@@ -47,8 +47,24 @@ export async function registerRoutes(
     }
   });
 
+  app.patch("/api/outcomes/:id", async (req, res) => {
+    try {
+      const data = insertOutcomeContractSchema.partial().parse(req.body);
+      const updated = await storage.updateOutcome(req.params.id, data);
+      if (!updated) return res.status(404).json({ message: "Not found" });
+      res.json(updated);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
   app.get("/api/kpis", async (_req, res) => {
     const kpis = await storage.getKpis();
+    res.json(kpis);
+  });
+
+  app.get("/api/outcomes/:id/kpis", async (req, res) => {
+    const kpis = await storage.getKpisByOutcome(req.params.id);
     res.json(kpis);
   });
 
@@ -60,6 +76,22 @@ export async function registerRoutes(
     } catch (e) {
       handleZodError(res, e);
     }
+  });
+
+  app.patch("/api/kpis/:id", async (req, res) => {
+    try {
+      const data = insertKpiDefinitionSchema.partial().parse(req.body);
+      const updated = await storage.updateKpi(req.params.id, data);
+      if (!updated) return res.status(404).json({ message: "Not found" });
+      res.json(updated);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  app.delete("/api/kpis/:id", async (req, res) => {
+    await storage.deleteKpi(req.params.id);
+    res.status(204).send();
   });
 
   app.get("/api/agents", async (_req, res) => {

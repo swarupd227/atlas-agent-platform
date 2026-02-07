@@ -1,5 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState } from "react";
+import { Link } from "wouter";
 import {
   Target,
   Plus,
@@ -9,6 +10,9 @@ import {
   Search,
   ArrowRight,
   BarChart3,
+  Lock,
+  GitBranch,
+  Shield,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -202,46 +206,72 @@ export default function Outcomes() {
           const avgProgress = outcomeKpis.length
             ? outcomeKpis.reduce((sum, k) => sum + (k.target ? ((k.currentValue || 0) / k.target) * 100 : 0), 0) / outcomeKpis.length
             : 0;
+          const gates = (outcome.approvalGates || []) as Array<Record<string, any>>;
+          const attribution = (outcome.attributionRules || {}) as Record<string, any>;
+          const sla = (outcome.slaConfig || {}) as Record<string, any>;
           return (
-            <Card key={outcome.id} className="hover-elevate cursor-pointer" data-testid={`card-outcome-${outcome.id}`}>
-              <CardContent className="p-4 flex flex-col gap-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <div className="flex items-center justify-center w-8 h-8 rounded-md bg-primary/10 shrink-0">
-                      <Target className="w-4 h-4 text-primary" />
+            <Link key={outcome.id} href={`/outcomes/${outcome.id}`}>
+              <Card className="hover-elevate cursor-pointer h-full" data-testid={`card-outcome-${outcome.id}`}>
+                <CardContent className="p-4 flex flex-col gap-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center justify-center w-8 h-8 rounded-md bg-primary/10 shrink-0">
+                        <Target className="w-4 h-4 text-primary" />
+                      </div>
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-sm font-semibold truncate">{outcome.name}</span>
+                        <span className="text-[11px] text-muted-foreground">v{outcome.version}</span>
+                      </div>
                     </div>
-                    <div className="flex flex-col min-w-0">
-                      <span className="text-sm font-semibold truncate">{outcome.name}</span>
-                      <span className="text-[11px] text-muted-foreground">v{outcome.version}</span>
-                    </div>
+                    <StatusBadge status={outcome.riskTier} />
                   </div>
-                  <StatusBadge status={outcome.riskTier} />
-                </div>
-                {outcome.description && (
-                  <p className="text-xs text-muted-foreground line-clamp-2">{outcome.description}</p>
-                )}
-                <div className="flex flex-col gap-1.5">
+                  {outcome.description && (
+                    <p className="text-xs text-muted-foreground line-clamp-2">{outcome.description}</p>
+                  )}
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-muted-foreground">Overall Progress</span>
+                      <span className="text-xs font-medium">{Math.round(avgProgress)}%</span>
+                    </div>
+                    <Progress value={avgProgress} className="h-1.5" />
+                  </div>
+                  <div className="flex items-center gap-3 flex-wrap pt-1 border-t">
+                    <div className="flex items-center gap-1">
+                      <BarChart3 className="w-3 h-3 text-muted-foreground" />
+                      <span className="text-[11px] text-muted-foreground">{outcomeKpis.length} KPIs</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <DollarSign className="w-3 h-3 text-muted-foreground" />
+                      <span className="text-[11px] text-muted-foreground">
+                        {outcome.currency || "$"}{outcome.pricePerUnit}/unit
+                      </span>
+                    </div>
+                    {sla.minSuccessRate && (
+                      <div className="flex items-center gap-1">
+                        <Shield className="w-3 h-3 text-muted-foreground" />
+                        <span className="text-[11px] text-muted-foreground">SLA {(sla.minSuccessRate * 100).toFixed(0)}%</span>
+                      </div>
+                    )}
+                    {gates.length > 0 && (
+                      <div className="flex items-center gap-1">
+                        <Lock className="w-3 h-3 text-muted-foreground" />
+                        <span className="text-[11px] text-muted-foreground">{gates.length} gates</span>
+                      </div>
+                    )}
+                    {attribution.model && (
+                      <div className="flex items-center gap-1">
+                        <GitBranch className="w-3 h-3 text-muted-foreground" />
+                        <span className="text-[11px] text-muted-foreground capitalize">{attribution.model.replace(/_/g, " ")}</span>
+                      </div>
+                    )}
+                  </div>
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs text-muted-foreground">Overall Progress</span>
-                    <span className="text-xs font-medium">{Math.round(avgProgress)}%</span>
+                    <StatusBadge status={outcome.status} />
+                    <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
                   </div>
-                  <Progress value={avgProgress} className="h-1.5" />
-                </div>
-                <div className="flex items-center justify-between gap-2 pt-1 border-t">
-                  <div className="flex items-center gap-1">
-                    <BarChart3 className="w-3 h-3 text-muted-foreground" />
-                    <span className="text-[11px] text-muted-foreground">{outcomeKpis.length} KPIs</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <DollarSign className="w-3 h-3 text-muted-foreground" />
-                    <span className="text-[11px] text-muted-foreground">
-                      ${outcome.pricePerUnit}/unit
-                    </span>
-                  </div>
-                  <StatusBadge status={outcome.status} />
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            </Link>
           );
         })}
       </div>

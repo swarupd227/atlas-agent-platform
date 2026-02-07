@@ -21,12 +21,14 @@ import Monitor from "@/pages/monitor";
 import Governance from "@/pages/governance";
 import Approvals from "@/pages/approvals";
 import Billing from "@/pages/billing";
+import OutcomeDetail from "@/pages/outcome-detail";
 
 function Router() {
   return (
     <Switch>
       <Route path="/" component={Overview} />
       <Route path="/outcomes" component={Outcomes} />
+      <Route path="/outcomes/:id" component={OutcomeDetail} />
       <Route path="/agents" component={Agents} />
       <Route path="/agents/:id" component={AgentDetail} />
       <Route path="/deployments" component={Deployments} />

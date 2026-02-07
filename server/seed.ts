@@ -16,7 +16,36 @@ export async function seedDatabase() {
     status: "active",
     pricingModel: "PER_OUTCOME_EVENT",
     pricePerUnit: 2.50,
-    slaConfig: { minSuccessRate: 0.92, maxP95LatencyMs: 8000, maxPolicyViolationRate: 0.001 },
+    currency: "USD",
+    pricingTiers: [
+      { minVolume: 0, maxVolume: 500, pricePerUnit: 2.50 },
+      { minVolume: 501, maxVolume: 2000, pricePerUnit: 2.10 },
+      { minVolume: 2001, maxVolume: null, pricePerUnit: 1.80 },
+    ],
+    volumeCap: 10000,
+    slaConfig: {
+      minSuccessRate: 0.92,
+      maxP95LatencyMs: 8000,
+      maxPolicyViolationRate: 0.001,
+      uptimePercent: 99.5,
+      breachPenaltyPercent: 15,
+    },
+    attributionRules: {
+      model: "last_touch",
+      windowHours: 24,
+      requireTraceLink: true,
+      excludeEscalated: false,
+      description: "Attribute to last agent that handled the ticket before resolution",
+    },
+    approvalGates: [
+      { stage: "contract_activation", required: true, approverRole: "business_owner" },
+      { stage: "pilot_promotion", required: true, approverRole: "expert_validator" },
+      { stage: "production_release", required: true, approverRole: "expert_validator" },
+      { stage: "pricing_change", required: true, approverRole: "finance_lead" },
+    ],
+    riskThreshold: 0.75,
+    maxDriftPercent: 8,
+    autoPauseTrigger: true,
   }).returning();
 
   const [outcome2] = await db.insert(outcomeContracts).values({
@@ -26,7 +55,32 @@ export async function seedDatabase() {
     status: "active",
     pricingModel: "PER_OUTCOME_EVENT",
     pricePerUnit: 1.75,
-    slaConfig: { minSuccessRate: 0.98, maxP95LatencyMs: 5000 },
+    currency: "USD",
+    pricingTiers: [
+      { minVolume: 0, maxVolume: 1000, pricePerUnit: 1.75 },
+      { minVolume: 1001, maxVolume: 5000, pricePerUnit: 1.50 },
+    ],
+    volumeCap: 20000,
+    slaConfig: {
+      minSuccessRate: 0.98,
+      maxP95LatencyMs: 5000,
+      uptimePercent: 99.9,
+      breachPenaltyPercent: 10,
+    },
+    attributionRules: {
+      model: "direct",
+      windowHours: 1,
+      requireTraceLink: true,
+      excludeEscalated: true,
+      description: "Direct 1:1 attribution - each invoice processing run maps to one outcome event",
+    },
+    approvalGates: [
+      { stage: "contract_activation", required: true, approverRole: "finance_lead" },
+      { stage: "production_release", required: true, approverRole: "expert_validator" },
+    ],
+    riskThreshold: 0.85,
+    maxDriftPercent: 5,
+    autoPauseTrigger: false,
   }).returning();
 
   const [outcome3] = await db.insert(outcomeContracts).values({
@@ -36,7 +90,32 @@ export async function seedDatabase() {
     status: "active",
     pricingModel: "PER_OUTCOME_EVENT",
     pricePerUnit: 3.00,
-    slaConfig: { minSuccessRate: 0.85, maxP95LatencyMs: 12000 },
+    currency: "USD",
+    pricingTiers: [
+      { minVolume: 0, maxVolume: 200, pricePerUnit: 3.00 },
+      { minVolume: 201, maxVolume: null, pricePerUnit: 2.50 },
+    ],
+    volumeCap: 5000,
+    slaConfig: {
+      minSuccessRate: 0.85,
+      maxP95LatencyMs: 12000,
+      uptimePercent: 99.0,
+      breachPenaltyPercent: 5,
+    },
+    attributionRules: {
+      model: "weighted_multi_touch",
+      windowHours: 72,
+      requireTraceLink: false,
+      excludeEscalated: false,
+      description: "Weighted multi-touch: scoring run gets 60%, enrichment gets 40% of outcome credit",
+    },
+    approvalGates: [
+      { stage: "contract_activation", required: true, approverRole: "business_owner" },
+      { stage: "production_release", required: false, approverRole: "expert_validator" },
+    ],
+    riskThreshold: 0.90,
+    maxDriftPercent: 15,
+    autoPauseTrigger: false,
   }).returning();
 
   const [outcome4] = await db.insert(outcomeContracts).values({
@@ -44,21 +123,50 @@ export async function seedDatabase() {
     description: "Automated content moderation for user-generated content platforms",
     riskTier: "HIGH",
     status: "active",
-    pricingModel: "PER_OUTCOME_EVENT",
+    pricingModel: "TIERED",
     pricePerUnit: 0.50,
-    slaConfig: { minSuccessRate: 0.99, maxP95LatencyMs: 2000 },
+    currency: "USD",
+    pricingTiers: [
+      { minVolume: 0, maxVolume: 10000, pricePerUnit: 0.50 },
+      { minVolume: 10001, maxVolume: 50000, pricePerUnit: 0.35 },
+      { minVolume: 50001, maxVolume: null, pricePerUnit: 0.20 },
+    ],
+    volumeCap: 500000,
+    slaConfig: {
+      minSuccessRate: 0.99,
+      maxP95LatencyMs: 2000,
+      uptimePercent: 99.99,
+      breachPenaltyPercent: 20,
+    },
+    attributionRules: {
+      model: "direct",
+      windowHours: 0.5,
+      requireTraceLink: true,
+      excludeEscalated: false,
+      description: "Direct attribution - each moderation decision is one outcome event",
+    },
+    approvalGates: [
+      { stage: "contract_activation", required: true, approverRole: "legal" },
+      { stage: "pilot_promotion", required: true, approverRole: "trust_safety_lead" },
+      { stage: "production_release", required: true, approverRole: "expert_validator" },
+      { stage: "model_change", required: true, approverRole: "trust_safety_lead" },
+      { stage: "pricing_change", required: true, approverRole: "finance_lead" },
+    ],
+    riskThreshold: 0.70,
+    maxDriftPercent: 3,
+    autoPauseTrigger: true,
   }).returning();
 
   // KPI Definitions
   await db.insert(kpiDefinitions).values([
-    { outcomeId: outcome1.id, name: "Autonomous Resolutions", unit: "count", target: 500, currentValue: 423, confidence: 0.89, trend: "up" },
-    { outcomeId: outcome1.id, name: "Customer Satisfaction", unit: "score", target: 4.5, currentValue: 4.3, confidence: 0.92, trend: "stable" },
-    { outcomeId: outcome1.id, name: "Avg Response Time", unit: "seconds", target: 30, currentValue: 22, confidence: 0.95, trend: "up" },
-    { outcomeId: outcome2.id, name: "Invoices Processed", unit: "count", target: 1200, currentValue: 1087, confidence: 0.94, trend: "up" },
-    { outcomeId: outcome2.id, name: "Extraction Accuracy", unit: "percent", target: 98, currentValue: 97.2, confidence: 0.91, trend: "stable" },
-    { outcomeId: outcome3.id, name: "Leads Qualified", unit: "count", target: 300, currentValue: 267, confidence: 0.87, trend: "up" },
-    { outcomeId: outcome3.id, name: "Conversion Rate", unit: "percent", target: 15, currentValue: 13.8, confidence: 0.82, trend: "up" },
-    { outcomeId: outcome4.id, name: "Items Moderated", unit: "count", target: 50000, currentValue: 47823, confidence: 0.96, trend: "up" },
+    { outcomeId: outcome1.id, name: "Autonomous Resolutions", unit: "count", baseline: 120, target: 500, currentValue: 423, weight: 0.4, slaThreshold: 400, breachLevel: "critical", confidence: 0.89, trend: "up", expression: "count(tickets WHERE resolved_by='agent' AND escalated=false)" },
+    { outcomeId: outcome1.id, name: "Customer Satisfaction", unit: "score", baseline: 3.8, target: 4.5, currentValue: 4.3, weight: 0.35, slaThreshold: 4.0, breachLevel: "warning", confidence: 0.92, trend: "stable", expression: "avg(csat_score WHERE source='post_resolution_survey')" },
+    { outcomeId: outcome1.id, name: "Avg Response Time", unit: "seconds", baseline: 120, target: 30, currentValue: 22, weight: 0.25, slaThreshold: 45, breachLevel: "warning", confidence: 0.95, trend: "up", expression: "avg(first_response_time_seconds)" },
+    { outcomeId: outcome2.id, name: "Invoices Processed", unit: "count", baseline: 300, target: 1200, currentValue: 1087, weight: 0.5, slaThreshold: 1000, breachLevel: "critical", confidence: 0.94, trend: "up", expression: "count(invoices WHERE status='processed')" },
+    { outcomeId: outcome2.id, name: "Extraction Accuracy", unit: "percent", baseline: 88, target: 98, currentValue: 97.2, weight: 0.5, slaThreshold: 95, breachLevel: "critical", confidence: 0.91, trend: "stable", expression: "avg(field_accuracy_score) * 100" },
+    { outcomeId: outcome3.id, name: "Leads Qualified", unit: "count", baseline: 80, target: 300, currentValue: 267, weight: 0.6, slaThreshold: 200, breachLevel: "warning", confidence: 0.87, trend: "up", expression: "count(leads WHERE qualification_status='qualified')" },
+    { outcomeId: outcome3.id, name: "Conversion Rate", unit: "percent", baseline: 8, target: 15, currentValue: 13.8, weight: 0.4, slaThreshold: 10, breachLevel: "warning", confidence: 0.82, trend: "up", expression: "count(leads WHERE converted=true) / count(leads) * 100" },
+    { outcomeId: outcome4.id, name: "Items Moderated", unit: "count", baseline: 15000, target: 50000, currentValue: 47823, weight: 1.0, slaThreshold: 40000, breachLevel: "critical", confidence: 0.96, trend: "up", expression: "count(content_items WHERE moderation_decision IS NOT NULL)" },
   ]);
 
   // Agents

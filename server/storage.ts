@@ -33,6 +33,10 @@ export interface IStorage {
   getKpis(): Promise<KpiDefinition[]>;
   getKpisByOutcome(outcomeId: string): Promise<KpiDefinition[]>;
   createKpi(kpi: InsertKpiDefinition): Promise<KpiDefinition>;
+  updateKpi(id: string, data: Partial<KpiDefinition>): Promise<KpiDefinition | undefined>;
+  deleteKpi(id: string): Promise<boolean>;
+
+  updateOutcome(id: string, data: Partial<OutcomeContract>): Promise<OutcomeContract | undefined>;
 
   getDeployments(): Promise<Deployment[]>;
   createDeployment(deployment: InsertDeployment): Promise<Deployment>;
@@ -117,6 +121,21 @@ export class DatabaseStorage implements IStorage {
   async createKpi(kpi: InsertKpiDefinition) {
     const [created] = await db.insert(kpiDefinitions).values(kpi).returning();
     return created;
+  }
+
+  async updateKpi(id: string, data: Partial<KpiDefinition>) {
+    const [updated] = await db.update(kpiDefinitions).set(data).where(eq(kpiDefinitions.id, id)).returning();
+    return updated;
+  }
+
+  async deleteKpi(id: string) {
+    const result = await db.delete(kpiDefinitions).where(eq(kpiDefinitions.id, id));
+    return true;
+  }
+
+  async updateOutcome(id: string, data: Partial<OutcomeContract>) {
+    const [updated] = await db.update(outcomeContracts).set(data).where(eq(outcomeContracts.id, id)).returning();
+    return updated;
   }
 
   async getDeployments() {
