@@ -238,21 +238,23 @@ export default function AgentDetail() {
             </CardHeader>
             <CardContent className="flex flex-col gap-2">
               {evals && evals.length > 0 ? evals.map((suite) => (
-                <div key={suite.id} className="flex items-center justify-between gap-3 p-3 rounded-md bg-muted/30 hover-elevate" data-testid={`eval-row-${suite.id}`}>
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="flex items-center justify-center w-7 h-7 rounded-md bg-emerald-500/10 shrink-0">
-                      <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
+                <Link key={suite.id} href={`/evals/${suite.id}`}>
+                  <div className="flex items-center justify-between gap-3 p-3 rounded-md bg-muted/30 hover-elevate cursor-pointer" data-testid={`eval-row-${suite.id}`}>
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="flex items-center justify-center w-7 h-7 rounded-md bg-emerald-500/10 shrink-0">
+                        <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
+                      </div>
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-xs font-medium truncate">{suite.name}</span>
+                        <span className="text-[11px] text-muted-foreground">{suite.totalCases} cases | {suite.type}</span>
+                      </div>
                     </div>
-                    <div className="flex flex-col min-w-0">
-                      <span className="text-xs font-medium truncate">{suite.name}</span>
-                      <span className="text-[11px] text-muted-foreground">{suite.totalCases} cases | {suite.type}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium">{((suite.passRate || 0) * 100).toFixed(0)}%</span>
+                      <Progress value={(suite.passRate || 0) * 100} className="h-1.5 w-16" />
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium">{((suite.passRate || 0) * 100).toFixed(0)}%</span>
-                    <Progress value={(suite.passRate || 0) * 100} className="h-1.5 w-16" />
-                  </div>
-                </div>
+                </Link>
               )) : (
                 <p className="text-sm text-muted-foreground py-8 text-center">No eval suites configured</p>
               )}

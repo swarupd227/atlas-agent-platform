@@ -1,4 +1,4 @@
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import {
   Bot,
@@ -26,48 +26,20 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { StatCard } from "@/components/stat-card";
 import { StatusBadge } from "@/components/status-badge";
 import { ErrorState } from "@/components/error-state";
-import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Link } from "wouter";
 import type { Agent, OutcomeContract } from "@shared/schema";
 
 export default function Agents() {
   const [search, setSearch] = useState("");
-  const [createOpen, setCreateOpen] = useState(false);
-  const { toast } = useToast();
 
   const { data: agents, isLoading, error, refetch } = useQuery<Agent[]>({
     queryKey: ["/api/agents"],
   });
   const { data: outcomes } = useQuery<OutcomeContract[]>({
     queryKey: ["/api/outcomes"],
-  });
-
-  const createMutation = useMutation({
-    mutationFn: async (data: Record<string, any>) => {
-      const res = await apiRequest("POST", "/api/agents", data);
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
-      setCreateOpen(false);
-      toast({ title: "Agent created successfully" });
-    },
-    onError: (err: Error) => {
-      toast({ title: "Failed to create agent", description: err.message, variant: "destructive" });
-    },
   });
 
   const filtered = agents?.filter((a) =>
@@ -103,78 +75,11 @@ export default function Agents() {
             System of record for all AI agents across your organization
           </p>
         </div>
-        <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-          <DialogTrigger asChild>
-            <Button data-testid="button-create-agent">
-              <Plus className="w-4 h-4 mr-1.5" /> New Agent
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Register New Agent</DialogTitle>
-            </DialogHeader>
-            <form
-              className="flex flex-col gap-4"
-              onSubmit={(e) => {
-                e.preventDefault();
-                const fd = new FormData(e.currentTarget);
-                createMutation.mutate({
-                  name: fd.get("name") as string,
-                  description: fd.get("description") as string,
-                  owner: fd.get("owner") as string,
-                  riskTier: fd.get("riskTier") as string,
-                  autonomyMode: fd.get("autonomyMode") as string,
-                  outcomeId: fd.get("outcomeId") as string || undefined,
-                });
-              }}
-            >
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="agent-name">Agent Name</Label>
-                <Input id="agent-name" name="name" required placeholder="e.g., Support Triage Agent" data-testid="input-agent-name" />
-              </div>
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="agent-desc">Description</Label>
-                <Textarea id="agent-desc" name="description" placeholder="What does this agent do?" data-testid="input-agent-description" />
-              </div>
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="agent-owner">Owner</Label>
-                <Input id="agent-owner" name="owner" placeholder="Team or person" data-testid="input-agent-owner" />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="flex flex-col gap-2">
-                  <Label>Risk Tier</Label>
-                  <select name="riskTier" className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm" defaultValue="MEDIUM">
-                    <option value="LOW">Low</option>
-                    <option value="MEDIUM">Medium</option>
-                    <option value="HIGH">High</option>
-                  </select>
-                </div>
-                <div className="flex flex-col gap-2">
-                  <Label>Autonomy Mode</Label>
-                  <select name="autonomyMode" className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm" defaultValue="assisted">
-                    <option value="manual">Manual</option>
-                    <option value="assisted">Assisted</option>
-                    <option value="autonomous">Autonomous</option>
-                  </select>
-                </div>
-              </div>
-              {outcomes && outcomes.length > 0 && (
-                <div className="flex flex-col gap-2">
-                  <Label>Link to Outcome</Label>
-                  <select name="outcomeId" className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm" defaultValue="">
-                    <option value="">None</option>
-                    {outcomes.map((o) => (
-                      <option key={o.id} value={o.id}>{o.name}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
-              <Button type="submit" disabled={createMutation.isPending} data-testid="button-submit-agent">
-                {createMutation.isPending ? "Creating..." : "Register Agent"}
-              </Button>
-            </form>
-          </DialogContent>
-        </Dialog>
+        <Link href="/agents/wizard">
+          <Button data-testid="button-create-agent">
+            <Plus className="w-4 h-4 mr-1.5" /> Design New Agent
+          </Button>
+        </Link>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

@@ -24,6 +24,8 @@ import Billing from "@/pages/billing";
 import OutcomeDetail from "@/pages/outcome-detail";
 import ReleaseDetail from "@/pages/release-detail";
 import TraceDetail from "@/pages/trace-detail";
+import AgentWizard from "@/pages/agent-wizard";
+import EvalDetail from "@/pages/eval-detail";
 
 function Router() {
   return (
@@ -32,10 +34,12 @@ function Router() {
       <Route path="/outcomes" component={Outcomes} />
       <Route path="/outcomes/:id" component={OutcomeDetail} />
       <Route path="/agents" component={Agents} />
+      <Route path="/agents/wizard" component={AgentWizard} />
       <Route path="/agents/:id" component={AgentDetail} />
       <Route path="/deployments" component={Deployments} />
       <Route path="/deployments/:id" component={ReleaseDetail} />
       <Route path="/traces/:id" component={TraceDetail} />
+      <Route path="/evals/:id" component={EvalDetail} />
       <Route path="/monitor" component={Monitor} />
       <Route path="/governance" component={Governance} />
       <Route path="/approvals" component={Approvals} />

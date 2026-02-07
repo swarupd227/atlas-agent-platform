@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { ZodError } from "zod";
+import OpenAI from "openai";
 import {
   insertOutcomeContractSchema,
   insertKpiDefinitionSchema,
@@ -12,7 +13,15 @@ import {
   insertPolicySchema,
   insertApprovalSchema,
   insertInvoiceSchema,
+  insertAgentTemplateSchema,
+  insertEvalTestCaseSchema,
+  insertEvalRunSchema,
 } from "@shared/schema";
+
+const openai = new OpenAI({
+  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+});
 
 function handleZodError(res: any, error: unknown) {
   if (error instanceof ZodError) {
@@ -300,6 +309,119 @@ export async function registerRoutes(
       res.status(201).json(invoice);
     } catch (e) {
       handleZodError(res, e);
+    }
+  });
+
+  // Agent Templates
+  app.get("/api/agent-templates", async (_req, res) => {
+    const templates = await storage.getAgentTemplates();
+    res.json(templates);
+  });
+
+  app.get("/api/agent-templates/:id", async (req, res) => {
+    const template = await storage.getAgentTemplate(req.params.id);
+    if (!template) return res.status(404).json({ message: "Template not found" });
+    res.json(template);
+  });
+
+  // Eval Suite Detail
+  app.get("/api/evals/:id", async (req, res) => {
+    const suite = await storage.getEvalSuite(req.params.id);
+    if (!suite) return res.status(404).json({ message: "Eval suite not found" });
+    res.json(suite);
+  });
+
+  app.get("/api/evals/:id/test-cases", async (req, res) => {
+    const cases = await storage.getEvalTestCases(req.params.id);
+    res.json(cases);
+  });
+
+  app.post("/api/evals/:id/test-cases", async (req, res) => {
+    try {
+      const data = insertEvalTestCaseSchema.parse({ ...req.body, suiteId: req.params.id });
+      const testCase = await storage.createEvalTestCase(data);
+      res.status(201).json(testCase);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  app.get("/api/evals/:id/runs", async (req, res) => {
+    const runs = await storage.getEvalRuns(req.params.id);
+    res.json(runs);
+  });
+
+  app.post("/api/evals/:id/runs", async (req, res) => {
+    try {
+      const data = insertEvalRunSchema.parse({ ...req.body, suiteId: req.params.id });
+      const run = await storage.createEvalRun(data);
+      res.status(201).json(run);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  // AI Agent Design Assistant
+  app.post("/api/ai/agent-assist", async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI assistant is not configured" });
+      }
+      const { messages, wizardState } = req.body;
+
+      const systemPrompt = `You are an AI Agent Design Assistant for the ALMP (Agent Lifecycle Management Platform). You help users design and configure AI agents.
+
+You understand the ALMP data model:
+- Agents have: name, description, owner, riskTier (LOW/MEDIUM/HIGH), autonomyMode (manual/assisted/autonomous), modelProvider, modelName
+- Tools config: array of tools with name, description, permissions
+- Permissions: data access scopes, API access, write capabilities
+- Memory/RAG: vector store config, retrieval strategy, chunk size, embedding model
+- Blueprint: workflow graph with nodes (validate, retrieve, classify, route, respond, escalate)
+- Policy bindings: array of policy references with enforcement level
+- Eval bindings: array of eval suite references with schedule
+- Rollback plan: trigger conditions, rollback target version, notification config
+
+Current wizard state: ${JSON.stringify(wizardState || {})}
+
+Guidelines:
+- Suggest specific, concrete configurations based on the user's described use case
+- When suggesting tools, provide realistic tool names and descriptions
+- When suggesting workflow nodes, include proper types (schema_validate, rag, llm_call, classifier, router, tool_call, human_review)
+- Format suggestions as JSON when appropriate so the user can apply them directly
+- Be concise but helpful. Focus on practical agent design.
+- If the user describes a use case, suggest a complete agent configuration they can use.`;
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+
+      const stream = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        messages: [
+          { role: "system", content: systemPrompt },
+          ...messages,
+        ],
+        stream: true,
+        max_completion_tokens: 2048,
+      });
+
+      for await (const chunk of stream) {
+        const content = chunk.choices[0]?.delta?.content || "";
+        if (content) {
+          res.write(`data: ${JSON.stringify({ content })}\n\n`);
+        }
+      }
+
+      res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+      res.end();
+    } catch (error) {
+      console.error("AI assist error:", error);
+      if (res.headersSent) {
+        res.write(`data: ${JSON.stringify({ error: "AI assistant error" })}\n\n`);
+        res.end();
+      } else {
+        res.status(500).json({ error: "AI assistant failed" });
+      }
     }
   });
 

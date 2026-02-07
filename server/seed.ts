@@ -1,7 +1,8 @@
 import { db } from "./db";
 import { 
   outcomeContracts, kpiDefinitions, agents, deployments, 
-  runTraces, evalSuites, policies, approvals, auditEvents, invoices
+  runTraces, evalSuites, policies, approvals, auditEvents, invoices,
+  agentTemplates, evalTestCases, evalRuns,
 } from "@shared/schema";
 
 export async function seedDatabase() {
@@ -1586,6 +1587,250 @@ export async function seedDatabase() {
     { outcomeId: outcome1.id, outcomeName: "Reduce Support Load", periodStart: new Date(now.getFullYear(), now.getMonth(), 1), periodEnd: new Date(now.getFullYear(), now.getMonth() + 1, 0), totalUnits: 198, unitPrice: 2.50, amount: 495.00, status: "pending" },
     { outcomeId: outcome2.id, outcomeName: "Invoice Processing Automation", periodStart: new Date(now.getFullYear(), now.getMonth(), 1), periodEnd: new Date(now.getFullYear(), now.getMonth() + 1, 0), totalUnits: 534, unitPrice: 1.75, amount: 934.50, status: "pending" },
   ]);
+
+  // Agent Templates
+  await db.insert(agentTemplates).values([
+    {
+      name: "Customer Support Triage",
+      description: "Autonomous tier-1 support agent that classifies tickets, searches knowledge base, and routes or resolves issues",
+      category: "support",
+      icon: "headphones",
+      complexity: "high",
+      modelProvider: "openai",
+      modelName: "gpt-4.1",
+      defaultRiskTier: "HIGH",
+      defaultAutonomyMode: "autonomous",
+      toolsConfig: [
+        { name: "search_knowledge_base", description: "Search internal KB for relevant articles", permissions: ["kb:read"] },
+        { name: "classify_ticket", description: "Classify ticket priority and category", permissions: ["tickets:read"] },
+        { name: "route_ticket", description: "Route ticket to appropriate team", permissions: ["tickets:write"] },
+        { name: "send_response", description: "Send automated response to customer", permissions: ["comms:write"] },
+      ],
+      permissionsConfig: { dataAccess: ["tickets", "knowledge_base", "customer_profiles"], apiAccess: ["crm", "helpdesk"], writeAccess: ["tickets", "responses"] },
+      memoryRagConfig: { vectorStore: "pinecone", retrievalStrategy: "hybrid", chunkSize: 512, embeddingModel: "text-embedding-3-small", topK: 5 },
+      blueprintJson: {
+        nodes: [
+          { id: "validate", type: "schema_validate", label: "Validate Input" },
+          { id: "retrieve", type: "rag", label: "KB Retrieval" },
+          { id: "classify", type: "classifier", label: "Classify Intent" },
+          { id: "route", type: "router", label: "Route Decision" },
+          { id: "respond", type: "llm_call", label: "Generate Response" },
+        ],
+      },
+      policyBindings: [{ policyName: "PII Redaction", enforcement: "hard" }, { policyName: "Tone & Language", enforcement: "soft" }],
+      evalBindings: [{ suiteName: "Support Quality Regression", schedule: "nightly" }],
+      rollbackPlan: { triggerConditions: ["success_rate < 0.90", "p95_latency > 10000"], rollbackTargetVersion: "previous_stable" },
+    },
+    {
+      name: "Document Extractor",
+      description: "Extract structured data from invoices, receipts, and contracts using vision + NLP",
+      category: "data_processing",
+      icon: "file-text",
+      complexity: "medium",
+      modelProvider: "openai",
+      modelName: "gpt-4.1",
+      defaultRiskTier: "MEDIUM",
+      defaultAutonomyMode: "assisted",
+      toolsConfig: [
+        { name: "ocr_extract", description: "Extract text from document images", permissions: ["docs:read"] },
+        { name: "validate_fields", description: "Validate extracted fields against schema", permissions: ["schema:read"] },
+        { name: "store_result", description: "Store structured extraction result", permissions: ["storage:write"] },
+      ],
+      permissionsConfig: { dataAccess: ["documents", "schemas"], apiAccess: ["ocr_service"], writeAccess: ["extractions"] },
+      memoryRagConfig: { vectorStore: "chromadb", retrievalStrategy: "similarity", chunkSize: 1024, embeddingModel: "text-embedding-3-small", topK: 3 },
+      blueprintJson: {
+        nodes: [
+          { id: "ingest", type: "schema_validate", label: "Ingest Document" },
+          { id: "extract", type: "tool_call", label: "OCR Extract" },
+          { id: "structure", type: "llm_call", label: "Structure Data" },
+          { id: "validate", type: "schema_validate", label: "Validate Output" },
+        ],
+      },
+      policyBindings: [{ policyName: "Data Retention", enforcement: "hard" }],
+      evalBindings: [{ suiteName: "Extraction Accuracy", schedule: "weekly" }],
+      rollbackPlan: { triggerConditions: ["accuracy < 0.95"], rollbackTargetVersion: "previous_stable" },
+    },
+    {
+      name: "Lead Scoring Agent",
+      description: "Score and qualify inbound leads using firmographic data, engagement signals, and predictive models",
+      category: "sales",
+      icon: "trending-up",
+      complexity: "medium",
+      modelProvider: "openai",
+      modelName: "gpt-4.1",
+      defaultRiskTier: "MEDIUM",
+      defaultAutonomyMode: "autonomous",
+      toolsConfig: [
+        { name: "enrich_lead", description: "Enrich lead with firmographic data", permissions: ["leads:read", "enrichment:read"] },
+        { name: "score_lead", description: "Calculate lead score based on signals", permissions: ["leads:read"] },
+        { name: "update_crm", description: "Update lead score in CRM", permissions: ["crm:write"] },
+      ],
+      permissionsConfig: { dataAccess: ["leads", "firmographic_data", "engagement_events"], apiAccess: ["crm", "enrichment_api"], writeAccess: ["lead_scores"] },
+      memoryRagConfig: { vectorStore: "pinecone", retrievalStrategy: "similarity", chunkSize: 256, embeddingModel: "text-embedding-3-small", topK: 10 },
+      blueprintJson: {
+        nodes: [
+          { id: "ingest", type: "schema_validate", label: "Ingest Lead" },
+          { id: "enrich", type: "tool_call", label: "Enrich Data" },
+          { id: "score", type: "llm_call", label: "Score Lead" },
+          { id: "route", type: "router", label: "Route by Score" },
+        ],
+      },
+      policyBindings: [{ policyName: "Fair Scoring", enforcement: "hard" }],
+      evalBindings: [{ suiteName: "Scoring Accuracy", schedule: "weekly" }],
+      rollbackPlan: { triggerConditions: ["conversion_rate_delta > -10%"], rollbackTargetVersion: "previous_stable" },
+    },
+    {
+      name: "Content Moderator",
+      description: "Real-time content moderation for UGC platforms with multi-modal analysis",
+      category: "trust_safety",
+      icon: "shield",
+      complexity: "high",
+      modelProvider: "openai",
+      modelName: "gpt-4.1",
+      defaultRiskTier: "HIGH",
+      defaultAutonomyMode: "autonomous",
+      toolsConfig: [
+        { name: "analyze_text", description: "Analyze text for policy violations", permissions: ["content:read"] },
+        { name: "analyze_image", description: "Analyze images for policy violations", permissions: ["content:read"] },
+        { name: "take_action", description: "Apply moderation action", permissions: ["content:write", "users:write"] },
+      ],
+      permissionsConfig: { dataAccess: ["user_content", "user_profiles", "moderation_rules"], apiAccess: ["vision_api"], writeAccess: ["moderation_actions", "user_flags"] },
+      memoryRagConfig: null,
+      blueprintJson: {
+        nodes: [
+          { id: "ingest", type: "schema_validate", label: "Ingest Content" },
+          { id: "classify", type: "classifier", label: "Classify Risk" },
+          { id: "review", type: "llm_call", label: "Deep Review" },
+          { id: "action", type: "router", label: "Action Decision" },
+        ],
+      },
+      policyBindings: [{ policyName: "Moderation Policy", enforcement: "hard" }, { policyName: "Appeal Rights", enforcement: "hard" }],
+      evalBindings: [{ suiteName: "Moderation Accuracy", schedule: "daily" }],
+      rollbackPlan: { triggerConditions: ["false_positive_rate > 0.05"], rollbackTargetVersion: "previous_stable" },
+    },
+    {
+      name: "Knowledge Base Updater",
+      description: "Automatically maintain and update knowledge bases from source documents and feedback loops",
+      category: "knowledge_management",
+      icon: "book-open",
+      complexity: "low",
+      modelProvider: "openai",
+      modelName: "gpt-4.1",
+      defaultRiskTier: "LOW",
+      defaultAutonomyMode: "assisted",
+      toolsConfig: [
+        { name: "fetch_sources", description: "Fetch new source documents", permissions: ["docs:read"] },
+        { name: "chunk_embed", description: "Chunk and embed documents", permissions: ["vectors:write"] },
+        { name: "update_index", description: "Update search index", permissions: ["search:write"] },
+      ],
+      permissionsConfig: { dataAccess: ["source_documents", "feedback"], apiAccess: ["embedding_api"], writeAccess: ["knowledge_base", "search_index"] },
+      memoryRagConfig: { vectorStore: "pinecone", retrievalStrategy: "hybrid", chunkSize: 512, embeddingModel: "text-embedding-3-small", topK: 5 },
+      blueprintJson: {
+        nodes: [
+          { id: "fetch", type: "tool_call", label: "Fetch Sources" },
+          { id: "process", type: "llm_call", label: "Process & Chunk" },
+          { id: "embed", type: "tool_call", label: "Generate Embeddings" },
+          { id: "index", type: "tool_call", label: "Update Index" },
+        ],
+      },
+      policyBindings: [{ policyName: "Source Verification", enforcement: "soft" }],
+      evalBindings: [{ suiteName: "Retrieval Quality", schedule: "weekly" }],
+      rollbackPlan: { triggerConditions: ["retrieval_quality < 0.85"], rollbackTargetVersion: "previous_stable" },
+    },
+    {
+      name: "Compliance Monitor",
+      description: "Continuous compliance monitoring agent that checks regulatory requirements and flags violations",
+      category: "governance",
+      icon: "scale",
+      complexity: "high",
+      modelProvider: "openai",
+      modelName: "gpt-4.1",
+      defaultRiskTier: "HIGH",
+      defaultAutonomyMode: "manual",
+      toolsConfig: [
+        { name: "scan_transactions", description: "Scan transactions for compliance issues", permissions: ["transactions:read"] },
+        { name: "check_regulations", description: "Check against regulatory database", permissions: ["regulations:read"] },
+        { name: "file_report", description: "File compliance report", permissions: ["reports:write"] },
+      ],
+      permissionsConfig: { dataAccess: ["transactions", "regulations", "audit_logs"], apiAccess: ["regulatory_db"], writeAccess: ["compliance_reports", "alerts"] },
+      memoryRagConfig: { vectorStore: "pinecone", retrievalStrategy: "hybrid", chunkSize: 1024, embeddingModel: "text-embedding-3-small", topK: 10 },
+      blueprintJson: {
+        nodes: [
+          { id: "scan", type: "tool_call", label: "Scan Data" },
+          { id: "analyze", type: "llm_call", label: "Analyze Compliance" },
+          { id: "classify", type: "classifier", label: "Risk Classification" },
+          { id: "report", type: "tool_call", label: "Generate Report" },
+          { id: "escalate", type: "human_review", label: "Expert Review" },
+        ],
+      },
+      policyBindings: [{ policyName: "Regulatory Compliance", enforcement: "hard" }, { policyName: "Audit Trail", enforcement: "hard" }],
+      evalBindings: [{ suiteName: "Compliance Detection", schedule: "daily" }],
+      rollbackPlan: { triggerConditions: ["missed_violation_rate > 0.01"], rollbackTargetVersion: "previous_stable" },
+    },
+  ]);
+
+  // Eval Test Cases and Runs for existing eval suites
+  const existingEvals = await db.select().from(evalSuites);
+  for (const suite of existingEvals) {
+    const testCaseData = [];
+    if (suite.name.includes("Regression") || suite.name.includes("Quality")) {
+      testCaseData.push(
+        { suiteId: suite.id, name: "Standard ticket classification", inputData: { ticket: "My order hasn't arrived", category: "shipping" }, expectedOutput: { classification: "shipping_issue", priority: "medium" }, tags: ["classification", "core"], weight: 1 },
+        { suiteId: suite.id, name: "Escalation detection", inputData: { ticket: "I want to speak to a manager NOW", sentiment: "angry" }, expectedOutput: { shouldEscalate: true, reason: "customer_request" }, tags: ["escalation", "critical"], weight: 2 },
+        { suiteId: suite.id, name: "KB retrieval accuracy", inputData: { query: "How to reset password" }, expectedOutput: { topArticle: "password-reset-guide", relevanceScore: 0.9 }, tags: ["retrieval", "core"], weight: 1.5 },
+        { suiteId: suite.id, name: "Response tone check", inputData: { ticket: "This is frustrating", draft: "I understand your frustration" }, expectedOutput: { toneScore: 0.85, isProfessional: true }, tags: ["tone", "quality"], weight: 1 },
+        { suiteId: suite.id, name: "Multi-language support", inputData: { ticket: "Mi pedido no ha llegado", language: "es" }, expectedOutput: { detectedLanguage: "es", canHandle: true }, tags: ["i18n", "edge_case"], weight: 1 },
+      );
+    } else if (suite.name.includes("Accuracy") || suite.name.includes("Extraction")) {
+      testCaseData.push(
+        { suiteId: suite.id, name: "Invoice total extraction", inputData: { documentType: "invoice", field: "total" }, expectedOutput: { value: "1234.56", confidence: 0.98 }, tags: ["extraction", "core"], weight: 2 },
+        { suiteId: suite.id, name: "Date format handling", inputData: { documentType: "invoice", field: "date", format: "DD/MM/YYYY" }, expectedOutput: { normalizedDate: "2025-01-15", format: "ISO" }, tags: ["normalization", "core"], weight: 1 },
+        { suiteId: suite.id, name: "Missing field detection", inputData: { documentType: "invoice", field: "po_number", present: false }, expectedOutput: { detected: false, fallback: "N/A" }, tags: ["edge_case"], weight: 1.5 },
+        { suiteId: suite.id, name: "Currency detection", inputData: { text: "EUR 500.00" }, expectedOutput: { currency: "EUR", amount: 500.0 }, tags: ["extraction", "core"], weight: 1 },
+      );
+    } else {
+      testCaseData.push(
+        { suiteId: suite.id, name: "Basic functionality test", inputData: { input: "standard_input" }, expectedOutput: { status: "success" }, tags: ["core"], weight: 1 },
+        { suiteId: suite.id, name: "Edge case handling", inputData: { input: "edge_case_input" }, expectedOutput: { status: "handled" }, tags: ["edge_case"], weight: 1.5 },
+        { suiteId: suite.id, name: "Performance threshold", inputData: { input: "perf_test" }, expectedOutput: { latencyMs: 500, withinThreshold: true }, tags: ["performance"], weight: 1 },
+      );
+    }
+
+    if (testCaseData.length > 0) {
+      await db.insert(evalTestCases).values(testCaseData);
+    }
+
+    // Add eval runs for each suite
+    const runData = [];
+    const now2 = new Date();
+    for (let r = 0; r < 5; r++) {
+      const passed = Math.floor(Math.random() * 3) + (testCaseData.length - 2);
+      const failed = testCaseData.length - passed;
+      runData.push({
+        suiteId: suite.id,
+        agentId: suite.agentId,
+        status: "completed" as const,
+        totalCases: testCaseData.length,
+        passedCases: Math.max(0, passed),
+        failedCases: Math.max(0, failed),
+        passRate: Math.max(0, passed) / testCaseData.length,
+        avgLatencyMs: Math.floor(Math.random() * 2000) + 500,
+        avgCostUsd: Math.random() * 0.05 + 0.01,
+        triggeredBy: r === 0 ? "manual" : "scheduled",
+        resultsJson: testCaseData.map((tc, i) => ({
+          testCaseId: `tc-${i}`,
+          testCaseName: tc.name,
+          passed: i < passed,
+          actualOutput: tc.expectedOutput,
+          latencyMs: Math.floor(Math.random() * 3000) + 200,
+          costUsd: Math.random() * 0.02 + 0.005,
+        })),
+        startedAt: new Date(now2.getTime() - (r * 24 * 60 * 60 * 1000)),
+        completedAt: new Date(now2.getTime() - (r * 24 * 60 * 60 * 1000) + 60000),
+      });
+    }
+    await db.insert(evalRuns).values(runData);
+  }
 
   console.log("Database seeded successfully");
 }

@@ -258,3 +258,68 @@ export const outcomeEvents = pgTable("outcome_events", {
 export const insertOutcomeEventSchema = createInsertSchema(outcomeEvents).omit({ id: true, createdAt: true });
 export type InsertOutcomeEvent = z.infer<typeof insertOutcomeEventSchema>;
 export type OutcomeEvent = typeof outcomeEvents.$inferSelect;
+
+export const agentTemplates = pgTable("agent_templates", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  description: text("description"),
+  category: text("category").notNull().default("general"),
+  icon: text("icon").default("bot"),
+  complexity: text("complexity").default("medium"),
+  modelProvider: text("model_provider").default("openai"),
+  modelName: text("model_name").default("gpt-4.1"),
+  toolsConfig: jsonb("tools_config"),
+  permissionsConfig: jsonb("permissions_config"),
+  memoryRagConfig: jsonb("memory_rag_config"),
+  blueprintJson: jsonb("blueprint_json"),
+  policyBindings: jsonb("policy_bindings"),
+  evalBindings: jsonb("eval_bindings"),
+  rollbackPlan: jsonb("rollback_plan"),
+  defaultRiskTier: text("default_risk_tier").default("MEDIUM"),
+  defaultAutonomyMode: text("default_autonomy_mode").default("assisted"),
+  usageCount: integer("usage_count").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAgentTemplateSchema = createInsertSchema(agentTemplates).omit({ id: true, createdAt: true });
+export type InsertAgentTemplate = z.infer<typeof insertAgentTemplateSchema>;
+export type AgentTemplate = typeof agentTemplates.$inferSelect;
+
+export const evalTestCases = pgTable("eval_test_cases", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  suiteId: varchar("suite_id").notNull(),
+  name: text("name").notNull(),
+  inputData: jsonb("input_data"),
+  expectedOutput: jsonb("expected_output"),
+  tags: text("tags").array(),
+  weight: real("weight").default(1),
+  status: text("status").default("active"),
+});
+
+export const insertEvalTestCaseSchema = createInsertSchema(evalTestCases).omit({ id: true });
+export type InsertEvalTestCase = z.infer<typeof insertEvalTestCaseSchema>;
+export type EvalTestCase = typeof evalTestCases.$inferSelect;
+
+export const evalRuns = pgTable("eval_runs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  suiteId: varchar("suite_id").notNull(),
+  agentId: varchar("agent_id"),
+  versionId: varchar("version_id"),
+  status: text("status").notNull().default("running"),
+  totalCases: integer("total_cases").default(0),
+  passedCases: integer("passed_cases").default(0),
+  failedCases: integer("failed_cases").default(0),
+  passRate: real("pass_rate").default(0),
+  avgLatencyMs: integer("avg_latency_ms").default(0),
+  avgCostUsd: real("avg_cost_usd").default(0),
+  resultsJson: jsonb("results_json"),
+  triggeredBy: text("triggered_by").default("manual"),
+  startedAt: timestamp("started_at").defaultNow(),
+  completedAt: timestamp("completed_at"),
+});
+
+export const insertEvalRunSchema = createInsertSchema(evalRuns).omit({ id: true, startedAt: true });
+export type InsertEvalRun = z.infer<typeof insertEvalRunSchema>;
+export type EvalRun = typeof evalRuns.$inferSelect;
+
+export * from "./models/chat";

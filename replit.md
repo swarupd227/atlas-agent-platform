@@ -41,8 +41,31 @@ A comprehensive platform for managing AI agent lifecycles with an 80% autonomous
 2. **Agent Blueprint** (`/agents/:id`) — 7 sections: Model Config, Workflow Graph, Tools & Permissions, Memory & RAG, Policy Bindings, Eval Bindings, Rollback Plan
 3. **Release** (`/deployments/:id`) — 4 sections: Overview, Canary Rules, Rollback Triggers, Promotion History. Actions: Promote (staging→pilot→prod), Rollback
 4. **Run Trace** (`/traces/:id`) — 7 sections: Execution Summary, Prompt Inputs, Tool Calls, Retrieved Documents, Decisions, Policy Checks, Cost & Latency Breakdown. Navigable from agent detail trace rows.
+5. **Eval Suite** (`/evals/:id`) — 4 tabs: Test Cases (table with input/output/tags/weight), Run History (pass rates, latency, cost), Scoring Config (threshold, schedule, weights), Agent Bindings (linked agent info)
+
+## Agent Design Wizard (`/agents/wizard`)
+5-step flow for creating agents:
+1. Template Library (6 pre-built templates) + AI Assistant panel (GPT-4.1 streaming chat)
+2. Basic Info (name, description, owner, risk tier, autonomy mode, outcome binding)
+3. Model & Tools (provider, model name, tools config, permissions)
+4. Memory & Workflow (RAG config, workflow graph nodes)
+5. Review & Create (summary + POST /api/agents)
+
+AI assistant endpoint: POST /api/ai/agent-assist (SSE streaming, uses Replit AI Integrations OpenAI)
+
+## Data Model
+- outcome_contracts, kpi_definitions
+- agents, agent_versions
+- deployments, run_traces
+- eval_suites, eval_test_cases, eval_runs
+- policies, approvals, audit_events
+- invoices, outcome_events
+- agent_templates
 
 ## Recent Changes
+- Agent Design Wizard: 5-step wizard at /agents/wizard with template library (6 templates), AI assistant (GPT-4.1 streaming), and full agent config form
+- Eval Suite Artifact: detail page at /evals/:id with test cases, run history, scoring config, agent bindings; eval_test_cases and eval_runs tables with seed data
+- agent_templates table with 6 pre-built templates (Support Triage, Document Extractor, Lead Scorer, Content Moderator, KB Updater, Compliance Monitor)
 - Run Trace forensics: enriched run_traces schema with modelId, promptInputs, toolCalls, retrievedDocs, decisions, policyChecks, tokenUsage. Built trace detail page with 7 forensics sections. 24 seeded traces with realistic data.
 - Release artifact: versioned deployments with canary configs, rollback triggers, promotion chains (staging→pilot→prod), signature hashes
 - Outcome Contract artifact with inline editing and 6 tabs

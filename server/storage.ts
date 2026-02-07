@@ -3,6 +3,7 @@ import { db } from "./db";
 import {
   users, agents, outcomeContracts, kpiDefinitions, deployments,
   runTraces, evalSuites, policies, approvals, auditEvents, invoices, outcomeEvents,
+  agentTemplates, evalTestCases, evalRuns,
   type User, type InsertUser,
   type Agent, type InsertAgent,
   type OutcomeContract, type InsertOutcomeContract,
@@ -15,6 +16,9 @@ import {
   type AuditEvent, type InsertAuditEvent,
   type Invoice, type InsertInvoice,
   type OutcomeEvent, type InsertOutcomeEvent,
+  type AgentTemplate, type InsertAgentTemplate,
+  type EvalTestCase, type InsertEvalTestCase,
+  type EvalRun, type InsertEvalRun,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -68,6 +72,19 @@ export interface IStorage {
 
   getOutcomeEvents(): Promise<OutcomeEvent[]>;
   createOutcomeEvent(event: InsertOutcomeEvent): Promise<OutcomeEvent>;
+
+  getAgentTemplates(): Promise<AgentTemplate[]>;
+  getAgentTemplate(id: string): Promise<AgentTemplate | undefined>;
+  createAgentTemplate(template: InsertAgentTemplate): Promise<AgentTemplate>;
+
+  getEvalSuite(id: string): Promise<EvalSuite | undefined>;
+  updateEvalSuite(id: string, data: Partial<EvalSuite>): Promise<EvalSuite | undefined>;
+
+  getEvalTestCases(suiteId: string): Promise<EvalTestCase[]>;
+  createEvalTestCase(testCase: InsertEvalTestCase): Promise<EvalTestCase>;
+
+  getEvalRuns(suiteId: string): Promise<EvalRun[]>;
+  createEvalRun(run: InsertEvalRun): Promise<EvalRun>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -243,6 +260,48 @@ export class DatabaseStorage implements IStorage {
 
   async createOutcomeEvent(event: InsertOutcomeEvent) {
     const [created] = await db.insert(outcomeEvents).values(event).returning();
+    return created;
+  }
+
+  async getAgentTemplates() {
+    return db.select().from(agentTemplates);
+  }
+
+  async getAgentTemplate(id: string) {
+    const [template] = await db.select().from(agentTemplates).where(eq(agentTemplates.id, id));
+    return template;
+  }
+
+  async createAgentTemplate(template: InsertAgentTemplate) {
+    const [created] = await db.insert(agentTemplates).values(template).returning();
+    return created;
+  }
+
+  async getEvalSuite(id: string) {
+    const [suite] = await db.select().from(evalSuites).where(eq(evalSuites.id, id));
+    return suite;
+  }
+
+  async updateEvalSuite(id: string, data: Partial<EvalSuite>) {
+    const [updated] = await db.update(evalSuites).set(data).where(eq(evalSuites.id, id)).returning();
+    return updated;
+  }
+
+  async getEvalTestCases(suiteId: string) {
+    return db.select().from(evalTestCases).where(eq(evalTestCases.suiteId, suiteId));
+  }
+
+  async createEvalTestCase(testCase: InsertEvalTestCase) {
+    const [created] = await db.insert(evalTestCases).values(testCase).returning();
+    return created;
+  }
+
+  async getEvalRuns(suiteId: string) {
+    return db.select().from(evalRuns).where(eq(evalRuns.suiteId, suiteId));
+  }
+
+  async createEvalRun(run: InsertEvalRun) {
+    const [created] = await db.insert(evalRuns).values(run).returning();
     return created;
   }
 }
