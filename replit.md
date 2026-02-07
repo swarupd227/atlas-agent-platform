@@ -13,19 +13,12 @@ A comprehensive platform for managing AI agent lifecycles with an 80% autonomous
 1. **Overview Dashboard** - Platform health, KPI progress, agent status
 2. **Outcomes** - Outcome contracts with KPIs, SLAs, pricing
 3. **Agents** - Agent registry with detail cockpit (traces, evals, blueprint)
-4. **Deployments** - Release orchestration across staging/pilot/prod
-5. **Monitor** - SLA dashboard, live run stream, drift detection
-6. **Governance** - Policy library (policy-as-code), audit trail
-7. **Approvals** - Expert validation queue with approve/reject
-8. **Billing** - Outcome-based metering and invoices
-
-## Data Model
-- outcome_contracts, kpi_definitions
-- agents, agent_versions
-- deployments, run_traces
-- eval_suites, policies
-- approvals, audit_events
-- invoices, outcome_events
+4. **Templates** - Industry-wide agent template library with browsing, filtering, search
+5. **Deployments** - Release orchestration across staging/pilot/prod
+6. **Monitor** - SLA dashboard, live run stream, drift detection
+7. **Governance** - Policy library (policy-as-code), audit trail
+8. **Approvals** - Expert validation queue with approve/reject
+9. **Billing** - Outcome-based metering and invoices
 
 ## Project Structure
 - `shared/schema.ts` - All Drizzle schemas and Zod types
@@ -40,18 +33,32 @@ A comprehensive platform for managing AI agent lifecycles with an 80% autonomous
 1. **Outcome Contract** (`/outcomes/:id`) — 6 tabs: KPI Definitions, SLA Configuration, Attribution Rules, Pricing & Billing, Risk Tolerance, Approval Gates
 2. **Agent Blueprint** (`/agents/:id`) — 7 sections: Model Config, Workflow Graph, Tools & Permissions, Memory & RAG, Policy Bindings, Eval Bindings, Rollback Plan
 3. **Release** (`/deployments/:id`) — 4 sections: Overview, Canary Rules, Rollback Triggers, Promotion History. Actions: Promote (staging→pilot→prod), Rollback
-4. **Run Trace** (`/traces/:id`) — 7 sections: Execution Summary, Prompt Inputs, Tool Calls, Retrieved Documents, Decisions, Policy Checks, Cost & Latency Breakdown. Navigable from agent detail trace rows.
-5. **Eval Suite** (`/evals/:id`) — 4 tabs: Test Cases (table with input/output/tags/weight), Run History (pass rates, latency, cost), Scoring Config (threshold, schedule, weights), Agent Bindings (linked agent info)
+4. **Run Trace** (`/traces/:id`) — 7 sections: Execution Summary, Prompt Inputs, Tool Calls, Retrieved Documents, Decisions, Policy Checks, Cost & Latency Breakdown
+5. **Eval Suite** (`/evals/:id`) — 4 tabs: Test Cases, Run History, Scoring Config, Agent Bindings
+
+## Agent Templates (`/templates`)
+Standalone browsable page with:
+- Grid of industry-wide agent templates with search and category/industry filters
+- Click-to-select detail panel showing tools, workflow, permissions, policy bindings
+- "Use This Template" action navigates to wizard with template pre-filled
+- Templates have: category, industry, tags, complexity, model config, tools, permissions, workflow, policies, evals, rollback plan
 
 ## Agent Design Wizard (`/agents/wizard`)
 5-step flow for creating agents:
-1. Template Library (6 pre-built templates) + AI Assistant panel (GPT-4.1 streaming chat)
-2. Basic Info (name, description, owner, risk tier, autonomy mode, outcome binding)
-3. Model & Tools (provider, model name, tools config, permissions)
-4. Memory & Workflow (RAG config, workflow graph nodes)
-5. Review & Create (summary + POST /api/agents)
+1. **Basic Info** - Name, description, owner, risk tier, autonomy mode, outcome binding
+2. **Choose Path** - Three creation approaches:
+   - **Manual Configuration** - Full control, proceed to model/tools setup
+   - **Use Template** - AI analyzes basic info and suggests best-matching templates with match scores and reasoning; user can pick AI suggestion or browse all templates manually
+   - **Conversational AI** - Chat with GPT-4.1 to design agent via natural language
+3. **Model & Tools** - Provider, model name, tools config, permissions (pre-filled if template selected)
+4. **Memory & Workflow** - RAG config, workflow graph nodes
+5. **Review & Create** - Summary + POST /api/agents
 
-AI assistant endpoint: POST /api/ai/agent-assist (SSE streaming, uses Replit AI Integrations OpenAI)
+Entry from Templates page: `/agents/wizard?templateId={id}` pre-fills all fields including basic info from template.
+
+## AI Endpoints
+- `POST /api/ai/agent-assist` - Conversational design assistant (SSE streaming, GPT-4.1)
+- `POST /api/ai/match-templates` - Template matching: analyzes basic info + outcome vs templates, returns ranked matches with scores and reasoning
 
 ## Data Model
 - outcome_contracts, kpi_definitions
@@ -60,16 +67,15 @@ AI assistant endpoint: POST /api/ai/agent-assist (SSE streaming, uses Replit AI 
 - eval_suites, eval_test_cases, eval_runs
 - policies, approvals, audit_events
 - invoices, outcome_events
-- agent_templates
+- agent_templates (with industry, tags fields)
 
 ## Recent Changes
-- Agent Design Wizard: 5-step wizard at /agents/wizard with template library (6 templates), AI assistant (GPT-4.1 streaming), and full agent config form
-- Eval Suite Artifact: detail page at /evals/:id with test cases, run history, scoring config, agent bindings; eval_test_cases and eval_runs tables with seed data
-- agent_templates table with 6 pre-built templates (Support Triage, Document Extractor, Lead Scorer, Content Moderator, KB Updater, Compliance Monitor)
-- Run Trace forensics: enriched run_traces schema with modelId, promptInputs, toolCalls, retrievedDocs, decisions, policyChecks, tokenUsage. Built trace detail page with 7 forensics sections. 24 seeded traces with realistic data.
-- Release artifact: versioned deployments with canary configs, rollback triggers, promotion chains (staging→pilot→prod), signature hashes
+- Agent Templates standalone page: /templates with browsable grid, category/industry filters, search, detail panel, and "Use This Template" action
+- Redesigned Agent Wizard: Step 1 = Basic Info first, Step 2 = Choose Path (Manual/Template/AI), AI template matching with scored suggestions
+- AI Template Matching: POST /api/ai/match-templates endpoint uses GPT-4.1 to analyze requirements and rank templates
+- agent_templates schema enriched with industry and tags fields
+- Eval Suite Artifact: detail page at /evals/:id with test cases, run history, scoring config, agent bindings
+- Run Trace forensics with 7 sections, Release artifact with promote/rollback
 - Outcome Contract artifact with inline editing and 6 tabs
 - Agent Blueprint artifact with 7 structured sections
-- Initial MVP build with all 8 modules
 - Dark/light mode support
-- Seed data with realistic agents, outcomes, KPIs

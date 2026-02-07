@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useRef, useEffect } from "react";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { AgentTemplate, OutcomeContract } from "@shared/schema";
@@ -40,6 +40,9 @@ import {
   MessageSquare,
   Send,
   Sparkles,
+  Wrench,
+  Library,
+  Loader2,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -54,8 +57,8 @@ const iconMap: Record<string, LucideIcon> = {
 };
 
 const STEPS = [
-  { number: 1, label: "Starting Point" },
-  { number: 2, label: "Basic Info" },
+  { number: 1, label: "Basic Info" },
+  { number: 2, label: "Choose Path" },
   { number: 3, label: "Model & Tools" },
   { number: 4, label: "Memory & Workflow" },
   { number: 5, label: "Review & Create" },
@@ -105,6 +108,14 @@ interface ChatMessage {
   content: string;
 }
 
+interface TemplateMatch {
+  id: string;
+  matchScore: number;
+  reasoning: string;
+}
+
+type CreationPath = "manual" | "template" | "ai" | null;
+
 const defaultWizardState: WizardState = {
   name: "",
   description: "",
@@ -132,12 +143,17 @@ const defaultWizardState: WizardState = {
 export default function AgentWizard() {
   const [currentStep, setCurrentStep] = useState(1);
   const [wizardState, setWizardState] = useState<WizardState>({ ...defaultWizardState });
+  const [creationPath, setCreationPath] = useState<CreationPath>(null);
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [aiInput, setAiInput] = useState("");
   const [aiStreaming, setAiStreaming] = useState(false);
+  const [templateMatches, setTemplateMatches] = useState<TemplateMatch[]>([]);
+  const [matchingInProgress, setMatchingInProgress] = useState(false);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const [, navigate] = useLocation();
+  const searchParams = useSearch();
   const { toast } = useToast();
 
   const { data: templates, isLoading: templatesLoading } = useQuery<AgentTemplate[]>({
@@ -167,16 +183,32 @@ export default function AgentWizard() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages]);
 
+  useEffect(() => {
+    const params = new URLSearchParams(searchParams);
+    const templateId = params.get("templateId");
+    if (templateId && templates) {
+      const template = templates.find((t) => t.id === templateId);
+      if (template) {
+        updateState({
+          name: template.name,
+          description: template.description || "",
+          riskTier: template.defaultRiskTier || "MEDIUM",
+          autonomyMode: template.defaultAutonomyMode || "assisted",
+        });
+        applyTemplate(template);
+        setCreationPath("template");
+        setSelectedTemplateId(templateId);
+        setCurrentStep(3);
+      }
+    }
+  }, [searchParams, templates]);
+
   function updateState(updates: Partial<WizardState>) {
     setWizardState((prev) => ({ ...prev, ...updates }));
   }
 
   function applyTemplate(template: AgentTemplate) {
     updateState({
-      name: template.name,
-      description: template.description || "",
-      riskTier: template.defaultRiskTier || "MEDIUM",
-      autonomyMode: template.defaultAutonomyMode || "assisted",
       modelProvider: template.modelProvider || "openai",
       modelName: template.modelName || "gpt-4.1",
       toolsConfig: Array.isArray(template.toolsConfig) ? (template.toolsConfig as ToolConfig[]) : [],
@@ -203,8 +235,35 @@ export default function AgentWizard() {
           : JSON.stringify(template.rollbackPlan)
         : "",
     });
-    setCurrentStep(2);
     toast({ title: `Template "${template.name}" applied` });
+  }
+
+  async function runAiMatching() {
+    if (!templates || templates.length === 0) return;
+    setMatchingInProgress(true);
+    setTemplateMatches([]);
+
+    const linkedOutcome = outcomes?.find((o) => o.id === wizardState.outcomeId);
+
+    try {
+      const res = await apiRequest("POST", "/api/ai/match-templates", {
+        basicInfo: {
+          name: wizardState.name,
+          description: wizardState.description,
+          owner: wizardState.owner,
+          riskTier: wizardState.riskTier,
+          autonomyMode: wizardState.autonomyMode,
+          outcomeName: linkedOutcome?.name || "",
+        },
+        templates,
+      });
+      const data = await res.json();
+      setTemplateMatches(data.matches || []);
+    } catch {
+      toast({ title: "Template matching failed", description: "Could not analyze templates. You can still select manually.", variant: "destructive" });
+    } finally {
+      setMatchingInProgress(false);
+    }
   }
 
   async function sendAiMessage() {
@@ -222,9 +281,7 @@ export default function AgentWizard() {
         body: JSON.stringify({ messages: newMessages, wizardState }),
       });
 
-      if (!res.ok) {
-        throw new Error("AI request failed");
-      }
+      if (!res.ok) throw new Error("AI request failed");
 
       const reader = res.body?.getReader();
       if (!reader) throw new Error("No response body");
@@ -253,7 +310,7 @@ export default function AgentWizard() {
                 });
               }
             } catch {
-              // skip unparseable lines
+              // skip
             }
           }
         }
@@ -289,6 +346,24 @@ export default function AgentWizard() {
     createMutation.mutate(payload);
   }
 
+  function handleChoosePath(path: CreationPath) {
+    setCreationPath(path);
+    if (path === "template") {
+      runAiMatching();
+    } else if (path === "ai") {
+      setAiPanelOpen(true);
+      setCurrentStep(3);
+    } else if (path === "manual") {
+      setCurrentStep(3);
+    }
+  }
+
+  function handleSelectTemplate(template: AgentTemplate) {
+    setSelectedTemplateId(template.id);
+    applyTemplate(template);
+    setCurrentStep(3);
+  }
+
   return (
     <div className="flex flex-col gap-6 p-6" data-testid="page-agent-wizard">
       <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -296,21 +371,25 @@ export default function AgentWizard() {
           <h1 className="text-2xl font-semibold tracking-tight">Agent Design Wizard</h1>
           <p className="text-sm text-muted-foreground">Create a new AI agent step by step</p>
         </div>
-        <Button
-          variant="outline"
-          onClick={() => setAiPanelOpen(true)}
-          data-testid="button-ai-assistant"
-        >
-          <Sparkles className="w-4 h-4 mr-1.5" />
-          AI Assistant
-        </Button>
+        {currentStep >= 3 && (
+          <Button
+            variant="outline"
+            onClick={() => setAiPanelOpen(true)}
+            data-testid="button-ai-assistant"
+          >
+            <Sparkles className="w-4 h-4 mr-1.5" />
+            AI Assistant
+          </Button>
+        )}
       </div>
 
       <div className="flex items-center gap-2 sticky top-0 z-30 bg-background py-3 border-b -mx-6 px-6">
         {STEPS.map((step, idx) => (
           <div key={step.number} className="flex items-center gap-2 flex-1" data-testid={`step-${step.number}`}>
             <button
-              onClick={() => setCurrentStep(step.number)}
+              onClick={() => {
+                if (step.number <= currentStep) setCurrentStep(step.number);
+              }}
               className={`flex items-center gap-2 text-sm font-medium transition-colors ${
                 currentStep === step.number
                   ? "text-foreground"
@@ -341,15 +420,21 @@ export default function AgentWizard() {
 
       <div className="min-h-[400px]">
         {currentStep === 1 && (
-          <Step1Templates
-            templates={templates}
-            loading={templatesLoading}
-            onApplyTemplate={applyTemplate}
-            onStartScratch={() => setCurrentStep(2)}
-          />
+          <Step1BasicInfo state={wizardState} updateState={updateState} outcomes={outcomes} />
         )}
         {currentStep === 2 && (
-          <Step2BasicInfo state={wizardState} updateState={updateState} outcomes={outcomes} />
+          <Step2ChoosePath
+            creationPath={creationPath}
+            onChoosePath={handleChoosePath}
+            templates={templates}
+            templatesLoading={templatesLoading}
+            templateMatches={templateMatches}
+            matchingInProgress={matchingInProgress}
+            selectedTemplateId={selectedTemplateId}
+            onSelectTemplate={handleSelectTemplate}
+            onRunMatching={runAiMatching}
+            wizardState={wizardState}
+          />
         )}
         {currentStep === 3 && (
           <Step3ModelTools state={wizardState} updateState={updateState} />
@@ -370,7 +455,13 @@ export default function AgentWizard() {
       <div className="flex items-center justify-between gap-4 border-t pt-4">
         <Button
           variant="outline"
-          onClick={() => setCurrentStep((s) => Math.max(1, s - 1))}
+          onClick={() => {
+            if (currentStep === 3 && creationPath === "template" && !selectedTemplateId) {
+              setCurrentStep(2);
+            } else {
+              setCurrentStep((s) => Math.max(1, s - 1));
+            }
+          }}
           disabled={currentStep === 1}
           data-testid="button-back-step"
         >
@@ -379,7 +470,14 @@ export default function AgentWizard() {
         </Button>
         {currentStep < 5 ? (
           <Button
-            onClick={() => setCurrentStep((s) => Math.min(5, s + 1))}
+            onClick={() => {
+              if (currentStep === 1) {
+                setCurrentStep(2);
+              } else {
+                setCurrentStep((s) => Math.min(5, s + 1));
+              }
+            }}
+            disabled={currentStep === 1 && !wizardState.name}
             data-testid="button-next-step"
           >
             Next
@@ -410,7 +508,7 @@ export default function AgentWizard() {
               <div className="flex flex-col items-center justify-center flex-1 gap-2 text-center py-8">
                 <MessageSquare className="w-8 h-8 text-muted-foreground/40" />
                 <p className="text-sm text-muted-foreground">
-                  Ask me anything about agent design, best practices, or configuration help.
+                  Describe your agent use case and I'll help configure it.
                 </p>
               </div>
             )}
@@ -460,95 +558,7 @@ export default function AgentWizard() {
   );
 }
 
-function Step1Templates({
-  templates,
-  loading,
-  onApplyTemplate,
-  onStartScratch,
-}: {
-  templates: AgentTemplate[] | undefined;
-  loading: boolean;
-  onApplyTemplate: (t: AgentTemplate) => void;
-  onStartScratch: () => void;
-}) {
-  return (
-    <div className="flex flex-col gap-4">
-      <h2 className="text-lg font-medium">Choose a Starting Point</h2>
-      <p className="text-sm text-muted-foreground">
-        Select a template to pre-fill your agent configuration, or start from scratch.
-      </p>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        <Card className="hover-elevate cursor-pointer" data-testid="template-card-scratch">
-          <CardContent className="p-5 flex flex-col gap-3">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-md bg-muted flex items-center justify-center shrink-0">
-                <Plus className="w-5 h-5 text-muted-foreground" />
-              </div>
-              <div className="min-w-0">
-                <h3 className="font-medium text-sm">Start from Scratch</h3>
-                <p className="text-xs text-muted-foreground">Configure everything manually</p>
-              </div>
-            </div>
-            <Button variant="outline" size="sm" onClick={onStartScratch} data-testid="button-use-template-scratch">
-              Get Started
-            </Button>
-          </CardContent>
-        </Card>
-
-        {loading &&
-          Array.from({ length: 3 }).map((_, i) => (
-            <Card key={i}>
-              <CardContent className="p-5">
-                <div className="animate-pulse flex flex-col gap-3">
-                  <div className="flex gap-3">
-                    <div className="w-10 h-10 rounded-md bg-muted" />
-                    <div className="flex-1 space-y-2">
-                      <div className="h-4 bg-muted rounded w-3/4" />
-                      <div className="h-3 bg-muted rounded w-1/2" />
-                    </div>
-                  </div>
-                  <div className="h-8 bg-muted rounded" />
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-
-        {templates?.map((template, index) => {
-          const IconComponent = iconMap[template.icon || "bot"] || Bot;
-          return (
-            <Card key={template.id} className="hover-elevate" data-testid={`template-card-${index}`}>
-              <CardContent className="p-5 flex flex-col gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
-                    <IconComponent className="w-5 h-5 text-primary" />
-                  </div>
-                  <div className="min-w-0">
-                    <h3 className="font-medium text-sm">{template.name}</h3>
-                    <p className="text-xs text-muted-foreground line-clamp-2">{template.description}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <Badge variant="outline" className="text-[10px]">{template.category}</Badge>
-                  <Badge variant="secondary" className="text-[10px]">{template.complexity}</Badge>
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => onApplyTemplate(template)}
-                  data-testid={`button-use-template-${index}`}
-                >
-                  Use Template
-                </Button>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function Step2BasicInfo({
+function Step1BasicInfo({
   state,
   updateState,
   outcomes,
@@ -560,6 +570,9 @@ function Step2BasicInfo({
   return (
     <div className="flex flex-col gap-6 max-w-2xl">
       <h2 className="text-lg font-medium">Basic Information</h2>
+      <p className="text-sm text-muted-foreground">
+        Tell us about the agent you want to create. This information helps us suggest the best configuration approach.
+      </p>
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-2">
           <Label htmlFor="wizard-name">Agent Name *</Label>
@@ -577,7 +590,7 @@ function Step2BasicInfo({
             id="wizard-desc"
             value={state.description}
             onChange={(e) => updateState({ description: e.target.value })}
-            placeholder="What does this agent do?"
+            placeholder="What does this agent do? Describe the use case, goals, and expected outcomes..."
             data-testid="input-agent-description"
           />
         </div>
@@ -635,6 +648,267 @@ function Step2BasicInfo({
             </Select>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function Step2ChoosePath({
+  creationPath,
+  onChoosePath,
+  templates,
+  templatesLoading,
+  templateMatches,
+  matchingInProgress,
+  selectedTemplateId,
+  onSelectTemplate,
+  onRunMatching,
+  wizardState,
+}: {
+  creationPath: CreationPath;
+  onChoosePath: (path: CreationPath) => void;
+  templates: AgentTemplate[] | undefined;
+  templatesLoading: boolean;
+  templateMatches: TemplateMatch[];
+  matchingInProgress: boolean;
+  selectedTemplateId: string | null;
+  onSelectTemplate: (t: AgentTemplate) => void;
+  onRunMatching: () => void;
+  wizardState: WizardState;
+}) {
+  const [showAllTemplates, setShowAllTemplates] = useState(false);
+
+  if (creationPath === "template") {
+    return (
+      <div className="flex flex-col gap-6">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div>
+            <h2 className="text-lg font-medium">Template Suggestions</h2>
+            <p className="text-sm text-muted-foreground">
+              {matchingInProgress
+                ? "AI is analyzing your requirements against our template library..."
+                : "AI-ranked templates based on your agent description and requirements"}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowAllTemplates(!showAllTemplates)}
+              data-testid="button-toggle-all-templates"
+            >
+              {showAllTemplates ? "Show AI Suggestions" : "Browse All Templates"}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onChoosePath(null)}
+              data-testid="button-change-path"
+            >
+              Change Path
+            </Button>
+          </div>
+        </div>
+
+        {matchingInProgress && (
+          <div className="flex flex-col items-center justify-center py-12 gap-3">
+            <Loader2 className="w-8 h-8 text-primary animate-spin" />
+            <p className="text-sm text-muted-foreground">Analyzing your requirements...</p>
+            <p className="text-xs text-muted-foreground">
+              Matching "{wizardState.name}" against {templates?.length || 0} templates
+            </p>
+          </div>
+        )}
+
+        {!matchingInProgress && !showAllTemplates && templateMatches.length > 0 && (
+          <div className="flex flex-col gap-3">
+            {templateMatches.map((match) => {
+              const template = templates?.find((t) => t.id === match.id);
+              if (!template) return null;
+              const IconComponent = iconMap[template.icon || "bot"] || Bot;
+              const isSelected = selectedTemplateId === template.id;
+              return (
+                <Card
+                  key={match.id}
+                  className={`hover-elevate cursor-pointer transition-colors ${isSelected ? "ring-2 ring-primary" : ""}`}
+                  onClick={() => onSelectTemplate(template)}
+                  data-testid={`match-card-${match.id}`}
+                >
+                  <CardContent className="p-5">
+                    <div className="flex items-start gap-4">
+                      <div className="w-11 h-11 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
+                        <IconComponent className="w-5 h-5 text-primary" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="font-medium text-sm">{template.name}</h3>
+                          <Badge
+                            variant={match.matchScore >= 80 ? "default" : match.matchScore >= 50 ? "secondary" : "outline"}
+                            className="text-[10px]"
+                          >
+                            {match.matchScore}% match
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1 line-clamp-1">
+                          {template.description}
+                        </p>
+                        <div className="mt-2 p-2 bg-muted/50 rounded-md">
+                          <p className="text-xs text-muted-foreground">
+                            <Sparkles className="w-3 h-3 inline mr-1" />
+                            {match.reasoning}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex flex-col items-end gap-1 shrink-0">
+                        <Badge variant="outline" className="text-[10px]">{template.category}</Badge>
+                        <Badge variant="outline" className="text-[10px]">{template.complexity}</Badge>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+
+        {!matchingInProgress && !showAllTemplates && templateMatches.length === 0 && (
+          <div className="flex flex-col items-center justify-center py-12 gap-3">
+            <Library className="w-8 h-8 text-muted-foreground/40" />
+            <p className="text-sm text-muted-foreground">
+              No AI suggestions available. Browse templates manually or try again.
+            </p>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={onRunMatching} data-testid="button-retry-matching">
+                Retry AI Matching
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setShowAllTemplates(true)}>
+                Browse All
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {!matchingInProgress && showAllTemplates && (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {templatesLoading &&
+              Array.from({ length: 3 }).map((_, i) => (
+                <Card key={i}>
+                  <CardContent className="p-5">
+                    <div className="animate-pulse flex flex-col gap-3">
+                      <div className="flex gap-3">
+                        <div className="w-10 h-10 rounded-md bg-muted" />
+                        <div className="flex-1 space-y-2">
+                          <div className="h-4 bg-muted rounded w-3/4" />
+                          <div className="h-3 bg-muted rounded w-1/2" />
+                        </div>
+                      </div>
+                      <div className="h-8 bg-muted rounded" />
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            {templates?.map((template) => {
+              const IconComponent = iconMap[template.icon || "bot"] || Bot;
+              const match = templateMatches.find((m) => m.id === template.id);
+              return (
+                <Card
+                  key={template.id}
+                  className="hover-elevate cursor-pointer"
+                  onClick={() => onSelectTemplate(template)}
+                  data-testid={`template-card-${template.id}`}
+                >
+                  <CardContent className="p-5 flex flex-col gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
+                        <IconComponent className="w-5 h-5 text-primary" />
+                      </div>
+                      <div className="min-w-0">
+                        <h3 className="font-medium text-sm">{template.name}</h3>
+                        <p className="text-xs text-muted-foreground line-clamp-2">{template.description}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <Badge variant="outline" className="text-[10px]">{template.category}</Badge>
+                      <Badge variant="secondary" className="text-[10px]">{template.complexity}</Badge>
+                      {match && (
+                        <Badge variant="default" className="text-[10px] ml-auto">
+                          {match.matchScore}% match
+                        </Badge>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-6 max-w-3xl">
+      <h2 className="text-lg font-medium">How would you like to build your agent?</h2>
+      <p className="text-sm text-muted-foreground">
+        Choose the approach that works best for you. You can always adjust the configuration later.
+      </p>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Card
+          className="hover-elevate cursor-pointer"
+          onClick={() => onChoosePath("manual")}
+          data-testid="path-manual"
+        >
+          <CardContent className="p-6 flex flex-col items-center text-center gap-4">
+            <div className="w-14 h-14 rounded-md bg-muted flex items-center justify-center">
+              <Wrench className="w-7 h-7 text-muted-foreground" />
+            </div>
+            <div>
+              <h3 className="font-semibold text-sm">Manual Configuration</h3>
+              <p className="text-xs text-muted-foreground mt-1">
+                Build your agent from scratch with full control over every setting
+              </p>
+            </div>
+            <Badge variant="outline" className="text-[10px]">Full Control</Badge>
+          </CardContent>
+        </Card>
+
+        <Card
+          className="hover-elevate cursor-pointer ring-1 ring-primary/20"
+          onClick={() => onChoosePath("template")}
+          data-testid="path-template"
+        >
+          <CardContent className="p-6 flex flex-col items-center text-center gap-4">
+            <div className="w-14 h-14 rounded-md bg-primary/10 flex items-center justify-center">
+              <Library className="w-7 h-7 text-primary" />
+            </div>
+            <div>
+              <h3 className="font-semibold text-sm">Use Template</h3>
+              <p className="text-xs text-muted-foreground mt-1">
+                AI suggests the best matching templates based on your agent's description
+              </p>
+            </div>
+            <Badge className="text-[10px]">Recommended</Badge>
+          </CardContent>
+        </Card>
+
+        <Card
+          className="hover-elevate cursor-pointer"
+          onClick={() => onChoosePath("ai")}
+          data-testid="path-ai"
+        >
+          <CardContent className="p-6 flex flex-col items-center text-center gap-4">
+            <div className="w-14 h-14 rounded-md bg-muted flex items-center justify-center">
+              <Sparkles className="w-7 h-7 text-muted-foreground" />
+            </div>
+            <div>
+              <h3 className="font-semibold text-sm">Conversational AI</h3>
+              <p className="text-xs text-muted-foreground mt-1">
+                Chat with AI to design your agent through natural conversation
+              </p>
+            </div>
+            <Badge variant="outline" className="text-[10px]">AI-Guided</Badge>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

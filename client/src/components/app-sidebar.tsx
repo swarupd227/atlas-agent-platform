@@ -9,6 +9,7 @@ import {
   CreditCard,
   CheckCircle,
   Zap,
+  Library,
 } from "lucide-react";
 import {
   Sidebar,
@@ -28,6 +29,7 @@ const mainNav = [
   { title: "Overview", url: "/", icon: LayoutDashboard },
   { title: "Outcomes", url: "/outcomes", icon: Target },
   { title: "Agents", url: "/agents", icon: Bot },
+  { title: "Templates", url: "/templates", icon: Library },
   { title: "Deployments", url: "/deployments", icon: Rocket },
   { title: "Monitor", url: "/monitor", icon: Activity },
 ];

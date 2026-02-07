@@ -264,6 +264,8 @@ export const agentTemplates = pgTable("agent_templates", {
   name: text("name").notNull(),
   description: text("description"),
   category: text("category").notNull().default("general"),
+  industry: text("industry").default("cross_industry"),
+  tags: text("tags").array().default(sql`'{}'::text[]`),
   icon: text("icon").default("bot"),
   complexity: text("complexity").default("medium"),
   modelProvider: text("model_provider").default("openai"),

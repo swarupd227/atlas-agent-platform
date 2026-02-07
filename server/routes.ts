@@ -361,6 +361,74 @@ export async function registerRoutes(
     }
   });
 
+  // AI Template Matching
+  app.post("/api/ai/match-templates", async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI matching is not configured" });
+      }
+      const { basicInfo, templates: templateList } = req.body;
+      if (!basicInfo || !templateList || !Array.isArray(templateList)) {
+        return res.status(400).json({ error: "Missing basicInfo or templates array" });
+      }
+
+      const templatesContext = templateList.map((t: any) => ({
+        id: t.id,
+        name: t.name,
+        description: t.description,
+        category: t.category,
+        industry: t.industry,
+        tags: t.tags,
+        complexity: t.complexity,
+        defaultRiskTier: t.defaultRiskTier,
+        defaultAutonomyMode: t.defaultAutonomyMode,
+        toolsCount: Array.isArray(t.toolsConfig) ? t.toolsConfig.length : 0,
+        hasRag: !!t.memoryRagConfig,
+      }));
+
+      const prompt = `You are an AI template matching expert for the ALMP platform. Given the user's agent requirements, analyze all available templates and rank the best matches.
+
+User's Agent Requirements:
+- Name: ${basicInfo.name || "Not specified"}
+- Description: ${basicInfo.description || "Not specified"}
+- Owner: ${basicInfo.owner || "Not specified"}
+- Risk Tier: ${basicInfo.riskTier || "MEDIUM"}
+- Autonomy Mode: ${basicInfo.autonomyMode || "assisted"}
+- Linked Outcome: ${basicInfo.outcomeName || "None"}
+
+Available Templates:
+${JSON.stringify(templatesContext, null, 2)}
+
+Return a JSON array of template recommendations, ranked by relevance. For each, include:
+- id: the template id
+- matchScore: percentage match (0-100)
+- reasoning: 1-2 sentences explaining WHY this template is a good fit based on the user's specific requirements
+
+Respond ONLY with a valid JSON array, no markdown, no explanation outside the JSON. Example format:
+[{"id": "abc", "matchScore": 92, "reasoning": "This template's ticket classification and KB search align with your support-focused agent description."}]
+
+Always include ALL templates, ranked from best to worst match.`;
+
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        messages: [{ role: "user", content: prompt }],
+        max_completion_tokens: 1024,
+        temperature: 0.3,
+      });
+
+      const content = completion.choices[0]?.message?.content || "[]";
+      try {
+        const matches = JSON.parse(content);
+        res.json({ matches });
+      } catch {
+        res.json({ matches: [] });
+      }
+    } catch (error) {
+      console.error("AI match error:", error);
+      res.status(500).json({ error: "Template matching failed" });
+    }
+  });
+
   // AI Agent Design Assistant
   app.post("/api/ai/agent-assist", async (req, res) => {
     try {
