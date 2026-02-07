@@ -120,6 +120,13 @@ export const deployments = pgTable("deployments", {
   canaryPercent: integer("canary_percent").default(0),
   rolloutStrategy: text("rollout_strategy").default("canary"),
   approvedBy: text("approved_by"),
+  signatureHash: text("signature_hash"),
+  promotedFrom: varchar("promoted_from"),
+  canaryConfig: jsonb("canary_config"),
+  rollbackConfig: jsonb("rollback_config"),
+  promotedAt: timestamp("promoted_at"),
+  deployedAt: timestamp("deployed_at"),
+  completedAt: timestamp("completed_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
