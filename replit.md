@@ -78,6 +78,8 @@ Entry from Templates page: `/agents/wizard?templateId={id}` pre-fills all fields
 - Storage: `getEvalRunsBySuite(suiteId)` method in IStorage interface
 
 ## Recent Changes
+- Overview Dashboard: Transformed into "Lifecycle Command Center" with ROI summary (cost/revenue/ROI%/cost-per-run), portfolio health heatmap, urgent signals panel (drift + approvals), outcome attainment progress
+- Governance Page: Enhanced into compliance center with policy violations count, approval compliance rate, enforcement stats tab, audit timeline with filters (object/action/date), CSV export
 - Evaluation Evidence system: drift detection, red-team coverage, regression detection, outcome correlation, evidence packaging
 - Agent Templates standalone page: /templates with browsable grid, category/industry filters, search, detail panel, and "Use This Template" action
 - Redesigned Agent Wizard: Step 1 = Basic Info first, Step 2 = Choose Path (Manual/Template/AI), AI template matching with scored suggestions
