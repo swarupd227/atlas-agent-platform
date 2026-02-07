@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, real, boolean, timestamp, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -7,12 +7,222 @@ export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
+  email: text("email"),
+  role: text("role").default("agent_engineer"),
 });
 
-export const insertUserSchema = createInsertSchema(users).pick({
-  username: true,
-  password: true,
-});
-
+export const insertUserSchema = createInsertSchema(users).omit({ id: true });
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
+
+export const outcomeContracts = pgTable("outcome_contracts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  description: text("description"),
+  riskTier: text("risk_tier").notNull().default("MEDIUM"),
+  status: text("status").notNull().default("active"),
+  version: integer("version").notNull().default(1),
+  pricingModel: text("pricing_model").default("PER_OUTCOME_EVENT"),
+  pricePerUnit: real("price_per_unit").default(0),
+  slaConfig: jsonb("sla_config"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertOutcomeContractSchema = createInsertSchema(outcomeContracts).omit({ id: true, createdAt: true });
+export type InsertOutcomeContract = z.infer<typeof insertOutcomeContractSchema>;
+export type OutcomeContract = typeof outcomeContracts.$inferSelect;
+
+export const kpiDefinitions = pgTable("kpi_definitions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  outcomeId: varchar("outcome_id").notNull(),
+  name: text("name").notNull(),
+  unit: text("unit").notNull().default("count"),
+  target: real("target").notNull(),
+  currentValue: real("current_value").default(0),
+  confidence: real("confidence").default(0),
+  trend: text("trend").default("stable"),
+  expression: text("expression"),
+});
+
+export const insertKpiDefinitionSchema = createInsertSchema(kpiDefinitions).omit({ id: true });
+export type InsertKpiDefinition = z.infer<typeof insertKpiDefinitionSchema>;
+export type KpiDefinition = typeof kpiDefinitions.$inferSelect;
+
+export const agents = pgTable("agents", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  description: text("description"),
+  owner: text("owner"),
+  outcomeId: varchar("outcome_id"),
+  status: text("status").notNull().default("active"),
+  riskTier: text("risk_tier").notNull().default("MEDIUM"),
+  autonomyMode: text("autonomy_mode").notNull().default("assisted"),
+  currentVersion: text("current_version").default("1.0.0"),
+  environment: text("environment").default("staging"),
+  healthScore: real("health_score").default(85),
+  successRate: real("success_rate").default(0.95),
+  avgLatencyMs: integer("avg_latency_ms").default(250),
+  costPerRun: real("cost_per_run").default(0.05),
+  monthlyCost: real("monthly_cost").default(0),
+  monthlyRevenue: real("monthly_revenue").default(0),
+  totalRuns: integer("total_runs").default(0),
+  modelProvider: text("model_provider").default("openai"),
+  modelName: text("model_name").default("gpt-4.1"),
+  blueprintJson: jsonb("blueprint_json"),
+  toolsConfig: jsonb("tools_config"),
+  lastIncidentAt: timestamp("last_incident_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAgentSchema = createInsertSchema(agents).omit({ id: true, createdAt: true });
+export type InsertAgent = z.infer<typeof insertAgentSchema>;
+export type Agent = typeof agents.$inferSelect;
+
+export const agentVersions = pgTable("agent_versions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  agentId: varchar("agent_id").notNull(),
+  semver: text("semver").notNull(),
+  blueprintHash: text("blueprint_hash"),
+  status: text("status").notNull().default("draft"),
+  createdBy: text("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAgentVersionSchema = createInsertSchema(agentVersions).omit({ id: true, createdAt: true });
+export type InsertAgentVersion = z.infer<typeof insertAgentVersionSchema>;
+export type AgentVersion = typeof agentVersions.$inferSelect;
+
+export const deployments = pgTable("deployments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  agentId: varchar("agent_id").notNull(),
+  agentName: text("agent_name"),
+  environment: text("environment").notNull().default("staging"),
+  versionId: varchar("version_id"),
+  version: text("version"),
+  status: text("status").notNull().default("pending"),
+  canaryPercent: integer("canary_percent").default(0),
+  rolloutStrategy: text("rollout_strategy").default("canary"),
+  approvedBy: text("approved_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertDeploymentSchema = createInsertSchema(deployments).omit({ id: true, createdAt: true });
+export type InsertDeployment = z.infer<typeof insertDeploymentSchema>;
+export type Deployment = typeof deployments.$inferSelect;
+
+export const runTraces = pgTable("run_traces", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  agentId: varchar("agent_id").notNull(),
+  versionId: varchar("version_id"),
+  environment: text("environment").default("prod"),
+  status: text("status").notNull().default("completed"),
+  costUsd: real("cost_usd").default(0),
+  latencyMs: integer("latency_ms").default(0),
+  inputSummary: text("input_summary"),
+  outputSummary: text("output_summary"),
+  stepsJson: jsonb("steps_json"),
+  startedAt: timestamp("started_at").defaultNow(),
+  endedAt: timestamp("ended_at"),
+});
+
+export const insertRunTraceSchema = createInsertSchema(runTraces).omit({ id: true, startedAt: true });
+export type InsertRunTrace = z.infer<typeof insertRunTraceSchema>;
+export type RunTrace = typeof runTraces.$inferSelect;
+
+export const evalSuites = pgTable("eval_suites", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  agentId: varchar("agent_id").notNull(),
+  name: text("name").notNull(),
+  type: text("type").default("regression"),
+  passRate: real("pass_rate").default(0),
+  totalCases: integer("total_cases").default(0),
+  lastRunAt: timestamp("last_run_at"),
+  thresholdConfig: jsonb("threshold_config"),
+});
+
+export const insertEvalSuiteSchema = createInsertSchema(evalSuites).omit({ id: true });
+export type InsertEvalSuite = z.infer<typeof insertEvalSuiteSchema>;
+export type EvalSuite = typeof evalSuites.$inferSelect;
+
+export const policies = pgTable("policies", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  domain: text("domain").notNull().default("data_handling"),
+  scopeType: text("scope_type").default("org"),
+  scopeId: varchar("scope_id"),
+  version: integer("version").notNull().default(1),
+  status: text("status").notNull().default("active"),
+  policyJson: jsonb("policy_json"),
+  description: text("description"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertPolicySchema = createInsertSchema(policies).omit({ id: true, createdAt: true });
+export type InsertPolicy = z.infer<typeof insertPolicySchema>;
+export type Policy = typeof policies.$inferSelect;
+
+export const approvals = pgTable("approvals", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  type: text("type").notNull(),
+  objectType: text("object_type").notNull(),
+  objectId: varchar("object_id"),
+  objectName: text("object_name"),
+  riskScore: real("risk_score").default(0),
+  status: text("status").notNull().default("pending"),
+  requestedBy: text("requested_by"),
+  decidedBy: text("decided_by"),
+  description: text("description"),
+  evidenceJson: jsonb("evidence_json"),
+  decidedAt: timestamp("decided_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertApprovalSchema = createInsertSchema(approvals).omit({ id: true, createdAt: true });
+export type InsertApproval = z.infer<typeof insertApprovalSchema>;
+export type Approval = typeof approvals.$inferSelect;
+
+export const auditEvents = pgTable("audit_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  actorType: text("actor_type").notNull().default("user"),
+  actorId: varchar("actor_id"),
+  action: text("action").notNull(),
+  objectType: text("object_type").notNull(),
+  objectId: varchar("object_id"),
+  details: text("details"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAuditEventSchema = createInsertSchema(auditEvents).omit({ id: true, createdAt: true });
+export type InsertAuditEvent = z.infer<typeof insertAuditEventSchema>;
+export type AuditEvent = typeof auditEvents.$inferSelect;
+
+export const invoices = pgTable("invoices", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  outcomeId: varchar("outcome_id"),
+  outcomeName: text("outcome_name"),
+  periodStart: timestamp("period_start"),
+  periodEnd: timestamp("period_end"),
+  totalUnits: integer("total_units").default(0),
+  unitPrice: real("unit_price").default(0),
+  amount: real("amount").default(0),
+  status: text("status").notNull().default("pending"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertInvoiceSchema = createInsertSchema(invoices).omit({ id: true, createdAt: true });
+export type InsertInvoice = z.infer<typeof insertInvoiceSchema>;
+export type Invoice = typeof invoices.$inferSelect;
+
+export const outcomeEvents = pgTable("outcome_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  outcomeId: varchar("outcome_id").notNull(),
+  agentId: varchar("agent_id"),
+  type: text("type").notNull(),
+  billable: boolean("billable").default(true),
+  payload: jsonb("payload"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertOutcomeEventSchema = createInsertSchema(outcomeEvents).omit({ id: true, createdAt: true });
+export type InsertOutcomeEvent = z.infer<typeof insertOutcomeEventSchema>;
+export type OutcomeEvent = typeof outcomeEvents.$inferSelect;
