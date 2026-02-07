@@ -82,6 +82,11 @@ export const agents = pgTable("agents", {
   modelName: text("model_name").default("gpt-4.1"),
   blueprintJson: jsonb("blueprint_json"),
   toolsConfig: jsonb("tools_config"),
+  permissionsConfig: jsonb("permissions_config"),
+  memoryRagConfig: jsonb("memory_rag_config"),
+  policyBindings: jsonb("policy_bindings"),
+  evalBindings: jsonb("eval_bindings"),
+  rollbackPlan: jsonb("rollback_plan"),
   lastIncidentAt: timestamp("last_incident_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
