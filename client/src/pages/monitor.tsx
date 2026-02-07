@@ -20,12 +20,30 @@ import { StatCard } from "@/components/stat-card";
 import { StatusBadge } from "@/components/status-badge";
 import type { Agent, RunTrace } from "@shared/schema";
 
+interface DriftSignal {
+  id: string;
+  agentId: string;
+  agentName: string;
+  suiteName: string;
+  suiteType: string;
+  metric: string;
+  baseline: number;
+  current: number;
+  driftPercent: number;
+  severity: string;
+  status: string;
+  detectedAt: string;
+}
+
 export default function Monitor() {
   const { data: agents, isLoading } = useQuery<Agent[]>({
     queryKey: ["/api/agents"],
   });
   const { data: traces } = useQuery<RunTrace[]>({
     queryKey: ["/api/traces"],
+  });
+  const { data: driftSignals } = useQuery<DriftSignal[]>({
+    queryKey: ["/api/drift-signals"],
   });
 
   if (isLoading) {
@@ -143,36 +161,70 @@ export default function Monitor() {
         </TabsContent>
 
         <TabsContent value="drift" className="mt-0">
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium">Drift & Change Detection</CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-3">
-              <div className="flex items-center gap-3 p-3 rounded-md bg-amber-500/5 border border-amber-500/20">
-                <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
-                <div className="flex flex-col min-w-0">
-                  <span className="text-xs font-medium">Knowledge Base Freshness</span>
-                  <span className="text-[11px] text-muted-foreground">3 knowledge sources haven't been updated in 14+ days</span>
+          <div className="flex flex-col gap-4">
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between gap-2">
+                  <CardTitle className="text-sm font-medium">Drift & Change Detection</CardTitle>
+                  <Badge variant="outline" className="text-[10px]">
+                    {driftSignals?.length || 0} signals detected
+                  </Badge>
                 </div>
-                <Button variant="outline" size="sm" className="shrink-0 ml-auto">Investigate</Button>
-              </div>
-              <div className="flex items-center gap-3 p-3 rounded-md bg-blue-500/5 border border-blue-500/20">
-                <Zap className="w-4 h-4 text-blue-500 shrink-0" />
-                <div className="flex flex-col min-w-0">
-                  <span className="text-xs font-medium">Model Version Update Available</span>
-                  <span className="text-[11px] text-muted-foreground">GPT-4.1-mini is available as a cost-optimized fallback</span>
-                </div>
-                <Button variant="outline" size="sm" className="shrink-0 ml-auto">Review</Button>
-              </div>
-              <div className="flex items-center gap-3 p-3 rounded-md bg-emerald-500/5 border border-emerald-500/20">
-                <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />
-                <div className="flex flex-col min-w-0">
-                  <span className="text-xs font-medium">Input Distribution Stable</span>
-                  <span className="text-[11px] text-muted-foreground">No significant drift detected in the last 7 days</span>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-3">
+                {!driftSignals || driftSignals.length === 0 ? (
+                  <div className="flex items-center gap-3 p-3 rounded-md bg-emerald-500/5 border border-emerald-500/20">
+                    <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-xs font-medium">All Clear</span>
+                      <span className="text-[11px] text-muted-foreground">No significant drift detected across all eval suites</span>
+                    </div>
+                  </div>
+                ) : (
+                  driftSignals.map((signal: DriftSignal) => {
+                    const isImproved = signal.status === "improved";
+                    const severityColors: Record<string, string> = {
+                      critical: "bg-red-500/5 border-red-500/20",
+                      high: "bg-amber-500/5 border-amber-500/20",
+                      medium: "bg-blue-500/5 border-blue-500/20",
+                      low: "bg-emerald-500/5 border-emerald-500/20",
+                    };
+                    const severityIconColors: Record<string, string> = {
+                      critical: "text-red-500",
+                      high: "text-amber-500",
+                      medium: "text-blue-500",
+                      low: "text-emerald-500",
+                    };
+                    return (
+                      <div key={signal.id} className={`flex items-start gap-3 p-3 rounded-md border ${severityColors[signal.severity] || ""}`} data-testid={`drift-signal-${signal.id}`}>
+                        {signal.severity === "critical" || signal.severity === "high" ? (
+                          <AlertTriangle className={`w-4 h-4 shrink-0 mt-0.5 ${severityIconColors[signal.severity]}`} />
+                        ) : isImproved ? (
+                          <TrendingUp className="w-4 h-4 shrink-0 mt-0.5 text-emerald-500" />
+                        ) : (
+                          <Activity className={`w-4 h-4 shrink-0 mt-0.5 ${severityIconColors[signal.severity]}`} />
+                        )}
+                        <div className="flex flex-col gap-1 flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-medium">{signal.agentName}</span>
+                            <Badge variant="outline" className="text-[9px]">{signal.suiteName}</Badge>
+                            <Badge variant={signal.severity === "critical" ? "destructive" : "outline"} className="text-[9px]">{signal.severity}</Badge>
+                          </div>
+                          <span className="text-[11px] text-muted-foreground">
+                            {signal.metric === "pass_rate" ? "Pass rate" : "Avg latency"} {isImproved ? "improved" : "degraded"} by{" "}
+                            <span className="font-medium">{Math.abs(signal.driftPercent)}%</span>
+                            {" "}(baseline: {signal.metric === "pass_rate" ? `${(signal.baseline * 100).toFixed(1)}%` : `${signal.baseline}ms`}
+                            {" "}&rarr; current: {signal.metric === "pass_rate" ? `${(signal.current * 100).toFixed(1)}%` : `${signal.current}ms`})
+                          </span>
+                          <span className="text-[10px] text-muted-foreground">Detected: {new Date(signal.detectedAt).toLocaleString()}</span>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
       </Tabs>
     </div>

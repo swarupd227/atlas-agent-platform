@@ -568,6 +568,100 @@ Guidelines:
     }
   });
 
+  app.get("/api/drift-signals", async (_req, res) => {
+    try {
+      const evalSuites = await storage.getEvalSuites();
+      const agents = await storage.getAgents();
+      const signals: Array<{
+        id: string;
+        agentId: string;
+        agentName: string;
+        suiteName: string;
+        suiteType: string;
+        metric: string;
+        baseline: number;
+        current: number;
+        driftPercent: number;
+        severity: string;
+        status: string;
+        detectedAt: string;
+      }> = [];
+
+      for (const suite of evalSuites) {
+        const runs = await storage.getEvalRunsBySuite(suite.id);
+        if (runs.length < 2) continue;
+        
+        const sorted = [...runs].sort((a, b) => 
+          new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime()
+        );
+        
+        const latest = sorted[0];
+        const previous = sorted.slice(1, 6);
+        
+        if (previous.length === 0) continue;
+        
+        const baselinePassRate = previous.reduce((sum, r) => sum + (r.passRate || 0), 0) / previous.length;
+        const currentPassRate = latest.passRate || 0;
+        
+        if (baselinePassRate === 0) continue;
+        
+        const driftPercent = ((baselinePassRate - currentPassRate) / baselinePassRate) * 100;
+        
+        const agent = agents.find(a => a.id === suite.agentId);
+        
+        if (Math.abs(driftPercent) > 2) {
+          signals.push({
+            id: `drift-${suite.id}`,
+            agentId: suite.agentId,
+            agentName: agent?.name || "Unknown Agent",
+            suiteName: suite.name,
+            suiteType: suite.type || "regression",
+            metric: "pass_rate",
+            baseline: baselinePassRate,
+            current: currentPassRate,
+            driftPercent: Math.round(driftPercent * 100) / 100,
+            severity: Math.abs(driftPercent) > 15 ? "critical" : Math.abs(driftPercent) > 8 ? "high" : Math.abs(driftPercent) > 4 ? "medium" : "low",
+            status: driftPercent > 0 ? "degraded" : "improved",
+            detectedAt: latest.startedAt ? new Date(latest.startedAt).toISOString() : new Date().toISOString(),
+          });
+        }
+        
+        const baselineLatency = previous.reduce((sum, r) => sum + (r.avgLatencyMs || 0), 0) / previous.length;
+        const currentLatency = latest.avgLatencyMs || 0;
+        
+        if (baselineLatency > 0) {
+          const latencyDrift = ((currentLatency - baselineLatency) / baselineLatency) * 100;
+          
+          if (Math.abs(latencyDrift) > 10) {
+            signals.push({
+              id: `drift-latency-${suite.id}`,
+              agentId: suite.agentId,
+              agentName: agent?.name || "Unknown Agent",
+              suiteName: suite.name,
+              suiteType: suite.type || "regression",
+              metric: "avg_latency",
+              baseline: baselineLatency,
+              current: currentLatency,
+              driftPercent: Math.round(latencyDrift * 100) / 100,
+              severity: Math.abs(latencyDrift) > 50 ? "critical" : Math.abs(latencyDrift) > 25 ? "high" : "medium",
+              status: latencyDrift > 0 ? "degraded" : "improved",
+              detectedAt: latest.startedAt ? new Date(latest.startedAt).toISOString() : new Date().toISOString(),
+            });
+          }
+        }
+      }
+      
+      signals.sort((a, b) => {
+        const severityOrder: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+        return (severityOrder[a.severity] || 4) - (severityOrder[b.severity] || 4);
+      });
+      
+      res.json(signals);
+    } catch (e) {
+      res.status(500).json({ message: "Failed to compute drift signals" });
+    }
+  });
+
   // Improvement Recommendations
   app.get("/api/recommendations", async (_req, res) => {
     const recs = await storage.getImprovementRecommendations();

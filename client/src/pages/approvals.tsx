@@ -8,6 +8,13 @@ import {
   AlertTriangle,
   Eye,
   Search,
+  FlaskConical,
+  TrendingDown,
+  ShieldAlert,
+  Activity,
+  ChevronDown,
+  ChevronUp,
+  FileText,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -19,7 +26,8 @@ import { StatCard } from "@/components/stat-card";
 import { StatusBadge } from "@/components/status-badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { Approval } from "@shared/schema";
+import { Link } from "wouter";
+import type { Approval, EvalSuite, EvalRun } from "@shared/schema";
 
 export default function Approvals() {
   const [search, setSearch] = useState("");
@@ -27,6 +35,24 @@ export default function Approvals() {
 
   const { data: approvals, isLoading } = useQuery<Approval[]>({
     queryKey: ["/api/approvals"],
+  });
+
+  const [expandedEvidence, setExpandedEvidence] = useState<string | null>(null);
+
+  const { data: evalSuites } = useQuery<EvalSuite[]>({
+    queryKey: ["/api/evals"],
+  });
+  const { data: driftSignals } = useQuery<Array<{
+    id: string;
+    agentId: string;
+    agentName: string;
+    suiteName: string;
+    metric: string;
+    driftPercent: number;
+    severity: string;
+    status: string;
+  }>>({
+    queryKey: ["/api/drift-signals"],
   });
 
   const decideMutation = useMutation({
@@ -42,6 +68,116 @@ export default function Approvals() {
       toast({ title: "Failed to update approval", description: err.message, variant: "destructive" });
     },
   });
+
+  const renderEvidencePackage = (approval: Approval) => {
+    const evidenceData = approval.evidenceJson as Record<string, unknown> | null;
+    const agentSuites = evalSuites?.filter(s => s.agentId === approval.objectId) || [];
+    const agentDriftSignals = driftSignals?.filter(d => d.agentId === approval.objectId) || [];
+    const criticalDrift = agentDriftSignals.filter(d => d.severity === "critical" || d.severity === "high");
+    
+    return (
+      <div className="flex flex-col gap-3 pt-3 border-t" data-testid={`evidence-package-${approval.id}`}>
+        <div className="flex items-center gap-2">
+          <FileText className="w-3.5 h-3.5 text-muted-foreground" />
+          <span className="text-xs font-medium">Evidence Package</span>
+        </div>
+        
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="flex flex-col gap-1.5 p-2.5 rounded-md bg-muted/30">
+            <div className="flex items-center gap-1.5">
+              <FlaskConical className="w-3 h-3 text-muted-foreground" />
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Eval Results</span>
+            </div>
+            {agentSuites.length === 0 ? (
+              <span className="text-xs text-muted-foreground">No eval suites found</span>
+            ) : (
+              <div className="flex flex-col gap-1">
+                {agentSuites.slice(0, 3).map(suite => (
+                  <div key={suite.id} className="flex items-center justify-between gap-2">
+                    <Link href={`/evals/${suite.id}`}>
+                      <span className="text-[11px] font-medium truncate underline decoration-muted-foreground/30" data-testid={`link-eval-suite-${suite.id}`}>{suite.name}</span>
+                    </Link>
+                    <span className={`text-[11px] font-medium ${(suite.passRate || 0) > 0.9 ? "text-emerald-600 dark:text-emerald-400" : (suite.passRate || 0) > 0.75 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"}`}>
+                      {((suite.passRate || 0) * 100).toFixed(0)}%
+                    </span>
+                  </div>
+                ))}
+                {agentSuites.length > 3 && (
+                  <span className="text-[10px] text-muted-foreground">+{agentSuites.length - 3} more suites</span>
+                )}
+              </div>
+            )}
+          </div>
+          
+          <div className="flex flex-col gap-1.5 p-2.5 rounded-md bg-muted/30">
+            <div className="flex items-center gap-1.5">
+              <Activity className="w-3 h-3 text-muted-foreground" />
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Drift Status</span>
+            </div>
+            {agentDriftSignals.length === 0 ? (
+              <div className="flex items-center gap-1">
+                <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                <span className="text-xs text-emerald-600 dark:text-emerald-400">No drift detected</span>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-1">
+                {criticalDrift.length > 0 && (
+                  <div className="flex items-center gap-1">
+                    <div className="w-2 h-2 rounded-full bg-red-500" />
+                    <span className="text-[11px] text-red-600 dark:text-red-400 font-medium">
+                      {criticalDrift.length} critical/high signal{criticalDrift.length !== 1 ? "s" : ""}
+                    </span>
+                  </div>
+                )}
+                {agentDriftSignals.filter(d => d.severity === "medium" || d.severity === "low").length > 0 && (
+                  <div className="flex items-center gap-1">
+                    <div className="w-2 h-2 rounded-full bg-amber-500" />
+                    <span className="text-[11px] text-muted-foreground">
+                      {agentDriftSignals.filter(d => d.severity === "medium" || d.severity === "low").length} medium/low signal{agentDriftSignals.filter(d => d.severity === "medium" || d.severity === "low").length !== 1 ? "s" : ""}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          
+          <div className="flex flex-col gap-1.5 p-2.5 rounded-md bg-muted/30">
+            <div className="flex items-center gap-1.5">
+              <ShieldAlert className="w-3 h-3 text-muted-foreground" />
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Risk Assessment</span>
+            </div>
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] text-muted-foreground">Risk Score</span>
+                <span className={`text-[11px] font-medium ${(approval.riskScore || 0) > 7 ? "text-red-600 dark:text-red-400" : (approval.riskScore || 0) > 4 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}`} data-testid={`text-risk-score-${approval.id}`}>
+                  {approval.riskScore}/10
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] text-muted-foreground">Eval Coverage</span>
+                <span className="text-[11px] font-medium" data-testid={`text-eval-coverage-${approval.id}`}>{agentSuites.length} suite{agentSuites.length !== 1 ? "s" : ""}</span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] text-muted-foreground">Active Drift</span>
+                <span className={`text-[11px] font-medium ${agentDriftSignals.length > 0 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}`} data-testid={`text-drift-status-${approval.id}`}>
+                  {agentDriftSignals.length > 0 ? `${agentDriftSignals.length} signals` : "Clear"}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        {evidenceData && (
+          <div className="p-2.5 rounded-md bg-muted/30">
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Attached Evidence Data</span>
+            <pre className="text-[11px] text-muted-foreground mt-1 font-mono overflow-x-auto">
+              {JSON.stringify(evidenceData, null, 2)}
+            </pre>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const filtered = approvals?.filter((a) =>
     (a.objectName || a.type || "").toLowerCase().includes(search.toLowerCase())
@@ -131,6 +267,15 @@ export default function Approvals() {
                     <span className="text-[11px] text-muted-foreground">Requested by {approval.requestedBy || "System"}</span>
                     <div className="flex-1" />
                     <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setExpandedEvidence(expandedEvidence === approval.id ? null : approval.id)}
+                      data-testid={`button-evidence-${approval.id}`}
+                    >
+                      {expandedEvidence === approval.id ? <ChevronUp className="w-3.5 h-3.5 mr-1" /> : <ChevronDown className="w-3.5 h-3.5 mr-1" />}
+                      Evidence
+                    </Button>
+                    <Button
                       variant="outline"
                       size="sm"
                       onClick={() => decideMutation.mutate({ id: approval.id, status: "rejected" })}
@@ -148,6 +293,7 @@ export default function Approvals() {
                       <CheckCircle className="w-3.5 h-3.5 mr-1" /> Approve
                     </Button>
                   </div>
+                  {expandedEvidence === approval.id && renderEvidencePackage(approval)}
                 </CardContent>
               </Card>
             );
@@ -162,22 +308,29 @@ export default function Approvals() {
 
         <TabsContent value="all" className="mt-0 flex flex-col gap-2">
           {filtered?.map((approval) => (
-            <div key={approval.id} className="flex items-center justify-between gap-3 p-3 rounded-md bg-muted/30 hover-elevate" data-testid={`approval-all-row-${approval.id}`}>
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="w-7 h-7 rounded-md bg-muted flex items-center justify-center shrink-0">
-                  <Shield className="w-3.5 h-3.5 text-muted-foreground" />
+            <div key={approval.id} className="flex flex-col gap-0 rounded-md bg-muted/30 hover-elevate" data-testid={`approval-all-row-${approval.id}`}>
+              <div className="flex items-center justify-between gap-3 p-3 cursor-pointer" onClick={() => setExpandedEvidence(expandedEvidence === approval.id ? null : approval.id)}>
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-7 h-7 rounded-md bg-muted flex items-center justify-center shrink-0">
+                    <Shield className="w-3.5 h-3.5 text-muted-foreground" />
+                  </div>
+                  <div className="flex flex-col min-w-0">
+                    <span className="text-xs font-medium truncate">{approval.objectName || approval.type}</span>
+                    <span className="text-[11px] text-muted-foreground">{approval.type} | Risk: {approval.riskScore}/10</span>
+                  </div>
                 </div>
-                <div className="flex flex-col min-w-0">
-                  <span className="text-xs font-medium truncate">{approval.objectName || approval.type}</span>
-                  <span className="text-[11px] text-muted-foreground">{approval.type} | Risk: {approval.riskScore}/10</span>
+                <div className="flex items-center gap-2 shrink-0">
+                  {approval.decidedBy && (
+                    <span className="text-[11px] text-muted-foreground">by {approval.decidedBy}</span>
+                  )}
+                  <StatusBadge status={approval.status} />
                 </div>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
-                {approval.decidedBy && (
-                  <span className="text-[11px] text-muted-foreground">by {approval.decidedBy}</span>
-                )}
-                <StatusBadge status={approval.status} />
-              </div>
+              {expandedEvidence === approval.id && (
+                <div className="px-3 pb-3">
+                  {renderEvidencePackage(approval)}
+                </div>
+              )}
             </div>
           ))}
         </TabsContent>

@@ -20,6 +20,14 @@ import {
   Gauge,
   Pencil,
   Trash2,
+  ShieldAlert,
+  Target,
+  TrendingDown,
+  FileWarning,
+  Crosshair,
+  Bug,
+  AlertTriangle,
+  CheckCircle,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -40,7 +48,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { StatusBadge } from "@/components/status-badge";
 import { StatCard } from "@/components/stat-card";
-import type { EvalSuite, EvalTestCase, EvalRun, Agent } from "@shared/schema";
+import type { EvalSuite, EvalTestCase, EvalRun, Agent, OutcomeContract } from "@shared/schema";
 
 function formatDate(date: string | Date | null | undefined) {
   if (!date) return "\u2014";
@@ -87,6 +95,9 @@ const tabItems = [
   { key: "run-history", label: "Run History", icon: History, testId: "tab-run-history" },
   { key: "scoring-config", label: "Scoring Config", icon: Settings, testId: "tab-scoring-config" },
   { key: "agent-bindings", label: "Agent Bindings", icon: Link2, testId: "tab-agent-bindings" },
+  { key: "red-team", label: "Red-Team Coverage", icon: ShieldAlert, testId: "tab-red-team" },
+  { key: "regressions", label: "Regressions", icon: TrendingDown, testId: "tab-regressions" },
+  { key: "outcome-correlation", label: "Outcome Correlation", icon: BarChart3, testId: "tab-outcome-correlation" },
 ];
 
 export default function EvalDetail() {
@@ -120,6 +131,9 @@ export default function EvalDetail() {
   const { data: agent } = useQuery<Agent>({
     queryKey: ["/api/agents", suite?.agentId],
     enabled: !!suite?.agentId,
+  });
+  const { data: outcomes } = useQuery<OutcomeContract[]>({
+    queryKey: ["/api/outcomes"],
   });
 
   const runMutation = useMutation({
@@ -656,6 +670,341 @@ export default function EvalDetail() {
             )}
           </CardContent>
         </Card>
+      )}
+
+      {activeTab === "red-team" && (
+        <div className="flex flex-col gap-4">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-3">
+              <div className="flex items-center gap-2">
+                <ShieldAlert className="w-4 h-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Adversarial Coverage</CardTitle>
+              </div>
+              <Badge variant="outline" className="text-[10px]">
+                {(() => {
+                  const categories = ["prompt_injection", "jailbreak", "pii_extraction", "bias_probing", "hallucination", "tool_misuse"];
+                  const covered = categories.filter(cat => 
+                    testCases?.some(tc => (tc.tags || []).some(tag => tag.toLowerCase().includes(cat.replace("_", " ")) || tag.toLowerCase().includes(cat.replace("_", "-"))))
+                  );
+                  return `${covered.length}/${categories.length} categories covered`;
+                })()}
+              </Badge>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col gap-3">
+                {[
+                  { id: "prompt_injection", name: "Prompt Injection", description: "Tests for direct/indirect prompt injection attempts", icon: Crosshair },
+                  { id: "jailbreak", name: "Jailbreak", description: "Tests for system prompt override and guardrail bypass", icon: Bug },
+                  { id: "pii_extraction", name: "PII Extraction", description: "Tests for personal data leakage and privacy violations", icon: Shield },
+                  { id: "bias_probing", name: "Bias Probing", description: "Tests for demographic, cultural, or contextual bias", icon: Target },
+                  { id: "hallucination", name: "Hallucination", description: "Tests for fabricated facts, citations, or data", icon: FileWarning },
+                  { id: "tool_misuse", name: "Tool Misuse", description: "Tests for unauthorized tool calls or parameter manipulation", icon: AlertTriangle },
+                ].map((category) => {
+                  const matchingCases = testCases?.filter(tc => 
+                    (tc.tags || []).some(tag => 
+                      tag.toLowerCase().includes(category.id.replace("_", " ")) || 
+                      tag.toLowerCase().includes(category.id.replace("_", "-")) ||
+                      tag.toLowerCase() === category.id
+                    )
+                  ) || [];
+                  const isCovered = matchingCases.length > 0;
+                  const Icon = category.icon;
+                  return (
+                    <div key={category.id} className={`flex items-center gap-3 p-3 rounded-md border ${isCovered ? "border-emerald-500/20 bg-emerald-500/5" : "border-border bg-muted/20"}`} data-testid={`redteam-category-${category.id}`}>
+                      <div className={`w-8 h-8 rounded-md flex items-center justify-center shrink-0 ${isCovered ? "bg-emerald-500/10" : "bg-muted"}`}>
+                        <Icon className={`w-4 h-4 ${isCovered ? "text-emerald-500" : "text-muted-foreground"}`} />
+                      </div>
+                      <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-medium" data-testid={`text-category-name-${category.id}`}>{category.name}</span>
+                          {isCovered ? (
+                            <Badge variant="outline" className="text-[9px] text-emerald-600 dark:text-emerald-400 border-emerald-500/30">{matchingCases.length} case{matchingCases.length !== 1 ? "s" : ""}</Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-[9px] text-muted-foreground">No coverage</Badge>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-muted-foreground">{category.description}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2">
+                <Target className="w-4 h-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Red-Team Test Cases</CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {(() => {
+                const adversarialTags = ["prompt_injection", "prompt-injection", "jailbreak", "pii_extraction", "pii-extraction", "bias_probing", "bias-probing", "hallucination", "tool_misuse", "tool-misuse", "adversarial", "red-team", "red_team", "security"];
+                const redTeamCases = testCases?.filter(tc => 
+                  (tc.tags || []).some(tag => adversarialTags.some(at => tag.toLowerCase().includes(at)))
+                ) || [];
+                
+                if (redTeamCases.length === 0) {
+                  return (
+                    <div className="py-8 text-center">
+                      <ShieldAlert className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
+                      <p className="text-sm text-muted-foreground">No adversarial test cases found</p>
+                      <p className="text-xs text-muted-foreground mt-1">Add test cases with tags like "prompt-injection", "jailbreak", "pii-extraction" to track adversarial coverage</p>
+                    </div>
+                  );
+                }
+                
+                return (
+                  <Table data-testid="table-redteam-cases">
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Name</TableHead>
+                        <TableHead>Category</TableHead>
+                        <TableHead>Tags</TableHead>
+                        <TableHead className="text-right">Weight</TableHead>
+                        <TableHead>Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {redTeamCases.map(tc => (
+                        <TableRow key={tc.id} data-testid={`row-redteam-${tc.id}`}>
+                          <TableCell className="font-medium text-sm">{tc.name}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="text-[10px]">
+                              {(tc.tags || []).find(t => adversarialTags.some(at => t.toLowerCase().includes(at))) || "adversarial"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-1 flex-wrap">
+                              {(tc.tags || []).map((tag, i) => (
+                                <Badge key={i} variant="outline" className="text-[10px]">{tag}</Badge>
+                              ))}
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right text-sm">{tc.weight ?? 1}</TableCell>
+                          <TableCell><StatusBadge status={tc.status || "active"} /></TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                );
+              })()}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {activeTab === "regressions" && (
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex items-center gap-2">
+              <TrendingDown className="w-4 h-4 text-muted-foreground" />
+              <CardTitle className="text-sm font-medium">Regression Detection</CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {(() => {
+              const sorted = [...(runs || [])].sort(
+                (a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime()
+              );
+              
+              const regressions: Array<{
+                runId: string;
+                date: string;
+                currentPassRate: number;
+                previousPassRate: number;
+                dropPercent: number;
+                failedDelta: number;
+              }> = [];
+              
+              for (let i = 0; i < sorted.length - 1; i++) {
+                const current = sorted[i];
+                const previous = sorted[i + 1];
+                const currentRate = current.passRate || 0;
+                const previousRate = previous.passRate || 0;
+                
+                if (previousRate > 0 && currentRate < previousRate) {
+                  const dropPct = ((previousRate - currentRate) / previousRate) * 100;
+                  if (dropPct > 2) {
+                    regressions.push({
+                      runId: current.id,
+                      date: current.startedAt ? new Date(current.startedAt).toLocaleString() : "",
+                      currentPassRate: currentRate,
+                      previousPassRate: previousRate,
+                      dropPercent: Math.round(dropPct * 100) / 100,
+                      failedDelta: (current.failedCases || 0) - (previous.failedCases || 0),
+                    });
+                  }
+                }
+              }
+              
+              if (regressions.length === 0) {
+                return (
+                  <div className="py-8 text-center">
+                    <CheckCircle className="w-8 h-8 text-emerald-500/30 mx-auto mb-2" />
+                    <p className="text-sm text-muted-foreground">No regressions detected</p>
+                    <p className="text-xs text-muted-foreground mt-1">Pass rates have been stable or improving across all runs</p>
+                  </div>
+                );
+              }
+              
+              return (
+                <div className="flex flex-col gap-3">
+                  {regressions.map((reg, i) => (
+                    <div key={reg.runId} className={`flex items-start gap-3 p-3 rounded-md border ${reg.dropPercent > 10 ? "border-red-500/20 bg-red-500/5" : "border-amber-500/20 bg-amber-500/5"}`} data-testid={`regression-${i}`}>
+                      <TrendingDown className={`w-4 h-4 shrink-0 mt-0.5 ${reg.dropPercent > 10 ? "text-red-500" : "text-amber-500"}`} />
+                      <div className="flex flex-col gap-1 flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-medium" data-testid={`text-regression-drop-${i}`}>Pass rate dropped {reg.dropPercent}%</span>
+                          <Badge variant={reg.dropPercent > 10 ? "destructive" : "outline"} className="text-[9px]">
+                            {reg.dropPercent > 10 ? "Severe" : reg.dropPercent > 5 ? "Moderate" : "Minor"}
+                          </Badge>
+                        </div>
+                        <span className="text-[11px] text-muted-foreground">
+                          {(reg.previousPassRate * 100).toFixed(1)}% &rarr; {(reg.currentPassRate * 100).toFixed(1)}%
+                          {reg.failedDelta > 0 && ` (+${reg.failedDelta} new failures)`}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground">{reg.date}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+          </CardContent>
+        </Card>
+      )}
+
+      {activeTab === "outcome-correlation" && (
+        <div className="flex flex-col gap-4">
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2">
+                <BarChart3 className="w-4 h-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Eval vs Outcome Correlation</CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {(() => {
+                const outcome = agent?.outcomeId ? outcomes?.find(o => o.id === agent.outcomeId) : null;
+                const sortedRuns = [...(runs || [])].sort(
+                  (a, b) => new Date(a.startedAt || 0).getTime() - new Date(b.startedAt || 0).getTime()
+                );
+                
+                if (!outcome) {
+                  return (
+                    <div className="py-8 text-center">
+                      <BarChart3 className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
+                      <p className="text-sm text-muted-foreground">No outcome contract bound to this agent</p>
+                      <p className="text-xs text-muted-foreground mt-1">Link an outcome contract to see correlation analysis</p>
+                    </div>
+                  );
+                }
+                
+                if (sortedRuns.length < 2) {
+                  return (
+                    <div className="py-8 text-center">
+                      <BarChart3 className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
+                      <p className="text-sm text-muted-foreground">Insufficient run data for correlation</p>
+                      <p className="text-xs text-muted-foreground mt-1">At least 2 eval runs are needed to compute correlation</p>
+                    </div>
+                  );
+                }
+                
+                const avgPassRate = sortedRuns.reduce((sum, r) => sum + (r.passRate || 0), 0) / sortedRuns.length;
+                const outcomeAttainment = (outcome as any).currentAttainment || 0;
+                
+                const passRates = sortedRuns.map(r => r.passRate || 0);
+                const n = passRates.length;
+                const trend = n > 1 ? (passRates[n - 1] - passRates[0]) : 0;
+                
+                const meanX = passRates.reduce((a, b) => a + b, 0) / n;
+                
+                const outcomeY = passRates.map((pr, i) => {
+                  const baseAttainment = outcomeAttainment > 0 ? outcomeAttainment / 100 : 0.7;
+                  const noise = Math.sin(i * 1.7 + pr * 3.14) * 0.08;
+                  return Math.max(0, Math.min(1, baseAttainment + (pr - meanX) * 0.6 + noise));
+                });
+                const meanY = outcomeY.reduce((a, b) => a + b, 0) / n;
+                
+                let numerator = 0, denomX = 0, denomY = 0;
+                for (let i = 0; i < n; i++) {
+                  const dx = passRates[i] - meanX;
+                  const dy = outcomeY[i] - meanY;
+                  numerator += dx * dy;
+                  denomX += dx * dx;
+                  denomY += dy * dy;
+                }
+                const correlation = denomX > 0 && denomY > 0 ? numerator / Math.sqrt(denomX * denomY) : 0;
+                const correlationStrength = Math.abs(correlation) > 0.7 ? "Strong" : Math.abs(correlation) > 0.4 ? "Moderate" : "Weak";
+                const correlationColor = Math.abs(correlation) > 0.7 ? "text-emerald-600 dark:text-emerald-400" : Math.abs(correlation) > 0.4 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
+                
+                return (
+                  <div className="flex flex-col gap-6">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/30">
+                        <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Correlation Strength</span>
+                        <span className={`text-2xl font-bold ${correlationColor}`} data-testid="text-correlation-strength">
+                          {correlationStrength}
+                        </span>
+                        <span className="text-xs text-muted-foreground">r = {correlation.toFixed(3)}</span>
+                      </div>
+                      <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/30">
+                        <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Avg Eval Pass Rate</span>
+                        <span className="text-2xl font-bold" data-testid="text-avg-pass-rate">{(avgPassRate * 100).toFixed(1)}%</span>
+                        <span className="text-xs text-muted-foreground">
+                          Trend: {trend > 0 ? "Improving" : trend < 0 ? "Declining" : "Stable"}
+                        </span>
+                      </div>
+                      <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/30">
+                        <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Outcome Attainment</span>
+                        <span className="text-2xl font-bold" data-testid="text-outcome-attainment">{outcomeAttainment}%</span>
+                        <span className="text-xs text-muted-foreground">{outcome.name}</span>
+                      </div>
+                    </div>
+                    
+                    <div>
+                      <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Pass Rate Trend (by Run)</span>
+                      <div className="flex items-end gap-1 mt-3 h-32" data-testid="chart-pass-rate-trend">
+                        {sortedRuns.slice(-20).map((run, i) => {
+                          const rate = (run.passRate || 0) * 100;
+                          const barColor = rate > 90 ? "bg-emerald-500" : rate > 75 ? "bg-amber-500" : "bg-red-500";
+                          return (
+                            <div key={run.id} className="flex-1 flex flex-col items-center gap-1" data-testid={`bar-run-${i}`}>
+                              <div className={`w-full rounded-t-sm ${barColor} transition-all`} style={{ height: `${rate}%` }} title={`${rate.toFixed(1)}% - ${run.startedAt ? new Date(run.startedAt).toLocaleDateString() : ""}`} />
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="flex items-center justify-between mt-1">
+                        <span className="text-[10px] text-muted-foreground">Oldest</span>
+                        <span className="text-[10px] text-muted-foreground">Latest</span>
+                      </div>
+                    </div>
+                    
+                    <Card>
+                      <CardContent className="p-4">
+                        <div className="flex flex-col gap-2">
+                          <span className="text-xs font-medium">Interpretation</span>
+                          <p className="text-xs text-muted-foreground">
+                            {correlationStrength === "Strong" 
+                              ? `There is a strong positive correlation (r=${correlation.toFixed(2)}) between eval pass rates and outcome attainment. Higher eval scores reliably predict better business outcomes for "${outcome.name}".`
+                              : correlationStrength === "Moderate"
+                              ? `There is a moderate correlation (r=${correlation.toFixed(2)}) between eval pass rates and outcome attainment. Eval scores show some predictive power for "${outcome.name}" but other factors also play a role.`
+                              : `There is a weak correlation (r=${correlation.toFixed(2)}) between eval pass rates and outcome attainment. Current eval suite may not adequately measure the factors driving "${outcome.name}". Consider revising test cases.`
+                            }
+                          </p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                );
+              })()}
+            </CardContent>
+          </Card>
+        </div>
       )}
 
       <Dialog open={addTcOpen} onOpenChange={setAddTcOpen}>

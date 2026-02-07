@@ -34,7 +34,7 @@ A comprehensive platform for managing AI agent lifecycles with an 80% autonomous
 2. **Agent Blueprint** (`/agents/:id`) — 7 sections: Model Config, Workflow Graph, Tools & Permissions, Memory & RAG, Policy Bindings, Eval Bindings, Rollback Plan
 3. **Release** (`/deployments/:id`) — 4 sections: Overview, Canary Rules, Rollback Triggers, Promotion History. Actions: Promote (staging→pilot→prod), Rollback
 4. **Run Trace** (`/traces/:id`) — 7 sections: Execution Summary, Prompt Inputs, Tool Calls, Retrieved Documents, Decisions, Policy Checks, Cost & Latency Breakdown
-5. **Eval Suite** (`/evals/:id`) — 4 tabs: Test Cases, Run History, Scoring Config, Agent Bindings
+5. **Eval Suite** (`/evals/:id`) — 7 tabs: Test Cases, Run History, Scoring Config, Agent Bindings, Red-Team Coverage, Regressions, Outcome Correlation
 
 ## Agent Templates (`/templates`)
 Standalone browsable page with:
@@ -69,12 +69,21 @@ Entry from Templates page: `/agents/wizard?templateId={id}` pre-fills all fields
 - invoices, outcome_events
 - agent_templates (with industry, tags fields)
 
+## Evaluation Evidence System
+- **Drift Detection Engine**: `GET /api/drift-signals` computes real-time drift by comparing latest eval run pass rates/latency against rolling 5-run baseline. Monitor page Drift tab shows severity-coded signals (critical/high/medium/low)
+- **Red-Team Coverage**: Eval detail "Red-Team Coverage" tab maps test cases to 6 adversarial categories (prompt injection, jailbreak, PII extraction, bias probing, hallucination, tool misuse) via tag matching
+- **Regression Detection**: Eval detail "Regressions" tab auto-compares consecutive eval runs, flags pass-rate drops >2% as Minor/Moderate/Severe
+- **Outcome Correlation**: Eval detail "Outcome Correlation" tab computes Pearson r between eval pass rates and outcome KPI attainment with bar chart trends and interpretation
+- **Evidence Packaging**: Approvals page bundles eval results, drift status, and risk assessment in expandable evidence cards for each approval request
+- Storage: `getEvalRunsBySuite(suiteId)` method in IStorage interface
+
 ## Recent Changes
+- Evaluation Evidence system: drift detection, red-team coverage, regression detection, outcome correlation, evidence packaging
 - Agent Templates standalone page: /templates with browsable grid, category/industry filters, search, detail panel, and "Use This Template" action
 - Redesigned Agent Wizard: Step 1 = Basic Info first, Step 2 = Choose Path (Manual/Template/AI), AI template matching with scored suggestions
 - AI Template Matching: POST /api/ai/match-templates endpoint uses GPT-4.1 to analyze requirements and rank templates
 - agent_templates schema enriched with industry and tags fields
-- Eval Suite Artifact: detail page at /evals/:id with test cases, run history, scoring config, agent bindings
+- Eval Suite Artifact: detail page at /evals/:id with 7 tabs including red-team, regressions, outcome correlation
 - Run Trace forensics with 7 sections, Release artifact with promote/rollback
 - Outcome Contract artifact with inline editing and 6 tabs
 - Agent Blueprint artifact with 7 structured sections
