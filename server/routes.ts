@@ -130,6 +130,12 @@ export async function registerRoutes(
     res.json(traces);
   });
 
+  app.get("/api/traces/:id", async (req, res) => {
+    const trace = await storage.getTrace(req.params.id);
+    if (!trace) return res.status(404).json({ error: "Trace not found" });
+    res.json(trace);
+  });
+
   app.post("/api/traces", async (req, res) => {
     try {
       const data = insertRunTraceSchema.parse(req.body);

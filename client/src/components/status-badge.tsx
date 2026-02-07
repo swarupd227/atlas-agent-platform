@@ -15,6 +15,7 @@ const statusConfig: Record<string, { label: string; className: string }> = {
   paid: { label: "Paid", className: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" },
   pending: { label: "Pending", className: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20" },
   warning: { label: "Warning", className: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20" },
+  blocked: { label: "Blocked", className: "bg-orange-500/15 text-orange-600 dark:text-orange-400 border-orange-500/20" },
   canary: { label: "Canary", className: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20" },
   rolling_out: { label: "Rolling Out", className: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/20" },
   draft: { label: "Draft", className: "bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/20" },

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useRoute, Link } from "wouter";
+import { useRoute, Link, useLocation } from "wouter";
 import {
   Bot,
   ArrowLeft,
@@ -204,18 +204,26 @@ export default function AgentDetail() {
             </CardHeader>
             <CardContent className="flex flex-col gap-2">
               {recentTraces.length > 0 ? recentTraces.map((trace) => (
-                <div key={trace.id} className="flex items-center justify-between gap-3 p-3 rounded-md bg-muted/30 hover-elevate" data-testid={`trace-row-${trace.id}`}>
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="flex items-center justify-center w-7 h-7 rounded-md bg-primary/10 shrink-0">
-                      <Terminal className="w-3.5 h-3.5 text-primary" />
+                <Link key={trace.id} href={`/traces/${trace.id}`}>
+                  <div className="flex items-center justify-between gap-3 p-3 rounded-md bg-muted/30 hover-elevate cursor-pointer" data-testid={`trace-row-${trace.id}`}>
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="flex items-center justify-center w-7 h-7 rounded-md bg-primary/10 shrink-0">
+                        <Terminal className="w-3.5 h-3.5 text-primary" />
+                      </div>
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-xs font-medium truncate">{trace.inputSummary || "Run"}</span>
+                        <span className="text-[11px] text-muted-foreground">
+                          {trace.environment} | {trace.latencyMs}ms | ${trace.costUsd?.toFixed(4)}
+                          {(trace as any).modelId ? ` | ${(trace as any).modelId}` : ""}
+                        </span>
+                      </div>
                     </div>
-                    <div className="flex flex-col min-w-0">
-                      <span className="text-xs font-medium truncate">{trace.inputSummary || "Run"}</span>
-                      <span className="text-[11px] text-muted-foreground">{trace.environment} | {trace.latencyMs}ms | ${trace.costUsd?.toFixed(4)}</span>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <StatusBadge status={trace.status} />
+                      <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
                     </div>
                   </div>
-                  <StatusBadge status={trace.status} />
-                </div>
+                </Link>
               )) : (
                 <p className="text-sm text-muted-foreground py-8 text-center">No traces recorded yet</p>
               )}

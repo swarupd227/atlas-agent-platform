@@ -805,27 +805,733 @@ export async function seedDatabase() {
     "License upgrade consultation",
   ];
 
-  for (let i = 0; i < 10; i++) {
+  // Support Triage Agent — 10 traces
+  const supportTraceData = [
+    {
+      status: traceStatuses[0], costUsd: 0.062, latencyMs: 1820,
+      inputSummary: traceInputs[0], outputSummary: "Resolved: sent password reset link with step-by-step instructions from KB article #1247",
+      modelId: "gpt-4.1", timeOffsetMs: 3 * 3600000,
+      promptInputs: { systemPrompt: "You are a tier-1 support agent. Resolve tickets using the knowledge base. Escalate billing disputes over $500 and legal issues.", userMessage: "Customer unable to reset password", contextVariables: { customerId: "cust_8a3f2c", tier: "premium", previousTickets: 2, accountAge: "14 months" } },
+      toolCalls: [
+        { name: "search_knowledge_base", arguments: { query: "password reset instructions", limit: 5 }, result: { articlesFound: 3, topArticleId: "kb-1247" }, latencyMs: 245, status: "success" },
+        { name: "classify_ticket", arguments: { text: "Customer unable to reset password", categories: ["billing", "technical", "account", "general"] }, result: { category: "account", confidence: 0.94 }, latencyMs: 180, status: "success" },
+        { name: "send_response", arguments: { ticketId: "tkt_29301", responseTemplate: "password_reset_v3", includeArticle: "kb-1247" }, result: "Response sent successfully", latencyMs: 320, status: "success" },
+      ],
+      retrievedDocs: [
+        { source: "knowledge_base", title: "How to Reset Your Password", relevanceScore: 0.96, snippet: "Navigate to Settings > Security > Reset Password. Click the reset link sent to your registered email." },
+        { source: "knowledge_base", title: "Account Recovery Options", relevanceScore: 0.82, snippet: "If you cannot access your email, contact support with your account ID and verification documents." },
+      ],
+      decisions: [
+        { step: "classification", reasoning: "Keywords 'reset password' strongly indicate account access issue, not billing or technical", confidence: 0.94, outcome: "classified_as_account" },
+        { step: "resolution_strategy", reasoning: "Standard password reset flow applies. Customer is premium tier, no escalation needed.", confidence: 0.91, outcome: "self_service_resolution" },
+      ],
+      policyChecks: [
+        { policyName: "PII Redaction", passed: true, details: "No PII detected in response draft", checkedAt: "2026-02-07T04:00:12Z" },
+        { policyName: "Professional Tone", passed: true, details: "Tone score: 0.93 (empathetic, professional)", checkedAt: "2026-02-07T04:00:13Z" },
+      ],
+      tokenUsage: { promptTokens: 1245, completionTokens: 387, totalTokens: 1632 },
+    },
+    {
+      status: traceStatuses[1], costUsd: 0.085, latencyMs: 2340,
+      inputSummary: traceInputs[1], outputSummary: "Resolved: applied $15.99 credit for duplicate charge and sent confirmation",
+      modelId: "gpt-4.1", timeOffsetMs: 5 * 3600000,
+      promptInputs: { systemPrompt: "You are a tier-1 support agent. Resolve tickets using the knowledge base. Escalate billing disputes over $500 and legal issues.", userMessage: "Billing dispute for subscription charge", contextVariables: { customerId: "cust_4b7e9d", tier: "standard", disputeAmount: 15.99, subscriptionPlan: "monthly_pro" } },
+      toolCalls: [
+        { name: "search_knowledge_base", arguments: { query: "billing dispute duplicate charge refund", limit: 5 }, result: { articlesFound: 4, topArticleId: "kb-892" }, latencyMs: 210, status: "success" },
+        { name: "classify_ticket", arguments: { text: "Billing dispute for subscription charge", categories: ["billing", "technical", "account", "general"] }, result: { category: "billing", confidence: 0.98 }, latencyMs: 155, status: "success" },
+        { name: "route_ticket", arguments: { ticketId: "tkt_29405", department: "billing", priority: "normal" }, result: "Routed to billing queue", latencyMs: 95, status: "success" },
+        { name: "send_response", arguments: { ticketId: "tkt_29405", responseTemplate: "billing_credit_applied", amount: 15.99 }, result: "Response sent successfully", latencyMs: 340, status: "success" },
+      ],
+      retrievedDocs: [
+        { source: "knowledge_base", title: "Duplicate Charge Resolution", relevanceScore: 0.94, snippet: "For duplicate charges under $50, apply automatic credit. Over $50 requires manager approval." },
+        { source: "support_policies", title: "Refund Policy v3.2", relevanceScore: 0.88, snippet: "Standard refunds processed within 5-7 business days. Immediate credits available for amounts under $100." },
+      ],
+      decisions: [
+        { step: "classification", reasoning: "Clear billing dispute mention with subscription context", confidence: 0.98, outcome: "classified_as_billing" },
+        { step: "escalation_check", reasoning: "Dispute amount $15.99 is under $500 threshold, no escalation required", confidence: 0.99, outcome: "no_escalation" },
+        { step: "resolution_strategy", reasoning: "Amount under $50 qualifies for automatic credit per refund policy", confidence: 0.95, outcome: "auto_credit_applied" },
+      ],
+      policyChecks: [
+        { policyName: "PII Redaction", passed: true, details: "Credit card last 4 digits redacted from response", checkedAt: "2026-02-07T02:15:30Z" },
+        { policyName: "Professional Tone", passed: true, details: "Tone score: 0.95 (apologetic, helpful)", checkedAt: "2026-02-07T02:15:31Z" },
+        { policyName: "No Legal Advice", passed: true, details: "No legal language detected", checkedAt: "2026-02-07T02:15:31Z" },
+      ],
+      tokenUsage: { promptTokens: 1580, completionTokens: 452, totalTokens: 2032 },
+    },
+    {
+      status: traceStatuses[2], costUsd: 0.048, latencyMs: 1450,
+      inputSummary: traceInputs[2], outputSummary: "Resolved: logged feature request and sent acknowledgment with roadmap link",
+      modelId: "gpt-4.1", timeOffsetMs: 8 * 3600000,
+      promptInputs: { systemPrompt: "You are a tier-1 support agent. Resolve tickets using the knowledge base. Escalate billing disputes over $500 and legal issues.", userMessage: "Feature request: dark mode support", contextVariables: { customerId: "cust_1c5d8f", tier: "enterprise", featureRequestCount: 1, accountAge: "26 months" } },
+      toolCalls: [
+        { name: "classify_ticket", arguments: { text: "Feature request: dark mode support", categories: ["billing", "technical", "account", "general"] }, result: { category: "general", confidence: 0.87 }, latencyMs: 165, status: "success" },
+        { name: "search_knowledge_base", arguments: { query: "dark mode feature request roadmap", limit: 3 }, result: { articlesFound: 1, topArticleId: "kb-2103" }, latencyMs: 198, status: "success" },
+        { name: "send_response", arguments: { ticketId: "tkt_29512", responseTemplate: "feature_request_ack", roadmapLink: "https://roadmap.example.com/dark-mode" }, result: "Response sent successfully", latencyMs: 285, status: "success" },
+      ],
+      retrievedDocs: [
+        { source: "knowledge_base", title: "Product Roadmap FAQ", relevanceScore: 0.79, snippet: "Dark mode is planned for Q3 2026. Users can vote on feature priorities at roadmap.example.com." },
+      ],
+      decisions: [
+        { step: "classification", reasoning: "Feature request identified, not a support issue requiring troubleshooting", confidence: 0.87, outcome: "classified_as_general" },
+        { step: "resolution_strategy", reasoning: "Log feature request and provide roadmap link. Enterprise customer gets priority acknowledgment.", confidence: 0.92, outcome: "feature_request_logged" },
+      ],
+      policyChecks: [
+        { policyName: "PII Redaction", passed: true, details: "No PII detected", checkedAt: "2026-02-06T23:10:05Z" },
+        { policyName: "Professional Tone", passed: true, details: "Tone score: 0.91 (encouraging, professional)", checkedAt: "2026-02-06T23:10:06Z" },
+      ],
+      tokenUsage: { promptTokens: 980, completionTokens: 312, totalTokens: 1292 },
+    },
+    {
+      status: traceStatuses[3], costUsd: 0.091, latencyMs: 2780,
+      inputSummary: traceInputs[3], outputSummary: "Resolved: identified API version mismatch and provided migration guide",
+      modelId: "gpt-4.1", timeOffsetMs: 12 * 3600000,
+      promptInputs: { systemPrompt: "You are a tier-1 support agent. Resolve tickets using the knowledge base. Escalate billing disputes over $500 and legal issues.", userMessage: "Integration error with Salesforce API", contextVariables: { customerId: "cust_9e2a7b", tier: "enterprise", integrationName: "Salesforce", errorCode: "SF_API_VERSION_MISMATCH" } },
+      toolCalls: [
+        { name: "classify_ticket", arguments: { text: "Integration error with Salesforce API", categories: ["billing", "technical", "account", "general"] }, result: { category: "technical", confidence: 0.96 }, latencyMs: 140, status: "success" },
+        { name: "search_knowledge_base", arguments: { query: "Salesforce API integration error version mismatch", limit: 5 }, result: { articlesFound: 5, topArticleId: "kb-1876" }, latencyMs: 312, status: "success" },
+        { name: "route_ticket", arguments: { ticketId: "tkt_29588", department: "integrations", priority: "high" }, result: "Routed to integrations team", latencyMs: 88, status: "success" },
+        { name: "send_response", arguments: { ticketId: "tkt_29588", responseTemplate: "api_troubleshooting", articleId: "kb-1876" }, result: "Response sent successfully", latencyMs: 295, status: "success" },
+      ],
+      retrievedDocs: [
+        { source: "knowledge_base", title: "Salesforce API v58 Migration Guide", relevanceScore: 0.95, snippet: "API v55 deprecated as of Jan 2026. Update your integration to use v58 endpoints." },
+        { source: "knowledge_base", title: "Common Integration Errors", relevanceScore: 0.87, snippet: "SF_API_VERSION_MISMATCH indicates the connected app is using a deprecated API version." },
+        { source: "past_tickets", title: "Similar Issue: Acme Corp SF Integration", relevanceScore: 0.81, snippet: "Resolved by updating API version in connection settings and re-authenticating OAuth." },
+      ],
+      decisions: [
+        { step: "classification", reasoning: "Error code and 'integration error' keyword strongly indicate technical issue", confidence: 0.96, outcome: "classified_as_technical" },
+        { step: "severity_assessment", reasoning: "Enterprise customer with integration blocker, high priority routing", confidence: 0.93, outcome: "priority_high" },
+        { step: "resolution_strategy", reasoning: "Known issue with SF API deprecation, provide migration guide and route to integrations team", confidence: 0.90, outcome: "guide_and_route" },
+      ],
+      policyChecks: [
+        { policyName: "PII Redaction", passed: true, details: "API keys redacted from diagnostic info", checkedAt: "2026-02-06T19:22:41Z" },
+        { policyName: "Professional Tone", passed: true, details: "Tone score: 0.89 (technical, helpful)", checkedAt: "2026-02-06T19:22:42Z" },
+      ],
+      tokenUsage: { promptTokens: 2105, completionTokens: 623, totalTokens: 2728 },
+    },
+    {
+      status: traceStatuses[4], costUsd: 0.074, latencyMs: 2100,
+      inputSummary: traceInputs[4], outputSummary: "Resolved: verified identity and sent account recovery email to alternate address",
+      modelId: "gpt-4.1", timeOffsetMs: 18 * 3600000,
+      promptInputs: { systemPrompt: "You are a tier-1 support agent. Resolve tickets using the knowledge base. Escalate billing disputes over $500 and legal issues.", userMessage: "Account access recovery request", contextVariables: { customerId: "cust_3f8b1e", tier: "premium", lastLogin: "2026-01-15", mfaEnabled: true } },
+      toolCalls: [
+        { name: "classify_ticket", arguments: { text: "Account access recovery request", categories: ["billing", "technical", "account", "general"] }, result: { category: "account", confidence: 0.97 }, latencyMs: 132, status: "success" },
+        { name: "search_knowledge_base", arguments: { query: "account recovery MFA locked out", limit: 4 }, result: { articlesFound: 3, topArticleId: "kb-1102" }, latencyMs: 228, status: "success" },
+        { name: "send_response", arguments: { ticketId: "tkt_29644", responseTemplate: "account_recovery_mfa", verificationRequired: true }, result: "Response sent successfully", latencyMs: 310, status: "success" },
+      ],
+      retrievedDocs: [
+        { source: "knowledge_base", title: "Account Recovery with MFA", relevanceScore: 0.97, snippet: "For MFA-locked accounts, verify identity with security questions and send recovery to alternate email." },
+        { source: "support_policies", title: "Identity Verification Requirements", relevanceScore: 0.91, snippet: "Require 2 of 3: security questions, government ID, previous billing info." },
+      ],
+      decisions: [
+        { step: "classification", reasoning: "Account access recovery is a clear account-type issue", confidence: 0.97, outcome: "classified_as_account" },
+        { step: "identity_verification", reasoning: "MFA-enabled account requires enhanced verification before recovery", confidence: 0.95, outcome: "verification_required" },
+        { step: "resolution_strategy", reasoning: "Standard MFA recovery flow, premium tier gets expedited handling", confidence: 0.93, outcome: "mfa_recovery_flow" },
+      ],
+      policyChecks: [
+        { policyName: "PII Redaction", passed: true, details: "Email addresses partially masked in response", checkedAt: "2026-02-06T13:45:18Z" },
+        { policyName: "Escalation Path", passed: true, details: "No escalation triggers detected", checkedAt: "2026-02-06T13:45:19Z" },
+      ],
+      tokenUsage: { promptTokens: 1420, completionTokens: 398, totalTokens: 1818 },
+    },
+    {
+      status: traceStatuses[5], costUsd: 0.031, latencyMs: 950,
+      inputSummary: traceInputs[5], outputSummary: "Failed: ticket rejected due to missing required fields (subject, category)",
+      modelId: "gpt-4.1", timeOffsetMs: 24 * 3600000,
+      promptInputs: { systemPrompt: "You are a tier-1 support agent. Resolve tickets using the knowledge base. Escalate billing disputes over $500 and legal issues.", userMessage: "Malformed ticket - missing required fields", contextVariables: { customerId: "unknown", tier: "unknown", rawPayload: "{ subject: null, body: 'help' }" } },
+      toolCalls: [
+        { name: "classify_ticket", arguments: { text: "help", categories: ["billing", "technical", "account", "general"] }, result: { error: "Insufficient input for classification", code: "INVALID_INPUT" }, latencyMs: 120, status: "error" },
+      ],
+      retrievedDocs: [],
+      decisions: [
+        { step: "input_validation", reasoning: "Ticket missing subject and category fields, cannot proceed with standard flow", confidence: 0.99, outcome: "validation_failed" },
+        { step: "error_handling", reasoning: "Return structured error to upstream system with missing field details", confidence: 0.98, outcome: "reject_with_error" },
+      ],
+      policyChecks: [
+        { policyName: "PII Redaction", passed: true, details: "No PII in error response", checkedAt: "2026-02-06T07:33:55Z" },
+      ],
+      tokenUsage: { promptTokens: 580, completionTokens: 145, totalTokens: 725 },
+    },
+    {
+      status: traceStatuses[6], costUsd: 0.058, latencyMs: 1680,
+      inputSummary: traceInputs[6], outputSummary: "Resolved: provided return shipping label and RMA number RMA-48291",
+      modelId: "gpt-4.1", timeOffsetMs: 30 * 3600000,
+      promptInputs: { systemPrompt: "You are a tier-1 support agent. Resolve tickets using the knowledge base. Escalate billing disputes over $500 and legal issues.", userMessage: "Product return inquiry", contextVariables: { customerId: "cust_7d4e2a", tier: "standard", orderId: "ord_18472", orderDate: "2026-01-28", returnWindow: "30 days" } },
+      toolCalls: [
+        { name: "classify_ticket", arguments: { text: "Product return inquiry", categories: ["billing", "technical", "account", "general"] }, result: { category: "billing", confidence: 0.82 }, latencyMs: 148, status: "success" },
+        { name: "search_knowledge_base", arguments: { query: "product return policy RMA shipping label", limit: 4 }, result: { articlesFound: 3, topArticleId: "kb-567" }, latencyMs: 235, status: "success" },
+        { name: "send_response", arguments: { ticketId: "tkt_29701", responseTemplate: "return_initiated", rmaNumber: "RMA-48291" }, result: "Response sent with shipping label", latencyMs: 380, status: "success" },
+      ],
+      retrievedDocs: [
+        { source: "knowledge_base", title: "Return & Refund Policy", relevanceScore: 0.95, snippet: "Items eligible for return within 30 days of purchase. Free return shipping for defective items." },
+        { source: "knowledge_base", title: "How to Generate RMA", relevanceScore: 0.88, snippet: "System auto-generates RMA numbers. Include RMA on outer packaging for processing." },
+      ],
+      decisions: [
+        { step: "classification", reasoning: "Product return falls under billing/commerce category", confidence: 0.82, outcome: "classified_as_billing" },
+        { step: "return_eligibility", reasoning: "Order date 2026-01-28 is within 30-day return window", confidence: 0.99, outcome: "eligible_for_return" },
+        { step: "resolution_strategy", reasoning: "Generate RMA and provide prepaid shipping label per standard return flow", confidence: 0.96, outcome: "return_initiated" },
+      ],
+      policyChecks: [
+        { policyName: "PII Redaction", passed: true, details: "Shipping address not included in ticket response", checkedAt: "2026-02-06T01:12:40Z" },
+        { policyName: "Professional Tone", passed: true, details: "Tone score: 0.92 (empathetic, clear)", checkedAt: "2026-02-06T01:12:41Z" },
+      ],
+      tokenUsage: { promptTokens: 1310, completionTokens: 365, totalTokens: 1675 },
+    },
+    {
+      status: traceStatuses[7], costUsd: 0.044, latencyMs: 1250,
+      inputSummary: traceInputs[7], outputSummary: "Resolved: provided real-time tracking link and estimated delivery date Feb 10",
+      modelId: "gpt-4.1", timeOffsetMs: 36 * 3600000,
+      promptInputs: { systemPrompt: "You are a tier-1 support agent. Resolve tickets using the knowledge base. Escalate billing disputes over $500 and legal issues.", userMessage: "Shipping status check", contextVariables: { customerId: "cust_2b6f9c", tier: "standard", orderId: "ord_19283", trackingNumber: "1Z999AA10123456784" } },
+      toolCalls: [
+        { name: "classify_ticket", arguments: { text: "Shipping status check", categories: ["billing", "technical", "account", "general"] }, result: { category: "general", confidence: 0.85 }, latencyMs: 128, status: "success" },
+        { name: "search_knowledge_base", arguments: { query: "shipping tracking status delivery estimate", limit: 3 }, result: { articlesFound: 2, topArticleId: "kb-445" }, latencyMs: 195, status: "success" },
+        { name: "send_response", arguments: { ticketId: "tkt_29756", responseTemplate: "shipping_status", trackingUrl: "https://track.example.com/1Z999AA10123456784" }, result: "Response sent successfully", latencyMs: 275, status: "success" },
+      ],
+      retrievedDocs: [
+        { source: "knowledge_base", title: "Shipping & Delivery FAQ", relevanceScore: 0.90, snippet: "Standard shipping takes 5-7 business days. Track your order at track.example.com." },
+      ],
+      decisions: [
+        { step: "classification", reasoning: "Shipping inquiry is a general support question", confidence: 0.85, outcome: "classified_as_general" },
+        { step: "resolution_strategy", reasoning: "Provide tracking link and estimated delivery date from carrier API", confidence: 0.94, outcome: "tracking_info_provided" },
+      ],
+      policyChecks: [
+        { policyName: "PII Redaction", passed: true, details: "Full address not disclosed, only city-level location", checkedAt: "2026-02-05T19:28:10Z" },
+        { policyName: "Professional Tone", passed: true, details: "Tone score: 0.90 (informative, concise)", checkedAt: "2026-02-05T19:28:11Z" },
+      ],
+      tokenUsage: { promptTokens: 890, completionTokens: 268, totalTokens: 1158 },
+    },
+    {
+      status: traceStatuses[8], costUsd: 0.072, latencyMs: 1920,
+      inputSummary: traceInputs[8], outputSummary: "Blocked: PII detected in draft response, escalated for human review",
+      modelId: "gpt-4.1", timeOffsetMs: 42 * 3600000,
+      promptInputs: { systemPrompt: "You are a tier-1 support agent. Resolve tickets using the knowledge base. Escalate billing disputes over $500 and legal issues.", userMessage: "PII detected in response draft", contextVariables: { customerId: "cust_5a8c3d", tier: "enterprise", piiTypes: ["ssn", "credit_card"], draftId: "draft_7821" } },
+      toolCalls: [
+        { name: "classify_ticket", arguments: { text: "Customer requesting account details with SSN verification", categories: ["billing", "technical", "account", "general"] }, result: { category: "account", confidence: 0.91 }, latencyMs: 152, status: "success" },
+        { name: "search_knowledge_base", arguments: { query: "PII handling sensitive data customer verification", limit: 4 }, result: { articlesFound: 4, topArticleId: "kb-2001" }, latencyMs: 267, status: "success" },
+        { name: "route_ticket", arguments: { ticketId: "tkt_29812", department: "security", priority: "critical", reason: "pii_detected" }, result: "Escalated to security team", latencyMs: 105, status: "success" },
+      ],
+      retrievedDocs: [
+        { source: "support_policies", title: "PII Handling Policy", relevanceScore: 0.99, snippet: "Never include SSN, full credit card numbers, or government IDs in any customer-facing response." },
+        { source: "knowledge_base", title: "Secure Verification Procedures", relevanceScore: 0.92, snippet: "Use tokenized verification links instead of requesting sensitive data via ticket." },
+      ],
+      decisions: [
+        { step: "pii_detection", reasoning: "Draft response contained SSN pattern (XXX-XX-XXXX) and credit card number", confidence: 0.99, outcome: "pii_detected" },
+        { step: "escalation_decision", reasoning: "PII in response is a hard block per policy, must escalate to human for safe handling", confidence: 1.0, outcome: "escalate_to_human" },
+      ],
+      policyChecks: [
+        { policyName: "PII Redaction", passed: false, details: "SSN pattern detected in response draft. Credit card number found. Blocked.", checkedAt: "2026-02-05T13:55:02Z" },
+        { policyName: "Escalation Path", passed: true, details: "Correctly escalated to security team for PII incident", checkedAt: "2026-02-05T13:55:03Z" },
+      ],
+      tokenUsage: { promptTokens: 1680, completionTokens: 412, totalTokens: 2092 },
+    },
+    {
+      status: traceStatuses[9], costUsd: 0.079, latencyMs: 2450,
+      inputSummary: traceInputs[9], outputSummary: "Resolved: provided license comparison table and upgrade pricing for Enterprise plan",
+      modelId: "gpt-4.1", timeOffsetMs: 48 * 3600000,
+      promptInputs: { systemPrompt: "You are a tier-1 support agent. Resolve tickets using the knowledge base. Escalate billing disputes over $500 and legal issues.", userMessage: "License upgrade consultation", contextVariables: { customerId: "cust_6e1d4b", tier: "standard", currentPlan: "pro_monthly", interestedIn: "enterprise" } },
+      toolCalls: [
+        { name: "classify_ticket", arguments: { text: "License upgrade consultation", categories: ["billing", "technical", "account", "general"] }, result: { category: "billing", confidence: 0.88 }, latencyMs: 138, status: "success" },
+        { name: "search_knowledge_base", arguments: { query: "license upgrade enterprise plan pricing comparison", limit: 5 }, result: { articlesFound: 4, topArticleId: "kb-330" }, latencyMs: 252, status: "success" },
+        { name: "route_ticket", arguments: { ticketId: "tkt_29868", department: "sales", priority: "normal" }, result: "Routed to sales team", latencyMs: 92, status: "success" },
+        { name: "send_response", arguments: { ticketId: "tkt_29868", responseTemplate: "upgrade_consultation", comparisonTable: true }, result: "Response sent with pricing details", latencyMs: 345, status: "success" },
+      ],
+      retrievedDocs: [
+        { source: "knowledge_base", title: "Plan Comparison Guide", relevanceScore: 0.96, snippet: "Enterprise plan includes unlimited users, SSO, dedicated support, and custom integrations." },
+        { source: "knowledge_base", title: "Enterprise Pricing", relevanceScore: 0.93, snippet: "Enterprise starts at $499/mo for up to 50 users. Volume discounts available for 100+ seats." },
+        { source: "knowledge_base", title: "Upgrade Process", relevanceScore: 0.85, snippet: "Upgrades are prorated. Contact sales for enterprise customization and annual billing options." },
+      ],
+      decisions: [
+        { step: "classification", reasoning: "License upgrade inquiry relates to billing and sales", confidence: 0.88, outcome: "classified_as_billing" },
+        { step: "resolution_strategy", reasoning: "Provide comparison info and route to sales for enterprise consultation", confidence: 0.94, outcome: "info_and_sales_route" },
+      ],
+      policyChecks: [
+        { policyName: "PII Redaction", passed: true, details: "No PII detected in response", checkedAt: "2026-02-05T07:42:30Z" },
+        { policyName: "Professional Tone", passed: true, details: "Tone score: 0.94 (consultative, professional)", checkedAt: "2026-02-05T07:42:31Z" },
+        { policyName: "No Legal Advice", passed: true, details: "Pricing presented as informational, no contractual commitments made", checkedAt: "2026-02-05T07:42:31Z" },
+      ],
+      tokenUsage: { promptTokens: 1750, completionTokens: 520, totalTokens: 2270 },
+    },
+  ];
+
+  for (const trace of supportTraceData) {
+    const startedAt = new Date(Date.now() - trace.timeOffsetMs);
+    const endedAt = new Date(startedAt.getTime() + trace.latencyMs);
     await db.insert(runTraces).values({
       agentId: agent1.id,
       environment: "prod",
-      status: traceStatuses[i],
-      costUsd: parseFloat((Math.random() * 0.1 + 0.02).toFixed(4)),
-      latencyMs: Math.floor(Math.random() * 3000 + 800),
-      inputSummary: traceInputs[i],
-      outputSummary: traceStatuses[i] === "completed" ? "Resolved with KB article reference" : "Escalated to human",
+      status: trace.status,
+      costUsd: trace.costUsd,
+      latencyMs: trace.latencyMs,
+      inputSummary: trace.inputSummary,
+      outputSummary: trace.outputSummary,
+      modelId: trace.modelId,
+      promptInputs: trace.promptInputs,
+      toolCalls: trace.toolCalls,
+      retrievedDocs: trace.retrievedDocs,
+      decisions: trace.decisions,
+      policyChecks: trace.policyChecks,
+      tokenUsage: trace.tokenUsage,
+      startedAt,
+      endedAt,
     });
   }
 
-  for (let i = 0; i < 6; i++) {
+  // Invoice Extractor — 6 traces
+  const invoiceTraceData = [
+    {
+      status: "completed", costUsd: 0.045, latencyMs: 3100,
+      inputSummary: "Invoice #10000 - Acme Corp monthly services payment",
+      outputSummary: "Extracted 12 fields with 99.1% confidence, matched PO-2024-0892, created SF record",
+      modelId: "gpt-4o", timeOffsetMs: 4 * 3600000,
+      promptInputs: { systemPrompt: "Extract all structured fields from the provided invoice document. Validate against vendor database and match purchase orders.", userMessage: "Process invoice from Acme Corp for $8,450.00", contextVariables: { documentType: "pdf", pageCount: 2, vendorId: "vnd_acme_001", currency: "USD" } },
+      toolCalls: [
+        { name: "extract_fields", arguments: { documentId: "doc_28401", schema: "InvoiceV2", ocrModel: "gpt-4o" }, result: { fieldsExtracted: 12, confidence: 0.991, invoiceNumber: "INV-2026-0147", amount: 8450.00 }, latencyMs: 1450, status: "success" },
+        { name: "validate_vendor", arguments: { vendorName: "Acme Corp", taxId: "XX-XXXXXXX" }, result: { verified: true, vendorId: "vnd_acme_001", riskLevel: "low" }, latencyMs: 380, status: "success" },
+        { name: "match_po", arguments: { vendorId: "vnd_acme_001", amount: 8450.00, dateRange: "2026-01" }, result: { matched: true, poNumber: "PO-2024-0892", variance: 0.0 }, latencyMs: 290, status: "success" },
+        { name: "create_salesforce_record", arguments: { type: "Invoice__c", invoiceNumber: "INV-2026-0147", amount: 8450.00, vendorId: "vnd_acme_001" }, result: { recordId: "a0B5e00000XYZ123", status: "created" }, latencyMs: 520, status: "success" },
+      ],
+      retrievedDocs: [
+        { source: "vendor_database", title: "Acme Corp Vendor Profile", relevanceScore: 0.98, snippet: "Verified vendor since 2022. Payment terms: Net 30. Primary contact: accounts@acme.com" },
+        { source: "invoice_templates", title: "Acme Corp Invoice Template", relevanceScore: 0.94, snippet: "Standard layout: header with logo, itemized table, tax line, total at bottom right." },
+      ],
+      decisions: [
+        { step: "field_extraction", reasoning: "All 12 required fields extracted with high confidence from clean PDF", confidence: 0.991, outcome: "extraction_complete" },
+        { step: "vendor_validation", reasoning: "Acme Corp matched to known vendor with valid tax ID", confidence: 0.99, outcome: "vendor_verified" },
+        { step: "po_matching", reasoning: "Amount exactly matches PO-2024-0892 with zero variance", confidence: 1.0, outcome: "po_matched" },
+        { step: "approval_routing", reasoning: "Amount $8,450 under $10,000 threshold, standard approval flow", confidence: 0.98, outcome: "standard_approval" },
+      ],
+      policyChecks: [
+        { policyName: "Financial Accuracy", passed: true, details: "Extracted amount $8,450.00 matches source document", checkedAt: "2026-02-07T03:15:22Z" },
+        { policyName: "Audit Trail", passed: true, details: "All extraction decisions logged with confidence scores", checkedAt: "2026-02-07T03:15:23Z" },
+      ],
+      tokenUsage: { promptTokens: 3200, completionTokens: 890, totalTokens: 4090 },
+    },
+    {
+      status: "completed", costUsd: 0.052, latencyMs: 3650,
+      inputSummary: "Invoice #10001 - GlobalTech quarterly license renewal",
+      outputSummary: "Extracted 14 fields with 97.8% confidence, matched PO-2024-1105, routed to CFO for approval (>$10k)",
+      modelId: "gpt-4o", timeOffsetMs: 10 * 3600000,
+      promptInputs: { systemPrompt: "Extract all structured fields from the provided invoice document. Validate against vendor database and match purchase orders.", userMessage: "Process invoice from GlobalTech Solutions for $24,500.00", contextVariables: { documentType: "pdf", pageCount: 3, vendorId: "vnd_globaltech_042", currency: "USD" } },
+      toolCalls: [
+        { name: "extract_fields", arguments: { documentId: "doc_28455", schema: "InvoiceV2", ocrModel: "gpt-4o" }, result: { fieldsExtracted: 14, confidence: 0.978, invoiceNumber: "GT-INV-8821", amount: 24500.00 }, latencyMs: 1680, status: "success" },
+        { name: "validate_vendor", arguments: { vendorName: "GlobalTech Solutions", taxId: "YY-YYYYYYY" }, result: { verified: true, vendorId: "vnd_globaltech_042", riskLevel: "low" }, latencyMs: 410, status: "success" },
+        { name: "match_po", arguments: { vendorId: "vnd_globaltech_042", amount: 24500.00, dateRange: "2026-Q1" }, result: { matched: true, poNumber: "PO-2024-1105", variance: 0.0 }, latencyMs: 310, status: "success" },
+        { name: "create_salesforce_record", arguments: { type: "Invoice__c", invoiceNumber: "GT-INV-8821", amount: 24500.00, vendorId: "vnd_globaltech_042", approvalRequired: true }, result: { recordId: "a0B5e00000ABC456", status: "pending_approval" }, latencyMs: 580, status: "success" },
+      ],
+      retrievedDocs: [
+        { source: "vendor_database", title: "GlobalTech Solutions Vendor Profile", relevanceScore: 0.97, snippet: "Enterprise software vendor. Payment terms: Net 45. Annual contract renewal in Q1." },
+      ],
+      decisions: [
+        { step: "field_extraction", reasoning: "14 fields extracted from multi-page PDF, line items parsed correctly", confidence: 0.978, outcome: "extraction_complete" },
+        { step: "vendor_validation", reasoning: "GlobalTech matched to existing vendor record with valid credentials", confidence: 0.98, outcome: "vendor_verified" },
+        { step: "approval_routing", reasoning: "Amount $24,500 exceeds $10,000 threshold, routing to CFO", confidence: 0.99, outcome: "cfo_approval_required" },
+      ],
+      policyChecks: [
+        { policyName: "Financial Accuracy", passed: true, details: "Extracted total matches sum of line items", checkedAt: "2026-02-06T21:08:15Z" },
+        { policyName: "PII Redaction", passed: true, details: "Bank account details redacted from logs", checkedAt: "2026-02-06T21:08:16Z" },
+        { policyName: "Audit Trail", passed: true, details: "Full extraction trace recorded", checkedAt: "2026-02-06T21:08:16Z" },
+      ],
+      tokenUsage: { promptTokens: 4100, completionTokens: 1120, totalTokens: 5220 },
+    },
+    {
+      status: "completed", costUsd: 0.038, latencyMs: 2800,
+      inputSummary: "Invoice #10002 - Office Supplies Direct recurring order",
+      outputSummary: "Extracted 10 fields with 98.5% confidence, matched PO-2025-0334, auto-approved under $5k",
+      modelId: "gpt-4o", timeOffsetMs: 16 * 3600000,
+      promptInputs: { systemPrompt: "Extract all structured fields from the provided invoice document. Validate against vendor database and match purchase orders.", userMessage: "Process invoice from Office Supplies Direct for $1,247.50", contextVariables: { documentType: "pdf", pageCount: 1, vendorId: "vnd_osd_118", currency: "USD" } },
+      toolCalls: [
+        { name: "extract_fields", arguments: { documentId: "doc_28510", schema: "InvoiceV2", ocrModel: "gpt-4o" }, result: { fieldsExtracted: 10, confidence: 0.985, invoiceNumber: "OSD-67442", amount: 1247.50 }, latencyMs: 1100, status: "success" },
+        { name: "validate_vendor", arguments: { vendorName: "Office Supplies Direct", taxId: "ZZ-ZZZZZZZ" }, result: { verified: true, vendorId: "vnd_osd_118", riskLevel: "low" }, latencyMs: 340, status: "success" },
+        { name: "match_po", arguments: { vendorId: "vnd_osd_118", amount: 1247.50, dateRange: "2026-02" }, result: { matched: true, poNumber: "PO-2025-0334", variance: 0.0 }, latencyMs: 260, status: "success" },
+        { name: "create_salesforce_record", arguments: { type: "Invoice__c", invoiceNumber: "OSD-67442", amount: 1247.50, vendorId: "vnd_osd_118" }, result: { recordId: "a0B5e00000DEF789", status: "auto_approved" }, latencyMs: 480, status: "success" },
+      ],
+      retrievedDocs: [
+        { source: "vendor_database", title: "Office Supplies Direct Profile", relevanceScore: 0.96, snippet: "Recurring vendor, monthly orders. Payment terms: Net 15. Auto-approve threshold: $5,000." },
+      ],
+      decisions: [
+        { step: "field_extraction", reasoning: "Simple single-page invoice, all standard fields present", confidence: 0.985, outcome: "extraction_complete" },
+        { step: "approval_routing", reasoning: "Amount $1,247.50 under $5,000 auto-approve threshold for recurring vendor", confidence: 0.99, outcome: "auto_approved" },
+      ],
+      policyChecks: [
+        { policyName: "Financial Accuracy", passed: true, details: "Amount validated against line items and tax calculation", checkedAt: "2026-02-06T15:30:44Z" },
+        { policyName: "Audit Trail", passed: true, details: "Auto-approval logged with justification", checkedAt: "2026-02-06T15:30:45Z" },
+      ],
+      tokenUsage: { promptTokens: 2400, completionTokens: 650, totalTokens: 3050 },
+    },
+    {
+      status: "completed", costUsd: 0.061, latencyMs: 4200,
+      inputSummary: "Invoice #10003 - New vendor CloudScale Infrastructure first invoice",
+      outputSummary: "Extracted 11 fields with 95.2% confidence, new vendor flagged for finance lead review",
+      modelId: "gpt-4o", timeOffsetMs: 22 * 3600000,
+      promptInputs: { systemPrompt: "Extract all structured fields from the provided invoice document. Validate against vendor database and match purchase orders.", userMessage: "Process invoice from CloudScale Infrastructure for $15,780.00", contextVariables: { documentType: "png", pageCount: 1, vendorId: null, currency: "USD" } },
+      toolCalls: [
+        { name: "extract_fields", arguments: { documentId: "doc_28567", schema: "InvoiceV2", ocrModel: "gpt-4o" }, result: { fieldsExtracted: 11, confidence: 0.952, invoiceNumber: "CSI-2026-001", amount: 15780.00 }, latencyMs: 1890, status: "success" },
+        { name: "validate_vendor", arguments: { vendorName: "CloudScale Infrastructure", taxId: "AA-AAAAAAA" }, result: { verified: false, reason: "new_vendor_not_in_system", riskLevel: "medium" }, latencyMs: 450, status: "success" },
+        { name: "match_po", arguments: { vendorName: "CloudScale Infrastructure", amount: 15780.00, dateRange: "2026-01" }, result: { matched: false, reason: "no_matching_po_found" }, latencyMs: 320, status: "success" },
+      ],
+      retrievedDocs: [
+        { source: "invoice_templates", title: "Unknown Vendor Template Matching", relevanceScore: 0.72, snippet: "When vendor is not in the system, flag for manual review. Collect W-9 before payment." },
+      ],
+      decisions: [
+        { step: "field_extraction", reasoning: "Image-based invoice required enhanced OCR, slightly lower confidence on handwritten fields", confidence: 0.952, outcome: "extraction_complete" },
+        { step: "vendor_validation", reasoning: "Vendor not found in database, first-time invoice, requires onboarding", confidence: 0.95, outcome: "new_vendor_flagged" },
+        { step: "po_matching", reasoning: "No matching PO found for this vendor, manual matching required", confidence: 0.90, outcome: "no_po_match" },
+        { step: "approval_routing", reasoning: "New vendor + no PO + amount over $10k = finance lead review required", confidence: 0.99, outcome: "finance_lead_review" },
+      ],
+      policyChecks: [
+        { policyName: "Financial Accuracy", passed: true, details: "Extracted amount consistent across invoice locations", checkedAt: "2026-02-06T09:44:18Z" },
+        { policyName: "Audit Trail", passed: true, details: "New vendor flag and missing PO documented", checkedAt: "2026-02-06T09:44:19Z" },
+      ],
+      tokenUsage: { promptTokens: 3800, completionTokens: 980, totalTokens: 4780 },
+    },
+    {
+      status: "completed", costUsd: 0.041, latencyMs: 2950,
+      inputSummary: "Invoice #10004 - TechParts Inc hardware components",
+      outputSummary: "Extracted 13 fields with 98.9% confidence, PO matched with 2.1% variance flagged",
+      modelId: "gpt-4o", timeOffsetMs: 28 * 3600000,
+      promptInputs: { systemPrompt: "Extract all structured fields from the provided invoice document. Validate against vendor database and match purchase orders.", userMessage: "Process invoice from TechParts Inc for $6,230.75", contextVariables: { documentType: "pdf", pageCount: 2, vendorId: "vnd_techparts_067", currency: "USD" } },
+      toolCalls: [
+        { name: "extract_fields", arguments: { documentId: "doc_28612", schema: "InvoiceV2", ocrModel: "gpt-4o" }, result: { fieldsExtracted: 13, confidence: 0.989, invoiceNumber: "TP-88921", amount: 6230.75 }, latencyMs: 1320, status: "success" },
+        { name: "validate_vendor", arguments: { vendorName: "TechParts Inc", taxId: "BB-BBBBBBB" }, result: { verified: true, vendorId: "vnd_techparts_067", riskLevel: "low" }, latencyMs: 360, status: "success" },
+        { name: "match_po", arguments: { vendorId: "vnd_techparts_067", amount: 6230.75, dateRange: "2026-01" }, result: { matched: true, poNumber: "PO-2025-0781", variance: 0.021, originalAmount: 6100.00 }, latencyMs: 280, status: "success" },
+        { name: "create_salesforce_record", arguments: { type: "Invoice__c", invoiceNumber: "TP-88921", amount: 6230.75, vendorId: "vnd_techparts_067", varianceFlag: true }, result: { recordId: "a0B5e00000GHI012", status: "created_with_flag" }, latencyMs: 510, status: "success" },
+      ],
+      retrievedDocs: [
+        { source: "vendor_database", title: "TechParts Inc Vendor Profile", relevanceScore: 0.95, snippet: "Hardware components vendor. Payment terms: Net 30. Variance tolerance: 5%." },
+      ],
+      decisions: [
+        { step: "field_extraction", reasoning: "Clean multi-page PDF with itemized hardware components", confidence: 0.989, outcome: "extraction_complete" },
+        { step: "po_matching", reasoning: "PO matched but 2.1% variance ($130.75) due to shipping surcharge, within 5% tolerance", confidence: 0.94, outcome: "po_matched_with_variance" },
+        { step: "approval_routing", reasoning: "Variance within tolerance but flagged for visibility. Standard approval flow.", confidence: 0.96, outcome: "standard_with_flag" },
+      ],
+      policyChecks: [
+        { policyName: "Financial Accuracy", passed: true, details: "Variance 2.1% within 5% tolerance, shipping surcharge identified", checkedAt: "2026-02-05T23:18:05Z" },
+        { policyName: "Audit Trail", passed: true, details: "Variance details and surcharge explanation logged", checkedAt: "2026-02-05T23:18:06Z" },
+      ],
+      tokenUsage: { promptTokens: 3450, completionTokens: 870, totalTokens: 4320 },
+    },
+    {
+      status: "failed", costUsd: 0.028, latencyMs: 1800,
+      inputSummary: "Invoice #10005 - Corrupted scan from DataServices Ltd",
+      outputSummary: "Failed: OCR extraction failed on corrupted scan, only 4 of 12 required fields extracted (33% confidence)",
+      modelId: "gpt-4o", timeOffsetMs: 34 * 3600000,
+      promptInputs: { systemPrompt: "Extract all structured fields from the provided invoice document. Validate against vendor database and match purchase orders.", userMessage: "Process invoice from DataServices Ltd", contextVariables: { documentType: "jpg", pageCount: 1, vendorId: "vnd_dataservices_091", currency: "USD", scanQuality: "poor" } },
+      toolCalls: [
+        { name: "extract_fields", arguments: { documentId: "doc_28670", schema: "InvoiceV2", ocrModel: "gpt-4o" }, result: { fieldsExtracted: 4, confidence: 0.33, error: "Low quality scan - multiple fields unreadable", invoiceNumber: null, amount: null }, latencyMs: 1420, status: "error" },
+      ],
+      retrievedDocs: [],
+      decisions: [
+        { step: "field_extraction", reasoning: "Corrupted/low-quality scan resulted in only 4 of 12 fields extracted, below 80% minimum threshold", confidence: 0.33, outcome: "extraction_failed" },
+        { step: "error_handling", reasoning: "Confidence below minimum threshold, requesting rescan from submitter", confidence: 0.99, outcome: "rescan_requested" },
+      ],
+      policyChecks: [
+        { policyName: "Financial Accuracy", passed: false, details: "Cannot verify extracted amount against source - document unreadable", checkedAt: "2026-02-05T17:05:30Z" },
+        { policyName: "Audit Trail", passed: true, details: "Extraction failure logged with scan quality metrics", checkedAt: "2026-02-05T17:05:31Z" },
+      ],
+      tokenUsage: { promptTokens: 2800, completionTokens: 420, totalTokens: 3220 },
+    },
+  ];
+
+  for (const trace of invoiceTraceData) {
+    const startedAt = new Date(Date.now() - trace.timeOffsetMs);
+    const endedAt = new Date(startedAt.getTime() + trace.latencyMs);
     await db.insert(runTraces).values({
       agentId: agent2.id,
       environment: "prod",
-      status: i < 5 ? "completed" : "failed",
-      costUsd: parseFloat((Math.random() * 0.06 + 0.01).toFixed(4)),
-      latencyMs: Math.floor(Math.random() * 4000 + 1500),
-      inputSummary: `Invoice #${10000 + i} - Vendor payment processing`,
-      outputSummary: "Data extracted and routed for approval",
+      status: trace.status,
+      costUsd: trace.costUsd,
+      latencyMs: trace.latencyMs,
+      inputSummary: trace.inputSummary,
+      outputSummary: trace.outputSummary,
+      modelId: trace.modelId,
+      promptInputs: trace.promptInputs,
+      toolCalls: trace.toolCalls,
+      retrievedDocs: trace.retrievedDocs,
+      decisions: trace.decisions,
+      policyChecks: trace.policyChecks,
+      tokenUsage: trace.tokenUsage,
+      startedAt,
+      endedAt,
+    });
+  }
+
+  // Lead Scorer — 3 traces
+  const leadScorerTraces = [
+    {
+      status: "completed", costUsd: 0.089, latencyMs: 4200,
+      inputSummary: "Inbound lead: Sarah Chen, VP Engineering at Nexus Dynamics (Series B, 120 employees)",
+      outputSummary: "Lead scored 87/100 (Hot), enriched with firmographics, routed to enterprise sales rep",
+      modelId: "claude-3.5-sonnet", timeOffsetMs: 6 * 3600000,
+      promptInputs: { systemPrompt: "Score inbound leads based on ICP fit, firmographic data, and behavioral signals. Provide detailed reasoning for each score component.", userMessage: "Score and route new lead: Sarah Chen from Nexus Dynamics", contextVariables: { leadSource: "demo_request", companySize: 120, fundingStage: "Series B", industry: "SaaS", title: "VP Engineering" } },
+      toolCalls: [
+        { name: "enrich_company", arguments: { companyName: "Nexus Dynamics", domain: "nexusdynamics.io" }, result: { employees: 120, revenue: "$18M ARR", funding: "Series B ($35M)", industry: "B2B SaaS", techStack: ["AWS", "React", "Python"] }, latencyMs: 1850, status: "success" },
+        { name: "check_crm", arguments: { email: "sarah.chen@nexusdynamics.io", companyName: "Nexus Dynamics" }, result: { existingAccount: false, previousInteractions: 0, competitorCustomer: false }, latencyMs: 620, status: "success" },
+        { name: "score_lead", arguments: { icpProfile: "enterprise_saas_v3", firmographics: { employees: 120, revenue: "18M", funding: "Series B" }, behavioral: { source: "demo_request", pageViews: 12, contentDownloads: 2 } }, result: { totalScore: 87, components: { icpFit: 92, timing: 85, engagement: 78 } }, latencyMs: 980, status: "success" },
+      ],
+      retrievedDocs: [
+        { source: "icp_profiles", title: "Enterprise SaaS ICP v3", relevanceScore: 0.94, snippet: "Ideal profile: 50-500 employees, Series A-C, B2B SaaS, VP+ decision maker." },
+        { source: "win_loss_reports", title: "Q4 2025 Win Analysis", relevanceScore: 0.82, snippet: "Companies in 100-200 employee range converted at 28% rate, highest among segments." },
+      ],
+      decisions: [
+        { step: "icp_scoring", reasoning: "120 employees (ideal range), Series B funded, B2B SaaS matches ICP perfectly. VP Engineering is a key decision maker.", confidence: 0.94, outcome: "icp_fit_high" },
+        { step: "lead_classification", reasoning: "Score 87 exceeds hot threshold of 80. Demo request shows strong buying intent.", confidence: 0.91, outcome: "classified_hot" },
+        { step: "routing", reasoning: "Enterprise-grade lead with high score, route to dedicated enterprise sales rep", confidence: 0.95, outcome: "route_enterprise_sales" },
+      ],
+      policyChecks: [
+        { policyName: "Score Explainability", passed: true, details: "Score breakdown provided: ICP Fit 92, Timing 85, Engagement 78", checkedAt: "2026-02-07T01:22:10Z" },
+        { policyName: "Data Freshness", passed: true, details: "Enrichment data fetched live, less than 1 hour old", checkedAt: "2026-02-07T01:22:11Z" },
+      ],
+      tokenUsage: { promptTokens: 1890, completionTokens: 545, totalTokens: 2435 },
+    },
+    {
+      status: "completed", costUsd: 0.072, latencyMs: 3800,
+      inputSummary: "Inbound lead: Mike Rodriguez, Marketing Manager at BrightPath (Seed, 25 employees)",
+      outputSummary: "Lead scored 42/100 (Nurture), small company below ICP threshold, added to nurture sequence",
+      modelId: "claude-3.5-sonnet", timeOffsetMs: 15 * 3600000,
+      promptInputs: { systemPrompt: "Score inbound leads based on ICP fit, firmographic data, and behavioral signals. Provide detailed reasoning for each score component.", userMessage: "Score and route new lead: Mike Rodriguez from BrightPath", contextVariables: { leadSource: "blog_signup", companySize: 25, fundingStage: "Seed", industry: "EdTech", title: "Marketing Manager" } },
+      toolCalls: [
+        { name: "enrich_company", arguments: { companyName: "BrightPath", domain: "brightpath.co" }, result: { employees: 25, revenue: "$1.2M ARR", funding: "Seed ($2M)", industry: "EdTech", techStack: ["Heroku", "Rails"] }, latencyMs: 1920, status: "success" },
+        { name: "check_crm", arguments: { email: "mike@brightpath.co", companyName: "BrightPath" }, result: { existingAccount: false, previousInteractions: 0, competitorCustomer: false }, latencyMs: 580, status: "success" },
+        { name: "score_lead", arguments: { icpProfile: "enterprise_saas_v3", firmographics: { employees: 25, revenue: "1.2M", funding: "Seed" }, behavioral: { source: "blog_signup", pageViews: 3, contentDownloads: 0 } }, result: { totalScore: 42, components: { icpFit: 35, timing: 48, engagement: 45 } }, latencyMs: 850, status: "success" },
+      ],
+      retrievedDocs: [
+        { source: "icp_profiles", title: "Enterprise SaaS ICP v3", relevanceScore: 0.94, snippet: "Ideal profile: 50-500 employees, Series A-C, B2B SaaS, VP+ decision maker." },
+      ],
+      decisions: [
+        { step: "icp_scoring", reasoning: "25 employees below 50 minimum ICP threshold. Seed stage too early. EdTech not core vertical.", confidence: 0.88, outcome: "icp_fit_low" },
+        { step: "lead_classification", reasoning: "Score 42 below warm threshold of 50. Blog signup is low-intent signal.", confidence: 0.90, outcome: "classified_nurture" },
+        { step: "routing", reasoning: "Low-score lead added to automated nurture email sequence for future re-engagement", confidence: 0.93, outcome: "route_nurture_sequence" },
+      ],
+      policyChecks: [
+        { policyName: "Score Explainability", passed: true, details: "Score breakdown provided: ICP Fit 35, Timing 48, Engagement 45", checkedAt: "2026-02-06T16:40:05Z" },
+        { policyName: "Data Freshness", passed: true, details: "Enrichment data is current", checkedAt: "2026-02-06T16:40:06Z" },
+      ],
+      tokenUsage: { promptTokens: 1650, completionTokens: 480, totalTokens: 2130 },
+    },
+    {
+      status: "completed", costUsd: 0.095, latencyMs: 4500,
+      inputSummary: "Inbound lead: Priya Sharma, CTO at Quantum Analytics (Series A, 85 employees)",
+      outputSummary: "Lead scored 74/100 (Warm), strong ICP fit but competitor customer, flagged for strategic outreach",
+      modelId: "claude-3.5-sonnet", timeOffsetMs: 26 * 3600000,
+      promptInputs: { systemPrompt: "Score inbound leads based on ICP fit, firmographic data, and behavioral signals. Provide detailed reasoning for each score component.", userMessage: "Score and route new lead: Priya Sharma from Quantum Analytics", contextVariables: { leadSource: "pricing_page", companySize: 85, fundingStage: "Series A", industry: "Data Analytics", title: "CTO" } },
+      toolCalls: [
+        { name: "enrich_company", arguments: { companyName: "Quantum Analytics", domain: "quantumanalytics.com" }, result: { employees: 85, revenue: "$9M ARR", funding: "Series A ($15M)", industry: "Data Analytics", techStack: ["GCP", "Python", "Snowflake"] }, latencyMs: 2100, status: "success" },
+        { name: "check_crm", arguments: { email: "priya@quantumanalytics.com", companyName: "Quantum Analytics" }, result: { existingAccount: false, previousInteractions: 1, competitorCustomer: true, competitor: "CompetitorX" }, latencyMs: 650, status: "success" },
+        { name: "score_lead", arguments: { icpProfile: "enterprise_saas_v3", firmographics: { employees: 85, revenue: "9M", funding: "Series A" }, behavioral: { source: "pricing_page", pageViews: 8, contentDownloads: 1 }, modifiers: { competitorCustomer: true } }, result: { totalScore: 74, components: { icpFit: 82, timing: 75, engagement: 68, competitorPenalty: -5 } }, latencyMs: 1050, status: "success" },
+      ],
+      retrievedDocs: [
+        { source: "icp_profiles", title: "Enterprise SaaS ICP v3", relevanceScore: 0.94, snippet: "Ideal profile: 50-500 employees, Series A-C, B2B SaaS, VP+ decision maker." },
+        { source: "win_loss_reports", title: "CompetitorX Displacement Playbook", relevanceScore: 0.88, snippet: "Competitor displacement requires ROI-focused messaging. Average sales cycle: 45 days longer." },
+      ],
+      decisions: [
+        { step: "icp_scoring", reasoning: "85 employees in ideal range, Series A funded, CTO is key buyer. Industry adjacent to core vertical.", confidence: 0.89, outcome: "icp_fit_good" },
+        { step: "competitor_assessment", reasoning: "Currently using CompetitorX, pricing page visit suggests evaluating switch", confidence: 0.85, outcome: "competitor_displacement_opportunity" },
+        { step: "lead_classification", reasoning: "Score 74 in warm range (50-80). Good fit but competitor displacement adds complexity.", confidence: 0.87, outcome: "classified_warm" },
+        { step: "routing", reasoning: "Flag for strategic sales outreach with competitor displacement playbook", confidence: 0.92, outcome: "route_strategic_sales" },
+      ],
+      policyChecks: [
+        { policyName: "Score Explainability", passed: true, details: "Score breakdown with competitor modifier: ICP 82, Timing 75, Engagement 68, Competitor -5", checkedAt: "2026-02-05T21:15:33Z" },
+        { policyName: "Data Freshness", passed: true, details: "CRM data shows 1 prior interaction from 3 months ago", checkedAt: "2026-02-05T21:15:34Z" },
+      ],
+      tokenUsage: { promptTokens: 2200, completionTokens: 620, totalTokens: 2820 },
+    },
+  ];
+
+  for (const trace of leadScorerTraces) {
+    const startedAt = new Date(Date.now() - trace.timeOffsetMs);
+    const endedAt = new Date(startedAt.getTime() + trace.latencyMs);
+    await db.insert(runTraces).values({
+      agentId: agent3.id,
+      environment: "prod",
+      status: trace.status,
+      costUsd: trace.costUsd,
+      latencyMs: trace.latencyMs,
+      inputSummary: trace.inputSummary,
+      outputSummary: trace.outputSummary,
+      modelId: trace.modelId,
+      promptInputs: trace.promptInputs,
+      toolCalls: trace.toolCalls,
+      retrievedDocs: trace.retrievedDocs,
+      decisions: trace.decisions,
+      policyChecks: trace.policyChecks,
+      tokenUsage: trace.tokenUsage,
+      startedAt,
+      endedAt,
+    });
+  }
+
+  // Content Moderator — 3 traces
+  const moderatorTraces = [
+    {
+      status: "completed", costUsd: 0.008, latencyMs: 380,
+      inputSummary: "User post: Product review with mild profanity in gaming forum",
+      outputSummary: "Classified as borderline, profanity filter applied, post approved with edit",
+      modelId: "gpt-4o-mini", timeOffsetMs: 2 * 3600000,
+      promptInputs: { systemPrompt: "Classify user-generated content for policy violations. Categories: safe, borderline, violation, severe. Apply content policies strictly.", userMessage: "Review user post for content policy compliance", contextVariables: { contentType: "forum_post", forumCategory: "gaming", userId: "usr_gaming_4821", contentLength: 245, reportCount: 0 } },
+      toolCalls: [
+        { name: "classify_content", arguments: { text: "[redacted user post]", categories: ["safe", "borderline", "violation", "severe"], context: "gaming_forum" }, result: { classification: "borderline", confidence: 0.87, flags: ["mild_profanity"] }, latencyMs: 145, status: "success" },
+        { name: "check_toxicity", arguments: { text: "[redacted user post]", threshold: 0.7 }, result: { toxicityScore: 0.42, categories: { profanity: 0.65, threat: 0.02, harassment: 0.05 } }, latencyMs: 98, status: "success" },
+      ],
+      retrievedDocs: [],
+      decisions: [
+        { step: "content_classification", reasoning: "Mild profanity detected but in gaming context where community standards are more relaxed", confidence: 0.87, outcome: "borderline" },
+        { step: "action_decision", reasoning: "Toxicity score 0.42 below 0.7 auto-remove threshold. Apply profanity filter and approve.", confidence: 0.91, outcome: "approve_with_filter" },
+      ],
+      policyChecks: [
+        { policyName: "Community Guidelines", passed: true, details: "Post meets gaming forum community standards after profanity filter", checkedAt: "2026-02-07T05:30:01Z" },
+        { policyName: "Hate Speech Policy", passed: true, details: "No hate speech or discrimination detected", checkedAt: "2026-02-07T05:30:01Z" },
+        { policyName: "Minor Safety", passed: true, details: "No content harmful to minors detected", checkedAt: "2026-02-07T05:30:02Z" },
+      ],
+      tokenUsage: { promptTokens: 420, completionTokens: 125, totalTokens: 545 },
+    },
+    {
+      status: "completed", costUsd: 0.009, latencyMs: 450,
+      inputSummary: "User comment: Harassment and personal attack on another user",
+      outputSummary: "Classified as violation, auto-removed, user warned, evidence package created",
+      modelId: "gpt-4o-mini", timeOffsetMs: 7 * 3600000,
+      promptInputs: { systemPrompt: "Classify user-generated content for policy violations. Categories: safe, borderline, violation, severe. Apply content policies strictly.", userMessage: "Review reported comment for harassment", contextVariables: { contentType: "comment", forumCategory: "general", userId: "usr_gen_9102", contentLength: 89, reportCount: 3, previousWarnings: 1 } },
+      toolCalls: [
+        { name: "classify_content", arguments: { text: "[redacted comment]", categories: ["safe", "borderline", "violation", "severe"], context: "general" }, result: { classification: "violation", confidence: 0.95, flags: ["harassment", "personal_attack"] }, latencyMs: 138, status: "success" },
+        { name: "check_toxicity", arguments: { text: "[redacted comment]", threshold: 0.7 }, result: { toxicityScore: 0.88, categories: { profanity: 0.45, threat: 0.15, harassment: 0.92 } }, latencyMs: 105, status: "success" },
+        { name: "flag_review", arguments: { contentId: "cmt_77291", action: "remove", reason: "harassment", userId: "usr_gen_9102", previousWarnings: 1 }, result: { actionTaken: "removed", userWarningIssued: true, warningCount: 2 }, latencyMs: 85, status: "success" },
+      ],
+      retrievedDocs: [],
+      decisions: [
+        { step: "content_classification", reasoning: "Clear personal attack targeting another user with harassment language", confidence: 0.95, outcome: "violation" },
+        { step: "action_decision", reasoning: "Toxicity 0.88 exceeds threshold. Harassment score 0.92 is high. Auto-remove per policy.", confidence: 0.97, outcome: "auto_remove" },
+        { step: "user_action", reasoning: "User has 1 previous warning. Issue second warning. Next violation triggers temp ban.", confidence: 0.99, outcome: "warning_issued" },
+      ],
+      policyChecks: [
+        { policyName: "Anti-Harassment Policy", passed: false, details: "Harassment detected with 0.92 confidence, content removed", checkedAt: "2026-02-07T00:15:44Z" },
+        { policyName: "Community Guidelines", passed: false, details: "Personal attacks violate community guidelines section 3.2", checkedAt: "2026-02-07T00:15:44Z" },
+        { policyName: "Progressive Discipline", passed: true, details: "Warning #2 issued per progressive discipline policy", checkedAt: "2026-02-07T00:15:45Z" },
+      ],
+      tokenUsage: { promptTokens: 380, completionTokens: 140, totalTokens: 520 },
+    },
+    {
+      status: "completed", costUsd: 0.007, latencyMs: 320,
+      inputSummary: "User post: Legitimate product question in marketplace forum",
+      outputSummary: "Classified as safe, no policy violations, post approved",
+      modelId: "gpt-4o-mini", timeOffsetMs: 11 * 3600000,
+      promptInputs: { systemPrompt: "Classify user-generated content for policy violations. Categories: safe, borderline, violation, severe. Apply content policies strictly.", userMessage: "Review new marketplace post for compliance", contextVariables: { contentType: "marketplace_post", forumCategory: "marketplace", userId: "usr_mkt_2244", contentLength: 312, reportCount: 0, previousWarnings: 0 } },
+      toolCalls: [
+        { name: "classify_content", arguments: { text: "[redacted marketplace post]", categories: ["safe", "borderline", "violation", "severe"], context: "marketplace" }, result: { classification: "safe", confidence: 0.98, flags: [] }, latencyMs: 130, status: "success" },
+        { name: "check_toxicity", arguments: { text: "[redacted marketplace post]", threshold: 0.7 }, result: { toxicityScore: 0.03, categories: { profanity: 0.01, threat: 0.0, harassment: 0.01 } }, latencyMs: 88, status: "success" },
+      ],
+      retrievedDocs: [],
+      decisions: [
+        { step: "content_classification", reasoning: "Standard product question with no policy-violating language", confidence: 0.98, outcome: "safe" },
+        { step: "action_decision", reasoning: "Toxicity score 0.03 well below any threshold. Approve immediately.", confidence: 0.99, outcome: "approve" },
+      ],
+      policyChecks: [
+        { policyName: "Community Guidelines", passed: true, details: "Post fully compliant with all community guidelines", checkedAt: "2026-02-06T20:45:12Z" },
+        { policyName: "Spam Detection", passed: true, details: "No spam indicators detected, genuine product inquiry", checkedAt: "2026-02-06T20:45:12Z" },
+        { policyName: "Marketplace Rules", passed: true, details: "Post follows marketplace posting format and rules", checkedAt: "2026-02-06T20:45:13Z" },
+      ],
+      tokenUsage: { promptTokens: 350, completionTokens: 95, totalTokens: 445 },
+    },
+  ];
+
+  for (const trace of moderatorTraces) {
+    const startedAt = new Date(Date.now() - trace.timeOffsetMs);
+    const endedAt = new Date(startedAt.getTime() + trace.latencyMs);
+    await db.insert(runTraces).values({
+      agentId: agent4.id,
+      environment: "prod",
+      status: trace.status,
+      costUsd: trace.costUsd,
+      latencyMs: trace.latencyMs,
+      inputSummary: trace.inputSummary,
+      outputSummary: trace.outputSummary,
+      modelId: trace.modelId,
+      promptInputs: trace.promptInputs,
+      toolCalls: trace.toolCalls,
+      retrievedDocs: trace.retrievedDocs,
+      decisions: trace.decisions,
+      policyChecks: trace.policyChecks,
+      tokenUsage: trace.tokenUsage,
+      startedAt,
+      endedAt,
+    });
+  }
+
+  // Knowledge Base Updater — 2 traces
+  const kbUpdaterTraces = [
+    {
+      status: "completed", costUsd: 0.055, latencyMs: 5200,
+      inputSummary: "Drift detected: API documentation outdated for v58 endpoints",
+      outputSummary: "Updated 3 KB articles with new API v58 endpoints, validated links, published changes",
+      modelId: "claude-3-haiku", timeOffsetMs: 9 * 3600000,
+      promptInputs: { systemPrompt: "Monitor knowledge base articles for drift and outdated information. Fetch authoritative sources and update articles while maintaining accuracy.", userMessage: "Drift alert: API documentation references deprecated v55 endpoints", contextVariables: { articleIds: ["kb-1876", "kb-1901", "kb-1923"], driftScore: 0.72, lastUpdated: "2025-11-15", sourceUrl: "https://docs.example.com/api/v58" } },
+      toolCalls: [
+        { name: "detect_drift", arguments: { articleIds: ["kb-1876", "kb-1901", "kb-1923"], checkAgainst: "source_docs" }, result: { driftDetected: true, articlesAffected: 3, driftScore: 0.72, details: "API v55 references deprecated, v58 is current" }, latencyMs: 1200, status: "success" },
+        { name: "fetch_source", arguments: { url: "https://docs.example.com/api/v58", format: "markdown" }, result: { content: "[API v58 documentation content]", lastModified: "2026-01-28", wordCount: 4500 }, latencyMs: 1800, status: "success" },
+        { name: "update_article", arguments: { articleId: "kb-1876", changes: { replaceRefs: "v55->v58", updateEndpoints: true, validateLinks: true } }, result: { updated: true, changesApplied: 8, linksValidated: 12, brokenLinksFixed: 2 }, latencyMs: 950, status: "success" },
+        { name: "update_article", arguments: { articleId: "kb-1901", changes: { replaceRefs: "v55->v58", updateCodeSamples: true } }, result: { updated: true, changesApplied: 5, codeSamplesUpdated: 3 }, latencyMs: 820, status: "success" },
+      ],
+      retrievedDocs: [
+        { source: "external_docs", title: "API v58 Migration Guide", relevanceScore: 0.97, snippet: "v58 introduces new authentication flow and deprecates legacy endpoints. All v55 endpoints sunset Feb 28, 2026." },
+        { source: "knowledge_base", title: "Salesforce API v58 Migration Guide (current)", relevanceScore: 0.95, snippet: "API v55 deprecated as of Jan 2026. Update your integration to use v58 endpoints." },
+        { source: "external_docs", title: "API v58 Changelog", relevanceScore: 0.89, snippet: "Breaking changes: /api/v55/records -> /api/v58/records, new OAuth 2.1 required." },
+      ],
+      decisions: [
+        { step: "drift_assessment", reasoning: "Drift score 0.72 exceeds 0.5 threshold. 3 articles reference deprecated v55 API.", confidence: 0.95, outcome: "drift_confirmed" },
+        { step: "source_validation", reasoning: "Official API docs updated Jan 28, 2026. KB articles last updated Nov 2025.", confidence: 0.98, outcome: "source_more_current" },
+        { step: "update_scope", reasoning: "All 3 articles need endpoint references updated. 2 need code sample changes.", confidence: 0.93, outcome: "batch_update" },
+      ],
+      policyChecks: [
+        { policyName: "Source Authority", passed: true, details: "Updates sourced from official API documentation", checkedAt: "2026-02-06T22:10:05Z" },
+        { policyName: "Change Review", passed: true, details: "Automated updates within scope of approved drift correction", checkedAt: "2026-02-06T22:10:06Z" },
+      ],
+      tokenUsage: { promptTokens: 3800, completionTokens: 1200, totalTokens: 5000 },
+    },
+    {
+      status: "completed", costUsd: 0.042, latencyMs: 3800,
+      inputSummary: "Scheduled sync: Checking support policy documents for recent updates",
+      outputSummary: "Synced 2 policy documents, no drift detected in remaining 87 articles",
+      modelId: "claude-3-haiku", timeOffsetMs: 20 * 3600000,
+      promptInputs: { systemPrompt: "Monitor knowledge base articles for drift and outdated information. Fetch authoritative sources and update articles while maintaining accuracy.", userMessage: "Scheduled daily sync check for support policy documents", contextVariables: { syncType: "scheduled", sourceCategory: "support_policies", totalArticles: 89, lastSyncAt: "2026-02-05T08:00:00Z" } },
+      toolCalls: [
+        { name: "detect_drift", arguments: { category: "support_policies", checkAgainst: "source_docs", fullScan: true }, result: { driftDetected: true, articlesAffected: 2, totalScanned: 89, driftScore: 0.31 }, latencyMs: 2100, status: "success" },
+        { name: "fetch_source", arguments: { category: "support_policies", lastModifiedAfter: "2026-02-05T08:00:00Z" }, result: { documentsFound: 2, documents: ["refund_policy_v3.3", "escalation_matrix_v2.1"] }, latencyMs: 850, status: "success" },
+        { name: "update_article", arguments: { articleId: "kb-892", changes: { source: "refund_policy_v3.3", updateSections: ["refund_amounts", "processing_time"] } }, result: { updated: true, changesApplied: 3, sectionsUpdated: 2 }, latencyMs: 620, status: "success" },
+      ],
+      retrievedDocs: [
+        { source: "support_policies", title: "Refund Policy v3.3", relevanceScore: 0.96, snippet: "Updated refund processing time from 5-7 to 3-5 business days effective Feb 2026." },
+        { source: "support_policies", title: "Escalation Matrix v2.1", relevanceScore: 0.91, snippet: "Added new escalation path for enterprise accounts with dedicated support managers." },
+      ],
+      decisions: [
+        { step: "drift_scan", reasoning: "89 articles scanned, 2 have source document updates since last sync", confidence: 0.97, outcome: "minor_drift_detected" },
+        { step: "update_priority", reasoning: "Refund policy change affects customer-facing responses, prioritize update", confidence: 0.94, outcome: "priority_update" },
+        { step: "sync_status", reasoning: "All 87 remaining articles current with sources. Sync complete.", confidence: 0.99, outcome: "sync_complete" },
+      ],
+      policyChecks: [
+        { policyName: "Source Authority", passed: true, details: "Updates from authorized internal policy documents", checkedAt: "2026-02-06T11:00:22Z" },
+        { policyName: "Change Review", passed: true, details: "Policy document changes auto-approved for KB sync", checkedAt: "2026-02-06T11:00:23Z" },
+      ],
+      tokenUsage: { promptTokens: 2900, completionTokens: 850, totalTokens: 3750 },
+    },
+  ];
+
+  for (const trace of kbUpdaterTraces) {
+    const startedAt = new Date(Date.now() - trace.timeOffsetMs);
+    const endedAt = new Date(startedAt.getTime() + trace.latencyMs);
+    await db.insert(runTraces).values({
+      agentId: agent5.id,
+      environment: "prod",
+      status: trace.status,
+      costUsd: trace.costUsd,
+      latencyMs: trace.latencyMs,
+      inputSummary: trace.inputSummary,
+      outputSummary: trace.outputSummary,
+      modelId: trace.modelId,
+      promptInputs: trace.promptInputs,
+      toolCalls: trace.toolCalls,
+      retrievedDocs: trace.retrievedDocs,
+      decisions: trace.decisions,
+      policyChecks: trace.policyChecks,
+      tokenUsage: trace.tokenUsage,
+      startedAt,
+      endedAt,
     });
   }
 

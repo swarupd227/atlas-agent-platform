@@ -45,6 +45,7 @@ export interface IStorage {
   getDeploymentsByPromotedFrom(promotedFrom: string): Promise<Deployment[]>;
 
   getTraces(): Promise<RunTrace[]>;
+  getTrace(id: string): Promise<RunTrace | undefined>;
   getTracesByAgent(agentId: string): Promise<RunTrace[]>;
   createTrace(trace: InsertRunTrace): Promise<RunTrace>;
 
@@ -166,6 +167,11 @@ export class DatabaseStorage implements IStorage {
 
   async getTraces() {
     return db.select().from(runTraces);
+  }
+
+  async getTrace(id: string) {
+    const [trace] = await db.select().from(runTraces).where(eq(runTraces.id, id));
+    return trace;
   }
 
   async getTracesByAgent(agentId: string) {
