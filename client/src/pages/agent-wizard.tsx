@@ -180,9 +180,12 @@ export default function AgentWizard() {
       modelProvider: template.modelProvider || "openai",
       modelName: template.modelName || "gpt-4.1",
       toolsConfig: Array.isArray(template.toolsConfig) ? (template.toolsConfig as ToolConfig[]) : [],
-      permissionsConfig: template.permissionsConfig
-        ? (template.permissionsConfig as WizardState["permissionsConfig"])
-        : { dataAccess: [], apiAccess: [], writeAccess: [] },
+      permissionsConfig: {
+        dataAccess: [],
+        apiAccess: [],
+        writeAccess: [],
+        ...(template.permissionsConfig as Record<string, string[]> || {}),
+      },
       memoryRagEnabled: !!template.memoryRagConfig,
       memoryRagConfig: template.memoryRagConfig
         ? (template.memoryRagConfig as WizardState["memoryRagConfig"])
@@ -750,7 +753,7 @@ function Step3ModelTools({
           <div className="flex flex-col gap-2">
             <Label>Data Access (comma-separated)</Label>
             <Input
-              value={state.permissionsConfig.dataAccess.join(", ")}
+              value={(state.permissionsConfig?.dataAccess || []).join(", ")}
               onChange={(e) => updatePermission("dataAccess", e.target.value)}
               placeholder="e.g., customer_data, product_catalog"
               data-testid="input-data-access"
@@ -759,7 +762,7 @@ function Step3ModelTools({
           <div className="flex flex-col gap-2">
             <Label>API Access (comma-separated)</Label>
             <Input
-              value={state.permissionsConfig.apiAccess.join(", ")}
+              value={(state.permissionsConfig?.apiAccess || []).join(", ")}
               onChange={(e) => updatePermission("apiAccess", e.target.value)}
               placeholder="e.g., search_api, email_api"
               data-testid="input-api-access"
@@ -768,7 +771,7 @@ function Step3ModelTools({
           <div className="flex flex-col gap-2">
             <Label>Write Access (comma-separated)</Label>
             <Input
-              value={state.permissionsConfig.writeAccess.join(", ")}
+              value={(state.permissionsConfig?.writeAccess || []).join(", ")}
               onChange={(e) => updatePermission("writeAccess", e.target.value)}
               placeholder="e.g., ticket_system, crm"
               data-testid="input-write-access"
@@ -1019,26 +1022,26 @@ function Step5Review({
                 : "None"}
             </span>
           </div>
-          {(state.permissionsConfig.dataAccess.length > 0 ||
-            state.permissionsConfig.apiAccess.length > 0 ||
-            state.permissionsConfig.writeAccess.length > 0) && (
+          {((state.permissionsConfig?.dataAccess || []).length > 0 ||
+            (state.permissionsConfig?.apiAccess || []).length > 0 ||
+            (state.permissionsConfig?.writeAccess || []).length > 0) && (
             <>
-              {state.permissionsConfig.dataAccess.length > 0 && (
+              {(state.permissionsConfig?.dataAccess || []).length > 0 && (
                 <div className="flex justify-between gap-4">
                   <span className="text-muted-foreground">Data Access</span>
-                  <span className="font-medium">{state.permissionsConfig.dataAccess.join(", ")}</span>
+                  <span className="font-medium">{(state.permissionsConfig?.dataAccess || []).join(", ")}</span>
                 </div>
               )}
-              {state.permissionsConfig.apiAccess.length > 0 && (
+              {(state.permissionsConfig?.apiAccess || []).length > 0 && (
                 <div className="flex justify-between gap-4">
                   <span className="text-muted-foreground">API Access</span>
-                  <span className="font-medium">{state.permissionsConfig.apiAccess.join(", ")}</span>
+                  <span className="font-medium">{(state.permissionsConfig?.apiAccess || []).join(", ")}</span>
                 </div>
               )}
-              {state.permissionsConfig.writeAccess.length > 0 && (
+              {(state.permissionsConfig?.writeAccess || []).length > 0 && (
                 <div className="flex justify-between gap-4">
                   <span className="text-muted-foreground">Write Access</span>
-                  <span className="font-medium">{state.permissionsConfig.writeAccess.join(", ")}</span>
+                  <span className="font-medium">{(state.permissionsConfig?.writeAccess || []).join(", ")}</span>
                 </div>
               )}
             </>
@@ -1097,7 +1100,7 @@ function Step5Review({
           <CardContent>
             <ul className="text-sm text-muted-foreground flex flex-col gap-1">
               {state.policyBindings.map((p, i) => (
-                <li key={i}>{p}</li>
+                <li key={i}>{typeof p === "object" ? `${(p as any).policyName || ""} (${(p as any).enforcement || "soft"})` : String(p)}</li>
               ))}
             </ul>
           </CardContent>
@@ -1112,7 +1115,7 @@ function Step5Review({
           <CardContent>
             <ul className="text-sm text-muted-foreground flex flex-col gap-1">
               {state.evalBindings.map((e, i) => (
-                <li key={i}>{e}</li>
+                <li key={i}>{typeof e === "object" ? `${(e as any).suiteName || ""} (${(e as any).schedule || "manual"})` : String(e)}</li>
               ))}
             </ul>
           </CardContent>
@@ -1125,7 +1128,11 @@ function Step5Review({
             <CardTitle className="text-sm font-medium">Rollback Plan</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-muted-foreground">{state.rollbackPlan}</p>
+            <p className="text-sm text-muted-foreground">
+              {typeof state.rollbackPlan === "object"
+                ? `Triggers: ${((state.rollbackPlan as any)?.triggerConditions || []).join(", ")} | Target: ${(state.rollbackPlan as any)?.rollbackTargetVersion || "previous_stable"}`
+                : String(state.rollbackPlan || "Not configured")}
+            </p>
           </CardContent>
         </Card>
       )}
