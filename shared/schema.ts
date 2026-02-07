@@ -324,4 +324,41 @@ export const insertEvalRunSchema = createInsertSchema(evalRuns).omit({ id: true,
 export type InsertEvalRun = z.infer<typeof insertEvalRunSchema>;
 export type EvalRun = typeof evalRuns.$inferSelect;
 
+export const improvementRecommendations = pgTable("improvement_recommendations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  agentId: varchar("agent_id").notNull(),
+  source: text("source").notNull().default("eval"),
+  sourceId: varchar("source_id"),
+  type: text("type").notNull().default("config_change"),
+  title: text("title").notNull(),
+  description: text("description"),
+  severity: text("severity").notNull().default("medium"),
+  status: text("status").notNull().default("pending"),
+  suggestedChanges: jsonb("suggested_changes"),
+  impact: text("impact"),
+  appliedAt: timestamp("applied_at"),
+  dismissedAt: timestamp("dismissed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertImprovementRecommendationSchema = createInsertSchema(improvementRecommendations).omit({ id: true, createdAt: true });
+export type InsertImprovementRecommendation = z.infer<typeof insertImprovementRecommendationSchema>;
+export type ImprovementRecommendation = typeof improvementRecommendations.$inferSelect;
+
+export const autonomousActionLogs = pgTable("autonomous_action_logs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  agentId: varchar("agent_id").notNull(),
+  deploymentId: varchar("deployment_id"),
+  actionType: text("action_type").notNull(),
+  trigger: text("trigger").notNull(),
+  description: text("description"),
+  status: text("status").notNull().default("completed"),
+  details: jsonb("details"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAutonomousActionLogSchema = createInsertSchema(autonomousActionLogs).omit({ id: true, createdAt: true });
+export type InsertAutonomousActionLog = z.infer<typeof insertAutonomousActionLogSchema>;
+export type AutonomousActionLog = typeof autonomousActionLogs.$inferSelect;
+
 export * from "./models/chat";

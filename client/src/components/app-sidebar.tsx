@@ -10,6 +10,7 @@ import {
   CheckCircle,
   Zap,
   Library,
+  Lightbulb,
 } from "lucide-react";
 import {
   Sidebar,
@@ -32,6 +33,7 @@ const mainNav = [
   { title: "Templates", url: "/templates", icon: Library },
   { title: "Deployments", url: "/deployments", icon: Rocket },
   { title: "Monitor", url: "/monitor", icon: Activity },
+  { title: "Improvements", url: "/improvements", icon: Lightbulb },
 ];
 
 const governanceNav = [

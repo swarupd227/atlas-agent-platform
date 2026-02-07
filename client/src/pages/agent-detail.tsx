@@ -1,5 +1,8 @@
-import { useQuery } from "@tanstack/react-query";
-import { useRoute, Link } from "wouter";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { useRoute, Link, useLocation } from "wouter";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { useState } from "react";
 import {
   Bot,
   ArrowLeft,
@@ -30,6 +33,12 @@ import {
   Gauge,
   XCircle,
   ChevronRight,
+  Archive,
+  Power,
+  RefreshCw,
+  TrendingUp,
+  Lightbulb,
+  AlertCircle,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -40,7 +49,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import { StatusBadge } from "@/components/status-badge";
 import { StatCard } from "@/components/stat-card";
-import type { Agent, RunTrace, EvalSuite, OutcomeContract } from "@shared/schema";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import type { Agent, RunTrace, EvalSuite, OutcomeContract, ImprovementRecommendation, AutonomousActionLog } from "@shared/schema";
 
 export default function AgentDetail() {
   const [, params] = useRoute("/agents/:id");
@@ -60,6 +74,55 @@ export default function AgentDetail() {
   });
   const { data: outcomes } = useQuery<OutcomeContract[]>({
     queryKey: ["/api/outcomes"],
+  });
+  const { data: recommendations } = useQuery<ImprovementRecommendation[]>({
+    queryKey: ["/api/agents", agentId, "recommendations"],
+    enabled: !!agentId,
+  });
+  const { data: autonomousActions } = useQuery<AutonomousActionLog[]>({
+    queryKey: ["/api/agents", agentId, "autonomous-actions"],
+    enabled: !!agentId,
+  });
+
+  const [, navigate] = useLocation();
+  const { toast } = useToast();
+  const [retireDialogOpen, setRetireDialogOpen] = useState(false);
+  const [retireReason, setRetireReason] = useState("");
+  const [replacementAgentId, setReplacementAgentId] = useState("");
+
+  const retireMutation = useMutation({
+    mutationFn: async (data: { status: string; description?: string }) => {
+      const res = await apiRequest("PATCH", `/api/agents/${agentId}`, data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
+      setRetireDialogOpen(false);
+      toast({ title: "Agent status updated" });
+    },
+  });
+
+  const applyRecMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("PATCH", `/api/recommendations/${id}`, { status: "applied" });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId, "recommendations"] });
+      toast({ title: "Recommendation applied" });
+    },
+  });
+
+  const dismissRecMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("PATCH", `/api/recommendations/${id}`, { status: "dismissed" });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId, "recommendations"] });
+      toast({ title: "Recommendation dismissed" });
+    },
   });
 
   if (isLoading) {
@@ -124,6 +187,16 @@ export default function AgentDetail() {
         <Button size="sm" data-testid="button-deploy">
           <Rocket className="w-3.5 h-3.5 mr-1.5" /> Deploy
         </Button>
+        {agent.status !== "retired" && (
+          <Button variant="outline" size="sm" onClick={() => setRetireDialogOpen(true)} data-testid="button-retire-agent">
+            <Archive className="w-3.5 h-3.5 mr-1.5" /> Retire
+          </Button>
+        )}
+        {agent.status === "retired" && (
+          <Button variant="outline" size="sm" onClick={() => retireMutation.mutate({ status: "active" })} data-testid="button-reactivate-agent">
+            <Power className="w-3.5 h-3.5 mr-1.5" /> Reactivate
+          </Button>
+        )}
       </div>
 
       <Tabs defaultValue="summary" className="flex flex-col gap-4">
@@ -132,6 +205,8 @@ export default function AgentDetail() {
           <TabsTrigger value="traces" data-testid="tab-traces">Runs & Traces</TabsTrigger>
           <TabsTrigger value="evals" data-testid="tab-evals">Evals</TabsTrigger>
           <TabsTrigger value="blueprint" data-testid="tab-blueprint">Blueprint</TabsTrigger>
+          <TabsTrigger value="lifecycle" data-testid="tab-lifecycle">Lifecycle</TabsTrigger>
+          <TabsTrigger value="autonomous" data-testid="tab-autonomous">Autonomous</TabsTrigger>
         </TabsList>
 
         <TabsContent value="summary" className="flex flex-col gap-4 mt-0">
@@ -271,7 +346,236 @@ export default function AgentDetail() {
           <BlueprintEvalBindings bindings={agent.evalBindings as any} />
           <BlueprintRollbackPlan plan={agent.rollbackPlan as any} />
         </TabsContent>
+
+        <TabsContent value="lifecycle" className="flex flex-col gap-4 mt-0">
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2">
+                <Archive className="w-4 h-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Agent Lifecycle</CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs text-muted-foreground">Current Status</span>
+                  <StatusBadge status={agent.status} />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs text-muted-foreground">Created</span>
+                  <span className="text-sm font-medium">{agent.createdAt ? new Date(agent.createdAt).toLocaleDateString() : "\u2014"}</span>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs text-muted-foreground">Current Version</span>
+                  <span className="text-sm font-medium">v{agent.currentVersion}</span>
+                </div>
+              </div>
+              {agent.status === "retired" && (
+                <div className="p-3 rounded-md bg-muted/50 flex flex-col gap-2">
+                  <div className="flex items-center gap-2">
+                    <Archive className="w-4 h-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">This agent has been retired</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">Archived and no longer processing new requests. Historical data and traces remain accessible.</p>
+                </div>
+              )}
+              {agent.status === "retiring" && (
+                <div className="p-3 rounded-md bg-amber-500/10 flex flex-col gap-2">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-500" />
+                    <span className="text-sm font-medium">Retirement in progress</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">Agent is draining active requests and preparing for archival.</p>
+                  <Progress value={65} className="h-2" />
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Retirement Triggers</CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col gap-3">
+                {[
+                  { metric: "Success Rate Drop", condition: "< 70% over 7 days", icon: TrendingUp },
+                  { metric: "Monthly Cost Exceeds Revenue", condition: "Cost/Revenue ratio > 1.5", icon: DollarSign },
+                  { metric: "No Active Runs", condition: "Zero runs for 30 days", icon: Clock },
+                  { metric: "Newer Version Available", condition: "Successor agent deployed", icon: RefreshCw },
+                ].map((trigger, i) => (
+                  <div key={i} className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted/30" data-testid={`retirement-trigger-${i}`}>
+                    <div className="flex items-center gap-2">
+                      <trigger.icon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                      <span className="text-xs font-medium">{trigger.metric}</span>
+                    </div>
+                    <span className="text-[10px] text-muted-foreground">{trigger.condition}</span>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2">
+                <Lightbulb className="w-4 h-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Improvement Recommendations</CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {!recommendations || recommendations.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-4">No recommendations yet</p>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  {recommendations.filter(r => r.status === "pending").slice(0, 5).map((rec) => (
+                    <div key={rec.id} className="flex items-start justify-between gap-3 p-3 rounded-md bg-muted/30" data-testid={`rec-${rec.id}`}>
+                      <div className="flex flex-col gap-1 min-w-0 flex-1">
+                        <span className="text-xs font-medium">{rec.title}</span>
+                        <span className="text-[10px] text-muted-foreground">{rec.description}</span>
+                        <div className="flex items-center gap-1 mt-1 flex-wrap">
+                          <Badge variant="outline" className="text-[9px]">{rec.source}</Badge>
+                          <Badge variant="outline" className="text-[9px]">{rec.severity}</Badge>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Button variant="outline" size="sm" onClick={() => applyRecMutation.mutate(rec.id)} data-testid={`button-apply-rec-${rec.id}`}>
+                          Apply
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => dismissRecMutation.mutate(rec.id)} data-testid={`button-dismiss-rec-${rec.id}`}>
+                          Dismiss
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="autonomous" className="flex flex-col gap-4 mt-0">
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2">
+                <Zap className="w-4 h-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Autonomous Action Rules</CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col gap-3">
+                {[
+                  { name: "Auto-Rollback on SLA Breach", description: "Automatically rollback to previous version when SLA breach is detected for > 5 minutes", type: "auto_rollback", enabled: true },
+                  { name: "Auto-Promote on Canary Success", description: "Promote canary deployment to full rollout when success threshold is met for the configured duration", type: "auto_promote", enabled: true },
+                  { name: "Auto-Scale on Load", description: "Scale agent instances based on request queue depth and latency targets", type: "auto_scale", enabled: false },
+                  { name: "Auto-Pause on Budget Exceed", description: "Pause agent when monthly cost exceeds configured budget threshold", type: "auto_pause", enabled: agent.status !== "retired" },
+                ].map((rule, i) => (
+                  <div key={i} className="flex items-center justify-between gap-3 p-3 rounded-md border" data-testid={`autonomous-rule-${rule.type}`}>
+                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                      <div className={`w-2 h-2 rounded-full shrink-0 ${rule.enabled ? "bg-emerald-500" : "bg-muted-foreground/30"}`} />
+                      <div className="flex flex-col gap-0.5 min-w-0">
+                        <span className="text-xs font-medium">{rule.name}</span>
+                        <span className="text-[10px] text-muted-foreground">{rule.description}</span>
+                      </div>
+                    </div>
+                    <Badge variant={rule.enabled ? "default" : "outline"} className="text-[10px] shrink-0">
+                      {rule.enabled ? "Enabled" : "Disabled"}
+                    </Badge>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2">
+                <History className="w-4 h-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Autonomous Action Log</CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {!autonomousActions || autonomousActions.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-4">No autonomous actions recorded yet</p>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {autonomousActions.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()).slice(0, 20).map((action) => (
+                    <div key={action.id} className="flex items-start gap-3 p-2.5 rounded-md bg-muted/30" data-testid={`action-log-${action.id}`}>
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${
+                        action.status === "completed" ? "bg-emerald-500/10" :
+                        action.status === "failed" ? "bg-red-500/10" :
+                        "bg-amber-500/10"
+                      }`}>
+                        {action.actionType === "auto_rollback" ? <RotateCcw className="w-3 h-3" /> :
+                         action.actionType === "auto_promote" ? <Rocket className="w-3 h-3" /> :
+                         action.actionType === "auto_scale" ? <TrendingUp className="w-3 h-3" /> :
+                         <Zap className="w-3 h-3" />}
+                      </div>
+                      <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-medium">{action.description || action.actionType.replace(/_/g, " ")}</span>
+                          <StatusBadge status={action.status} />
+                        </div>
+                        <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                          <span>Trigger: {action.trigger}</span>
+                          <span>{action.createdAt ? new Date(action.createdAt).toLocaleString() : ""}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
       </Tabs>
+
+      <Dialog open={retireDialogOpen} onOpenChange={setRetireDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Retire Agent</DialogTitle>
+            <DialogDescription>
+              Retiring an agent will archive it and stop it from processing new requests. Historical data will remain accessible.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2">
+              <Label>Retirement Reason</Label>
+              <Textarea
+                value={retireReason}
+                onChange={(e) => setRetireReason(e.target.value)}
+                placeholder="Why is this agent being retired?"
+                data-testid="input-retire-reason"
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label>Replacement Agent ID (optional)</Label>
+              <Input
+                value={replacementAgentId}
+                onChange={(e) => setReplacementAgentId(e.target.value)}
+                placeholder="UUID of replacement agent"
+                data-testid="input-replacement-agent"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRetireDialogOpen(false)} data-testid="button-cancel-retire">
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => retireMutation.mutate({ status: "retired", description: `Retired: ${retireReason}` })}
+              disabled={retireMutation.isPending}
+              data-testid="button-confirm-retire"
+            >
+              {retireMutation.isPending ? "Retiring..." : "Retire Agent"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

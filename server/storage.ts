@@ -4,6 +4,7 @@ import {
   users, agents, outcomeContracts, kpiDefinitions, deployments,
   runTraces, evalSuites, policies, approvals, auditEvents, invoices, outcomeEvents,
   agentTemplates, evalTestCases, evalRuns,
+  improvementRecommendations, autonomousActionLogs,
   type User, type InsertUser,
   type Agent, type InsertAgent,
   type OutcomeContract, type InsertOutcomeContract,
@@ -19,6 +20,8 @@ import {
   type AgentTemplate, type InsertAgentTemplate,
   type EvalTestCase, type InsertEvalTestCase,
   type EvalRun, type InsertEvalRun,
+  type ImprovementRecommendation, type InsertImprovementRecommendation,
+  type AutonomousActionLog, type InsertAutonomousActionLog,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -87,6 +90,20 @@ export interface IStorage {
 
   getEvalRuns(suiteId: string): Promise<EvalRun[]>;
   createEvalRun(run: InsertEvalRun): Promise<EvalRun>;
+
+  updateEvalTestCase(id: string, data: Partial<EvalTestCase>): Promise<EvalTestCase | undefined>;
+  deleteEvalTestCase(id: string): Promise<boolean>;
+
+  updateAgent(id: string, data: Partial<Agent>): Promise<Agent | undefined>;
+
+  getImprovementRecommendations(): Promise<ImprovementRecommendation[]>;
+  getImprovementRecommendationsByAgent(agentId: string): Promise<ImprovementRecommendation[]>;
+  createImprovementRecommendation(rec: InsertImprovementRecommendation): Promise<ImprovementRecommendation>;
+  updateImprovementRecommendation(id: string, data: Partial<ImprovementRecommendation>): Promise<ImprovementRecommendation | undefined>;
+
+  getAutonomousActionLogs(): Promise<AutonomousActionLog[]>;
+  getAutonomousActionLogsByAgent(agentId: string): Promise<AutonomousActionLog[]>;
+  createAutonomousActionLog(log: InsertAutonomousActionLog): Promise<AutonomousActionLog>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -314,6 +331,59 @@ export class DatabaseStorage implements IStorage {
 
   async createEvalRun(run: InsertEvalRun) {
     const [created] = await db.insert(evalRuns).values(run).returning();
+    return created;
+  }
+
+  async updateEvalTestCase(id: string, data: Partial<EvalTestCase>) {
+    const [updated] = await db.update(evalTestCases).set(data).where(eq(evalTestCases.id, id)).returning();
+    return updated;
+  }
+
+  async deleteEvalTestCase(id: string) {
+    await db.delete(evalTestCases).where(eq(evalTestCases.id, id));
+    return true;
+  }
+
+  async updateAgent(id: string, data: Partial<Agent>) {
+    const [updated] = await db.update(agents).set(data).where(eq(agents.id, id)).returning();
+    return updated;
+  }
+
+  async getImprovementRecommendations() {
+    return db.select().from(improvementRecommendations);
+  }
+
+  async getImprovementRecommendationsByAgent(agentId: string) {
+    return db.select().from(improvementRecommendations).where(eq(improvementRecommendations.agentId, agentId));
+  }
+
+  async createImprovementRecommendation(rec: InsertImprovementRecommendation) {
+    const [created] = await db.insert(improvementRecommendations).values(rec).returning();
+    return created;
+  }
+
+  async updateImprovementRecommendation(id: string, data: Partial<ImprovementRecommendation>) {
+    const updateData = { ...data };
+    if (updateData.status === "applied" && !updateData.appliedAt) {
+      updateData.appliedAt = new Date();
+    }
+    if (updateData.status === "dismissed" && !updateData.dismissedAt) {
+      updateData.dismissedAt = new Date();
+    }
+    const [updated] = await db.update(improvementRecommendations).set(updateData).where(eq(improvementRecommendations.id, id)).returning();
+    return updated;
+  }
+
+  async getAutonomousActionLogs() {
+    return db.select().from(autonomousActionLogs);
+  }
+
+  async getAutonomousActionLogsByAgent(agentId: string) {
+    return db.select().from(autonomousActionLogs).where(eq(autonomousActionLogs.agentId, agentId));
+  }
+
+  async createAutonomousActionLog(log: InsertAutonomousActionLog) {
+    const [created] = await db.insert(autonomousActionLogs).values(log).returning();
     return created;
   }
 }

@@ -28,6 +28,7 @@ import AgentWizard from "@/pages/agent-wizard";
 import EvalDetail from "@/pages/eval-detail";
 import Templates from "@/pages/templates";
 import TemplateDetail from "@/pages/template-detail";
+import Improvements from "@/pages/improvements";
 
 function Router() {
   return (
@@ -47,6 +48,7 @@ function Router() {
       <Route path="/monitor" component={Monitor} />
       <Route path="/governance" component={Governance} />
       <Route path="/approvals" component={Approvals} />
+      <Route path="/improvements" component={Improvements} />
       <Route path="/billing" component={Billing} />
       <Route component={NotFound} />
     </Switch>

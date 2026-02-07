@@ -16,6 +16,8 @@ import {
   insertAgentTemplateSchema,
   insertEvalTestCaseSchema,
   insertEvalRunSchema,
+  insertImprovementRecommendationSchema,
+  insertAutonomousActionLogSchema,
 } from "@shared/schema";
 
 const openai = new OpenAI({
@@ -124,6 +126,16 @@ export async function registerRoutes(
     }
   });
 
+  app.patch("/api/agents/:id", async (req, res) => {
+    try {
+      const updated = await storage.updateAgent(req.params.id, req.body);
+      if (!updated) return res.status(404).json({ message: "Agent not found" });
+      res.json(updated);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
   app.get("/api/agents/:id/traces", async (req, res) => {
     const traces = await storage.getTracesByAgent(req.params.id);
     res.json(traces);
@@ -132,6 +144,16 @@ export async function registerRoutes(
   app.get("/api/agents/:id/evals", async (req, res) => {
     const evals = await storage.getEvalsByAgent(req.params.id);
     res.json(evals);
+  });
+
+  app.get("/api/agents/:id/recommendations", async (req, res) => {
+    const recs = await storage.getImprovementRecommendationsByAgent(req.params.id);
+    res.json(recs);
+  });
+
+  app.get("/api/agents/:id/autonomous-actions", async (req, res) => {
+    const logs = await storage.getAutonomousActionLogsByAgent(req.params.id);
+    res.json(logs);
   });
 
   app.get("/api/traces", async (_req, res) => {
@@ -374,6 +396,31 @@ export async function registerRoutes(
     }
   });
 
+  app.put("/api/eval-test-cases/:id", async (req, res) => {
+    try {
+      const updated = await storage.updateEvalTestCase(req.params.id, req.body);
+      if (!updated) return res.status(404).json({ message: "Test case not found" });
+      res.json(updated);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  app.delete("/api/eval-test-cases/:id", async (req, res) => {
+    await storage.deleteEvalTestCase(req.params.id);
+    res.status(204).send();
+  });
+
+  app.put("/api/evals/:id", async (req, res) => {
+    try {
+      const updated = await storage.updateEvalSuite(req.params.id, req.body);
+      if (!updated) return res.status(404).json({ message: "Eval suite not found" });
+      res.json(updated);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
   app.get("/api/evals/:id/runs", async (req, res) => {
     const runs = await storage.getEvalRuns(req.params.id);
     res.json(runs);
@@ -518,6 +565,48 @@ Guidelines:
       } else {
         res.status(500).json({ error: "AI assistant failed" });
       }
+    }
+  });
+
+  // Improvement Recommendations
+  app.get("/api/recommendations", async (_req, res) => {
+    const recs = await storage.getImprovementRecommendations();
+    res.json(recs);
+  });
+
+  app.post("/api/recommendations", async (req, res) => {
+    try {
+      const data = insertImprovementRecommendationSchema.parse(req.body);
+      const rec = await storage.createImprovementRecommendation(data);
+      res.status(201).json(rec);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  app.patch("/api/recommendations/:id", async (req, res) => {
+    try {
+      const updated = await storage.updateImprovementRecommendation(req.params.id, req.body);
+      if (!updated) return res.status(404).json({ message: "Recommendation not found" });
+      res.json(updated);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  // Autonomous Action Logs
+  app.get("/api/autonomous-actions", async (_req, res) => {
+    const logs = await storage.getAutonomousActionLogs();
+    res.json(logs);
+  });
+
+  app.post("/api/autonomous-actions", async (req, res) => {
+    try {
+      const data = insertAutonomousActionLogSchema.parse(req.body);
+      const log = await storage.createAutonomousActionLog(data);
+      res.status(201).json(log);
+    } catch (e) {
+      handleZodError(res, e);
     }
   });
 

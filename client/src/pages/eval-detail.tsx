@@ -18,6 +18,8 @@ import {
   Bot,
   Shield,
   Gauge,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -32,6 +34,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { StatusBadge } from "@/components/status-badge";
 import { StatCard } from "@/components/stat-card";
 import type { EvalSuite, EvalTestCase, EvalRun, Agent } from "@shared/schema";
@@ -88,6 +94,16 @@ export default function EvalDetail() {
   const id = params?.id;
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState("test-cases");
+  const [addTcOpen, setAddTcOpen] = useState(false);
+  const [tcName, setTcName] = useState("");
+  const [tcInputData, setTcInputData] = useState("");
+  const [tcExpectedOutput, setTcExpectedOutput] = useState("");
+  const [tcTags, setTcTags] = useState("");
+  const [tcWeight, setTcWeight] = useState("1");
+  const [deleteTcId, setDeleteTcId] = useState<string | null>(null);
+  const [editScoring, setEditScoring] = useState(false);
+  const [editPassThreshold, setEditPassThreshold] = useState("");
+  const [editSchedule, setEditSchedule] = useState("");
 
   const { data: suite, isLoading } = useQuery<EvalSuite>({
     queryKey: ["/api/evals", id],
@@ -121,6 +137,62 @@ export default function EvalDetail() {
     },
     onError: (error: Error) => {
       toast({ title: "Failed to start run", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const addTestCaseMutation = useMutation({
+    mutationFn: async () => {
+      const body: Record<string, unknown> = { name: tcName, weight: parseFloat(tcWeight) || 1 };
+      if (tcInputData.trim()) body.inputData = JSON.parse(tcInputData);
+      if (tcExpectedOutput.trim()) body.expectedOutput = JSON.parse(tcExpectedOutput);
+      if (tcTags.trim()) body.tags = tcTags.split(",").map((t) => t.trim()).filter(Boolean);
+      await apiRequest("POST", `/api/evals/${id}/test-cases`, body);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/evals", id, "test-cases"] });
+      toast({ title: "Test case added", description: "The test case has been created successfully." });
+      setAddTcOpen(false);
+      setTcName("");
+      setTcInputData("");
+      setTcExpectedOutput("");
+      setTcTags("");
+      setTcWeight("1");
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to add test case", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const deleteTestCaseMutation = useMutation({
+    mutationFn: async (tcId: string) => {
+      await apiRequest("DELETE", `/api/eval-test-cases/${tcId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/evals", id, "test-cases"] });
+      toast({ title: "Test case deleted", description: "The test case has been removed." });
+      setDeleteTcId(null);
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to delete test case", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const updateScoringMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("PUT", `/api/evals/${id}`, {
+        thresholdConfig: {
+          passThreshold: parseFloat(editPassThreshold) / 100,
+          schedule: editSchedule,
+        },
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/evals", id] });
+      toast({ title: "Scoring config updated", description: "Threshold settings have been saved." });
+      setEditScoring(false);
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to update scoring", description: error.message, variant: "destructive" });
     },
   });
 
@@ -254,7 +326,7 @@ export default function EvalDetail() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-3">
             <CardTitle className="text-sm font-medium">Test Cases</CardTitle>
-            <Button variant="outline" size="sm" data-testid="button-add-test-case">
+            <Button variant="outline" size="sm" data-testid="button-add-test-case" onClick={() => setAddTcOpen(true)}>
               <Plus className="w-3.5 h-3.5 mr-1.5" /> Add Test Case
             </Button>
           </CardHeader>
@@ -273,6 +345,7 @@ export default function EvalDetail() {
                     <TableHead>Tags</TableHead>
                     <TableHead className="text-right">Weight</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead className="w-10"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -301,6 +374,16 @@ export default function EvalDetail() {
                       <TableCell className="text-right text-sm">{tc.weight ?? 1}</TableCell>
                       <TableCell>
                         <StatusBadge status={tc.status || "active"} />
+                      </TableCell>
+                      <TableCell>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          data-testid={`button-delete-tc-${tc.id}`}
+                          onClick={() => setDeleteTcId(tc.id)}
+                        >
+                          <Trash2 className="w-3.5 h-3.5 text-muted-foreground" />
+                        </Button>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -382,29 +465,91 @@ export default function EvalDetail() {
       {activeTab === "scoring-config" && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <Card>
-            <CardHeader className="pb-3">
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-3">
               <div className="flex items-center gap-2">
                 <Gauge className="w-4 h-4 text-muted-foreground" />
                 <CardTitle className="text-sm font-medium">Pass Threshold</CardTitle>
               </div>
+              {!editScoring && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  data-testid="button-edit-scoring"
+                  onClick={() => {
+                    const currentThreshold = thresholdConfig && typeof thresholdConfig === "object" && "passThreshold" in thresholdConfig
+                      ? Number(thresholdConfig.passThreshold) * 100
+                      : (suite.passRate || 0) * 100;
+                    const currentSchedule = thresholdConfig && typeof thresholdConfig === "object" && "schedule" in thresholdConfig
+                      ? String(thresholdConfig.schedule)
+                      : "";
+                    setEditPassThreshold(String(currentThreshold));
+                    setEditSchedule(currentSchedule);
+                    setEditScoring(true);
+                  }}
+                >
+                  <Pencil className="w-3.5 h-3.5 mr-1.5" /> Edit
+                </Button>
+              )}
             </CardHeader>
             <CardContent className="flex flex-col gap-3">
-              <div className="flex items-baseline gap-2">
-                <span className="text-4xl font-bold tracking-tight" data-testid="text-pass-threshold">
-                  {thresholdConfig && typeof thresholdConfig === "object" && "passThreshold" in thresholdConfig
-                    ? `${Number(thresholdConfig.passThreshold) * 100}%`
-                    : `${(suite.passRate || 0) * 100}%`}
-                </span>
-                <span className="text-sm text-muted-foreground">required to pass</span>
-              </div>
-              <Progress
-                value={
-                  thresholdConfig && typeof thresholdConfig === "object" && "passThreshold" in thresholdConfig
-                    ? Number(thresholdConfig.passThreshold) * 100
-                    : (suite.passRate || 0) * 100
-                }
-                className="h-2"
-              />
+              {editScoring ? (
+                <>
+                  <div className="flex flex-col gap-2">
+                    <Label htmlFor="pass-threshold" className="text-xs text-muted-foreground">Pass Threshold (%)</Label>
+                    <Input
+                      id="pass-threshold"
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={editPassThreshold}
+                      onChange={(e) => setEditPassThreshold(e.target.value)}
+                      data-testid="input-pass-threshold"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <Label htmlFor="schedule" className="text-xs text-muted-foreground">Schedule</Label>
+                    <Input
+                      id="schedule"
+                      value={editSchedule}
+                      onChange={(e) => setEditSchedule(e.target.value)}
+                      placeholder="e.g. daily, weekly, 0 0 * * *"
+                      data-testid="input-schedule"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2 pt-2">
+                    <Button
+                      size="sm"
+                      data-testid="button-save-scoring"
+                      onClick={() => updateScoringMutation.mutate()}
+                      disabled={updateScoringMutation.isPending}
+                    >
+                      {updateScoringMutation.isPending ? "Saving..." : "Save"}
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => setEditScoring(false)}>
+                      Cancel
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-4xl font-bold tracking-tight" data-testid="text-pass-threshold">
+                      {thresholdConfig && typeof thresholdConfig === "object" && "passThreshold" in thresholdConfig
+                        ? `${Number(thresholdConfig.passThreshold) * 100}%`
+                        : `${(suite.passRate || 0) * 100}%`}
+                    </span>
+                    <span className="text-sm text-muted-foreground">required to pass</span>
+                  </div>
+                  <Progress
+                    value={
+                      thresholdConfig && typeof thresholdConfig === "object" && "passThreshold" in thresholdConfig
+                        ? Number(thresholdConfig.passThreshold) * 100
+                        : (suite.passRate || 0) * 100
+                    }
+                    className="h-2"
+                  />
+                </>
+              )}
             </CardContent>
           </Card>
 
@@ -512,6 +657,108 @@ export default function EvalDetail() {
           </CardContent>
         </Card>
       )}
+
+      <Dialog open={addTcOpen} onOpenChange={setAddTcOpen}>
+        <DialogContent data-testid="dialog-add-test-case">
+          <DialogHeader>
+            <DialogTitle>Add Test Case</DialogTitle>
+            <DialogDescription>Create a new test case for this eval suite.</DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-4 py-2">
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="tc-name" className="text-xs text-muted-foreground">Name</Label>
+              <Input
+                id="tc-name"
+                value={tcName}
+                onChange={(e) => setTcName(e.target.value)}
+                placeholder="Test case name"
+                data-testid="input-tc-name"
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="tc-input-data" className="text-xs text-muted-foreground">Input Data (JSON)</Label>
+              <Textarea
+                id="tc-input-data"
+                value={tcInputData}
+                onChange={(e) => setTcInputData(e.target.value)}
+                placeholder='{"key": "value"}'
+                className="font-mono text-xs"
+                rows={3}
+                data-testid="input-tc-input-data"
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="tc-expected-output" className="text-xs text-muted-foreground">Expected Output (JSON)</Label>
+              <Textarea
+                id="tc-expected-output"
+                value={tcExpectedOutput}
+                onChange={(e) => setTcExpectedOutput(e.target.value)}
+                placeholder='{"result": "expected"}'
+                className="font-mono text-xs"
+                rows={3}
+                data-testid="input-tc-expected-output"
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="tc-tags" className="text-xs text-muted-foreground">Tags (comma-separated)</Label>
+              <Input
+                id="tc-tags"
+                value={tcTags}
+                onChange={(e) => setTcTags(e.target.value)}
+                placeholder="tag1, tag2, tag3"
+                data-testid="input-tc-tags"
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="tc-weight" className="text-xs text-muted-foreground">Weight</Label>
+              <Input
+                id="tc-weight"
+                type="number"
+                min="0"
+                step="0.1"
+                value={tcWeight}
+                onChange={(e) => setTcWeight(e.target.value)}
+                data-testid="input-tc-weight"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setAddTcOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              data-testid="button-tc-submit"
+              onClick={() => addTestCaseMutation.mutate()}
+              disabled={!tcName.trim() || addTestCaseMutation.isPending}
+            >
+              {addTestCaseMutation.isPending ? "Adding..." : "Add Test Case"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!deleteTcId} onOpenChange={(open) => { if (!open) setDeleteTcId(null); }}>
+        <DialogContent data-testid="dialog-confirm-delete-tc">
+          <DialogHeader>
+            <DialogTitle>Delete Test Case</DialogTitle>
+            <DialogDescription>Are you sure you want to delete this test case? This action cannot be undone.</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setDeleteTcId(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => { if (deleteTcId) deleteTestCaseMutation.mutate(deleteTcId); }}
+              disabled={deleteTestCaseMutation.isPending}
+            >
+              {deleteTestCaseMutation.isPending ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
