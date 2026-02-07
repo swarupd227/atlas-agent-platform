@@ -324,6 +324,34 @@ export async function registerRoutes(
     res.json(template);
   });
 
+  app.post("/api/agent-templates", async (req, res) => {
+    try {
+      const parsed = insertAgentTemplateSchema.parse(req.body);
+      const template = await storage.createAgentTemplate(parsed);
+      res.status(201).json(template);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message || "Invalid template data" });
+    }
+  });
+
+  app.put("/api/agent-templates/:id", async (req, res) => {
+    try {
+      const existing = await storage.getAgentTemplate(req.params.id);
+      if (!existing) return res.status(404).json({ message: "Template not found" });
+      const updated = await storage.updateAgentTemplate(req.params.id, req.body);
+      res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message || "Invalid template data" });
+    }
+  });
+
+  app.delete("/api/agent-templates/:id", async (req, res) => {
+    const existing = await storage.getAgentTemplate(req.params.id);
+    if (!existing) return res.status(404).json({ message: "Template not found" });
+    await storage.deleteAgentTemplate(req.params.id);
+    res.json({ message: "Template deleted" });
+  });
+
   // Eval Suite Detail
   app.get("/api/evals/:id", async (req, res) => {
     const suite = await storage.getEvalSuite(req.params.id);

@@ -27,6 +27,7 @@ import TraceDetail from "@/pages/trace-detail";
 import AgentWizard from "@/pages/agent-wizard";
 import EvalDetail from "@/pages/eval-detail";
 import Templates from "@/pages/templates";
+import TemplateDetail from "@/pages/template-detail";
 
 function Router() {
   return (
@@ -36,6 +37,7 @@ function Router() {
       <Route path="/outcomes/:id" component={OutcomeDetail} />
       <Route path="/agents" component={Agents} />
       <Route path="/templates" component={Templates} />
+      <Route path="/templates/:id" component={TemplateDetail} />
       <Route path="/agents/wizard" component={AgentWizard} />
       <Route path="/agents/:id" component={AgentDetail} />
       <Route path="/deployments" component={Deployments} />

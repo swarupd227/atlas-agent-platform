@@ -76,6 +76,8 @@ export interface IStorage {
   getAgentTemplates(): Promise<AgentTemplate[]>;
   getAgentTemplate(id: string): Promise<AgentTemplate | undefined>;
   createAgentTemplate(template: InsertAgentTemplate): Promise<AgentTemplate>;
+  updateAgentTemplate(id: string, data: Partial<InsertAgentTemplate>): Promise<AgentTemplate | undefined>;
+  deleteAgentTemplate(id: string): Promise<boolean>;
 
   getEvalSuite(id: string): Promise<EvalSuite | undefined>;
   updateEvalSuite(id: string, data: Partial<EvalSuite>): Promise<EvalSuite | undefined>;
@@ -275,6 +277,16 @@ export class DatabaseStorage implements IStorage {
   async createAgentTemplate(template: InsertAgentTemplate) {
     const [created] = await db.insert(agentTemplates).values(template).returning();
     return created;
+  }
+
+  async updateAgentTemplate(id: string, data: Partial<InsertAgentTemplate>) {
+    const [updated] = await db.update(agentTemplates).set(data).where(eq(agentTemplates.id, id)).returning();
+    return updated;
+  }
+
+  async deleteAgentTemplate(id: string) {
+    const result = await db.delete(agentTemplates).where(eq(agentTemplates.id, id));
+    return true;
   }
 
   async getEvalSuite(id: string) {

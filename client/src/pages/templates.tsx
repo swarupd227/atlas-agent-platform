@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 import { useLocation, Link } from "wouter";
 import type { AgentTemplate } from "@shared/schema";
@@ -6,6 +6,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import {
   Select,
   SelectContent,
@@ -78,6 +81,10 @@ import {
   Users,
   Wrench,
   Zap,
+  Plus,
+  Pencil,
+  Trash2,
+  ExternalLink,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -188,8 +195,26 @@ export default function Templates() {
   const [selectedTemplate, setSelectedTemplate] = useState<AgentTemplate | null>(null);
   const [, navigate] = useLocation();
 
+  const { toast } = useToast();
+  const [deleteTarget, setDeleteTarget] = useState<AgentTemplate | null>(null);
+
   const { data: templates, isLoading } = useQuery<AgentTemplate[]>({
     queryKey: ["/api/agent-templates"],
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await apiRequest("DELETE", `/api/agent-templates/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agent-templates"] });
+      toast({ title: "Template deleted" });
+      setDeleteTarget(null);
+      if (selectedTemplate?.id === deleteTarget?.id) setSelectedTemplate(null);
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to delete template", description: err.message, variant: "destructive" });
+    },
   });
 
   const filteredTemplates = templates?.filter((t) => {
@@ -219,6 +244,10 @@ export default function Templates() {
           <Badge variant="outline" className="text-xs">
             {templates?.length || 0} templates
           </Badge>
+          <Button size="sm" onClick={() => navigate("/templates/new")} data-testid="button-new-template">
+            <Plus className="w-4 h-4 mr-1" />
+            New Template
+          </Button>
         </div>
       </div>
 
@@ -352,6 +381,38 @@ export default function Templates() {
                         )}
                       </div>
                     )}
+                    <div className="flex items-center gap-1 border-t pt-2 mt-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-xs flex-1"
+                        onClick={(e) => { e.stopPropagation(); navigate(`/templates/${template.id}`); }}
+                        data-testid={`button-view-template-${template.id}`}
+                      >
+                        <ExternalLink className="w-3 h-3 mr-1" />
+                        View
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-xs flex-1"
+                        onClick={(e) => { e.stopPropagation(); navigate(`/templates/${template.id}?edit=true`); }}
+                        data-testid={`button-edit-template-${template.id}`}
+                      >
+                        <Pencil className="w-3 h-3 mr-1" />
+                        Edit
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-xs flex-1 text-destructive"
+                        onClick={(e) => { e.stopPropagation(); setDeleteTarget(template); }}
+                        data-testid={`button-delete-template-${template.id}`}
+                      >
+                        <Trash2 className="w-3 h-3 mr-1" />
+                        Delete
+                      </Button>
+                    </div>
                   </CardContent>
                 </Card>
               );
@@ -369,6 +430,30 @@ export default function Templates() {
           </div>
         )}
       </div>
+
+      <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Template</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete "{deleteTarget?.name}"? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)} data-testid="button-cancel-delete">
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={deleteMutation.isPending}
+              onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
+              data-testid="button-confirm-delete"
+            >
+              {deleteMutation.isPending ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
