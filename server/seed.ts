@@ -618,17 +618,177 @@ export async function seedDatabase() {
     },
   }).returning();
 
-  // Deployments
-  await db.insert(deployments).values([
-    { agentId: agent1.id, agentName: "Support Triage Agent", environment: "prod", version: "2.3.1", status: "deployed", rolloutStrategy: "canary", canaryPercent: 100, approvedBy: "Expert Validator" },
-    { agentId: agent1.id, agentName: "Support Triage Agent", environment: "staging", version: "2.4.0-beta", status: "deployed", rolloutStrategy: "direct", canaryPercent: 0 },
-    { agentId: agent2.id, agentName: "Invoice Extractor", environment: "prod", version: "1.8.0", status: "deployed", rolloutStrategy: "canary", canaryPercent: 100, approvedBy: "Finance Lead" },
-    { agentId: agent2.id, agentName: "Invoice Extractor", environment: "pilot", version: "1.9.0-rc1", status: "canary", rolloutStrategy: "canary", canaryPercent: 25 },
-    { agentId: agent3.id, agentName: "Lead Scorer", environment: "prod", version: "3.1.2", status: "deployed", rolloutStrategy: "direct", canaryPercent: 100, approvedBy: "Revenue Ops Lead" },
-    { agentId: agent4.id, agentName: "Content Moderator", environment: "prod", version: "4.0.0", status: "deployed", rolloutStrategy: "canary", canaryPercent: 100 },
-    { agentId: agent5.id, agentName: "Knowledge Base Updater", environment: "staging", version: "1.2.0", status: "deployed", rolloutStrategy: "shadow", canaryPercent: 0 },
-    { agentId: agent4.id, agentName: "Content Moderator", environment: "staging", version: "4.1.0-alpha", status: "pending", rolloutStrategy: "shadow", canaryPercent: 0 },
-  ]);
+  // Deployments - with promotion chains, signatures, canary & rollback configs
+  const canaryDefault = {
+    startPercent: 5,
+    stepPercent: 15,
+    intervalMinutes: 30,
+    healthCheckUrl: "/health",
+    successThreshold: 0.995,
+    maxErrorRate: 0.02,
+  };
+
+  const rollbackDefault = {
+    autoRollbackEnabled: true,
+    errorRateThreshold: 0.05,
+    latencyP99Threshold: 5000,
+    rollbackToVersion: "previous",
+    cooldownMinutes: 15,
+    triggers: [
+      { metric: "error_rate", operator: ">", value: 0.05, windowMinutes: 10 },
+      { metric: "p99_latency_ms", operator: ">", value: 5000, windowMinutes: 5 },
+      { metric: "success_rate", operator: "<", value: 0.95, windowMinutes: 15 },
+    ],
+  };
+
+  // Agent 1: Support Triage — full promotion chain staging → pilot → prod (v2.3.1)
+  const [dep1staging] = await db.insert(deployments).values({
+    agentId: agent1.id, agentName: "Support Triage Agent", environment: "staging", version: "2.3.1",
+    status: "promoted", rolloutStrategy: "canary", canaryPercent: 100,
+    signatureHash: "sha256:a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2",
+    canaryConfig: canaryDefault,
+    rollbackConfig: rollbackDefault,
+    approvedBy: "CI Pipeline",
+    deployedAt: new Date(Date.now() - 14 * 86400000),
+    promotedAt: new Date(Date.now() - 10 * 86400000),
+    createdAt: new Date(Date.now() - 14 * 86400000),
+  }).returning();
+
+  const [dep1pilot] = await db.insert(deployments).values({
+    agentId: agent1.id, agentName: "Support Triage Agent", environment: "pilot", version: "2.3.1",
+    status: "promoted", rolloutStrategy: "canary", canaryPercent: 100,
+    signatureHash: "sha256:a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2",
+    promotedFrom: dep1staging.id,
+    canaryConfig: { ...canaryDefault, startPercent: 10, stepPercent: 20, intervalMinutes: 60 },
+    rollbackConfig: rollbackDefault,
+    approvedBy: "Expert Validator",
+    deployedAt: new Date(Date.now() - 10 * 86400000),
+    promotedAt: new Date(Date.now() - 7 * 86400000),
+    createdAt: new Date(Date.now() - 10 * 86400000),
+  }).returning();
+
+  await db.insert(deployments).values({
+    agentId: agent1.id, agentName: "Support Triage Agent", environment: "prod", version: "2.3.1",
+    status: "deployed", rolloutStrategy: "canary", canaryPercent: 100,
+    signatureHash: "sha256:a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2",
+    promotedFrom: dep1pilot.id,
+    canaryConfig: { ...canaryDefault, startPercent: 2, stepPercent: 5, intervalMinutes: 120, successThreshold: 0.999 },
+    rollbackConfig: { ...rollbackDefault, errorRateThreshold: 0.02, latencyP99Threshold: 3000, triggers: [
+      { metric: "error_rate", operator: ">", value: 0.02, windowMinutes: 5 },
+      { metric: "p99_latency_ms", operator: ">", value: 3000, windowMinutes: 5 },
+      { metric: "success_rate", operator: "<", value: 0.98, windowMinutes: 10 },
+      { metric: "human_escalation_rate", operator: ">", value: 0.30, windowMinutes: 15 },
+    ]},
+    approvedBy: "Expert Validator",
+    deployedAt: new Date(Date.now() - 7 * 86400000),
+    createdAt: new Date(Date.now() - 7 * 86400000),
+  });
+
+  // Agent 1: v2.4.0-beta in staging (not yet promoted)
+  await db.insert(deployments).values({
+    agentId: agent1.id, agentName: "Support Triage Agent", environment: "staging", version: "2.4.0-beta",
+    status: "deployed", rolloutStrategy: "canary", canaryPercent: 60,
+    signatureHash: "sha256:f1e2d3c4b5a6f7e8d9c0b1a2f3e4d5c6b7a8f9e0d1c2b3a4f5e6d7c8b9a0f1e2",
+    canaryConfig: canaryDefault,
+    rollbackConfig: rollbackDefault,
+    deployedAt: new Date(Date.now() - 2 * 86400000),
+    createdAt: new Date(Date.now() - 2 * 86400000),
+  });
+
+  // Agent 2: Invoice Extractor — in pilot with canary at 25%
+  const [dep2staging] = await db.insert(deployments).values({
+    agentId: agent2.id, agentName: "Invoice Extractor", environment: "staging", version: "1.9.0-rc1",
+    status: "promoted", rolloutStrategy: "canary", canaryPercent: 100,
+    signatureHash: "sha256:b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3",
+    canaryConfig: canaryDefault,
+    rollbackConfig: { ...rollbackDefault, triggers: [
+      { metric: "extraction_accuracy", operator: "<", value: 0.95, windowMinutes: 15 },
+      { metric: "error_rate", operator: ">", value: 0.03, windowMinutes: 10 },
+      { metric: "p99_latency_ms", operator: ">", value: 8000, windowMinutes: 5 },
+    ]},
+    approvedBy: "Finance Lead",
+    deployedAt: new Date(Date.now() - 5 * 86400000),
+    promotedAt: new Date(Date.now() - 3 * 86400000),
+    createdAt: new Date(Date.now() - 5 * 86400000),
+  }).returning();
+
+  await db.insert(deployments).values({
+    agentId: agent2.id, agentName: "Invoice Extractor", environment: "pilot", version: "1.9.0-rc1",
+    status: "canary", rolloutStrategy: "canary", canaryPercent: 25,
+    signatureHash: "sha256:b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3",
+    promotedFrom: dep2staging.id,
+    canaryConfig: { ...canaryDefault, startPercent: 10, stepPercent: 15, intervalMinutes: 45 },
+    rollbackConfig: { ...rollbackDefault, triggers: [
+      { metric: "extraction_accuracy", operator: "<", value: 0.95, windowMinutes: 15 },
+      { metric: "error_rate", operator: ">", value: 0.03, windowMinutes: 10 },
+    ]},
+    approvedBy: "Finance Lead",
+    deployedAt: new Date(Date.now() - 3 * 86400000),
+    createdAt: new Date(Date.now() - 3 * 86400000),
+  });
+
+  // Agent 2: prod still on 1.8.0
+  await db.insert(deployments).values({
+    agentId: agent2.id, agentName: "Invoice Extractor", environment: "prod", version: "1.8.0",
+    status: "deployed", rolloutStrategy: "canary", canaryPercent: 100,
+    signatureHash: "sha256:c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4",
+    canaryConfig: canaryDefault,
+    rollbackConfig: rollbackDefault,
+    approvedBy: "Finance Lead",
+    deployedAt: new Date(Date.now() - 30 * 86400000),
+    createdAt: new Date(Date.now() - 30 * 86400000),
+  });
+
+  // Agent 3: Lead Scorer — direct deploy to prod
+  await db.insert(deployments).values({
+    agentId: agent3.id, agentName: "Lead Scorer", environment: "prod", version: "3.1.2",
+    status: "deployed", rolloutStrategy: "direct", canaryPercent: 100,
+    signatureHash: "sha256:d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5",
+    canaryConfig: null,
+    rollbackConfig: { ...rollbackDefault, triggers: [
+      { metric: "lead_score_drift", operator: ">", value: 0.15, windowMinutes: 60 },
+      { metric: "error_rate", operator: ">", value: 0.05, windowMinutes: 10 },
+    ]},
+    approvedBy: "Revenue Ops Lead",
+    deployedAt: new Date(Date.now() - 21 * 86400000),
+    createdAt: new Date(Date.now() - 21 * 86400000),
+  });
+
+  // Agent 4: Content Moderator — rolled back release
+  await db.insert(deployments).values({
+    agentId: agent4.id, agentName: "Content Moderator", environment: "prod", version: "4.0.0",
+    status: "deployed", rolloutStrategy: "canary", canaryPercent: 100,
+    signatureHash: "sha256:e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6",
+    canaryConfig: canaryDefault,
+    rollbackConfig: rollbackDefault,
+    approvedBy: "Trust & Safety Lead",
+    deployedAt: new Date(Date.now() - 45 * 86400000),
+    createdAt: new Date(Date.now() - 45 * 86400000),
+  });
+
+  await db.insert(deployments).values({
+    agentId: agent4.id, agentName: "Content Moderator", environment: "staging", version: "4.1.0-alpha",
+    status: "rolled_back", rolloutStrategy: "shadow", canaryPercent: 0,
+    signatureHash: "sha256:f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7",
+    canaryConfig: canaryDefault,
+    rollbackConfig: rollbackDefault,
+    completedAt: new Date(Date.now() - 1 * 86400000),
+    deployedAt: new Date(Date.now() - 3 * 86400000),
+    createdAt: new Date(Date.now() - 3 * 86400000),
+  });
+
+  // Agent 5: Knowledge Base Updater — pending in staging
+  await db.insert(deployments).values({
+    agentId: agent5.id, agentName: "Knowledge Base Updater", environment: "staging", version: "1.2.0",
+    status: "pending", rolloutStrategy: "shadow", canaryPercent: 0,
+    signatureHash: "sha256:a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8",
+    canaryConfig: { ...canaryDefault, startPercent: 0, stepPercent: 10, intervalMinutes: 60 },
+    rollbackConfig: { ...rollbackDefault, triggers: [
+      { metric: "kb_sync_failure_rate", operator: ">", value: 0.10, windowMinutes: 30 },
+      { metric: "error_rate", operator: ">", value: 0.05, windowMinutes: 10 },
+    ]},
+    createdAt: new Date(Date.now() - 1 * 86400000),
+  });
 
   // Run Traces
   const traceStatuses = ["completed", "completed", "completed", "completed", "completed", "failed", "completed", "completed", "blocked", "completed"];

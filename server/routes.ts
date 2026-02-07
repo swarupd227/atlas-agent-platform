@@ -155,6 +155,74 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/deployments/:id", async (req, res) => {
+    const deployment = await storage.getDeployment(req.params.id);
+    if (!deployment) return res.status(404).json({ message: "Deployment not found" });
+    res.json(deployment);
+  });
+
+  app.patch("/api/deployments/:id", async (req, res) => {
+    try {
+      const data = insertDeploymentSchema.partial().parse(req.body);
+      const updated = await storage.updateDeployment(req.params.id, data);
+      if (!updated) return res.status(404).json({ message: "Deployment not found" });
+      res.json(updated);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  app.post("/api/deployments/:id/promote", async (req, res) => {
+    try {
+      const source = await storage.getDeployment(req.params.id);
+      if (!source) return res.status(404).json({ message: "Deployment not found" });
+
+      const envOrder = ["staging", "pilot", "prod"];
+      const currentIdx = envOrder.indexOf(source.environment);
+      if (currentIdx === -1 || currentIdx >= envOrder.length - 1) {
+        return res.status(400).json({ message: `Cannot promote from ${source.environment}` });
+      }
+      const nextEnv = envOrder[currentIdx + 1];
+
+      await storage.updateDeployment(source.id, { status: "promoted", promotedAt: new Date() });
+
+      const promoted = await storage.createDeployment({
+        agentId: source.agentId,
+        agentName: source.agentName,
+        environment: nextEnv,
+        versionId: source.versionId,
+        version: source.version,
+        status: "pending",
+        canaryPercent: source.canaryConfig ? (source.canaryConfig as any).startPercent || 0 : 0,
+        rolloutStrategy: source.rolloutStrategy,
+        approvedBy: req.body.approvedBy || source.approvedBy,
+        signatureHash: source.signatureHash,
+        promotedFrom: source.id,
+        canaryConfig: source.canaryConfig as any,
+        rollbackConfig: source.rollbackConfig as any,
+      });
+
+      res.status(201).json(promoted);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  app.post("/api/deployments/:id/rollback", async (req, res) => {
+    try {
+      const deployment = await storage.getDeployment(req.params.id);
+      if (!deployment) return res.status(404).json({ message: "Deployment not found" });
+
+      const updated = await storage.updateDeployment(deployment.id, {
+        status: "rolled_back",
+        completedAt: new Date(),
+      });
+      res.json(updated);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
   app.get("/api/evals", async (_req, res) => {
     const suites = await storage.getEvalSuites();
     res.json(suites);

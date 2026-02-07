@@ -39,7 +39,10 @@ export interface IStorage {
   updateOutcome(id: string, data: Partial<OutcomeContract>): Promise<OutcomeContract | undefined>;
 
   getDeployments(): Promise<Deployment[]>;
+  getDeployment(id: string): Promise<Deployment | undefined>;
   createDeployment(deployment: InsertDeployment): Promise<Deployment>;
+  updateDeployment(id: string, data: Partial<Deployment>): Promise<Deployment | undefined>;
+  getDeploymentsByPromotedFrom(promotedFrom: string): Promise<Deployment[]>;
 
   getTraces(): Promise<RunTrace[]>;
   getTracesByAgent(agentId: string): Promise<RunTrace[]>;
@@ -142,9 +145,23 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(deployments);
   }
 
+  async getDeployment(id: string) {
+    const [deployment] = await db.select().from(deployments).where(eq(deployments.id, id));
+    return deployment;
+  }
+
   async createDeployment(deployment: InsertDeployment) {
     const [created] = await db.insert(deployments).values(deployment).returning();
     return created;
+  }
+
+  async updateDeployment(id: string, data: Partial<Deployment>) {
+    const [updated] = await db.update(deployments).set(data).where(eq(deployments.id, id)).returning();
+    return updated;
+  }
+
+  async getDeploymentsByPromotedFrom(promotedFrom: string) {
+    return db.select().from(deployments).where(eq(deployments.promotedFrom, promotedFrom));
   }
 
   async getTraces() {

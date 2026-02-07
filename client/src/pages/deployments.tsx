@@ -1,5 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState } from "react";
+import { useLocation } from "wouter";
 import {
   Rocket,
   Plus,
@@ -11,6 +12,8 @@ import {
   CheckCircle,
   AlertTriangle,
   Server,
+  Hash,
+  ChevronRight,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -33,15 +36,15 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Deployment, Agent } from "@shared/schema";
 
-function EnvironmentPanel({ env, deployments }: { env: string; deployments: Deployment[] }) {
+const envColors: Record<string, string> = {
+  staging: "bg-purple-500/10 text-purple-600 dark:text-purple-400",
+  pilot: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",
+  prod: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+};
+
+function EnvironmentPanel({ env, deployments, onSelect }: { env: string; deployments: Deployment[]; onSelect: (id: string) => void }) {
   const envDeploys = deployments.filter((d) => d.environment === env);
   const active = envDeploys.filter((d) => d.status === "deployed" || d.status === "active");
-
-  const envColors: Record<string, string> = {
-    staging: "bg-purple-500/10 text-purple-600 dark:text-purple-400",
-    pilot: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",
-    prod: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-  };
 
   return (
     <Card>
@@ -58,7 +61,12 @@ function EnvironmentPanel({ env, deployments }: { env: string; deployments: Depl
       </CardHeader>
       <CardContent className="flex flex-col gap-2">
         {envDeploys.length > 0 ? envDeploys.slice(0, 5).map((dep) => (
-          <div key={dep.id} className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted/30 hover-elevate" data-testid={`deploy-env-row-${dep.id}`}>
+          <div
+            key={dep.id}
+            className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted/30 hover-elevate cursor-pointer"
+            onClick={() => onSelect(dep.id)}
+            data-testid={`deploy-env-row-${dep.id}`}
+          >
             <div className="flex flex-col min-w-0">
               <span className="text-xs font-medium truncate">{dep.agentName || "Agent"}</span>
               <span className="text-[11px] text-muted-foreground">v{dep.version} | {dep.rolloutStrategy}</span>
@@ -68,6 +76,7 @@ function EnvironmentPanel({ env, deployments }: { env: string; deployments: Depl
                 <Badge variant="outline" className="text-[10px]">{dep.canaryPercent}% canary</Badge>
               )}
               <StatusBadge status={dep.status} />
+              <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
             </div>
           </div>
         )) : (
@@ -80,6 +89,7 @@ function EnvironmentPanel({ env, deployments }: { env: string; deployments: Depl
 
 export default function Deployments() {
   const [createOpen, setCreateOpen] = useState(false);
+  const [, navigate] = useLocation();
   const { toast } = useToast();
 
   const { data: deployments, isLoading } = useQuery<Deployment[]>({
@@ -208,9 +218,9 @@ export default function Deployments() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <EnvironmentPanel env="staging" deployments={allDeploys} />
-        <EnvironmentPanel env="pilot" deployments={allDeploys} />
-        <EnvironmentPanel env="prod" deployments={allDeploys} />
+        <EnvironmentPanel env="staging" deployments={allDeploys} onSelect={(id) => navigate(`/deployments/${id}`)} />
+        <EnvironmentPanel env="pilot" deployments={allDeploys} onSelect={(id) => navigate(`/deployments/${id}`)} />
+        <EnvironmentPanel env="prod" deployments={allDeploys} onSelect={(id) => navigate(`/deployments/${id}`)} />
       </div>
 
       <Card>
@@ -219,7 +229,12 @@ export default function Deployments() {
         </CardHeader>
         <CardContent className="flex flex-col gap-2">
           {allDeploys.map((dep) => (
-            <div key={dep.id} className="flex items-center justify-between gap-3 p-3 rounded-md bg-muted/30 hover-elevate" data-testid={`release-row-${dep.id}`}>
+            <div
+              key={dep.id}
+              className="flex items-center justify-between gap-3 p-3 rounded-md bg-muted/30 hover-elevate cursor-pointer"
+              onClick={() => navigate(`/deployments/${dep.id}`)}
+              data-testid={`release-row-${dep.id}`}
+            >
               <div className="flex items-center gap-3 min-w-0">
                 <div className="flex items-center justify-center w-8 h-8 rounded-md bg-blue-500/10 shrink-0">
                   <Rocket className="w-4 h-4 text-blue-500" />
@@ -233,10 +248,17 @@ export default function Deployments() {
                 </div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                {dep.approvedBy && (
-                  <Badge variant="outline" className="text-[10px]">Approved by {dep.approvedBy}</Badge>
+                {dep.signatureHash && (
+                  <Badge variant="outline" className="text-[10px] font-mono">
+                    <Hash className="w-3 h-3 mr-0.5" />
+                    {dep.signatureHash.split(":")[1]?.substring(0, 8) || "signed"}
+                  </Badge>
                 )}
+                <Badge variant="outline" className={`text-[10px] ${envColors[dep.environment] || ""}`}>
+                  {dep.environment}
+                </Badge>
                 <StatusBadge status={dep.status} />
+                <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
               </div>
             </div>
           ))}

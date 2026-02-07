@@ -24,6 +24,8 @@ const statusConfig: Record<string, { label: string; className: string }> = {
   failed: { label: "Failed", className: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20" },
   error: { label: "Error", className: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20" },
   rejected: { label: "Rejected", className: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20" },
+  promoted: { label: "Promoted", className: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/20" },
+  rolled_back: { label: "Rolled Back", className: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20" },
   deprecated: { label: "Deprecated", className: "bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/20" },
   overdue: { label: "Overdue", className: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20" },
   HIGH: { label: "High Risk", className: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20" },

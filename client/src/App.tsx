@@ -22,6 +22,7 @@ import Governance from "@/pages/governance";
 import Approvals from "@/pages/approvals";
 import Billing from "@/pages/billing";
 import OutcomeDetail from "@/pages/outcome-detail";
+import ReleaseDetail from "@/pages/release-detail";
 
 function Router() {
   return (
@@ -32,6 +33,7 @@ function Router() {
       <Route path="/agents" component={Agents} />
       <Route path="/agents/:id" component={AgentDetail} />
       <Route path="/deployments" component={Deployments} />
+      <Route path="/deployments/:id" component={ReleaseDetail} />
       <Route path="/monitor" component={Monitor} />
       <Route path="/governance" component={Governance} />
       <Route path="/approvals" component={Approvals} />
