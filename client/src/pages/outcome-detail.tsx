@@ -25,6 +25,12 @@ import {
   Layers,
   Zap,
   Activity,
+  Bot,
+  Sparkles,
+  Loader2,
+  ChevronRight,
+  Workflow,
+  ArrowRight,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -47,7 +53,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { StatCard } from "@/components/stat-card";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { OutcomeContract, KpiDefinition } from "@shared/schema";
+import type { OutcomeContract, KpiDefinition, Approval } from "@shared/schema";
 
 export default function OutcomeDetail() {
   const [, params] = useRoute("/outcomes/:id");
@@ -249,6 +255,7 @@ export default function OutcomeDetail() {
           <TabsTrigger value="pricing" data-testid="tab-pricing">Pricing & Billing</TabsTrigger>
           <TabsTrigger value="risk" data-testid="tab-risk">Risk Tolerance</TabsTrigger>
           <TabsTrigger value="gates" data-testid="tab-gates">Approval Gates</TabsTrigger>
+          <TabsTrigger value="agents" data-testid="tab-agents">Agent Proposals</TabsTrigger>
         </TabsList>
 
         <TabsContent value="kpis" className="space-y-4">
@@ -849,7 +856,259 @@ export default function OutcomeDetail() {
             </Card>
           )}
         </TabsContent>
+
+        <TabsContent value="agents" className="space-y-4">
+          <AgentProposalsTab outcome={outcome} kpis={kpis || []} />
+        </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+interface AgentProposal {
+  name: string;
+  description: string;
+  role: string;
+  riskTier: string;
+  autonomyMode: string;
+  modelProvider: string;
+  modelName: string;
+  workflowSteps: string[];
+  tools: Array<{ name: string; description: string }>;
+  kpiBindings: string[];
+  estimatedImpact: string;
+  templateMatch: string | null;
+}
+
+function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: KpiDefinition[] }) {
+  const { toast } = useToast();
+  const [proposals, setProposals] = useState<AgentProposal[]>([]);
+  const [generating, setGenerating] = useState(false);
+  const [generated, setGenerated] = useState(false);
+
+  const { data: approvals } = useQuery<Approval[]>({
+    queryKey: ["/api/approvals"],
+  });
+  const outcomeReview = approvals?.find(
+    (a) => a.type === "outcome_review" && a.objectId === outcome.id
+  );
+  const isPendingValidation = outcomeReview?.status === "pending";
+  const isValidated = outcomeReview?.status === "approved";
+
+  const createAgentMutation = useMutation({
+    mutationFn: async (agent: AgentProposal) => {
+      const res = await apiRequest("POST", "/api/agents", {
+        name: agent.name,
+        description: agent.description,
+        owner: "system",
+        riskTier: agent.riskTier,
+        autonomyMode: agent.autonomyMode,
+        modelProvider: agent.modelProvider,
+        modelName: agent.modelName,
+        outcomeId: outcome.id,
+        toolsConfig: agent.tools,
+      });
+      return res.json();
+    },
+    onSuccess: (created: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
+      toast({ title: "Agent created", description: `"${created.name}" has been created and linked to this outcome.` });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to create agent", description: err.message, variant: "destructive" });
+    },
+  });
+
+  async function generateProposals() {
+    setGenerating(true);
+    try {
+      const res = await apiRequest("POST", "/api/ai/propose-agents", {
+        outcomeContract: outcome,
+        kpis,
+      });
+      const data = await res.json();
+      setProposals(data.agents || []);
+      setGenerated(true);
+    } catch (err) {
+      toast({ title: "Failed to generate proposals", description: "Please try again.", variant: "destructive" });
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  if (!generated) {
+    return (
+      <Card>
+        <CardContent className="flex flex-col items-center justify-center py-12 gap-4">
+          <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center">
+            <Bot className="w-7 h-7 text-primary" />
+          </div>
+          <div className="text-center flex flex-col gap-1">
+            <h3 className="text-base font-semibold">Agent Proposals</h3>
+            <p className="text-sm text-muted-foreground max-w-md">
+              Let AI analyze this outcome contract and its KPIs to propose the right agents — with workflows, tools, and autonomy levels already configured.
+            </p>
+          </div>
+          {isPendingValidation && (
+            <div className="flex items-center gap-2 p-3 rounded-md bg-amber-500/5 border border-amber-500/10 max-w-md flex-wrap" data-testid="notice-pending-validation">
+              <Shield className="w-4 h-4 text-amber-500 shrink-0" />
+              <div className="flex flex-col gap-0.5">
+                <span className="text-xs font-medium">Pending Expert Validation</span>
+                <span className="text-[11px] text-muted-foreground">This outcome is awaiting expert review. You can still generate proposals, but agents should only be created after validation.</span>
+              </div>
+            </div>
+          )}
+          {isValidated && (
+            <div className="flex items-center gap-2 p-3 rounded-md bg-green-500/5 border border-green-500/10 max-w-md flex-wrap" data-testid="notice-validated">
+              <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
+              <span className="text-xs text-green-700 dark:text-green-300">Outcome validated by expert — ready for agent creation</span>
+            </div>
+          )}
+          <Button onClick={generateProposals} disabled={generating} data-testid="button-generate-proposals">
+            {generating ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                Analyzing outcome...
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-4 h-4 mr-1.5" />
+                Generate Agent Proposals
+              </>
+            )}
+          </Button>
+          {kpis.length === 0 && (
+            <p className="text-xs text-amber-600 dark:text-amber-400">Define KPIs first for better agent proposals</p>
+          )}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <h2 className="text-lg font-semibold">Proposed Agents</h2>
+          <p className="text-sm text-muted-foreground">AI-generated agents to deliver this outcome. Review and create the ones you need.</p>
+        </div>
+        <Button variant="outline" onClick={generateProposals} disabled={generating} data-testid="button-regenerate-proposals">
+          {generating ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1.5" />}
+          Regenerate
+        </Button>
+      </div>
+
+      {isPendingValidation && (
+        <div className="flex items-center gap-2 p-3 rounded-md bg-amber-500/5 border border-amber-500/10 flex-wrap" data-testid="notice-pending-validation-proposals">
+          <Shield className="w-4 h-4 text-amber-500 shrink-0" />
+          <span className="text-xs text-muted-foreground">This outcome is pending expert validation. Agent creation is recommended only after validation is complete.</span>
+          <Link href="/approvals">
+            <Button variant="outline" size="sm" data-testid="button-go-to-approvals">
+              <ArrowRight className="w-3.5 h-3.5 mr-1" /> Go to Approvals
+            </Button>
+          </Link>
+        </div>
+      )}
+
+      {proposals.length === 0 ? (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-8 gap-2">
+            <Bot className="w-8 h-8 text-muted-foreground/50" />
+            <p className="text-sm text-muted-foreground">No agent proposals generated. Try regenerating.</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {proposals.map((agent, i) => (
+            <Card key={i} data-testid={`card-agent-proposal-${i}`}>
+              <CardHeader className="p-4 pb-2">
+                <CardTitle className="text-sm font-semibold flex items-center gap-2 flex-wrap">
+                  <Bot className="w-4 h-4 text-primary" />
+                  {agent.name}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-4 pt-0 flex flex-col gap-3">
+                <p className="text-xs text-muted-foreground">{agent.description}</p>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Badge variant="outline" className="text-[10px]">{agent.riskTier} Risk</Badge>
+                  <Badge variant="outline" className="text-[10px]">{agent.autonomyMode}</Badge>
+                  <Badge variant="outline" className="text-[10px]">{agent.modelProvider}/{agent.modelName}</Badge>
+                  {agent.templateMatch && (
+                    <Badge variant="secondary" className="text-[10px]">Template: {agent.templateMatch}</Badge>
+                  )}
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Role</span>
+                  <span className="text-xs">{agent.role}</span>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Workflow</span>
+                  <div className="flex items-center gap-1 flex-wrap">
+                    {agent.workflowSteps.map((step, j) => (
+                      <span key={j} className="flex items-center gap-0.5">
+                        {j > 0 && <ChevronRight className="w-2.5 h-2.5 text-muted-foreground" />}
+                        <Badge variant="secondary" className="text-[9px]">{step}</Badge>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                {agent.tools.length > 0 && (
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Tools</span>
+                    <div className="flex flex-wrap gap-1">
+                      {agent.tools.map((tool, j) => (
+                        <Badge key={j} variant="outline" className="text-[9px]">{tool.name}</Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {agent.kpiBindings.length > 0 && (
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">KPI Bindings</span>
+                    <div className="flex flex-wrap gap-1">
+                      {agent.kpiBindings.map((kpi, j) => (
+                        <Badge key={j} variant="outline" className="text-[9px] text-green-600 dark:text-green-400 border-green-200 dark:border-green-800">{kpi}</Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2 p-2 rounded-md bg-green-500/5 border border-green-500/10 flex-wrap">
+                  <TrendingUp className="w-3.5 h-3.5 text-green-500 shrink-0" />
+                  <span className="text-[11px] text-green-700 dark:text-green-300">{agent.estimatedImpact}</span>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Button
+                    className="flex-1"
+                    onClick={() => createAgentMutation.mutate(agent)}
+                    disabled={createAgentMutation.isPending}
+                    data-testid={`button-create-agent-${i}`}
+                  >
+                    {createAgentMutation.isPending ? (
+                      <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                    ) : (
+                      <Plus className="w-4 h-4 mr-1.5" />
+                    )}
+                    Create Agent
+                  </Button>
+                  <Link href={`/agents/wizard?name=${encodeURIComponent(agent.name)}&description=${encodeURIComponent(agent.description)}&riskTier=${agent.riskTier}&autonomyMode=${agent.autonomyMode}`}>
+                    <Button variant="outline" data-testid={`button-customize-agent-${i}`}>
+                      <Edit3 className="w-4 h-4 mr-1.5" />
+                      Customize
+                    </Button>
+                  </Link>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -94,6 +94,13 @@ Components: `role-provider.tsx` (context + hook), `role-switcher.tsx` (header dr
 3. **Autonomy with guardrails**: POST /api/policy-check validates against agent risk tier, environment, autonomy mode. Apply/Remediate buttons pre-check policies; blocked actions show violation dialog with "Request Expert Approval" escalation to approvals queue.
 4. **Time travel**: GET /api/agents/:id/timeline aggregates version changes, audit events, applied recommendations. Agent detail "Timeline" tab with category filters, diff visualization, "Last Known Good State" marker, "Changes Since Last Good" summary.
 
+## Business Outcome Discovery Flow
+- **Outcome Discovery** (`/outcomes/discover`): Conversational AI page where business users describe goals in natural language. Platform maps workflows, identifies automation opportunities, proposes agent roles, defines KPIs, and drafts an Outcome Contract with validation checklist. Starter prompts for common scenarios.
+- **AI Endpoints**: POST /api/ai/outcome-discover (SSE streaming conversation), POST /api/ai/propose-agents (generates agent proposals for an outcome)
+- **Agent Proposals Tab**: Outcome detail page (/outcomes/:id) has "Agent Proposals" tab where AI generates 2-4 agents with workflows, tools, KPI bindings, and autonomy levels. "Create Agent" and "Customize" (links to wizard) actions per proposal.
+- **Expert Validation Gate**: Creating an outcome from discovery auto-creates an `outcome_review` approval in the Approvals queue. Shows proposed KPIs, proposed agents, and validation checklist. "Validate" button instead of "Approve".
+- **Business-first entry points**: Overview page "Start with a Business Outcome" CTA, Outcomes page "Discover with AI" button, Sidebar "Discover" nav item (visible to Outcome Owner and Agent Engineer roles)
+
 ## Recent Changes
 - 80/20 Model Gaps Closed:
   - Improvements page: Auto-generated recommendations from eval failures, drift signals, cost analysis, traces. Categories: retrain, model_swap, config_change, workflow_optimization, policy_update. Generate endpoint computes new recs from agent data. Cost source filter, agent name links, type badges, estimated savings stat.

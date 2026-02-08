@@ -939,5 +939,184 @@ Guidelines:
     res.json(timeline);
   });
 
+  app.post("/api/ai/propose-agents", async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI assistant is not configured" });
+      }
+      const { outcomeContract, kpis } = req.body;
+      const templates = await storage.getAgentTemplates();
+
+      const systemPrompt = `You are an Agent Proposal Generator for the ALMP platform. Given a business Outcome Contract and its KPIs, propose AI agents that can deliver these outcomes.
+
+Outcome Contract: ${JSON.stringify(outcomeContract)}
+KPIs: ${JSON.stringify(kpis || [])}
+Available templates: ${JSON.stringify(templates.slice(0, 10).map(t => ({ name: t.name, category: t.category, industry: t.industry, description: t.description })))}
+
+Respond with a JSON array of proposed agents:
+\`\`\`json
+[
+  {
+    "name": "string - agent name",
+    "description": "string - what this agent does",
+    "role": "string - the business role",
+    "riskTier": "LOW | MEDIUM | HIGH",
+    "autonomyMode": "manual | assisted | autonomous",
+    "modelProvider": "openai | anthropic | google",
+    "modelName": "string - specific model",
+    "workflowSteps": ["string"],
+    "tools": [{"name": "string", "description": "string"}],
+    "kpiBindings": ["string - which KPIs this agent contributes to"],
+    "estimatedImpact": "string",
+    "templateMatch": "string | null - name of matching template if any"
+  }
+]
+\`\`\`
+
+Guidelines:
+- Propose 2-4 agents that together can deliver ALL KPIs
+- Each agent should have a clear, specific role
+- Higher-risk operations should have lower autonomy modes
+- Match to existing templates when possible
+- Use realistic model choices (gpt-4.1-mini for simple tasks, gpt-4.1 for complex)
+- Tools should be specific to the domain`;
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: `Generate agent proposals for this outcome contract: "${outcomeContract?.name}". KPIs: ${JSON.stringify(kpis?.map((k: any) => k.name) || [])}` },
+        ],
+        max_completion_tokens: 2000,
+      });
+
+      const content = response.choices[0]?.message?.content || "";
+      const jsonMatch = content.match(/```json\s*([\s\S]*?)```/);
+      if (jsonMatch) {
+        const agents = JSON.parse(jsonMatch[1]);
+        res.json({ agents });
+      } else {
+        try {
+          const agents = JSON.parse(content);
+          res.json({ agents: Array.isArray(agents) ? agents : [agents] });
+        } catch {
+          res.json({ agents: [], raw: content });
+        }
+      }
+    } catch (error) {
+      console.error("Agent proposal error:", error);
+      res.status(500).json({ error: "Failed to generate agent proposals" });
+    }
+  });
+
+  app.post("/api/ai/outcome-discover", async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI assistant is not configured" });
+      }
+      const { messages, discoveryContext } = req.body;
+
+      const templates = await storage.getAgentTemplates();
+      const outcomes = await storage.getOutcomes();
+
+      const systemPrompt = `You are a Business Outcome Discovery Assistant for the ALMP (Agent Lifecycle Management Platform). You help non-technical business users define what they want to achieve, then propose AI agent solutions.
+
+Your role is to:
+1. LISTEN to business problems described in plain language (e.g., "our customer churn is too high", "support tickets take too long")
+2. MAP workflows - identify which business processes could be automated by agents
+3. IDENTIFY automation opportunities - suggest where AI agents can add value
+4. PROPOSE agent roles - recommend specific agent types with names and descriptions
+5. DEFINE success metrics - suggest concrete KPIs with targets and measurement methods
+6. DRAFT an Outcome Contract - when enough info is gathered, produce a structured proposal
+
+When you have enough information (usually after 2-3 exchanges), produce a structured JSON proposal wrapped in \`\`\`json blocks. The proposal should follow this structure:
+\`\`\`json
+{
+  "type": "outcome_proposal",
+  "outcomeContract": {
+    "name": "string - outcome name",
+    "description": "string - what this outcome achieves",
+    "riskTier": "LOW | MEDIUM | HIGH",
+    "pricingModel": "PER_OUTCOME_EVENT | MONTHLY_FIXED | TIERED",
+    "pricePerUnit": number,
+    "riskThreshold": number (0-1),
+    "maxDriftPercent": number
+  },
+  "kpis": [
+    {
+      "name": "string - KPI name",
+      "target": number,
+      "unit": "string (%, count, $, minutes, etc.)",
+      "measurement": "string - how to measure",
+      "currentBaseline": number or null
+    }
+  ],
+  "proposedAgents": [
+    {
+      "name": "string - agent name",
+      "description": "string - what this agent does",
+      "role": "string - the business role this agent fills",
+      "workflowSteps": ["string - steps in the agent's workflow"],
+      "tools": ["string - tools/integrations needed"],
+      "riskTier": "LOW | MEDIUM | HIGH",
+      "autonomyMode": "manual | assisted | autonomous",
+      "estimatedImpact": "string - expected business impact"
+    }
+  ],
+  "validationChecklist": [
+    "string - items the expert/business owner should validate before proceeding"
+  ]
+}
+\`\`\`
+
+Existing outcome contracts for context: ${JSON.stringify(outcomes.slice(0, 5).map(o => ({ name: o.name, description: o.description })))}
+Available agent templates for context: ${JSON.stringify(templates.slice(0, 10).map(t => ({ name: t.name, category: t.category, industry: t.industry, description: t.description })))}
+
+Current discovery context: ${JSON.stringify(discoveryContext || {})}
+
+Guidelines:
+- Use warm, accessible business language - avoid technical jargon
+- Ask clarifying questions about business goals, current pain points, and success criteria
+- Propose realistic, measurable KPIs with specific numeric targets
+- Suggest agents that map to the user's domain (not generic AI agents)
+- Include a validation checklist of items the business owner and expert should confirm
+- When the user seems ready, produce the full structured proposal
+- Be proactive: suggest things the user might not have thought of
+- Reference existing templates when a match exists`;
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+
+      const stream = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        messages: [
+          { role: "system", content: systemPrompt },
+          ...messages,
+        ],
+        stream: true,
+        max_completion_tokens: 3000,
+      });
+
+      for await (const chunk of stream) {
+        const content = chunk.choices[0]?.delta?.content || "";
+        if (content) {
+          res.write(`data: ${JSON.stringify({ content })}\n\n`);
+        }
+      }
+
+      res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+      res.end();
+    } catch (error) {
+      console.error("Outcome discovery error:", error);
+      if (res.headersSent) {
+        res.write(`data: ${JSON.stringify({ error: "Discovery assistant error" })}\n\n`);
+        res.end();
+      } else {
+        res.status(500).json({ error: "Discovery assistant failed" });
+      }
+    }
+  });
+
   return httpServer;
 }

@@ -11,6 +11,7 @@ import {
   Zap,
   Library,
   Lightbulb,
+  Sparkles,
 } from "lucide-react";
 import {
   Sidebar,
@@ -29,6 +30,7 @@ import { useRole } from "./role-provider";
 
 const mainNav = [
   { title: "Overview", url: "/", icon: LayoutDashboard },
+  { title: "Discover", url: "/outcomes/discover", icon: Sparkles },
   { title: "Outcomes", url: "/outcomes", icon: Target },
   { title: "Agents", url: "/agents", icon: Bot },
   { title: "Templates", url: "/templates", icon: Library },
@@ -49,6 +51,8 @@ export function AppSidebar() {
 
   const isActive = (url: string) => {
     if (url === "/") return location === "/";
+    if (url === "/outcomes") return location === "/outcomes" || (location.startsWith("/outcomes/") && !location.startsWith("/outcomes/discover"));
+    if (url === "/outcomes/discover") return location === "/outcomes/discover";
     return location.startsWith(url);
   };
 

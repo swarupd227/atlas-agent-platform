@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import {
   Target,
   Plus,
@@ -13,6 +13,7 @@ import {
   Lock,
   GitBranch,
   Shield,
+  Sparkles,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -98,12 +99,18 @@ export default function Outcomes() {
             Define, track, and deliver measurable business outcomes
           </p>
         </div>
-        <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-          <DialogTrigger asChild>
-            <Button data-testid="button-create-outcome">
-              <Plus className="w-4 h-4 mr-1.5" /> New Contract
+        <div className="flex items-center gap-2 flex-wrap">
+          <Link href="/outcomes/discover">
+            <Button variant="outline" data-testid="button-discover-outcomes">
+              <Sparkles className="w-4 h-4 mr-1.5" /> Discover with AI
             </Button>
-          </DialogTrigger>
+          </Link>
+          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+            <DialogTrigger asChild>
+              <Button data-testid="button-create-outcome">
+                <Plus className="w-4 h-4 mr-1.5" /> New Contract
+              </Button>
+            </DialogTrigger>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Create Outcome Contract</DialogTitle>
@@ -158,6 +165,7 @@ export default function Outcomes() {
             </form>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

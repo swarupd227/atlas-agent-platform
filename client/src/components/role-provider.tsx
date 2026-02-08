@@ -35,7 +35,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "OO",
     description: "Defines KPIs, sees ROI, approves outcome contracts",
     icon: Target,
-    allowedRoutes: ["/", "/outcomes", "/billing", "/approvals"],
+    allowedRoutes: ["/", "/outcomes", "/outcomes/discover", "/billing", "/approvals"],
   },
   {
     id: "agent_engineer",
@@ -44,7 +44,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "AE",
     description: "Designs blueprints, tools, memory, eval suites",
     icon: Bot,
-    allowedRoutes: ["/", "/agents", "/templates", "/evals", "/improvements"],
+    allowedRoutes: ["/", "/agents", "/templates", "/evals", "/improvements", "/outcomes/discover"],
   },
   {
     id: "ops_sre",

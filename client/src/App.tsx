@@ -30,12 +30,14 @@ import EvalDetail from "@/pages/eval-detail";
 import Templates from "@/pages/templates";
 import TemplateDetail from "@/pages/template-detail";
 import Improvements from "@/pages/improvements";
+import OutcomeDiscover from "@/pages/outcome-discover";
 
 function Router() {
   return (
     <Switch>
       <Route path="/" component={Overview} />
       <Route path="/outcomes" component={Outcomes} />
+      <Route path="/outcomes/discover" component={OutcomeDiscover} />
       <Route path="/outcomes/:id" component={OutcomeDetail} />
       <Route path="/agents" component={Agents} />
       <Route path="/templates" component={Templates} />
