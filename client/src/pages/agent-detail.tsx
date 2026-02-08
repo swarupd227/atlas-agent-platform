@@ -130,6 +130,60 @@ export default function AgentDetail() {
   const [retirementChecklist, setRetirementChecklist] = useState<boolean[]>([false, false, false, false, false, false]);
   const [expandedTrace, setExpandedTrace] = useState<string | null>(null);
 
+  const { data: deprecationSignals, isLoading: deprecationLoading, isError: deprecationError } = useQuery<{
+    riskScore: number;
+    recommendation: string;
+    signals: Array<{ signal: string; severity: string; value: number; threshold: number; message: string }>;
+    metadata: { recentSuccessRate: number; costRevenueRatio: number; daysSinceLastRun: number; avgEvalPassRate: number; healthScore: number; totalTraces7d: number };
+    computedAt: string;
+  }>({
+    queryKey: ["/api/agents", agentId, "deprecation-signals"],
+    enabled: !!agentId,
+  });
+
+  const [replacementProposal, setReplacementProposal] = useState<any>(null);
+
+  const proposalMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/ai/propose-replacement`, { agentId });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setReplacementProposal(data);
+      toast({ title: "Replacement proposal generated" });
+    },
+    onError: () => toast({ title: "Failed to generate proposal", variant: "destructive" }),
+  });
+
+  const initiateRetirementMutation = useMutation({
+    mutationFn: async (data: { reason: string; replacementAgentId?: string; requireApproval: boolean }) => {
+      const res = await apiRequest("POST", `/api/agents/${agentId}/initiate-retirement`, data);
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/approvals"] });
+      setRetireDialogOpen(false);
+      toast({ title: data.status === "pending_approval" ? "Retirement sent for expert approval" : "Retirement initiated" });
+    },
+    onError: () => toast({ title: "Failed to initiate retirement", variant: "destructive" }),
+  });
+
+  const completeRetirementMutation = useMutation({
+    mutationFn: async (data: { handoverComplete: boolean; requireApproval: boolean }) => {
+      const res = await apiRequest("POST", `/api/agents/${agentId}/complete-retirement`, data);
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/approvals"] });
+      toast({ title: data.status === "retired" ? "Agent archived successfully" : "Handover review submitted for approval" });
+    },
+    onError: () => toast({ title: "Failed to complete retirement", variant: "destructive" }),
+  });
+
   const retireMutation = useMutation({
     mutationFn: async (data: { status: string; description?: string }) => {
       const res = await apiRequest("PATCH", `/api/agents/${agentId}`, data);
@@ -717,14 +771,69 @@ export default function AgentDetail() {
         </TabsContent>
 
         <TabsContent value="lifecycle" className="flex flex-col gap-4 mt-0">
+          {/* Status Overview */}
           <Card>
             <CardHeader className="pb-3">
-              <div className="flex items-center gap-2">
-                <Archive className="w-4 h-4 text-muted-foreground" />
-                <CardTitle className="text-sm font-medium">Agent Lifecycle</CardTitle>
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <Archive className="w-4 h-4 text-muted-foreground" />
+                  <CardTitle className="text-sm font-medium">Agent Lifecycle</CardTitle>
+                </div>
+                {(() => {
+                  const retirementApprovals = (allApprovals || []).filter(a => a.objectId === agentId && (a.type === "retirement_review" || a.type === "handover_review"));
+                  const hasPendingApproval = retirementApprovals.some(a => a.status === "pending");
+                  const hasDeniedApproval = retirementApprovals.some(a => a.status === "denied" || a.status === "rejected");
+
+                  if (hasPendingApproval) {
+                    return (
+                      <Badge variant="secondary" data-testid="badge-pending-approval">
+                        <Clock className="w-3 h-3 mr-1" /> Awaiting Expert Approval
+                      </Badge>
+                    );
+                  }
+
+                  if (agent.status === "active" && !hasDeniedApproval) {
+                    return (
+                      <Button variant="outline" size="sm" onClick={() => setRetireDialogOpen(true)} data-testid="button-open-retire-dialog">
+                        <Power className="w-3 h-3 mr-1" /> Initiate Retirement
+                      </Button>
+                    );
+                  }
+
+                  if (agent.status === "retiring") {
+                    return (
+                      <Button variant="outline" size="sm" onClick={() => completeRetirementMutation.mutate({ handoverComplete: retirementChecklist.every(Boolean), requireApproval: agent.riskTier === "HIGH" || agent.riskTier === "CRITICAL" })} disabled={completeRetirementMutation.isPending} data-testid="button-complete-retirement">
+                        <Archive className="w-3 h-3 mr-1" /> {completeRetirementMutation.isPending ? "Processing..." : "Complete Archival"}
+                      </Button>
+                    );
+                  }
+
+                  return null;
+                })()}
               </div>
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
+              {/* Phase timeline */}
+              <div className="flex items-center gap-0" data-testid="lifecycle-phase-timeline">
+                {[
+                  { label: "Active", phase: "active" },
+                  { label: "Retiring", phase: "retiring" },
+                  { label: "Archived", phase: "retired" },
+                ].map((p, i) => {
+                  const isActive = agent.status === p.phase;
+                  const isPast = (agent.status === "retiring" && p.phase === "active") || (agent.status === "retired" && (p.phase === "active" || p.phase === "retiring"));
+                  return (
+                    <div key={p.phase} className="flex items-center gap-0 flex-1" data-testid={`phase-${p.phase}`}>
+                      <div className={`flex flex-col items-center gap-1 flex-1 p-3 rounded-md border text-center ${isActive ? "border-primary bg-primary/5" : isPast ? "bg-muted/50" : ""}`}>
+                        <div className={`w-3 h-3 rounded-full ${isActive ? "bg-primary" : isPast ? "bg-muted-foreground" : "bg-muted"}`} />
+                        <span className={`text-xs font-medium ${isActive ? "text-primary" : isPast ? "text-muted-foreground" : "text-muted-foreground/50"}`}>{p.label}</span>
+                      </div>
+                      {i < 2 && <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0 mx-1" />}
+                    </div>
+                  );
+                })}
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="flex flex-col gap-1">
                   <span className="text-xs text-muted-foreground">Current Status</span>
@@ -739,6 +848,7 @@ export default function AgentDetail() {
                   <span className="text-sm font-medium">v{agent.currentVersion}</span>
                 </div>
               </div>
+
               {agent.status === "retired" && (
                 <div className="p-3 rounded-md bg-muted/50 flex flex-col gap-2">
                   <div className="flex items-center gap-2">
@@ -754,40 +864,259 @@ export default function AgentDetail() {
                     <AlertCircle className="w-4 h-4 text-amber-500" />
                     <span className="text-sm font-medium">Retirement in progress</span>
                   </div>
-                  <p className="text-xs text-muted-foreground">Agent is draining active requests and preparing for archival.</p>
-                  <Progress value={65} className="h-2" />
+                  <p className="text-xs text-muted-foreground">Agent is draining active requests and preparing for archival. Complete the knowledge transfer checklist below before final archival.</p>
+                  <Progress value={(retirementChecklist.filter(Boolean).length / retirementChecklist.length) * 100} className="h-2" />
+                </div>
+              )}
+
+              {/* Approval gate status */}
+              {(() => {
+                const retirementApprovals = (allApprovals || []).filter(a => a.objectId === agentId && (a.type === "retirement_review" || a.type === "handover_review"));
+                if (retirementApprovals.length === 0) return null;
+                return (
+                  <div className="flex flex-col gap-2" data-testid="retirement-approvals">
+                    <span className="text-xs font-medium">Approval Gates</span>
+                    {retirementApprovals.map(a => (
+                      <div key={a.id} className="flex items-center justify-between gap-2 p-2.5 rounded-md border" data-testid={`approval-gate-${a.id}`}>
+                        <div className="flex items-center gap-2">
+                          <Shield className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                          <div className="flex flex-col">
+                            <span className="text-xs font-medium">{a.type === "retirement_review" ? "Retirement Decision" : "Handover Review"}</span>
+                            <span className="text-[10px] text-muted-foreground">{a.description}</span>
+                          </div>
+                        </div>
+                        <StatusBadge status={a.status} />
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+            </CardContent>
+          </Card>
+
+          {/* Deprecation Signals Dashboard */}
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-muted-foreground" />
+                  <CardTitle className="text-sm font-medium">Deprecation Signals</CardTitle>
+                </div>
+                {deprecationSignals && (
+                  <Badge variant={deprecationSignals.recommendation === "retire" ? "destructive" : deprecationSignals.recommendation === "review" ? "secondary" : "outline"} data-testid="badge-risk-recommendation">
+                    {deprecationSignals.recommendation === "retire" ? "Recommend Retire" : deprecationSignals.recommendation === "review" ? "Needs Review" : "Healthy"}
+                  </Badge>
+                )}
+              </div>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-4">
+              {deprecationLoading ? (
+                <div className="flex flex-col gap-2">
+                  <Skeleton className="h-4 w-full" />
+                  <Skeleton className="h-4 w-3/4" />
+                </div>
+              ) : deprecationError ? (
+                <div className="flex items-center gap-2 p-3 rounded-md bg-muted/50" data-testid="signals-error">
+                  <AlertCircle className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-xs text-muted-foreground">Unable to compute deprecation signals. The data may not be available yet.</span>
+                </div>
+              ) : deprecationSignals ? (
+                <>
+                  {/* Risk Score Gauge */}
+                  <div className="flex flex-col gap-2" data-testid="deprecation-risk-score">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-muted-foreground">Retirement Risk Score</span>
+                      <span className={`text-sm font-bold ${deprecationSignals.riskScore >= 60 ? "text-red-500" : deprecationSignals.riskScore >= 30 ? "text-amber-500" : "text-emerald-500"}`}>
+                        {deprecationSignals.riskScore}/100
+                      </span>
+                    </div>
+                    <Progress value={deprecationSignals.riskScore} className="h-2.5" data-testid="progress-risk-score" />
+                  </div>
+
+                  {/* Signal breakdown */}
+                  {deprecationSignals.signals.length > 0 ? (
+                    <div className="flex flex-col gap-2">
+                      {deprecationSignals.signals.map((sig, i) => (
+                        <div key={i} className={`flex items-start gap-2 p-2.5 rounded-md border ${sig.severity === "high" ? "border-red-500/30 bg-red-500/5" : "border-amber-500/30 bg-amber-500/5"}`} data-testid={`signal-${sig.signal}`}>
+                          <AlertCircle className={`w-3.5 h-3.5 mt-0.5 shrink-0 ${sig.severity === "high" ? "text-red-500" : "text-amber-500"}`} />
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-xs font-medium">{sig.message}</span>
+                            <span className="text-[10px] text-muted-foreground">Threshold: {sig.threshold} | Current: {sig.value}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 p-3 rounded-md bg-emerald-500/5 border border-emerald-500/20" data-testid="signals-healthy">
+                      <CheckCircle className="w-4 h-4 text-emerald-500" />
+                      <span className="text-xs font-medium text-emerald-700 dark:text-emerald-400">No deprecation signals detected — agent is operating normally</span>
+                    </div>
+                  )}
+
+                  {/* Metadata summary */}
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3" data-testid="signal-metadata">
+                    <div className="flex flex-col gap-0.5 p-2 rounded-md bg-muted/30">
+                      <span className="text-[10px] text-muted-foreground">7d Success Rate</span>
+                      <span className="text-xs font-medium">{deprecationSignals.metadata.recentSuccessRate}%</span>
+                    </div>
+                    <div className="flex flex-col gap-0.5 p-2 rounded-md bg-muted/30">
+                      <span className="text-[10px] text-muted-foreground">Cost/Revenue</span>
+                      <span className="text-xs font-medium">{deprecationSignals.metadata.costRevenueRatio}x</span>
+                    </div>
+                    <div className="flex flex-col gap-0.5 p-2 rounded-md bg-muted/30">
+                      <span className="text-[10px] text-muted-foreground">Days Since Last Run</span>
+                      <span className="text-xs font-medium">{deprecationSignals.metadata.daysSinceLastRun >= 999 ? "N/A" : deprecationSignals.metadata.daysSinceLastRun}</span>
+                    </div>
+                    <div className="flex flex-col gap-0.5 p-2 rounded-md bg-muted/30">
+                      <span className="text-[10px] text-muted-foreground">Avg Eval Pass Rate</span>
+                      <span className="text-xs font-medium">{deprecationSignals.metadata.avgEvalPassRate}%</span>
+                    </div>
+                    <div className="flex flex-col gap-0.5 p-2 rounded-md bg-muted/30">
+                      <span className="text-[10px] text-muted-foreground">Health Score</span>
+                      <span className="text-xs font-medium">{deprecationSignals.metadata.healthScore}</span>
+                    </div>
+                    <div className="flex flex-col gap-0.5 p-2 rounded-md bg-muted/30">
+                      <span className="text-[10px] text-muted-foreground">Traces (7d)</span>
+                      <span className="text-xs font-medium">{deprecationSignals.metadata.totalTraces7d}</span>
+                    </div>
+                  </div>
+                </>
+              ) : null}
+            </CardContent>
+          </Card>
+
+          {/* AI Replacement Proposal */}
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <RefreshCw className="w-4 h-4 text-muted-foreground" />
+                  <CardTitle className="text-sm font-medium">Replacement Proposal</CardTitle>
+                </div>
+                <Button variant="outline" size="sm" onClick={() => proposalMutation.mutate()} disabled={proposalMutation.isPending} data-testid="button-generate-replacement">
+                  <Cpu className="w-3 h-3 mr-1" /> {proposalMutation.isPending ? "Analyzing..." : "Generate AI Proposal"}
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-4">
+              {replacementProposal ? (
+                <>
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline" data-testid="badge-strategy">{replacementProposal.replacementStrategy?.replace(/_/g, " ")}</Badge>
+                      <Badge variant={replacementProposal.migrationComplexity === "high" ? "destructive" : replacementProposal.migrationComplexity === "medium" ? "secondary" : "outline"} data-testid="badge-complexity">
+                        {replacementProposal.migrationComplexity} complexity
+                      </Badge>
+                    </div>
+                    {replacementProposal.estimatedTransitionDays && (
+                      <span className="text-[10px] text-muted-foreground">Est. {replacementProposal.estimatedTransitionDays} days to transition</span>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground" data-testid="text-proposal-reasoning">{replacementProposal.reasoning}</p>
+
+                  {replacementProposal.templateMatches?.length > 0 && (
+                    <div className="flex flex-col gap-2">
+                      <span className="text-xs font-medium">Template Matches</span>
+                      {replacementProposal.templateMatches.map((m: any, i: number) => (
+                        <div key={i} className="flex items-center justify-between gap-2 p-2.5 rounded-md border" data-testid={`template-match-${i}`}>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-xs font-medium">{m.templateName}</span>
+                            <span className="text-[10px] text-muted-foreground">{m.reasoning}</span>
+                          </div>
+                          <Badge variant="outline" className="shrink-0">{m.matchScore}% match</Badge>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {replacementProposal.agentMatches?.length > 0 && (
+                    <div className="flex flex-col gap-2">
+                      <span className="text-xs font-medium">Existing Agent Matches</span>
+                      {replacementProposal.agentMatches.map((m: any, i: number) => (
+                        <div key={i} className="flex items-center justify-between gap-2 p-2.5 rounded-md border" data-testid={`agent-match-${i}`}>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-xs font-medium">{m.agentName}</span>
+                            <span className="text-[10px] text-muted-foreground">{m.reasoning}</span>
+                          </div>
+                          <Badge variant="outline" className="shrink-0">{m.matchScore}% match</Badge>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {replacementProposal.capabilityGaps?.length > 0 && (
+                    <div className="flex flex-col gap-2">
+                      <span className="text-xs font-medium">Capability Gaps</span>
+                      <div className="flex flex-wrap gap-1">
+                        {replacementProposal.capabilityGaps.map((gap: string, i: number) => (
+                          <Badge key={i} variant="secondary" data-testid={`gap-${i}`}>{gap}</Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {replacementProposal.knowledgeTransferSteps?.length > 0 && (
+                    <div className="flex flex-col gap-2">
+                      <span className="text-xs font-medium">Recommended Transfer Steps</span>
+                      {replacementProposal.knowledgeTransferSteps.map((step: string, i: number) => (
+                        <div key={i} className="flex items-start gap-2 text-xs" data-testid={`transfer-step-${i}`}>
+                          <span className="text-muted-foreground shrink-0">{i + 1}.</span>
+                          <span>{step}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="text-center py-4">
+                  <p className="text-xs text-muted-foreground">Click "Generate AI Proposal" to analyze this agent and suggest replacement strategies</p>
                 </div>
               )}
             </CardContent>
           </Card>
 
+          {/* Knowledge Transfer Checklist */}
           <Card>
             <CardHeader className="pb-3">
               <div className="flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-muted-foreground" />
-                <CardTitle className="text-sm font-medium">Retirement Triggers</CardTitle>
+                <BookOpen className="w-4 h-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Knowledge Transfer Checklist</CardTitle>
               </div>
             </CardHeader>
-            <CardContent>
-              <div className="flex flex-col gap-3">
-                {[
-                  { metric: "Success Rate Drop", condition: "< 70% over 7 days", icon: TrendingUp },
-                  { metric: "Monthly Cost Exceeds Revenue", condition: "Cost/Revenue ratio > 1.5", icon: DollarSign },
-                  { metric: "No Active Runs", condition: "Zero runs for 30 days", icon: Clock },
-                  { metric: "Newer Version Available", condition: "Successor agent deployed", icon: RefreshCw },
-                ].map((trigger, i) => (
-                  <div key={i} className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted/30" data-testid={`retirement-trigger-${i}`}>
-                    <div className="flex items-center gap-2">
-                      <trigger.icon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                      <span className="text-xs font-medium">{trigger.metric}</span>
-                    </div>
-                    <span className="text-[10px] text-muted-foreground">{trigger.condition}</span>
-                  </div>
-                ))}
+            <CardContent className="flex flex-col gap-4">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <span className="text-xs text-muted-foreground">Complete these steps before archiving the agent</span>
+                <Badge variant="outline" className="text-[10px]" data-testid="badge-checklist-progress">
+                  {retirementChecklist.filter(Boolean).length}/{retirementChecklist.length} completed
+                </Badge>
               </div>
+              <Progress value={(retirementChecklist.filter(Boolean).length / retirementChecklist.length) * 100} className="h-2" data-testid="progress-checklist" />
+              {[
+                { label: "Document agent purpose and business context", icon: FileCode },
+                { label: "Export evaluation suite results", icon: FlaskConical },
+                { label: "Transfer tool configurations to replacement", icon: Wrench },
+                { label: "Notify dependent outcome owners", icon: Users },
+                { label: "Archive run traces and audit logs", icon: Database },
+                { label: "Update routing rules to replacement agent", icon: GitBranch },
+              ].map((item, i) => (
+                <div key={i} className="flex items-center gap-2" data-testid={`checklist-item-${i}`}>
+                  <Checkbox
+                    checked={retirementChecklist[i]}
+                    onCheckedChange={(checked) => {
+                      const next = [...retirementChecklist];
+                      next[i] = !!checked;
+                      setRetirementChecklist(next);
+                    }}
+                    data-testid={`checkbox-checklist-${i}`}
+                  />
+                  <item.icon className="w-3 h-3 text-muted-foreground shrink-0" />
+                  <span className={`text-xs ${retirementChecklist[i] ? "line-through text-muted-foreground" : ""}`}>{item.label}</span>
+                </div>
+              ))}
             </CardContent>
           </Card>
 
+          {/* Improvement Recommendations */}
           <Card>
             <CardHeader className="pb-3">
               <div className="flex items-center gap-2">
@@ -827,71 +1156,6 @@ export default function AgentDetail() {
                   ))}
                 </div>
               )}
-            </CardContent>
-          </Card>
-
-          {/* Retirement Plan */}
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex items-center gap-2">
-                <Power className="w-4 h-4 text-muted-foreground" />
-                <CardTitle className="text-sm font-medium">Retirement Plan</CardTitle>
-              </div>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-4">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="flex flex-col gap-1">
-                  <span className="text-xs text-muted-foreground">Deprecation Status</span>
-                  <span className="text-sm font-medium" data-testid="text-deprecation-status">
-                    {agent.status === "retiring" ? "In Progress" : agent.status === "retired" ? "Completed" : "Active"}
-                  </span>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <span className="text-xs text-muted-foreground">Target Retirement Date</span>
-                  <span className="text-sm font-medium" data-testid="text-retirement-date">
-                    {agent.status === "retiring" ? new Date(Date.now() + 30 * 86400000).toLocaleDateString() : "Not scheduled"}
-                  </span>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <span className="text-xs text-muted-foreground">Replacement Candidate</span>
-                  <span className="text-sm font-medium" data-testid="text-replacement-agent">
-                    {replacementAgentId || "No replacement designated"}
-                  </span>
-                </div>
-              </div>
-
-              <Separator />
-
-              <div className="flex flex-col gap-3">
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <span className="text-xs font-medium">Knowledge Transfer Checklist</span>
-                  <Badge variant="outline" className="text-[10px]" data-testid="badge-checklist-progress">
-                    {retirementChecklist.filter(Boolean).length}/{retirementChecklist.length} completed
-                  </Badge>
-                </div>
-                <Progress value={(retirementChecklist.filter(Boolean).length / retirementChecklist.length) * 100} className="h-2" data-testid="progress-checklist" />
-                {[
-                  "Document agent purpose and business context",
-                  "Export evaluation suite results",
-                  "Transfer tool configurations to replacement",
-                  "Notify dependent outcome owners",
-                  "Archive run traces and audit logs",
-                  "Update routing rules to replacement agent",
-                ].map((item, i) => (
-                  <div key={i} className="flex items-center gap-2" data-testid={`checklist-item-${i}`}>
-                    <Checkbox
-                      checked={retirementChecklist[i]}
-                      onCheckedChange={(checked) => {
-                        const next = [...retirementChecklist];
-                        next[i] = !!checked;
-                        setRetirementChecklist(next);
-                      }}
-                      data-testid={`checkbox-checklist-${i}`}
-                    />
-                    <span className={`text-xs ${retirementChecklist[i] ? "line-through text-muted-foreground" : ""}`}>{item}</span>
-                  </div>
-                ))}
-              </div>
             </CardContent>
           </Card>
         </TabsContent>
@@ -1522,9 +1786,9 @@ export default function AgentDetail() {
       <Dialog open={retireDialogOpen} onOpenChange={setRetireDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Retire Agent</DialogTitle>
+            <DialogTitle>Initiate Retirement</DialogTitle>
             <DialogDescription>
-              Retiring an agent will archive it and stop it from processing new requests. Historical data will remain accessible.
+              This will begin the retirement process. For HIGH or CRITICAL risk agents, an expert approval will be required before the retirement proceeds.
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-4">
@@ -1546,6 +1810,12 @@ export default function AgentDetail() {
                 data-testid="input-replacement-agent"
               />
             </div>
+            {(agent?.riskTier === "HIGH" || agent?.riskTier === "CRITICAL") && (
+              <div className="flex items-center gap-2 p-2.5 rounded-md bg-amber-500/10 border border-amber-500/20">
+                <Shield className="w-4 h-4 text-amber-500 shrink-0" />
+                <span className="text-xs text-muted-foreground">This is a {agent.riskTier} risk agent. Retirement will require expert approval before proceeding.</span>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setRetireDialogOpen(false)} data-testid="button-cancel-retire">
@@ -1553,11 +1823,15 @@ export default function AgentDetail() {
             </Button>
             <Button
               variant="destructive"
-              onClick={() => retireMutation.mutate({ status: "retired", description: `Retired: ${retireReason}` })}
-              disabled={retireMutation.isPending}
+              onClick={() => initiateRetirementMutation.mutate({
+                reason: retireReason,
+                replacementAgentId: replacementAgentId || undefined,
+                requireApproval: agent?.riskTier === "HIGH" || agent?.riskTier === "CRITICAL",
+              })}
+              disabled={initiateRetirementMutation.isPending || !retireReason.trim()}
               data-testid="button-confirm-retire"
             >
-              {retireMutation.isPending ? "Retiring..." : "Retire Agent"}
+              {initiateRetirementMutation.isPending ? "Processing..." : "Begin Retirement"}
             </Button>
           </DialogFooter>
         </DialogContent>

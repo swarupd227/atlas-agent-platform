@@ -2225,5 +2225,240 @@ Return a JSON array of 3-5 improvement cycle proposals. Return ONLY valid JSON.`
     }
   });
 
+  // ── Deprecation Detection ──────────────────────────────────────────
+  app.get("/api/agents/:id/deprecation-signals", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+
+      const traces = await storage.getTracesByAgent(req.params.id);
+      const evals = await storage.getEvalsByAgent(req.params.id);
+
+      const now = Date.now();
+      const sevenDaysAgo = now - 7 * 86400000;
+      const thirtyDaysAgo = now - 30 * 86400000;
+
+      const recentTraces = traces.filter(t => new Date(t.startedAt || 0).getTime() > sevenDaysAgo);
+      const recentFailed = recentTraces.filter(t => t.status === "failed" || t.status === "error");
+      const recentSuccessRate = recentTraces.length > 0
+        ? (recentTraces.length - recentFailed.length) / recentTraces.length
+        : (agent.successRate || 0.95);
+
+      const hasRecentRuns = traces.some(t => new Date(t.startedAt || 0).getTime() > thirtyDaysAgo);
+      const daysSinceLastRun = traces.length > 0
+        ? Math.floor((now - Math.max(...traces.map(t => new Date(t.startedAt || t.endedAt || 0).getTime()))) / 86400000)
+        : 999;
+
+      const costRevenueRatio = (agent.monthlyRevenue && agent.monthlyRevenue > 0)
+        ? (agent.monthlyCost || 0) / agent.monthlyRevenue
+        : 0;
+
+      const evalPassRates = evals.map((e: any) => e.passRate ?? e.pass_rate ?? null).filter((r: any) => r !== null) as number[];
+      const avgPassRate = evalPassRates.length > 0
+        ? evalPassRates.reduce((s, r) => s + r, 0) / evalPassRates.length
+        : 1;
+
+      const signals = [];
+      let riskScore = 0;
+
+      if (recentSuccessRate < 0.7) {
+        signals.push({ signal: "success_rate_decline", severity: "high", value: Math.round(recentSuccessRate * 100), threshold: 70, message: `Success rate dropped to ${Math.round(recentSuccessRate * 100)}% over the last 7 days` });
+        riskScore += 30;
+      } else if (recentSuccessRate < 0.85) {
+        signals.push({ signal: "success_rate_decline", severity: "medium", value: Math.round(recentSuccessRate * 100), threshold: 85, message: `Success rate at ${Math.round(recentSuccessRate * 100)}% — trending below target` });
+        riskScore += 15;
+      }
+
+      if (costRevenueRatio > 1.5) {
+        signals.push({ signal: "cost_overrun", severity: "high", value: Math.round(costRevenueRatio * 100) / 100, threshold: 1.5, message: `Cost/Revenue ratio is ${costRevenueRatio.toFixed(2)}x — agent is unprofitable` });
+        riskScore += 25;
+      } else if (costRevenueRatio > 1.0) {
+        signals.push({ signal: "cost_overrun", severity: "medium", value: Math.round(costRevenueRatio * 100) / 100, threshold: 1.0, message: `Cost/Revenue ratio is ${costRevenueRatio.toFixed(2)}x — approaching break-even` });
+        riskScore += 10;
+      }
+
+      if (!hasRecentRuns) {
+        signals.push({ signal: "staleness", severity: "high", value: daysSinceLastRun, threshold: 30, message: `No runs in the last ${daysSinceLastRun} days — agent may be obsolete` });
+        riskScore += 25;
+      }
+
+      if (avgPassRate < 0.6) {
+        signals.push({ signal: "eval_degradation", severity: "high", value: Math.round(avgPassRate * 100), threshold: 60, message: `Average eval pass rate is ${Math.round(avgPassRate * 100)}% — below minimum quality` });
+        riskScore += 20;
+      } else if (avgPassRate < 0.8) {
+        signals.push({ signal: "eval_degradation", severity: "medium", value: Math.round(avgPassRate * 100), threshold: 80, message: `Average eval pass rate is ${Math.round(avgPassRate * 100)}% — quality declining` });
+        riskScore += 10;
+      }
+
+      if ((agent.healthScore || 85) < 50) {
+        signals.push({ signal: "health_score_critical", severity: "high", value: agent.healthScore, threshold: 50, message: `Health score is ${agent.healthScore} — critically low` });
+        riskScore += 20;
+      }
+
+      riskScore = Math.min(100, riskScore);
+      const recommendation = riskScore >= 60 ? "retire" : riskScore >= 30 ? "review" : "healthy";
+
+      res.json({
+        agentId: agent.id,
+        agentName: agent.name,
+        riskScore,
+        recommendation,
+        signals,
+        metadata: {
+          recentSuccessRate: Math.round(recentSuccessRate * 100),
+          costRevenueRatio: Math.round(costRevenueRatio * 100) / 100,
+          daysSinceLastRun,
+          avgEvalPassRate: Math.round(avgPassRate * 100),
+          healthScore: agent.healthScore,
+          totalTraces7d: recentTraces.length,
+        },
+        computedAt: new Date().toISOString(),
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to compute deprecation signals" });
+    }
+  });
+
+  // ── AI Replacement Proposal ──────────────────────────────────────────
+  app.post("/api/ai/propose-replacement", async (req, res) => {
+    try {
+      const { agentId } = req.body;
+      if (!agentId) return res.status(400).json({ message: "agentId is required" });
+
+      const agent = await storage.getAgent(agentId);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+
+      const templates = await storage.getAgentTemplates();
+      const agents = await storage.getAgents();
+      const activeAgents = agents.filter(a => a.id !== agentId && a.status === "active");
+
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        messages: [
+          {
+            role: "system",
+            content: `You are an AI agent lifecycle advisor. An agent is being considered for retirement. Analyze the agent and suggest replacement options from existing templates or active agents. Return JSON with:
+{
+  "replacementStrategy": "template" | "existing_agent" | "new_design" | "no_replacement",
+  "reasoning": "why this strategy",
+  "templateMatches": [{"templateId": "...", "templateName": "...", "matchScore": 0-100, "reasoning": "..."}],
+  "agentMatches": [{"agentId": "...", "agentName": "...", "matchScore": 0-100, "reasoning": "..."}],
+  "capabilityGaps": ["list of capabilities the replacement would need"],
+  "migrationComplexity": "low" | "medium" | "high",
+  "estimatedTransitionDays": number,
+  "knowledgeTransferSteps": ["ordered list of transfer steps"]
+}`
+          },
+          {
+            role: "user",
+            content: `Agent to retire:
+Name: ${agent.name}
+Description: ${agent.description || "N/A"}
+Tools: ${JSON.stringify(agent.toolsConfig || [])}
+Model: ${agent.modelProvider}/${agent.modelName}
+Risk Tier: ${agent.riskTier}
+Outcome ID: ${agent.outcomeId || "none"}
+
+Available templates: ${JSON.stringify(templates.map(t => ({ id: t.id, name: t.name, description: t.description, category: t.category, tags: t.tags })).slice(0, 10))}
+
+Active agents: ${JSON.stringify(activeAgents.map(a => ({ id: a.id, name: a.name, description: a.description, outcomeId: a.outcomeId })).slice(0, 10))}`
+          }
+        ],
+        response_format: { type: "json_object" },
+        temperature: 0.3,
+      });
+
+      const result = JSON.parse(completion.choices[0].message.content || "{}");
+      res.json({ ...result, agentId, agentName: agent.name, proposedAt: new Date().toISOString() });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to propose replacement" });
+    }
+  });
+
+  // ── Retirement Workflow ──────────────────────────────────────────
+  app.post("/api/agents/:id/initiate-retirement", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+      if (agent.status === "retired") return res.status(400).json({ message: "Agent is already retired" });
+
+      const { reason, replacementAgentId, requireApproval } = req.body;
+
+      if (requireApproval) {
+        const approval = await storage.createApproval({
+          type: "retirement_review",
+          objectType: "agent",
+          objectId: agent.id,
+          objectName: agent.name,
+          riskScore: agent.riskTier === "HIGH" ? 0.8 : agent.riskTier === "CRITICAL" ? 0.95 : 0.5,
+          requestedBy: "system",
+          description: `Retirement request for agent "${agent.name}". Reason: ${reason || "Not specified"}. Replacement: ${replacementAgentId || "None designated"}.`,
+          evidenceJson: {
+            retirementReason: reason,
+            replacementAgentId,
+            currentStatus: agent.status,
+            healthScore: agent.healthScore,
+            monthlyCost: agent.monthlyCost,
+            monthlyRevenue: agent.monthlyRevenue,
+            riskTier: agent.riskTier,
+          },
+        });
+        res.json({ status: "pending_approval", approvalId: approval.id, message: "Retirement requires expert approval" });
+      } else {
+        const updated = await storage.updateAgent(req.params.id, { status: "retiring" });
+        await storage.createAuditEvent({
+          actorType: "system",
+          actorId: "system",
+          action: "agent_retirement_initiated",
+          objectType: "agent",
+          objectId: agent.id,
+          details: JSON.stringify({ reason, replacementAgentId, previousStatus: agent.status }),
+        });
+        res.json({ status: "retiring", agentId: agent.id, message: "Retirement initiated" });
+      }
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to initiate retirement" });
+    }
+  });
+
+  app.post("/api/agents/:id/complete-retirement", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+
+      const { handoverComplete, requireApproval } = req.body;
+
+      if (requireApproval && !handoverComplete) {
+        const approval = await storage.createApproval({
+          type: "handover_review",
+          objectType: "agent",
+          objectId: agent.id,
+          objectName: agent.name,
+          riskScore: 0.6,
+          requestedBy: "system",
+          description: `Handover completeness review for agent "${agent.name}" before final archival.`,
+          evidenceJson: {
+            currentStatus: agent.status,
+            handoverComplete: !!handoverComplete,
+          },
+        });
+        res.json({ status: "pending_handover_approval", approvalId: approval.id });
+      } else {
+        const updated = await storage.updateAgent(req.params.id, { status: "retired" });
+        await storage.createAuditEvent({
+          actorType: "system",
+          actorId: "system",
+          action: "agent_retired",
+          objectType: "agent",
+          objectId: agent.id,
+          details: JSON.stringify({ previousStatus: agent.status, archivedAt: new Date().toISOString() }),
+        });
+        res.json({ status: "retired", agentId: agent.id, message: "Agent archived successfully" });
+      }
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to complete retirement" });
+    }
+  });
+
   return httpServer;
 }
