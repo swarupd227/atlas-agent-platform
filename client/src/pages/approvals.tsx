@@ -18,6 +18,7 @@ import {
   Award,
   Target,
   ArrowRight,
+  Rocket,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -268,6 +269,65 @@ export default function Approvals() {
           </div>
         )}
 
+        {approval.type === "launch_readiness" && evidenceData && (
+          <div className="flex flex-col gap-3" data-testid={`launch-readiness-${approval.id}`}>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-2 flex-wrap">
+                <Rocket className="w-3.5 h-3.5 text-blue-500" />
+                <span className="text-xs font-medium">Launch Readiness Review</span>
+              </div>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {(evidenceData as any).riskTier && (
+                  <Badge
+                    variant={(evidenceData as any).riskTier === "HIGH" ? "destructive" : "secondary"}
+                    className="text-[10px]"
+                  >
+                    {(evidenceData as any).riskTier} Risk
+                  </Badge>
+                )}
+                {(evidenceData as any).autonomyMode && (
+                  <Badge variant="outline" className="text-[10px]">
+                    {(evidenceData as any).autonomyMode}
+                  </Badge>
+                )}
+              </div>
+            </div>
+
+            {(evidenceData as any).canaryMetrics && (
+              <div className="flex flex-col gap-1.5">
+                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Canary Metrics</span>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {Object.entries((evidenceData as any).canaryMetrics as Record<string, string | number>).map(([key, val]) => (
+                    <div key={key} className="flex flex-col gap-0.5 p-2 rounded-md bg-muted/20">
+                      <span className="text-[10px] text-muted-foreground capitalize">{key.replace(/([A-Z])/g, " $1").trim()}</span>
+                      <span className="text-xs font-medium">{val}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {(evidenceData as any).evalResults && (evidenceData as any).evalResults.length > 0 && (
+              <div className="flex flex-col gap-1.5">
+                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Eval Results</span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                  {((evidenceData as any).evalResults as Array<{name: string; passRate: number; totalCases: number}>).map((suite, idx) => (
+                    <div key={idx} className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/30">
+                      <span className="text-[11px] font-medium truncate">{suite.name}</span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className={`text-[11px] font-semibold ${(suite.passRate || 0) >= 80 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
+                          {(suite.passRate || 0).toFixed(0)}%
+                        </span>
+                        <span className="text-[10px] text-muted-foreground">({suite.totalCases} cases)</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {(evidenceData as any)?.configDiff && (
           <ConfigDiff
             changes={(evidenceData as any).configDiff.changes || []}
@@ -455,6 +515,8 @@ export default function Approvals() {
                           <Award className="w-4 h-4 text-blue-500" />
                         ) : approval.type === "outcome_review" ? (
                           <Target className="w-4 h-4 text-blue-500" />
+                        ) : approval.type === "launch_readiness" ? (
+                          <Rocket className="w-4 h-4 text-emerald-500" />
                         ) : (
                           <Shield className="w-4 h-4 text-amber-500" />
                         )}
@@ -462,7 +524,7 @@ export default function Approvals() {
                       <div className="flex flex-col min-w-0">
                         <span className="text-sm font-semibold truncate">{approval.objectName || approval.type}</span>
                         <span className="text-xs text-muted-foreground">
-                          {approval.type === "outcome_certification" ? "Outcome Certification" : approval.type === "outcome_review" ? "Outcome Review" : approval.type.replace(/_/g, " ")} | {approval.objectType} | Risk: {approval.riskScore}/10
+                          {approval.type === "outcome_certification" ? "Outcome Certification" : approval.type === "outcome_review" ? "Outcome Review" : approval.type === "launch_readiness" ? "Launch Readiness" : approval.type.replace(/_/g, " ")} | {approval.objectType} | Risk: {approval.riskScore}/10
                         </span>
                       </div>
                     </div>
@@ -498,7 +560,7 @@ export default function Approvals() {
                       disabled={decideMutation.isPending}
                       data-testid={`button-approve-${approval.id}`}
                     >
-                      <CheckCircle className="w-3.5 h-3.5 mr-1" /> {approval.type === "outcome_certification" ? "Certify" : approval.type === "outcome_review" ? "Validate" : approval.type === "blueprint_review" ? "Validate Blueprint" : "Approve"}
+                      <CheckCircle className="w-3.5 h-3.5 mr-1" /> {approval.type === "outcome_certification" ? "Certify" : approval.type === "outcome_review" ? "Validate" : approval.type === "blueprint_review" ? "Validate Blueprint" : approval.type === "launch_readiness" ? "Clear for Launch" : "Approve"}
                     </Button>
                     {approval.type === "outcome_review" && approval.objectId && (
                       <Link href={`/outcomes/${approval.objectId}`}>
@@ -511,6 +573,13 @@ export default function Approvals() {
                       <Link href={`/agents/${approval.objectId}`}>
                         <Button size="sm" variant="outline" data-testid={`button-view-agent-${approval.id}`}>
                           <ArrowRight className="w-3.5 h-3.5 mr-1" /> View Agent
+                        </Button>
+                      </Link>
+                    )}
+                    {approval.type === "launch_readiness" && approval.objectId && (
+                      <Link href={`/deployments/${approval.objectId}`}>
+                        <Button size="sm" variant="outline" data-testid={`button-view-deployment-${approval.id}`}>
+                          <ArrowRight className="w-3.5 h-3.5 mr-1" /> View Deployment
                         </Button>
                       </Link>
                     )}
@@ -538,7 +607,7 @@ export default function Approvals() {
                   </div>
                   <div className="flex flex-col min-w-0">
                     <span className="text-xs font-medium truncate">{approval.objectName || approval.type}</span>
-                    <span className="text-[11px] text-muted-foreground">{approval.type === "outcome_certification" ? "Outcome Certification" : approval.type === "outcome_review" ? "Outcome Review" : approval.type.replace(/_/g, " ")} | Risk: {approval.riskScore}/10</span>
+                    <span className="text-[11px] text-muted-foreground">{approval.type === "outcome_certification" ? "Outcome Certification" : approval.type === "outcome_review" ? "Outcome Review" : approval.type === "launch_readiness" ? "Launch Readiness" : approval.type.replace(/_/g, " ")} | Risk: {approval.riskScore}/10</span>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">

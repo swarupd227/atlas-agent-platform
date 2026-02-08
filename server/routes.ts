@@ -343,6 +343,36 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/deployments/health", async (_req, res) => {
+    try {
+      const deployments = await storage.getDeployments();
+      const traces = await storage.getTraces();
+      const activeDeployments = deployments.filter(d => d.status === "deployed" || d.status === "active" || d.status === "canary");
+
+      const health: Record<string, { successRate: number; avgLatency: number; errorCount: number; traceCount: number }> = {};
+
+      for (const dep of activeDeployments) {
+        const agentTraces = traces.filter(t => t.agentId === dep.agentId).slice(0, 30);
+        const total = agentTraces.length;
+        const failed = agentTraces.filter(t => t.status === "failed" || t.status === "error").length;
+        const avgLat = total > 0 ? Math.round(agentTraces.reduce((s, t) => s + (t.latencyMs || 0), 0) / total) : 0;
+
+        if (!health[dep.environment]) {
+          health[dep.environment] = { successRate: 0, avgLatency: 0, errorCount: 0, traceCount: 0 };
+        }
+        const env = health[dep.environment];
+        env.traceCount += total;
+        env.errorCount += failed;
+        env.avgLatency = total > 0 ? Math.round((env.avgLatency * (env.traceCount - total) + avgLat * total) / env.traceCount) : env.avgLatency;
+        env.successRate = env.traceCount > 0 ? ((env.traceCount - env.errorCount) / env.traceCount) * 100 : 100;
+      }
+
+      res.json(health);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
   app.get("/api/deployments/:id", async (req, res) => {
     const deployment = await storage.getDeployment(req.params.id);
     if (!deployment) return res.status(404).json({ message: "Deployment not found" });
@@ -390,7 +420,175 @@ export async function registerRoutes(
         rollbackConfig: source.rollbackConfig as any,
       });
 
+      if (nextEnv === "prod") {
+        const agent = await storage.getAgent(source.agentId);
+        const evalSuites = await storage.getEvalSuites();
+        const agentSuites = evalSuites.filter(s => s.agentId === source.agentId);
+        const traces = await storage.getTracesByAgent(source.agentId);
+        const recentTraces = traces.slice(0, 30);
+        const totalT = recentTraces.length;
+        const failedT = recentTraces.filter(t => t.status === "failed" || t.status === "error").length;
+        const successRate = totalT > 0 ? ((totalT - failedT) / totalT * 100) : 100;
+        const avgLat = totalT > 0 ? Math.round(recentTraces.reduce((s, t) => s + (t.latencyMs || 0), 0) / totalT) : 0;
+
+        const outcomes = await storage.getOutcomes();
+        const boundOutcomes = outcomes.filter(o => {
+          const attrs = (o.attributionRules as any)?.agents;
+          return Array.isArray(attrs) && attrs.some((a: any) => a.agentId === source.agentId);
+        });
+        const invoices = await storage.getInvoices();
+        const agentInvoices = invoices.filter(inv => boundOutcomes.some(o => o.id === inv.outcomeId));
+        const revenueExposure = agentInvoices.reduce((sum, inv) => sum + (inv.amount || 0), 0);
+
+        await storage.createApproval({
+          type: "launch_readiness",
+          objectType: "deployment",
+          objectId: promoted.id,
+          objectName: `${source.agentName || "Agent"} v${source.version} → Production`,
+          status: "pending",
+          requestedBy: "System (Auto-Promotion)",
+          description: `Production launch readiness review for ${source.agentName} v${source.version}. Requires expert validation before deployment goes live.`,
+          riskScore: agent?.riskTier === "HIGH" ? 9 : agent?.riskTier === "MEDIUM" ? 6 : 3,
+          evidenceJson: {
+            agentName: source.agentName,
+            version: source.version,
+            riskTier: agent?.riskTier || "MEDIUM",
+            autonomyMode: agent?.autonomyMode || "supervised",
+            evalResults: agentSuites.map(s => ({ name: s.name, passRate: s.passRate, totalCases: s.totalCases })),
+            canaryMetrics: {
+              successRate: successRate.toFixed(1) + "%",
+              avgLatency: avgLat + "ms",
+              errorRate: (totalT > 0 ? (failedT / totalT * 100).toFixed(1) : "0") + "%",
+              traceCount: totalT,
+            },
+            blastRadius: {
+              affectedRunsPerDay: Math.round(totalT * (24 / Math.max(1, 168))),
+              revenueExposure: `$${revenueExposure.toLocaleString()}`,
+              environment: "prod",
+              boundOutcomes: boundOutcomes.map(o => o.name).slice(0, 5),
+              rollbackTimeEstimate: source.rollbackConfig ? `${(source.rollbackConfig as any).cooldownMinutes || 15}m` : "~15m",
+            },
+            promotedFrom: source.environment,
+            deploymentId: promoted.id,
+          },
+        });
+      }
+
       res.status(201).json(promoted);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  app.get("/api/deployments/:id/readiness", async (req, res) => {
+    try {
+      const deployment = await storage.getDeployment(req.params.id);
+      if (!deployment) return res.status(404).json({ message: "Deployment not found" });
+
+      const agentId = deployment.agentId;
+      const traces = await storage.getTracesByAgent(agentId);
+      const evalSuites = await storage.getEvalSuites();
+      const agentSuites = evalSuites.filter(s => s.agentId === agentId);
+      const agentDrift: Array<{ agentId: string; metric: string; driftPercent: number; severity: string }> = [];
+      const allSuites = evalSuites;
+      for (const suite of allSuites.filter(s => s.agentId === agentId)) {
+        const runs = await storage.getEvalRunsBySuite(suite.id);
+        if (runs.length < 2) continue;
+        const sorted = [...runs].sort((a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime());
+        const latest = sorted[0];
+        const previous = sorted.slice(1, 6);
+        if (previous.length === 0) continue;
+        const baselinePassRate = previous.reduce((sum, r) => sum + (r.passRate || 0), 0) / previous.length;
+        const currentPassRate = latest.passRate || 0;
+        if (baselinePassRate > 0) {
+          const driftPct = ((baselinePassRate - currentPassRate) / baselinePassRate) * 100;
+          if (Math.abs(driftPct) > 2) {
+            agentDrift.push({
+              agentId: suite.agentId,
+              metric: "pass_rate",
+              driftPercent: Math.round(driftPct * 100) / 100,
+              severity: Math.abs(driftPct) > 15 ? "critical" : Math.abs(driftPct) > 8 ? "high" : Math.abs(driftPct) > 4 ? "medium" : "low",
+            });
+          }
+        }
+      }
+
+      const recentTraces = traces.slice(0, 50);
+      const totalTraces = recentTraces.length;
+      const failedTraces = recentTraces.filter(t => t.status === "failed" || t.status === "error");
+      const successRate = totalTraces > 0 ? ((totalTraces - failedTraces.length) / totalTraces) * 100 : 100;
+      const avgLatency = totalTraces > 0
+        ? Math.round(recentTraces.reduce((sum, t) => sum + (t.latencyMs || 0), 0) / totalTraces)
+        : 0;
+
+      const bestSuite = agentSuites.reduce((best, s) => (!best || (s.passRate || 0) > (best.passRate || 0) ? s : best), agentSuites[0] as typeof agentSuites[0] | undefined);
+      const evalPassRate = bestSuite?.passRate ?? null;
+      const evalSuiteName = bestSuite?.name ?? null;
+
+      const criticalDrift = agentDrift.filter((d: any) => d.severity === "critical");
+      const highDrift = agentDrift.filter((d: any) => d.severity === "high");
+
+      const checks = [
+        {
+          name: "Eval Pass Rate",
+          status: evalPassRate === null ? "unknown" : evalPassRate >= 80 ? "pass" : evalPassRate >= 60 ? "warn" : "fail",
+          value: evalPassRate !== null ? `${evalPassRate.toFixed(1)}%` : "No evals",
+          detail: evalSuiteName ? `Suite: ${evalSuiteName}` : "No eval suite found",
+        },
+        {
+          name: "Success Rate",
+          status: successRate >= 95 ? "pass" : successRate >= 85 ? "warn" : "fail",
+          value: `${successRate.toFixed(1)}%`,
+          detail: `${totalTraces} recent traces, ${failedTraces.length} failed`,
+        },
+        {
+          name: "Drift Status",
+          status: criticalDrift.length > 0 ? "fail" : highDrift.length > 0 ? "warn" : "pass",
+          value: criticalDrift.length > 0 ? `${criticalDrift.length} critical` : highDrift.length > 0 ? `${highDrift.length} high` : "Stable",
+          detail: agentDrift.length > 0 ? agentDrift.map((d: any) => `${d.metric}: ${d.driftPercent.toFixed(1)}%`).slice(0, 3).join(", ") : "No drift detected",
+        },
+        {
+          name: "Avg Latency",
+          status: avgLatency <= 2000 ? "pass" : avgLatency <= 5000 ? "warn" : "fail",
+          value: `${avgLatency}ms`,
+          detail: avgLatency <= 2000 ? "Within threshold" : avgLatency <= 5000 ? "Elevated" : "Exceeds threshold",
+        },
+        {
+          name: "Error Rate",
+          status: failedTraces.length === 0 ? "pass" : failedTraces.length <= 2 ? "warn" : "fail",
+          value: totalTraces > 0 ? `${((failedTraces.length / totalTraces) * 100).toFixed(1)}%` : "0%",
+          detail: `${failedTraces.length} failures in last ${totalTraces} runs`,
+        },
+      ];
+
+      const overallStatus = checks.some(c => c.status === "fail") ? "blocked" : checks.some(c => c.status === "warn") ? "warning" : "ready";
+
+      const agent = await storage.getAgent(agentId);
+      const outcomes = await storage.getOutcomes();
+      const boundOutcomes = outcomes.filter(o => {
+        const agents = (o.attributionRules as any)?.agents;
+        if (Array.isArray(agents)) return agents.some((a: any) => a.agentId === agentId);
+        return false;
+      });
+      const allAgents = await storage.getAgents();
+      const invoices = await storage.getInvoices();
+      const agentInvoices = invoices.filter(inv => boundOutcomes.some(o => o.id === inv.outcomeId));
+      const revenueExposure = agentInvoices.reduce((sum, inv) => sum + (inv.amount || 0), 0);
+      const downstreamCount = allAgents.filter(a => a.id !== agentId && boundOutcomes.some(o => {
+        const attrs = (o.attributionRules as any)?.agents;
+        return Array.isArray(attrs) && attrs.some((at: any) => at.agentId === a.id);
+      })).length;
+
+      const blastRadius = {
+        affectedRunsPerDay: Math.round(totalTraces * (24 / Math.max(1, 168))),
+        revenueExposure: `$${revenueExposure.toLocaleString()}`,
+        environment: deployment.environment,
+        downstreamAgents: downstreamCount,
+        rollbackTimeEstimate: deployment.rollbackConfig ? `${(deployment.rollbackConfig as any).cooldownMinutes || 15}m` : "~15m",
+        boundOutcomes: boundOutcomes.map(o => o.name).slice(0, 5),
+      };
+
+      res.json({ checks, overallStatus, blastRadius, agentName: agent?.name || "Unknown" });
     } catch (e) {
       handleZodError(res, e);
     }

@@ -14,6 +14,9 @@ import {
   Server,
   Hash,
   ChevronRight,
+  Activity,
+  Timer,
+  Zap,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -43,12 +46,24 @@ const envColors: Record<string, string> = {
   prod: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
 };
 
-function EnvironmentPanel({ env, deployments, onSelect }: { env: string; deployments: Deployment[]; onSelect: (id: string) => void }) {
+interface EnvHealth {
+  successRate: number;
+  avgLatency: number;
+  errorCount: number;
+  traceCount: number;
+}
+
+function EnvironmentPanel({ env, deployments, onSelect, health }: { env: string; deployments: Deployment[]; onSelect: (id: string) => void; health?: EnvHealth }) {
   const envDeploys = deployments.filter((d) => d.environment === env);
   const active = envDeploys.filter((d) => d.status === "deployed" || d.status === "active");
 
+  const healthColor = !health || health.traceCount === 0 ? "text-muted-foreground" :
+    health.successRate >= 95 ? "text-emerald-600 dark:text-emerald-400" :
+    health.successRate >= 85 ? "text-amber-600 dark:text-amber-400" :
+    "text-red-600 dark:text-red-400";
+
   return (
-    <Card>
+    <Card data-testid={`env-panel-${env}`}>
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
@@ -60,7 +75,38 @@ function EnvironmentPanel({ env, deployments, onSelect }: { env: string; deploym
           <Badge variant="outline" className="text-[11px]">{active.length} active</Badge>
         </div>
       </CardHeader>
-      <CardContent className="flex flex-col gap-2">
+      <CardContent className="flex flex-col gap-3">
+        {health && health.traceCount > 0 && (
+          <div className="grid grid-cols-3 gap-2" data-testid={`health-${env}`}>
+            <div className="flex flex-col gap-0.5 p-2 rounded-md bg-muted/20">
+              <div className="flex items-center gap-1">
+                <Activity className="w-3 h-3 text-muted-foreground" />
+                <span className="text-[10px] text-muted-foreground">Success</span>
+              </div>
+              <span className={`text-xs font-semibold ${healthColor}`} data-testid={`health-success-${env}`}>
+                {health.successRate.toFixed(1)}%
+              </span>
+            </div>
+            <div className="flex flex-col gap-0.5 p-2 rounded-md bg-muted/20">
+              <div className="flex items-center gap-1">
+                <Timer className="w-3 h-3 text-muted-foreground" />
+                <span className="text-[10px] text-muted-foreground">Latency</span>
+              </div>
+              <span className="text-xs font-semibold" data-testid={`health-latency-${env}`}>
+                {health.avgLatency}ms
+              </span>
+            </div>
+            <div className="flex flex-col gap-0.5 p-2 rounded-md bg-muted/20">
+              <div className="flex items-center gap-1">
+                <Zap className="w-3 h-3 text-muted-foreground" />
+                <span className="text-[10px] text-muted-foreground">Errors</span>
+              </div>
+              <span className={`text-xs font-semibold ${health.errorCount > 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`} data-testid={`health-errors-${env}`}>
+                {health.errorCount}
+              </span>
+            </div>
+          </div>
+        )}
         {envDeploys.length > 0 ? envDeploys.slice(0, 5).map((dep) => (
           <div
             key={dep.id}
@@ -98,6 +144,9 @@ export default function Deployments() {
   });
   const { data: agents } = useQuery<Agent[]>({
     queryKey: ["/api/agents"],
+  });
+  const { data: envHealth } = useQuery<Record<string, EnvHealth>>({
+    queryKey: ["/api/deployments/health"],
   });
 
   const createMutation = useMutation({
@@ -221,9 +270,9 @@ export default function Deployments() {
       <OutcomeKpiStrip compact />
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <EnvironmentPanel env="staging" deployments={allDeploys} onSelect={(id) => navigate(`/deployments/${id}`)} />
-        <EnvironmentPanel env="pilot" deployments={allDeploys} onSelect={(id) => navigate(`/deployments/${id}`)} />
-        <EnvironmentPanel env="prod" deployments={allDeploys} onSelect={(id) => navigate(`/deployments/${id}`)} />
+        <EnvironmentPanel env="staging" deployments={allDeploys} onSelect={(id) => navigate(`/deployments/${id}`)} health={envHealth?.staging} />
+        <EnvironmentPanel env="pilot" deployments={allDeploys} onSelect={(id) => navigate(`/deployments/${id}`)} health={envHealth?.pilot} />
+        <EnvironmentPanel env="prod" deployments={allDeploys} onSelect={(id) => navigate(`/deployments/${id}`)} health={envHealth?.prod} />
       </div>
 
       <Card>

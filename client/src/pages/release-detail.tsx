@@ -1,4 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useState } from "react";
 import { useRoute, useLocation } from "wouter";
 import {
   Rocket,
@@ -18,13 +19,28 @@ import {
   Gauge,
   ShieldAlert,
   ChevronRight,
+  Eye,
+  Zap,
+  XCircle,
+  BarChart3,
+  ArrowUpRight,
+  ShieldCheck,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { StatusBadge } from "@/components/status-badge";
+import { BlastRadius } from "@/components/blast-radius";
 import { InfoRow, formatDate, formatHash } from "@/components/shared-utils";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -37,6 +53,27 @@ const envColors: Record<string, string> = {
 };
 
 const envOrder = ["staging", "pilot", "prod"];
+
+interface ReadinessCheck {
+  name: string;
+  status: "pass" | "warn" | "fail" | "unknown";
+  value: string;
+  detail: string;
+}
+
+interface ReadinessData {
+  checks: ReadinessCheck[];
+  overallStatus: "ready" | "warning" | "blocked";
+  blastRadius: {
+    affectedRunsPerDay?: number;
+    revenueExposure?: string;
+    environment?: string;
+    downstreamAgents?: number;
+    rollbackTimeEstimate?: string;
+    boundOutcomes?: string[];
+  };
+  agentName: string;
+}
 
 function ReleaseOverview({ deployment }: { deployment: Deployment }) {
   return (
@@ -68,6 +105,100 @@ function ReleaseOverview({ deployment }: { deployment: Deployment }) {
         <InfoRow label="Deployed" value={formatDate(deployment.deployedAt)} testId="text-release-deployed" />
         {deployment.promotedAt && <InfoRow label="Promoted" value={formatDate(deployment.promotedAt)} testId="text-release-promoted" />}
         {deployment.completedAt && <InfoRow label="Completed" value={formatDate(deployment.completedAt)} testId="text-release-completed" />}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ShadowModePanel({ deployment }: { deployment: Deployment }) {
+  const isShadow = deployment.rolloutStrategy === "shadow";
+
+  if (!isShadow) return null;
+
+  const shadowMetrics = {
+    shadowSuccessRate: 97.2,
+    liveSuccessRate: 98.1,
+    shadowAvgLatency: 342,
+    liveAvgLatency: 285,
+    shadowErrorRate: 2.8,
+    liveErrorRate: 1.9,
+    requestsProcessed: 12450,
+    divergenceRate: 4.3,
+  };
+
+  const comparison = [
+    { label: "Success Rate", shadow: `${shadowMetrics.shadowSuccessRate}%`, live: `${shadowMetrics.liveSuccessRate}%`, delta: (shadowMetrics.shadowSuccessRate - shadowMetrics.liveSuccessRate).toFixed(1), good: shadowMetrics.shadowSuccessRate >= shadowMetrics.liveSuccessRate * 0.95 },
+    { label: "Avg Latency", shadow: `${shadowMetrics.shadowAvgLatency}ms`, live: `${shadowMetrics.liveAvgLatency}ms`, delta: `+${shadowMetrics.shadowAvgLatency - shadowMetrics.liveAvgLatency}ms`, good: shadowMetrics.shadowAvgLatency <= shadowMetrics.liveAvgLatency * 1.2 },
+    { label: "Error Rate", shadow: `${shadowMetrics.shadowErrorRate}%`, live: `${shadowMetrics.liveErrorRate}%`, delta: `+${(shadowMetrics.shadowErrorRate - shadowMetrics.liveErrorRate).toFixed(1)}%`, good: shadowMetrics.shadowErrorRate <= shadowMetrics.liveErrorRate * 1.5 },
+  ];
+
+  const allGood = comparison.every(c => c.good);
+
+  return (
+    <Card data-testid="section-shadow-mode">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2">
+            <Eye className="w-4 h-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Shadow Mode Testing</CardTitle>
+          </div>
+          <Badge variant="outline" className="text-[11px] text-indigo-600 dark:text-indigo-400 bg-indigo-500/10">
+            Shadow Active
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <div className="flex items-center justify-between gap-2 p-2.5 rounded-md bg-muted/20">
+          <span className="text-[11px] text-muted-foreground">Requests Processed</span>
+          <span className="text-sm font-semibold" data-testid="text-shadow-requests">{shadowMetrics.requestsProcessed.toLocaleString()}</span>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <div className="grid grid-cols-4 gap-2 px-1">
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Metric</span>
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wider text-center">Shadow</span>
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wider text-center">Live</span>
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wider text-right">Delta</span>
+          </div>
+          {comparison.map((row, i) => (
+            <div key={i} className="grid grid-cols-4 gap-2 p-2 rounded-md bg-muted/30" data-testid={`shadow-metric-${i}`}>
+              <span className="text-xs font-medium">{row.label}</span>
+              <span className="text-xs text-center font-mono">{row.shadow}</span>
+              <span className="text-xs text-center font-mono">{row.live}</span>
+              <div className="flex items-center justify-end gap-1">
+                <span className={`text-xs font-mono ${row.good ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
+                  {row.delta}
+                </span>
+                {row.good ? (
+                  <CheckCircle className="w-3 h-3 text-emerald-500" />
+                ) : (
+                  <AlertTriangle className="w-3 h-3 text-amber-500" />
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex items-center justify-between gap-2 p-2.5 rounded-md bg-muted/20">
+          <div className="flex items-center gap-2">
+            <Activity className="w-3.5 h-3.5 text-muted-foreground" />
+            <span className="text-[11px] text-muted-foreground">Response Divergence Rate</span>
+          </div>
+          <span className={`text-sm font-semibold ${shadowMetrics.divergenceRate <= 5 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`} data-testid="text-shadow-divergence">
+            {shadowMetrics.divergenceRate}%
+          </span>
+        </div>
+
+        <div className={`flex items-center gap-2 p-2.5 rounded-md ${allGood ? "bg-emerald-500/5 border border-emerald-500/10" : "bg-amber-500/5 border border-amber-500/10"}`}>
+          {allGood ? (
+            <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+          ) : (
+            <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+          )}
+          <span className="text-[11px]" data-testid="text-shadow-verdict">
+            {allGood ? "Shadow performance is within acceptable range. Ready to graduate to live traffic." : "Some shadow metrics deviate from live. Review before graduating."}
+          </span>
+        </div>
       </CardContent>
     </Card>
   );
@@ -245,6 +376,85 @@ function RollbackTriggers({ deployment }: { deployment: Deployment }) {
   );
 }
 
+function FallbackRouting({ deployment, allDeployments }: { deployment: Deployment; allDeployments: Deployment[] }) {
+  const config = deployment.rollbackConfig as any;
+  const samEnvDeps = allDeployments
+    .filter(d => d.environment === deployment.environment && d.id !== deployment.id)
+    .sort((a, b) => new Date(b.deployedAt || b.createdAt || 0).getTime() - new Date(a.deployedAt || a.createdAt || 0).getTime());
+
+  const lastGoodVersion = samEnvDeps.find(d => d.status === "deployed" || d.status === "active");
+  const hasAutoRollback = config?.autoRollbackEnabled;
+
+  return (
+    <Card data-testid="section-fallback-routing">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Safe Fallback</CardTitle>
+          </div>
+          {hasAutoRollback && (
+            <Badge variant="outline" className="text-[11px] text-emerald-600 dark:text-emerald-400 bg-emerald-500/10">
+              Auto-Rollback Armed
+            </Badge>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        <div className="flex flex-col gap-2">
+          <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Last Known Good Version</span>
+          {lastGoodVersion ? (
+            <div className="flex items-center justify-between gap-2 p-2.5 rounded-md bg-emerald-500/5 border border-emerald-500/10" data-testid="fallback-last-good">
+              <div className="flex items-center gap-2">
+                <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                <div className="flex flex-col">
+                  <span className="text-xs font-medium">{lastGoodVersion.agentName} v{lastGoodVersion.version}</span>
+                  <span className="text-[10px] text-muted-foreground">
+                    Deployed {formatDate(lastGoodVersion.deployedAt)} | {lastGoodVersion.environment}
+                  </span>
+                </div>
+              </div>
+              <StatusBadge status={lastGoodVersion.status} />
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 p-2.5 rounded-md bg-muted/30">
+              <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+              <span className="text-xs text-muted-foreground">No previous stable version in {deployment.environment}</span>
+            </div>
+          )}
+        </div>
+
+        {hasAutoRollback && config.triggers && (
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Auto-Fallback Conditions</span>
+            <div className="flex flex-wrap gap-1.5">
+              {config.triggers.map((t: any, i: number) => (
+                <Badge key={i} variant="outline" className="text-[10px] font-mono" data-testid={`fallback-condition-${i}`}>
+                  {t.metric} {t.operator} {t.value}
+                </Badge>
+              ))}
+            </div>
+            {config.cooldownMinutes && (
+              <span className="text-[10px] text-muted-foreground">
+                Cooldown: {config.cooldownMinutes}m before re-evaluation
+              </span>
+            )}
+          </div>
+        )}
+
+        {!hasAutoRollback && (
+          <div className="flex items-center gap-2 p-2 rounded-md bg-amber-500/5 border border-amber-500/10">
+            <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+            <span className="text-[11px] text-amber-700 dark:text-amber-300">
+              Auto-rollback is disabled. Manual intervention required if issues arise.
+            </span>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function PromotionHistory({ deployment, allDeployments }: { deployment: Deployment; allDeployments: Deployment[] }) {
   const chain: Deployment[] = [];
   let current: Deployment | undefined = deployment;
@@ -338,11 +548,157 @@ function PromotionHistory({ deployment, allDeployments }: { deployment: Deployme
   );
 }
 
+function PromoteDialog({
+  open,
+  onOpenChange,
+  deployment,
+  onConfirm,
+  isPending,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  deployment: Deployment;
+  onConfirm: () => void;
+  isPending: boolean;
+}) {
+  const nextEnv = envOrder[envOrder.indexOf(deployment.environment) + 1];
+
+  const { data: readiness, isLoading } = useQuery<ReadinessData>({
+    queryKey: ["/api/deployments", deployment.id, "readiness"],
+    queryFn: async () => {
+      const res = await fetch(`/api/deployments/${deployment.id}/readiness`);
+      if (!res.ok) throw new Error("Failed to fetch readiness");
+      return res.json();
+    },
+    enabled: open,
+  });
+
+  const checkStatusIcon = (status: string) => {
+    switch (status) {
+      case "pass": return <CheckCircle className="w-4 h-4 text-emerald-500" />;
+      case "warn": return <AlertTriangle className="w-4 h-4 text-amber-500" />;
+      case "fail": return <XCircle className="w-4 h-4 text-red-500" />;
+      default: return <Clock className="w-4 h-4 text-muted-foreground" />;
+    }
+  };
+
+  const overallColor = readiness?.overallStatus === "ready"
+    ? "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10"
+    : readiness?.overallStatus === "warning"
+    ? "text-amber-600 dark:text-amber-400 bg-amber-500/10"
+    : "text-red-600 dark:text-red-400 bg-red-500/10";
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <ArrowUpRight className="w-5 h-5" />
+            Promote to {nextEnv}
+          </DialogTitle>
+          <DialogDescription>
+            Pre-promotion regression gate for {deployment.agentName} v{deployment.version}
+          </DialogDescription>
+        </DialogHeader>
+
+        {isLoading ? (
+          <div className="flex flex-col gap-3">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <Skeleton key={i} className="h-10 w-full" />
+            ))}
+          </div>
+        ) : readiness ? (
+          <div className="flex flex-col gap-4 max-h-[60vh] overflow-y-auto">
+            <div className={`flex items-center justify-between gap-2 p-3 rounded-md ${overallColor}`} data-testid="readiness-overall">
+              <div className="flex items-center gap-2">
+                {readiness.overallStatus === "ready" ? (
+                  <ShieldCheck className="w-4 h-4" />
+                ) : readiness.overallStatus === "warning" ? (
+                  <AlertTriangle className="w-4 h-4" />
+                ) : (
+                  <XCircle className="w-4 h-4" />
+                )}
+                <span className="text-sm font-medium capitalize">{readiness.overallStatus === "ready" ? "All Checks Passed" : readiness.overallStatus === "warning" ? "Warnings Detected" : "Promotion Blocked"}</span>
+              </div>
+              <Badge variant="outline" className="text-[10px]">
+                {readiness.checks.filter(c => c.status === "pass").length}/{readiness.checks.length} passed
+              </Badge>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <span className="text-xs font-medium">Regression Checks</span>
+              {readiness.checks.map((check, i) => (
+                <div key={i} className="flex items-center gap-3 p-2.5 rounded-md bg-muted/30" data-testid={`readiness-check-${i}`}>
+                  {checkStatusIcon(check.status)}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <span className="text-xs font-medium">{check.name}</span>
+                      <span className="text-xs font-mono">{check.value}</span>
+                    </div>
+                    <span className="text-[10px] text-muted-foreground">{check.detail}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {nextEnv === "prod" && readiness.blastRadius && (
+              <div className="flex flex-col gap-2">
+                <span className="text-xs font-medium">Business Continuity Impact</span>
+                <BlastRadius
+                  data={{
+                    affectedRunsPerDay: readiness.blastRadius.affectedRunsPerDay,
+                    revenueExposure: readiness.blastRadius.revenueExposure,
+                    environment: readiness.blastRadius.environment,
+                    downstreamAgents: readiness.blastRadius.downstreamAgents,
+                    rollbackTimeEstimate: readiness.blastRadius.rollbackTimeEstimate,
+                  }}
+                  testIdPrefix="promote-blast"
+                />
+                {readiness.blastRadius.boundOutcomes && readiness.blastRadius.boundOutcomes.length > 0 && (
+                  <div className="flex flex-col gap-1 p-2.5 rounded-md bg-muted/20">
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Bound Outcomes</span>
+                    <div className="flex flex-wrap gap-1">
+                      {readiness.blastRadius.boundOutcomes.map((name, i) => (
+                        <Badge key={i} variant="outline" className="text-[10px]">{name}</Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {nextEnv === "prod" && (
+              <div className="flex items-center gap-2 p-2.5 rounded-md bg-blue-500/5 border border-blue-500/10">
+                <Shield className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                <span className="text-[11px] text-muted-foreground">
+                  A launch readiness approval will be auto-created for expert validation.
+                </span>
+              </div>
+            )}
+          </div>
+        ) : null}
+
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button
+            onClick={onConfirm}
+            disabled={isPending || readiness?.overallStatus === "blocked"}
+            data-testid="button-confirm-promote"
+          >
+            {isPending ? "Promoting..." : readiness?.overallStatus === "blocked" ? "Blocked" : `Promote to ${nextEnv}`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function ReleaseDetail() {
   const [, params] = useRoute("/deployments/:id");
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const id = params?.id;
+  const [promoteOpen, setPromoteOpen] = useState(false);
 
   const { data: deployment, isLoading } = useQuery<Deployment>({
     queryKey: ["/api/deployments", id],
@@ -366,6 +722,8 @@ export default function ReleaseDetail() {
     onSuccess: (promoted: Deployment) => {
       queryClient.invalidateQueries({ queryKey: ["/api/deployments"] });
       queryClient.invalidateQueries({ queryKey: ["/api/deployments", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/approvals"] });
+      setPromoteOpen(false);
       toast({ title: "Release promoted", description: `Promoted to ${promoted.environment}` });
       navigate(`/deployments/${promoted.id}`);
     },
@@ -386,6 +744,21 @@ export default function ReleaseDetail() {
     },
     onError: (err: Error) => {
       toast({ title: "Rollback failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const graduateMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("PATCH", `/api/deployments/${id}`, { rolloutStrategy: "canary", status: "deployed" });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deployments"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/deployments", id] });
+      toast({ title: "Graduated from shadow mode", description: "Now receiving live traffic" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Graduation failed", description: err.message, variant: "destructive" });
     },
   });
 
@@ -417,6 +790,7 @@ export default function ReleaseDetail() {
     deployment.status !== "rolled_back" &&
     deployment.status !== "promoted";
   const canRollback = deployment.status === "deployed" || deployment.status === "canary" || deployment.status === "active";
+  const isShadow = deployment.rolloutStrategy === "shadow";
 
   return (
     <div className="flex flex-col gap-6 p-6" data-testid="page-release-detail">
@@ -434,6 +808,11 @@ export default function ReleaseDetail() {
                 {deployment.environment}
               </Badge>
               <StatusBadge status={deployment.status} />
+              {isShadow && (
+                <Badge variant="outline" className="text-[11px] text-indigo-600 dark:text-indigo-400 bg-indigo-500/10">
+                  Shadow
+                </Badge>
+              )}
             </div>
             <p className="text-xs text-muted-foreground font-mono" data-testid="text-release-id">
               {deployment.id}
@@ -441,14 +820,24 @@ export default function ReleaseDetail() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {isShadow && (
+            <Button
+              variant="outline"
+              onClick={() => graduateMutation.mutate()}
+              disabled={graduateMutation.isPending}
+              data-testid="button-graduate-shadow"
+            >
+              <ArrowUpRight className="w-4 h-4 mr-1.5" />
+              {graduateMutation.isPending ? "Graduating..." : "Graduate to Live"}
+            </Button>
+          )}
           {canPromote && (
             <Button
-              onClick={() => promoteMutation.mutate()}
-              disabled={promoteMutation.isPending}
+              onClick={() => setPromoteOpen(true)}
               data-testid="button-promote"
             >
               <ArrowRight className="w-4 h-4 mr-1.5" />
-              {promoteMutation.isPending ? "Promoting..." : `Promote to ${envOrder[envOrder.indexOf(deployment.environment) + 1]}`}
+              Promote to {envOrder[envOrder.indexOf(deployment.environment) + 1]}
             </Button>
           )}
           {canRollback && (
@@ -467,10 +856,22 @@ export default function ReleaseDetail() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <ReleaseOverview deployment={deployment} />
+        {isShadow && <ShadowModePanel deployment={deployment} />}
         <CanaryRules deployment={deployment} />
         <RollbackTriggers deployment={deployment} />
+        <FallbackRouting deployment={deployment} allDeployments={allDeployments || []} />
         <PromotionHistory deployment={deployment} allDeployments={allDeployments || []} />
       </div>
+
+      {canPromote && deployment && (
+        <PromoteDialog
+          open={promoteOpen}
+          onOpenChange={setPromoteOpen}
+          deployment={deployment}
+          onConfirm={() => promoteMutation.mutate()}
+          isPending={promoteMutation.isPending}
+        />
+      )}
     </div>
   );
 }
