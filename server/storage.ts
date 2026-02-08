@@ -5,6 +5,7 @@ import {
   runTraces, evalSuites, policies, approvals, auditEvents, invoices, outcomeEvents,
   agentTemplates, evalTestCases, evalRuns,
   improvementRecommendations, autonomousActionLogs, agentVersions,
+  policyExceptions, complianceReports,
   type User, type InsertUser,
   type Agent, type InsertAgent,
   type OutcomeContract, type InsertOutcomeContract,
@@ -25,6 +26,8 @@ import {
   type AgentVersion,
   improvementCycles,
   type ImprovementCycle, type InsertImprovementCycle,
+  type PolicyException, type InsertPolicyException,
+  type ComplianceReport, type InsertComplianceReport,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -115,6 +118,16 @@ export interface IStorage {
   getImprovementCyclesByAgent(agentId: string): Promise<ImprovementCycle[]>;
   createImprovementCycle(cycle: InsertImprovementCycle): Promise<ImprovementCycle>;
   updateImprovementCycle(id: string, data: Partial<ImprovementCycle>): Promise<ImprovementCycle | undefined>;
+
+  getPolicyExceptions(): Promise<PolicyException[]>;
+  getPolicyExceptionsByAgent(agentId: string): Promise<PolicyException[]>;
+  createPolicyException(exception: InsertPolicyException): Promise<PolicyException>;
+  updatePolicyException(id: string, data: Partial<PolicyException>): Promise<PolicyException | undefined>;
+
+  getComplianceReports(): Promise<ComplianceReport[]>;
+  createComplianceReport(report: InsertComplianceReport): Promise<ComplianceReport>;
+
+  verifyAuditChainIntegrity(): Promise<{ valid: boolean; totalEvents: number; verifiedEvents: number; brokenAt?: number }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -427,6 +440,57 @@ export class DatabaseStorage implements IStorage {
   async updateImprovementCycle(id: string, data: Partial<ImprovementCycle>) {
     const [updated] = await db.update(improvementCycles).set(data).where(eq(improvementCycles.id, id)).returning();
     return updated;
+  }
+
+  async getPolicyExceptions() {
+    return db.select().from(policyExceptions);
+  }
+
+  async getPolicyExceptionsByAgent(agentId: string) {
+    return db.select().from(policyExceptions).where(eq(policyExceptions.agentId, agentId));
+  }
+
+  async createPolicyException(exception: InsertPolicyException) {
+    const [created] = await db.insert(policyExceptions).values(exception).returning();
+    return created;
+  }
+
+  async updatePolicyException(id: string, data: Partial<PolicyException>) {
+    const [updated] = await db.update(policyExceptions).set(data).where(eq(policyExceptions.id, id)).returning();
+    return updated;
+  }
+
+  async getComplianceReports() {
+    return db.select().from(complianceReports);
+  }
+
+  async createComplianceReport(report: InsertComplianceReport) {
+    const [created] = await db.insert(complianceReports).values(report).returning();
+    return created;
+  }
+
+  async verifyAuditChainIntegrity() {
+    const events = await db.select().from(auditEvents);
+    const sorted = events
+      .filter(e => e.sequenceNum !== null)
+      .sort((a, b) => (a.sequenceNum || 0) - (b.sequenceNum || 0));
+
+    if (sorted.length === 0) {
+      return { valid: true, totalEvents: events.length, verifiedEvents: 0 };
+    }
+
+    let valid = true;
+    let brokenAt: number | undefined;
+
+    for (let i = 1; i < sorted.length; i++) {
+      if (sorted[i].previousHash !== sorted[i - 1].eventHash) {
+        valid = false;
+        brokenAt = sorted[i].sequenceNum || i;
+        break;
+      }
+    }
+
+    return { valid, totalEvents: events.length, verifiedEvents: sorted.length, brokenAt };
   }
 }
 

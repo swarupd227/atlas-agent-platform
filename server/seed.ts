@@ -1,9 +1,10 @@
 import { db } from "./db";
+import crypto from "crypto";
 import { 
   outcomeContracts, kpiDefinitions, agents, deployments, 
   runTraces, evalSuites, policies, approvals, auditEvents, invoices,
   agentTemplates, evalTestCases, evalRuns, improvementRecommendations,
-  agentVersions, improvementCycles,
+  agentVersions, improvementCycles, policyExceptions, complianceReports,
 } from "@shared/schema";
 import { batch1Templates } from "./templates-batch1";
 import { batch2Templates } from "./templates-batch2";
@@ -1691,8 +1692,8 @@ export async function seedDatabase() {
     },
   ]);
 
-  // Audit Events
-  await db.insert(auditEvents).values([
+  // Audit Events with tamper-evident hash chain
+  const auditEventData = [
     { actorType: "system", actorId: "ci-pipeline", action: "deployment.created", objectType: "deployment", objectId: agent1.id, details: "Created deployment v2.4.0-beta to staging" },
     { actorType: "user", actorId: "expert-validator", action: "approval.approved", objectType: "agent", objectId: agent4.id, details: "Approved Content Moderator v4.1.0 deployment" },
     { actorType: "system", actorId: "autopatch-engine", action: "patch.proposed", objectType: "agent", objectId: agent3.id, details: "Proposed prompt optimization for Lead Scorer" },
@@ -1709,6 +1710,76 @@ export async function seedDatabase() {
     { actorType: "system", actorId: "deploy-pipeline", action: "deployment.promoted", objectType: "agent", objectId: agent2.id, details: "Promoted v3.2.0 from staging to production" },
     { actorType: "user", actorId: "agent-engineer", action: "tools.modified", objectType: "agent", objectId: agent4.id, details: "Added image_classifier_v2 tool for deepfake detection" },
     { actorType: "system", actorId: "autopatch-engine", action: "patch.applied", objectType: "agent", objectId: agent1.id, details: "Auto-applied prompt optimization: reduced hallucination rate by 12%" },
+  ];
+
+  let previousHash = "GENESIS";
+  const hashedEvents = auditEventData.map((event, i) => {
+    const payload = JSON.stringify({ ...event, sequenceNum: i + 1, previousHash });
+    const eventHash = crypto.createHash("sha256").update(payload).digest("hex");
+    const result = { ...event, sequenceNum: i + 1, previousHash, eventHash };
+    previousHash = eventHash;
+    return result;
+  });
+  await db.insert(auditEvents).values(hashedEvents);
+
+  // Policy Exceptions
+  const allPolicies = await db.select().from(policies);
+  if (allPolicies.length >= 2) {
+    await db.insert(policyExceptions).values([
+      { policyId: allPolicies[0].id, agentId: agent1.id, requestedBy: "agent-engineer", reason: "Agent requires temporary access to external search API for A/B experiment", scope: "agent", status: "approved", approvedBy: "compliance-lead", expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000) },
+      { policyId: allPolicies[1].id, agentId: agent2.id, requestedBy: "ops-sre", reason: "Invoice OCR agent needs elevated logging for debugging production latency spike", scope: "agent", status: "approved", approvedBy: "expert-validator", expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) },
+      { policyId: allPolicies[0].id, agentId: agent4.id, requestedBy: "trust-safety-lead", reason: "Content moderator needs expanded tool access for deepfake detection pilot", scope: "agent", status: "pending" },
+      { policyId: allPolicies.length > 2 ? allPolicies[2].id : allPolicies[0].id, requestedBy: "agent-engineer", reason: "Organization-wide exception for holiday traffic surge - relaxed rate limits", scope: "org", status: "expired", approvedBy: "compliance-lead", expiresAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000) },
+    ]);
+  }
+
+  // Compliance Reports
+  await db.insert(complianceReports).values([
+    {
+      framework: "SOC2",
+      title: "SOC2 Type II - Q4 2025 Assessment",
+      status: "completed",
+      overallScore: 92,
+      findings: [
+        { control: "CC6.1", title: "Logical Access Controls", status: "pass", evidence: "Role-based access with 6 personas, route-level filtering" },
+        { control: "CC6.2", title: "System Operations Monitoring", status: "pass", evidence: "Real-time agent health monitoring, SLO tracking, anomaly detection" },
+        { control: "CC7.1", title: "Change Management", status: "pass", evidence: "Immutable audit trail with hash chain, version control for all agents" },
+        { control: "CC7.2", title: "Incident Response", status: "warning", evidence: "Automated drift detection in place, manual escalation workflow needs improvement" },
+        { control: "CC8.1", title: "Data Classification", status: "pass", evidence: "PII redaction policies enforced via policy-as-code" },
+      ],
+      evidencePackage: { generatedAt: new Date().toISOString(), totalPolicies: 5, totalAuditEvents: 16, coveragePercent: 92 },
+      generatedBy: "system",
+    },
+    {
+      framework: "EU_AI_ACT",
+      title: "EU AI Act - High-Risk AI System Assessment",
+      status: "completed",
+      overallScore: 87,
+      findings: [
+        { control: "Art.9", title: "Risk Management System", status: "pass", evidence: "Risk tier classification (LOW/MEDIUM/HIGH/CRITICAL) with tiered autonomy controls" },
+        { control: "Art.10", title: "Data Governance", status: "pass", evidence: "Data handling policies enforced, PII redaction, content boundary controls" },
+        { control: "Art.11", title: "Technical Documentation", status: "warning", evidence: "Blueprint documentation exists but explainability reports need enhancement" },
+        { control: "Art.13", title: "Transparency", status: "warning", evidence: "Agent decisions logged but end-user facing explanations incomplete" },
+        { control: "Art.14", title: "Human Oversight", status: "pass", evidence: "80/20 autonomous/expert model with mandatory approval gates for high-risk actions" },
+        { control: "Art.15", title: "Accuracy & Robustness", status: "pass", evidence: "Continuous eval suites, regression detection, drift monitoring" },
+      ],
+      evidencePackage: { generatedAt: new Date().toISOString(), totalAgents: 7, highRiskAgents: 2, coveragePercent: 87 },
+      generatedBy: "system",
+    },
+    {
+      framework: "GDPR",
+      title: "GDPR Data Processing Assessment",
+      status: "in_progress",
+      overallScore: 78,
+      findings: [
+        { control: "Art.5", title: "Data Processing Principles", status: "pass", evidence: "Purpose limitation via outcome contracts, data minimization policies" },
+        { control: "Art.25", title: "Data Protection by Design", status: "pass", evidence: "PII redaction policies, content boundary enforcement" },
+        { control: "Art.30", title: "Records of Processing", status: "warning", evidence: "Audit trail exists but needs structured ROPA documentation" },
+        { control: "Art.35", title: "Data Protection Impact Assessment", status: "fail", evidence: "DPIA not yet conducted for high-risk agent processing activities" },
+      ],
+      evidencePackage: { generatedAt: new Date().toISOString(), dataSubjects: "customers, employees", processingActivities: 12, coveragePercent: 78 },
+      generatedBy: "compliance-lead",
+    },
   ]);
 
   // Agent Versions

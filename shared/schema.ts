@@ -223,12 +223,48 @@ export const auditEvents = pgTable("audit_events", {
   objectType: text("object_type").notNull(),
   objectId: varchar("object_id"),
   details: text("details"),
+  sequenceNum: integer("sequence_num"),
+  previousHash: text("previous_hash"),
+  eventHash: text("event_hash"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
 export const insertAuditEventSchema = createInsertSchema(auditEvents).omit({ id: true, createdAt: true });
 export type InsertAuditEvent = z.infer<typeof insertAuditEventSchema>;
 export type AuditEvent = typeof auditEvents.$inferSelect;
+
+export const policyExceptions = pgTable("policy_exceptions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  policyId: varchar("policy_id").notNull(),
+  agentId: varchar("agent_id"),
+  requestedBy: text("requested_by").notNull(),
+  reason: text("reason").notNull(),
+  scope: text("scope").notNull().default("agent"),
+  status: text("status").notNull().default("pending"),
+  approvedBy: text("approved_by"),
+  expiresAt: timestamp("expires_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertPolicyExceptionSchema = createInsertSchema(policyExceptions).omit({ id: true, createdAt: true });
+export type InsertPolicyException = z.infer<typeof insertPolicyExceptionSchema>;
+export type PolicyException = typeof policyExceptions.$inferSelect;
+
+export const complianceReports = pgTable("compliance_reports", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  framework: text("framework").notNull(),
+  title: text("title").notNull(),
+  status: text("status").notNull().default("draft"),
+  overallScore: real("overall_score"),
+  findings: jsonb("findings"),
+  evidencePackage: jsonb("evidence_package"),
+  generatedBy: text("generated_by").default("system"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertComplianceReportSchema = createInsertSchema(complianceReports).omit({ id: true, createdAt: true });
+export type InsertComplianceReport = z.infer<typeof insertComplianceReportSchema>;
+export type ComplianceReport = typeof complianceReports.$inferSelect;
 
 export const invoices = pgTable("invoices", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

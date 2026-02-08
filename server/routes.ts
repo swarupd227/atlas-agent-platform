@@ -20,6 +20,8 @@ import {
   insertImprovementRecommendationSchema,
   insertAutonomousActionLogSchema,
   insertImprovementCycleSchema,
+  insertPolicyExceptionSchema,
+  insertComplianceReportSchema,
 } from "@shared/schema";
 
 const openai = new OpenAI({
@@ -809,6 +811,52 @@ export async function registerRoutes(
   app.get("/api/audit-events", async (_req, res) => {
     const events = await storage.getAuditEvents();
     res.json(events);
+  });
+
+  app.get("/api/audit-events/verify-integrity", async (_req, res) => {
+    const result = await storage.verifyAuditChainIntegrity();
+    res.json(result);
+  });
+
+  app.get("/api/policy-exceptions", async (_req, res) => {
+    const exceptions = await storage.getPolicyExceptions();
+    res.json(exceptions);
+  });
+
+  app.get("/api/policy-exceptions/agent/:agentId", async (req, res) => {
+    const exceptions = await storage.getPolicyExceptionsByAgent(req.params.agentId);
+    res.json(exceptions);
+  });
+
+  app.post("/api/policy-exceptions", async (req, res) => {
+    try {
+      const data = insertPolicyExceptionSchema.parse(req.body);
+      const exception = await storage.createPolicyException(data);
+      res.status(201).json(exception);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  app.patch("/api/policy-exceptions/:id", async (req, res) => {
+    const updated = await storage.updatePolicyException(req.params.id, req.body);
+    if (!updated) return res.status(404).json({ message: "Not found" });
+    res.json(updated);
+  });
+
+  app.get("/api/compliance-reports", async (_req, res) => {
+    const reports = await storage.getComplianceReports();
+    res.json(reports);
+  });
+
+  app.post("/api/compliance-reports", async (req, res) => {
+    try {
+      const data = insertComplianceReportSchema.parse(req.body);
+      const report = await storage.createComplianceReport(data);
+      res.status(201).json(report);
+    } catch (e) {
+      handleZodError(res, e);
+    }
   });
 
   app.get("/api/invoices", async (_req, res) => {

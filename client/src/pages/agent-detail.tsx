@@ -62,7 +62,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import type { Agent, RunTrace, EvalSuite, OutcomeContract, ImprovementRecommendation, AutonomousActionLog, AgentVersion, Deployment, Policy, Approval } from "@shared/schema";
+import type { Agent, RunTrace, EvalSuite, OutcomeContract, ImprovementRecommendation, AutonomousActionLog, AgentVersion, Deployment, Policy, Approval, PolicyException } from "@shared/schema";
 
 export default function AgentDetail() {
   const [, params] = useRoute("/agents/:id");
@@ -117,6 +117,9 @@ export default function AgentDetail() {
   const { data: allApprovals } = useQuery<Approval[]>({
     queryKey: ["/api/approvals"],
   });
+  const { data: agentExceptions } = useQuery<PolicyException[]>({
+    queryKey: ["/api/policy-exceptions/agent", agentId],
+  });
 
   const [, navigate] = useLocation();
   const { toast } = useToast();
@@ -125,6 +128,7 @@ export default function AgentDetail() {
   const [replacementAgentId, setReplacementAgentId] = useState("");
   const [timelineFilter, setTimelineFilter] = useState<string>("all");
   const [retirementChecklist, setRetirementChecklist] = useState<boolean[]>([false, false, false, false, false, false]);
+  const [expandedTrace, setExpandedTrace] = useState<string | null>(null);
 
   const retireMutation = useMutation({
     mutationFn: async (data: { status: string; description?: string }) => {
@@ -384,34 +388,170 @@ export default function AgentDetail() {
           </div>
         </TabsContent>
 
-        <TabsContent value="traces" className="mt-0">
+        <TabsContent value="traces" className="flex flex-col gap-4 mt-0">
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium">Run Traces</CardTitle>
+              <div className="flex items-center justify-between gap-2">
+                <CardTitle className="text-sm font-medium">Run Traces</CardTitle>
+                <Badge variant="outline" className="text-[10px]">{recentTraces.length} traces</Badge>
+              </div>
             </CardHeader>
             <CardContent className="flex flex-col gap-2">
-              {recentTraces.length > 0 ? recentTraces.map((trace) => (
-                <Link key={trace.id} href={`/traces/${trace.id}`}>
-                  <div className="flex items-center justify-between gap-3 p-3 rounded-md bg-muted/30 hover-elevate cursor-pointer" data-testid={`trace-row-${trace.id}`}>
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="flex items-center justify-center w-7 h-7 rounded-md bg-primary/10 shrink-0">
-                        <Terminal className="w-3.5 h-3.5 text-primary" />
+              {recentTraces.length > 0 ? recentTraces.map((trace) => {
+                const isExpanded = expandedTrace === trace.id;
+                const decisions = trace.decisions as any[] | null;
+                const toolCalls = trace.toolCalls as any[] | null;
+                const policyChecks = trace.policyChecks as any[] | null;
+                const tokenUsage = trace.tokenUsage as any | null;
+                const promptInputs = trace.promptInputs as any | null;
+                const retrievedDocs = trace.retrievedDocs as any[] | null;
+                const hasExplainability = decisions || toolCalls || policyChecks || tokenUsage;
+                return (
+                  <div key={trace.id} className="flex flex-col">
+                    <div
+                      className="flex items-center justify-between gap-3 p-3 rounded-md bg-muted/30 hover-elevate cursor-pointer"
+                      data-testid={`trace-row-${trace.id}`}
+                      onClick={() => setExpandedTrace(isExpanded ? null : trace.id)}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="flex items-center justify-center w-7 h-7 rounded-md bg-primary/10 shrink-0">
+                          <Terminal className="w-3.5 h-3.5 text-primary" />
+                        </div>
+                        <div className="flex flex-col min-w-0">
+                          <span className="text-xs font-medium truncate">{trace.inputSummary || "Run"}</span>
+                          <span className="text-[11px] text-muted-foreground">
+                            {trace.environment} | {trace.latencyMs}ms | ${trace.costUsd?.toFixed(4)}
+                            {trace.modelId ? ` | ${trace.modelId}` : ""}
+                          </span>
+                        </div>
                       </div>
-                      <div className="flex flex-col min-w-0">
-                        <span className="text-xs font-medium truncate">{trace.inputSummary || "Run"}</span>
-                        <span className="text-[11px] text-muted-foreground">
-                          {trace.environment} | {trace.latencyMs}ms | ${trace.costUsd?.toFixed(4)}
-                          {(trace as any).modelId ? ` | ${(trace as any).modelId}` : ""}
-                        </span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {hasExplainability && <Eye className="w-3.5 h-3.5 text-muted-foreground" />}
+                        <StatusBadge status={trace.status} />
+                        <ChevronRight className={`w-3.5 h-3.5 text-muted-foreground transition-transform ${isExpanded ? "rotate-90" : ""}`} />
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <StatusBadge status={trace.status} />
-                      <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
-                    </div>
+                    {isExpanded && (
+                      <div className="ml-10 mt-1 mb-2 flex flex-col gap-3 p-3 rounded-md border bg-background" data-testid={`explainability-panel-${trace.id}`}>
+                        <div className="flex items-center gap-2">
+                          <Lightbulb className="w-4 h-4 text-amber-500" />
+                          <span className="text-xs font-semibold">Explainability Report</span>
+                        </div>
+
+                        {trace.inputSummary && (
+                          <div className="flex flex-col gap-1">
+                            <span className="text-[11px] font-medium text-muted-foreground">Input</span>
+                            <p className="text-xs bg-muted/30 p-2 rounded-md">{trace.inputSummary}</p>
+                          </div>
+                        )}
+
+                        {trace.outputSummary && (
+                          <div className="flex flex-col gap-1">
+                            <span className="text-[11px] font-medium text-muted-foreground">Output</span>
+                            <p className="text-xs bg-muted/30 p-2 rounded-md">{trace.outputSummary}</p>
+                          </div>
+                        )}
+
+                        {decisions && decisions.length > 0 && (
+                          <div className="flex flex-col gap-1.5">
+                            <span className="text-[11px] font-medium text-muted-foreground">Decision Reasoning</span>
+                            {decisions.map((decision: any, di: number) => (
+                              <div key={di} className="flex items-start gap-2 p-2 rounded-md bg-muted/20" data-testid={`decision-${trace.id}-${di}`}>
+                                <div className="w-5 h-5 rounded-full bg-amber-500/10 flex items-center justify-center shrink-0 mt-0.5">
+                                  <span className="text-[9px] font-bold text-amber-600 dark:text-amber-400">{di + 1}</span>
+                                </div>
+                                <div className="flex flex-col min-w-0">
+                                  <span className="text-xs font-medium">{decision.step || decision.action || `Step ${di + 1}`}</span>
+                                  <span className="text-[11px] text-muted-foreground">{decision.reasoning || decision.description || JSON.stringify(decision)}</span>
+                                  {decision.confidence !== undefined && (
+                                    <div className="flex items-center gap-1.5 mt-1">
+                                      <span className="text-[10px] text-muted-foreground">Confidence:</span>
+                                      <Progress value={decision.confidence * 100} className="h-1 w-16" />
+                                      <span className="text-[10px] font-medium">{(decision.confidence * 100).toFixed(0)}%</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {toolCalls && toolCalls.length > 0 && (
+                          <div className="flex flex-col gap-1.5">
+                            <span className="text-[11px] font-medium text-muted-foreground">Tool Calls</span>
+                            <div className="flex flex-wrap gap-1.5">
+                              {toolCalls.map((tc: any, ti: number) => (
+                                <Badge key={ti} variant="outline" className="text-[10px]" data-testid={`tool-call-${trace.id}-${ti}`}>
+                                  <Wrench className="w-2.5 h-2.5 mr-1" />
+                                  {tc.tool || tc.name || `tool_${ti}`}
+                                  {tc.status && <span className="ml-1 opacity-60">({tc.status})</span>}
+                                </Badge>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {policyChecks && policyChecks.length > 0 && (
+                          <div className="flex flex-col gap-1.5">
+                            <span className="text-[11px] font-medium text-muted-foreground">Policy Checks</span>
+                            {policyChecks.map((pc: any, pi: number) => (
+                              <div key={pi} className="flex items-center gap-2 text-xs" data-testid={`policy-check-${trace.id}-${pi}`}>
+                                {pc.passed || pc.result === "pass" ? (
+                                  <CheckCircle className="w-3 h-3 text-emerald-500 shrink-0" />
+                                ) : (
+                                  <XCircle className="w-3 h-3 text-red-500 shrink-0" />
+                                )}
+                                <span>{pc.policy || pc.name || `Policy ${pi + 1}`}</span>
+                                <span className="text-muted-foreground">{pc.reason || ""}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {retrievedDocs && retrievedDocs.length > 0 && (
+                          <div className="flex flex-col gap-1.5">
+                            <span className="text-[11px] font-medium text-muted-foreground">Retrieved Sources</span>
+                            <div className="flex flex-wrap gap-1.5">
+                              {retrievedDocs.map((doc: any, ri: number) => (
+                                <Badge key={ri} variant="outline" className="text-[10px]">
+                                  <Database className="w-2.5 h-2.5 mr-1" />
+                                  {doc.title || doc.source || `Source ${ri + 1}`}
+                                  {doc.relevance !== undefined && <span className="ml-1 opacity-60">({(doc.relevance * 100).toFixed(0)}%)</span>}
+                                </Badge>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {tokenUsage && (
+                          <div className="flex flex-col gap-1">
+                            <span className="text-[11px] font-medium text-muted-foreground">Token Usage</span>
+                            <div className="flex items-center gap-4 text-[11px]">
+                              {tokenUsage.prompt !== undefined && (
+                                <span>Prompt: <span className="font-medium">{tokenUsage.prompt?.toLocaleString()}</span></span>
+                              )}
+                              {tokenUsage.completion !== undefined && (
+                                <span>Completion: <span className="font-medium">{tokenUsage.completion?.toLocaleString()}</span></span>
+                              )}
+                              {tokenUsage.total !== undefined && (
+                                <span>Total: <span className="font-medium">{tokenUsage.total?.toLocaleString()}</span></span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="flex items-center gap-2 pt-2 border-t">
+                          <Link href={`/traces/${trace.id}`}>
+                            <Button variant="outline" size="sm" data-testid={`button-view-full-trace-${trace.id}`}>
+                              <Terminal className="w-3 h-3 mr-1" /> View Full Trace
+                            </Button>
+                          </Link>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                </Link>
-              )) : (
+                );
+              }) : (
                 <p className="text-sm text-muted-foreground py-8 text-center">No traces recorded yet</p>
               )}
             </CardContent>
@@ -466,7 +606,7 @@ export default function AgentDetail() {
                   <div className="flex flex-col gap-4">
                     {agentVersions.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()).map(version => {
                       const versionDeployments = agentDeployments.filter(d => d.version === version.semver || d.versionId === version.id);
-                      const deployedEnvs = [...new Set(versionDeployments.map(d => d.environment))];
+                      const deployedEnvs = Array.from(new Set(versionDeployments.map(d => d.environment)));
                       const rollbackPlan = agent.rollbackPlan as any;
                       return (
                         <div key={version.id} className="relative pl-10" data-testid={`version-entry-${version.id}`}>
@@ -1175,25 +1315,35 @@ export default function AgentDetail() {
               <div className="flex items-center gap-2">
                 <Shield className="w-4 h-4 text-muted-foreground" />
                 <CardTitle className="text-sm font-medium">Policy Exceptions</CardTitle>
+                {agentExceptions && <Badge variant="outline" className="text-[10px] ml-auto">{agentExceptions.length}</Badge>}
               </div>
             </CardHeader>
             <CardContent>
               <div className="flex flex-col gap-2">
-                {[
-                  { description: "PII detection bypass for internal testing", expiry: "2026-03-01", status: "active" },
-                  { description: "Cost threshold override for Q1 pilot", expiry: "2026-04-15", status: "active" },
-                ].map((exception, i) => (
-                  <div key={i} className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted/30" data-testid={`policy-exception-${i}`}>
-                    <div className="flex items-center gap-2 min-w-0">
-                      <AlertCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                      <span className="text-xs">{exception.description}</span>
+                {agentExceptions && agentExceptions.length > 0 ? agentExceptions.map((exception) => {
+                  const policy = allPolicies?.find(p => p.id === exception.policyId);
+                  return (
+                    <div key={exception.id} className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted/30" data-testid={`policy-exception-${exception.id}`}>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <AlertCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                        <div className="flex flex-col min-w-0">
+                          <span className="text-xs font-medium">{policy?.name || "Unknown Policy"}</span>
+                          <span className="text-[11px] text-muted-foreground truncate">{exception.reason}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {exception.expiresAt && (
+                          <span className="text-[10px] text-muted-foreground">
+                            Expires {new Date(exception.expiresAt).toLocaleDateString()}
+                          </span>
+                        )}
+                        <StatusBadge status={exception.status} />
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-[10px] text-muted-foreground">Expires {exception.expiry}</span>
-                      <StatusBadge status={exception.status} />
-                    </div>
-                  </div>
-                ))}
+                  );
+                }) : (
+                  <p className="text-sm text-muted-foreground text-center py-4">No policy exceptions for this agent</p>
+                )}
               </div>
             </CardContent>
           </Card>
