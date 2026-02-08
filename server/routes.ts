@@ -120,6 +120,152 @@ export async function registerRoutes(
     try {
       const data = insertAgentSchema.parse(req.body);
       const agent = await storage.createAgent(data);
+
+      const tools = Array.isArray(agent.toolsConfig) ? agent.toolsConfig as Array<{ name?: string; description?: string }> : [];
+      const bp = agent.blueprintJson && typeof agent.blueprintJson === "object" ? agent.blueprintJson as Record<string, unknown> : {};
+      const workflow = (
+        Array.isArray(bp.nodes) ? bp.nodes :
+        Array.isArray(bp.workflowNodes) ? bp.workflowNodes : []
+      ) as Array<{ id?: string; type?: string; label?: string }>;
+
+      const testCases: Array<{ name: string; inputData: unknown; expectedOutput: unknown; tags: string[] }> = [];
+
+      testCases.push({
+        name: "Baseline Latency Check",
+        inputData: { type: "latency_probe", payload: "standard_input" },
+        expectedOutput: { maxLatencyMs: 5000, status: "pass" },
+        tags: ["baseline", "latency"],
+      });
+      testCases.push({
+        name: "Error Handling - Invalid Input",
+        inputData: { type: "invalid", payload: null },
+        expectedOutput: { status: "graceful_error", errorHandled: true },
+        tags: ["error_handling", "robustness"],
+      });
+
+      for (const tool of tools.slice(0, 5)) {
+        if (tool.name) {
+          testCases.push({
+            name: `Tool Permission - ${tool.name}`,
+            inputData: { type: "tool_access", tool: tool.name, action: "invoke" },
+            expectedOutput: { authorized: true, toolResponds: true },
+            tags: ["tool_permission", tool.name],
+          });
+        }
+      }
+
+      for (const node of workflow.slice(0, 5)) {
+        if (node.type === "human_review") {
+          testCases.push({
+            name: `Escalation Path - ${node.label || node.id}`,
+            inputData: { type: "escalation_trigger", nodeId: node.id },
+            expectedOutput: { escalated: true, reviewerNotified: true },
+            tags: ["escalation", "human_review"],
+          });
+        } else if (node.type) {
+          testCases.push({
+            name: `Workflow Node - ${node.label || node.id || node.type}`,
+            inputData: { type: "workflow_step", nodeId: node.id, nodeType: node.type },
+            expectedOutput: { stepCompleted: true },
+            tags: ["workflow", node.type],
+          });
+        }
+      }
+
+      if (agent.memoryRagConfig && typeof agent.memoryRagConfig === "object") {
+        testCases.push({
+          name: "RAG Retrieval Quality",
+          inputData: { type: "retrieval_probe", query: "test retrieval accuracy" },
+          expectedOutput: { relevanceScore: 0.7, documentsReturned: true },
+          tags: ["rag", "retrieval"],
+        });
+      }
+
+      const suite = await storage.createEvalSuite({
+        agentId: agent.id,
+        name: `${agent.name} - Auto-Generated Suite`,
+        type: "regression",
+        totalCases: testCases.length,
+      });
+
+      for (const tc of testCases) {
+        await storage.createEvalTestCase({
+          suiteId: suite.id,
+          name: tc.name,
+          inputData: tc.inputData as Record<string, unknown>,
+          expectedOutput: tc.expectedOutput as Record<string, unknown>,
+          tags: tc.tags,
+          weight: 1,
+        });
+      }
+
+      const domainAssumptions = [
+        { item: "Model capability matches use case complexity", validated: false },
+        { item: `${agent.modelProvider}/${agent.modelName} supports required output format`, validated: false },
+        ...(tools.length > 0 ? [{ item: `Tools (${tools.map(t => t.name).join(", ")}) have correct API access`, validated: false }] : []),
+        ...(agent.memoryRagConfig ? [{ item: "RAG corpus covers target domain knowledge", validated: false }] : []),
+      ];
+
+      const regulatoryConstraints = [
+        { item: "Data handling complies with privacy policy", validated: false },
+        ...(agent.riskTier === "HIGH" ? [{ item: "HIGH risk tier requires enhanced monitoring", validated: false }] : []),
+        ...(tools.some((t: any) => (t.name || "").includes("write") || (t.name || "").includes("send") || (t.name || "").includes("delete"))
+          ? [{ item: "Write/send/delete tools require explicit authorization controls", validated: false }] : []),
+        { item: "Output content meets compliance standards", validated: false },
+      ];
+
+      const escalationPaths = [
+        { item: `Autonomy mode "${agent.autonomyMode}" has appropriate human oversight`, validated: false },
+        ...(workflow.some(n => n.type === "human_review")
+          ? [{ item: "Human review nodes are correctly positioned in workflow", validated: false }]
+          : [{ item: "No human review node in workflow - confirm autonomous operation is safe", validated: false }]),
+        { item: "Rollback plan is defined and tested", validated: agent.rollbackPlan != null },
+      ];
+
+      await storage.createApproval({
+        type: "blueprint_review",
+        objectType: "agent",
+        objectId: agent.id,
+        objectName: agent.name,
+        riskScore: agent.riskTier === "HIGH" ? 0.85 : agent.riskTier === "MEDIUM" ? 0.55 : 0.25,
+        status: "pending",
+        requestedBy: agent.owner || "system",
+        description: `Expert validation required for new agent "${agent.name}" blueprint before deployment`,
+        evidenceJson: {
+          blueprintSummary: {
+            modelProvider: agent.modelProvider,
+            modelName: agent.modelName,
+            toolCount: tools.length,
+            tools: tools.map(t => t.name).filter(Boolean),
+            workflowNodeCount: workflow.length,
+            workflowNodes: workflow.map(n => ({ type: n.type, label: n.label })),
+            hasMemoryRag: !!agent.memoryRagConfig,
+            policyBindings: Array.isArray(agent.policyBindings) ? (agent.policyBindings as any[]).length : 0,
+            evalSuiteId: suite.id,
+            evalTestCaseCount: testCases.length,
+          },
+          riskTier: agent.riskTier,
+          autonomyMode: agent.autonomyMode,
+          domainAssumptions,
+          regulatoryConstraints,
+          escalationPaths,
+          validationChecklist: [
+            ...domainAssumptions.map(d => ({ ...d, category: "domain" })),
+            ...regulatoryConstraints.map(r => ({ ...r, category: "regulatory" })),
+            ...escalationPaths.map(e => ({ ...e, category: "escalation" })),
+          ],
+        },
+      });
+
+      await storage.createAuditEvent({
+        actorType: "system",
+        actorId: agent.owner || "system",
+        action: "agent_created",
+        objectType: "agent",
+        objectId: agent.id,
+        details: `Agent "${agent.name}" created with auto-scaffolded eval suite (${testCases.length} test cases) and blueprint review approval`,
+      });
+
       res.status(201).json(agent);
     } catch (e) {
       handleZodError(res, e);

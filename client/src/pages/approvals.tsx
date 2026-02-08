@@ -185,6 +185,89 @@ export default function Approvals() {
           </div>
         )}
 
+        {approval.type === "blueprint_review" && (evidenceData as any)?.blueprintSummary && (
+          <div className="flex flex-col gap-3" data-testid={`blueprint-review-${approval.id}`}>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-2 flex-wrap">
+                <FileText className="w-3.5 h-3.5 text-blue-500" />
+                <span className="text-xs font-medium">Blueprint Review</span>
+              </div>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {(evidenceData as any).riskTier && (
+                  <Badge
+                    variant={(evidenceData as any).riskTier === "HIGH" ? "destructive" : "secondary"}
+                    className="text-[10px]"
+                    data-testid={`badge-risk-tier-${approval.id}`}
+                  >
+                    {(evidenceData as any).riskTier} Risk
+                  </Badge>
+                )}
+                {(evidenceData as any).autonomyMode && (
+                  <Badge variant="outline" className="text-[10px]" data-testid={`badge-autonomy-${approval.id}`}>
+                    {(evidenceData as any).autonomyMode}
+                  </Badge>
+                )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div className="flex flex-col gap-0.5 p-2 rounded-md bg-muted/20">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Model</span>
+                <span className="text-xs font-medium">{(evidenceData as any).blueprintSummary.modelProvider}/{(evidenceData as any).blueprintSummary.modelName}</span>
+              </div>
+              <div className="flex flex-col gap-0.5 p-2 rounded-md bg-muted/20">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Tools</span>
+                <span className="text-xs font-medium">{(evidenceData as any).blueprintSummary.toolCount} configured</span>
+              </div>
+              <div className="flex flex-col gap-0.5 p-2 rounded-md bg-muted/20">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Workflow Nodes</span>
+                <span className="text-xs font-medium">{(evidenceData as any).blueprintSummary.workflowNodeCount}</span>
+              </div>
+              <div className="flex flex-col gap-0.5 p-2 rounded-md bg-muted/20">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Eval Tests</span>
+                <span className="text-xs font-medium">{(evidenceData as any).blueprintSummary.evalTestCaseCount} auto-generated</span>
+              </div>
+            </div>
+
+            {(evidenceData as any).validationChecklist && (
+              <div className="flex flex-col gap-2">
+                {["domain", "regulatory", "escalation"].map((category) => {
+                  const items = ((evidenceData as any).validationChecklist as Array<{item: string; validated: boolean; category: string}>)
+                    .filter((c: any) => c.category === category);
+                  if (items.length === 0) return null;
+                  const categoryLabels: Record<string, string> = {
+                    domain: "Domain Assumptions",
+                    regulatory: "Regulatory Constraints",
+                    escalation: "Escalation Paths",
+                  };
+                  const categoryIcons: Record<string, typeof Shield> = {
+                    domain: Target,
+                    regulatory: Shield,
+                    escalation: Activity,
+                  };
+                  const CategoryIcon = categoryIcons[category] || Shield;
+                  return (
+                    <div key={category} className="flex flex-col gap-1.5" data-testid={`checklist-${category}-${approval.id}`}>
+                      <div className="flex items-center gap-1.5">
+                        <CategoryIcon className="w-3 h-3 text-muted-foreground" />
+                        <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">{categoryLabels[category]}</span>
+                      </div>
+                      {items.map((item: any, idx: number) => (
+                        <div key={idx} className="flex items-center gap-2 pl-4">
+                          <div className={`w-3 h-3 rounded border flex items-center justify-center shrink-0 ${item.validated ? "bg-emerald-500 border-emerald-500" : "border-muted-foreground/30"}`}>
+                            {item.validated && <CheckCircle className="w-2.5 h-2.5 text-white" />}
+                          </div>
+                          <span className="text-[11px] text-muted-foreground">{item.item}</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
         {(evidenceData as any)?.configDiff && (
           <ConfigDiff
             changes={(evidenceData as any).configDiff.changes || []}
@@ -415,12 +498,19 @@ export default function Approvals() {
                       disabled={decideMutation.isPending}
                       data-testid={`button-approve-${approval.id}`}
                     >
-                      <CheckCircle className="w-3.5 h-3.5 mr-1" /> {approval.type === "outcome_certification" ? "Certify" : approval.type === "outcome_review" ? "Validate" : "Approve"}
+                      <CheckCircle className="w-3.5 h-3.5 mr-1" /> {approval.type === "outcome_certification" ? "Certify" : approval.type === "outcome_review" ? "Validate" : approval.type === "blueprint_review" ? "Validate Blueprint" : "Approve"}
                     </Button>
                     {approval.type === "outcome_review" && approval.objectId && (
                       <Link href={`/outcomes/${approval.objectId}`}>
                         <Button size="sm" variant="outline" data-testid={`button-view-outcome-${approval.id}`}>
                           <ArrowRight className="w-3.5 h-3.5 mr-1" /> View Outcome
+                        </Button>
+                      </Link>
+                    )}
+                    {approval.type === "blueprint_review" && approval.objectId && (
+                      <Link href={`/agents/${approval.objectId}`}>
+                        <Button size="sm" variant="outline" data-testid={`button-view-agent-${approval.id}`}>
+                          <ArrowRight className="w-3.5 h-3.5 mr-1" /> View Agent
                         </Button>
                       </Link>
                     )}

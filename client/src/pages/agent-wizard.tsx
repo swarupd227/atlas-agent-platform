@@ -43,6 +43,13 @@ import {
   Wrench,
   Library,
   Loader2,
+  Gauge,
+  Clock,
+  DollarSign,
+  Zap,
+  AlertTriangle,
+  ShieldCheck,
+  Info,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -1411,6 +1418,22 @@ function Step5Review({
         </Card>
       )}
 
+      <PerformanceSimulation state={state} />
+
+      <Card className="border-amber-500/30 bg-amber-500/5">
+        <CardContent className="flex items-start gap-3 pt-4">
+          <ShieldCheck className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+          <div className="flex flex-col gap-1" data-testid="validation-gate-notice">
+            <span className="text-sm font-medium">Expert Validation Required</span>
+            <span className="text-xs text-muted-foreground">
+              Creating this agent will automatically generate an evaluation suite with test cases derived from your tools and workflow,
+              and submit a blueprint review to the expert validation queue. An expert validator must verify domain assumptions,
+              regulatory constraints, and escalation paths before deployment.
+            </span>
+          </div>
+        </CardContent>
+      </Card>
+
       <Button
         className="w-full"
         onClick={onCreate}
@@ -1420,5 +1443,113 @@ function Step5Review({
         {isPending ? "Creating Agent..." : "Create Agent"}
       </Button>
     </div>
+  );
+}
+
+function PerformanceSimulation({ state }: { state: WizardState }) {
+  const toolCount = state.toolsConfig.filter(t => t.name).length;
+  const nodeCount = state.workflowNodes.length;
+  const hasRag = state.memoryRagEnabled;
+
+  const modelLatencyBase: Record<string, number> = {
+    "gpt-4.1": 800, "gpt-4": 900, "gpt-4o": 400, "gpt-4o-mini": 200,
+    "gpt-3.5-turbo": 150, "claude-3.5-sonnet": 700, "claude-3-opus": 1200,
+    "gemini-pro": 500, "gemini-1.5-pro": 600, "llama-3.1-70b": 350,
+  };
+  const modelCostBase: Record<string, number> = {
+    "gpt-4.1": 0.03, "gpt-4": 0.06, "gpt-4o": 0.005, "gpt-4o-mini": 0.0003,
+    "gpt-3.5-turbo": 0.002, "claude-3.5-sonnet": 0.015, "claude-3-opus": 0.075,
+    "gemini-pro": 0.007, "gemini-1.5-pro": 0.014, "llama-3.1-70b": 0.009,
+  };
+
+  const baseLatency = modelLatencyBase[state.modelName] || 500;
+  const baseCost = modelCostBase[state.modelName] || 0.01;
+
+  const toolLatencyAdd = toolCount * 120;
+  const ragLatencyAdd = hasRag ? 200 : 0;
+  const nodeLatencyMultiplier = Math.max(1, nodeCount * 0.8);
+  const estLatencyMs = Math.round((baseLatency + toolLatencyAdd + ragLatencyAdd) * nodeLatencyMultiplier);
+
+  const toolCostAdd = toolCount * 0.002;
+  const ragCostAdd = hasRag ? 0.005 : 0;
+  const nodeCostMultiplier = Math.max(1, nodeCount * 0.7);
+  const estCostPerRun = parseFloat(((baseCost + toolCostAdd + ragCostAdd) * nodeCostMultiplier).toFixed(4));
+
+  const throughputPerMin = Math.max(1, Math.round(60000 / estLatencyMs));
+
+  const riskFactors: string[] = [];
+  if (state.riskTier === "HIGH") riskFactors.push("High risk tier requires enhanced monitoring");
+  if (state.autonomyMode === "autonomous") riskFactors.push("Fully autonomous mode - no human checkpoint");
+  if (toolCount > 3) riskFactors.push(`${toolCount} tools increase attack surface`);
+  if (!hasRag && nodeCount > 3) riskFactors.push("Complex workflow without RAG may reduce accuracy");
+  if (!state.rollbackPlan) riskFactors.push("No rollback plan configured");
+  const hasWriteTools = state.toolsConfig.some(t => /write|send|delete|create/i.test(t.name));
+  if (hasWriteTools) riskFactors.push("Write/send tools carry higher blast radius");
+
+  const riskLevel = riskFactors.length >= 3 ? "high" : riskFactors.length >= 1 ? "medium" : "low";
+
+  return (
+    <Card data-testid="performance-simulation">
+      <CardHeader className="pb-3">
+        <div className="flex items-center gap-2">
+          <Gauge className="w-4 h-4 text-muted-foreground" />
+          <CardTitle className="text-sm font-medium">Performance Simulation</CardTitle>
+        </div>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/30" data-testid="sim-latency">
+            <div className="flex items-center gap-1.5">
+              <Clock className="w-3.5 h-3.5 text-muted-foreground" />
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Est. Latency</span>
+            </div>
+            <span className="text-lg font-semibold">{estLatencyMs >= 1000 ? `${(estLatencyMs / 1000).toFixed(1)}s` : `${estLatencyMs}ms`}</span>
+          </div>
+          <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/30" data-testid="sim-cost">
+            <div className="flex items-center gap-1.5">
+              <DollarSign className="w-3.5 h-3.5 text-muted-foreground" />
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Cost / Run</span>
+            </div>
+            <span className="text-lg font-semibold">${estCostPerRun}</span>
+          </div>
+          <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/30" data-testid="sim-throughput">
+            <div className="flex items-center gap-1.5">
+              <Zap className="w-3.5 h-3.5 text-muted-foreground" />
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Throughput</span>
+            </div>
+            <span className="text-lg font-semibold">{throughputPerMin}/min</span>
+          </div>
+          <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/30" data-testid="sim-risk">
+            <div className="flex items-center gap-1.5">
+              <AlertTriangle className="w-3.5 h-3.5 text-muted-foreground" />
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Risk Level</span>
+            </div>
+            <Badge
+              variant={riskLevel === "high" ? "destructive" : riskLevel === "medium" ? "secondary" : "outline"}
+              className="w-fit"
+              data-testid="sim-risk-badge"
+            >
+              {riskLevel.toUpperCase()}
+            </Badge>
+          </div>
+        </div>
+
+        {riskFactors.length > 0 && (
+          <div className="flex flex-col gap-1.5" data-testid="sim-risk-factors">
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Risk Factors</span>
+            {riskFactors.map((factor, i) => (
+              <div key={i} className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Info className="w-3 h-3 shrink-0" />
+                <span>{factor}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <p className="text-[10px] text-muted-foreground">
+          Estimates based on model characteristics, tool count, workflow complexity, and RAG configuration. Actual performance may vary.
+        </p>
+      </CardContent>
+    </Card>
   );
 }

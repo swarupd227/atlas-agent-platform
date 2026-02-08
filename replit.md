@@ -115,6 +115,17 @@ Components: `role-provider.tsx` (context + hook), `role-switcher.tsx` (header dr
 - **Admin** (`/admin`): Platform health stats (uptime, users, API calls, storage) + admin sections (User Management, System Settings, API Keys, Audit Logs).
 
 ## Recent Changes
+- Autonomous Agent Design & Assembly (Vision #2):
+  - Auto-scaffold eval suite: POST /api/agents now auto-creates eval suite + test cases (baseline latency, error handling, tool permissions, workflow coverage, RAG retrieval, escalation paths) derived from agent config
+  - Performance simulation: Wizard Review step shows estimated latency, cost/run, throughput, and risk assessment with risk factors computed from model/tools/workflow/RAG config
+  - Blueprint review approval: Agent creation auto-creates `blueprint_review` approval with structured evidence (domain assumptions, regulatory constraints, escalation paths validation checklist)
+  - Approvals page renders blueprint_review type with risk tier badge, autonomy mode badge, blueprint summary grid, category-grouped validation checklist with checkboxes, and "Validate Blueprint" action button + "View Agent" link
+  - Validation gate notice: Wizard Review step shows amber callout informing user that creation triggers expert validation before deployment
+  - Audit trail: Agent creation logged with details about auto-scaffolded artifacts
+- Universal Pattern Components:
+  - Extracted shared-utils (InfoRow, formatDate, formatMs, formatHash), ConfigDiff/InlineDiff, BlastRadius, ActionCard, PolicyViolationDialog
+  - Refactored approvals, agent-detail, improvements, monitor pages to use shared components (~500 lines reduced)
+  - Normalized eval-detail.tsx from manual activeTab to standard shadcn Tabs/TabsContent pattern
 - 80/20 Model Gaps Closed:
   - Improvements page: Auto-generated recommendations from eval failures, drift signals, cost analysis, traces. Categories: retrain, model_swap, config_change, workflow_optimization, policy_update. Generate endpoint computes new recs from agent data. Cost source filter, agent name links, type badges, estimated savings stat.
   - Automated Remediation: Monitor drift signals now show contextual fix suggestions (rollback, retrain, adjust threshold) with one-click "Remediate" button that creates improvement recommendations.
