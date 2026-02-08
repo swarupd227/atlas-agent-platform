@@ -34,6 +34,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Table,
   TableBody,
@@ -48,18 +49,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { StatusBadge } from "@/components/status-badge";
 import { StatCard } from "@/components/stat-card";
+import { formatDate } from "@/components/shared-utils";
 import type { EvalSuite, EvalTestCase, EvalRun, Agent, OutcomeContract } from "@shared/schema";
-
-function formatDate(date: string | Date | null | undefined) {
-  if (!date) return "\u2014";
-  return new Date(date).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
 
 function truncateJson(data: unknown, maxLen = 80): string {
   if (!data) return "\u2014";
@@ -104,7 +95,6 @@ export default function EvalDetail() {
   const [, params] = useRoute("/evals/:id");
   const id = params?.id;
   const { toast } = useToast();
-  const [activeTab, setActiveTab] = useState("test-cases");
   const [addTcOpen, setAddTcOpen] = useState(false);
   const [tcName, setTcName] = useState("");
   const [tcInputData, setTcInputData] = useState("");
@@ -315,28 +305,20 @@ export default function EvalDetail() {
         />
       </div>
 
-      <div className="flex items-center gap-1 border-b flex-wrap">
-        {tabItems.map((tab) => {
-          const Icon = tab.icon;
-          return (
-            <button
-              key={tab.key}
-              data-testid={tab.testId}
-              onClick={() => setActiveTab(tab.key)}
-              className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === tab.key
-                  ? "border-primary text-foreground"
-                  : "border-transparent text-muted-foreground"
-              }`}
-            >
-              <Icon className="w-3.5 h-3.5" />
-              {tab.label}
-            </button>
-          );
-        })}
-      </div>
+      <Tabs defaultValue="test-cases" className="flex flex-col gap-4">
+        <TabsList className="flex-wrap h-auto gap-1" data-testid="eval-tabs">
+          {tabItems.map((tab) => {
+            const Icon = tab.icon;
+            return (
+              <TabsTrigger key={tab.key} value={tab.key} data-testid={tab.testId} className="gap-1.5">
+                <Icon className="w-3.5 h-3.5" />
+                {tab.label}
+              </TabsTrigger>
+            );
+          })}
+        </TabsList>
 
-      {activeTab === "test-cases" && (
+      <TabsContent value="test-cases" className="mt-0">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-3">
             <CardTitle className="text-sm font-medium">Test Cases</CardTitle>
@@ -406,9 +388,9 @@ export default function EvalDetail() {
             )}
           </CardContent>
         </Card>
-      )}
+      </TabsContent>
 
-      {activeTab === "run-history" && (
+      <TabsContent value="run-history" className="mt-0">
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium">Run History</CardTitle>
@@ -474,9 +456,9 @@ export default function EvalDetail() {
             )}
           </CardContent>
         </Card>
-      )}
+      </TabsContent>
 
-      {activeTab === "scoring-config" && (
+      <TabsContent value="scoring-config" className="mt-0">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-3">
@@ -623,9 +605,9 @@ export default function EvalDetail() {
             </CardContent>
           </Card>
         </div>
-      )}
+      </TabsContent>
 
-      {activeTab === "agent-bindings" && (
+      <TabsContent value="agent-bindings" className="mt-0">
         <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center gap-2">
@@ -670,9 +652,9 @@ export default function EvalDetail() {
             )}
           </CardContent>
         </Card>
-      )}
+      </TabsContent>
 
-      {activeTab === "red-team" && (
+      <TabsContent value="red-team" className="mt-0">
         <div className="flex flex-col gap-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-3">
@@ -794,9 +776,9 @@ export default function EvalDetail() {
             </CardContent>
           </Card>
         </div>
-      )}
+      </TabsContent>
 
-      {activeTab === "regressions" && (
+      <TabsContent value="regressions" className="mt-0">
         <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center gap-2">
@@ -875,9 +857,9 @@ export default function EvalDetail() {
             })()}
           </CardContent>
         </Card>
-      )}
+      </TabsContent>
 
-      {activeTab === "outcome-correlation" && (
+      <TabsContent value="outcome-correlation" className="mt-0">
         <div className="flex flex-col gap-4">
           <Card>
             <CardHeader className="pb-3">
@@ -1005,7 +987,8 @@ export default function EvalDetail() {
             </CardContent>
           </Card>
         </div>
-      )}
+      </TabsContent>
+      </Tabs>
 
       <Dialog open={addTcOpen} onOpenChange={setAddTcOpen}>
         <DialogContent data-testid="dialog-add-test-case">

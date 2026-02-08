@@ -16,8 +16,6 @@ import {
   ChevronUp,
   FileText,
   Award,
-  GitCompare,
-  Zap,
   Target,
   ArrowRight,
 } from "lucide-react";
@@ -29,6 +27,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatCard } from "@/components/stat-card";
 import { StatusBadge } from "@/components/status-badge";
+import { ConfigDiff } from "@/components/config-diff";
+import { BlastRadius } from "@/components/blast-radius";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Link } from "wouter";
@@ -186,80 +186,19 @@ export default function Approvals() {
         )}
 
         {(evidenceData as any)?.configDiff && (
-          <div className="flex flex-col gap-2" data-testid={`config-diff-${approval.id}`}>
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <div className="flex items-center gap-2 flex-wrap">
-                <GitCompare className="w-3.5 h-3.5 text-muted-foreground" />
-                <span className="text-xs font-medium">Config Changes</span>
-              </div>
-              {(evidenceData as any).configDiff.version && (
-                <Badge variant="outline" className="text-[10px]" data-testid={`badge-version-diff-${approval.id}`}>
-                  v{(evidenceData as any).configDiff.version.from} → v{(evidenceData as any).configDiff.version.to}
-                </Badge>
-              )}
-            </div>
-            <div className="flex flex-col gap-1">
-              {((evidenceData as any).configDiff.changes as Array<{field: string; from: any; to: any; category: string}>).map((change, idx) => (
-                <div key={idx} className="flex items-center gap-2 p-2 rounded-md bg-muted/20 flex-wrap" data-testid={`diff-row-${approval.id}-${idx}`}>
-                  <Badge variant="outline" className="text-[9px]">{change.category}</Badge>
-                  <span className="text-[11px] font-medium font-mono">{change.field}</span>
-                  <span className="text-[11px] text-red-500 dark:text-red-400 line-through">{String(change.from)}</span>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0" />
-                  <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">{String(change.to)}</span>
-                </div>
-              ))}
-            </div>
-            {(evidenceData as any).configDiff.summary && (
-              <span className="text-[10px] text-muted-foreground">{(evidenceData as any).configDiff.summary}</span>
-            )}
-          </div>
+          <ConfigDiff
+            changes={(evidenceData as any).configDiff.changes || []}
+            version={(evidenceData as any).configDiff.version}
+            summary={(evidenceData as any).configDiff.summary}
+            testIdPrefix={`diff-${approval.id}`}
+          />
         )}
 
         {(evidenceData as any)?.blastRadius && (
-          <div className="flex flex-col gap-2" data-testid={`blast-radius-${approval.id}`}>
-            <div className="flex items-center gap-2 flex-wrap">
-              <Zap className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="text-xs font-medium">Blast Radius</span>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              {(evidenceData as any).blastRadius.affectedUsers && (
-                <div className="flex flex-col gap-0.5 p-2 rounded-md bg-muted/20" data-testid={`blast-users-${approval.id}`}>
-                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Users Affected</span>
-                  <span className="text-sm font-semibold">{(evidenceData as any).blastRadius.affectedUsers.toLocaleString()}</span>
-                </div>
-              )}
-              {(evidenceData as any).blastRadius.affectedRunsPerDay && (
-                <div className="flex flex-col gap-0.5 p-2 rounded-md bg-muted/20" data-testid={`blast-runs-${approval.id}`}>
-                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Runs / Day</span>
-                  <span className="text-sm font-semibold">{(evidenceData as any).blastRadius.affectedRunsPerDay.toLocaleString()}</span>
-                </div>
-              )}
-              {(evidenceData as any).blastRadius.revenueExposure && (
-                <div className="flex flex-col gap-0.5 p-2 rounded-md bg-muted/20" data-testid={`blast-revenue-${approval.id}`}>
-                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Revenue Exposure</span>
-                  <span className="text-sm font-semibold">{(evidenceData as any).blastRadius.revenueExposure}</span>
-                </div>
-              )}
-              {(evidenceData as any).blastRadius.environment && (
-                <div className="flex flex-col gap-0.5 p-2 rounded-md bg-muted/20" data-testid={`blast-env-${approval.id}`}>
-                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Environment</span>
-                  <span className="text-sm font-semibold capitalize">{(evidenceData as any).blastRadius.environment}</span>
-                </div>
-              )}
-              {(evidenceData as any).blastRadius.downstreamAgents != null && (
-                <div className="flex flex-col gap-0.5 p-2 rounded-md bg-muted/20" data-testid={`blast-downstream-${approval.id}`}>
-                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Downstream Agents</span>
-                  <span className="text-sm font-semibold">{(evidenceData as any).blastRadius.downstreamAgents}</span>
-                </div>
-              )}
-              {(evidenceData as any).blastRadius.rollbackTimeEstimate && (
-                <div className="flex flex-col gap-0.5 p-2 rounded-md bg-muted/20" data-testid={`blast-rollback-${approval.id}`}>
-                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Rollback Time</span>
-                  <span className="text-sm font-semibold">{(evidenceData as any).blastRadius.rollbackTimeEstimate}</span>
-                </div>
-              )}
-            </div>
-          </div>
+          <BlastRadius
+            data={(evidenceData as any).blastRadius}
+            testIdPrefix={`blast-${approval.id}`}
+          />
         )}
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">

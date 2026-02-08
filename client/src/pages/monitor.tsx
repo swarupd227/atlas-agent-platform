@@ -23,6 +23,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { StatCard } from "@/components/stat-card";
 import { OutcomeKpiStrip } from "@/components/outcome-kpi-strip";
 import { StatusBadge } from "@/components/status-badge";
+import { PolicyViolationDialog } from "@/components/policy-violation-dialog";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { Agent, RunTrace } from "@shared/schema";
@@ -380,54 +381,19 @@ export default function Monitor() {
         </TabsContent>
       </Tabs>
 
-      <Dialog open={policyCheckResult !== null} onOpenChange={() => setPolicyCheckResult(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 flex-wrap">
-              <ShieldAlert className="w-5 h-5 text-amber-500" />
-              Policy Guardrail Triggered
-            </DialogTitle>
-          </DialogHeader>
-          <div className="flex flex-col gap-3">
-            <p className="text-sm text-muted-foreground">
-              This remediation cannot be auto-applied because it exceeds policy bounds. Expert approval is required.
-            </p>
-            {policyCheckResult?.violations.map((v, idx) => (
-              <div key={idx} className="flex flex-col gap-1 p-3 rounded-md bg-amber-500/5 border border-amber-500/10" data-testid={`monitor-policy-violation-${idx}`}>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <Badge variant="outline" className="text-[10px]">{v.policyName}</Badge>
-                  <Badge variant="outline" className={`text-[10px] ${v.severity === "high" ? "text-red-600 dark:text-red-400" : "text-amber-600 dark:text-amber-400"}`}>{v.severity}</Badge>
-                </div>
-                <span className="text-xs font-medium">{v.rule}</span>
-                <span className="text-[11px] text-muted-foreground">{v.message}</span>
-              </div>
-            ))}
-            {policyCheckResult?.sandboxAvailable && (
-              <div className="flex items-center gap-2 p-2 rounded-md bg-blue-500/5 border border-blue-500/10 flex-wrap" data-testid="monitor-sandbox-notice">
-                <Shield className="w-3.5 h-3.5 text-blue-500" />
-                <span className="text-[11px] text-muted-foreground">Sandbox testing is available for non-production environments</span>
-              </div>
-            )}
-          </div>
-          <div className="flex items-center justify-end gap-2 pt-2 flex-wrap">
-            <Button variant="outline" onClick={() => setPolicyCheckResult(null)} data-testid="button-cancel-monitor-policy">
-              Cancel
-            </Button>
-            <Button
-              onClick={() => {
-                if (policyCheckResult) {
-                  requestApprovalFromDriftMutation.mutate(policyCheckResult.signal);
-                }
-                setPolicyCheckResult(null);
-              }}
-              data-testid="button-request-approval-monitor"
-            >
-              <Shield className="w-4 h-4 mr-1.5" />
-              Request Expert Approval
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <PolicyViolationDialog
+        open={policyCheckResult !== null}
+        onClose={() => setPolicyCheckResult(null)}
+        violations={policyCheckResult?.violations || []}
+        sandboxAvailable={policyCheckResult?.sandboxAvailable}
+        onRequestApproval={() => {
+          if (policyCheckResult) {
+            requestApprovalFromDriftMutation.mutate(policyCheckResult.signal);
+          }
+        }}
+        requestApprovalPending={requestApprovalFromDriftMutation.isPending}
+        testIdPrefix="monitor-policy"
+      />
     </div>
   );
 }

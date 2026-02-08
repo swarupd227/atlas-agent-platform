@@ -11,18 +11,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Lightbulb, Check, X, Undo2, ChevronDown, ChevronRight, AlertTriangle, TrendingUp, FlaskConical, Shield, ShieldAlert, Clock, RefreshCcw, DollarSign } from "lucide-react";
 import { Link } from "wouter";
+import { formatDate } from "@/components/shared-utils";
+import { ActionCard } from "@/components/action-card";
+import { PolicyViolationDialog } from "@/components/policy-violation-dialog";
 import type { ImprovementRecommendation, Agent } from "@shared/schema";
-
-function formatDate(date: string | Date | null | undefined) {
-  if (!date) return "\u2014";
-  return new Date(date).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
 
 const severityConfig: Record<string, { color: string; variant: "default" | "success" | "warning" | "danger" }> = {
   critical: { color: "bg-red-500/10 text-red-600 dark:text-red-400", variant: "danger" },
@@ -333,190 +325,83 @@ export default function Improvements() {
 
         {filtered.map((rec) => {
           const SourceIcon = sourceIcons[rec.source] || Lightbulb;
-          const sevConfig = severityConfig[rec.severity] || severityConfig.low;
-          const isExpanded = expandedIds.has(rec.id);
           const isPending = rec.status === "pending";
 
           return (
-            <Card key={rec.id} data-testid={`card-recommendation-${rec.id}`}>
-              <CardContent className="p-4 flex flex-col gap-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex flex-col gap-1.5 min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-semibold" data-testid={`text-title-${rec.id}`}>
-                        {rec.title}
-                      </span>
-                      <Badge variant="outline" className="text-[11px]" data-testid={`badge-source-${rec.id}`}>
-                        <SourceIcon className="w-3 h-3 mr-1" />
-                        {rec.source}
-                      </Badge>
-                      <Badge variant="outline" className="text-[11px]" data-testid={`badge-type-${rec.id}`}>
-                        {rec.type.replace(/_/g, " ")}
-                      </Badge>
-                      <Badge
-                        variant="outline"
-                        className={`text-[11px] ${sevConfig.color}`}
-                        data-testid={`badge-severity-${rec.id}`}
-                      >
-                        {rec.severity}
-                      </Badge>
-                      <Badge
-                        variant="outline"
-                        className="text-[11px]"
-                        data-testid={`badge-status-${rec.id}`}
-                      >
-                        {rec.status}
-                      </Badge>
-                    </div>
-                    {rec.description && (
-                      <p className="text-xs text-muted-foreground" data-testid={`text-description-${rec.id}`}>
-                        {rec.description}
-                      </p>
-                    )}
-                    {rec.impact && (
-                      <p className="text-xs text-muted-foreground" data-testid={`text-impact-${rec.id}`}>
-                        <TrendingUp className="w-3 h-3 inline-block mr-1" />
-                        {rec.impact}
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                {rec.suggestedChanges != null && (
-                  <div className="flex flex-col gap-1">
-                    <button
-                      className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer"
-                      onClick={() => toggleExpanded(rec.id)}
-                      data-testid={`button-toggle-changes-${rec.id}`}
-                    >
-                      {isExpanded ? (
-                        <ChevronDown className="w-3.5 h-3.5" />
-                      ) : (
-                        <ChevronRight className="w-3.5 h-3.5" />
-                      )}
-                      Suggested Changes
-                    </button>
-                    {isExpanded && (
-                      <pre
-                        className="text-xs bg-muted/50 p-3 rounded-md overflow-x-auto"
-                        data-testid={`text-suggested-changes-${rec.id}`}
-                      >
-                        {JSON.stringify(rec.suggestedChanges as Record<string, unknown>, null, 2)}
-                      </pre>
-                    )}
-                  </div>
-                )}
-
-                <div className="flex items-center justify-between gap-3 pt-2 border-t flex-wrap">
-                  <div className="flex items-center gap-3 text-[11px] text-muted-foreground flex-wrap">
-                    <Link href={`/agents/${rec.agentId}`}>
-                      <span className="underline cursor-pointer" data-testid={`link-agent-${rec.id}`}>
-                        {agents?.find((a) => a.id === rec.agentId)?.name || "Agent " + rec.agentId.substring(0, 8)}
-                      </span>
-                    </Link>
-                    <span data-testid={`text-created-${rec.id}`}>
-                      {formatDate(rec.createdAt)}
+            <ActionCard
+              key={rec.id}
+              testId={`card-recommendation-${rec.id}`}
+              title={rec.title}
+              description={rec.description}
+              impact={rec.impact}
+              status={rec.status}
+              severity={rec.severity}
+              source={rec.source}
+              type={rec.type}
+              sourceIcon={SourceIcon}
+              suggestedChanges={rec.suggestedChanges as Record<string, unknown> | null}
+              footer={
+                <>
+                  <Link href={`/agents/${rec.agentId}`}>
+                    <span className="underline cursor-pointer" data-testid={`link-agent-${rec.id}`}>
+                      {agents?.find((a) => a.id === rec.agentId)?.name || "Agent " + rec.agentId.substring(0, 8)}
                     </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {isPending ? (
-                      <>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => dismissMutation.mutate(rec.id)}
-                          disabled={dismissMutation.isPending}
-                          data-testid={`button-dismiss-${rec.id}`}
-                        >
-                          <X className="w-3.5 h-3.5 mr-1" />
-                          Dismiss
-                        </Button>
-                        <Button
-                          size="sm"
-                          onClick={() => {
-                            policyCheckMutation.mutate(rec, {
-                              onSuccess: (result: any) => {
-                                if (result.allowed) {
-                                  applyMutation.mutate(rec.id);
-                                } else {
-                                  setPolicyCheckResult({ recommendationId: rec.id, ...result });
-                                }
-                              },
-                            });
-                          }}
-                          disabled={applyMutation.isPending || policyCheckMutation.isPending}
-                          data-testid={`button-apply-${rec.id}`}
-                        >
-                          <Check className="w-3.5 h-3.5 mr-1" />
-                          Apply
-                        </Button>
-                      </>
-                    ) : (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => undoMutation.mutate(rec.id)}
-                        disabled={undoMutation.isPending}
-                        data-testid={`button-undo-${rec.id}`}
-                      >
-                        <Undo2 className="w-3.5 h-3.5 mr-1" />
-                        Undo
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                  </Link>
+                  <span data-testid={`text-created-${rec.id}`}>
+                    {formatDate(rec.createdAt)}
+                  </span>
+                </>
+              }
+              secondaryActions={isPending ? [{
+                label: "Dismiss",
+                icon: X,
+                variant: "outline",
+                onClick: () => dismissMutation.mutate(rec.id),
+                disabled: dismissMutation.isPending,
+                testId: `button-dismiss-${rec.id}`,
+              }] : [{
+                label: "Undo",
+                icon: Undo2,
+                variant: "outline",
+                onClick: () => undoMutation.mutate(rec.id),
+                disabled: undoMutation.isPending,
+                testId: `button-undo-${rec.id}`,
+              }]}
+              primaryActions={isPending ? [{
+                label: "Apply",
+                icon: Check,
+                onClick: () => {
+                  policyCheckMutation.mutate(rec, {
+                    onSuccess: (result: any) => {
+                      if (result.allowed) {
+                        applyMutation.mutate(rec.id);
+                      } else {
+                        setPolicyCheckResult({ recommendationId: rec.id, ...result });
+                      }
+                    },
+                  });
+                },
+                disabled: applyMutation.isPending || policyCheckMutation.isPending,
+                testId: `button-apply-${rec.id}`,
+              }] : undefined}
+            />
           );
         })}
       </div>
 
-      <Dialog open={policyCheckResult !== null} onOpenChange={() => setPolicyCheckResult(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <ShieldAlert className="w-5 h-5 text-amber-500" />
-              Policy Guardrail Triggered
-            </DialogTitle>
-          </DialogHeader>
-          <div className="flex flex-col gap-3">
-            <p className="text-sm text-muted-foreground">
-              This change cannot be auto-applied because it exceeds policy bounds. Expert approval is required.
-            </p>
-            {policyCheckResult?.violations.map((v, idx) => (
-              <div key={idx} className="flex flex-col gap-1 p-3 rounded-md bg-amber-500/5 border border-amber-500/10" data-testid={`policy-violation-${idx}`}>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <Badge variant="outline" className="text-[10px]">{v.policyName}</Badge>
-                  <Badge variant="outline" className={`text-[10px] ${v.severity === "high" ? "text-red-600 dark:text-red-400" : "text-amber-600 dark:text-amber-400"}`}>{v.severity}</Badge>
-                </div>
-                <span className="text-xs font-medium">{v.rule}</span>
-                <span className="text-[11px] text-muted-foreground">{v.message}</span>
-              </div>
-            ))}
-            {policyCheckResult?.sandboxAvailable && (
-              <div className="flex items-center gap-2 p-2 rounded-md bg-blue-500/5 border border-blue-500/10 flex-wrap" data-testid="sandbox-notice">
-                <Shield className="w-3.5 h-3.5 text-blue-500" />
-                <span className="text-[11px] text-muted-foreground">Sandbox testing is available for non-production environments</span>
-              </div>
-            )}
-          </div>
-          <div className="flex items-center justify-end gap-2 pt-2 flex-wrap">
-            <Button variant="outline" onClick={() => setPolicyCheckResult(null)} data-testid="button-cancel-policy">
-              Cancel
-            </Button>
-            <Button
-              onClick={() => {
-                requestApprovalMutation.mutate(policyCheckResult!.recommendationId);
-                setPolicyCheckResult(null);
-              }}
-              data-testid="button-request-approval"
-            >
-              <Shield className="w-4 h-4 mr-1.5" />
-              Request Expert Approval
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <PolicyViolationDialog
+        open={policyCheckResult !== null}
+        onClose={() => setPolicyCheckResult(null)}
+        violations={policyCheckResult?.violations || []}
+        sandboxAvailable={policyCheckResult?.sandboxAvailable}
+        onRequestApproval={() => {
+          if (policyCheckResult) {
+            requestApprovalMutation.mutate(policyCheckResult.recommendationId);
+          }
+        }}
+        requestApprovalPending={requestApprovalMutation.isPending}
+        testIdPrefix="policy"
+      />
     </div>
   );
 }

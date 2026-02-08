@@ -25,7 +25,6 @@ import {
   Unlock,
   Database,
   GitBranch,
-  ArrowRight,
   BookOpen,
   ShieldCheck,
   FlaskConical,
@@ -50,6 +49,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import { StatusBadge } from "@/components/status-badge";
 import { StatCard } from "@/components/stat-card";
+import { InlineDiff } from "@/components/config-diff";
+import { ActionCard } from "@/components/action-card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -448,24 +449,29 @@ export default function AgentDetail() {
               ) : (
                 <div className="flex flex-col gap-3">
                   {recommendations.filter(r => r.status === "pending").slice(0, 5).map((rec) => (
-                    <div key={rec.id} className="flex items-start justify-between gap-3 p-3 rounded-md bg-muted/30" data-testid={`rec-${rec.id}`}>
-                      <div className="flex flex-col gap-1 min-w-0 flex-1">
-                        <span className="text-xs font-medium">{rec.title}</span>
-                        <span className="text-[10px] text-muted-foreground">{rec.description}</span>
-                        <div className="flex items-center gap-1 mt-1 flex-wrap">
-                          <Badge variant="outline" className="text-[9px]">{rec.source}</Badge>
-                          <Badge variant="outline" className="text-[9px]">{rec.severity}</Badge>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1 shrink-0">
-                        <Button variant="outline" size="sm" onClick={() => applyRecMutation.mutate(rec.id)} data-testid={`button-apply-rec-${rec.id}`}>
-                          Apply
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => dismissRecMutation.mutate(rec.id)} data-testid={`button-dismiss-rec-${rec.id}`}>
-                          Dismiss
-                        </Button>
-                      </div>
-                    </div>
+                    <ActionCard
+                      key={rec.id}
+                      testId={`rec-${rec.id}`}
+                      title={rec.title}
+                      description={rec.description}
+                      status={rec.status}
+                      severity={rec.severity}
+                      source={rec.source}
+                      type={rec.type}
+                      suggestedChanges={rec.suggestedChanges as Record<string, unknown> | null}
+                      secondaryActions={[{
+                        label: "Dismiss",
+                        variant: "ghost",
+                        onClick: () => dismissRecMutation.mutate(rec.id),
+                        testId: `button-dismiss-rec-${rec.id}`,
+                      }]}
+                      primaryActions={[{
+                        label: "Apply",
+                        variant: "outline",
+                        onClick: () => applyRecMutation.mutate(rec.id),
+                        testId: `button-apply-rec-${rec.id}`,
+                      }]}
+                    />
                   ))}
                 </div>
               )}
@@ -648,16 +654,7 @@ export default function AgentDetail() {
                                     <p className="text-xs text-muted-foreground" data-testid={`timeline-desc-${entry.id}`}>{entry.description}</p>
                                   )}
                                   {entry.diff && (
-                                    <div className="flex flex-col gap-1 mt-1">
-                                      {entry.diff.map((d, idx) => (
-                                        <div key={idx} className="flex items-center gap-2 text-[11px] flex-wrap" data-testid={`timeline-diff-${entry.id}-${idx}`}>
-                                          <span className="font-mono text-muted-foreground">{d.field}:</span>
-                                          <span className="text-red-500 dark:text-red-400 line-through">{d.from}</span>
-                                          <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0" />
-                                          <span className="text-emerald-600 dark:text-emerald-400">{d.to}</span>
-                                        </div>
-                                      ))}
-                                    </div>
+                                    <InlineDiff diffs={entry.diff} testIdPrefix={`timeline-diff-${entry.id}`} />
                                   )}
                                   {entry.correlatedMetric && (
                                     <div className="flex items-center gap-2 mt-1 flex-wrap" data-testid={`timeline-metric-${entry.id}`}>
