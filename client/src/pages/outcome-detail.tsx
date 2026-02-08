@@ -31,6 +31,14 @@ import {
   ChevronRight,
   Workflow,
   ArrowRight,
+  Clock,
+  FileText,
+  Eye,
+  ShieldCheck,
+  History,
+  Filter,
+  Database,
+  CircleDot,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -53,7 +61,88 @@ import { StatusBadge } from "@/components/status-badge";
 import { StatCard } from "@/components/stat-card";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { OutcomeContract, KpiDefinition, Approval } from "@shared/schema";
+import type { OutcomeContract, KpiDefinition, Approval, OutcomeEvent } from "@shared/schema";
+
+function Sparkline({
+  points,
+  target,
+  width = 120,
+  height = 32,
+  className,
+}: {
+  points: Array<{ date: string; value: number }>;
+  target?: number;
+  width?: number;
+  height?: number;
+  className?: string;
+}) {
+  if (!points || points.length < 2) return null;
+  const values = points.map((p) => p.value);
+  const min = Math.min(...values, target ?? Infinity);
+  const max = Math.max(...values, target ?? -Infinity);
+  const range = max - min || 1;
+  const pad = 2;
+  const w = width - pad * 2;
+  const h = height - pad * 2;
+
+  const pathPoints = points.map((p, i) => {
+    const x = pad + (i / (points.length - 1)) * w;
+    const y = pad + h - ((p.value - min) / range) * h;
+    return `${x},${y}`;
+  });
+  const d = `M${pathPoints.join(" L")}`;
+
+  const targetY =
+    target != null ? pad + h - ((target - min) / range) * h : null;
+
+  return (
+    <svg
+      width={width}
+      height={height}
+      className={className}
+      viewBox={`0 0 ${width} ${height}`}
+    >
+      {targetY != null && (
+        <line
+          x1={pad}
+          y1={targetY}
+          x2={width - pad}
+          y2={targetY}
+          stroke="currentColor"
+          strokeWidth="1"
+          strokeDasharray="3,3"
+          className="text-muted-foreground/40"
+        />
+      )}
+      <path
+        d={d}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="text-primary"
+      />
+    </svg>
+  );
+}
+
+function relativeTime(dateStr: string | null | undefined): string {
+  if (!dateStr) return "N/A";
+  const now = Date.now();
+  const then = new Date(dateStr).getTime();
+  const diffMs = now - then;
+  const diffSec = Math.floor(diffMs / 1000);
+  if (diffSec < 60) return "just now";
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin} minute${diffMin === 1 ? "" : "s"} ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr} hour${diffHr === 1 ? "" : "s"} ago`;
+  const diffDay = Math.floor(diffHr / 24);
+  if (diffDay < 30) return `${diffDay} day${diffDay === 1 ? "" : "s"} ago`;
+  const diffMonth = Math.floor(diffDay / 30);
+  return `${diffMonth} month${diffMonth === 1 ? "" : "s"} ago`;
+}
 
 export default function OutcomeDetail() {
   const [, params] = useRoute("/outcomes/:id");
@@ -71,6 +160,74 @@ export default function OutcomeDetail() {
   const { data: kpis } = useQuery<KpiDefinition[]>({
     queryKey: ["/api/outcomes", outcomeId, "kpis"],
     enabled: !!outcomeId,
+  });
+
+  const { data: evidence } = useQuery<{
+    kpiTimeSeries: Array<{
+      kpiId: string;
+      kpiName: string;
+      unit: string;
+      target: number;
+      baseline: number;
+      points: Array<{ date: string; value: number }>;
+    }>;
+    correlatedMetrics: {
+      successRate: number;
+      avgLatency: number;
+      totalRuns: number;
+      failedRuns: number;
+      latencyTrend: Array<{ date: string; value: number }>;
+      agentCount: number;
+    };
+    dataQuality: {
+      totalEvents: number;
+      billableEvents: number;
+      missingFieldRate: number;
+      schemaConformance: number;
+      lastEventAt: string | null;
+    };
+  }>({
+    queryKey: ["/api/outcomes", outcomeId, "evidence"],
+    enabled: !!outcomeId,
+  });
+
+  const { data: outcomeEvents } = useQuery<OutcomeEvent[]>({
+    queryKey: ["/api/outcomes", outcomeId, "events"],
+    enabled: !!outcomeId,
+  });
+
+  const { data: auditData } = useQuery<{
+    auditEvents: Array<{
+      id: string;
+      objectType: string;
+      objectId: string;
+      action: string;
+      actorId: string;
+      details: any;
+      timestamp: string;
+      createdAt?: string;
+    }>;
+    approvals: Array<{
+      id: string;
+      type: string;
+      status: string;
+      objectName: string;
+      decidedBy: string;
+      decidedAt: string;
+      riskScore: number;
+      createdAt?: string;
+    }>;
+  }>({
+    queryKey: ["/api/outcomes", outcomeId, "audit"],
+    enabled: !!outcomeId,
+  });
+
+  const { data: allApprovals } = useQuery<Approval[]>({
+    queryKey: ["/api/approvals"],
+  });
+
+  const { data: allAgents } = useQuery<Array<{ id: string; outcomeId: string | null }>>({
+    queryKey: ["/api/agents"],
   });
 
   const createKpiMutation = useMutation({
@@ -192,6 +349,32 @@ export default function OutcomeDetail() {
     return <Minus className="w-3.5 h-3.5 text-muted-foreground" />;
   };
 
+  const boundAgents = allAgents?.filter(a => a.outcomeId === outcomeId) || [];
+  const outcomeApprovals = allApprovals?.filter(a => a.objectId === outcomeId) || [];
+  const pendingApprovals = outcomeApprovals.filter(a => a.status === "pending");
+
+  const recentEvents = outcomeEvents
+    ? [...outcomeEvents]
+        .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
+        .slice(0, 10)
+    : [];
+  const totalEventsCount = outcomeEvents?.length || 0;
+  const billableEventsCount = outcomeEvents?.filter(e => e.billable).length || 0;
+  const exclusionRate = totalEventsCount > 0 ? ((totalEventsCount - billableEventsCount) / totalEventsCount) * 100 : 0;
+  const estimatedRevenue = billableEventsCount * (outcome.pricePerUnit || 0);
+
+  const impactScore = Math.min(((outcome.pricePerUnit || 0) * 10 + (outcome.volumeCap || 100) / 100), 40);
+  const complianceScore = Math.min(gates.length * 10, 30);
+  const autonomyScore = Math.min(boundAgents.length * 10, 30);
+  const riskScore = Math.round(Math.min(impactScore + complianceScore + autonomyScore, 100));
+
+  const requiredApprovalRules =
+    outcome.riskTier === "HIGH"
+      ? ["All configuration changes", "KPI threshold modifications", "Billing & pricing changes", "Agent binding changes", "Risk parameter updates"]
+      : outcome.riskTier === "MEDIUM"
+        ? ["Billing & pricing changes", "KPI threshold modifications"]
+        : ["Billing & pricing changes"];
+
   return (
     <div className="flex flex-col gap-6 p-6" data-testid="page-outcome-detail">
       <div className="flex items-center gap-3 flex-wrap">
@@ -247,18 +430,18 @@ export default function OutcomeDetail() {
         />
       </div>
 
-      <Tabs defaultValue="kpis" className="space-y-4">
+      <Tabs defaultValue="definition" className="space-y-4">
         <TabsList>
-          <TabsTrigger value="kpis" data-testid="tab-kpis">KPI Definitions</TabsTrigger>
-          <TabsTrigger value="sla" data-testid="tab-sla">SLA Configuration</TabsTrigger>
-          <TabsTrigger value="attribution" data-testid="tab-attribution">Attribution Rules</TabsTrigger>
-          <TabsTrigger value="pricing" data-testid="tab-pricing">Pricing & Billing</TabsTrigger>
-          <TabsTrigger value="risk" data-testid="tab-risk">Risk Tolerance</TabsTrigger>
-          <TabsTrigger value="gates" data-testid="tab-gates">Approval Gates</TabsTrigger>
+          <TabsTrigger value="definition" data-testid="tab-definition">Definition</TabsTrigger>
+          <TabsTrigger value="evidence" data-testid="tab-evidence">Evidence</TabsTrigger>
+          <TabsTrigger value="commercials" data-testid="tab-commercials">Commercials</TabsTrigger>
+          <TabsTrigger value="risk" data-testid="tab-risk">Risk</TabsTrigger>
+          <TabsTrigger value="audit" data-testid="tab-audit">Audit</TabsTrigger>
           <TabsTrigger value="agents" data-testid="tab-agents">Agent Proposals</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="kpis" className="space-y-4">
+        {/* Tab 1: Definition */}
+        <TabsContent value="definition" className="space-y-6">
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <div>
               <h2 className="text-lg font-semibold">KPI Definitions</h2>
@@ -538,17 +721,24 @@ export default function OutcomeDetail() {
                           )}
                         </div>
                       </div>
+
+                      {kpi.expression && (
+                        <div className="rounded-md bg-muted/50 p-3" data-testid={`expression-preview-${kpi.id}`}>
+                          <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Expression</span>
+                          <pre className="mt-1 text-xs font-mono text-foreground overflow-x-auto">{kpi.expression}</pre>
+                        </div>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
               );
             })}
           </div>
-        </TabsContent>
 
-        <TabsContent value="sla" className="space-y-4">
+          <Separator />
+
           <div>
-            <h2 className="text-lg font-semibold">SLA Configuration</h2>
+            <h2 className="text-lg font-semibold">SLA Terms</h2>
             <p className="text-sm text-muted-foreground">Service level agreement thresholds and breach penalties</p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -562,7 +752,7 @@ export default function OutcomeDetail() {
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-sm text-muted-foreground">Minimum Success Rate</span>
-                    <span className="text-sm font-semibold">{sla.minSuccessRate ? `${(sla.minSuccessRate * 100).toFixed(1)}%` : "N/A"}</span>
+                    <span className="text-sm font-semibold" data-testid="text-sla-success-rate">{sla.minSuccessRate ? `${(sla.minSuccessRate * 100).toFixed(1)}%` : "N/A"}</span>
                   </div>
                   {sla.minSuccessRate && (
                     <Progress value={sla.minSuccessRate * 100} className="h-1.5" />
@@ -579,7 +769,7 @@ export default function OutcomeDetail() {
               <CardContent className="p-4 pt-0">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-sm text-muted-foreground">Max P95 Latency</span>
-                  <span className="text-sm font-semibold">{sla.maxP95LatencyMs ? `${(sla.maxP95LatencyMs / 1000).toFixed(1)}s` : "N/A"}</span>
+                  <span className="text-sm font-semibold" data-testid="text-sla-latency">{sla.maxP95LatencyMs ? `${(sla.maxP95LatencyMs / 1000).toFixed(1)}s` : "N/A"}</span>
                 </div>
               </CardContent>
             </Card>
@@ -592,7 +782,7 @@ export default function OutcomeDetail() {
               <CardContent className="p-4 pt-0">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-sm text-muted-foreground">Minimum Uptime</span>
-                  <span className="text-sm font-semibold">{sla.uptimePercent ? `${sla.uptimePercent}%` : "N/A"}</span>
+                  <span className="text-sm font-semibold" data-testid="text-sla-uptime">{sla.uptimePercent ? `${sla.uptimePercent}%` : "N/A"}</span>
                 </div>
               </CardContent>
             </Card>
@@ -606,7 +796,7 @@ export default function OutcomeDetail() {
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-sm text-muted-foreground">Penalty Rate</span>
-                    <span className="text-sm font-semibold">{sla.breachPenaltyPercent ? `${sla.breachPenaltyPercent}%` : "N/A"}</span>
+                    <span className="text-sm font-semibold" data-testid="text-sla-penalty">{sla.breachPenaltyPercent ? `${sla.breachPenaltyPercent}%` : "N/A"}</span>
                   </div>
                   {sla.maxPolicyViolationRate != null && (
                     <div className="flex items-center justify-between gap-2">
@@ -618,9 +808,9 @@ export default function OutcomeDetail() {
               </CardContent>
             </Card>
           </div>
-        </TabsContent>
 
-        <TabsContent value="attribution" className="space-y-4">
+          <Separator />
+
           <div>
             <h2 className="text-lg font-semibold">Attribution Rules</h2>
             <p className="text-sm text-muted-foreground">How outcome events get attributed to agent runs</p>
@@ -644,15 +834,15 @@ export default function OutcomeDetail() {
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                     <div className="flex flex-col gap-1">
                       <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Model</span>
-                      <span className="text-sm font-medium capitalize">{attribution.model?.replace(/_/g, " ")}</span>
+                      <span className="text-sm font-medium capitalize" data-testid="text-attribution-model">{attribution.model?.replace(/_/g, " ")}</span>
                     </div>
                     <div className="flex flex-col gap-1">
                       <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Window</span>
-                      <span className="text-sm font-medium">{attribution.windowHours}h</span>
+                      <span className="text-sm font-medium" data-testid="text-attribution-window">{attribution.windowHours}h</span>
                     </div>
                     <div className="flex flex-col gap-1">
                       <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Trace Link</span>
-                      <span className="text-sm font-medium flex items-center gap-1">
+                      <span className="text-sm font-medium flex items-center gap-1" data-testid="text-attribution-trace">
                         {attribution.requireTraceLink ? (
                           <><CheckCircle className="w-3.5 h-3.5 text-emerald-500" /> Required</>
                         ) : (
@@ -662,7 +852,7 @@ export default function OutcomeDetail() {
                     </div>
                     <div className="flex flex-col gap-1">
                       <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Escalated</span>
-                      <span className="text-sm font-medium flex items-center gap-1">
+                      <span className="text-sm font-medium flex items-center gap-1" data-testid="text-attribution-escalated">
                         {attribution.excludeEscalated ? (
                           <><XCircle className="w-3.5 h-3.5 text-red-500" /> Excluded</>
                         ) : (
@@ -684,11 +874,191 @@ export default function OutcomeDetail() {
           )}
         </TabsContent>
 
-        <TabsContent value="pricing" className="space-y-4">
+        {/* Tab 2: Evidence */}
+        <TabsContent value="evidence" className="space-y-6">
           <div>
-            <h2 className="text-lg font-semibold">Pricing & Billing</h2>
-            <p className="text-sm text-muted-foreground">Outcome-based pricing model, tiers, and volume caps</p>
+            <h2 className="text-lg font-semibold">Evidence</h2>
+            <p className="text-sm text-muted-foreground">KPI trends, correlated metrics, and data quality signals</p>
           </div>
+
+          {!evidence ? (
+            <div className="space-y-3">
+              <Skeleton className="h-32 w-full" />
+              <Skeleton className="h-32 w-full" />
+            </div>
+          ) : (
+            <>
+              {evidence.kpiTimeSeries.length > 0 && (
+                <div className="space-y-3">
+                  <h3 className="text-sm font-semibold">KPI Time Series</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {evidence.kpiTimeSeries.map((kpiTs) => {
+                      const lastPoint = kpiTs.points[kpiTs.points.length - 1];
+                      const firstPoint = kpiTs.points[0];
+                      const trendDir = lastPoint && firstPoint
+                        ? lastPoint.value > firstPoint.value ? "up" : lastPoint.value < firstPoint.value ? "down" : "stable"
+                        : "stable";
+                      return (
+                        <Card key={kpiTs.kpiId} data-testid={`card-kpi-timeseries-${kpiTs.kpiId}`}>
+                          <CardContent className="p-4">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex flex-col gap-0.5 min-w-0">
+                                <span className="text-sm font-semibold truncate">{kpiTs.kpiName}</span>
+                                <span className="text-xs text-muted-foreground">
+                                  Current: {lastPoint?.value ?? "N/A"} {kpiTs.unit} | Target: {kpiTs.target} {kpiTs.unit}
+                                </span>
+                                <div className="flex items-center gap-1 mt-0.5">
+                                  {trendDir === "up" && <TrendingUp className="w-3 h-3 text-emerald-500" />}
+                                  {trendDir === "down" && <TrendingDown className="w-3 h-3 text-red-500" />}
+                                  {trendDir === "stable" && <Minus className="w-3 h-3 text-muted-foreground" />}
+                                  <span className="text-[10px] text-muted-foreground">7-day trend</span>
+                                </div>
+                              </div>
+                              <Sparkline
+                                points={kpiTs.points}
+                                target={kpiTs.target}
+                                width={140}
+                                height={40}
+                              />
+                            </div>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold">Correlated Metrics</h3>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+                  <Card data-testid="card-metric-success-rate">
+                    <CardContent className="p-4">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Success Rate</span>
+                      <p className="text-lg font-semibold mt-1">{evidence.correlatedMetrics.successRate}%</p>
+                    </CardContent>
+                  </Card>
+                  <Card data-testid="card-metric-avg-latency">
+                    <CardContent className="p-4">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Avg Latency</span>
+                      <p className="text-lg font-semibold mt-1">{evidence.correlatedMetrics.avgLatency}ms</p>
+                    </CardContent>
+                  </Card>
+                  <Card data-testid="card-metric-total-runs">
+                    <CardContent className="p-4">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Total Runs</span>
+                      <p className="text-lg font-semibold mt-1">{evidence.correlatedMetrics.totalRuns}</p>
+                    </CardContent>
+                  </Card>
+                  <Card data-testid="card-metric-failed-runs">
+                    <CardContent className="p-4">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Failed Runs</span>
+                      <p className="text-lg font-semibold mt-1">{evidence.correlatedMetrics.failedRuns}</p>
+                    </CardContent>
+                  </Card>
+                  <Card data-testid="card-metric-agent-count">
+                    <CardContent className="p-4">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Agent Count</span>
+                      <p className="text-lg font-semibold mt-1">{evidence.correlatedMetrics.agentCount}</p>
+                    </CardContent>
+                  </Card>
+                </div>
+              </div>
+
+              {evidence.correlatedMetrics.latencyTrend.length > 0 && (
+                <div className="space-y-3">
+                  <h3 className="text-sm font-semibold">Latency Trend (7-day)</h3>
+                  <Card data-testid="card-latency-trend">
+                    <CardContent className="p-4 flex items-center gap-4">
+                      <Sparkline
+                        points={evidence.correlatedMetrics.latencyTrend}
+                        width={240}
+                        height={48}
+                      />
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-xs text-muted-foreground">Latest</span>
+                        <span className="text-sm font-semibold">
+                          {evidence.correlatedMetrics.latencyTrend[evidence.correlatedMetrics.latencyTrend.length - 1]?.value ?? 0}ms
+                        </span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold">Data Quality Signals</h3>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+                  <Card data-testid="card-dq-total-events">
+                    <CardContent className="p-4">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Total Events</span>
+                      <p className="text-lg font-semibold mt-1">{evidence.dataQuality.totalEvents}</p>
+                    </CardContent>
+                  </Card>
+                  <Card data-testid="card-dq-billable-events">
+                    <CardContent className="p-4">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Billable Events</span>
+                      <p className="text-lg font-semibold mt-1">{evidence.dataQuality.billableEvents}</p>
+                    </CardContent>
+                  </Card>
+                  <Card data-testid="card-dq-missing-field-rate">
+                    <CardContent className="p-4">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Missing Field Rate</span>
+                      <p className="text-lg font-semibold mt-1">{evidence.dataQuality.missingFieldRate}%</p>
+                    </CardContent>
+                  </Card>
+                  <Card data-testid="card-dq-schema-conformance">
+                    <CardContent className="p-4">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Schema Conformance</span>
+                      <p className="text-lg font-semibold mt-1">{evidence.dataQuality.schemaConformance}%</p>
+                    </CardContent>
+                  </Card>
+                  <Card data-testid="card-dq-last-event">
+                    <CardContent className="p-4">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Last Event</span>
+                      <p className="text-sm font-semibold mt-1">{relativeTime(evidence.dataQuality.lastEventAt)}</p>
+                    </CardContent>
+                  </Card>
+                </div>
+              </div>
+            </>
+          )}
+        </TabsContent>
+
+        {/* Tab 3: Commercials */}
+        <TabsContent value="commercials" className="space-y-6">
+          <div>
+            <h2 className="text-lg font-semibold">Commercials</h2>
+            <p className="text-sm text-muted-foreground">Pricing, metering rules, and outcome event activity</p>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <Card data-testid="card-commercial-total-events">
+              <CardContent className="p-4">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Total Events</span>
+                <p className="text-lg font-semibold mt-1">{totalEventsCount}</p>
+              </CardContent>
+            </Card>
+            <Card data-testid="card-commercial-billable-events">
+              <CardContent className="p-4">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Billable Events</span>
+                <p className="text-lg font-semibold mt-1">{billableEventsCount}</p>
+              </CardContent>
+            </Card>
+            <Card data-testid="card-commercial-revenue">
+              <CardContent className="p-4">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Revenue</span>
+                <p className="text-lg font-semibold mt-1">{outcome.currency || "USD"} {estimatedRevenue.toFixed(2)}</p>
+              </CardContent>
+            </Card>
+            <Card data-testid="card-commercial-exclusion-rate">
+              <CardContent className="p-4">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Exclusion Rate</span>
+                <p className="text-lg font-semibold mt-1">{exclusionRate.toFixed(1)}%</p>
+              </CardContent>
+            </Card>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Card>
               <CardHeader className="pb-2">
@@ -700,7 +1070,7 @@ export default function OutcomeDetail() {
                 <div className="flex flex-col gap-3">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-sm text-muted-foreground">Model</span>
-                    <span className="text-sm font-semibold">{outcome.pricingModel?.replace(/_/g, " ")}</span>
+                    <span className="text-sm font-semibold" data-testid="text-pricing-model">{outcome.pricingModel?.replace(/_/g, " ")}</span>
                   </div>
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-sm text-muted-foreground">Base Price</span>
@@ -730,7 +1100,7 @@ export default function OutcomeDetail() {
                 {tiers.length > 0 ? (
                   <div className="flex flex-col gap-2">
                     {tiers.map((tier, i) => (
-                      <div key={i} className="flex items-center justify-between gap-2 py-1.5 border-b last:border-0">
+                      <div key={i} className="flex items-center justify-between gap-2 py-1.5 border-b last:border-0" data-testid={`text-tier-${i}`}>
                         <span className="text-sm text-muted-foreground">
                           {tier.minVolume.toLocaleString()} - {tier.maxVolume ? tier.maxVolume.toLocaleString() : "Unlimited"}
                         </span>
@@ -744,14 +1114,95 @@ export default function OutcomeDetail() {
               </CardContent>
             </Card>
           </div>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <Filter className="w-4 h-4 text-primary" /> Metering Rules
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-4 pt-0">
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium">Fraud Prevention</span>
+                    <span className="text-xs text-muted-foreground">Duplicate detection window</span>
+                  </div>
+                  <Badge variant="outline" className="text-[10px]">60s window</Badge>
+                </div>
+                <Separator />
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium">Retry Deduplication</span>
+                    <span className="text-xs text-muted-foreground">Configurable dedup window</span>
+                  </div>
+                  <Badge variant="outline" className="text-[10px]">300s window</Badge>
+                </div>
+                <Separator />
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium">Minimum Quality Threshold</span>
+                    <span className="text-xs text-muted-foreground">Events below threshold are excluded</span>
+                  </div>
+                  <Badge variant="outline" className="text-[10px]">0.7 score</Badge>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <div className="space-y-3">
+            <h3 className="text-sm font-semibold">Recent Outcome Events</h3>
+            {recentEvents.length === 0 ? (
+              <Card>
+                <CardContent className="flex flex-col items-center justify-center py-8 gap-2">
+                  <Database className="w-8 h-8 text-muted-foreground/50" />
+                  <p className="text-sm text-muted-foreground">No outcome events recorded yet</p>
+                </CardContent>
+              </Card>
+            ) : (
+              <Card>
+                <CardContent className="p-0">
+                  <div className="divide-y">
+                    {recentEvents.map((evt) => (
+                      <div key={evt.id} className="flex items-center justify-between gap-3 px-4 py-3" data-testid={`row-event-${evt.id}`}>
+                        <div className="flex items-center gap-3 min-w-0">
+                          <CircleDot className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                          <div className="flex flex-col min-w-0">
+                            <span className="text-sm font-medium truncate">{evt.type}</span>
+                            <span className="text-xs text-muted-foreground truncate">
+                              Agent: {evt.agentId ? evt.agentId.slice(0, 8) + "..." : "N/A"}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {evt.billable ? (
+                            <Badge variant="outline" className="text-[10px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" data-testid={`badge-billable-${evt.id}`}>
+                              Billable
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-[10px] bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/20" data-testid={`badge-excluded-${evt.id}`}>
+                              Excluded
+                            </Badge>
+                          )}
+                          <span className="text-xs text-muted-foreground whitespace-nowrap">{relativeTime(evt.createdAt as string | null)}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </div>
         </TabsContent>
 
-        <TabsContent value="risk" className="space-y-4">
+        {/* Tab 4: Risk */}
+        <TabsContent value="risk" className="space-y-6">
           <div>
-            <h2 className="text-lg font-semibold">Risk Tolerance</h2>
-            <p className="text-sm text-muted-foreground">Thresholds, drift limits, and automatic safety controls</p>
+            <h2 className="text-lg font-semibold">Risk</h2>
+            <p className="text-sm text-muted-foreground">Risk assessment, thresholds, and change impact analysis</p>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-medium flex items-center gap-2">
@@ -763,7 +1214,7 @@ export default function OutcomeDetail() {
                   <StatusBadge status={outcome.riskTier} />
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-sm text-muted-foreground">Risk Threshold</span>
-                    <span className="text-sm font-semibold">{((outcome.riskThreshold || 0) * 100).toFixed(0)}%</span>
+                    <span className="text-sm font-semibold" data-testid="text-risk-threshold">{((outcome.riskThreshold || 0) * 100).toFixed(0)}%</span>
                   </div>
                   <Progress value={(outcome.riskThreshold || 0) * 100} className="h-1.5" />
                 </div>
@@ -779,7 +1230,7 @@ export default function OutcomeDetail() {
                 <div className="flex flex-col gap-3">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-sm text-muted-foreground">Max Drift Allowed</span>
-                    <span className="text-sm font-semibold">{outcome.maxDriftPercent || 0}%</span>
+                    <span className="text-sm font-semibold" data-testid="text-max-drift">{outcome.maxDriftPercent || 0}%</span>
                   </div>
                   <Progress value={outcome.maxDriftPercent || 0} className="h-1.5" />
                   <span className="text-xs text-muted-foreground">Performance drift beyond this triggers alert</span>
@@ -813,55 +1264,312 @@ export default function OutcomeDetail() {
                 </div>
               </CardContent>
             </Card>
-          </div>
-        </TabsContent>
-
-        <TabsContent value="gates" className="space-y-4">
-          <div>
-            <h2 className="text-lg font-semibold">Approval Gates</h2>
-            <p className="text-sm text-muted-foreground">Lifecycle stages requiring expert validation before proceeding</p>
-          </div>
-          {gates.length > 0 ? (
-            <div className="space-y-3">
-              {gates.map((gate, i) => (
-                <Card key={i} data-testid={`card-gate-${i}`}>
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between gap-4 flex-wrap">
-                      <div className="flex items-center gap-3">
-                        <div className="flex items-center justify-center w-8 h-8 rounded-md bg-primary/10 shrink-0">
-                          <Lock className="w-4 h-4 text-primary" />
-                        </div>
-                        <div className="flex flex-col">
-                          <span className="text-sm font-semibold capitalize">{gate.stage?.replace(/_/g, " ")}</span>
-                          <span className="text-xs text-muted-foreground capitalize">Approver: {gate.approverRole?.replace(/_/g, " ")}</span>
-                        </div>
-                      </div>
-                      <Badge variant="outline" className={gate.required
-                        ? "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20"
-                        : "bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/20"
-                      }>
-                        {gate.required ? "Required" : "Optional"}
-                      </Badge>
+            <Card data-testid="card-risk-score">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                  <Gauge className="w-4 h-4 text-primary" /> Risk Score
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-4 pt-0">
+                <div className="flex flex-col items-center gap-3">
+                  <div className="relative w-20 h-20">
+                    <svg viewBox="0 0 36 36" className="w-20 h-20 -rotate-90">
+                      <path
+                        d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="3"
+                        className="text-muted/30"
+                      />
+                      <path
+                        d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="3"
+                        strokeDasharray={`${riskScore}, 100`}
+                        className={riskScore >= 70 ? "text-red-500" : riskScore >= 40 ? "text-amber-500" : "text-emerald-500"}
+                      />
+                    </svg>
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <span className="text-lg font-semibold" data-testid="text-risk-score">{riskScore}</span>
                     </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          ) : (
-            <Card>
-              <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
-                <Lock className="w-10 h-10 text-muted-foreground/50" />
-                <p className="text-sm text-muted-foreground">No approval gates configured</p>
+                  </div>
+                  <span className="text-xs text-muted-foreground text-center">Composite score out of 100</span>
+                </div>
               </CardContent>
             </Card>
-          )}
+          </div>
+
+          <div className="space-y-3">
+            <h3 className="text-sm font-semibold">Change Impact</h3>
+            {pendingApprovals.length === 0 ? (
+              <Card>
+                <CardContent className="flex flex-col items-center justify-center py-8 gap-2">
+                  <CheckCircle className="w-8 h-8 text-muted-foreground/50" />
+                  <p className="text-sm text-muted-foreground">No pending approvals for this outcome</p>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="space-y-2">
+                {pendingApprovals.map((approval) => (
+                  <Card key={approval.id} data-testid={`card-pending-approval-${approval.id}`}>
+                    <CardContent className="p-4">
+                      <div className="flex items-center justify-between gap-3 flex-wrap">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Clock className="w-4 h-4 text-amber-500 shrink-0" />
+                          <div className="flex flex-col min-w-0">
+                            <span className="text-sm font-medium truncate">{approval.objectName || approval.type}</span>
+                            <span className="text-xs text-muted-foreground">{approval.description || approval.type.replace(/_/g, " ")}</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <StatusBadge status={approval.status} />
+                          {approval.riskScore != null && (
+                            <Badge variant="outline" className="text-[10px]">Risk: {((approval.riskScore || 0) * 100).toFixed(0)}%</Badge>
+                          )}
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-3">
+            <h3 className="text-sm font-semibold">Required Approvals</h3>
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center gap-2 mb-1">
+                    <StatusBadge status={outcome.riskTier} />
+                    <span className="text-xs text-muted-foreground">tier determines approval requirements</span>
+                  </div>
+                  {requiredApprovalRules.map((rule, i) => (
+                    <div key={i} className="flex items-center gap-2 py-1" data-testid={`text-approval-rule-${i}`}>
+                      <ShieldCheck className="w-3.5 h-3.5 text-primary shrink-0" />
+                      <span className="text-sm">{rule}</span>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
 
+        {/* Tab 5: Audit */}
+        <TabsContent value="audit" className="space-y-6">
+          <AuditTab outcomeId={outcomeId!} outcome={outcome} auditData={auditData} gates={gates} />
+        </TabsContent>
+
+        {/* Tab 6: Agent Proposals */}
         <TabsContent value="agents" className="space-y-4">
           <AgentProposalsTab outcome={outcome} kpis={kpis || []} />
         </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+function AuditTab({
+  outcomeId,
+  outcome,
+  auditData,
+  gates,
+}: {
+  outcomeId: string;
+  outcome: OutcomeContract;
+  auditData: {
+    auditEvents: Array<{
+      id: string;
+      objectType: string;
+      objectId: string;
+      action: string;
+      actorId: string;
+      details: any;
+      timestamp: string;
+      createdAt?: string;
+    }>;
+    approvals: Array<{
+      id: string;
+      type: string;
+      status: string;
+      objectName: string;
+      decidedBy: string;
+      decidedAt: string;
+      riskScore: number;
+      createdAt?: string;
+    }>;
+  } | undefined;
+  gates: Array<Record<string, any>>;
+}) {
+  const [auditFilter, setAuditFilter] = useState<"all" | "changes" | "approvals">("all");
+
+  const timelineEntries: Array<{
+    id: string;
+    kind: "audit" | "approval";
+    action: string;
+    actor: string;
+    timestamp: string;
+    details?: any;
+    status?: string;
+    riskScore?: number;
+  }> = [];
+
+  if (auditData) {
+    for (const evt of auditData.auditEvents) {
+      timelineEntries.push({
+        id: evt.id,
+        kind: "audit",
+        action: evt.action,
+        actor: evt.actorId || "system",
+        timestamp: evt.timestamp || evt.createdAt || "",
+        details: evt.details,
+      });
+    }
+    for (const appr of auditData.approvals) {
+      timelineEntries.push({
+        id: appr.id,
+        kind: "approval",
+        action: `${appr.type} - ${appr.status}`,
+        actor: appr.decidedBy || "pending",
+        timestamp: appr.decidedAt || appr.createdAt || "",
+        status: appr.status,
+        riskScore: appr.riskScore,
+      });
+    }
+  }
+
+  timelineEntries.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+  const filteredEntries =
+    auditFilter === "all"
+      ? timelineEntries
+      : auditFilter === "changes"
+        ? timelineEntries.filter((e) => e.kind === "audit")
+        : timelineEntries.filter((e) => e.kind === "approval");
+
+  const actionIcon = (action: string, kind: string) => {
+    if (kind === "approval") return <ShieldCheck className="w-4 h-4 text-primary" />;
+    if (action.includes("create")) return <Plus className="w-4 h-4 text-emerald-500" />;
+    if (action.includes("update") || action.includes("edit")) return <Edit3 className="w-4 h-4 text-amber-500" />;
+    if (action.includes("delete")) return <Trash2 className="w-4 h-4 text-red-500" />;
+    return <FileText className="w-4 h-4 text-muted-foreground" />;
+  };
+
+  return (
+    <>
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <h2 className="text-lg font-semibold">Audit Trail</h2>
+          <p className="text-sm text-muted-foreground">Timeline of changes and approval decisions</p>
+        </div>
+        <Badge variant="outline" className="text-[10px]" data-testid="badge-version">v{outcome.version}</Badge>
+      </div>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <Button
+          variant={auditFilter === "all" ? "default" : "outline"}
+          size="sm"
+          onClick={() => setAuditFilter("all")}
+          data-testid="button-filter-all"
+        >
+          All
+        </Button>
+        <Button
+          variant={auditFilter === "changes" ? "default" : "outline"}
+          size="sm"
+          onClick={() => setAuditFilter("changes")}
+          data-testid="button-filter-changes"
+        >
+          Changes
+        </Button>
+        <Button
+          variant={auditFilter === "approvals" ? "default" : "outline"}
+          size="sm"
+          onClick={() => setAuditFilter("approvals")}
+          data-testid="button-filter-approvals"
+        >
+          Approvals
+        </Button>
+      </div>
+
+      {!auditData ? (
+        <div className="space-y-3">
+          <Skeleton className="h-16 w-full" />
+          <Skeleton className="h-16 w-full" />
+        </div>
+      ) : filteredEntries.length === 0 ? (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
+            <History className="w-10 h-10 text-muted-foreground/50" />
+            <p className="text-sm text-muted-foreground">No audit events recorded</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-2">
+          {filteredEntries.map((entry) => (
+            <Card key={entry.id} data-testid={`card-audit-${entry.id}`}>
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-3 min-w-0">
+                    {actionIcon(entry.action, entry.kind)}
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-sm font-medium truncate">{entry.action.replace(/_/g, " ")}</span>
+                      <span className="text-xs text-muted-foreground">by {entry.actor}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {entry.status && <StatusBadge status={entry.status} />}
+                    {entry.riskScore != null && entry.riskScore > 0 && (
+                      <Badge variant="outline" className="text-[10px]">Risk: {(entry.riskScore * 100).toFixed(0)}%</Badge>
+                    )}
+                    <span className="text-xs text-muted-foreground whitespace-nowrap" data-testid={`text-audit-time-${entry.id}`}>
+                      {relativeTime(entry.timestamp)}
+                    </span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {gates.length > 0 && (
+        <>
+          <Separator />
+          <div>
+            <h3 className="text-sm font-semibold">Configured Gates</h3>
+            <p className="text-xs text-muted-foreground">Lifecycle stages requiring expert validation</p>
+          </div>
+          <div className="space-y-2">
+            {gates.map((gate, i) => (
+              <Card key={i} data-testid={`card-gate-${i}`}>
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between gap-4 flex-wrap">
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center justify-center w-8 h-8 rounded-md bg-primary/10 shrink-0">
+                        <Lock className="w-4 h-4 text-primary" />
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-sm font-semibold capitalize">{gate.stage?.replace(/_/g, " ")}</span>
+                        <span className="text-xs text-muted-foreground capitalize">Approver: {gate.approverRole?.replace(/_/g, " ")}</span>
+                      </div>
+                    </div>
+                    <Badge variant="outline" className={gate.required
+                      ? "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20"
+                      : "bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/20"
+                    }>
+                      {gate.required ? "Required" : "Optional"}
+                    </Badge>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </>
+      )}
+    </>
   );
 }
 

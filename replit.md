@@ -1,146 +1,55 @@
 # ALMP - Agent Lifecycle Management Platform
 
 ## Overview
-A comprehensive platform for managing AI agent lifecycles with an 80% autonomous execution + 20% expert validation model. Outcome-driven billing where customers pay for measurable results.
+ALMP is an Agent Lifecycle Management Platform designed for managing AI agents with an 80% autonomous execution and 20% expert validation model. The platform aims to provide outcome-driven billing, where customers pay for measurable results. It offers comprehensive tools for agent creation, deployment, monitoring, and governance, focusing on delivering business value and enabling efficient AI operations.
 
-## Architecture
-- **Frontend**: React + Vite + Tailwind CSS + shadcn/ui + wouter routing
-- **Backend**: Express.js REST API
-- **Database**: PostgreSQL with Drizzle ORM
-- **State**: TanStack React Query
+## User Preferences
+I prefer that you ask me before making any major changes to the codebase. When suggesting code, please provide clear explanations for the choices made. I value an iterative development approach, where we can discuss and refine solutions progressively.
 
-## Key Modules
-1. **Overview Dashboard** - Platform health, KPI progress, agent status
-2. **Outcomes** - Outcome contracts with KPIs, SLAs, pricing
-3. **Agents** - Agent registry with detail cockpit (traces, evals, blueprint)
-4. **Templates** - Industry-wide agent template library with browsing, filtering, search
-5. **Deployments** - Release orchestration across staging/pilot/prod
-6. **Monitor** - SLA dashboard, live run stream, drift detection
-7. **Governance** - Policy library (policy-as-code), audit trail
-8. **Approvals** - Expert validation queue with approve/reject
-9. **Billing** - Outcome-based metering and invoices
+## System Architecture
+The platform is built with a modern web stack:
+- **Frontend**: React, Vite, Tailwind CSS, shadcn/ui, and wouter for routing.
+- **Backend**: Express.js REST API.
+- **Database**: PostgreSQL with Drizzle ORM.
+- **State Management**: TanStack React Query.
 
-## Project Structure
-- `shared/schema.ts` - All Drizzle schemas and Zod types
-- `server/db.ts` - Database connection
-- `server/storage.ts` - Storage layer (IStorage interface)
-- `server/routes.ts` - REST API endpoints
-- `server/seed.ts` - Seed data
-- `client/src/pages/` - Page components
-- `client/src/components/` - Shared UI components
+**UI/UX Design Principles**:
+- **Outcome-first navigation**: Every screen prioritizes showing KPI delivery status via an `OutcomeKpiStrip` component.
+- **Evidence-by-default**: Approvals show configuration differences, blast radius analysis, and evaluation proof.
+- **Autonomy with guardrails**: Policies are checked before actions, with options to request expert approval for violations.
+- **Time travel**: An agent timeline aggregates version changes, audit events, and recommendations with diff visualization.
 
-## Artifacts (Detail Pages)
-1. **Outcome Contract** (`/outcomes/:id`) — 6 tabs: KPI Definitions, SLA Configuration, Attribution Rules, Pricing & Billing, Risk Tolerance, Approval Gates
-2. **Agent Blueprint** (`/agents/:id`) — 7 sections: Model Config, Workflow Graph, Tools & Permissions, Memory & RAG, Policy Bindings, Eval Bindings, Rollback Plan
-3. **Release** (`/deployments/:id`) — 4 sections: Overview, Canary Rules, Rollback Triggers, Promotion History. Actions: Promote (staging→pilot→prod), Rollback
-4. **Run Trace** (`/traces/:id`) — 7 sections: Execution Summary, Prompt Inputs, Tool Calls, Retrieved Documents, Decisions, Policy Checks, Cost & Latency Breakdown
-5. **Eval Suite** (`/evals/:id`) — 7 tabs: Test Cases, Run History, Scoring Config, Agent Bindings, Red-Team Coverage, Regressions, Outcome Correlation
+**Key Modules & Features**:
+- **Overview Dashboard**: Provides platform health, KPI progress, and agent status.
+- **Outcomes**: Manages outcome contracts, KPIs, SLAs, and pricing with detailed artifact pages covering definition, evidence, commercials, risk, audit, and agent proposals.
+- **Agents**: Features an agent registry, a detailed cockpit for traces and evaluations, and a blueprint editor. An Agent Design Wizard guides users through creation with options for manual configuration, template usage (with AI matching), or conversational AI design.
+- **Templates**: A library of industry-wide agent templates with browsing, filtering, search, and "Use This Template" functionality.
+- **Deployments**: Facilitates release orchestration across staging, pilot, and production environments with promote/rollback actions and detailed release artifacts.
+- **Monitor**: Offers an SLA dashboard, live run streams, and drift detection. Automated remediation suggestions are provided based on monitoring data.
+- **Governance**: Includes a policy library (policy-as-code), audit trails, and compliance reporting.
+- **Approvals**: Manages an expert validation queue for various approval types (e.g., blueprint review, outcome review, outcome certification) with structured evidence.
+- **Billing**: Handles outcome-based metering and invoicing.
+- **Evaluation Evidence System**: Incorporates drift detection, red-team coverage, regression detection, and outcome correlation to provide robust evidence for agent performance and risks.
+- **Business Outcome Discovery**: A conversational AI-driven process for business users to define goals, identify automation opportunities, and draft outcome contracts.
+- **Role-based Access**: Six switchable personas (Outcome Owner, Agent Engineer, Ops/SRE, Compliance/Security, Expert Validator, Finance) filter navigation and available actions.
+- **Global App Shell**: Includes a left navigation sidebar, top bar with global search, command palette, environment selector, and notification center.
 
-## Agent Templates (`/templates`)
-Standalone browsable page with:
-- Grid of industry-wide agent templates with search and category/industry filters
-- Click-to-select detail panel showing tools, workflow, permissions, policy bindings
-- "Use This Template" action navigates to wizard with template pre-filled
-- Templates have: category, industry, tags, complexity, model config, tools, permissions, workflow, policies, evals, rollback plan
+**Technical Implementations**:
+- **AI Endpoints**: `POST /api/ai/agent-assist` for conversational design, `POST /api/ai/match-templates` for template matching, `POST /api/ai/outcome-discover` for outcome discovery, and `POST /api/ai/propose-agents` for generating agent proposals.
+- **Data Model**: Comprehensive schema covering outcome contracts, agents, deployments, evaluations, policies, approvals, billing, and templates.
 
-## Agent Design Wizard (`/agents/wizard`)
-5-step flow for creating agents:
-1. **Basic Info** - Name, description, owner, risk tier, autonomy mode, outcome binding
-2. **Choose Path** - Three creation approaches:
-   - **Manual Configuration** - Full control, proceed to model/tools setup
-   - **Use Template** - AI analyzes basic info and suggests best-matching templates with match scores and reasoning; user can pick AI suggestion or browse all templates manually
-   - **Conversational AI** - Chat with GPT-4.1 to design agent via natural language
-3. **Model & Tools** - Provider, model name, tools config, permissions (pre-filled if template selected)
-4. **Memory & Workflow** - RAG config, workflow graph nodes
-5. **Review & Create** - Summary + POST /api/agents
-
-Entry from Templates page: `/agents/wizard?templateId={id}` pre-fills all fields including basic info from template.
-
-## AI Endpoints
-- `POST /api/ai/agent-assist` - Conversational design assistant (SSE streaming, GPT-4.1)
-- `POST /api/ai/match-templates` - Template matching: analyzes basic info + outcome vs templates, returns ranked matches with scores and reasoning
-
-## Data Model
-- outcome_contracts, kpi_definitions
-- agents, agent_versions
-- deployments, run_traces
-- eval_suites, eval_test_cases, eval_runs
-- policies, approvals, audit_events
-- invoices, outcome_events
-- agent_templates (with industry, tags fields)
-
-## Evaluation Evidence System
-- **Drift Detection Engine**: `GET /api/drift-signals` computes real-time drift by comparing latest eval run pass rates/latency against rolling 5-run baseline. Monitor page Drift tab shows severity-coded signals (critical/high/medium/low)
-- **Red-Team Coverage**: Eval detail "Red-Team Coverage" tab maps test cases to 6 adversarial categories (prompt injection, jailbreak, PII extraction, bias probing, hallucination, tool misuse) via tag matching
-- **Regression Detection**: Eval detail "Regressions" tab auto-compares consecutive eval runs, flags pass-rate drops >2% as Minor/Moderate/Severe
-- **Outcome Correlation**: Eval detail "Outcome Correlation" tab computes Pearson r between eval pass rates and outcome KPI attainment with bar chart trends and interpretation
-- **Evidence Packaging**: Approvals page bundles eval results, drift status, and risk assessment in expandable evidence cards for each approval request
-- Storage: `getEvalRunsBySuite(suiteId)` method in IStorage interface
-
-## Personas / Roles
-6 switchable personas via header dropdown (localStorage-persisted, no auth):
-- **Outcome Owner** (business): Overview, Outcomes, Billing, Approvals
-- **Agent Engineer** (builder, default): Overview, Agents, Templates, Improvements
-- **Ops / SRE** (operations): Overview, Deployments, Monitor, Agents
-- **Compliance / Security**: Overview, Governance, Approvals
-- **Expert Validator** (20% human): Overview, Approvals, Agents, Deployments
-- **Finance**: Overview, Billing, Outcomes
-
-Components: `role-provider.tsx` (context + hook), `role-switcher.tsx` (header dropdown), sidebar filters nav by role
-
-## UX Design Principles (Implemented)
-1. **Outcome-first navigation**: Every screen answers "Are we delivering the KPI safely?" via `OutcomeKpiStrip` component on Agents, Deployments, Monitor, Improvements. Full mode shows KPI mini-cards; compact mode shows attainment + at-risk count.
-2. **Evidence-by-default**: Approvals show config diffs (field-level old→new, version badge, category tags) + blast radius (affected users, runs/day, revenue exposure, environment, downstream agents, rollback time) alongside eval proof.
-3. **Autonomy with guardrails**: POST /api/policy-check validates against agent risk tier, environment, autonomy mode. Apply/Remediate buttons pre-check policies; blocked actions show violation dialog with "Request Expert Approval" escalation to approvals queue.
-4. **Time travel**: GET /api/agents/:id/timeline aggregates version changes, audit events, applied recommendations. Agent detail "Timeline" tab with category filters, diff visualization, "Last Known Good State" marker, "Changes Since Last Good" summary.
-
-## Business Outcome Discovery Flow
-- **Outcome Discovery** (`/outcomes/discover`): Conversational AI page where business users describe goals in natural language. Platform maps workflows, identifies automation opportunities, proposes agent roles, defines KPIs, and drafts an Outcome Contract with validation checklist. Starter prompts for common scenarios.
-- **AI Endpoints**: POST /api/ai/outcome-discover (SSE streaming conversation), POST /api/ai/propose-agents (generates agent proposals for an outcome)
-- **Agent Proposals Tab**: Outcome detail page (/outcomes/:id) has "Agent Proposals" tab where AI generates 2-4 agents with workflows, tools, KPI bindings, and autonomy levels. "Create Agent" and "Customize" (links to wizard) actions per proposal.
-- **Expert Validation Gate**: Creating an outcome from discovery auto-creates an `outcome_review` approval in the Approvals queue. Shows proposed KPIs, proposed agents, and validation checklist. "Validate" button instead of "Approve".
-- **Business-first entry points**: Overview page "Start with a Business Outcome" CTA, Outcomes page "Discover with AI" button, Sidebar "Discover" nav item (visible to Outcome Owner and Agent Engineer roles)
-
-## Global App Shell
-- **Left Nav (Sidebar)**: Two groups — Platform (Overview, Discover, Outcomes, Agents, Templates, Evals, Deployments, Monitor) and Operations (Ops, Governance, Approvals, Billing, Integrations, Admin). Role-filtered.
-- **Top Bar**: Global search (queries agents, outcomes, policies, runs), Command palette (Cmd+K with Create Agent, Run Eval, Rollback, Open Incident actions), Environment selector (Staging/Pilot/Prod), Notification center (real-time pending approvals + drift alerts), Role switcher, Theme toggle
-- **Command Palette**: `client/src/components/command-palette.tsx` — Cmd+K shortcut, Quick Actions + Navigate groups, uses shadcn CommandDialog
-- **Global Search**: `client/src/components/global-search.tsx` — searches agents, outcomes, policies, run traces with results dropdown
-- **Environment Selector**: `client/src/components/environment-selector.tsx` — Staging/Pilot/Prod with localStorage persistence
-- **Notification Center**: `client/src/components/notification-center.tsx` — Popover with pending approvals + critical drift alerts from real API data
-
-## New Pages
-- **Evals Listing** (`/evals`): Browse all eval suites with status, scoring method, linked agents. Links to eval detail.
-- **Integrations** (`/integrations`): Integration categories (LLM Providers, Vector DBs, Monitoring, CI/CD, Ticketing, Communication) with configure actions.
-- **Admin** (`/admin`): Platform health stats (uptime, users, API calls, storage) + admin sections (User Management, System Settings, API Keys, Audit Logs).
-
-## Recent Changes
-- Autonomous Agent Design & Assembly (Vision #2):
-  - Auto-scaffold eval suite: POST /api/agents now auto-creates eval suite + test cases (baseline latency, error handling, tool permissions, workflow coverage, RAG retrieval, escalation paths) derived from agent config
-  - Performance simulation: Wizard Review step shows estimated latency, cost/run, throughput, and risk assessment with risk factors computed from model/tools/workflow/RAG config
-  - Blueprint review approval: Agent creation auto-creates `blueprint_review` approval with structured evidence (domain assumptions, regulatory constraints, escalation paths validation checklist)
-  - Approvals page renders blueprint_review type with risk tier badge, autonomy mode badge, blueprint summary grid, category-grouped validation checklist with checkboxes, and "Validate Blueprint" action button + "View Agent" link
-  - Validation gate notice: Wizard Review step shows amber callout informing user that creation triggers expert validation before deployment
-  - Audit trail: Agent creation logged with details about auto-scaffolded artifacts
-- Universal Pattern Components:
-  - Extracted shared-utils (InfoRow, formatDate, formatMs, formatHash), ConfigDiff/InlineDiff, BlastRadius, ActionCard, PolicyViolationDialog
-  - Refactored approvals, agent-detail, improvements, monitor pages to use shared components (~500 lines reduced)
-  - Normalized eval-detail.tsx from manual activeTab to standard shadcn Tabs/TabsContent pattern
-- 80/20 Model Gaps Closed:
-  - Improvements page: Auto-generated recommendations from eval failures, drift signals, cost analysis, traces. Categories: retrain, model_swap, config_change, workflow_optimization, policy_update. Generate endpoint computes new recs from agent data. Cost source filter, agent name links, type badges, estimated savings stat.
-  - Automated Remediation: Monitor drift signals now show contextual fix suggestions (rollback, retrain, adjust threshold) with one-click "Remediate" button that creates improvement recommendations.
-  - Outcome Certification: New `outcome_certification` approval type in Approvals page with KPI attainment progress bars, overall attainment badge, billing impact, certification recommendation. "Certify" button instead of "Approve".
-  - Cost-Performance Tuning: /api/recommendations/generate computes cost optimization, success rate, and latency recommendations from agent data. Surfaced in Improvements page with "cost" source filter.
-- Role-based persona system: 6 roles with header switcher dropdown, sidebar navigation filtering per role, sidebar footer showing active role
-- Overview Dashboard: Transformed into "Lifecycle Command Center" with ROI summary (cost/revenue/ROI%/cost-per-run), portfolio health heatmap, urgent signals panel (drift + approvals), outcome attainment progress
-- Governance Page: Enhanced into compliance center with policy violations count, approval compliance rate, enforcement stats tab, audit timeline with filters (object/action/date), CSV export
-- Evaluation Evidence system: drift detection, red-team coverage, regression detection, outcome correlation, evidence packaging
-- Agent Templates standalone page: /templates with browsable grid, category/industry filters, search, detail panel, and "Use This Template" action
-- Redesigned Agent Wizard: Step 1 = Basic Info first, Step 2 = Choose Path (Manual/Template/AI), AI template matching with scored suggestions
-- AI Template Matching: POST /api/ai/match-templates endpoint uses GPT-4.1 to analyze requirements and rank templates
-- agent_templates schema enriched with industry and tags fields
-- Eval Suite Artifact: detail page at /evals/:id with 7 tabs including red-team, regressions, outcome correlation
-- Run Trace forensics with 7 sections, Release artifact with promote/rollback
-- Outcome Contract artifact with inline editing and 6 tabs
-- Agent Blueprint artifact with 7 structured sections
-- Dark/light mode support
+## External Dependencies
+- **LLM Providers**: Integrated for AI capabilities (e.g., GPT-4.1 for conversational AI and template matching).
+- **PostgreSQL**: Primary database for persistent storage.
+- **Express.js**: Used for building the backend REST API.
+- **React**: Frontend library for user interface development.
+- **Vite**: Frontend build tool.
+- **Tailwind CSS**: Utility-first CSS framework for styling.
+- **shadcn/ui**: UI component library.
+- **wouter**: Small routing library for React.
+- **TanStack React Query**: For data fetching, caching, and state management in the frontend.
+- **Drizzle ORM**: Object-relational mapper for interacting with PostgreSQL.
+- **Vector DBs**: Potential future or current integration for RAG functionalities.
+- **Monitoring Tools**: External services for deeper monitoring capabilities.
+- **CI/CD Tools**: Integration for continuous integration and deployment workflows.
+- **Ticketing/Communication Systems**: For escalating issues and notifications.
