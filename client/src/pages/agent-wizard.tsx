@@ -80,6 +80,13 @@ interface WorkflowNode {
   id: string;
   type: string;
   label: string;
+  x?: number;
+  y?: number;
+}
+
+interface WorkflowConnection {
+  from: string;
+  to: string;
 }
 
 interface WizardState {
@@ -105,6 +112,7 @@ interface WizardState {
     topK: number;
   };
   workflowNodes: WorkflowNode[];
+  workflowConnections: WorkflowConnection[];
   policyBindings: string[];
   evalBindings: string[];
   rollbackPlan: string;
@@ -142,6 +150,7 @@ const defaultWizardState: WizardState = {
     topK: 5,
   },
   workflowNodes: [],
+  workflowConnections: [],
   policyBindings: [],
   evalBindings: [],
   rollbackPlan: "",
@@ -1064,6 +1073,18 @@ function Step3ModelTools({
   );
 }
 
+const NODE_TYPES: { type: string; label: string; icon: LucideIcon; color: string }[] = [
+  { type: "trigger", label: "Trigger", icon: Zap, color: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" },
+  { type: "llm_call", label: "LLM Call", icon: Sparkles, color: "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20" },
+  { type: "tool_call", label: "Tool Call", icon: Wrench, color: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20" },
+  { type: "condition", label: "Condition", icon: AlertTriangle, color: "bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/20" },
+  { type: "human_review", label: "Human Review", icon: ShieldCheck, color: "bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20" },
+  { type: "classifier", label: "Classifier", icon: Gauge, color: "bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/20" },
+  { type: "router", label: "Router", icon: ArrowRight, color: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20" },
+  { type: "schema_validate", label: "Validate", icon: Check, color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" },
+  { type: "rag", label: "RAG", icon: BookOpen, color: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20" },
+];
+
 function Step4MemoryWorkflow({
   state,
   updateState,
@@ -1071,23 +1092,59 @@ function Step4MemoryWorkflow({
   state: WizardState;
   updateState: (u: Partial<WizardState>) => void;
 }) {
-  function addNode() {
-    const newId = `node_${state.workflowNodes.length + 1}`;
+  const [connectingFrom, setConnectingFrom] = useState<string | null>(null);
+  const canvasRef = useRef<HTMLDivElement>(null);
+
+  function addNodeToCanvas(type: string) {
+    const count = state.workflowNodes.length;
+    const newId = `node_${count + 1}`;
+    const x = 40 + (count % 3) * 220;
+    const y = 40 + Math.floor(count / 3) * 140;
     updateState({
-      workflowNodes: [...state.workflowNodes, { id: newId, type: "llm_call", label: "" }],
+      workflowNodes: [...state.workflowNodes, { id: newId, type, label: "", x, y }],
     });
   }
-  function removeNode(i: number) {
-    updateState({ workflowNodes: state.workflowNodes.filter((_, idx) => idx !== i) });
+
+  function removeNode(id: string) {
+    updateState({
+      workflowNodes: state.workflowNodes.filter(n => n.id !== id),
+      workflowConnections: (state.workflowConnections || []).filter((c: WorkflowConnection) => c.from !== id && c.to !== id),
+    });
+    if (connectingFrom === id) setConnectingFrom(null);
   }
-  function updateNode(i: number, field: keyof WorkflowNode, value: string) {
+
+  function updateNodeLabel(index: number, label: string) {
     const updated = [...state.workflowNodes];
-    updated[i] = { ...updated[i], [field]: value };
+    updated[index] = { ...updated[index], label };
     updateState({ workflowNodes: updated });
   }
 
+  function updateNodePosition(id: string, x: number, y: number) {
+    const updated = state.workflowNodes.map(n => n.id === id ? { ...n, x, y } : n);
+    updateState({ workflowNodes: updated });
+  }
+
+  function startConnection(nodeId: string) {
+    setConnectingFrom(prev => prev === nodeId ? null : nodeId);
+  }
+
+  function completeConnection(nodeId: string) {
+    if (!connectingFrom || connectingFrom === nodeId) return;
+    const existing = (state.workflowConnections || []) as WorkflowConnection[];
+    const alreadyExists = existing.some(c => c.from === connectingFrom && c.to === nodeId);
+    if (!alreadyExists) {
+      updateState({ workflowConnections: [...existing, { from: connectingFrom, to: nodeId }] });
+    }
+    setConnectingFrom(null);
+  }
+
+  function removeConnection(from: string, to: string) {
+    const existing = (state.workflowConnections || []) as WorkflowConnection[];
+    updateState({ workflowConnections: existing.filter(c => !(c.from === from && c.to === to)) });
+  }
+
   return (
-    <div className="flex flex-col gap-6 max-w-2xl">
+    <div className="flex flex-col gap-6 max-w-4xl">
       <h2 className="text-lg font-medium">Memory & Workflow</h2>
 
       <Card>
@@ -1182,46 +1239,162 @@ function Step4MemoryWorkflow({
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
-          <CardTitle className="text-sm font-medium">Workflow Nodes</CardTitle>
-          <Button variant="outline" size="sm" onClick={addNode} data-testid="button-add-node">
-            <Plus className="w-3.5 h-3.5 mr-1" /> Add Node
-          </Button>
+          <CardTitle className="text-sm font-medium">Visual Workflow</CardTitle>
+          {connectingFrom && (
+            <Badge variant="outline" className="text-[10px] animate-pulse">
+              Click a target node to connect
+            </Badge>
+          )}
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
-          {state.workflowNodes.length === 0 && (
-            <p className="text-sm text-muted-foreground text-center py-4">
-              No workflow nodes configured. Add nodes to define your agent's execution graph.
-            </p>
-          )}
-          {state.workflowNodes.map((node, i) => (
-            <div key={i} className="flex items-start gap-2">
-              <Badge variant="outline" className="mt-2 shrink-0 text-[10px]">{node.id}</Badge>
-              <Select value={node.type} onValueChange={(v) => updateNode(i, "type", v)}>
-                <SelectTrigger className="w-44" data-testid={`select-node-type-${i}`}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="schema_validate">Schema Validate</SelectItem>
-                  <SelectItem value="rag">RAG</SelectItem>
-                  <SelectItem value="llm_call">LLM Call</SelectItem>
-                  <SelectItem value="classifier">Classifier</SelectItem>
-                  <SelectItem value="router">Router</SelectItem>
-                  <SelectItem value="tool_call">Tool Call</SelectItem>
-                  <SelectItem value="human_review">Human Review</SelectItem>
-                </SelectContent>
-              </Select>
-              <Input
-                placeholder="Node label"
-                value={node.label}
-                onChange={(e) => updateNode(i, "label", e.target.value)}
-                className="flex-1"
-                data-testid={`input-node-label-${i}`}
-              />
-              <Button variant="ghost" size="icon" onClick={() => removeNode(i)} data-testid={`button-remove-node-${i}`}>
-                <Trash2 className="w-4 h-4" />
+          <div className="flex items-center gap-1.5 flex-wrap pb-2 border-b">
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wider mr-1">Add:</span>
+            {NODE_TYPES.map((nt) => (
+              <Button
+                key={nt.type}
+                variant="outline"
+                size="sm"
+                onClick={() => addNodeToCanvas(nt.type)}
+                data-testid={`button-add-${nt.type}`}
+              >
+                <nt.icon className="w-3 h-3 mr-1" />
+                {nt.label}
               </Button>
-            </div>
-          ))}
+            ))}
+          </div>
+
+          <div
+            ref={canvasRef}
+            className="relative border rounded-md bg-muted/20"
+            style={{ minHeight: "400px", height: `${Math.max(400, (Math.floor(state.workflowNodes.length / 3) + 1) * 160 + 60)}px` }}
+            data-testid="workflow-canvas"
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              const nodeId = e.dataTransfer.getData("nodeId");
+              if (!nodeId || !canvasRef.current) return;
+              const rect = canvasRef.current.getBoundingClientRect();
+              const offsetX = parseInt(e.dataTransfer.getData("offsetX") || "0");
+              const offsetY = parseInt(e.dataTransfer.getData("offsetY") || "0");
+              const newX = Math.max(0, e.clientX - offsetX);
+              const newY = Math.max(0, e.clientY - offsetY);
+              const relX = Math.max(0, Math.min(newX - rect.left, rect.width - 200));
+              const relY = Math.max(0, newY - rect.top);
+              updateNodePosition(nodeId, relX, relY);
+            }}
+          >
+            <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 1 }}>
+              {state.workflowConnections?.map((conn: WorkflowConnection, i: number) => {
+                const fromNode = state.workflowNodes.find(n => n.id === conn.from);
+                const toNode = state.workflowNodes.find(n => n.id === conn.to);
+                if (!fromNode || !toNode) return null;
+                const fx = (fromNode.x || 0) + 100;
+                const fy = (fromNode.y || 0) + 55;
+                const tx = (toNode.x || 0) + 100;
+                const ty = (toNode.y || 0) + 15;
+                const midY = (fy + ty) / 2;
+                return (
+                  <g key={i}>
+                    <path
+                      d={`M ${fx} ${fy} C ${fx} ${midY}, ${tx} ${midY}, ${tx} ${ty}`}
+                      fill="none"
+                      stroke="hsl(var(--primary))"
+                      strokeWidth="2"
+                      strokeOpacity="0.4"
+                      markerEnd="url(#arrowhead)"
+                    />
+                    <circle
+                      cx={(fx + tx) / 2}
+                      cy={(fy + ty) / 2}
+                      r="8"
+                      fill="hsl(var(--destructive))"
+                      fillOpacity="0.7"
+                      className="cursor-pointer pointer-events-auto"
+                      onClick={() => removeConnection(conn.from, conn.to)}
+                      data-testid={`button-remove-connection-${i}`}
+                    />
+                    <text
+                      x={(fx + tx) / 2}
+                      y={(fy + ty) / 2 + 1}
+                      textAnchor="middle"
+                      dominantBaseline="middle"
+                      fill="white"
+                      fontSize="10"
+                      className="pointer-events-none"
+                    >x</text>
+                  </g>
+                );
+              })}
+              <defs>
+                <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                  <polygon points="0 0, 10 3.5, 0 7" fill="hsl(var(--primary))" fillOpacity="0.4" />
+                </marker>
+              </defs>
+            </svg>
+
+            {state.workflowNodes.length === 0 && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <p className="text-sm text-muted-foreground">Click a node type above to add it to the canvas</p>
+              </div>
+            )}
+            {state.workflowNodes.map((node, i) => {
+              const nodeType = NODE_TYPES.find(nt => nt.type === node.type) || NODE_TYPES[0];
+              const NodeIcon = nodeType.icon;
+              return (
+                <div
+                  key={node.id}
+                  className={`absolute border rounded-md p-2.5 flex flex-col gap-1.5 w-[200px] cursor-move ${nodeType.color} ${connectingFrom === node.id ? "ring-2 ring-primary" : ""}`}
+                  style={{ left: node.x || 0, top: node.y || 0, zIndex: 2 }}
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData("nodeId", node.id);
+                    e.dataTransfer.setData("offsetX", String(e.clientX - (node.x || 0)));
+                    e.dataTransfer.setData("offsetY", String(e.clientY - (node.y || 0)));
+                  }}
+                  data-testid={`workflow-node-${node.id}`}
+                >
+                  <div className="flex items-center justify-between gap-1">
+                    <div className="flex items-center gap-1.5">
+                      <NodeIcon className="w-3.5 h-3.5" />
+                      <span className="text-[10px] font-semibold uppercase tracking-wider">{nodeType.label}</span>
+                    </div>
+                    <Button variant="ghost" size="icon" onClick={() => removeNode(node.id)} data-testid={`button-remove-node-${node.id}`}>
+                      <Trash2 className="w-3 h-3" />
+                    </Button>
+                  </div>
+                  <Input
+                    value={node.label}
+                    onChange={(e) => updateNodeLabel(i, e.target.value)}
+                    placeholder="Node label..."
+                    className="h-7 text-xs"
+                    data-testid={`input-node-label-${node.id}`}
+                  />
+                  <div className="flex items-center justify-between gap-1 mt-0.5">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-[10px]"
+                      onClick={() => startConnection(node.id)}
+                      data-testid={`button-connect-from-${node.id}`}
+                    >
+                      Connect
+                    </Button>
+                    {connectingFrom && connectingFrom !== node.id && (
+                      <Button
+                        variant="default"
+                        size="sm"
+                        className="text-[10px] animate-pulse"
+                        onClick={() => completeConnection(node.id)}
+                        data-testid={`button-connect-to-${node.id}`}
+                      >
+                        Link here
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </CardContent>
       </Card>
     </div>
@@ -1369,6 +1542,10 @@ function Step5Review({
                 <span className="text-muted-foreground">{node.label || "Unlabeled"}</span>
               </div>
             ))}
+            <div className="flex justify-between gap-2 flex-wrap">
+              <span className="text-muted-foreground">Connections</span>
+              <span>{state.workflowConnections?.length || 0}</span>
+            </div>
           </CardContent>
         </Card>
       )}

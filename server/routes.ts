@@ -3,6 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { z, ZodError } from "zod";
 import OpenAI from "openai";
+import multer from "multer";
 import {
   insertOutcomeContractSchema,
   insertKpiDefinitionSchema,
@@ -1813,6 +1814,75 @@ Guidelines:
       } else {
         res.status(500).json({ error: "Discovery assistant failed" });
       }
+    }
+  });
+
+  const upload = multer({ storage: multer.memoryStorage() });
+
+  app.post("/api/ai/transcribe-analyze", upload.single("audio"), async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI transcription is not configured" });
+      }
+
+      if (!req.file) {
+        return res.status(400).json({ error: "No audio file provided" });
+      }
+
+      const audioFile = new File([req.file.buffer], req.file.originalname, {
+        type: req.file.mimetype,
+      });
+
+      const transcription = await openai.audio.transcriptions.create({
+        file: audioFile,
+        model: "whisper-1",
+      });
+
+      const transcript = transcription.text;
+
+      const analysisResponse = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert business process analyst. Analyze the following meeting transcript and identify automation opportunities. Look for:
+- Repetitive manual processes that could be automated
+- Pain points and bottlenecks mentioned by participants
+- Data entry or transfer tasks between systems
+- Approval workflows that could be streamlined
+- Reporting or monitoring tasks that could be automated
+
+For each opportunity found, provide:
+- name: A concise name for the automation opportunity
+- description: A detailed description of what could be automated and how
+- businessValue: Rate as "high", "medium", or "low" based on potential impact
+- keyRequirements: An array of strings listing what would be needed to implement this automation
+- suggestedSystems: An array of strings listing systems or tools that could be integrated
+
+Return ONLY a valid JSON array of opportunity objects. Do not include any text before or after the JSON array.`,
+          },
+          {
+            role: "user",
+            content: `Meeting Transcript:\n\n${transcript}`,
+          },
+        ],
+        temperature: 0.3,
+        max_tokens: 4000,
+      });
+
+      const rawContent = analysisResponse.choices[0]?.message?.content || "[]";
+      let opportunities;
+      try {
+        opportunities = JSON.parse(rawContent);
+      } catch {
+        const jsonMatch = rawContent.match(/\[[\s\S]*\]/);
+        opportunities = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
+      }
+
+      res.json({ transcript, opportunities });
+    } catch (error: any) {
+      console.error("Transcribe-analyze error:", error);
+      res.status(500).json({ error: error.message || "Failed to transcribe and analyze audio" });
     }
   });
 

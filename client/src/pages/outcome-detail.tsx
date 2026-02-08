@@ -151,6 +151,14 @@ export default function OutcomeDetail() {
   const [createKpiOpen, setCreateKpiOpen] = useState(false);
   const [editingKpiId, setEditingKpiId] = useState<string | null>(null);
   const [editKpiData, setEditKpiData] = useState<Record<string, any>>({});
+  const [roiInputs, setRoiInputs] = useState({
+    currentTimeMins: 30,
+    volumePerMonth: 500,
+    hourlyRate: 75,
+    automationPercent: 70,
+    implementationCost: 25000,
+    ongoingMonthlyCost: 500,
+  });
 
   const { data: outcome, isLoading } = useQuery<OutcomeContract>({
     queryKey: ["/api/outcomes", outcomeId],
@@ -1147,6 +1155,114 @@ export default function OutcomeDetail() {
                   <Badge variant="outline" className="text-[10px]">0.7 score</Badge>
                 </div>
               </div>
+            </CardContent>
+          </Card>
+
+          <Card data-testid="card-roi-calculator">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
+                <TrendingUp className="w-4 h-4 text-primary" /> ROI Projection Calculator
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs">Current Time / Task (mins)</Label>
+                  <Input
+                    type="number"
+                    value={roiInputs.currentTimeMins}
+                    onChange={(e) => setRoiInputs(prev => ({ ...prev, currentTimeMins: Math.max(0, parseInt(e.target.value) || 0) }))}
+                    data-testid="input-roi-time"
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs">Volume / Month</Label>
+                  <Input
+                    type="number"
+                    value={roiInputs.volumePerMonth}
+                    onChange={(e) => setRoiInputs(prev => ({ ...prev, volumePerMonth: Math.max(0, parseInt(e.target.value) || 0) }))}
+                    data-testid="input-roi-volume"
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs">Fully Loaded Hourly Rate ($)</Label>
+                  <Input
+                    type="number"
+                    value={roiInputs.hourlyRate}
+                    onChange={(e) => setRoiInputs(prev => ({ ...prev, hourlyRate: Math.max(0, parseFloat(e.target.value) || 0) }))}
+                    data-testid="input-roi-rate"
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs">Automation Savings (%)</Label>
+                  <Input
+                    type="number"
+                    value={roiInputs.automationPercent}
+                    onChange={(e) => setRoiInputs(prev => ({ ...prev, automationPercent: Math.min(100, Math.max(0, parseInt(e.target.value) || 0)) }))}
+                    data-testid="input-roi-automation"
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs">Implementation Cost ($)</Label>
+                  <Input
+                    type="number"
+                    value={roiInputs.implementationCost}
+                    onChange={(e) => setRoiInputs(prev => ({ ...prev, implementationCost: Math.max(0, parseFloat(e.target.value) || 0) }))}
+                    data-testid="input-roi-impl-cost"
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs">Ongoing Monthly Cost ($)</Label>
+                  <Input
+                    type="number"
+                    value={roiInputs.ongoingMonthlyCost}
+                    onChange={(e) => setRoiInputs(prev => ({ ...prev, ongoingMonthlyCost: Math.max(0, parseFloat(e.target.value) || 0) }))}
+                    data-testid="input-roi-ongoing-cost"
+                  />
+                </div>
+              </div>
+
+              <Separator />
+
+              {(() => {
+                const totalHoursMonth = (roiInputs.currentTimeMins * roiInputs.volumePerMonth) / 60;
+                const currentMonthlyCost = totalHoursMonth * roiInputs.hourlyRate;
+                const savedHours = totalHoursMonth * (roiInputs.automationPercent / 100);
+                const monthlySavings = (currentMonthlyCost * (roiInputs.automationPercent / 100)) - roiInputs.ongoingMonthlyCost;
+                const annualSavings = monthlySavings * 12;
+                const paybackMonths = monthlySavings > 0 ? roiInputs.implementationCost / monthlySavings : Infinity;
+                const roiPercent = roiInputs.implementationCost > 0 ? ((annualSavings - roiInputs.implementationCost) / roiInputs.implementationCost) * 100 : 0;
+
+                return (
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="flex flex-col gap-0.5 p-3 rounded-md bg-muted/50">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Monthly Savings</span>
+                      <span className="text-lg font-semibold text-green-600 dark:text-green-400" data-testid="text-roi-monthly-savings">
+                        ${monthlySavings > 0 ? monthlySavings.toLocaleString(undefined, { maximumFractionDigits: 0 }) : "0"}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">{savedHours.toFixed(0)} hrs saved/mo</span>
+                    </div>
+                    <div className="flex flex-col gap-0.5 p-3 rounded-md bg-muted/50">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Annual Savings</span>
+                      <span className="text-lg font-semibold text-green-600 dark:text-green-400" data-testid="text-roi-annual-savings">
+                        ${annualSavings > 0 ? annualSavings.toLocaleString(undefined, { maximumFractionDigits: 0 }) : "0"}
+                      </span>
+                    </div>
+                    <div className="flex flex-col gap-0.5 p-3 rounded-md bg-muted/50">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Payback Period</span>
+                      <span className="text-lg font-semibold" data-testid="text-roi-payback">
+                        {paybackMonths === Infinity ? "N/A" : paybackMonths < 1 ? "< 1 mo" : `${paybackMonths.toFixed(1)} mo`}
+                      </span>
+                    </div>
+                    <div className="flex flex-col gap-0.5 p-3 rounded-md bg-muted/50">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">First-Year ROI</span>
+                      <span className={`text-lg font-semibold ${roiPercent >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`} data-testid="text-roi-percent">
+                        {roiPercent.toFixed(0)}%
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
             </CardContent>
           </Card>
 

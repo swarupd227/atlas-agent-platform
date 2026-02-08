@@ -15,6 +15,16 @@ import {
   ClipboardCheck,
   ChevronRight,
   Loader2,
+  Mic,
+  MicOff,
+  Clock,
+  Zap,
+  Square,
+  Play,
+  Plus,
+  Trash2,
+  Users,
+  AlertCircle,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -22,9 +32,21 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Separator } from "@/components/ui/separator";
+import { Label } from "@/components/ui/label";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { OutcomeContract } from "@shared/schema";
+
+interface ProcessFlowStep {
+  id: string;
+  description: string;
+  actor: string;
+  timeMins: number;
+  painPoints: string;
+  improvementIdeas: string;
+}
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -124,7 +146,17 @@ export default function OutcomeDiscover() {
   const [streaming, setStreaming] = useState(false);
   const [proposal, setProposal] = useState<OutcomeProposal | null>(null);
   const [checkedItems, setCheckedItems] = useState<Set<number>>(new Set());
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+  const [audioChunks, setAudioChunks] = useState<Blob[]>([]);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [transcriptResult, setTranscriptResult] = useState<{ transcript: string; opportunities: Array<{ name: string; description: string; businessValue: string; keyRequirements: string[]; suggestedSystems: string[] }> } | null>(null);
+  const [activeTab, setActiveTab] = useState<"chat" | "record">("chat");
+  const [processSteps, setProcessSteps] = useState<ProcessFlowStep[]>([]);
+  const [showProcessFlow, setShowProcessFlow] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -243,67 +275,387 @@ export default function OutcomeDiscover() {
     });
   }
 
+  async function startRecording() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      const chunks: Blob[] = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+
+      recorder.onstop = () => {
+        setAudioChunks(chunks);
+        stream.getTracks().forEach(track => track.stop());
+      };
+
+      recorder.start();
+      setMediaRecorder(recorder);
+      setIsRecording(true);
+      setRecordingTime(0);
+      setTranscriptResult(null);
+
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingTime(prev => prev + 1);
+      }, 1000);
+    } catch (err) {
+      toast({ title: "Microphone access denied", description: "Please allow microphone access to record meetings.", variant: "destructive" });
+    }
+  }
+
+  function stopRecording() {
+    if (mediaRecorder && mediaRecorder.state !== "inactive") {
+      mediaRecorder.stop();
+      setIsRecording(false);
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+    }
+  }
+
+  async function analyzeRecording() {
+    if (audioChunks.length === 0) return;
+    setAnalyzing(true);
+    try {
+      const blob = new Blob(audioChunks, { type: "audio/webm" });
+      const formData = new FormData();
+      formData.append("audio", blob, "recording.webm");
+
+      const res = await fetch("/api/ai/transcribe-analyze", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) throw new Error("Analysis failed");
+      const result = await res.json();
+      setTranscriptResult(result);
+      toast({ title: "Analysis complete", description: `Found ${result.opportunities.length} automation opportunities.` });
+    } catch (err) {
+      toast({ title: "Analysis failed", description: "Could not analyze the recording. Please try again.", variant: "destructive" });
+    } finally {
+      setAnalyzing(false);
+    }
+  }
+
+  function formatTime(seconds: number) {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+  }
+
+  function useOpportunityForDiscovery(opp: { name: string; description: string; keyRequirements: string[] }) {
+    const processContext = processSteps.length > 0
+      ? ` Current process has ${processSteps.length} steps: ${processSteps.map((s, i) => `Step ${i + 1}: ${s.description} (${s.actor}, ${s.timeMins} mins, Pain: ${s.painPoints})`).join("; ")}.`
+      : "";
+    const prompt = `I want to automate: ${opp.name}. ${opp.description}. Key requirements include: ${opp.keyRequirements.join(", ")}.${processContext} Please help me define an outcome contract for this.`;
+    setActiveTab("chat");
+    sendMessage(prompt);
+  }
+
+  function addProcessStep() {
+    setProcessSteps(prev => [...prev, {
+      id: `step_${Date.now()}`,
+      description: "",
+      actor: "",
+      timeMins: 0,
+      painPoints: "",
+      improvementIdeas: "",
+    }]);
+  }
+
+  function updateProcessStep(id: string, field: keyof ProcessFlowStep, value: string | number) {
+    setProcessSteps(prev => prev.map(s => s.id === id ? { ...s, [field]: value } : s));
+  }
+
+  function removeProcessStep(id: string) {
+    setProcessSteps(prev => prev.filter(s => s.id !== id));
+  }
+
+  const totalProcessTime = processSteps.reduce((sum, s) => sum + s.timeMins, 0);
+
   const allChecked = proposal ? checkedItems.size === proposal.validationChecklist.length : false;
 
   return (
     <div className="flex flex-col h-full" data-testid="page-outcome-discover">
       {messages.length === 0 ? (
-        <div className="flex-1 flex flex-col items-center justify-center p-6 gap-8 max-w-2xl mx-auto">
-          <div className="flex flex-col items-center gap-3 text-center">
-            <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center">
-              <Sparkles className="w-7 h-7 text-primary" />
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "chat" | "record")} className="flex-1 flex flex-col">
+          <div className="flex justify-center pt-6">
+            <TabsList>
+              <TabsTrigger value="chat" data-testid="tab-chat-discovery">
+                <Sparkles className="w-4 h-4 mr-1.5" /> Chat Discovery
+              </TabsTrigger>
+              <TabsTrigger value="record" data-testid="tab-record-meeting">
+                <Mic className="w-4 h-4 mr-1.5" /> Record Meeting
+              </TabsTrigger>
+            </TabsList>
+          </div>
+          <TabsContent value="chat" className="flex-1 flex flex-col">
+            <div className="flex-1 flex flex-col items-center justify-center p-6 gap-8 max-w-2xl mx-auto">
+              <div className="flex flex-col items-center gap-3 text-center">
+                <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center">
+                  <Sparkles className="w-7 h-7 text-primary" />
+                </div>
+                <h1 className="text-2xl font-semibold" data-testid="text-discover-title">What business outcome do you want to achieve?</h1>
+                <p className="text-muted-foreground text-sm max-w-md">
+                  Describe your business challenge in plain language. The platform will map your workflows, propose AI agent roles, define success metrics, and draft an Outcome Contract.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full">
+                {STARTER_PROMPTS.map((sp, i) => (
+                  <Card
+                    key={i}
+                    className="hover-elevate cursor-pointer"
+                    onClick={() => sendMessage(sp.prompt)}
+                    data-testid={`card-starter-${i}`}
+                  >
+                    <CardContent className="flex items-start gap-3 p-4">
+                      <sp.icon className="w-5 h-5 text-primary shrink-0 mt-0.5" />
+                      <div className="flex flex-col gap-1 min-w-0">
+                        <span className="text-sm font-medium">{sp.label}</span>
+                        <span className="text-xs text-muted-foreground line-clamp-2">{sp.prompt}</span>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-2 w-full max-w-lg">
+                <Textarea
+                  placeholder="Describe your business goal or challenge..."
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      sendMessage();
+                    }
+                  }}
+                  className="resize-none text-sm"
+                  rows={2}
+                  data-testid="input-discover-message"
+                />
+                <Button
+                  size="icon"
+                  onClick={() => sendMessage()}
+                  disabled={!input.trim()}
+                  data-testid="button-send-discover"
+                >
+                  <Send className="w-4 h-4" />
+                </Button>
+              </div>
             </div>
-            <h1 className="text-2xl font-semibold" data-testid="text-discover-title">What business outcome do you want to achieve?</h1>
-            <p className="text-muted-foreground text-sm max-w-md">
-              Describe your business challenge in plain language. The platform will map your workflows, propose AI agent roles, define success metrics, and draft an Outcome Contract.
-            </p>
-          </div>
+          </TabsContent>
+          <TabsContent value="record" className="flex-1 flex flex-col">
+            <div className="flex-1 flex flex-col items-center justify-center p-6 gap-6 max-w-2xl mx-auto">
+              <div className="flex flex-col items-center gap-3 text-center">
+                <div className={`w-20 h-20 rounded-full flex items-center justify-center transition-all ${isRecording ? "bg-red-500/20 animate-pulse" : "bg-primary/10"}`}>
+                  {isRecording ? <Mic className="w-10 h-10 text-red-500" /> : <Mic className="w-10 h-10 text-primary" />}
+                </div>
+                <h2 className="text-xl font-semibold">
+                  {isRecording ? "Recording in progress..." : transcriptResult ? "Analysis Complete" : audioChunks.length > 0 ? "Recording ready" : "Record a Meeting"}
+                </h2>
+                <p className="text-sm text-muted-foreground max-w-md">
+                  {isRecording
+                    ? "Speak clearly. The AI will transcribe and identify automation opportunities."
+                    : transcriptResult
+                      ? `Found ${transcriptResult.opportunities.length} automation opportunities from your conversation.`
+                      : audioChunks.length > 0
+                        ? "Recording captured. Click Analyze to process it."
+                        : "Record a stakeholder conversation or workshop discussion. The AI will automatically identify automation opportunities."}
+                </p>
+              </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full">
-            {STARTER_PROMPTS.map((sp, i) => (
-              <Card
-                key={i}
-                className="hover-elevate cursor-pointer"
-                onClick={() => sendMessage(sp.prompt)}
-                data-testid={`card-starter-${i}`}
-              >
-                <CardContent className="flex items-start gap-3 p-4">
-                  <sp.icon className="w-5 h-5 text-primary shrink-0 mt-0.5" />
-                  <div className="flex flex-col gap-1 min-w-0">
-                    <span className="text-sm font-medium">{sp.label}</span>
-                    <span className="text-xs text-muted-foreground line-clamp-2">{sp.prompt}</span>
+              {isRecording && (
+                <div className="flex items-center gap-3">
+                  <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
+                  <span className="text-lg font-mono font-semibold" data-testid="text-recording-time">{formatTime(recordingTime)}</span>
+                </div>
+              )}
+
+              <div className="flex items-center gap-3">
+                {!isRecording && audioChunks.length === 0 && !transcriptResult && (
+                  <Button size="lg" onClick={startRecording} data-testid="button-start-recording">
+                    <Mic className="w-4 h-4 mr-2" /> Start Recording
+                  </Button>
+                )}
+                {isRecording && (
+                  <Button size="lg" variant="destructive" onClick={stopRecording} data-testid="button-stop-recording">
+                    <Square className="w-4 h-4 mr-2" /> Stop Recording
+                  </Button>
+                )}
+                {!isRecording && audioChunks.length > 0 && !transcriptResult && (
+                  <>
+                    <Button size="lg" onClick={analyzeRecording} disabled={analyzing} data-testid="button-analyze-recording">
+                      {analyzing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Zap className="w-4 h-4 mr-2" />}
+                      {analyzing ? "Analyzing..." : "Analyze Recording"}
+                    </Button>
+                    <Button size="lg" variant="outline" onClick={() => { setAudioChunks([]); setRecordingTime(0); }} data-testid="button-discard-recording">
+                      Discard
+                    </Button>
+                  </>
+                )}
+                {transcriptResult && (
+                  <Button variant="outline" onClick={() => { setAudioChunks([]); setRecordingTime(0); setTranscriptResult(null); }} data-testid="button-new-recording">
+                    <Mic className="w-4 h-4 mr-2" /> New Recording
+                  </Button>
+                )}
+              </div>
+
+              {transcriptResult && (
+                <div className="w-full flex flex-col gap-4 mt-2">
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
+                        <Clock className="w-4 h-4 text-primary" /> Transcript
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="text-sm text-muted-foreground whitespace-pre-wrap max-h-32 overflow-y-auto" data-testid="text-transcript">
+                        {transcriptResult.transcript}
+                      </p>
+                    </CardContent>
+                  </Card>
+
+                  <Card data-testid="card-process-flow">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-medium flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-2">
+                          <Workflow className="w-4 h-4 text-primary" /> Process Flow Mapping
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {processSteps.length > 0 && (
+                            <Badge variant="outline" className="text-[10px]">
+                              {processSteps.length} steps / {totalProcessTime} mins total
+                            </Badge>
+                          )}
+                          {!showProcessFlow ? (
+                            <Button variant="outline" size="sm" onClick={() => { setShowProcessFlow(true); if (processSteps.length === 0) addProcessStep(); }} data-testid="button-show-process-flow">
+                              <Plus className="w-3 h-3 mr-1" /> Map Process
+                            </Button>
+                          ) : (
+                            <Button variant="ghost" size="sm" onClick={() => setShowProcessFlow(false)} data-testid="button-hide-process-flow">
+                              Collapse
+                            </Button>
+                          )}
+                        </div>
+                      </CardTitle>
+                    </CardHeader>
+                    {showProcessFlow && (
+                      <CardContent className="flex flex-col gap-3">
+                        <p className="text-xs text-muted-foreground">
+                          Map out your current manual process steps. This information helps the AI propose better agent designs and estimate ROI.
+                        </p>
+                        {processSteps.map((step, i) => (
+                          <div key={step.id} className="flex flex-col gap-2 p-3 rounded-md border bg-muted/30" data-testid={`process-step-${i}`}>
+                            <div className="flex items-center justify-between gap-2">
+                              <Badge variant="outline" className="text-[10px]">Step {i + 1}</Badge>
+                              <Button variant="ghost" size="icon" onClick={() => removeProcessStep(step.id)} data-testid={`button-remove-step-${i}`}>
+                                <Trash2 className="w-3 h-3" />
+                              </Button>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                              <div className="flex flex-col gap-1">
+                                <Label className="text-[10px] text-muted-foreground">Step Description</Label>
+                                <Input
+                                  placeholder="What happens in this step?"
+                                  value={step.description}
+                                  onChange={(e) => updateProcessStep(step.id, "description", e.target.value)}
+                                  className="h-8 text-xs"
+                                  data-testid={`input-step-description-${i}`}
+                                />
+                              </div>
+                              <div className="flex gap-2">
+                                <div className="flex flex-col gap-1 flex-1">
+                                  <Label className="text-[10px] text-muted-foreground flex items-center gap-1"><Users className="w-3 h-3" /> Actor</Label>
+                                  <Input
+                                    placeholder="Who does this?"
+                                    value={step.actor}
+                                    onChange={(e) => updateProcessStep(step.id, "actor", e.target.value)}
+                                    className="h-8 text-xs"
+                                    data-testid={`input-step-actor-${i}`}
+                                  />
+                                </div>
+                                <div className="flex flex-col gap-1 w-24">
+                                  <Label className="text-[10px] text-muted-foreground flex items-center gap-1"><Clock className="w-3 h-3" /> Mins</Label>
+                                  <Input
+                                    type="number"
+                                    placeholder="0"
+                                    value={step.timeMins || ""}
+                                    onChange={(e) => updateProcessStep(step.id, "timeMins", parseInt(e.target.value) || 0)}
+                                    className="h-8 text-xs"
+                                    data-testid={`input-step-time-${i}`}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                              <div className="flex flex-col gap-1">
+                                <Label className="text-[10px] text-muted-foreground flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Pain Points</Label>
+                                <Input
+                                  placeholder="What goes wrong or is slow?"
+                                  value={step.painPoints}
+                                  onChange={(e) => updateProcessStep(step.id, "painPoints", e.target.value)}
+                                  className="h-8 text-xs"
+                                  data-testid={`input-step-pain-${i}`}
+                                />
+                              </div>
+                              <div className="flex flex-col gap-1">
+                                <Label className="text-[10px] text-muted-foreground flex items-center gap-1"><Lightbulb className="w-3 h-3" /> Improvement Ideas</Label>
+                                <Input
+                                  placeholder="How could this be automated?"
+                                  value={step.improvementIdeas}
+                                  onChange={(e) => updateProcessStep(step.id, "improvementIdeas", e.target.value)}
+                                  className="h-8 text-xs"
+                                  data-testid={`input-step-ideas-${i}`}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                        <Button variant="outline" size="sm" onClick={addProcessStep} data-testid="button-add-process-step">
+                          <Plus className="w-3 h-3 mr-1" /> Add Step
+                        </Button>
+                      </CardContent>
+                    )}
+                  </Card>
+
+                  <div className="flex flex-col gap-3">
+                    <h3 className="text-sm font-semibold flex items-center gap-2">
+                      <Zap className="w-4 h-4 text-primary" /> Identified Opportunities ({transcriptResult.opportunities.length})
+                    </h3>
+                    {transcriptResult.opportunities.map((opp, i) => (
+                      <Card key={i} className="hover-elevate" data-testid={`card-opportunity-${i}`}>
+                        <CardContent className="p-4 flex flex-col gap-2">
+                          <div className="flex items-start justify-between gap-2 flex-wrap">
+                            <div className="flex flex-col gap-1 min-w-0 flex-1">
+                              <span className="text-sm font-semibold">{opp.name}</span>
+                              <span className="text-xs text-muted-foreground">{opp.description}</span>
+                            </div>
+                            <Badge variant={opp.businessValue === "high" ? "default" : "outline"} className="text-[10px] shrink-0">
+                              {opp.businessValue} value
+                            </Badge>
+                          </div>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {opp.suggestedSystems.map((sys, j) => (
+                              <Badge key={j} variant="secondary" className="text-[9px]">{sys}</Badge>
+                            ))}
+                          </div>
+                          <Button variant="outline" size="sm" onClick={() => useOpportunityForDiscovery(opp)} data-testid={`button-use-opportunity-${i}`}>
+                            <ArrowRight className="w-3 h-3 mr-1" /> Create Outcome Contract
+                          </Button>
+                        </CardContent>
+                      </Card>
+                    ))}
                   </div>
-                  <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-
-          <div className="flex items-center gap-2 w-full max-w-lg">
-            <Textarea
-              placeholder="Describe your business goal or challenge..."
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  sendMessage();
-                }
-              }}
-              className="resize-none text-sm"
-              rows={2}
-              data-testid="input-discover-message"
-            />
-            <Button
-              size="icon"
-              onClick={() => sendMessage()}
-              disabled={!input.trim()}
-              data-testid="button-send-discover"
-            >
-              <Send className="w-4 h-4" />
-            </Button>
-          </div>
-        </div>
+                </div>
+              )}
+            </div>
+          </TabsContent>
+        </Tabs>
       ) : (
         <div className="flex-1 flex flex-col lg:flex-row min-h-0">
           <div className="flex-1 flex flex-col min-h-0 min-w-0">
