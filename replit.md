@@ -77,7 +77,19 @@ Entry from Templates page: `/agents/wizard?templateId={id}` pre-fills all fields
 - **Evidence Packaging**: Approvals page bundles eval results, drift status, and risk assessment in expandable evidence cards for each approval request
 - Storage: `getEvalRunsBySuite(suiteId)` method in IStorage interface
 
+## Personas / Roles
+6 switchable personas via header dropdown (localStorage-persisted, no auth):
+- **Outcome Owner** (business): Overview, Outcomes, Billing, Approvals
+- **Agent Engineer** (builder, default): Overview, Agents, Templates, Improvements
+- **Ops / SRE** (operations): Overview, Deployments, Monitor, Agents
+- **Compliance / Security**: Overview, Governance, Approvals
+- **Expert Validator** (20% human): Overview, Approvals, Agents, Deployments
+- **Finance**: Overview, Billing, Outcomes
+
+Components: `role-provider.tsx` (context + hook), `role-switcher.tsx` (header dropdown), sidebar filters nav by role
+
 ## Recent Changes
+- Role-based persona system: 6 roles with header switcher dropdown, sidebar navigation filtering per role, sidebar footer showing active role
 - Overview Dashboard: Transformed into "Lifecycle Command Center" with ROI summary (cost/revenue/ROI%/cost-per-run), portfolio health heatmap, urgent signals panel (drift + approvals), outcome attainment progress
 - Governance Page: Enhanced into compliance center with policy violations count, approval compliance rate, enforcement stats tab, audit timeline with filters (object/action/date), CSV export
 - Evaluation Evidence system: drift detection, red-team coverage, regression detection, outcome correlation, evidence packaging

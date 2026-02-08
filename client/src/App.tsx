@@ -7,9 +7,10 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { Bell, Search } from "lucide-react";
+import { RoleProvider } from "@/components/role-provider";
+import { RoleSwitcher } from "@/components/role-switcher";
+import { Bell } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import NotFound from "@/pages/not-found";
 import Overview from "@/pages/overview";
@@ -65,29 +66,31 @@ function App() {
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
-          <SidebarProvider style={style as React.CSSProperties}>
-            <div className="flex h-screen w-full">
-              <AppSidebar />
-              <div className="flex flex-col flex-1 min-w-0">
-                <header className="flex items-center justify-between gap-2 p-2 border-b shrink-0 h-12">
-                  <div className="flex items-center gap-2">
-                    <SidebarTrigger data-testid="button-sidebar-toggle" />
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <Badge variant="outline" className="text-[10px] mr-2">Production</Badge>
-                    <Button variant="ghost" size="icon" data-testid="button-notifications">
-                      <Bell className="w-4 h-4" />
-                    </Button>
-                    <ThemeToggle />
-                  </div>
-                </header>
-                <ScrollArea className="flex-1">
-                  <Router />
-                </ScrollArea>
+          <RoleProvider>
+            <SidebarProvider style={style as React.CSSProperties}>
+              <div className="flex h-screen w-full">
+                <AppSidebar />
+                <div className="flex flex-col flex-1 min-w-0">
+                  <header className="flex items-center justify-between gap-2 p-2 border-b shrink-0 h-12">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <SidebarTrigger data-testid="button-sidebar-toggle" />
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <RoleSwitcher />
+                      <Button variant="ghost" size="icon" data-testid="button-notifications">
+                        <Bell className="w-4 h-4" />
+                      </Button>
+                      <ThemeToggle />
+                    </div>
+                  </header>
+                  <ScrollArea className="flex-1">
+                    <Router />
+                  </ScrollArea>
+                </div>
               </div>
-            </div>
-          </SidebarProvider>
-          <Toaster />
+            </SidebarProvider>
+            <Toaster />
+          </RoleProvider>
         </TooltipProvider>
       </QueryClientProvider>
     </ThemeProvider>

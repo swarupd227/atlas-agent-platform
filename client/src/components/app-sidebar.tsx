@@ -25,6 +25,7 @@ import {
   SidebarFooter,
 } from "@/components/ui/sidebar";
 import { Badge } from "@/components/ui/badge";
+import { useRole } from "./role-provider";
 
 const mainNav = [
   { title: "Overview", url: "/", icon: LayoutDashboard },
@@ -44,11 +45,15 @@ const governanceNav = [
 
 export function AppSidebar() {
   const [location] = useLocation();
+  const { role, isRouteAllowed } = useRole();
 
   const isActive = (url: string) => {
     if (url === "/") return location === "/";
     return location.startsWith(url);
   };
+
+  const filteredMainNav = mainNav.filter((item) => isRouteAllowed(item.url));
+  const filteredGovNav = governanceNav.filter((item) => isRouteAllowed(item.url));
 
   return (
     <Sidebar>
@@ -66,49 +71,53 @@ export function AppSidebar() {
         </Link>
       </SidebarHeader>
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>Platform</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {mainNav.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild data-active={isActive(item.url)}>
-                    <Link href={item.url} data-testid={`link-nav-${item.title.toLowerCase()}`}>
-                      <item.icon className="w-4 h-4" />
-                      <span>{item.title}</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-        <SidebarGroup>
-          <SidebarGroupLabel>Operations</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {governanceNav.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild data-active={isActive(item.url)}>
-                    <Link href={item.url} data-testid={`link-nav-${item.title.toLowerCase()}`}>
-                      <item.icon className="w-4 h-4" />
-                      <span>{item.title}</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {filteredMainNav.length > 0 && (
+          <SidebarGroup>
+            <SidebarGroupLabel>Platform</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {filteredMainNav.map((item) => (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton asChild data-active={isActive(item.url)}>
+                      <Link href={item.url} data-testid={`link-nav-${item.title.toLowerCase()}`}>
+                        <item.icon className="w-4 h-4" />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
+        {filteredGovNav.length > 0 && (
+          <SidebarGroup>
+            <SidebarGroupLabel>Operations</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {filteredGovNav.map((item) => (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton asChild data-active={isActive(item.url)}>
+                      <Link href={item.url} data-testid={`link-nav-${item.title.toLowerCase()}`}>
+                        <item.icon className="w-4 h-4" />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
       </SidebarContent>
       <SidebarFooter className="p-4">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2" data-testid="sidebar-role-indicator">
           <div className="w-7 h-7 rounded-md bg-muted flex items-center justify-center">
-            <span className="text-xs font-medium text-muted-foreground">AE</span>
+            <span className="text-xs font-medium text-muted-foreground" data-testid="text-role-initials">{role.initials}</span>
           </div>
           <div className="flex flex-col">
-            <span className="text-xs font-medium text-sidebar-foreground">Agent Engineer</span>
-            <Badge variant="outline" className="text-[10px] w-fit">Pro</Badge>
+            <span className="text-xs font-medium text-sidebar-foreground" data-testid="text-role-name">{role.label}</span>
+            <Badge variant="outline" className="text-[10px] w-fit" data-testid="badge-role-type">{role.shortLabel}</Badge>
           </div>
         </div>
       </SidebarFooter>
