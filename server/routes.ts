@@ -2078,5 +2078,152 @@ Return a JSON array of 3-5 improvement cycle proposals. Return ONLY valid JSON.`
     }
   });
 
+  app.post("/api/blueprints/validate", async (req, res) => {
+    try {
+      const { blueprint, toolsConfig, permissionsConfig } = req.body;
+      const errors: string[] = [];
+      const warnings: string[] = [];
+
+      if (!blueprint || !Array.isArray(blueprint.nodes)) {
+        errors.push("Blueprint must contain a 'nodes' array");
+        return res.json({ valid: false, warnings, errors, resolvedPermissions: {} });
+      }
+
+      if (blueprint.nodes.length === 0) {
+        errors.push("Blueprint must have at least one node");
+      }
+
+      const nodeIds = new Set<string>(blueprint.nodes.map((n: any) => n.id));
+      const connections = Array.isArray(blueprint.connections) ? blueprint.connections : [];
+
+      for (const conn of connections) {
+        if (!nodeIds.has(conn.sourceId)) {
+          errors.push(`Connection references invalid source node ID: ${conn.sourceId}`);
+        }
+        if (!nodeIds.has(conn.targetId)) {
+          errors.push(`Connection references invalid target node ID: ${conn.targetId}`);
+        }
+      }
+
+      const adjacency: Record<string, string[]> = {};
+      for (const conn of connections) {
+        if (!adjacency[conn.sourceId]) adjacency[conn.sourceId] = [];
+        adjacency[conn.sourceId].push(conn.targetId);
+      }
+
+      const visited = new Set<string>();
+      const recStack = new Set<string>();
+      let hasCycle = false;
+
+      const dfs = (nodeId: string) => {
+        visited.add(nodeId);
+        recStack.add(nodeId);
+        for (const neighbor of adjacency[nodeId] || []) {
+          if (!visited.has(neighbor)) {
+            dfs(neighbor);
+          } else if (recStack.has(neighbor)) {
+            hasCycle = true;
+          }
+        }
+        recStack.delete(nodeId);
+      };
+
+      for (const nodeId of Array.from(nodeIds)) {
+        if (!visited.has(nodeId)) {
+          dfs(nodeId);
+        }
+      }
+
+      if (hasCycle) {
+        warnings.push("Circular dependency detected in workflow graph");
+      }
+
+      const nodeTypes = new Set(blueprint.nodes.map((n: any) => n.type));
+      const hasHumanReview = nodeTypes.has("human_review");
+      const hasPolicyCheck = nodeTypes.has("policy_check");
+      const hasEscalationNode = hasHumanReview || nodeTypes.has("escalation");
+
+      const tools = Array.isArray(toolsConfig) ? toolsConfig : [];
+      for (const tool of tools) {
+        if (tool.writeAccess === true) {
+          if (!hasHumanReview && !hasPolicyCheck) {
+            errors.push(`Tool "${tool.name || "unknown"}" has writeAccess but workflow lacks "human_review" or "policy_check" nodes`);
+          }
+        }
+        if (tool.permissionScope === "CRITICAL") {
+          if (!hasEscalationNode) {
+            errors.push(`Tool "${tool.name || "unknown"}" has CRITICAL permissionScope but workflow lacks escalation nodes`);
+          }
+        }
+      }
+
+      const resolvedPermissions: Record<string, any> = {};
+      for (const tool of tools) {
+        resolvedPermissions[tool.name || "unknown"] = {
+          writeAccess: tool.writeAccess || false,
+          permissionScope: tool.permissionScope || "STANDARD",
+          requiresReview: tool.writeAccess === true || tool.permissionScope === "CRITICAL",
+        };
+      }
+
+      if (permissionsConfig && typeof permissionsConfig === "object") {
+        resolvedPermissions["_global"] = permissionsConfig;
+      }
+
+      res.json({
+        valid: errors.length === 0,
+        warnings,
+        errors,
+        resolvedPermissions,
+      });
+    } catch (e: any) {
+      res.status(400).json({ valid: false, warnings: [], errors: [e.message || "Invalid request"], resolvedPermissions: {} });
+    }
+  });
+
+  app.get("/api/policies/resolve/:agentId", async (req, res) => {
+    try {
+      const { agentId } = req.params;
+      const agent = await storage.getAgent(agentId);
+      if (!agent) {
+        return res.status(404).json({ message: "Agent not found" });
+      }
+
+      const allPolicies = await storage.getPolicies();
+
+      const orgPolicies = allPolicies.filter(p => p.scopeType === "org");
+      const outcomePolicies = agent.outcomeId
+        ? allPolicies.filter(p => p.scopeType === "outcome" && p.scopeId === agent.outcomeId)
+        : [];
+      const agentPolicies = allPolicies.filter(p => p.scopeType === "agent" && p.scopeId === agentId);
+
+      const policyMap = new Map<string, typeof allPolicies[0]>();
+      for (const p of orgPolicies) policyMap.set(p.id, p);
+      for (const p of outcomePolicies) policyMap.set(p.id, p);
+      for (const p of agentPolicies) policyMap.set(p.id, p);
+
+      const effectivePolicies = Array.from(policyMap.values());
+
+      let exceptions: any[] = [];
+      try {
+        exceptions = await storage.getPolicyExceptionsByAgent(agentId);
+      } catch {
+        const allExceptions = await storage.getPolicyExceptions();
+        exceptions = allExceptions.filter(e => e.agentId === agentId);
+      }
+
+      res.json({
+        effectivePolicies,
+        orgPolicies,
+        outcomePolicies,
+        agentPolicies,
+        exceptions,
+        resolvedAt: new Date().toISOString(),
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to resolve policies" });
+    }
+  });
+
   return httpServer;
 }

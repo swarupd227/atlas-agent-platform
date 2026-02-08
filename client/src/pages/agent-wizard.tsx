@@ -50,6 +50,18 @@ import {
   AlertTriangle,
   ShieldCheck,
   Info,
+  FlaskConical,
+  Rocket,
+  RotateCcw,
+  Activity,
+  Bell,
+  Target,
+  ListChecks,
+  PlugZap,
+  Database,
+  PhoneForwarded,
+  Settings,
+  Eye,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -68,13 +80,36 @@ const STEPS = [
   { number: 2, label: "Choose Path" },
   { number: 3, label: "Model & Tools" },
   { number: 4, label: "Memory & Workflow" },
-  { number: 5, label: "Review & Create" },
+  { number: 5, label: "Guardrails" },
+  { number: 6, label: "Eval Suite" },
+  { number: 7, label: "Rollout Plan" },
+  { number: 8, label: "Review & Create" },
 ];
 
 interface ToolConfig {
   name: string;
   description: string;
+  permissionScope?: string;
+  dataClasses?: string[];
+  failureModes?: string[];
+  rateLimit?: string;
+  costPerCall?: number;
+  accessTier?: string;
+  writeAccess?: boolean;
 }
+
+const TOOL_CATALOG: ToolConfig[] = [
+  { name: "search_knowledge_base", description: "Search internal knowledge base articles", permissionScope: "READ", dataClasses: ["internal_docs"], failureModes: ["timeout", "index_unavailable"], rateLimit: "100/min", costPerCall: 0.001, accessTier: "OPEN" },
+  { name: "query_database", description: "Execute read-only database queries", permissionScope: "READ", dataClasses: ["customer_data", "product_data"], failureModes: ["connection_error", "query_timeout"], rateLimit: "50/min", costPerCall: 0.002, accessTier: "STANDARD" },
+  { name: "send_email", description: "Send emails to customers or internal teams", permissionScope: "WRITE", dataClasses: ["contact_info", "pii"], failureModes: ["smtp_error", "rate_limit"], rateLimit: "20/min", costPerCall: 0.005, accessTier: "RESTRICTED", writeAccess: true },
+  { name: "update_crm_record", description: "Create or update CRM records", permissionScope: "WRITE", dataClasses: ["customer_data", "sales_data"], failureModes: ["api_error", "validation_error"], rateLimit: "30/min", costPerCall: 0.003, accessTier: "RESTRICTED", writeAccess: true },
+  { name: "create_ticket", description: "Create support tickets in ticketing system", permissionScope: "WRITE", dataClasses: ["support_data"], failureModes: ["api_error", "duplicate_detection"], rateLimit: "40/min", costPerCall: 0.002, accessTier: "STANDARD", writeAccess: true },
+  { name: "web_search", description: "Search the web for current information", permissionScope: "READ", dataClasses: ["public_data"], failureModes: ["api_quota", "timeout"], rateLimit: "30/min", costPerCall: 0.01, accessTier: "OPEN" },
+  { name: "execute_code", description: "Execute sandboxed code for data analysis", permissionScope: "EXECUTE", dataClasses: ["computed_data"], failureModes: ["sandbox_error", "timeout", "memory_limit"], rateLimit: "10/min", costPerCall: 0.02, accessTier: "RESTRICTED" },
+  { name: "deploy_model", description: "Deploy or update ML model endpoints", permissionScope: "ADMIN", dataClasses: ["model_artifacts", "infrastructure"], failureModes: ["deployment_error", "resource_limit"], rateLimit: "5/min", costPerCall: 0.05, accessTier: "CRITICAL", writeAccess: true },
+  { name: "process_payment", description: "Process financial transactions", permissionScope: "ADMIN", dataClasses: ["financial_data", "pii"], failureModes: ["payment_declined", "fraud_detection"], rateLimit: "10/min", costPerCall: 0.03, accessTier: "CRITICAL", writeAccess: true },
+  { name: "extract_document", description: "Extract structured data from documents", permissionScope: "READ", dataClasses: ["document_data"], failureModes: ["ocr_error", "format_unsupported"], rateLimit: "20/min", costPerCall: 0.015, accessTier: "STANDARD" },
+];
 
 interface WorkflowNode {
   id: string;
@@ -82,11 +117,29 @@ interface WorkflowNode {
   label: string;
   x?: number;
   y?: number;
+  config?: {
+    prompt?: string;
+    model?: string;
+    temperature?: number;
+    maxRetries?: number;
+    timeoutMs?: number;
+    costBudget?: number;
+    logLevel?: string;
+    redactFields?: string[];
+    fallbackModel?: string;
+    targetSystem?: string;
+    policyId?: string;
+    escalationOwner?: string;
+  };
 }
 
 interface WorkflowConnection {
   from: string;
   to: string;
+  edgeType?: string;
+  retries?: number;
+  backoffMs?: number;
+  condition?: string;
 }
 
 interface WizardState {
@@ -116,6 +169,26 @@ interface WizardState {
   policyBindings: string[];
   evalBindings: string[];
   rollbackPlan: string;
+  guardrailsConfig: {
+    policyBundleIds: string[];
+    stopConditions: string[];
+    escalationTriggers: string[];
+    forbiddenOutputs: string[];
+    allowedActions: string[];
+  };
+  evalSuiteConfig: {
+    baselineSuiteIds: string[];
+    customCases: Array<{ name: string; input: string; expectedOutput: string }>;
+    pilotThreshold: number;
+    prodThreshold: number;
+  };
+  rolloutConfig: {
+    shadowModeDuration: string;
+    canarySteps: number[];
+    autoRollbackTriggers: string[];
+    rollbackStrategy: string;
+    healthCheckInterval: string;
+  };
 }
 
 interface ChatMessage {
@@ -154,6 +227,26 @@ const defaultWizardState: WizardState = {
   policyBindings: [],
   evalBindings: [],
   rollbackPlan: "",
+  guardrailsConfig: {
+    policyBundleIds: [],
+    stopConditions: [],
+    escalationTriggers: [],
+    forbiddenOutputs: [],
+    allowedActions: [],
+  },
+  evalSuiteConfig: {
+    baselineSuiteIds: [],
+    customCases: [],
+    pilotThreshold: 80,
+    prodThreshold: 90,
+  },
+  rolloutConfig: {
+    shadowModeDuration: "7d",
+    canarySteps: [5, 25, 50, 100],
+    autoRollbackTriggers: [],
+    rollbackStrategy: "immediate",
+    healthCheckInterval: "5m",
+  },
 };
 
 export default function AgentWizard() {
@@ -357,7 +450,16 @@ export default function AgentWizard() {
       blueprintJson: { nodes: wizardState.workflowNodes },
       policyBindings: wizardState.policyBindings,
       evalBindings: wizardState.evalBindings,
-      rollbackPlan: wizardState.rollbackPlan ? { summary: wizardState.rollbackPlan } : null,
+      guardrailsConfig: wizardState.guardrailsConfig,
+      evalSuiteConfig: wizardState.evalSuiteConfig,
+      rolloutConfig: wizardState.rolloutConfig,
+      rollbackPlan: wizardState.rolloutConfig ? {
+        rollbackStrategy: wizardState.rolloutConfig.rollbackStrategy,
+        healthCheckInterval: wizardState.rolloutConfig.healthCheckInterval,
+        autoRollbackTriggers: wizardState.rolloutConfig.autoRollbackTriggers,
+        shadowModeDuration: wizardState.rolloutConfig.shadowModeDuration,
+        canarySteps: wizardState.rolloutConfig.canarySteps,
+      } : null,
     };
     createMutation.mutate(payload);
   }
@@ -459,6 +561,15 @@ export default function AgentWizard() {
           <Step4MemoryWorkflow state={wizardState} updateState={updateState} />
         )}
         {currentStep === 5 && (
+          <Step5Guardrails state={wizardState} updateState={updateState} />
+        )}
+        {currentStep === 6 && (
+          <Step6EvalSuite state={wizardState} updateState={updateState} />
+        )}
+        {currentStep === 7 && (
+          <Step7RolloutPlan state={wizardState} updateState={updateState} />
+        )}
+        {currentStep === 8 && (
           <Step5Review
             state={wizardState}
             onCreate={handleCreate}
@@ -484,13 +595,13 @@ export default function AgentWizard() {
           <ArrowLeft className="w-4 h-4 mr-1.5" />
           Back
         </Button>
-        {currentStep < 5 ? (
+        {currentStep < 8 ? (
           <Button
             onClick={() => {
               if (currentStep === 1) {
                 setCurrentStep(2);
               } else {
-                setCurrentStep((s) => Math.min(5, s + 1));
+                setCurrentStep((s) => Math.min(8, s + 1));
               }
             }}
             disabled={currentStep === 1 && !wizardState.name}
@@ -937,13 +1048,25 @@ function Step3ModelTools({
   state: WizardState;
   updateState: (u: Partial<WizardState>) => void;
 }) {
-  function addTool() {
-    updateState({ toolsConfig: [...state.toolsConfig, { name: "", description: "" }] });
+  const [catalogFilter, setCatalogFilter] = useState<string>("all");
+  const [showCatalog, setShowCatalog] = useState(false);
+
+  function addToolFromCatalog(catalogTool: ToolConfig) {
+    const alreadyAdded = state.toolsConfig.some(t => t.name === catalogTool.name);
+    if (!alreadyAdded) {
+      updateState({ toolsConfig: [...state.toolsConfig, { ...catalogTool }] });
+    }
   }
+
+  function addCustomTool() {
+    updateState({ toolsConfig: [...state.toolsConfig, { name: "", description: "", permissionScope: "READ", accessTier: "STANDARD" }] });
+  }
+
   function removeTool(i: number) {
     updateState({ toolsConfig: state.toolsConfig.filter((_, idx) => idx !== i) });
   }
-  function updateTool(i: number, field: keyof ToolConfig, value: string) {
+
+  function updateTool(i: number, field: keyof ToolConfig, value: string | number | boolean | string[]) {
     const updated = [...state.toolsConfig];
     updated[i] = { ...updated[i], [field]: value };
     updateState({ toolsConfig: updated });
@@ -961,8 +1084,24 @@ function Step3ModelTools({
     });
   }
 
+  const tierColors: Record<string, string> = {
+    OPEN: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+    STANDARD: "bg-blue-500/10 text-blue-700 dark:text-blue-400",
+    RESTRICTED: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
+    CRITICAL: "bg-red-500/10 text-red-700 dark:text-red-400",
+  };
+
+  const scopeColors: Record<string, string> = {
+    READ: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+    WRITE: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
+    EXECUTE: "bg-purple-500/10 text-purple-700 dark:text-purple-400",
+    ADMIN: "bg-red-500/10 text-red-700 dark:text-red-400",
+  };
+
+  const filteredCatalog = catalogFilter === "all" ? TOOL_CATALOG : TOOL_CATALOG.filter(t => t.accessTier === catalogFilter);
+
   return (
-    <div className="flex flex-col gap-6 max-w-2xl">
+    <div className="flex flex-col gap-6 max-w-4xl">
       <h2 className="text-lg font-medium">Model & Tools Configuration</h2>
 
       <Card>
@@ -1000,38 +1139,139 @@ function Step3ModelTools({
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
-          <CardTitle className="text-sm font-medium">Tools</CardTitle>
-          <Button variant="outline" size="sm" onClick={addTool} data-testid="button-add-tool">
-            <Plus className="w-3.5 h-3.5 mr-1" /> Add Tool
-          </Button>
+          <div className="flex items-center gap-2">
+            <CardTitle className="text-sm font-medium">Tool Catalog</CardTitle>
+            {state.toolsConfig.length > 0 && <Badge variant="outline" className="text-[10px]">{state.toolsConfig.length} selected</Badge>}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setShowCatalog(!showCatalog)} data-testid="button-toggle-catalog">
+              <Library className="w-3.5 h-3.5 mr-1" /> {showCatalog ? "Hide" : "Browse"} Catalog
+            </Button>
+            <Button variant="outline" size="sm" onClick={addCustomTool} data-testid="button-add-custom-tool">
+              <Plus className="w-3.5 h-3.5 mr-1" /> Custom Tool
+            </Button>
+          </div>
         </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          {state.toolsConfig.length === 0 && (
+        <CardContent className="flex flex-col gap-4">
+          {showCatalog && (
+            <div className="flex flex-col gap-3 pb-4 border-b">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider mr-1">Filter:</span>
+                {["all", "OPEN", "STANDARD", "RESTRICTED", "CRITICAL"].map(tier => (
+                  <Button
+                    key={tier}
+                    variant={catalogFilter === tier ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setCatalogFilter(tier)}
+                    data-testid={`button-filter-tier-${tier.toLowerCase()}`}
+                  >
+                    {tier === "all" ? "All" : tier}
+                  </Button>
+                ))}
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                {filteredCatalog.map(tool => {
+                  const isSelected = state.toolsConfig.some(t => t.name === tool.name);
+                  return (
+                    <div
+                      key={tool.name}
+                      className={`flex flex-col gap-2 p-3 rounded-md border cursor-pointer transition-colors ${isSelected ? "border-primary bg-primary/5" : "hover-elevate"}`}
+                      onClick={() => !isSelected && addToolFromCatalog(tool)}
+                      data-testid={`catalog-tool-${tool.name}`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-medium font-mono">{tool.name}</span>
+                        <div className="flex items-center gap-1">
+                          <Badge variant="outline" className={`text-[9px] ${tierColors[tool.accessTier || "STANDARD"]}`}>
+                            {tool.accessTier}
+                          </Badge>
+                          <Badge variant="outline" className={`text-[9px] ${scopeColors[tool.permissionScope || "READ"]}`}>
+                            {tool.permissionScope}
+                          </Badge>
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">{tool.description}</p>
+                      <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+                        <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{tool.rateLimit}</span>
+                        <span className="flex items-center gap-1"><DollarSign className="w-3 h-3" />${tool.costPerCall}/call</span>
+                        {tool.writeAccess && <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400"><AlertTriangle className="w-3 h-3" />Write</span>}
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {tool.dataClasses?.map(dc => (
+                          <Badge key={dc} variant="secondary" className="text-[9px]">{dc}</Badge>
+                        ))}
+                      </div>
+                      {isSelected && (
+                        <Badge variant="default" className="text-[9px] w-fit">Selected</Badge>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {state.toolsConfig.length === 0 && !showCatalog && (
             <p className="text-sm text-muted-foreground text-center py-4">
-              No tools configured. Add tools to extend your agent's capabilities.
+              No tools configured. Browse the catalog or add a custom tool.
             </p>
           )}
-          {state.toolsConfig.map((tool, i) => (
-            <div key={i} className="flex items-start gap-2">
-              <div className="flex-1 grid grid-cols-2 gap-2">
-                <Input
-                  placeholder="Tool name"
-                  value={tool.name}
-                  onChange={(e) => updateTool(i, "name", e.target.value)}
-                  data-testid={`input-tool-name-${i}`}
-                />
-                <Input
-                  placeholder="Tool description"
-                  value={tool.description}
-                  onChange={(e) => updateTool(i, "description", e.target.value)}
-                  data-testid={`input-tool-desc-${i}`}
-                />
-              </div>
-              <Button variant="ghost" size="icon" onClick={() => removeTool(i)} data-testid={`button-remove-tool-${i}`}>
-                <Trash2 className="w-4 h-4" />
-              </Button>
+
+          {state.toolsConfig.length > 0 && (
+            <div className="flex flex-col gap-2">
+              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Selected Tools</span>
+              {state.toolsConfig.map((tool, i) => (
+                <div key={i} className="flex items-start gap-2 p-3 rounded-md border" data-testid={`selected-tool-${i}`}>
+                  <div className="flex-1 flex flex-col gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {tool.name ? (
+                        <span className="text-xs font-medium font-mono">{tool.name}</span>
+                      ) : (
+                        <Input
+                          placeholder="Tool name"
+                          value={tool.name}
+                          onChange={(e) => updateTool(i, "name", e.target.value)}
+                          className="h-7 text-xs w-48"
+                          data-testid={`input-tool-name-${i}`}
+                        />
+                      )}
+                      {tool.accessTier && (
+                        <Badge variant="outline" className={`text-[9px] ${tierColors[tool.accessTier]}`}>
+                          {tool.accessTier}
+                        </Badge>
+                      )}
+                      {tool.permissionScope && (
+                        <Badge variant="outline" className={`text-[9px] ${scopeColors[tool.permissionScope]}`}>
+                          {tool.permissionScope}
+                        </Badge>
+                      )}
+                    </div>
+                    {!tool.description && !TOOL_CATALOG.some(c => c.name === tool.name) ? (
+                      <Input
+                        placeholder="Tool description"
+                        value={tool.description}
+                        onChange={(e) => updateTool(i, "description", e.target.value)}
+                        className="h-7 text-xs"
+                        data-testid={`input-tool-desc-${i}`}
+                      />
+                    ) : (
+                      <p className="text-[11px] text-muted-foreground">{tool.description}</p>
+                    )}
+                    <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+                      {tool.rateLimit && <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{tool.rateLimit}</span>}
+                      {tool.costPerCall !== undefined && <span className="flex items-center gap-1"><DollarSign className="w-3 h-3" />${tool.costPerCall}/call</span>}
+                      {tool.failureModes && tool.failureModes.length > 0 && (
+                        <span className="flex items-center gap-1"><AlertTriangle className="w-3 h-3" />{tool.failureModes.length} failure modes</span>
+                      )}
+                    </div>
+                  </div>
+                  <Button variant="ghost" size="icon" onClick={() => removeTool(i)} data-testid={`button-remove-tool-${i}`}>
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </div>
+              ))}
             </div>
-          ))}
+          )}
         </CardContent>
       </Card>
 
@@ -1077,12 +1317,17 @@ const NODE_TYPES: { type: string; label: string; icon: LucideIcon; color: string
   { type: "trigger", label: "Trigger", icon: Zap, color: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" },
   { type: "llm_call", label: "LLM Call", icon: Sparkles, color: "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20" },
   { type: "tool_call", label: "Tool Call", icon: Wrench, color: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20" },
+  { type: "tool_proxy", label: "Tool Proxy", icon: PlugZap, color: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border-cyan-500/20" },
   { type: "condition", label: "Condition", icon: AlertTriangle, color: "bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/20" },
+  { type: "policy_check", label: "Policy Check", icon: Shield, color: "bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20" },
   { type: "human_review", label: "Human Review", icon: ShieldCheck, color: "bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20" },
+  { type: "escalation", label: "Escalation", icon: PhoneForwarded, color: "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20" },
+  { type: "writeback", label: "Writeback", icon: Database, color: "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20" },
   { type: "classifier", label: "Classifier", icon: Gauge, color: "bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/20" },
   { type: "router", label: "Router", icon: ArrowRight, color: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20" },
   { type: "schema_validate", label: "Validate", icon: Check, color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" },
   { type: "rag", label: "RAG", icon: BookOpen, color: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20" },
+  { type: "output_format", label: "Output Format", icon: FileText, color: "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20" },
 ];
 
 function Step4MemoryWorkflow({
@@ -1093,6 +1338,8 @@ function Step4MemoryWorkflow({
   updateState: (u: Partial<WizardState>) => void;
 }) {
   const [connectingFrom, setConnectingFrom] = useState<string | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [selectedEdgeIdx, setSelectedEdgeIdx] = useState<number | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
 
   function addNodeToCanvas(type: string) {
@@ -1101,7 +1348,7 @@ function Step4MemoryWorkflow({
     const x = 40 + (count % 3) * 220;
     const y = 40 + Math.floor(count / 3) * 140;
     updateState({
-      workflowNodes: [...state.workflowNodes, { id: newId, type, label: "", x, y }],
+      workflowNodes: [...state.workflowNodes, { id: newId, type, label: "", x, y, config: {} }],
     });
   }
 
@@ -1111,12 +1358,26 @@ function Step4MemoryWorkflow({
       workflowConnections: (state.workflowConnections || []).filter((c: WorkflowConnection) => c.from !== id && c.to !== id),
     });
     if (connectingFrom === id) setConnectingFrom(null);
+    if (selectedNodeId === id) setSelectedNodeId(null);
   }
 
   function updateNodeLabel(index: number, label: string) {
     const updated = [...state.workflowNodes];
     updated[index] = { ...updated[index], label };
     updateState({ workflowNodes: updated });
+  }
+
+  function updateNodeConfig(nodeId: string, configUpdate: Record<string, unknown>) {
+    const updated = state.workflowNodes.map(n =>
+      n.id === nodeId ? { ...n, config: { ...(n.config || {}), ...configUpdate } } : n
+    );
+    updateState({ workflowNodes: updated });
+  }
+
+  function updateEdgeConfig(edgeIdx: number, updates: Partial<WorkflowConnection>) {
+    const conns = [...(state.workflowConnections || [])] as WorkflowConnection[];
+    conns[edgeIdx] = { ...conns[edgeIdx], ...updates };
+    updateState({ workflowConnections: conns });
   }
 
   function updateNodePosition(id: string, x: number, y: number) {
@@ -1133,7 +1394,7 @@ function Step4MemoryWorkflow({
     const existing = (state.workflowConnections || []) as WorkflowConnection[];
     const alreadyExists = existing.some(c => c.from === connectingFrom && c.to === nodeId);
     if (!alreadyExists) {
-      updateState({ workflowConnections: [...existing, { from: connectingFrom, to: nodeId }] });
+      updateState({ workflowConnections: [...existing, { from: connectingFrom, to: nodeId, edgeType: "default", retries: 0, backoffMs: 1000 }] });
     }
     setConnectingFrom(null);
   }
@@ -1141,7 +1402,18 @@ function Step4MemoryWorkflow({
   function removeConnection(from: string, to: string) {
     const existing = (state.workflowConnections || []) as WorkflowConnection[];
     updateState({ workflowConnections: existing.filter(c => !(c.from === from && c.to === to)) });
+    setSelectedEdgeIdx(null);
   }
+
+  const selectedNode = selectedNodeId ? state.workflowNodes.find(n => n.id === selectedNodeId) : null;
+  const selectedEdge = selectedEdgeIdx !== null ? (state.workflowConnections as WorkflowConnection[])?.[selectedEdgeIdx] : null;
+
+  const edgeTypeColors: Record<string, string> = {
+    default: "hsl(var(--primary))",
+    fallback: "hsl(var(--destructive))",
+    human_gate: "hsl(130, 60%, 50%)",
+    retry: "hsl(45, 90%, 50%)",
+  };
 
   return (
     <div className="flex flex-col gap-6 max-w-4xl">
@@ -1239,7 +1511,10 @@ function Step4MemoryWorkflow({
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
-          <CardTitle className="text-sm font-medium">Visual Workflow</CardTitle>
+          <div className="flex items-center gap-2">
+            <CardTitle className="text-sm font-medium">Visual Workflow</CardTitle>
+            {state.workflowNodes.length > 0 && <Badge variant="outline" className="text-[10px]">{state.workflowNodes.length} nodes</Badge>}
+          </div>
           {connectingFrom && (
             <Badge variant="outline" className="text-[10px] animate-pulse">
               Click a target node to connect
@@ -1263,140 +1538,1084 @@ function Step4MemoryWorkflow({
             ))}
           </div>
 
-          <div
-            ref={canvasRef}
-            className="relative border rounded-md bg-muted/20"
-            style={{ minHeight: "400px", height: `${Math.max(400, (Math.floor(state.workflowNodes.length / 3) + 1) * 160 + 60)}px` }}
-            data-testid="workflow-canvas"
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => {
-              e.preventDefault();
-              const nodeId = e.dataTransfer.getData("nodeId");
-              if (!nodeId || !canvasRef.current) return;
-              const rect = canvasRef.current.getBoundingClientRect();
-              const offsetX = parseInt(e.dataTransfer.getData("offsetX") || "0");
-              const offsetY = parseInt(e.dataTransfer.getData("offsetY") || "0");
-              const newX = Math.max(0, e.clientX - offsetX);
-              const newY = Math.max(0, e.clientY - offsetY);
-              const relX = Math.max(0, Math.min(newX - rect.left, rect.width - 200));
-              const relY = Math.max(0, newY - rect.top);
-              updateNodePosition(nodeId, relX, relY);
-            }}
-          >
-            <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 1 }}>
-              {state.workflowConnections?.map((conn: WorkflowConnection, i: number) => {
-                const fromNode = state.workflowNodes.find(n => n.id === conn.from);
-                const toNode = state.workflowNodes.find(n => n.id === conn.to);
-                if (!fromNode || !toNode) return null;
-                const fx = (fromNode.x || 0) + 100;
-                const fy = (fromNode.y || 0) + 55;
-                const tx = (toNode.x || 0) + 100;
-                const ty = (toNode.y || 0) + 15;
-                const midY = (fy + ty) / 2;
+          <div className="flex gap-3">
+            <div
+              ref={canvasRef}
+              className="relative border rounded-md bg-muted/20 flex-1"
+              style={{ minHeight: "400px", height: `${Math.max(400, (Math.floor(state.workflowNodes.length / 3) + 1) * 160 + 60)}px` }}
+              data-testid="workflow-canvas"
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                const nodeId = e.dataTransfer.getData("nodeId");
+                if (!nodeId || !canvasRef.current) return;
+                const rect = canvasRef.current.getBoundingClientRect();
+                const offsetX = parseInt(e.dataTransfer.getData("offsetX") || "0");
+                const offsetY = parseInt(e.dataTransfer.getData("offsetY") || "0");
+                const newX = Math.max(0, e.clientX - offsetX);
+                const newY = Math.max(0, e.clientY - offsetY);
+                const relX = Math.max(0, Math.min(newX - rect.left, rect.width - 200));
+                const relY = Math.max(0, newY - rect.top);
+                updateNodePosition(nodeId, relX, relY);
+              }}
+            >
+              <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 1 }}>
+                {state.workflowConnections?.map((conn: WorkflowConnection, i: number) => {
+                  const fromNode = state.workflowNodes.find(n => n.id === conn.from);
+                  const toNode = state.workflowNodes.find(n => n.id === conn.to);
+                  if (!fromNode || !toNode) return null;
+                  const fx = (fromNode.x || 0) + 100;
+                  const fy = (fromNode.y || 0) + 55;
+                  const tx = (toNode.x || 0) + 100;
+                  const ty = (toNode.y || 0) + 15;
+                  const midY = (fy + ty) / 2;
+                  const edgeColor = edgeTypeColors[conn.edgeType || "default"] || edgeTypeColors.default;
+                  const isDashed = conn.edgeType === "fallback" || conn.edgeType === "human_gate";
+                  return (
+                    <g key={i}>
+                      <path
+                        d={`M ${fx} ${fy} C ${fx} ${midY}, ${tx} ${midY}, ${tx} ${ty}`}
+                        fill="none"
+                        stroke={edgeColor}
+                        strokeWidth="2"
+                        strokeOpacity={selectedEdgeIdx === i ? "0.9" : "0.4"}
+                        strokeDasharray={isDashed ? "6 3" : "none"}
+                        markerEnd="url(#arrowhead)"
+                        className="cursor-pointer pointer-events-auto"
+                        onClick={() => setSelectedEdgeIdx(selectedEdgeIdx === i ? null : i)}
+                      />
+                      {conn.edgeType && conn.edgeType !== "default" && (
+                        <text
+                          x={(fx + tx) / 2 + 12}
+                          y={(fy + ty) / 2 - 4}
+                          fill={edgeColor}
+                          fontSize="9"
+                          className="pointer-events-none"
+                        >{conn.edgeType}{conn.retries ? ` (${conn.retries}x)` : ""}</text>
+                      )}
+                      <circle
+                        cx={(fx + tx) / 2}
+                        cy={(fy + ty) / 2}
+                        r="8"
+                        fill="hsl(var(--destructive))"
+                        fillOpacity="0.7"
+                        className="cursor-pointer pointer-events-auto"
+                        onClick={() => removeConnection(conn.from, conn.to)}
+                        data-testid={`button-remove-connection-${i}`}
+                      />
+                      <text
+                        x={(fx + tx) / 2}
+                        y={(fy + ty) / 2 + 1}
+                        textAnchor="middle"
+                        dominantBaseline="middle"
+                        fill="white"
+                        fontSize="10"
+                        className="pointer-events-none"
+                      >x</text>
+                    </g>
+                  );
+                })}
+                <defs>
+                  <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                    <polygon points="0 0, 10 3.5, 0 7" fill="hsl(var(--primary))" fillOpacity="0.4" />
+                  </marker>
+                </defs>
+              </svg>
+
+              {state.workflowNodes.length === 0 && (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <p className="text-sm text-muted-foreground">Click a node type above to add it to the canvas</p>
+                </div>
+              )}
+              {state.workflowNodes.map((node, i) => {
+                const nodeType = NODE_TYPES.find(nt => nt.type === node.type) || NODE_TYPES[0];
+                const NodeIcon = nodeType.icon;
+                const isSelected = selectedNodeId === node.id;
                 return (
-                  <g key={i}>
-                    <path
-                      d={`M ${fx} ${fy} C ${fx} ${midY}, ${tx} ${midY}, ${tx} ${ty}`}
-                      fill="none"
-                      stroke="hsl(var(--primary))"
-                      strokeWidth="2"
-                      strokeOpacity="0.4"
-                      markerEnd="url(#arrowhead)"
+                  <div
+                    key={node.id}
+                    className={`absolute border rounded-md p-2.5 flex flex-col gap-1.5 w-[200px] cursor-move ${nodeType.color} ${connectingFrom === node.id ? "ring-2 ring-primary" : ""} ${isSelected ? "ring-2 ring-foreground" : ""}`}
+                    style={{ left: node.x || 0, top: node.y || 0, zIndex: 2 }}
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData("nodeId", node.id);
+                      e.dataTransfer.setData("offsetX", String(e.clientX - (node.x || 0)));
+                      e.dataTransfer.setData("offsetY", String(e.clientY - (node.y || 0)));
+                    }}
+                    data-testid={`workflow-node-${node.id}`}
+                  >
+                    <div className="flex items-center justify-between gap-1">
+                      <div className="flex items-center gap-1.5">
+                        <NodeIcon className="w-3.5 h-3.5" />
+                        <span className="text-[10px] font-semibold uppercase tracking-wider">{nodeType.label}</span>
+                      </div>
+                      <div className="flex items-center gap-0.5">
+                        <Button variant="ghost" size="icon" onClick={() => setSelectedNodeId(isSelected ? null : node.id)} data-testid={`button-config-node-${node.id}`}>
+                          <Settings className="w-3 h-3" />
+                        </Button>
+                        <Button variant="ghost" size="icon" onClick={() => removeNode(node.id)} data-testid={`button-remove-node-${node.id}`}>
+                          <Trash2 className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    </div>
+                    <Input
+                      value={node.label}
+                      onChange={(e) => updateNodeLabel(i, e.target.value)}
+                      placeholder="Node label..."
+                      className="h-7 text-xs"
+                      data-testid={`input-node-label-${node.id}`}
                     />
-                    <circle
-                      cx={(fx + tx) / 2}
-                      cy={(fy + ty) / 2}
-                      r="8"
-                      fill="hsl(var(--destructive))"
-                      fillOpacity="0.7"
-                      className="cursor-pointer pointer-events-auto"
-                      onClick={() => removeConnection(conn.from, conn.to)}
-                      data-testid={`button-remove-connection-${i}`}
-                    />
-                    <text
-                      x={(fx + tx) / 2}
-                      y={(fy + ty) / 2 + 1}
-                      textAnchor="middle"
-                      dominantBaseline="middle"
-                      fill="white"
-                      fontSize="10"
-                      className="pointer-events-none"
-                    >x</text>
-                  </g>
+                    <div className="flex items-center justify-between gap-1 mt-0.5">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-[10px]"
+                        onClick={() => startConnection(node.id)}
+                        data-testid={`button-connect-from-${node.id}`}
+                      >
+                        Connect
+                      </Button>
+                      {connectingFrom && connectingFrom !== node.id && (
+                        <Button
+                          variant="default"
+                          size="sm"
+                          className="text-[10px] animate-pulse"
+                          onClick={() => completeConnection(node.id)}
+                          data-testid={`button-connect-to-${node.id}`}
+                        >
+                          Link here
+                        </Button>
+                      )}
+                    </div>
+                  </div>
                 );
               })}
-              <defs>
-                <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-                  <polygon points="0 0, 10 3.5, 0 7" fill="hsl(var(--primary))" fillOpacity="0.4" />
-                </marker>
-              </defs>
-            </svg>
+            </div>
 
-            {state.workflowNodes.length === 0 && (
-              <div className="absolute inset-0 flex items-center justify-center">
-                <p className="text-sm text-muted-foreground">Click a node type above to add it to the canvas</p>
+            {(selectedNode || selectedEdge) && (
+              <div className="w-64 shrink-0 border rounded-md p-3 flex flex-col gap-3 bg-muted/10" data-testid="workflow-config-sidebar">
+                {selectedNode && (
+                  <>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold uppercase tracking-wider">Node Config</span>
+                      <Button variant="ghost" size="icon" onClick={() => setSelectedNodeId(null)} data-testid="button-close-node-config">
+                        <ArrowRight className="w-3 h-3" />
+                      </Button>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <Label className="text-[10px]">Prompt / Instructions</Label>
+                      <Textarea
+                        value={selectedNode.config?.prompt || ""}
+                        onChange={(e) => updateNodeConfig(selectedNode.id, { prompt: e.target.value })}
+                        placeholder="System prompt or instructions..."
+                        className="text-xs min-h-[60px]"
+                        data-testid="input-node-prompt"
+                      />
+                    </div>
+                    {(selectedNode.type === "llm_call" || selectedNode.type === "classifier" || selectedNode.type === "rag") && (
+                      <>
+                        <div className="flex flex-col gap-2">
+                          <Label className="text-[10px]">Model Override</Label>
+                          <Input
+                            value={selectedNode.config?.model || ""}
+                            onChange={(e) => updateNodeConfig(selectedNode.id, { model: e.target.value })}
+                            placeholder="Default model"
+                            className="h-7 text-xs"
+                            data-testid="input-node-model"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-2">
+                          <Label className="text-[10px]">Temperature</Label>
+                          <Input
+                            type="number"
+                            step="0.1"
+                            min="0"
+                            max="2"
+                            value={selectedNode.config?.temperature ?? 0.7}
+                            onChange={(e) => updateNodeConfig(selectedNode.id, { temperature: parseFloat(e.target.value) || 0.7 })}
+                            className="h-7 text-xs"
+                            data-testid="input-node-temperature"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-2">
+                          <Label className="text-[10px]">Fallback Model</Label>
+                          <Input
+                            value={selectedNode.config?.fallbackModel || ""}
+                            onChange={(e) => updateNodeConfig(selectedNode.id, { fallbackModel: e.target.value })}
+                            placeholder="e.g., gpt-4o-mini"
+                            className="h-7 text-xs"
+                            data-testid="input-node-fallback-model"
+                          />
+                        </div>
+                      </>
+                    )}
+                    {(selectedNode.type === "writeback" || selectedNode.type === "tool_proxy") && (
+                      <div className="flex flex-col gap-2">
+                        <Label className="text-[10px]">Target System</Label>
+                        <Input
+                          value={selectedNode.config?.targetSystem || ""}
+                          onChange={(e) => updateNodeConfig(selectedNode.id, { targetSystem: e.target.value })}
+                          placeholder="e.g., CRM, ticket system"
+                          className="h-7 text-xs"
+                          data-testid="input-node-target-system"
+                        />
+                      </div>
+                    )}
+                    {selectedNode.type === "escalation" && (
+                      <div className="flex flex-col gap-2">
+                        <Label className="text-[10px]">Escalation Owner</Label>
+                        <Input
+                          value={selectedNode.config?.escalationOwner || ""}
+                          onChange={(e) => updateNodeConfig(selectedNode.id, { escalationOwner: e.target.value })}
+                          placeholder="Team or person"
+                          className="h-7 text-xs"
+                          data-testid="input-node-escalation-owner"
+                        />
+                      </div>
+                    )}
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="flex flex-col gap-1">
+                        <Label className="text-[10px]">Max Retries</Label>
+                        <Input
+                          type="number"
+                          min="0"
+                          value={selectedNode.config?.maxRetries ?? 3}
+                          onChange={(e) => updateNodeConfig(selectedNode.id, { maxRetries: parseInt(e.target.value) || 0 })}
+                          className="h-7 text-xs"
+                          data-testid="input-node-retries"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <Label className="text-[10px]">Timeout (ms)</Label>
+                        <Input
+                          type="number"
+                          min="0"
+                          value={selectedNode.config?.timeoutMs ?? 30000}
+                          onChange={(e) => updateNodeConfig(selectedNode.id, { timeoutMs: parseInt(e.target.value) || 30000 })}
+                          className="h-7 text-xs"
+                          data-testid="input-node-timeout"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <Label className="text-[10px]">Cost Budget ($)</Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={selectedNode.config?.costBudget ?? ""}
+                        onChange={(e) => updateNodeConfig(selectedNode.id, { costBudget: parseFloat(e.target.value) || 0 })}
+                        placeholder="Max cost per call"
+                        className="h-7 text-xs"
+                        data-testid="input-node-cost-budget"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <Label className="text-[10px]">Observability Log Level</Label>
+                      <Select
+                        value={selectedNode.config?.logLevel || "info"}
+                        onValueChange={(v) => updateNodeConfig(selectedNode.id, { logLevel: v })}
+                      >
+                        <SelectTrigger className="h-7 text-xs" data-testid="select-node-log-level">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="debug">Debug</SelectItem>
+                          <SelectItem value="info">Info</SelectItem>
+                          <SelectItem value="warn">Warning</SelectItem>
+                          <SelectItem value="error">Error Only</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </>
+                )}
+
+                {selectedEdge && selectedEdgeIdx !== null && (
+                  <>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold uppercase tracking-wider">Edge Rules</span>
+                      <Button variant="ghost" size="icon" onClick={() => setSelectedEdgeIdx(null)} data-testid="button-close-edge-config">
+                        <ArrowRight className="w-3 h-3" />
+                      </Button>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <Label className="text-[10px]">Edge Type</Label>
+                      <Select
+                        value={selectedEdge.edgeType || "default"}
+                        onValueChange={(v) => updateEdgeConfig(selectedEdgeIdx, { edgeType: v })}
+                      >
+                        <SelectTrigger className="h-7 text-xs" data-testid="select-edge-type">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="default">Default</SelectItem>
+                          <SelectItem value="fallback">Fallback Path</SelectItem>
+                          <SelectItem value="retry">Retry Loop</SelectItem>
+                          <SelectItem value="human_gate">Human Required Gate</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {(selectedEdge.edgeType === "retry" || selectedEdge.edgeType === "fallback") && (
+                      <>
+                        <div className="flex flex-col gap-2">
+                          <Label className="text-[10px]">Max Retries</Label>
+                          <Input
+                            type="number"
+                            min="0"
+                            value={selectedEdge.retries ?? 3}
+                            onChange={(e) => updateEdgeConfig(selectedEdgeIdx, { retries: parseInt(e.target.value) || 0 })}
+                            className="h-7 text-xs"
+                            data-testid="input-edge-retries"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-2">
+                          <Label className="text-[10px]">Backoff (ms)</Label>
+                          <Input
+                            type="number"
+                            min="0"
+                            value={selectedEdge.backoffMs ?? 1000}
+                            onChange={(e) => updateEdgeConfig(selectedEdgeIdx, { backoffMs: parseInt(e.target.value) || 1000 })}
+                            className="h-7 text-xs"
+                            data-testid="input-edge-backoff"
+                          />
+                        </div>
+                      </>
+                    )}
+                    <div className="flex flex-col gap-2">
+                      <Label className="text-[10px]">Condition</Label>
+                      <Input
+                        value={selectedEdge.condition || ""}
+                        onChange={(e) => updateEdgeConfig(selectedEdgeIdx, { condition: e.target.value })}
+                        placeholder="e.g., output.confidence > 0.8"
+                        className="h-7 text-xs"
+                        data-testid="input-edge-condition"
+                      />
+                    </div>
+                  </>
+                )}
               </div>
             )}
-            {state.workflowNodes.map((node, i) => {
-              const nodeType = NODE_TYPES.find(nt => nt.type === node.type) || NODE_TYPES[0];
-              const NodeIcon = nodeType.icon;
-              return (
-                <div
-                  key={node.id}
-                  className={`absolute border rounded-md p-2.5 flex flex-col gap-1.5 w-[200px] cursor-move ${nodeType.color} ${connectingFrom === node.id ? "ring-2 ring-primary" : ""}`}
-                  style={{ left: node.x || 0, top: node.y || 0, zIndex: 2 }}
-                  draggable
-                  onDragStart={(e) => {
-                    e.dataTransfer.setData("nodeId", node.id);
-                    e.dataTransfer.setData("offsetX", String(e.clientX - (node.x || 0)));
-                    e.dataTransfer.setData("offsetY", String(e.clientY - (node.y || 0)));
-                  }}
-                  data-testid={`workflow-node-${node.id}`}
-                >
-                  <div className="flex items-center justify-between gap-1">
-                    <div className="flex items-center gap-1.5">
-                      <NodeIcon className="w-3.5 h-3.5" />
-                      <span className="text-[10px] font-semibold uppercase tracking-wider">{nodeType.label}</span>
-                    </div>
-                    <Button variant="ghost" size="icon" onClick={() => removeNode(node.id)} data-testid={`button-remove-node-${node.id}`}>
-                      <Trash2 className="w-3 h-3" />
-                    </Button>
-                  </div>
-                  <Input
-                    value={node.label}
-                    onChange={(e) => updateNodeLabel(i, e.target.value)}
-                    placeholder="Node label..."
-                    className="h-7 text-xs"
-                    data-testid={`input-node-label-${node.id}`}
-                  />
-                  <div className="flex items-center justify-between gap-1 mt-0.5">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="text-[10px]"
-                      onClick={() => startConnection(node.id)}
-                      data-testid={`button-connect-from-${node.id}`}
-                    >
-                      Connect
-                    </Button>
-                    {connectingFrom && connectingFrom !== node.id && (
-                      <Button
-                        variant="default"
-                        size="sm"
-                        className="text-[10px] animate-pulse"
-                        onClick={() => completeConnection(node.id)}
-                        data-testid={`button-connect-to-${node.id}`}
-                      >
-                        Link here
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
           </div>
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+function StringListCard({
+  title,
+  icon: Icon,
+  items,
+  onAdd,
+  onRemove,
+  placeholder,
+  testIdPrefix,
+}: {
+  title: string;
+  icon: LucideIcon;
+  items: string[];
+  onAdd: (val: string) => void;
+  onRemove: (idx: number) => void;
+  placeholder: string;
+  testIdPrefix: string;
+}) {
+  const [inputVal, setInputVal] = useState("");
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center gap-2 pb-3">
+        <Icon className="w-4 h-4 text-muted-foreground" />
+        <CardTitle className="text-sm font-medium">{title}</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        <div className="flex items-center gap-2">
+          <Input
+            value={inputVal}
+            onChange={(e) => setInputVal(e.target.value)}
+            placeholder={placeholder}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && inputVal.trim()) {
+                onAdd(inputVal.trim());
+                setInputVal("");
+              }
+            }}
+            data-testid={`input-${testIdPrefix}`}
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              if (inputVal.trim()) {
+                onAdd(inputVal.trim());
+                setInputVal("");
+              }
+            }}
+            data-testid={`button-add-${testIdPrefix}`}
+          >
+            <Plus className="w-3.5 h-3.5 mr-1" /> Add
+          </Button>
+        </div>
+        {items.length === 0 && (
+          <p className="text-sm text-muted-foreground text-center py-2">No items added yet.</p>
+        )}
+        {items.map((item, i) => (
+          <div key={i} className="flex items-center justify-between gap-2 text-sm">
+            <span data-testid={`text-${testIdPrefix}-${i}`}>{item}</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => onRemove(i)}
+              data-testid={`button-remove-${testIdPrefix}-${i}`}
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </Button>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+function Step5Guardrails({
+  state,
+  updateState,
+}: {
+  state: WizardState;
+  updateState: (u: Partial<WizardState>) => void;
+}) {
+  const { data: policies, isLoading: policiesLoading } = useQuery<Array<{
+    id: string;
+    name: string;
+    domain: string;
+    description: string;
+  }>>({
+    queryKey: ["/api/policies"],
+  });
+
+  function togglePolicy(policyId: string) {
+    const current = state.guardrailsConfig.policyBundleIds;
+    const updated = current.includes(policyId)
+      ? current.filter((id) => id !== policyId)
+      : [...current, policyId];
+    updateState({
+      guardrailsConfig: { ...state.guardrailsConfig, policyBundleIds: updated },
+    });
+  }
+
+  function addItem(field: keyof typeof state.guardrailsConfig, val: string) {
+    const current = state.guardrailsConfig[field] as string[];
+    updateState({
+      guardrailsConfig: { ...state.guardrailsConfig, [field]: [...current, val] },
+    });
+  }
+
+  function removeItem(field: keyof typeof state.guardrailsConfig, idx: number) {
+    const current = state.guardrailsConfig[field] as string[];
+    updateState({
+      guardrailsConfig: { ...state.guardrailsConfig, [field]: current.filter((_, i) => i !== idx) },
+    });
+  }
+
+  return (
+    <div className="flex flex-col gap-6 max-w-2xl">
+      <div className="flex items-center gap-2">
+        <Shield className="w-5 h-5 text-muted-foreground" />
+        <h2 className="text-lg font-medium">Guardrails</h2>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        Configure safety policies, stop conditions, and escalation triggers to control agent behavior.
+      </p>
+
+      <Card>
+        <CardHeader className="flex flex-row items-center gap-2 pb-3">
+          <ListChecks className="w-4 h-4 text-muted-foreground" />
+          <CardTitle className="text-sm font-medium">Policy Bundles</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2">
+          {policiesLoading && (
+            <div className="flex items-center justify-center py-4">
+              <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+            </div>
+          )}
+          {!policiesLoading && (!policies || policies.length === 0) && (
+            <p className="text-sm text-muted-foreground text-center py-4">No policies available.</p>
+          )}
+          {policies?.map((policy) => {
+            const isSelected = state.guardrailsConfig.policyBundleIds.includes(policy.id);
+            return (
+              <div
+                key={policy.id}
+                className={`flex items-center gap-3 p-3 rounded-md cursor-pointer transition-colors ${
+                  isSelected ? "bg-primary/10 ring-1 ring-primary/30" : "bg-muted/30 hover-elevate"
+                }`}
+                onClick={() => togglePolicy(policy.id)}
+                data-testid={`toggle-policy-${policy.id}`}
+              >
+                <div className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 ${
+                  isSelected ? "bg-primary border-primary" : "border-border"
+                }`}>
+                  {isSelected && <Check className="w-3 h-3 text-primary-foreground" />}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-medium">{policy.name}</span>
+                    <Badge variant="outline" className="text-[10px]">{policy.domain}</Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{policy.description}</p>
+                </div>
+              </div>
+            );
+          })}
+        </CardContent>
+      </Card>
+
+      <StringListCard
+        title="Stop Conditions"
+        icon={AlertTriangle}
+        items={state.guardrailsConfig.stopConditions}
+        onAdd={(val) => addItem("stopConditions", val)}
+        onRemove={(idx) => removeItem("stopConditions", idx)}
+        placeholder="e.g., PII detected in output"
+        testIdPrefix="stop-condition"
+      />
+
+      <StringListCard
+        title="Escalation Triggers"
+        icon={Bell}
+        items={state.guardrailsConfig.escalationTriggers}
+        onAdd={(val) => addItem("escalationTriggers", val)}
+        onRemove={(idx) => removeItem("escalationTriggers", idx)}
+        placeholder="e.g., Write action to production DB"
+        testIdPrefix="escalation-trigger"
+      />
+
+      <StringListCard
+        title="Forbidden Outputs"
+        icon={Shield}
+        items={state.guardrailsConfig.forbiddenOutputs}
+        onAdd={(val) => addItem("forbiddenOutputs", val)}
+        onRemove={(idx) => removeItem("forbiddenOutputs", idx)}
+        placeholder="e.g., Never output raw SQL queries"
+        testIdPrefix="forbidden-output"
+      />
+
+      <StringListCard
+        title="Allowed Actions"
+        icon={Target}
+        items={state.guardrailsConfig.allowedActions}
+        onAdd={(val) => addItem("allowedActions", val)}
+        onRemove={(idx) => removeItem("allowedActions", idx)}
+        placeholder="e.g., Read from customer database"
+        testIdPrefix="allowed-action"
+      />
+    </div>
+  );
+}
+
+function Step6EvalSuite({
+  state,
+  updateState,
+}: {
+  state: WizardState;
+  updateState: (u: Partial<WizardState>) => void;
+}) {
+  const { data: evalSuites, isLoading: suitesLoading } = useQuery<Array<{
+    id: string;
+    name: string;
+    type: string;
+    totalCases: number;
+    passRate: number;
+  }>>({
+    queryKey: ["/api/eval-suites"],
+  });
+
+  const [newCase, setNewCase] = useState({ name: "", input: "", expectedOutput: "" });
+
+  function toggleSuite(suiteId: string) {
+    const current = state.evalSuiteConfig.baselineSuiteIds;
+    const updated = current.includes(suiteId)
+      ? current.filter((id) => id !== suiteId)
+      : [...current, suiteId];
+    updateState({
+      evalSuiteConfig: { ...state.evalSuiteConfig, baselineSuiteIds: updated },
+    });
+  }
+
+  function addCustomCase() {
+    if (!newCase.name.trim() || !newCase.input.trim()) return;
+    updateState({
+      evalSuiteConfig: {
+        ...state.evalSuiteConfig,
+        customCases: [...state.evalSuiteConfig.customCases, { ...newCase }],
+      },
+    });
+    setNewCase({ name: "", input: "", expectedOutput: "" });
+  }
+
+  function removeCustomCase(idx: number) {
+    updateState({
+      evalSuiteConfig: {
+        ...state.evalSuiteConfig,
+        customCases: state.evalSuiteConfig.customCases.filter((_, i) => i !== idx),
+      },
+    });
+  }
+
+  return (
+    <div className="flex flex-col gap-6 max-w-2xl">
+      <div className="flex items-center gap-2">
+        <FlaskConical className="w-5 h-5 text-muted-foreground" />
+        <h2 className="text-lg font-medium">Eval Suite</h2>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        Select baseline evaluation suites, add custom test cases, and set acceptance thresholds.
+      </p>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm font-medium">Baseline Suites</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2">
+          {suitesLoading && (
+            <div className="flex items-center justify-center py-4">
+              <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+            </div>
+          )}
+          {!suitesLoading && (!evalSuites || evalSuites.length === 0) && (
+            <p className="text-sm text-muted-foreground text-center py-4">No eval suites available.</p>
+          )}
+          {evalSuites?.map((suite) => {
+            const isSelected = state.evalSuiteConfig.baselineSuiteIds.includes(suite.id);
+            return (
+              <div
+                key={suite.id}
+                className={`flex items-center justify-between gap-3 p-3 rounded-md cursor-pointer transition-colors ${
+                  isSelected ? "bg-primary/10 ring-1 ring-primary/30" : "bg-muted/30 hover-elevate"
+                }`}
+                onClick={() => toggleSuite(suite.id)}
+                data-testid={`toggle-suite-${suite.id}`}
+              >
+                <div className="flex items-center gap-3">
+                  <div className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 ${
+                    isSelected ? "bg-primary border-primary" : "border-border"
+                  }`}>
+                    {isSelected && <Check className="w-3 h-3 text-primary-foreground" />}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-medium">{suite.name}</span>
+                      <Badge variant="outline" className="text-[10px]">{suite.type}</Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {suite.totalCases} cases | {suite.passRate}% pass rate
+                    </p>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
+          <CardTitle className="text-sm font-medium">Custom Test Cases</CardTitle>
+          <Badge variant="secondary" className="text-[10px]">
+            {state.evalSuiteConfig.customCases.length} cases
+          </Badge>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          <div className="flex flex-col gap-3 p-3 rounded-md bg-muted/30">
+            <div className="flex flex-col gap-2">
+              <Label>Case Name</Label>
+              <Input
+                value={newCase.name}
+                onChange={(e) => setNewCase({ ...newCase, name: e.target.value })}
+                placeholder="e.g., Happy path - basic query"
+                data-testid="input-case-name"
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label>Input</Label>
+              <Textarea
+                value={newCase.input}
+                onChange={(e) => setNewCase({ ...newCase, input: e.target.value })}
+                placeholder="Test input for the agent..."
+                data-testid="input-case-input"
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label>Expected Output</Label>
+              <Textarea
+                value={newCase.expectedOutput}
+                onChange={(e) => setNewCase({ ...newCase, expectedOutput: e.target.value })}
+                placeholder="Expected agent response..."
+                data-testid="input-case-expected"
+              />
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={addCustomCase}
+              disabled={!newCase.name.trim() || !newCase.input.trim()}
+              data-testid="button-add-custom-case"
+            >
+              <Plus className="w-3.5 h-3.5 mr-1" /> Add Case
+            </Button>
+          </div>
+          {state.evalSuiteConfig.customCases.map((tc, i) => (
+            <div key={i} className="flex items-start justify-between gap-2 p-3 rounded-md bg-muted/20">
+              <div className="flex-1 min-w-0">
+                <span className="text-sm font-medium" data-testid={`text-case-name-${i}`}>{tc.name}</span>
+                <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">Input: {tc.input}</p>
+                {tc.expectedOutput && (
+                  <p className="text-xs text-muted-foreground line-clamp-1">Expected: {tc.expectedOutput}</p>
+                )}
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => removeCustomCase(i)}
+                data-testid={`button-remove-case-${i}`}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm font-medium">Acceptance Thresholds</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="flex flex-col gap-2">
+              <Label>Pilot Threshold (%)</Label>
+              <Input
+                type="number"
+                min={0}
+                max={100}
+                value={state.evalSuiteConfig.pilotThreshold}
+                onChange={(e) =>
+                  updateState({
+                    evalSuiteConfig: {
+                      ...state.evalSuiteConfig,
+                      pilotThreshold: parseInt(e.target.value) || 0,
+                    },
+                  })
+                }
+                data-testid="input-pilot-threshold"
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label>Production Threshold (%)</Label>
+              <Input
+                type="number"
+                min={0}
+                max={100}
+                value={state.evalSuiteConfig.prodThreshold}
+                onChange={(e) =>
+                  updateState({
+                    evalSuiteConfig: {
+                      ...state.evalSuiteConfig,
+                      prodThreshold: parseInt(e.target.value) || 0,
+                    },
+                  })
+                }
+                data-testid="input-prod-threshold"
+              />
+            </div>
+          </div>
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between gap-4 text-xs text-muted-foreground">
+              <span>0%</span>
+              <span>Pilot: {state.evalSuiteConfig.pilotThreshold}%</span>
+              <span>Prod: {state.evalSuiteConfig.prodThreshold}%</span>
+              <span>100%</span>
+            </div>
+            <div className="h-3 rounded-full bg-muted overflow-hidden flex">
+              <div
+                className="h-full bg-amber-500/60 transition-all"
+                style={{ width: `${state.evalSuiteConfig.pilotThreshold}%` }}
+              />
+              <div
+                className="h-full bg-green-500/60 transition-all"
+                style={{ width: `${Math.max(0, state.evalSuiteConfig.prodThreshold - state.evalSuiteConfig.pilotThreshold)}%` }}
+              />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function Step7RolloutPlan({
+  state,
+  updateState,
+}: {
+  state: WizardState;
+  updateState: (u: Partial<WizardState>) => void;
+}) {
+  const [newStepVal, setNewStepVal] = useState("");
+  const [newTriggerVal, setNewTriggerVal] = useState("");
+
+  return (
+    <div className="flex flex-col gap-6 max-w-2xl">
+      <div className="flex items-center gap-2">
+        <Rocket className="w-5 h-5 text-muted-foreground" />
+        <h2 className="text-lg font-medium">Rollout Plan</h2>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        Configure shadow mode, canary deployment steps, and rollback strategies.
+      </p>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm font-medium">Shadow Mode</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <p className="text-xs text-muted-foreground">
+            In shadow mode, the agent runs alongside the existing system without affecting real traffic. Outputs are logged for comparison.
+          </p>
+          <div className="flex flex-col gap-2">
+            <Label>Duration</Label>
+            <Select
+              value={state.rolloutConfig.shadowModeDuration}
+              onValueChange={(v) =>
+                updateState({ rolloutConfig: { ...state.rolloutConfig, shadowModeDuration: v } })
+              }
+            >
+              <SelectTrigger data-testid="select-shadow-duration">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="3d">3 days</SelectItem>
+                <SelectItem value="7d">1 week</SelectItem>
+                <SelectItem value="14d">2 weeks</SelectItem>
+                <SelectItem value="30d">1 month</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm font-medium">Canary Steps</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <p className="text-xs text-muted-foreground">
+            Define the traffic percentage progression for canary deployment.
+          </p>
+          <div className="flex items-center gap-2 flex-wrap">
+            {state.rolloutConfig.canarySteps.map((step, i) => (
+              <div key={i} className="flex items-center gap-1">
+                <div className="flex items-center gap-1 p-1.5 rounded-md bg-muted/50">
+                  <Input
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={step}
+                    onChange={(e) => {
+                      const updated = [...state.rolloutConfig.canarySteps];
+                      updated[i] = parseInt(e.target.value) || 0;
+                      updateState({ rolloutConfig: { ...state.rolloutConfig, canarySteps: updated } });
+                    }}
+                    className="w-16 text-center"
+                    data-testid={`input-canary-step-${i}`}
+                  />
+                  <span className="text-xs text-muted-foreground">%</span>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => {
+                      updateState({
+                        rolloutConfig: {
+                          ...state.rolloutConfig,
+                          canarySteps: state.rolloutConfig.canarySteps.filter((_, idx) => idx !== i),
+                        },
+                      });
+                    }}
+                    data-testid={`button-remove-canary-${i}`}
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </Button>
+                </div>
+                {i < state.rolloutConfig.canarySteps.length - 1 && (
+                  <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="flex items-center gap-2">
+            <Input
+              type="number"
+              min={1}
+              max={100}
+              value={newStepVal}
+              onChange={(e) => setNewStepVal(e.target.value)}
+              placeholder="e.g., 75"
+              className="w-24"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && newStepVal.trim()) {
+                  const val = parseInt(newStepVal);
+                  if (val > 0 && val <= 100) {
+                    updateState({
+                      rolloutConfig: {
+                        ...state.rolloutConfig,
+                        canarySteps: [...state.rolloutConfig.canarySteps, val].sort((a, b) => a - b),
+                      },
+                    });
+                    setNewStepVal("");
+                  }
+                }
+              }}
+              data-testid="input-new-canary-step"
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const val = parseInt(newStepVal);
+                if (val > 0 && val <= 100) {
+                  updateState({
+                    rolloutConfig: {
+                      ...state.rolloutConfig,
+                      canarySteps: [...state.rolloutConfig.canarySteps, val].sort((a, b) => a - b),
+                    },
+                  });
+                  setNewStepVal("");
+                }
+              }}
+              data-testid="button-add-canary-step"
+            >
+              <Plus className="w-3.5 h-3.5 mr-1" /> Add Step
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex flex-row items-center gap-2 pb-3">
+          <RotateCcw className="w-4 h-4 text-muted-foreground" />
+          <CardTitle className="text-sm font-medium">Auto-Rollback Triggers</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <div className="flex items-center gap-2">
+            <Input
+              value={newTriggerVal}
+              onChange={(e) => setNewTriggerVal(e.target.value)}
+              placeholder="e.g., Error rate > 5%"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && newTriggerVal.trim()) {
+                  updateState({
+                    rolloutConfig: {
+                      ...state.rolloutConfig,
+                      autoRollbackTriggers: [...state.rolloutConfig.autoRollbackTriggers, newTriggerVal.trim()],
+                    },
+                  });
+                  setNewTriggerVal("");
+                }
+              }}
+              data-testid="input-rollback-trigger"
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                if (newTriggerVal.trim()) {
+                  updateState({
+                    rolloutConfig: {
+                      ...state.rolloutConfig,
+                      autoRollbackTriggers: [...state.rolloutConfig.autoRollbackTriggers, newTriggerVal.trim()],
+                    },
+                  });
+                  setNewTriggerVal("");
+                }
+              }}
+              data-testid="button-add-rollback-trigger"
+            >
+              <Plus className="w-3.5 h-3.5 mr-1" /> Add
+            </Button>
+          </div>
+          {state.rolloutConfig.autoRollbackTriggers.length === 0 && (
+            <p className="text-sm text-muted-foreground text-center py-2">No rollback triggers configured.</p>
+          )}
+          {state.rolloutConfig.autoRollbackTriggers.map((trigger, i) => (
+            <div key={i} className="flex items-center justify-between gap-2 text-sm">
+              <span data-testid={`text-rollback-trigger-${i}`}>{trigger}</span>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() =>
+                  updateState({
+                    rolloutConfig: {
+                      ...state.rolloutConfig,
+                      autoRollbackTriggers: state.rolloutConfig.autoRollbackTriggers.filter((_, idx) => idx !== i),
+                    },
+                  })
+                }
+                data-testid={`button-remove-rollback-trigger-${i}`}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <Card>
+          <CardHeader className="flex flex-row items-center gap-2 pb-3">
+            <RotateCcw className="w-4 h-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Rollback Strategy</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Select
+              value={state.rolloutConfig.rollbackStrategy}
+              onValueChange={(v) =>
+                updateState({ rolloutConfig: { ...state.rolloutConfig, rollbackStrategy: v } })
+              }
+            >
+              <SelectTrigger data-testid="select-rollback-strategy">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="immediate">Immediate</SelectItem>
+                <SelectItem value="gradual">Gradual</SelectItem>
+                <SelectItem value="manual">Manual</SelectItem>
+              </SelectContent>
+            </Select>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center gap-2 pb-3">
+            <Activity className="w-4 h-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Health Check Interval</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Select
+              value={state.rolloutConfig.healthCheckInterval}
+              onValueChange={(v) =>
+                updateState({ rolloutConfig: { ...state.rolloutConfig, healthCheckInterval: v } })
+              }
+            >
+              <SelectTrigger data-testid="select-health-check-interval">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="1m">Every 1 minute</SelectItem>
+                <SelectItem value="5m">Every 5 minutes</SelectItem>
+                <SelectItem value="15m">Every 15 minutes</SelectItem>
+                <SelectItem value="30m">Every 30 minutes</SelectItem>
+              </SelectContent>
+            </Select>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }
@@ -1595,6 +2814,101 @@ function Step5Review({
         </Card>
       )}
 
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-2">
+            <Shield className="w-4 h-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Guardrails</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2 text-sm">
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">Policy Bundles</span>
+            <span className="font-medium" data-testid="review-policy-count">{state.guardrailsConfig.policyBundleIds.length} selected</span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">Stop Conditions</span>
+            <span className="font-medium" data-testid="review-stop-conditions-count">{state.guardrailsConfig.stopConditions.length} configured</span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">Escalation Triggers</span>
+            <span className="font-medium" data-testid="review-escalation-count">{state.guardrailsConfig.escalationTriggers.length} configured</span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">Forbidden Outputs</span>
+            <span className="font-medium">{state.guardrailsConfig.forbiddenOutputs.length} defined</span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">Allowed Actions</span>
+            <span className="font-medium">{state.guardrailsConfig.allowedActions.length} defined</span>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-2">
+            <FlaskConical className="w-4 h-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Eval Suite</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2 text-sm">
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">Baseline Suites</span>
+            <span className="font-medium" data-testid="review-suites-count">{state.evalSuiteConfig.baselineSuiteIds.length} selected</span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">Custom Cases</span>
+            <span className="font-medium" data-testid="review-custom-cases-count">{state.evalSuiteConfig.customCases.length} cases</span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">Pilot Threshold</span>
+            <span className="font-medium">{state.evalSuiteConfig.pilotThreshold}%</span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">Production Threshold</span>
+            <span className="font-medium">{state.evalSuiteConfig.prodThreshold}%</span>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-2">
+            <Rocket className="w-4 h-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Rollout Plan</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2 text-sm">
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">Shadow Mode Duration</span>
+            <span className="font-medium" data-testid="review-shadow-duration">{state.rolloutConfig.shadowModeDuration}</span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">Canary Steps</span>
+            <div className="flex items-center gap-1">
+              {state.rolloutConfig.canarySteps.map((s, i) => (
+                <span key={i} className="font-medium">
+                  {s}%{i < state.rolloutConfig.canarySteps.length - 1 ? " \u2192 " : ""}
+                </span>
+              ))}
+            </div>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">Rollback Strategy</span>
+            <Badge variant="outline" className="text-[10px]" data-testid="review-rollback-strategy">{state.rolloutConfig.rollbackStrategy}</Badge>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">Health Check Interval</span>
+            <span className="font-medium">{state.rolloutConfig.healthCheckInterval}</span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">Auto-Rollback Triggers</span>
+            <span className="font-medium">{state.rolloutConfig.autoRollbackTriggers.length} configured</span>
+          </div>
+        </CardContent>
+      </Card>
+
       <PerformanceSimulation state={state} />
 
       <Card className="border-amber-500/30 bg-amber-500/5">
@@ -1607,6 +2921,30 @@ function Step5Review({
               and submit a blueprint review to the expert validation queue. An expert validator must verify domain assumptions,
               regulatory constraints, and escalation paths before deployment.
             </span>
+            {(state.riskTier === "HIGH" ||
+              (state.permissionsConfig?.writeAccess || []).length > 0 ||
+              state.outcomeId) && (
+              <div className="flex flex-col gap-1 mt-2">
+                {state.riskTier === "HIGH" && (
+                  <div className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
+                    <AlertTriangle className="w-3 h-3 shrink-0" />
+                    <span>High risk tier requires enhanced review</span>
+                  </div>
+                )}
+                {(state.permissionsConfig?.writeAccess || []).length > 0 && (
+                  <div className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
+                    <AlertTriangle className="w-3 h-3 shrink-0" />
+                    <span>Tools have write access - elevated blast radius</span>
+                  </div>
+                )}
+                {state.outcomeId && (
+                  <div className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
+                    <AlertTriangle className="w-3 h-3 shrink-0" />
+                    <span>Outcome linked to high-impact KPIs</span>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
