@@ -1182,6 +1182,45 @@ Guidelines:
         }
       }
       
+      for (const suite of evalSuites) {
+        if (suite.type === "red_team" || suite.type === "accuracy" || suite.type === "faithfulness") {
+          const runs = await storage.getEvalRunsBySuite(suite.id);
+          if (runs.length < 2) continue;
+          const sorted = [...runs].sort((a, b) =>
+            new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime()
+          );
+          const latest = sorted[0];
+          const previous = sorted.slice(1, 6);
+          if (previous.length === 0) continue;
+
+          const baselinePass = previous.reduce((s, r) => s + (r.passRate || 0), 0) / previous.length;
+          const currentPass = latest.passRate || 0;
+          if (baselinePass === 0) continue;
+          const hallDrift = ((baselinePass - currentPass) / baselinePass) * 100;
+          const agent = agents.find(a => a.id === suite.agentId);
+
+          if (Math.abs(hallDrift) > 3) {
+            const existingSignal = signals.find(s => s.id === `drift-${suite.id}`);
+            if (!existingSignal) {
+              signals.push({
+                id: `drift-hallucination-${suite.id}`,
+                agentId: suite.agentId,
+                agentName: agent?.name || "Unknown Agent",
+                suiteName: suite.name,
+                suiteType: suite.type || "red_team",
+                metric: "hallucination",
+                baseline: baselinePass,
+                current: currentPass,
+                driftPercent: Math.round(hallDrift * 100) / 100,
+                severity: Math.abs(hallDrift) > 20 ? "critical" : Math.abs(hallDrift) > 10 ? "high" : Math.abs(hallDrift) > 5 ? "medium" : "low",
+                status: hallDrift > 0 ? "degraded" : "improved",
+                detectedAt: latest.startedAt ? new Date(latest.startedAt).toISOString() : new Date().toISOString(),
+              });
+            }
+          }
+        }
+      }
+
       signals.sort((a, b) => {
         const severityOrder: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
         return (severityOrder[a.severity] || 4) - (severityOrder[b.severity] || 4);
@@ -1190,6 +1229,95 @@ Guidelines:
       res.json(signals);
     } catch (e) {
       res.status(500).json({ message: "Failed to compute drift signals" });
+    }
+  });
+
+  app.get("/api/monitor/impact", async (_req, res) => {
+    try {
+      const outcomes = await storage.getOutcomes();
+      const kpis = await storage.getKpis();
+      const agents = await storage.getAgents();
+      const traces = await storage.getTraces();
+      const approvals = await storage.getApprovals();
+
+      const impactData = outcomes.map(outcome => {
+        const outcomeKpis = kpis.filter(k => k.outcomeId === outcome.id);
+        const boundAgents = agents.filter(a => a.outcomeId === outcome.id);
+
+        const kpiStatuses = outcomeKpis.map(kpi => {
+          const attainment = kpi.target > 0 ? ((kpi.currentValue || 0) / kpi.target) * 100 : 0;
+          const slaThreshold = kpi.slaThreshold || kpi.target * 0.8;
+          const atSla = kpi.target > 0 ? ((kpi.currentValue || 0) >= slaThreshold) : true;
+          const breachStatus = atSla ? (attainment >= 100 ? "exceeded" : "healthy") : "breached";
+
+          return {
+            id: kpi.id,
+            name: kpi.name,
+            unit: kpi.unit,
+            baseline: kpi.baseline || 0,
+            current: kpi.currentValue || 0,
+            target: kpi.target,
+            slaThreshold,
+            attainment: Math.round(attainment * 10) / 10,
+            breachStatus,
+            trend: kpi.trend || "stable",
+            weight: kpi.weight || 1,
+          };
+        });
+
+        const agentHealths = boundAgents.map(agent => {
+          const agentTraces = traces.filter(t => t.agentId === agent.id).slice(-30);
+          const recentFailures = agentTraces.filter(t => t.status === "failed" || t.status === "error").length;
+          const recentTotal = agentTraces.length;
+          const recentSuccessRate = recentTotal > 0 ? ((recentTotal - recentFailures) / recentTotal) : (agent.successRate || 0.95);
+
+          return {
+            id: agent.id,
+            name: agent.name,
+            status: agent.status,
+            healthScore: agent.healthScore || 85,
+            successRate: Math.round(recentSuccessRate * 1000) / 10,
+            avgLatencyMs: agent.avgLatencyMs || 0,
+            autonomyMode: agent.autonomyMode,
+            recentFailures,
+            costPerRun: agent.costPerRun || 0,
+          };
+        });
+
+        const weightedProgress = outcomeKpis.length > 0
+          ? outcomeKpis.reduce((sum, k) => {
+              const att = k.target > 0 ? Math.min(100, ((k.currentValue || 0) / k.target) * 100) : 0;
+              return sum + att * (k.weight || 1);
+            }, 0) / outcomeKpis.reduce((sum, k) => sum + (k.weight || 1), 0)
+          : 0;
+
+        const breachedCount = kpiStatuses.filter(k => k.breachStatus === "breached").length;
+        const overallStatus = breachedCount > 0 ? "at_risk" : weightedProgress >= 80 ? "on_track" : "needs_attention";
+
+        const pendingApprovals = approvals.filter(a =>
+          a.status === "pending" && a.objectId === outcome.id
+        ).length;
+
+        return {
+          id: outcome.id,
+          name: outcome.name,
+          status: outcome.status,
+          riskTier: outcome.riskTier,
+          overallStatus,
+          weightedProgress: Math.round(weightedProgress * 10) / 10,
+          breachedKpis: breachedCount,
+          totalKpis: outcomeKpis.length,
+          maxDriftPercent: outcome.maxDriftPercent || 10,
+          autoPause: outcome.autoPauseTrigger ?? true,
+          pendingApprovals,
+          kpis: kpiStatuses,
+          agents: agentHealths,
+        };
+      });
+
+      res.json(impactData);
+    } catch (e) {
+      res.status(500).json({ message: "Failed to compute monitor impact data" });
     }
   });
 

@@ -328,6 +328,88 @@ export default function Approvals() {
           </div>
         )}
 
+        {approval.type === "anomaly_review" && evidenceData && (
+          <div className="flex flex-col gap-3" data-testid={`anomaly-review-${approval.id}`}>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-2 flex-wrap">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+                <span className="text-xs font-medium">Anomaly Review</span>
+              </div>
+              <Badge variant={(evidenceData as any).severity === "critical" ? "destructive" : "outline"} className="text-[10px]" data-testid={`badge-anomaly-severity-${approval.id}`}>
+                {(evidenceData as any).severity || "unknown"} severity
+              </Badge>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div className="flex flex-col gap-0.5 p-2 rounded-md bg-muted/20" data-testid={`anomaly-metric-${approval.id}`}>
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Metric</span>
+                <span className="text-xs font-medium">
+                  {(evidenceData as any).metric === "pass_rate" ? "Pass Rate" : (evidenceData as any).metric === "hallucination" ? "Faithfulness" : (evidenceData as any).metric === "avg_latency" ? "Avg Latency" : (evidenceData as any).metric}
+                </span>
+              </div>
+              <div className="flex flex-col gap-0.5 p-2 rounded-md bg-muted/20">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Drift</span>
+                <span className={`text-xs font-semibold ${Math.abs((evidenceData as any).driftPercent || 0) > 10 ? "text-red-600 dark:text-red-400" : "text-amber-600 dark:text-amber-400"}`}>
+                  {Math.abs((evidenceData as any).driftPercent || 0).toFixed(1)}%
+                </span>
+              </div>
+              <div className="flex flex-col gap-0.5 p-2 rounded-md bg-muted/20">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Baseline</span>
+                <span className="text-xs font-medium">
+                  {(evidenceData as any).metric === "avg_latency" ? `${(evidenceData as any).baseline}ms` : `${((evidenceData as any).baseline * 100).toFixed(1)}%`}
+                </span>
+              </div>
+              <div className="flex flex-col gap-0.5 p-2 rounded-md bg-muted/20">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Current</span>
+                <span className="text-xs font-medium">
+                  {(evidenceData as any).metric === "avg_latency" ? `${(evidenceData as any).current}ms` : `${((evidenceData as any).current * 100).toFixed(1)}%`}
+                </span>
+              </div>
+            </div>
+
+            {(evidenceData as any).agentName && (
+              <div className="flex items-center gap-2 p-2 rounded-md bg-muted/20">
+                <Activity className="w-3 h-3 text-muted-foreground" />
+                <span className="text-[11px] text-muted-foreground">Agent:</span>
+                <span className="text-[11px] font-medium">{(evidenceData as any).agentName}</span>
+                {(evidenceData as any).suiteName && (
+                  <>
+                    <span className="text-[11px] text-muted-foreground">| Suite:</span>
+                    <span className="text-[11px] font-medium">{(evidenceData as any).suiteName}</span>
+                  </>
+                )}
+              </div>
+            )}
+
+            {(evidenceData as any).affectedOutcomes && (evidenceData as any).affectedOutcomes.length > 0 && (
+              <div className="flex flex-col gap-1.5" data-testid={`anomaly-affected-outcomes-${approval.id}`}>
+                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Affected Outcomes</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {((evidenceData as any).affectedOutcomes as string[]).map((name, idx) => (
+                    <Badge key={idx} variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400">
+                      {name}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {(evidenceData as any).suggestedRemediation && (
+              <div className="flex items-start gap-2 p-2.5 rounded-md bg-blue-500/5 border border-blue-500/10" data-testid={`anomaly-remediation-${approval.id}`}>
+                <TrendingDown className="w-3.5 h-3.5 text-blue-500 mt-0.5 shrink-0" />
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Suggested Remediation</span>
+                  <span className="text-[11px] font-medium">{(evidenceData as any).suggestedRemediation}</span>
+                </div>
+              </div>
+            )}
+
+            {(evidenceData as any).detectedAt && (
+              <span className="text-[10px] text-muted-foreground">Detected: {new Date((evidenceData as any).detectedAt).toLocaleString()}</span>
+            )}
+          </div>
+        )}
+
         {(evidenceData as any)?.configDiff && (
           <ConfigDiff
             changes={(evidenceData as any).configDiff.changes || []}

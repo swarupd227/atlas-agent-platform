@@ -25,7 +25,7 @@ The platform is built with a modern web stack:
 - **Agents**: Features an agent registry, a detailed cockpit for traces and evaluations, and a blueprint editor. An Agent Design Wizard guides users through creation with options for manual configuration, template usage (with AI matching), or conversational AI design.
 - **Templates**: A library of industry-wide agent templates with browsing, filtering, search, and "Use This Template" functionality.
 - **Deployments**: Facilitates release orchestration across staging, pilot, and production environments with promote/rollback actions and detailed release artifacts.
-- **Monitor**: Offers an SLA dashboard, live run streams, and drift detection. Automated remediation suggestions are provided based on monitoring data.
+- **Monitor**: Outcome SLA Dashboard (outcome-centric with KPI breach status, SLA threshold markers, bound agent health), Live Runs stream, Drift Detection (pass rate + latency + hallucination/faithfulness drift, customer impact analysis, expert escalation flow), Agent Health cards. 5 stat cards including Customer Impact. GET /api/monitor/impact endpoint aggregates outcome health data.
 - **Governance**: Includes a policy library (policy-as-code), audit trails, and compliance reporting.
 - **Approvals**: Manages an expert validation queue for various approval types (e.g., blueprint review, outcome review, outcome certification) with structured evidence.
 - **Billing**: Handles outcome-based metering and invoicing.
