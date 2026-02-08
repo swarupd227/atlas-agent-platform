@@ -485,6 +485,91 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/outcome-risk-drivers", async (_req, res) => {
+    try {
+      const traces = await storage.getTraces();
+      const agents = await storage.getAgents();
+      const policies = await storage.getPolicies();
+
+      const drivers: Array<{
+        type: string;
+        label: string;
+        severity: string;
+        detail: string;
+      }> = [];
+
+      const failedTraces = traces.filter((t) => t.status === "failed" || t.status === "error");
+      if (failedTraces.length > 0) {
+        const recentFails = failedTraces.slice(0, 5);
+        const agentIds = Array.from(new Set(recentFails.map((t) => t.agentId)));
+        const agentNames = agentIds
+          .map((id) => agents.find((a) => a.id === id)?.name || "Unknown")
+          .slice(0, 3);
+        drivers.push({
+          type: "tool_failure",
+          label: `${failedTraces.length} failed run(s)`,
+          severity: failedTraces.length >= 5 ? "critical" : failedTraces.length >= 2 ? "high" : "medium",
+          detail: `Agents: ${agentNames.join(", ")}`,
+        });
+      }
+
+      const toolCallFailures: string[] = [];
+      for (const trace of traces.slice(0, 50)) {
+        const calls = trace.toolCalls as Array<{ name?: string; status?: string }> | null;
+        if (Array.isArray(calls)) {
+          calls.forEach((c) => {
+            if (c.status === "failed" || c.status === "error") {
+              toolCallFailures.push(c.name || "unknown");
+            }
+          });
+        }
+      }
+      if (toolCallFailures.length > 0) {
+        const unique = Array.from(new Set(toolCallFailures)).slice(0, 3);
+        drivers.push({
+          type: "tool_failure",
+          label: `${toolCallFailures.length} tool call failure(s)`,
+          severity: toolCallFailures.length >= 5 ? "high" : "medium",
+          detail: `Tools: ${unique.join(", ")}`,
+        });
+      }
+
+      let policyViolationCount = 0;
+      for (const trace of traces.slice(0, 50)) {
+        const checks = trace.policyChecks as Array<{ result?: string; status?: string }> | null;
+        if (Array.isArray(checks)) {
+          checks.forEach((c) => {
+            if (c.result === "violation" || c.status === "violated") {
+              policyViolationCount++;
+            }
+          });
+        }
+      }
+      if (policyViolationCount > 0) {
+        drivers.push({
+          type: "policy_violation",
+          label: `${policyViolationCount} policy violation(s)`,
+          severity: policyViolationCount >= 5 ? "critical" : policyViolationCount >= 2 ? "high" : "medium",
+          detail: "Detected in recent run traces",
+        });
+      }
+
+      const stalePolicies = policies.filter((p) => p.status === "draft" || p.status === "deprecated");
+      if (stalePolicies.length > 0) {
+        drivers.push({
+          type: "policy_violation",
+          label: `${stalePolicies.length} stale policy(ies)`,
+          severity: "low",
+          detail: stalePolicies.map((p) => p.name).slice(0, 3).join(", "),
+        });
+      }
+
+      res.json(drivers);
+    } catch (e) {
+      res.status(500).json({ error: "Failed to compute risk drivers" });
+    }
+  });
+
   // Agent Templates
   app.get("/api/agent-templates", async (_req, res) => {
     const templates = await storage.getAgentTemplates();
