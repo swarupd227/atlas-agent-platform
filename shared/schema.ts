@@ -363,4 +363,29 @@ export const insertAutonomousActionLogSchema = createInsertSchema(autonomousActi
 export type InsertAutonomousActionLog = z.infer<typeof insertAutonomousActionLogSchema>;
 export type AutonomousActionLog = typeof autonomousActionLogs.$inferSelect;
 
+export const improvementCycles = pgTable("improvement_cycles", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  agentId: varchar("agent_id").notNull(),
+  triggerType: text("trigger_type").notNull().default("drift_detected"),
+  detectedIssue: text("detected_issue").notNull(),
+  issueCategory: text("issue_category").notNull().default("performance"),
+  proposedAction: text("proposed_action").notNull(),
+  actionType: text("action_type").notNull().default("prompt_optimization"),
+  currentConfig: jsonb("current_config"),
+  proposedConfig: jsonb("proposed_config"),
+  evaluationResult: jsonb("evaluation_result"),
+  blastRadius: jsonb("blast_radius"),
+  status: text("status").notNull().default("detected"),
+  riskLevel: text("risk_level").notNull().default("low"),
+  autoApplied: boolean("auto_applied").default(false),
+  expertRequired: boolean("expert_required").default(false),
+  approvalId: varchar("approval_id"),
+  appliedAt: timestamp("applied_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertImprovementCycleSchema = createInsertSchema(improvementCycles).omit({ id: true, createdAt: true });
+export type InsertImprovementCycle = z.infer<typeof insertImprovementCycleSchema>;
+export type ImprovementCycle = typeof improvementCycles.$inferSelect;
+
 export * from "./models/chat";

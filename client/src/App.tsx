@@ -33,6 +33,7 @@ import Evals from "@/pages/evals";
 import Templates from "@/pages/templates";
 import TemplateDetail from "@/pages/template-detail";
 import Improvements from "@/pages/improvements";
+import ImprovementLoop from "@/pages/improvement-loop";
 import OutcomeDiscover from "@/pages/outcome-discover";
 import Integrations from "@/pages/integrations";
 import Admin from "@/pages/admin";
@@ -58,6 +59,7 @@ function Router() {
       <Route path="/governance" component={Governance} />
       <Route path="/approvals" component={Approvals} />
       <Route path="/improvements" component={Improvements} />
+      <Route path="/improvement-loop" component={ImprovementLoop} />
       <Route path="/billing" component={Billing} />
       <Route path="/integrations" component={Integrations} />
       <Route path="/admin" component={Admin} />

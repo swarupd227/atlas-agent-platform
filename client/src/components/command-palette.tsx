@@ -29,6 +29,7 @@ import {
   Plus,
   Search,
   Sparkles,
+  RefreshCw,
 } from "lucide-react";
 
 export function CommandPalette() {
@@ -133,6 +134,10 @@ export function CommandPalette() {
           <CommandItem onSelect={() => runCommand(() => navigate("/improvements"))} data-testid="command-nav-ops">
             <Wrench className="mr-2 h-4 w-4" />
             <span>Ops</span>
+          </CommandItem>
+          <CommandItem onSelect={() => runCommand(() => navigate("/improvement-loop"))} data-testid="command-nav-self-heal">
+            <RefreshCw className="mr-2 h-4 w-4" />
+            <span>Self-Heal Loop</span>
           </CommandItem>
           <CommandItem onSelect={() => runCommand(() => navigate("/governance"))} data-testid="command-nav-governance">
             <Shield className="mr-2 h-4 w-4" />

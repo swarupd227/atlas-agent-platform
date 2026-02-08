@@ -23,6 +23,8 @@ import {
   type ImprovementRecommendation, type InsertImprovementRecommendation,
   type AutonomousActionLog, type InsertAutonomousActionLog,
   type AgentVersion,
+  improvementCycles,
+  type ImprovementCycle, type InsertImprovementCycle,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -108,6 +110,11 @@ export interface IStorage {
   createAutonomousActionLog(log: InsertAutonomousActionLog): Promise<AutonomousActionLog>;
 
   getAgentVersions(agentId: string): Promise<AgentVersion[]>;
+
+  getImprovementCycles(): Promise<ImprovementCycle[]>;
+  getImprovementCyclesByAgent(agentId: string): Promise<ImprovementCycle[]>;
+  createImprovementCycle(cycle: InsertImprovementCycle): Promise<ImprovementCycle>;
+  updateImprovementCycle(id: string, data: Partial<ImprovementCycle>): Promise<ImprovementCycle | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -397,6 +404,29 @@ export class DatabaseStorage implements IStorage {
 
   async getAgentVersions(agentId: string) {
     return db.select().from(agentVersions).where(eq(agentVersions.agentId, agentId));
+  }
+
+  async getImprovementCycles() {
+    return db.select().from(improvementCycles);
+  }
+
+  async getImprovementCycleById(id: string) {
+    const [cycle] = await db.select().from(improvementCycles).where(eq(improvementCycles.id, id));
+    return cycle;
+  }
+
+  async getImprovementCyclesByAgent(agentId: string) {
+    return db.select().from(improvementCycles).where(eq(improvementCycles.agentId, agentId));
+  }
+
+  async createImprovementCycle(cycle: InsertImprovementCycle) {
+    const [created] = await db.insert(improvementCycles).values(cycle).returning();
+    return created;
+  }
+
+  async updateImprovementCycle(id: string, data: Partial<ImprovementCycle>) {
+    const [updated] = await db.update(improvementCycles).set(data).where(eq(improvementCycles.id, id)).returning();
+    return updated;
   }
 }
 

@@ -15,6 +15,7 @@ import {
   FlaskConical,
   Plug,
   ShieldCheck,
+  RotateCcw,
 } from "lucide-react";
 import {
   Sidebar,
@@ -44,6 +45,7 @@ const platformNav = [
 
 const opsNav = [
   { title: "Ops", url: "/improvements", icon: Wrench },
+  { title: "Self-Heal", url: "/improvement-loop", icon: RotateCcw },
   { title: "Governance", url: "/governance", icon: Shield },
   { title: "Approvals", url: "/approvals", icon: CheckCircle },
   { title: "Billing", url: "/billing", icon: CreditCard },

@@ -19,6 +19,7 @@ import {
   insertEvalRunSchema,
   insertImprovementRecommendationSchema,
   insertAutonomousActionLogSchema,
+  insertImprovementCycleSchema,
 } from "@shared/schema";
 
 const openai = new OpenAI({
@@ -1467,6 +1468,39 @@ Guidelines:
     }
   });
 
+  // Improvement Cycles
+  app.get("/api/improvement-cycles", async (_req, res) => {
+    const cycles = await storage.getImprovementCycles();
+    res.json(cycles);
+  });
+
+  app.get("/api/improvement-cycles/:id", async (req, res) => {
+    const cycle = await storage.getImprovementCycleById(req.params.id);
+    if (!cycle) return res.status(404).json({ error: "Not found" });
+    res.json(cycle);
+  });
+
+  app.post("/api/improvement-cycles", async (req, res) => {
+    try {
+      const data = insertImprovementCycleSchema.parse(req.body);
+      const cycle = await storage.createImprovementCycle(data);
+      res.status(201).json(cycle);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  app.patch("/api/improvement-cycles/:id", async (req, res) => {
+    try {
+      const data = insertImprovementCycleSchema.partial().parse(req.body);
+      const updated = await storage.updateImprovementCycle(req.params.id, data);
+      if (!updated) return res.status(404).json({ error: "Not found" });
+      res.json(updated);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
   // Generate recommendations from drift signals and agent data
   app.post("/api/recommendations/generate", async (_req, res) => {
     try {
@@ -1882,6 +1916,112 @@ Return ONLY a valid JSON array of opportunity objects. Do not include any text b
     } catch (error: any) {
       console.error("Transcribe-analyze error:", error);
       res.status(500).json({ error: error.message || "Failed to transcribe and analyze audio" });
+    }
+  });
+
+  // AI-powered improvement cycle analysis
+  app.post("/api/ai/improvement-analyze", async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI is not configured" });
+      }
+
+      const { agentId } = req.body;
+      if (!agentId) return res.status(400).json({ error: "agentId is required" });
+
+      const agent = await storage.getAgent(agentId);
+      if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+      const allEvals = await storage.getEvalSuites();
+      const evals = allEvals.filter(e => e.agentId === agentId);
+      const recommendations = await storage.getImprovementRecommendationsByAgent(agentId);
+      const existingCycles = await storage.getImprovementCyclesByAgent(agentId);
+
+      const agentContext = {
+        name: agent.name,
+        model: agent.modelName,
+        provider: agent.modelProvider,
+        healthScore: agent.healthScore,
+        successRate: agent.successRate,
+        avgLatencyMs: agent.avgLatencyMs,
+        costPerRun: agent.costPerRun,
+        monthlyCost: agent.monthlyCost,
+        monthlyRevenue: agent.monthlyRevenue,
+        autonomyMode: agent.autonomyMode,
+        riskTier: agent.riskTier,
+        currentVersion: agent.currentVersion,
+        evalPassRates: evals.map(e => ({ name: e.name, passRate: e.passRate, type: e.type })),
+        recentRecommendations: recommendations.slice(0, 5).map(r => ({ title: r.title, severity: r.severity, status: r.status, source: r.source })),
+        activeCycles: existingCycles.filter(c => !["applied", "dismissed"].includes(c.status)).length,
+      };
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        messages: [
+          {
+            role: "system",
+            content: `You are an AI agent lifecycle optimization engine. Analyze the agent's performance data and generate improvement cycle proposals. Each proposal represents one autonomous optimization the platform can perform.
+
+For each proposal, classify:
+- triggerType: one of "drift_detected", "eval_regression", "cost_anomaly", "latency_spike", "model_update_available", "policy_violation", "workflow_change"
+- actionType: one of "prompt_optimization", "model_upgrade", "retrain_on_new_data", "workflow_adaptation", "failure_patching", "policy_update", "config_tuning"
+- riskLevel: "low" (auto-apply safe), "medium" (auto-apply with monitoring), "high" (requires expert validation)
+- expertRequired: true if riskLevel is "high" or the change is a major version upgrade or significant behavioral shift
+
+For each proposal provide:
+- detectedIssue: Clear description of what was detected
+- issueCategory: "performance", "cost", "reliability", "compliance", "model"
+- proposedAction: Specific action to take
+- currentConfig: JSON object showing current state (e.g. current prompt snippet, current model, current threshold)
+- proposedConfig: JSON object showing proposed state
+- evaluationResult: JSON with expected improvements (e.g. { passRateChange: "+3%", latencyChange: "-15ms", costChange: "-$0.02/run" })
+- blastRadius: JSON with { affectedOutcomes: number, affectedUsers: string, rollbackPlan: string }
+
+Return a JSON array of 3-5 improvement cycle proposals. Return ONLY valid JSON.`,
+          },
+          {
+            role: "user",
+            content: `Agent Performance Data:\n${JSON.stringify(agentContext, null, 2)}`,
+          },
+        ],
+        temperature: 0.4,
+        max_tokens: 4000,
+      });
+
+      const rawContent = response.choices[0]?.message?.content || "[]";
+      let proposals;
+      try {
+        proposals = JSON.parse(rawContent);
+      } catch {
+        const jsonMatch = rawContent.match(/\[[\s\S]*\]/);
+        proposals = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
+      }
+
+      const createdCycles = [];
+      for (const p of proposals) {
+        const cycle = await storage.createImprovementCycle({
+          agentId,
+          triggerType: p.triggerType || "drift_detected",
+          detectedIssue: p.detectedIssue || "Performance issue detected",
+          issueCategory: p.issueCategory || "performance",
+          proposedAction: p.proposedAction || "Review and optimize",
+          actionType: p.actionType || "prompt_optimization",
+          currentConfig: p.currentConfig || {},
+          proposedConfig: p.proposedConfig || {},
+          evaluationResult: p.evaluationResult || {},
+          blastRadius: p.blastRadius || {},
+          status: p.riskLevel === "high" ? "pending_review" : "proposed",
+          riskLevel: p.riskLevel || "low",
+          autoApplied: false,
+          expertRequired: p.expertRequired || p.riskLevel === "high",
+        });
+        createdCycles.push(cycle);
+      }
+
+      res.json({ cycles: createdCycles, agentContext });
+    } catch (error: any) {
+      console.error("Improvement analyze error:", error);
+      res.status(500).json({ error: error.message || "Failed to analyze agent for improvements" });
     }
   });
 
