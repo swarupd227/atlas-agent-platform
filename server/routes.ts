@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { z, ZodError } from "zod";
-import OpenAI from "openai";
+import OpenAI, { toFile } from "openai";
 import multer from "multer";
 import {
   insertOutcomeContractSchema,
@@ -1829,13 +1829,12 @@ Guidelines:
         return res.status(400).json({ error: "No audio file provided" });
       }
 
-      const audioFile = new File([req.file.buffer], req.file.originalname, {
-        type: req.file.mimetype,
-      });
+      const ext = req.file.originalname.split(".").pop() || "webm";
+      const audioFile = await toFile(req.file.buffer, `audio.${ext}`);
 
       const transcription = await openai.audio.transcriptions.create({
         file: audioFile,
-        model: "whisper-1",
+        model: "gpt-4o-mini-transcribe",
       });
 
       const transcript = transcription.text;

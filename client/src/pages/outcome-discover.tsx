@@ -25,6 +25,8 @@ import {
   Trash2,
   Users,
   AlertCircle,
+  FileText,
+  RefreshCw,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -155,8 +157,13 @@ export default function OutcomeDiscover() {
   const [activeTab, setActiveTab] = useState<"chat" | "record">("chat");
   const [processSteps, setProcessSteps] = useState<ProcessFlowStep[]>([]);
   const [showProcessFlow, setShowProcessFlow] = useState(false);
+  const [liveTranscript, setLiveTranscript] = useState("");
+  const [interimText, setInterimText] = useState("");
+  const [analysisFailed, setAnalysisFailed] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const speechRecognitionRef = useRef<any>(null);
+  const pendingChunksRef = useRef<Blob[]>([]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -280,14 +287,17 @@ export default function OutcomeDiscover() {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const recorder = new MediaRecorder(stream);
       const chunks: Blob[] = [];
+      pendingChunksRef.current = chunks;
 
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) chunks.push(e.data);
       };
 
       recorder.onstop = () => {
-        setAudioChunks(chunks);
+        const finalChunks = [...chunks];
+        setAudioChunks(finalChunks);
         stream.getTracks().forEach(track => track.stop());
+        analyzeChunks(finalChunks);
       };
 
       recorder.start();
@@ -295,10 +305,51 @@ export default function OutcomeDiscover() {
       setIsRecording(true);
       setRecordingTime(0);
       setTranscriptResult(null);
+      setAnalysisFailed(false);
+      setLiveTranscript("");
+      setInterimText("");
 
       recordingTimerRef.current = setInterval(() => {
         setRecordingTime(prev => prev + 1);
       }, 1000);
+
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        const recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = "en-US";
+        let active = true;
+
+        recognition.onresult = (event: any) => {
+          let finalText = "";
+          let interim = "";
+          for (let i = 0; i < event.results.length; i++) {
+            const result = event.results[i];
+            if (result.isFinal) {
+              finalText += result[0].transcript + " ";
+            } else {
+              interim += result[0].transcript;
+            }
+          }
+          if (finalText) {
+            setLiveTranscript(prev => prev + finalText);
+          }
+          setInterimText(interim);
+        };
+
+        recognition.onerror = () => {};
+        recognition.onend = () => {
+          if (active && speechRecognitionRef.current) {
+            try { speechRecognitionRef.current.start(); } catch {}
+          }
+        };
+
+        recognition.start();
+        speechRecognitionRef.current = recognition;
+        (recognition as any)._activeFlag = () => active;
+        (recognition as any)._deactivate = () => { active = false; };
+      }
     } catch (err) {
       toast({ title: "Microphone access denied", description: "Please allow microphone access to record meetings.", variant: "destructive" });
     }
@@ -312,14 +363,22 @@ export default function OutcomeDiscover() {
         clearInterval(recordingTimerRef.current);
         recordingTimerRef.current = null;
       }
+      if (speechRecognitionRef.current) {
+        const ref = speechRecognitionRef.current;
+        if (ref._deactivate) ref._deactivate();
+        speechRecognitionRef.current = null;
+        try { ref.stop(); } catch {}
+      }
+      setInterimText("");
     }
   }
 
-  async function analyzeRecording() {
-    if (audioChunks.length === 0) return;
+  async function analyzeChunks(chunks: Blob[]) {
+    if (chunks.length === 0) return;
     setAnalyzing(true);
+    setAnalysisFailed(false);
     try {
-      const blob = new Blob(audioChunks, { type: "audio/webm" });
+      const blob = new Blob(chunks, { type: "audio/webm" });
       const formData = new FormData();
       formData.append("audio", blob, "recording.webm");
 
@@ -328,12 +387,18 @@ export default function OutcomeDiscover() {
         body: formData,
       });
 
-      if (!res.ok) throw new Error("Analysis failed");
+      if (!res.ok) {
+        const errText = await res.text();
+        let errMsg = "Analysis failed";
+        try { errMsg = JSON.parse(errText).error || errMsg; } catch {}
+        throw new Error(errMsg);
+      }
       const result = await res.json();
       setTranscriptResult(result);
       toast({ title: "Analysis complete", description: `Found ${result.opportunities.length} automation opportunities.` });
-    } catch (err) {
-      toast({ title: "Analysis failed", description: "Could not analyze the recording. Please try again.", variant: "destructive" });
+    } catch (err: any) {
+      setAnalysisFailed(true);
+      toast({ title: "Analysis failed", description: err.message || "Could not analyze the recording. Please try again.", variant: "destructive" });
     } finally {
       setAnalyzing(false);
     }
@@ -456,16 +521,16 @@ export default function OutcomeDiscover() {
                   {isRecording ? <Mic className="w-10 h-10 text-red-500" /> : <Mic className="w-10 h-10 text-primary" />}
                 </div>
                 <h2 className="text-xl font-semibold">
-                  {isRecording ? "Recording in progress..." : transcriptResult ? "Analysis Complete" : audioChunks.length > 0 ? "Recording ready" : "Record a Meeting"}
+                  {isRecording ? "Recording in progress..." : analyzing ? "Analyzing recording..." : transcriptResult ? "Analysis Complete" : "Record a Meeting"}
                 </h2>
                 <p className="text-sm text-muted-foreground max-w-md">
                   {isRecording
-                    ? "Speak clearly. The AI will transcribe and identify automation opportunities."
-                    : transcriptResult
-                      ? `Found ${transcriptResult.opportunities.length} automation opportunities from your conversation.`
-                      : audioChunks.length > 0
-                        ? "Recording captured. Click Analyze to process it."
-                        : "Record a stakeholder conversation or workshop discussion. The AI will automatically identify automation opportunities."}
+                    ? "Speak clearly. Live transcription appears below."
+                    : analyzing
+                      ? "Processing your recording with AI to identify automation opportunities..."
+                      : transcriptResult
+                        ? `Found ${transcriptResult.opportunities.length} automation opportunities from your conversation.`
+                        : "Record a stakeholder conversation or workshop discussion. The AI will automatically transcribe and identify automation opportunities."}
                 </p>
               </div>
 
@@ -476,8 +541,31 @@ export default function OutcomeDiscover() {
                 </div>
               )}
 
+              {(isRecording || analyzing) && (liveTranscript || interimText) && (
+                <Card className="w-full">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
+                      <FileText className="w-4 h-4 text-primary" /> Live Transcription
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-sm text-muted-foreground whitespace-pre-wrap max-h-40 overflow-y-auto" data-testid="text-live-transcript">
+                      {liveTranscript}
+                      {interimText && <span className="text-muted-foreground/50 italic">{interimText}</span>}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {analyzing && !isRecording && (
+                <div className="flex items-center gap-3">
+                  <Loader2 className="w-5 h-5 animate-spin text-primary" />
+                  <span className="text-sm text-muted-foreground">Running AI analysis on your recording...</span>
+                </div>
+              )}
+
               <div className="flex items-center gap-3">
-                {!isRecording && audioChunks.length === 0 && !transcriptResult && (
+                {!isRecording && !analyzing && !transcriptResult && !analysisFailed && (
                   <Button size="lg" onClick={startRecording} data-testid="button-start-recording">
                     <Mic className="w-4 h-4 mr-2" /> Start Recording
                   </Button>
@@ -487,19 +575,23 @@ export default function OutcomeDiscover() {
                     <Square className="w-4 h-4 mr-2" /> Stop Recording
                   </Button>
                 )}
-                {!isRecording && audioChunks.length > 0 && !transcriptResult && (
-                  <>
-                    <Button size="lg" onClick={analyzeRecording} disabled={analyzing} data-testid="button-analyze-recording">
-                      {analyzing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Zap className="w-4 h-4 mr-2" />}
-                      {analyzing ? "Analyzing..." : "Analyze Recording"}
+                {!isRecording && analyzing && !transcriptResult && (
+                  <Button size="lg" disabled data-testid="button-analyzing">
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Analyzing recording...
+                  </Button>
+                )}
+                {!isRecording && !analyzing && analysisFailed && !transcriptResult && (
+                  <div className="flex items-center gap-2">
+                    <Button variant="default" onClick={() => analyzeChunks(audioChunks)} data-testid="button-retry-analysis">
+                      <RefreshCw className="w-4 h-4 mr-2" /> Retry Analysis
                     </Button>
-                    <Button size="lg" variant="outline" onClick={() => { setAudioChunks([]); setRecordingTime(0); }} data-testid="button-discard-recording">
+                    <Button variant="outline" onClick={() => { setAudioChunks([]); setRecordingTime(0); setAnalysisFailed(false); setLiveTranscript(""); setInterimText(""); }} data-testid="button-discard-recording">
                       Discard
                     </Button>
-                  </>
+                  </div>
                 )}
                 {transcriptResult && (
-                  <Button variant="outline" onClick={() => { setAudioChunks([]); setRecordingTime(0); setTranscriptResult(null); }} data-testid="button-new-recording">
+                  <Button variant="outline" onClick={() => { setAudioChunks([]); setRecordingTime(0); setTranscriptResult(null); setAnalysisFailed(false); setLiveTranscript(""); setInterimText(""); }} data-testid="button-new-recording">
                     <Mic className="w-4 h-4 mr-2" /> New Recording
                   </Button>
                 )}
