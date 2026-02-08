@@ -483,7 +483,7 @@ export default function AgentWizard() {
   }
 
   return (
-    <div className="flex flex-col gap-6 p-6" data-testid="page-agent-wizard">
+    <div className="flex flex-col gap-6 p-6 pb-20" data-testid="page-agent-wizard">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex flex-col gap-1">
           <h1 className="text-2xl font-semibold tracking-tight">Agent Design Wizard</h1>
@@ -501,7 +501,7 @@ export default function AgentWizard() {
         )}
       </div>
 
-      <div className="flex items-center gap-2 sticky top-0 z-30 bg-background py-3 border-b -mx-6 px-6">
+      <div className="flex items-center gap-2 bg-background py-3 border-b -mx-6 px-6 sticky top-0 z-30">
         {STEPS.map((step, idx) => (
           <div key={step.number} className="flex items-center gap-2 flex-1" data-testid={`step-${step.number}`}>
             <button
@@ -579,7 +579,7 @@ export default function AgentWizard() {
         )}
       </div>
 
-      <div className="flex items-center justify-between gap-4 border-t pt-4 sticky bottom-0 z-30 bg-background pb-4 -mx-6 px-6">
+      <div className="fixed bottom-0 left-0 right-0 flex items-center justify-between gap-4 border-t pt-4 pb-4 px-6 bg-background z-50">
         <Button
           variant="outline"
           onClick={() => {
