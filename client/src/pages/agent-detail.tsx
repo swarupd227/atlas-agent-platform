@@ -129,6 +129,11 @@ export default function AgentDetail() {
   const [timelineFilter, setTimelineFilter] = useState<string>("all");
   const [retirementChecklist, setRetirementChecklist] = useState<boolean[]>([false, false, false, false, false, false]);
   const [expandedTrace, setExpandedTrace] = useState<string | null>(null);
+  const [shadowReplayOpen, setShadowReplayOpen] = useState(false);
+  const [shadowTimeWindow, setShadowTimeWindow] = useState("24h");
+  const [shadowEnvironment, setShadowEnvironment] = useState("staging");
+  const [shadowSampleSize, setShadowSampleSize] = useState("10");
+  const [shadowResult, setShadowResult] = useState<{ status: string; summary: string; tracesReplayed: number; passRate: number; divergences: Array<{ traceId: string; original: string; replay: string; divergenceType: string }> } | null>(null);
 
   const { data: deprecationSignals, isLoading: deprecationLoading, isError: deprecationError } = useQuery<{
     riskScore: number;
@@ -168,6 +173,24 @@ export default function AgentDetail() {
       toast({ title: data.status === "pending_approval" ? "Retirement sent for expert approval" : "Retirement initiated" });
     },
     onError: () => toast({ title: "Failed to initiate retirement", variant: "destructive" }),
+  });
+
+  const shadowReplayMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/agents/${agentId}/shadow-replay`, {
+        timeWindow: shadowTimeWindow,
+        environment: shadowEnvironment,
+        sampleSize: parseInt(shadowSampleSize) || 10,
+      });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setShadowResult(data);
+      toast({ title: "Shadow replay complete", description: `${data.tracesReplayed} traces replayed with ${Math.round(data.passRate * 100)}% pass rate` });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Shadow replay failed", description: error.message, variant: "destructive" });
+    },
   });
 
   const completeRetirementMutation = useMutation({
@@ -341,7 +364,7 @@ export default function AgentDetail() {
         <Button variant="outline" size="sm" data-testid="button-run-test">
           <Play className="w-3.5 h-3.5 mr-1.5" /> Run Test
         </Button>
-        <Button variant="outline" size="sm" data-testid="button-run-shadow-replay" onClick={() => toast({ title: "Shadow replay initiated" })}>
+        <Button variant="outline" size="sm" data-testid="button-run-shadow-replay" onClick={() => { setShadowReplayOpen(true); setShadowResult(null); }}>
           <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Run Shadow Replay
         </Button>
         <Button variant="outline" size="sm" data-testid="button-request-approval" onClick={() => toast({ title: "Approval request submitted" })}>
@@ -1355,6 +1378,8 @@ export default function AgentDetail() {
                   { name: "Auto-Promote on Canary Success", description: "Promote canary deployment to full rollout when success threshold is met for the configured duration", type: "auto_promote", enabled: true },
                   { name: "Auto-Scale on Load", description: "Scale agent instances based on request queue depth and latency targets", type: "auto_scale", enabled: false },
                   { name: "Auto-Pause on Budget Exceed", description: "Pause agent when monthly cost exceeds configured budget threshold", type: "auto_pause", enabled: agent.status !== "retired" },
+                  { name: "Auto-Expand Eval Suites on Drift", description: "When drift detection finds pass rate degradation > 10%, automatically trigger AI-generated test cases targeting the drift pattern", type: "auto_expand_eval", enabled: true },
+                  { name: "Auto-Quarantine on Confidence Drop", description: "Quarantine agent from production traffic when confidence score drops below 0.6, routing to shadow mode until eval pass rates recover", type: "auto_quarantine", enabled: true },
                 ].map((rule, i) => (
                   <div key={i} className="flex items-center justify-between gap-3 p-3 rounded-md border" data-testid={`autonomous-rule-${rule.type}`}>
                     <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -1395,6 +1420,8 @@ export default function AgentDetail() {
                         {action.actionType === "auto_rollback" ? <RotateCcw className="w-3 h-3" /> :
                          action.actionType === "auto_promote" ? <Rocket className="w-3 h-3" /> :
                          action.actionType === "auto_scale" ? <TrendingUp className="w-3 h-3" /> :
+                         action.actionType === "auto_expand_eval" ? <FlaskConical className="w-3 h-3" /> :
+                         action.actionType === "auto_quarantine" ? <Shield className="w-3 h-3" /> :
                          <Zap className="w-3 h-3" />}
                       </div>
                       <div className="flex flex-col gap-0.5 flex-1 min-w-0">
@@ -1782,6 +1809,130 @@ export default function AgentDetail() {
           })()}
         </TabsContent>
       </Tabs>
+
+      <Dialog open={shadowReplayOpen} onOpenChange={setShadowReplayOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Shadow Replay</DialogTitle>
+            <DialogDescription>
+              Replay historical traces against the current agent version to detect behavioral divergences without affecting production.
+            </DialogDescription>
+          </DialogHeader>
+          {!shadowResult ? (
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-col gap-2">
+                <Label>Time Window</Label>
+                <Select value={shadowTimeWindow} onValueChange={setShadowTimeWindow}>
+                  <SelectTrigger data-testid="select-shadow-time-window">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1h">Last 1 hour</SelectItem>
+                    <SelectItem value="6h">Last 6 hours</SelectItem>
+                    <SelectItem value="24h">Last 24 hours</SelectItem>
+                    <SelectItem value="7d">Last 7 days</SelectItem>
+                    <SelectItem value="30d">Last 30 days</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label>Target Environment</Label>
+                <Select value={shadowEnvironment} onValueChange={setShadowEnvironment}>
+                  <SelectTrigger data-testid="select-shadow-environment">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="staging">Staging</SelectItem>
+                    <SelectItem value="pilot">Pilot</SelectItem>
+                    <SelectItem value="prod">Production (read-only)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label>Sample Size</Label>
+                <Input
+                  type="number"
+                  min="1"
+                  max="100"
+                  value={shadowSampleSize}
+                  onChange={(e) => setShadowSampleSize(e.target.value)}
+                  data-testid="input-shadow-sample-size"
+                />
+                <span className="text-xs text-muted-foreground">Number of historical traces to replay (1-100)</span>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-4">
+              <div className="grid grid-cols-3 gap-3">
+                <div className="flex flex-col items-center gap-1 p-3 rounded-md bg-muted/30">
+                  <span className="text-lg font-semibold">{shadowResult.tracesReplayed}</span>
+                  <span className="text-[10px] text-muted-foreground">Traces Replayed</span>
+                </div>
+                <div className="flex flex-col items-center gap-1 p-3 rounded-md bg-muted/30">
+                  <span className={`text-lg font-semibold ${shadowResult.passRate >= 0.9 ? "text-green-600" : shadowResult.passRate >= 0.7 ? "text-amber-500" : "text-red-500"}`}>
+                    {Math.round(shadowResult.passRate * 100)}%
+                  </span>
+                  <span className="text-[10px] text-muted-foreground">Pass Rate</span>
+                </div>
+                <div className="flex flex-col items-center gap-1 p-3 rounded-md bg-muted/30">
+                  <span className="text-lg font-semibold">{shadowResult.divergences.length}</span>
+                  <span className="text-[10px] text-muted-foreground">Divergences</span>
+                </div>
+              </div>
+              <p className="text-sm text-muted-foreground">{shadowResult.summary}</p>
+              {shadowResult.divergences.length > 0 && (
+                <div className="flex flex-col gap-2">
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Divergences</span>
+                  <div className="max-h-48 overflow-y-auto space-y-2">
+                    {shadowResult.divergences.map((div, i) => (
+                      <div key={i} className="p-2.5 rounded-md bg-muted/30 space-y-1" data-testid={`divergence-${i}`}>
+                        <div className="flex items-center justify-between gap-2">
+                          <Badge variant="outline" className="text-[10px]">{div.divergenceType}</Badge>
+                          <span className="text-[10px] text-muted-foreground font-mono">{div.traceId.slice(0, 8)}</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-[11px]">
+                          <div>
+                            <span className="text-muted-foreground block mb-0.5">Original</span>
+                            <span className="font-mono">{div.original.slice(0, 80)}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground block mb-0.5">Replay</span>
+                            <span className="font-mono">{div.replay.slice(0, 80)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            {shadowResult ? (
+              <Button variant="outline" onClick={() => setShadowReplayOpen(false)} data-testid="button-close-shadow-replay">
+                Close
+              </Button>
+            ) : (
+              <>
+                <Button variant="outline" onClick={() => setShadowReplayOpen(false)} data-testid="button-cancel-shadow-replay">
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => shadowReplayMutation.mutate()}
+                  disabled={shadowReplayMutation.isPending}
+                  data-testid="button-start-shadow-replay"
+                >
+                  {shadowReplayMutation.isPending ? (
+                    <><RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Replaying...</>
+                  ) : (
+                    <><Play className="w-3.5 h-3.5 mr-1.5" /> Start Replay</>
+                  )}
+                </Button>
+              </>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={retireDialogOpen} onOpenChange={setRetireDialogOpen}>
         <DialogContent>

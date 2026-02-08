@@ -3,7 +3,7 @@ import { db } from "./db";
 import {
   users, agents, outcomeContracts, kpiDefinitions, deployments,
   runTraces, evalSuites, policies, approvals, auditEvents, invoices, outcomeEvents,
-  agentTemplates, evalTestCases, evalRuns,
+  agentTemplates, evalTestCases, evalRuns, evalCaseResults,
   improvementRecommendations, autonomousActionLogs, agentVersions,
   policyExceptions, complianceReports,
   type User, type InsertUser,
@@ -21,6 +21,7 @@ import {
   type AgentTemplate, type InsertAgentTemplate,
   type EvalTestCase, type InsertEvalTestCase,
   type EvalRun, type InsertEvalRun,
+  type EvalCaseResult, type InsertEvalCaseResult,
   type ImprovementRecommendation, type InsertImprovementRecommendation,
   type AutonomousActionLog, type InsertAutonomousActionLog,
   type AgentVersion,
@@ -97,6 +98,10 @@ export interface IStorage {
   getEvalRuns(suiteId: string): Promise<EvalRun[]>;
   getEvalRunsBySuite(suiteId: string): Promise<EvalRun[]>;
   createEvalRun(run: InsertEvalRun): Promise<EvalRun>;
+
+  getEvalCaseResults(runId: string): Promise<EvalCaseResult[]>;
+  createEvalCaseResult(result: InsertEvalCaseResult): Promise<EvalCaseResult>;
+  getEvalCaseResultsByCase(caseId: string): Promise<EvalCaseResult[]>;
 
   updateEvalTestCase(id: string, data: Partial<EvalTestCase>): Promise<EvalTestCase | undefined>;
   deleteEvalTestCase(id: string): Promise<boolean>;
@@ -360,6 +365,19 @@ export class DatabaseStorage implements IStorage {
   async createEvalRun(run: InsertEvalRun) {
     const [created] = await db.insert(evalRuns).values(run).returning();
     return created;
+  }
+
+  async getEvalCaseResults(runId: string) {
+    return db.select().from(evalCaseResults).where(eq(evalCaseResults.runId, runId));
+  }
+
+  async createEvalCaseResult(result: InsertEvalCaseResult) {
+    const [created] = await db.insert(evalCaseResults).values(result).returning();
+    return created;
+  }
+
+  async getEvalCaseResultsByCase(caseId: string) {
+    return db.select().from(evalCaseResults).where(eq(evalCaseResults.caseId, caseId));
   }
 
   async updateEvalTestCase(id: string, data: Partial<EvalTestCase>) {

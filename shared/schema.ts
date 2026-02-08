@@ -172,6 +172,10 @@ export const evalSuites = pgTable("eval_suites", {
   totalCases: integer("total_cases").default(0),
   lastRunAt: timestamp("last_run_at"),
   thresholdConfig: jsonb("threshold_config"),
+  scorerConfig: jsonb("scorer_config"),
+  coverageTags: text("coverage_tags").array(),
+  environmentThresholds: jsonb("environment_thresholds"),
+  schedule: text("schedule"),
 });
 
 export const insertEvalSuiteSchema = createInsertSchema(evalSuites).omit({ id: true });
@@ -354,6 +358,7 @@ export const evalRuns = pgTable("eval_runs", {
   avgCostUsd: real("avg_cost_usd").default(0),
   resultsJson: jsonb("results_json"),
   triggeredBy: text("triggered_by").default("manual"),
+  environment: text("environment").default("staging"),
   startedAt: timestamp("started_at").defaultNow(),
   completedAt: timestamp("completed_at"),
 });
@@ -361,6 +366,24 @@ export const evalRuns = pgTable("eval_runs", {
 export const insertEvalRunSchema = createInsertSchema(evalRuns).omit({ id: true, startedAt: true });
 export type InsertEvalRun = z.infer<typeof insertEvalRunSchema>;
 export type EvalRun = typeof evalRuns.$inferSelect;
+
+export const evalCaseResults = pgTable("eval_case_results", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  runId: varchar("run_id").notNull(),
+  caseId: varchar("case_id").notNull(),
+  passed: boolean("passed").notNull().default(false),
+  actualOutput: jsonb("actual_output"),
+  scorerOutputs: jsonb("scorer_outputs"),
+  failingStep: text("failing_step"),
+  failingReason: text("failing_reason"),
+  latencyMs: integer("latency_ms").default(0),
+  costUsd: real("cost_usd").default(0),
+  traceId: varchar("trace_id"),
+});
+
+export const insertEvalCaseResultSchema = createInsertSchema(evalCaseResults).omit({ id: true });
+export type InsertEvalCaseResult = z.infer<typeof insertEvalCaseResultSchema>;
+export type EvalCaseResult = typeof evalCaseResults.$inferSelect;
 
 export const improvementRecommendations = pgTable("improvement_recommendations", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

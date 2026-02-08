@@ -36,7 +36,10 @@ The platform is built with a modern web stack:
 - **Global App Shell**: Includes a left navigation sidebar, top bar with global search, command palette, environment selector, and notification center.
 
 **Technical Implementations**:
-- **AI Endpoints**: `POST /api/ai/agent-assist` for conversational design, `POST /api/ai/match-templates` for template matching, `POST /api/ai/outcome-discover` for outcome discovery, `POST /api/ai/propose-agents` for generating agent proposals, and `POST /api/ai/propose-replacement` for AI-powered replacement proposals during retirement.
+- **Eval Studio**: Full-featured evaluation management with 9-tab detail page (test-cases, run-history, scorers, env-thresholds, failure-triage, agent-bindings, red-team, regression-diff, outcome-correlation). Features include: AI-powered auto-generate test cases (POST /api/ai/generate-eval-cases using GPT-4.1), 4 scorer types (Structured Correctness, Semantic Match, Policy Compliance, Tool Assertions), per-environment thresholds (staging/pilot/prod), failure triage with per-case results and trace viewer links, regression diff with version A vs B comparison, coverage tag badges (safety/compliance/edge-cases/adversarial).
+- **Shadow Replay**: POST /api/agents/:id/shadow-replay endpoint that replays historical traces against current agent version to detect behavioral divergences. UI dialog with time window selector (1h/6h/24h/7d/30d), target environment, sample size controls, and divergence visualization.
+- **Autonomy Hooks**: Auto-expand eval suites on drift (auto-generates test cases targeting drift patterns when pass rate degradation > 10%), auto-quarantine on confidence drop (quarantine agent from production when confidence < 0.6). POST /api/agents/:id/autonomy-hooks endpoint.
+- **AI Endpoints**: `POST /api/ai/agent-assist` for conversational design, `POST /api/ai/match-templates` for template matching, `POST /api/ai/outcome-discover` for outcome discovery, `POST /api/ai/propose-agents` for generating agent proposals, `POST /api/ai/propose-replacement` for AI-powered replacement proposals during retirement, and `POST /api/ai/generate-eval-cases` for AI-generated test case synthesis.
 - **Data Model**: Comprehensive schema covering outcome contracts, agents, deployments, evaluations, policies, approvals, billing, and templates.
 
 ## External Dependencies

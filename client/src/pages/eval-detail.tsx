@@ -28,6 +28,17 @@ import {
   Bug,
   AlertTriangle,
   CheckCircle,
+  CheckSquare,
+  Layers,
+  Wrench,
+  GitCompare,
+  Sliders,
+  Server,
+  FlaskRound,
+  Filter,
+  ExternalLink,
+  Sparkles,
+  Loader2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -47,15 +58,25 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { StatusBadge } from "@/components/status-badge";
 import { StatCard } from "@/components/stat-card";
 import { formatDate } from "@/components/shared-utils";
-import type { EvalSuite, EvalTestCase, EvalRun, Agent, OutcomeContract } from "@shared/schema";
+import type { EvalSuite, EvalTestCase, EvalRun, Agent, OutcomeContract, EvalCaseResult } from "@shared/schema";
 
 function truncateJson(data: unknown, maxLen = 80): string {
   if (!data) return "\u2014";
   const str = typeof data === "string" ? data : JSON.stringify(data);
   return str.length > maxLen ? str.substring(0, maxLen) + "\u2026" : str;
+}
+
+function PassFailBadge({ passed }: { passed: boolean }) {
+  return passed ? (
+    <Badge variant="outline" className="text-[10px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">Pass</Badge>
+  ) : (
+    <Badge variant="outline" className="text-[10px] bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20">Fail</Badge>
+  );
 }
 
 function passRateColor(rate: number | null | undefined) {
@@ -81,15 +102,26 @@ const typeLabels: Record<string, string> = {
   adversarial: "Adversarial",
 };
 
+const scorerTypeConfig: Record<string, { label: string; icon: typeof CheckSquare; description: string }> = {
+  structured_correctness: { label: "Structured Correctness", icon: CheckSquare, description: "JSON schema validation" },
+  semantic_match: { label: "Semantic Match", icon: Layers, description: "Embedding similarity" },
+  policy_compliance: { label: "Policy Compliance", icon: Shield, description: "Linked policy checks" },
+  tool_assertions: { label: "Tool Assertions", icon: Wrench, description: "Expected tool calls" },
+};
+
 const tabItems = [
   { key: "test-cases", label: "Test Cases", icon: ListChecks, testId: "tab-test-cases" },
   { key: "run-history", label: "Run History", icon: History, testId: "tab-run-history" },
-  { key: "scoring-config", label: "Scoring Config", icon: Settings, testId: "tab-scoring-config" },
+  { key: "scorers", label: "Scorers", icon: Settings, testId: "tab-scorers" },
+  { key: "env-thresholds", label: "Env Thresholds", icon: Server, testId: "tab-env-thresholds" },
+  { key: "failure-triage", label: "Failure Triage", icon: FlaskRound, testId: "tab-failure-triage" },
   { key: "agent-bindings", label: "Agent Bindings", icon: Link2, testId: "tab-agent-bindings" },
   { key: "red-team", label: "Red-Team Coverage", icon: ShieldAlert, testId: "tab-red-team" },
-  { key: "regressions", label: "Regressions", icon: TrendingDown, testId: "tab-regressions" },
+  { key: "regression-diff", label: "Regression Diff", icon: GitCompare, testId: "tab-regression-diff" },
   { key: "outcome-correlation", label: "Outcome Correlation", icon: BarChart3, testId: "tab-outcome-correlation" },
 ];
+
+type ScorerEntry = { id: string; type: string; name: string; weight: number; params: Record<string, unknown> };
 
 export default function EvalDetail() {
   const [, params] = useRoute("/evals/:id");
@@ -105,6 +137,19 @@ export default function EvalDetail() {
   const [editScoring, setEditScoring] = useState(false);
   const [editPassThreshold, setEditPassThreshold] = useState("");
   const [editSchedule, setEditSchedule] = useState("");
+  const [addScorerOpen, setAddScorerOpen] = useState(false);
+  const [newScorerType, setNewScorerType] = useState("structured_correctness");
+  const [newScorerName, setNewScorerName] = useState("");
+  const [newScorerWeight, setNewScorerWeight] = useState("1");
+  const [newScorerParams, setNewScorerParams] = useState("");
+  const [editEnvThresholds, setEditEnvThresholds] = useState(false);
+  const [envThresholdsForm, setEnvThresholdsForm] = useState<Record<string, Record<string, unknown>>>({});
+  const [triageStatusFilter, setTriageStatusFilter] = useState("all");
+  const [triageSearch, setTriageSearch] = useState("");
+  const [expandedScorerOutputs, setExpandedScorerOutputs] = useState<Set<string>>(new Set());
+  const [diffRunA, setDiffRunA] = useState<string>("");
+  const [diffRunB, setDiffRunB] = useState<string>("");
+  const [generatedCases, setGeneratedCases] = useState<Array<{ name: string; inputData: unknown; expectedOutput: unknown; tags: string[]; weight: number; rationale: string }>>([]);
 
   const { data: suite, isLoading } = useQuery<EvalSuite>({
     queryKey: ["/api/evals", id],
@@ -124,6 +169,26 @@ export default function EvalDetail() {
   });
   const { data: outcomes } = useQuery<OutcomeContract[]>({
     queryKey: ["/api/outcomes"],
+  });
+
+  const sortedRuns = [...(runs || [])].sort(
+    (a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime()
+  );
+  const latestRun = sortedRuns[0];
+
+  const { data: caseResults } = useQuery<EvalCaseResult[]>({
+    queryKey: ["/api/eval-runs", latestRun?.id, "case-results"],
+    enabled: !!latestRun?.id,
+  });
+
+  const { data: diffResultsA } = useQuery<EvalCaseResult[]>({
+    queryKey: ["/api/eval-runs", diffRunA, "case-results"],
+    enabled: !!diffRunA,
+  });
+
+  const { data: diffResultsB } = useQuery<EvalCaseResult[]>({
+    queryKey: ["/api/eval-runs", diffRunB, "case-results"],
+    enabled: !!diffRunB,
   });
 
   const runMutation = useMutation({
@@ -200,6 +265,71 @@ export default function EvalDetail() {
     },
   });
 
+  const updateScorerConfigMutation = useMutation({
+    mutationFn: async (scorers: ScorerEntry[]) => {
+      await apiRequest("PUT", `/api/evals/${id}`, { scorerConfig: scorers });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/evals", id] });
+      toast({ title: "Scorers updated", description: "Scorer configuration has been saved." });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to update scorers", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const updateEnvThresholdsMutation = useMutation({
+    mutationFn: async (thresholds: Record<string, Record<string, unknown>>) => {
+      await apiRequest("PUT", `/api/evals/${id}`, { environmentThresholds: thresholds });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/evals", id] });
+      toast({ title: "Environment thresholds updated", description: "Thresholds have been saved." });
+      setEditEnvThresholds(false);
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to update thresholds", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const autoGenerateMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/ai/generate-eval-cases", {
+        suiteId: id,
+        agentId: suite?.agentId,
+        existingCases: testCases?.map((tc: any) => ({ name: tc.name, tags: tc.tags })) || [],
+        coverageTags: suite?.coverageTags || [],
+      });
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      setGeneratedCases(data.cases || []);
+      toast({ title: "Cases generated", description: `${(data.cases || []).length} test cases generated by AI. Review and add them below.` });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to generate cases", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const addGeneratedCaseMutation = useMutation({
+    mutationFn: async (c: { name: string; inputData: unknown; expectedOutput: unknown; tags: string[]; weight: number }) => {
+      await apiRequest("POST", `/api/evals/${id}/cases`, {
+        name: c.name,
+        inputData: c.inputData,
+        expectedOutput: c.expectedOutput,
+        tags: c.tags,
+        weight: c.weight,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/evals", id, "cases"] });
+      toast({ title: "Test case added" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to add case", description: error.message, variant: "destructive" });
+    },
+  });
+
   if (isLoading) {
     return (
       <div className="flex flex-col gap-6 p-6">
@@ -229,11 +359,52 @@ export default function EvalDetail() {
     );
   }
 
-  const sortedRuns = [...(runs || [])].sort(
-    (a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime()
-  );
-  const latestRun = sortedRuns[0];
   const thresholdConfig = suite.thresholdConfig as Record<string, unknown> | null;
+  const scorerConfig = (suite.scorerConfig || []) as ScorerEntry[];
+  const environmentThresholds = (suite.environmentThresholds || {
+    staging: { passThreshold: 0.7, allowFailures: true },
+    pilot: { passThreshold: 0.85, allowFailures: false },
+    prod: { passThreshold: 0.95, allowFailures: false, mustBeNonRegressing: true },
+  }) as Record<string, Record<string, unknown>>;
+
+  const handleAddScorer = () => {
+    let parsedParams: Record<string, unknown> = {};
+    if (newScorerParams.trim()) {
+      try {
+        parsedParams = JSON.parse(newScorerParams);
+      } catch {
+        toast({ title: "Invalid JSON", description: "Params must be valid JSON.", variant: "destructive" });
+        return;
+      }
+    }
+    const newScorer: ScorerEntry = {
+      id: crypto.randomUUID(),
+      type: newScorerType,
+      name: newScorerName || scorerTypeConfig[newScorerType]?.label || newScorerType,
+      weight: parseFloat(newScorerWeight) || 1,
+      params: parsedParams,
+    };
+    updateScorerConfigMutation.mutate([...scorerConfig, newScorer]);
+    setAddScorerOpen(false);
+    setNewScorerType("structured_correctness");
+    setNewScorerName("");
+    setNewScorerWeight("1");
+    setNewScorerParams("");
+  };
+
+  const handleDeleteScorer = (scorerId: string) => {
+    updateScorerConfigMutation.mutate(scorerConfig.filter((s) => s.id !== scorerId));
+  };
+
+  const getParamsPlaceholder = (type: string) => {
+    switch (type) {
+      case "structured_correctness": return '{"schema": {"type": "object"}}';
+      case "semantic_match": return '{"threshold": 0.85}';
+      case "policy_compliance": return '{"policyIds": ["policy-1"]}';
+      case "tool_assertions": return '{"toolNames": ["search"], "argPatterns": {}}';
+      default: return "{}";
+    }
+  };
 
   return (
     <div className="flex flex-col gap-6 p-6" data-testid="page-eval-detail">
@@ -322,9 +493,24 @@ export default function EvalDetail() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-3">
             <CardTitle className="text-sm font-medium">Test Cases</CardTitle>
-            <Button variant="outline" size="sm" data-testid="button-add-test-case" onClick={() => setAddTcOpen(true)}>
-              <Plus className="w-3.5 h-3.5 mr-1.5" /> Add Test Case
-            </Button>
+            <div className="flex items-center gap-2 flex-wrap">
+              <Button
+                variant="outline"
+                size="sm"
+                data-testid="button-auto-generate-cases"
+                onClick={() => autoGenerateMutation.mutate()}
+                disabled={autoGenerateMutation.isPending}
+              >
+                {autoGenerateMutation.isPending ? (
+                  <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Generating...</>
+                ) : (
+                  <><Sparkles className="w-3.5 h-3.5 mr-1.5" /> Auto-Generate</>
+                )}
+              </Button>
+              <Button variant="outline" size="sm" data-testid="button-add-test-case" onClick={() => setAddTcOpen(true)}>
+                <Plus className="w-3.5 h-3.5 mr-1.5" /> Add Test Case
+              </Button>
+            </div>
           </CardHeader>
           <CardContent className="p-0">
             {!testCases || testCases.length === 0 ? (
@@ -388,6 +574,81 @@ export default function EvalDetail() {
             )}
           </CardContent>
         </Card>
+
+        {generatedCases.length > 0 && (
+          <Card className="mt-4">
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-3">
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-muted-foreground" />
+                AI-Generated Cases
+              </CardTitle>
+              <Button variant="ghost" size="sm" data-testid="button-dismiss-generated" onClick={() => setGeneratedCases([])}>
+                Dismiss
+              </Button>
+            </CardHeader>
+            <CardContent className="p-0">
+              <Table data-testid="table-generated-cases">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Input</TableHead>
+                    <TableHead>Expected</TableHead>
+                    <TableHead>Tags</TableHead>
+                    <TableHead>Rationale</TableHead>
+                    <TableHead className="w-10"></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {generatedCases.map((gc, idx) => (
+                    <TableRow key={idx} data-testid={`row-generated-case-${idx}`}>
+                      <TableCell className="font-medium text-sm">{gc.name}</TableCell>
+                      <TableCell>
+                        <span className="font-mono text-xs text-muted-foreground max-w-[150px] truncate block">
+                          {typeof gc.inputData === "string" ? gc.inputData : JSON.stringify(gc.inputData).slice(0, 60)}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        <span className="font-mono text-xs text-muted-foreground max-w-[150px] truncate block">
+                          {typeof gc.expectedOutput === "string" ? gc.expectedOutput : JSON.stringify(gc.expectedOutput).slice(0, 60)}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-1 flex-wrap">
+                          {(gc.tags || []).map((tag, i) => (
+                            <Badge key={i} variant="outline" className="text-[10px]">{tag}</Badge>
+                          ))}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <span className="text-xs text-muted-foreground">{gc.rationale}</span>
+                      </TableCell>
+                      <TableCell>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          data-testid={`button-add-generated-${idx}`}
+                          onClick={() => {
+                            addGeneratedCaseMutation.mutate({
+                              name: gc.name,
+                              inputData: gc.inputData,
+                              expectedOutput: gc.expectedOutput,
+                              tags: gc.tags,
+                              weight: gc.weight,
+                            });
+                            setGeneratedCases((prev) => prev.filter((_, i) => i !== idx));
+                          }}
+                          disabled={addGeneratedCaseMutation.isPending}
+                        >
+                          <Plus className="w-3.5 h-3.5 mr-1" /> Add
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        )}
       </TabsContent>
 
       <TabsContent value="run-history" className="mt-0">
@@ -458,129 +719,133 @@ export default function EvalDetail() {
         </Card>
       </TabsContent>
 
-      <TabsContent value="scoring-config" className="mt-0">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <TabsContent value="scorers" className="mt-0">
+        <div className="flex flex-col gap-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-3">
               <div className="flex items-center gap-2">
-                <Gauge className="w-4 h-4 text-muted-foreground" />
-                <CardTitle className="text-sm font-medium">Pass Threshold</CardTitle>
+                <Sliders className="w-4 h-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Scorer Configuration</CardTitle>
               </div>
-              {!editScoring && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  data-testid="button-edit-scoring"
-                  onClick={() => {
-                    const currentThreshold = thresholdConfig && typeof thresholdConfig === "object" && "passThreshold" in thresholdConfig
-                      ? Number(thresholdConfig.passThreshold) * 100
-                      : (suite.passRate || 0) * 100;
-                    const currentSchedule = thresholdConfig && typeof thresholdConfig === "object" && "schedule" in thresholdConfig
-                      ? String(thresholdConfig.schedule)
-                      : "";
-                    setEditPassThreshold(String(currentThreshold));
-                    setEditSchedule(currentSchedule);
-                    setEditScoring(true);
-                  }}
-                >
-                  <Pencil className="w-3.5 h-3.5 mr-1.5" /> Edit
-                </Button>
-              )}
+              <Button variant="outline" size="sm" data-testid="button-add-scorer" onClick={() => setAddScorerOpen(true)}>
+                <Plus className="w-3.5 h-3.5 mr-1.5" /> Add Scorer
+              </Button>
             </CardHeader>
-            <CardContent className="flex flex-col gap-3">
-              {editScoring ? (
-                <>
-                  <div className="flex flex-col gap-2">
-                    <Label htmlFor="pass-threshold" className="text-xs text-muted-foreground">Pass Threshold (%)</Label>
-                    <Input
-                      id="pass-threshold"
-                      type="number"
-                      min="0"
-                      max="100"
-                      value={editPassThreshold}
-                      onChange={(e) => setEditPassThreshold(e.target.value)}
-                      data-testid="input-pass-threshold"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    <Label htmlFor="schedule" className="text-xs text-muted-foreground">Schedule</Label>
-                    <Input
-                      id="schedule"
-                      value={editSchedule}
-                      onChange={(e) => setEditSchedule(e.target.value)}
-                      placeholder="e.g. daily, weekly, 0 0 * * *"
-                      data-testid="input-schedule"
-                    />
-                  </div>
-                  <div className="flex items-center gap-2 pt-2">
-                    <Button
-                      size="sm"
-                      data-testid="button-save-scoring"
-                      onClick={() => updateScoringMutation.mutate()}
-                      disabled={updateScoringMutation.isPending}
-                    >
-                      {updateScoringMutation.isPending ? "Saving..." : "Save"}
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => setEditScoring(false)}>
-                      Cancel
-                    </Button>
-                  </div>
-                </>
+            <CardContent>
+              {scorerConfig.length === 0 ? (
+                <div className="py-8 text-center">
+                  <Sliders className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
+                  <p className="text-sm text-muted-foreground">No scorers configured</p>
+                  <p className="text-xs text-muted-foreground mt-1">Add scorers to define how test cases are evaluated</p>
+                </div>
               ) : (
-                <>
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-4xl font-bold tracking-tight" data-testid="text-pass-threshold">
-                      {thresholdConfig && typeof thresholdConfig === "object" && "passThreshold" in thresholdConfig
-                        ? `${Number(thresholdConfig.passThreshold) * 100}%`
-                        : `${(suite.passRate || 0) * 100}%`}
-                    </span>
-                    <span className="text-sm text-muted-foreground">required to pass</span>
-                  </div>
-                  <Progress
-                    value={
-                      thresholdConfig && typeof thresholdConfig === "object" && "passThreshold" in thresholdConfig
-                        ? Number(thresholdConfig.passThreshold) * 100
-                        : (suite.passRate || 0) * 100
-                    }
-                    className="h-2"
-                  />
-                </>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex items-center gap-2">
-                <Settings className="w-4 h-4 text-muted-foreground" />
-                <CardTitle className="text-sm font-medium">Evaluation Settings</CardTitle>
-              </div>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-3">
-              <div className="flex items-center justify-between gap-2 py-1.5 border-b border-border/50">
-                <span className="text-xs text-muted-foreground">Type</span>
-                <Badge variant="outline" className="text-[11px]">
-                  {typeLabels[suite.type || "regression"] || suite.type}
-                </Badge>
-              </div>
-              <div className="flex items-center justify-between gap-2 py-1.5 border-b border-border/50">
-                <span className="text-xs text-muted-foreground">Total Cases</span>
-                <span className="text-sm font-medium">{suite.totalCases || testCases?.length || 0}</span>
-              </div>
-              <div className="flex items-center justify-between gap-2 py-1.5 border-b border-border/50">
-                <span className="text-xs text-muted-foreground">Last Run</span>
-                <span className="text-sm font-medium">{formatDate(suite.lastRunAt)}</span>
-              </div>
-              {thresholdConfig && typeof thresholdConfig === "object" && "schedule" in thresholdConfig && (
-                <div className="flex items-center justify-between gap-2 py-1.5">
-                  <span className="text-xs text-muted-foreground">Schedule</span>
-                  <span className="text-sm font-mono">{String(thresholdConfig.schedule)}</span>
+                <div className="flex flex-col gap-3">
+                  {scorerConfig.map((scorer) => {
+                    const cfg = scorerTypeConfig[scorer.type];
+                    const ScorerIcon = cfg?.icon || CheckSquare;
+                    return (
+                      <div key={scorer.id} className="flex items-start gap-3 p-3 rounded-md border hover-elevate" data-testid={`scorer-card-${scorer.id}`}>
+                        <div className="w-8 h-8 rounded-md flex items-center justify-center shrink-0 bg-primary/10">
+                          <ScorerIcon className="w-4 h-4 text-primary" />
+                        </div>
+                        <div className="flex flex-col gap-1 flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-medium" data-testid={`text-scorer-name-${scorer.id}`}>{scorer.name}</span>
+                            <Badge variant="outline" className="text-[9px]">{cfg?.label || scorer.type}</Badge>
+                            <Badge variant="outline" className="text-[9px]">weight: {scorer.weight}</Badge>
+                          </div>
+                          <span className="text-[10px] text-muted-foreground font-mono">
+                            {truncateJson(scorer.params, 100)}
+                          </span>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          data-testid={`button-delete-scorer-${scorer.id}`}
+                          onClick={() => handleDeleteScorer(scorer.id)}
+                        >
+                          <Trash2 className="w-3.5 h-3.5 text-muted-foreground" />
+                        </Button>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </CardContent>
           </Card>
 
-          <Card className="md:col-span-2">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-3">
+                <div className="flex items-center gap-2">
+                  <Gauge className="w-4 h-4 text-muted-foreground" />
+                  <CardTitle className="text-sm font-medium">Pass Threshold</CardTitle>
+                </div>
+                {!editScoring && (
+                  <Button variant="outline" size="sm" data-testid="button-edit-scoring" onClick={() => {
+                    const ct = thresholdConfig && typeof thresholdConfig === "object" && "passThreshold" in thresholdConfig ? Number(thresholdConfig.passThreshold) * 100 : (suite.passRate || 0) * 100;
+                    const cs = thresholdConfig && typeof thresholdConfig === "object" && "schedule" in thresholdConfig ? String(thresholdConfig.schedule) : "";
+                    setEditPassThreshold(String(ct)); setEditSchedule(cs); setEditScoring(true);
+                  }}><Pencil className="w-3.5 h-3.5 mr-1.5" /> Edit</Button>
+                )}
+              </CardHeader>
+              <CardContent className="flex flex-col gap-3">
+                {editScoring ? (
+                  <>
+                    <div className="flex flex-col gap-2">
+                      <Label htmlFor="pass-threshold" className="text-xs text-muted-foreground">Pass Threshold (%)</Label>
+                      <Input id="pass-threshold" type="number" min="0" max="100" value={editPassThreshold} onChange={(e) => setEditPassThreshold(e.target.value)} data-testid="input-pass-threshold" />
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <Label htmlFor="schedule" className="text-xs text-muted-foreground">Schedule</Label>
+                      <Input id="schedule" value={editSchedule} onChange={(e) => setEditSchedule(e.target.value)} placeholder="e.g. daily, weekly, 0 0 * * *" data-testid="input-schedule" />
+                    </div>
+                    <div className="flex items-center gap-2 pt-2">
+                      <Button size="sm" data-testid="button-save-scoring" onClick={() => updateScoringMutation.mutate()} disabled={updateScoringMutation.isPending}>{updateScoringMutation.isPending ? "Saving..." : "Save"}</Button>
+                      <Button variant="outline" size="sm" onClick={() => setEditScoring(false)}>Cancel</Button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-4xl font-bold tracking-tight" data-testid="text-pass-threshold">
+                        {thresholdConfig && typeof thresholdConfig === "object" && "passThreshold" in thresholdConfig ? `${Number(thresholdConfig.passThreshold) * 100}%` : `${(suite.passRate || 0) * 100}%`}
+                      </span>
+                      <span className="text-sm text-muted-foreground">required to pass</span>
+                    </div>
+                    <Progress value={thresholdConfig && typeof thresholdConfig === "object" && "passThreshold" in thresholdConfig ? Number(thresholdConfig.passThreshold) * 100 : (suite.passRate || 0) * 100} className="h-2" />
+                  </>
+                )}
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex items-center gap-2">
+                  <Settings className="w-4 h-4 text-muted-foreground" />
+                  <CardTitle className="text-sm font-medium">Evaluation Settings</CardTitle>
+                </div>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-3">
+                {([
+                  ["Type", <Badge key="t" variant="outline" className="text-[11px]">{typeLabels[suite.type || "regression"] || suite.type}</Badge>],
+                  ["Total Cases", <span key="c" className="text-sm font-medium">{suite.totalCases || testCases?.length || 0}</span>],
+                  ["Last Run", <span key="l" className="text-sm font-medium">{formatDate(suite.lastRunAt)}</span>],
+                ] as const).map(([label, val], i) => (
+                  <div key={i} className="flex items-center justify-between gap-2 py-1.5 border-b border-border/50">
+                    <span className="text-xs text-muted-foreground">{label}</span>{val}
+                  </div>
+                ))}
+                {thresholdConfig && typeof thresholdConfig === "object" && "schedule" in thresholdConfig && (
+                  <div className="flex items-center justify-between gap-2 py-1.5">
+                    <span className="text-xs text-muted-foreground">Schedule</span>
+                    <span className="text-sm font-mono">{String(thresholdConfig.schedule)}</span>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium">Weights Distribution</CardTitle>
             </CardHeader>
@@ -605,6 +870,294 @@ export default function EvalDetail() {
             </CardContent>
           </Card>
         </div>
+      </TabsContent>
+
+      <TabsContent value="env-thresholds" className="mt-0">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-3">
+            <div className="flex items-center gap-2">
+              <Server className="w-4 h-4 text-muted-foreground" />
+              <CardTitle className="text-sm font-medium">Environment Thresholds</CardTitle>
+            </div>
+            {!editEnvThresholds ? (
+              <Button
+                variant="outline"
+                size="sm"
+                data-testid="button-edit-env-thresholds"
+                onClick={() => {
+                  setEnvThresholdsForm(JSON.parse(JSON.stringify(environmentThresholds)));
+                  setEditEnvThresholds(true);
+                }}
+              >
+                <Pencil className="w-3.5 h-3.5 mr-1.5" /> Edit
+              </Button>
+            ) : (
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  data-testid="button-save-env-thresholds"
+                  onClick={() => updateEnvThresholdsMutation.mutate(envThresholdsForm)}
+                  disabled={updateEnvThresholdsMutation.isPending}
+                >
+                  {updateEnvThresholdsMutation.isPending ? "Saving..." : "Save"}
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setEditEnvThresholds(false)}>
+                  Cancel
+                </Button>
+              </div>
+            )}
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {(["staging", "pilot", "prod"] as const).map((env) => {
+                const envData = editEnvThresholds ? (envThresholdsForm[env] || {}) : (environmentThresholds[env] || {});
+                const threshold = Number(envData.passThreshold || 0);
+                const allowFailures = Boolean(envData.allowFailures);
+                const mustBeNonRegressing = Boolean(envData.mustBeNonRegressing);
+                const colorMap = { staging: "blue", pilot: "amber", prod: "emerald" } as const;
+                const color = colorMap[env];
+                const badgeClass = {
+                  blue: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/20",
+                  amber: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20",
+                  emerald: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+                }[color];
+                const progressClass = {
+                  blue: "[&>div]:bg-blue-500",
+                  amber: "[&>div]:bg-amber-500",
+                  emerald: "[&>div]:bg-emerald-500",
+                }[color];
+
+                return (
+                  <div key={env} className="flex flex-col gap-4 p-4 rounded-md border" data-testid={`env-threshold-${env}`}>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline" className={`text-[11px] border ${badgeClass}`}>
+                        {env === "prod" ? "Production" : env.charAt(0).toUpperCase() + env.slice(1)}
+                      </Badge>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs text-muted-foreground">Pass Threshold</span>
+                        <span className="text-sm font-bold" data-testid={`text-threshold-${env}`}>
+                          {(threshold * 100).toFixed(0)}%
+                        </span>
+                      </div>
+                      {editEnvThresholds ? (
+                        <Input
+                          type="number"
+                          min="0"
+                          max="100"
+                          value={(threshold * 100).toFixed(0)}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value) / 100;
+                            setEnvThresholdsForm((prev) => ({
+                              ...prev,
+                              [env]: { ...prev[env], passThreshold: val },
+                            }));
+                          }}
+                          data-testid={`input-threshold-${env}`}
+                        />
+                      ) : (
+                        <Progress value={threshold * 100} className={`h-2 ${progressClass}`} />
+                      )}
+                    </div>
+                    {env === "staging" && (
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs text-muted-foreground">Allow Failures</span>
+                        {editEnvThresholds ? (
+                          <Switch
+                            checked={allowFailures}
+                            onCheckedChange={(checked) => {
+                              setEnvThresholdsForm((prev) => ({
+                                ...prev,
+                                [env]: { ...prev[env], allowFailures: checked },
+                              }));
+                            }}
+                            data-testid={`switch-allow-failures-${env}`}
+                          />
+                        ) : (
+                          <Badge variant="outline" className="text-[10px]" data-testid={`badge-allow-failures-${env}`}>
+                            {allowFailures ? "Yes" : "No"}
+                          </Badge>
+                        )}
+                      </div>
+                    )}
+                    {env === "prod" && (
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs text-muted-foreground">Must Be Non-Regressing</span>
+                        {editEnvThresholds ? (
+                          <Switch
+                            checked={mustBeNonRegressing}
+                            onCheckedChange={(checked) => {
+                              setEnvThresholdsForm((prev) => ({
+                                ...prev,
+                                [env]: { ...prev[env], mustBeNonRegressing: checked },
+                              }));
+                            }}
+                            data-testid={`switch-non-regressing-${env}`}
+                          />
+                        ) : (
+                          <Badge variant="outline" className="text-[10px]" data-testid={`badge-non-regressing-${env}`}>
+                            {mustBeNonRegressing ? "Required" : "No"}
+                          </Badge>
+                        )}
+                      </div>
+                    )}
+                    <div className="flex items-center gap-1 pt-1">
+                      <span className="text-[10px] text-muted-foreground">Strictness:</span>
+                      <div className="flex items-center gap-0.5">
+                        {[0, 1, 2].map((i) => {
+                          const filled = i < (env === "staging" ? 1 : env === "pilot" ? 2 : 3);
+                          const dotColor = filled ? (color === "blue" ? "bg-blue-500" : color === "amber" ? "bg-amber-500" : "bg-emerald-500") : "bg-muted";
+                          return <div key={i} className={`w-2 h-2 rounded-full ${dotColor}`} />;
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      </TabsContent>
+
+      <TabsContent value="failure-triage" className="mt-0">
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex items-center gap-2">
+              <FlaskRound className="w-4 h-4 text-muted-foreground" />
+              <CardTitle className="text-sm font-medium">Failure Triage</CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {!latestRun || !caseResults || caseResults.length === 0 ? (
+              <div className="py-8 text-center">
+                <FlaskRound className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
+                <p className="text-sm text-muted-foreground" data-testid="text-no-case-results">No case results. Run an evaluation to see per-case results.</p>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-4">
+                {(() => {
+                  const passed = caseResults.filter((cr) => cr.passed).length;
+                  const failed = caseResults.filter((cr) => !cr.passed).length;
+                  return (
+                    <div className="flex items-center gap-3 flex-wrap" data-testid="triage-summary">
+                      <Badge variant="outline" className="text-[11px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">
+                        {passed} passed
+                      </Badge>
+                      <Badge variant="outline" className="text-[11px] bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20">
+                        {failed} failed
+                      </Badge>
+                      <Badge variant="outline" className="text-[11px]">
+                        {caseResults.length} total
+                      </Badge>
+                    </div>
+                  );
+                })()}
+                <div className="flex items-center gap-3 flex-wrap">
+                  <Select value={triageStatusFilter} onValueChange={setTriageStatusFilter}>
+                    <SelectTrigger className="w-[140px]" data-testid="select-triage-status">
+                      <Filter className="w-3.5 h-3.5 mr-1.5" />
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All</SelectItem>
+                      <SelectItem value="passed">Passed</SelectItem>
+                      <SelectItem value="failed">Failed</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Input
+                    placeholder="Search by case name..."
+                    value={triageSearch}
+                    onChange={(e) => setTriageSearch(e.target.value)}
+                    className="max-w-xs"
+                    data-testid="input-triage-search"
+                  />
+                </div>
+                <Table data-testid="table-failure-triage">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Case Name</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Failing Step</TableHead>
+                      <TableHead>Failing Reason</TableHead>
+                      <TableHead>Scorer Outputs</TableHead>
+                      <TableHead className="text-right">Latency</TableHead>
+                      <TableHead className="text-right">Cost</TableHead>
+                      <TableHead>Trace</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {caseResults
+                      .filter((cr) => {
+                        if (triageStatusFilter === "passed") return cr.passed;
+                        if (triageStatusFilter === "failed") return !cr.passed;
+                        return true;
+                      })
+                      .filter((cr) => {
+                        if (!triageSearch.trim()) return true;
+                        const tc = testCases?.find((t) => t.id === cr.caseId);
+                        const name = tc?.name || cr.caseId;
+                        return name.toLowerCase().includes(triageSearch.toLowerCase());
+                      })
+                      .map((cr) => {
+                        const tc = testCases?.find((t) => t.id === cr.caseId);
+                        const isExpanded = expandedScorerOutputs.has(cr.id);
+                        return (
+                          <TableRow key={cr.id} data-testid={`row-case-result-${cr.id}`}>
+                            <TableCell className="font-medium text-sm" data-testid={`text-case-name-${cr.id}`}>
+                              {tc?.name || cr.caseId}
+                            </TableCell>
+                            <TableCell><PassFailBadge passed={cr.passed} /></TableCell>
+                            <TableCell className="text-xs text-muted-foreground">{cr.failingStep || "\u2014"}</TableCell>
+                            <TableCell className="text-xs text-muted-foreground max-w-[200px] truncate">{cr.failingReason || "\u2014"}</TableCell>
+                            <TableCell>
+                              {cr.scorerOutputs ? (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  data-testid={`button-toggle-scorer-${cr.id}`}
+                                  onClick={() => {
+                                    setExpandedScorerOutputs((prev) => {
+                                      const next = new Set(prev);
+                                      if (next.has(cr.id)) next.delete(cr.id);
+                                      else next.add(cr.id);
+                                      return next;
+                                    });
+                                  }}
+                                >
+                                  {isExpanded ? "Hide" : "Show"}
+                                </Button>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">{"\u2014"}</span>
+                              )}
+                              {isExpanded && cr.scorerOutputs && (
+                                <pre className="text-[10px] font-mono text-muted-foreground mt-1 max-w-[300px] overflow-auto whitespace-pre-wrap">
+                                  {JSON.stringify(cr.scorerOutputs, null, 2)}
+                                </pre>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right text-sm">{cr.latencyMs != null ? `${cr.latencyMs}ms` : "\u2014"}</TableCell>
+                            <TableCell className="text-right text-sm">{cr.costUsd != null ? `$${cr.costUsd.toFixed(4)}` : "\u2014"}</TableCell>
+                            <TableCell>
+                              {cr.traceId ? (
+                                <Link href={`/traces/${cr.traceId}`}>
+                                  <Button variant="ghost" size="icon" data-testid={`button-trace-${cr.id}`}>
+                                    <ExternalLink className="w-3.5 h-3.5" />
+                                  </Button>
+                                </Link>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">{"\u2014"}</span>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </TabsContent>
 
       <TabsContent value="agent-bindings" className="mt-0">
@@ -664,48 +1217,34 @@ export default function EvalDetail() {
               </div>
               <Badge variant="outline" className="text-[10px]">
                 {(() => {
-                  const categories = ["prompt_injection", "jailbreak", "pii_extraction", "bias_probing", "hallucination", "tool_misuse"];
-                  const covered = categories.filter(cat => 
-                    testCases?.some(tc => (tc.tags || []).some(tag => tag.toLowerCase().includes(cat.replace("_", " ")) || tag.toLowerCase().includes(cat.replace("_", "-"))))
-                  );
-                  return `${covered.length}/${categories.length} categories covered`;
+                  const cats = ["prompt_injection", "jailbreak", "pii_extraction", "bias_probing", "hallucination", "tool_misuse"];
+                  return `${cats.filter(c => testCases?.some(tc => (tc.tags || []).some(t => t.toLowerCase().includes(c.replace("_", " ")) || t.toLowerCase().includes(c.replace("_", "-"))))).length}/${cats.length} categories covered`;
                 })()}
               </Badge>
             </CardHeader>
             <CardContent>
               <div className="flex flex-col gap-3">
-                {[
-                  { id: "prompt_injection", name: "Prompt Injection", description: "Tests for direct/indirect prompt injection attempts", icon: Crosshair },
-                  { id: "jailbreak", name: "Jailbreak", description: "Tests for system prompt override and guardrail bypass", icon: Bug },
-                  { id: "pii_extraction", name: "PII Extraction", description: "Tests for personal data leakage and privacy violations", icon: Shield },
-                  { id: "bias_probing", name: "Bias Probing", description: "Tests for demographic, cultural, or contextual bias", icon: Target },
-                  { id: "hallucination", name: "Hallucination", description: "Tests for fabricated facts, citations, or data", icon: FileWarning },
-                  { id: "tool_misuse", name: "Tool Misuse", description: "Tests for unauthorized tool calls or parameter manipulation", icon: AlertTriangle },
-                ].map((category) => {
-                  const matchingCases = testCases?.filter(tc => 
-                    (tc.tags || []).some(tag => 
-                      tag.toLowerCase().includes(category.id.replace("_", " ")) || 
-                      tag.toLowerCase().includes(category.id.replace("_", "-")) ||
-                      tag.toLowerCase() === category.id
-                    )
-                  ) || [];
-                  const isCovered = matchingCases.length > 0;
-                  const Icon = category.icon;
+                {([
+                  ["prompt_injection", "Prompt Injection", "Tests for direct/indirect prompt injection attempts", Crosshair],
+                  ["jailbreak", "Jailbreak", "Tests for system prompt override and guardrail bypass", Bug],
+                  ["pii_extraction", "PII Extraction", "Tests for personal data leakage and privacy violations", Shield],
+                  ["bias_probing", "Bias Probing", "Tests for demographic, cultural, or contextual bias", Target],
+                  ["hallucination", "Hallucination", "Tests for fabricated facts, citations, or data", FileWarning],
+                  ["tool_misuse", "Tool Misuse", "Tests for unauthorized tool calls or parameter manipulation", AlertTriangle],
+                ] as const).map(([catId, catName, catDesc, Icon]) => {
+                  const mc = testCases?.filter(tc => (tc.tags || []).some(t => t.toLowerCase().includes(catId.replace("_", " ")) || t.toLowerCase().includes(catId.replace("_", "-")) || t.toLowerCase() === catId)) || [];
+                  const covered = mc.length > 0;
                   return (
-                    <div key={category.id} className={`flex items-center gap-3 p-3 rounded-md border ${isCovered ? "border-emerald-500/20 bg-emerald-500/5" : "border-border bg-muted/20"}`} data-testid={`redteam-category-${category.id}`}>
-                      <div className={`w-8 h-8 rounded-md flex items-center justify-center shrink-0 ${isCovered ? "bg-emerald-500/10" : "bg-muted"}`}>
-                        <Icon className={`w-4 h-4 ${isCovered ? "text-emerald-500" : "text-muted-foreground"}`} />
+                    <div key={catId} className={`flex items-center gap-3 p-3 rounded-md border ${covered ? "border-emerald-500/20 bg-emerald-500/5" : "border-border bg-muted/20"}`} data-testid={`redteam-category-${catId}`}>
+                      <div className={`w-8 h-8 rounded-md flex items-center justify-center shrink-0 ${covered ? "bg-emerald-500/10" : "bg-muted"}`}>
+                        <Icon className={`w-4 h-4 ${covered ? "text-emerald-500" : "text-muted-foreground"}`} />
                       </div>
                       <div className="flex flex-col gap-0.5 flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-xs font-medium" data-testid={`text-category-name-${category.id}`}>{category.name}</span>
-                          {isCovered ? (
-                            <Badge variant="outline" className="text-[9px] text-emerald-600 dark:text-emerald-400 border-emerald-500/30">{matchingCases.length} case{matchingCases.length !== 1 ? "s" : ""}</Badge>
-                          ) : (
-                            <Badge variant="outline" className="text-[9px] text-muted-foreground">No coverage</Badge>
-                          )}
+                          <span className="text-xs font-medium" data-testid={`text-category-name-${catId}`}>{catName}</span>
+                          <Badge variant="outline" className={`text-[9px] ${covered ? "text-emerald-600 dark:text-emerald-400 border-emerald-500/30" : "text-muted-foreground"}`}>{covered ? `${mc.length} case${mc.length !== 1 ? "s" : ""}` : "No coverage"}</Badge>
                         </div>
-                        <span className="text-[10px] text-muted-foreground">{category.description}</span>
+                        <span className="text-[10px] text-muted-foreground">{catDesc}</span>
                       </div>
                     </div>
                   );
@@ -713,7 +1252,6 @@ export default function EvalDetail() {
               </div>
             </CardContent>
           </Card>
-
           <Card>
             <CardHeader className="pb-3">
               <div className="flex items-center gap-2">
@@ -723,48 +1261,26 @@ export default function EvalDetail() {
             </CardHeader>
             <CardContent>
               {(() => {
-                const adversarialTags = ["prompt_injection", "prompt-injection", "jailbreak", "pii_extraction", "pii-extraction", "bias_probing", "bias-probing", "hallucination", "tool_misuse", "tool-misuse", "adversarial", "red-team", "red_team", "security"];
-                const redTeamCases = testCases?.filter(tc => 
-                  (tc.tags || []).some(tag => adversarialTags.some(at => tag.toLowerCase().includes(at)))
-                ) || [];
-                
-                if (redTeamCases.length === 0) {
-                  return (
-                    <div className="py-8 text-center">
-                      <ShieldAlert className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
-                      <p className="text-sm text-muted-foreground">No adversarial test cases found</p>
-                      <p className="text-xs text-muted-foreground mt-1">Add test cases with tags like "prompt-injection", "jailbreak", "pii-extraction" to track adversarial coverage</p>
-                    </div>
-                  );
-                }
-                
+                const advTags = ["prompt_injection", "prompt-injection", "jailbreak", "pii_extraction", "pii-extraction", "bias_probing", "bias-probing", "hallucination", "tool_misuse", "tool-misuse", "adversarial", "red-team", "red_team", "security"];
+                const rtCases = testCases?.filter(tc => (tc.tags || []).some(tag => advTags.some(at => tag.toLowerCase().includes(at)))) || [];
+                if (rtCases.length === 0) return (
+                  <div className="py-8 text-center">
+                    <ShieldAlert className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
+                    <p className="text-sm text-muted-foreground">No adversarial test cases found</p>
+                    <p className="text-xs text-muted-foreground mt-1">Add test cases with tags like "prompt-injection", "jailbreak", "pii-extraction" to track adversarial coverage</p>
+                  </div>
+                );
                 return (
                   <Table data-testid="table-redteam-cases">
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Name</TableHead>
-                        <TableHead>Category</TableHead>
-                        <TableHead>Tags</TableHead>
-                        <TableHead className="text-right">Weight</TableHead>
-                        <TableHead>Status</TableHead>
-                      </TableRow>
-                    </TableHeader>
+                    <TableHeader><TableRow>
+                      <TableHead>Name</TableHead><TableHead>Category</TableHead><TableHead>Tags</TableHead><TableHead className="text-right">Weight</TableHead><TableHead>Status</TableHead>
+                    </TableRow></TableHeader>
                     <TableBody>
-                      {redTeamCases.map(tc => (
+                      {rtCases.map(tc => (
                         <TableRow key={tc.id} data-testid={`row-redteam-${tc.id}`}>
                           <TableCell className="font-medium text-sm">{tc.name}</TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className="text-[10px]">
-                              {(tc.tags || []).find(t => adversarialTags.some(at => t.toLowerCase().includes(at))) || "adversarial"}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-1 flex-wrap">
-                              {(tc.tags || []).map((tag, i) => (
-                                <Badge key={i} variant="outline" className="text-[10px]">{tag}</Badge>
-                              ))}
-                            </div>
-                          </TableCell>
+                          <TableCell><Badge variant="outline" className="text-[10px]">{(tc.tags || []).find(t => advTags.some(at => t.toLowerCase().includes(at))) || "adversarial"}</Badge></TableCell>
+                          <TableCell><div className="flex items-center gap-1 flex-wrap">{(tc.tags || []).map((tag, i) => <Badge key={i} variant="outline" className="text-[10px]">{tag}</Badge>)}</div></TableCell>
                           <TableCell className="text-right text-sm">{tc.weight ?? 1}</TableCell>
                           <TableCell><StatusBadge status={tc.status || "active"} /></TableCell>
                         </TableRow>
@@ -778,316 +1294,319 @@ export default function EvalDetail() {
         </div>
       </TabsContent>
 
-      <TabsContent value="regressions" className="mt-0">
+      <TabsContent value="regression-diff" className="mt-0">
+        <div className="flex flex-col gap-4">
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2">
+                <GitCompare className="w-4 h-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Regression Diff</CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col gap-4">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <div className="flex flex-col gap-1 flex-1 min-w-[200px]">
+                    <Label className="text-xs text-muted-foreground">Run A</Label>
+                    <Select value={diffRunA} onValueChange={setDiffRunA}>
+                      <SelectTrigger data-testid="select-diff-run-a">
+                        <SelectValue placeholder="Select Run A" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {sortedRuns.map((run) => (
+                          <SelectItem key={run.id} value={run.id}>
+                            {formatDate(run.startedAt)} {run.version ? `(v${run.version})` : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex flex-col gap-1 flex-1 min-w-[200px]">
+                    <Label className="text-xs text-muted-foreground">Run B</Label>
+                    <Select value={diffRunB} onValueChange={setDiffRunB}>
+                      <SelectTrigger data-testid="select-diff-run-b">
+                        <SelectValue placeholder="Select Run B" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {sortedRuns.map((run) => (
+                          <SelectItem key={run.id} value={run.id}>
+                            {formatDate(run.startedAt)} {run.version ? `(v${run.version})` : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                {diffRunA && diffRunB && (() => {
+                  const runA = runs?.find((r) => r.id === diffRunA);
+                  const runB = runs?.find((r) => r.id === diffRunB);
+                  if (!runA || !runB) return null;
+
+                  const rateA = runA.passRate || 0;
+                  const rateB = runB.passRate || 0;
+                  const delta = rateB - rateA;
+                  const deltaColor = delta > 0 ? "text-emerald-600 dark:text-emerald-400" : delta < 0 ? "text-red-600 dark:text-red-400" : "text-muted-foreground";
+
+                  const hasResults = diffResultsA && diffResultsA.length > 0 && diffResultsB && diffResultsB.length > 0;
+
+                  let improved = 0, regressed = 0, unchanged = 0;
+                  const comparisonRows: Array<{ caseId: string; name: string; passedA: boolean; passedB: boolean; delta: string }> = [];
+
+                  if (hasResults) {
+                    const mapA = new Map(diffResultsA.map((r) => [r.caseId, r]));
+                    const mapB = new Map(diffResultsB.map((r) => [r.caseId, r]));
+                    const allCaseIds = new Set([...mapA.keys(), ...mapB.keys()]);
+                    allCaseIds.forEach((caseId) => {
+                      const a = mapA.get(caseId);
+                      const b = mapB.get(caseId);
+                      const passedA = a?.passed ?? false;
+                      const passedB = b?.passed ?? false;
+                      const tc = testCases?.find((t) => t.id === caseId);
+                      const d = passedA === passedB ? "same" : passedB && !passedA ? "improved" : "regressed";
+                      if (d === "improved") improved++;
+                      else if (d === "regressed") regressed++;
+                      else unchanged++;
+                      comparisonRows.push({ caseId, name: tc?.name || caseId, passedA, passedB, delta: d });
+                    });
+                  }
+
+                  return (
+                    <div className="flex flex-col gap-4">
+                      <div className="flex items-center gap-3 flex-wrap" data-testid="diff-summary">
+                        <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/30 flex-1 min-w-[120px]">
+                          <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Pass Rate Delta</span>
+                          <span className={`text-xl font-bold ${deltaColor}`} data-testid="text-pass-rate-delta">
+                            {delta > 0 ? "+" : ""}{(delta * 100).toFixed(1)}%
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            {(rateA * 100).toFixed(1)}% &rarr; {(rateB * 100).toFixed(1)}%
+                          </span>
+                        </div>
+                        {hasResults && (
+                          <>
+                            <Badge variant="outline" className="text-[11px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" data-testid="badge-improved">
+                              {improved} improved
+                            </Badge>
+                            <Badge variant="outline" className="text-[11px] bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20" data-testid="badge-regressed">
+                              {regressed} regressed
+                            </Badge>
+                            <Badge variant="outline" className="text-[11px]" data-testid="badge-unchanged">
+                              {unchanged} unchanged
+                            </Badge>
+                          </>
+                        )}
+                      </div>
+
+                      {hasResults ? (
+                        <Table data-testid="table-regression-diff">
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Case Name</TableHead>
+                              <TableHead>Run A</TableHead>
+                              <TableHead>Run B</TableHead>
+                              <TableHead>Delta</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {comparisonRows.map((row) => (
+                              <TableRow key={row.caseId} data-testid={`row-diff-${row.caseId}`}>
+                                <TableCell className="font-medium text-sm">{row.name}</TableCell>
+                                <TableCell><PassFailBadge passed={row.passedA} /></TableCell>
+                                <TableCell><PassFailBadge passed={row.passedB} /></TableCell>
+                                <TableCell>
+                                  {row.delta === "improved" && <CheckCircle className="w-4 h-4 text-emerald-500" />}
+                                  {row.delta === "regressed" && <TrendingDown className="w-4 h-4 text-red-500" />}
+                                  {row.delta === "same" && <span className="text-xs text-muted-foreground">{"\u2014"}</span>}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      ) : null}
+                    </div>
+                  );
+                })()}
+
+                {(!diffRunA || !diffRunB) && (() => {
+                  const sorted = [...(runs || [])].sort((a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime());
+                  const regs: Array<{ runId: string; date: string; cur: number; prev: number; drop: number; fd: number }> = [];
+                  for (let i = 0; i < sorted.length - 1; i++) {
+                    const cur = sorted[i].passRate || 0, prev = sorted[i + 1].passRate || 0;
+                    if (prev > 0 && cur < prev) {
+                      const d = ((prev - cur) / prev) * 100;
+                      if (d > 2) regs.push({ runId: sorted[i].id, date: sorted[i].startedAt ? new Date(sorted[i].startedAt!).toLocaleString() : "", cur, prev, drop: Math.round(d * 100) / 100, fd: (sorted[i].failedCases || 0) - (sorted[i + 1].failedCases || 0) });
+                    }
+                  }
+                  if (regs.length === 0) return (
+                    <div className="py-8 text-center">
+                      <CheckCircle className="w-8 h-8 text-emerald-500/30 mx-auto mb-2" />
+                      <p className="text-sm text-muted-foreground">No regressions detected</p>
+                      <p className="text-xs text-muted-foreground mt-1">Pass rates have been stable or improving across all runs</p>
+                    </div>
+                  );
+                  return (
+                    <div className="flex flex-col gap-3">
+                      {regs.map((r, i) => (
+                        <div key={r.runId} className={`flex items-start gap-3 p-3 rounded-md border ${r.drop > 10 ? "border-red-500/20 bg-red-500/5" : "border-amber-500/20 bg-amber-500/5"}`} data-testid={`regression-${i}`}>
+                          <TrendingDown className={`w-4 h-4 shrink-0 mt-0.5 ${r.drop > 10 ? "text-red-500" : "text-amber-500"}`} />
+                          <div className="flex flex-col gap-1 flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-xs font-medium" data-testid={`text-regression-drop-${i}`}>Pass rate dropped {r.drop}%</span>
+                              <Badge variant={r.drop > 10 ? "destructive" : "outline"} className="text-[9px]">{r.drop > 10 ? "Severe" : r.drop > 5 ? "Moderate" : "Minor"}</Badge>
+                            </div>
+                            <span className="text-[11px] text-muted-foreground">{(r.prev * 100).toFixed(1)}% &rarr; {(r.cur * 100).toFixed(1)}%{r.fd > 0 && ` (+${r.fd} new failures)`}</span>
+                            <span className="text-[10px] text-muted-foreground">{r.date}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </TabsContent>
+
+      <TabsContent value="outcome-correlation" className="mt-0">
         <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center gap-2">
-              <TrendingDown className="w-4 h-4 text-muted-foreground" />
-              <CardTitle className="text-sm font-medium">Regression Detection</CardTitle>
+              <BarChart3 className="w-4 h-4 text-muted-foreground" />
+              <CardTitle className="text-sm font-medium">Eval vs Outcome Correlation</CardTitle>
             </div>
           </CardHeader>
           <CardContent>
             {(() => {
-              const sorted = [...(runs || [])].sort(
-                (a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime()
+              const outcome = agent?.outcomeId ? outcomes?.find(o => o.id === agent.outcomeId) : null;
+              const corrRuns = [...(runs || [])].sort((a, b) => new Date(a.startedAt || 0).getTime() - new Date(b.startedAt || 0).getTime());
+              if (!outcome) return (
+                <div className="py-8 text-center">
+                  <BarChart3 className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
+                  <p className="text-sm text-muted-foreground">No outcome contract bound to this agent</p>
+                  <p className="text-xs text-muted-foreground mt-1">Link an outcome contract to see correlation analysis</p>
+                </div>
               );
-              
-              const regressions: Array<{
-                runId: string;
-                date: string;
-                currentPassRate: number;
-                previousPassRate: number;
-                dropPercent: number;
-                failedDelta: number;
-              }> = [];
-              
-              for (let i = 0; i < sorted.length - 1; i++) {
-                const current = sorted[i];
-                const previous = sorted[i + 1];
-                const currentRate = current.passRate || 0;
-                const previousRate = previous.passRate || 0;
-                
-                if (previousRate > 0 && currentRate < previousRate) {
-                  const dropPct = ((previousRate - currentRate) / previousRate) * 100;
-                  if (dropPct > 2) {
-                    regressions.push({
-                      runId: current.id,
-                      date: current.startedAt ? new Date(current.startedAt).toLocaleString() : "",
-                      currentPassRate: currentRate,
-                      previousPassRate: previousRate,
-                      dropPercent: Math.round(dropPct * 100) / 100,
-                      failedDelta: (current.failedCases || 0) - (previous.failedCases || 0),
-                    });
-                  }
-                }
-              }
-              
-              if (regressions.length === 0) {
-                return (
-                  <div className="py-8 text-center">
-                    <CheckCircle className="w-8 h-8 text-emerald-500/30 mx-auto mb-2" />
-                    <p className="text-sm text-muted-foreground">No regressions detected</p>
-                    <p className="text-xs text-muted-foreground mt-1">Pass rates have been stable or improving across all runs</p>
-                  </div>
-                );
-              }
-              
+              if (corrRuns.length < 2) return (
+                <div className="py-8 text-center">
+                  <BarChart3 className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
+                  <p className="text-sm text-muted-foreground">Insufficient run data for correlation</p>
+                  <p className="text-xs text-muted-foreground mt-1">At least 2 eval runs are needed to compute correlation</p>
+                </div>
+              );
+              const avgPassRate = corrRuns.reduce((sum, r) => sum + (r.passRate || 0), 0) / corrRuns.length;
+              const outcomeAttainment = (outcome as any).currentAttainment || 0;
+              const passRates = corrRuns.map(r => r.passRate || 0);
+              const n = passRates.length;
+              const trend = n > 1 ? (passRates[n - 1] - passRates[0]) : 0;
+              const meanX = passRates.reduce((a, b) => a + b, 0) / n;
+              const outcomeY = passRates.map((pr, i) => {
+                const base = outcomeAttainment > 0 ? outcomeAttainment / 100 : 0.7;
+                return Math.max(0, Math.min(1, base + (pr - meanX) * 0.6 + Math.sin(i * 1.7 + pr * 3.14) * 0.08));
+              });
+              const meanY = outcomeY.reduce((a, b) => a + b, 0) / n;
+              let num = 0, dX = 0, dY = 0;
+              for (let i = 0; i < n; i++) { const dx = passRates[i] - meanX, dy = outcomeY[i] - meanY; num += dx * dy; dX += dx * dx; dY += dy * dy; }
+              const corr = dX > 0 && dY > 0 ? num / Math.sqrt(dX * dY) : 0;
+              const strength = Math.abs(corr) > 0.7 ? "Strong" : Math.abs(corr) > 0.4 ? "Moderate" : "Weak";
+              const corrColor = Math.abs(corr) > 0.7 ? "text-emerald-600 dark:text-emerald-400" : Math.abs(corr) > 0.4 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
+              const interpText = strength === "Strong"
+                ? `There is a strong positive correlation (r=${corr.toFixed(2)}) between eval pass rates and outcome attainment. Higher eval scores reliably predict better business outcomes for "${outcome.name}".`
+                : strength === "Moderate"
+                ? `There is a moderate correlation (r=${corr.toFixed(2)}) between eval pass rates and outcome attainment. Eval scores show some predictive power for "${outcome.name}" but other factors also play a role.`
+                : `There is a weak correlation (r=${corr.toFixed(2)}) between eval pass rates and outcome attainment. Current eval suite may not adequately measure the factors driving "${outcome.name}". Consider revising test cases.`;
               return (
-                <div className="flex flex-col gap-3">
-                  {regressions.map((reg, i) => (
-                    <div key={reg.runId} className={`flex items-start gap-3 p-3 rounded-md border ${reg.dropPercent > 10 ? "border-red-500/20 bg-red-500/5" : "border-amber-500/20 bg-amber-500/5"}`} data-testid={`regression-${i}`}>
-                      <TrendingDown className={`w-4 h-4 shrink-0 mt-0.5 ${reg.dropPercent > 10 ? "text-red-500" : "text-amber-500"}`} />
-                      <div className="flex flex-col gap-1 flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-xs font-medium" data-testid={`text-regression-drop-${i}`}>Pass rate dropped {reg.dropPercent}%</span>
-                          <Badge variant={reg.dropPercent > 10 ? "destructive" : "outline"} className="text-[9px]">
-                            {reg.dropPercent > 10 ? "Severe" : reg.dropPercent > 5 ? "Moderate" : "Minor"}
-                          </Badge>
-                        </div>
-                        <span className="text-[11px] text-muted-foreground">
-                          {(reg.previousPassRate * 100).toFixed(1)}% &rarr; {(reg.currentPassRate * 100).toFixed(1)}%
-                          {reg.failedDelta > 0 && ` (+${reg.failedDelta} new failures)`}
-                        </span>
-                        <span className="text-[10px] text-muted-foreground">{reg.date}</span>
-                      </div>
+                <div className="flex flex-col gap-6">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/30">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Correlation Strength</span>
+                      <span className={`text-2xl font-bold ${corrColor}`} data-testid="text-correlation-strength">{strength}</span>
+                      <span className="text-xs text-muted-foreground">r = {corr.toFixed(3)}</span>
                     </div>
-                  ))}
+                    <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/30">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Avg Eval Pass Rate</span>
+                      <span className="text-2xl font-bold" data-testid="text-avg-pass-rate">{(avgPassRate * 100).toFixed(1)}%</span>
+                      <span className="text-xs text-muted-foreground">Trend: {trend > 0 ? "Improving" : trend < 0 ? "Declining" : "Stable"}</span>
+                    </div>
+                    <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/30">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Outcome Attainment</span>
+                      <span className="text-2xl font-bold" data-testid="text-outcome-attainment">{outcomeAttainment}%</span>
+                      <span className="text-xs text-muted-foreground">{outcome.name}</span>
+                    </div>
+                  </div>
+                  <div>
+                    <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Pass Rate Trend (by Run)</span>
+                    <div className="flex items-end gap-1 mt-3 h-32" data-testid="chart-pass-rate-trend">
+                      {corrRuns.slice(-20).map((run, i) => {
+                        const rate = (run.passRate || 0) * 100;
+                        return (
+                          <div key={run.id} className="flex-1 flex flex-col items-center gap-1" data-testid={`bar-run-${i}`}>
+                            <div className={`w-full rounded-t-sm ${rate > 90 ? "bg-emerald-500" : rate > 75 ? "bg-amber-500" : "bg-red-500"} transition-all`} style={{ height: `${rate}%` }} title={`${rate.toFixed(1)}% - ${run.startedAt ? new Date(run.startedAt).toLocaleDateString() : ""}`} />
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="flex items-center justify-between gap-2 mt-1">
+                      <span className="text-[10px] text-muted-foreground">Oldest</span>
+                      <span className="text-[10px] text-muted-foreground">Latest</span>
+                    </div>
+                  </div>
+                  <Card>
+                    <CardContent className="p-4">
+                      <span className="text-xs font-medium">Interpretation</span>
+                      <p className="text-xs text-muted-foreground mt-1">{interpText}</p>
+                    </CardContent>
+                  </Card>
                 </div>
               );
             })()}
           </CardContent>
         </Card>
       </TabsContent>
-
-      <TabsContent value="outcome-correlation" className="mt-0">
-        <div className="flex flex-col gap-4">
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex items-center gap-2">
-                <BarChart3 className="w-4 h-4 text-muted-foreground" />
-                <CardTitle className="text-sm font-medium">Eval vs Outcome Correlation</CardTitle>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {(() => {
-                const outcome = agent?.outcomeId ? outcomes?.find(o => o.id === agent.outcomeId) : null;
-                const sortedRuns = [...(runs || [])].sort(
-                  (a, b) => new Date(a.startedAt || 0).getTime() - new Date(b.startedAt || 0).getTime()
-                );
-                
-                if (!outcome) {
-                  return (
-                    <div className="py-8 text-center">
-                      <BarChart3 className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
-                      <p className="text-sm text-muted-foreground">No outcome contract bound to this agent</p>
-                      <p className="text-xs text-muted-foreground mt-1">Link an outcome contract to see correlation analysis</p>
-                    </div>
-                  );
-                }
-                
-                if (sortedRuns.length < 2) {
-                  return (
-                    <div className="py-8 text-center">
-                      <BarChart3 className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
-                      <p className="text-sm text-muted-foreground">Insufficient run data for correlation</p>
-                      <p className="text-xs text-muted-foreground mt-1">At least 2 eval runs are needed to compute correlation</p>
-                    </div>
-                  );
-                }
-                
-                const avgPassRate = sortedRuns.reduce((sum, r) => sum + (r.passRate || 0), 0) / sortedRuns.length;
-                const outcomeAttainment = (outcome as any).currentAttainment || 0;
-                
-                const passRates = sortedRuns.map(r => r.passRate || 0);
-                const n = passRates.length;
-                const trend = n > 1 ? (passRates[n - 1] - passRates[0]) : 0;
-                
-                const meanX = passRates.reduce((a, b) => a + b, 0) / n;
-                
-                const outcomeY = passRates.map((pr, i) => {
-                  const baseAttainment = outcomeAttainment > 0 ? outcomeAttainment / 100 : 0.7;
-                  const noise = Math.sin(i * 1.7 + pr * 3.14) * 0.08;
-                  return Math.max(0, Math.min(1, baseAttainment + (pr - meanX) * 0.6 + noise));
-                });
-                const meanY = outcomeY.reduce((a, b) => a + b, 0) / n;
-                
-                let numerator = 0, denomX = 0, denomY = 0;
-                for (let i = 0; i < n; i++) {
-                  const dx = passRates[i] - meanX;
-                  const dy = outcomeY[i] - meanY;
-                  numerator += dx * dy;
-                  denomX += dx * dx;
-                  denomY += dy * dy;
-                }
-                const correlation = denomX > 0 && denomY > 0 ? numerator / Math.sqrt(denomX * denomY) : 0;
-                const correlationStrength = Math.abs(correlation) > 0.7 ? "Strong" : Math.abs(correlation) > 0.4 ? "Moderate" : "Weak";
-                const correlationColor = Math.abs(correlation) > 0.7 ? "text-emerald-600 dark:text-emerald-400" : Math.abs(correlation) > 0.4 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
-                
-                return (
-                  <div className="flex flex-col gap-6">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/30">
-                        <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Correlation Strength</span>
-                        <span className={`text-2xl font-bold ${correlationColor}`} data-testid="text-correlation-strength">
-                          {correlationStrength}
-                        </span>
-                        <span className="text-xs text-muted-foreground">r = {correlation.toFixed(3)}</span>
-                      </div>
-                      <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/30">
-                        <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Avg Eval Pass Rate</span>
-                        <span className="text-2xl font-bold" data-testid="text-avg-pass-rate">{(avgPassRate * 100).toFixed(1)}%</span>
-                        <span className="text-xs text-muted-foreground">
-                          Trend: {trend > 0 ? "Improving" : trend < 0 ? "Declining" : "Stable"}
-                        </span>
-                      </div>
-                      <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/30">
-                        <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Outcome Attainment</span>
-                        <span className="text-2xl font-bold" data-testid="text-outcome-attainment">{outcomeAttainment}%</span>
-                        <span className="text-xs text-muted-foreground">{outcome.name}</span>
-                      </div>
-                    </div>
-                    
-                    <div>
-                      <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Pass Rate Trend (by Run)</span>
-                      <div className="flex items-end gap-1 mt-3 h-32" data-testid="chart-pass-rate-trend">
-                        {sortedRuns.slice(-20).map((run, i) => {
-                          const rate = (run.passRate || 0) * 100;
-                          const barColor = rate > 90 ? "bg-emerald-500" : rate > 75 ? "bg-amber-500" : "bg-red-500";
-                          return (
-                            <div key={run.id} className="flex-1 flex flex-col items-center gap-1" data-testid={`bar-run-${i}`}>
-                              <div className={`w-full rounded-t-sm ${barColor} transition-all`} style={{ height: `${rate}%` }} title={`${rate.toFixed(1)}% - ${run.startedAt ? new Date(run.startedAt).toLocaleDateString() : ""}`} />
-                            </div>
-                          );
-                        })}
-                      </div>
-                      <div className="flex items-center justify-between mt-1">
-                        <span className="text-[10px] text-muted-foreground">Oldest</span>
-                        <span className="text-[10px] text-muted-foreground">Latest</span>
-                      </div>
-                    </div>
-                    
-                    <Card>
-                      <CardContent className="p-4">
-                        <div className="flex flex-col gap-2">
-                          <span className="text-xs font-medium">Interpretation</span>
-                          <p className="text-xs text-muted-foreground">
-                            {correlationStrength === "Strong" 
-                              ? `There is a strong positive correlation (r=${correlation.toFixed(2)}) between eval pass rates and outcome attainment. Higher eval scores reliably predict better business outcomes for "${outcome.name}".`
-                              : correlationStrength === "Moderate"
-                              ? `There is a moderate correlation (r=${correlation.toFixed(2)}) between eval pass rates and outcome attainment. Eval scores show some predictive power for "${outcome.name}" but other factors also play a role.`
-                              : `There is a weak correlation (r=${correlation.toFixed(2)}) between eval pass rates and outcome attainment. Current eval suite may not adequately measure the factors driving "${outcome.name}". Consider revising test cases.`
-                            }
-                          </p>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  </div>
-                );
-              })()}
-            </CardContent>
-          </Card>
-        </div>
-      </TabsContent>
       </Tabs>
 
       <Dialog open={addTcOpen} onOpenChange={setAddTcOpen}>
         <DialogContent data-testid="dialog-add-test-case">
-          <DialogHeader>
-            <DialogTitle>Add Test Case</DialogTitle>
-            <DialogDescription>Create a new test case for this eval suite.</DialogDescription>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>Add Test Case</DialogTitle><DialogDescription>Create a new test case for this eval suite.</DialogDescription></DialogHeader>
           <div className="flex flex-col gap-4 py-2">
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="tc-name" className="text-xs text-muted-foreground">Name</Label>
-              <Input
-                id="tc-name"
-                value={tcName}
-                onChange={(e) => setTcName(e.target.value)}
-                placeholder="Test case name"
-                data-testid="input-tc-name"
-              />
-            </div>
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="tc-input-data" className="text-xs text-muted-foreground">Input Data (JSON)</Label>
-              <Textarea
-                id="tc-input-data"
-                value={tcInputData}
-                onChange={(e) => setTcInputData(e.target.value)}
-                placeholder='{"key": "value"}'
-                className="font-mono text-xs"
-                rows={3}
-                data-testid="input-tc-input-data"
-              />
-            </div>
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="tc-expected-output" className="text-xs text-muted-foreground">Expected Output (JSON)</Label>
-              <Textarea
-                id="tc-expected-output"
-                value={tcExpectedOutput}
-                onChange={(e) => setTcExpectedOutput(e.target.value)}
-                placeholder='{"result": "expected"}'
-                className="font-mono text-xs"
-                rows={3}
-                data-testid="input-tc-expected-output"
-              />
-            </div>
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="tc-tags" className="text-xs text-muted-foreground">Tags (comma-separated)</Label>
-              <Input
-                id="tc-tags"
-                value={tcTags}
-                onChange={(e) => setTcTags(e.target.value)}
-                placeholder="tag1, tag2, tag3"
-                data-testid="input-tc-tags"
-              />
-            </div>
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="tc-weight" className="text-xs text-muted-foreground">Weight</Label>
-              <Input
-                id="tc-weight"
-                type="number"
-                min="0"
-                step="0.1"
-                value={tcWeight}
-                onChange={(e) => setTcWeight(e.target.value)}
-                data-testid="input-tc-weight"
-              />
-            </div>
+            <div className="flex flex-col gap-2"><Label htmlFor="tc-name" className="text-xs text-muted-foreground">Name</Label><Input id="tc-name" value={tcName} onChange={(e) => setTcName(e.target.value)} placeholder="Test case name" data-testid="input-tc-name" /></div>
+            <div className="flex flex-col gap-2"><Label htmlFor="tc-input-data" className="text-xs text-muted-foreground">Input Data (JSON)</Label><Textarea id="tc-input-data" value={tcInputData} onChange={(e) => setTcInputData(e.target.value)} placeholder='{"key": "value"}' className="font-mono text-xs" rows={3} data-testid="input-tc-input-data" /></div>
+            <div className="flex flex-col gap-2"><Label htmlFor="tc-expected-output" className="text-xs text-muted-foreground">Expected Output (JSON)</Label><Textarea id="tc-expected-output" value={tcExpectedOutput} onChange={(e) => setTcExpectedOutput(e.target.value)} placeholder='{"result": "expected"}' className="font-mono text-xs" rows={3} data-testid="input-tc-expected-output" /></div>
+            <div className="flex flex-col gap-2"><Label htmlFor="tc-tags" className="text-xs text-muted-foreground">Tags (comma-separated)</Label><Input id="tc-tags" value={tcTags} onChange={(e) => setTcTags(e.target.value)} placeholder="tag1, tag2, tag3" data-testid="input-tc-tags" /></div>
+            <div className="flex flex-col gap-2"><Label htmlFor="tc-weight" className="text-xs text-muted-foreground">Weight</Label><Input id="tc-weight" type="number" min="0" step="0.1" value={tcWeight} onChange={(e) => setTcWeight(e.target.value)} data-testid="input-tc-weight" /></div>
           </div>
           <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setAddTcOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              data-testid="button-tc-submit"
-              onClick={() => addTestCaseMutation.mutate()}
-              disabled={!tcName.trim() || addTestCaseMutation.isPending}
-            >
-              {addTestCaseMutation.isPending ? "Adding..." : "Add Test Case"}
-            </Button>
+            <Button variant="outline" size="sm" onClick={() => setAddTcOpen(false)}>Cancel</Button>
+            <Button size="sm" data-testid="button-tc-submit" onClick={() => addTestCaseMutation.mutate()} disabled={!tcName.trim() || addTestCaseMutation.isPending}>{addTestCaseMutation.isPending ? "Adding..." : "Add Test Case"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
       <Dialog open={!!deleteTcId} onOpenChange={(open) => { if (!open) setDeleteTcId(null); }}>
         <DialogContent data-testid="dialog-confirm-delete-tc">
-          <DialogHeader>
-            <DialogTitle>Delete Test Case</DialogTitle>
-            <DialogDescription>Are you sure you want to delete this test case? This action cannot be undone.</DialogDescription>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>Delete Test Case</DialogTitle><DialogDescription>Are you sure you want to delete this test case? This action cannot be undone.</DialogDescription></DialogHeader>
           <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setDeleteTcId(null)}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={() => { if (deleteTcId) deleteTestCaseMutation.mutate(deleteTcId); }}
-              disabled={deleteTestCaseMutation.isPending}
-            >
-              {deleteTestCaseMutation.isPending ? "Deleting..." : "Delete"}
-            </Button>
+            <Button variant="outline" size="sm" onClick={() => setDeleteTcId(null)}>Cancel</Button>
+            <Button variant="destructive" size="sm" onClick={() => { if (deleteTcId) deleteTestCaseMutation.mutate(deleteTcId); }} disabled={deleteTestCaseMutation.isPending}>{deleteTestCaseMutation.isPending ? "Deleting..." : "Delete"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={addScorerOpen} onOpenChange={setAddScorerOpen}>
+        <DialogContent data-testid="dialog-add-scorer">
+          <DialogHeader><DialogTitle>Add Scorer</DialogTitle><DialogDescription>Configure a new scorer for this eval suite.</DialogDescription></DialogHeader>
+          <div className="flex flex-col gap-4 py-2">
+            <div className="flex flex-col gap-2">
+              <Label className="text-xs text-muted-foreground">Scorer Type</Label>
+              <Select value={newScorerType} onValueChange={setNewScorerType}><SelectTrigger data-testid="select-scorer-type"><SelectValue /></SelectTrigger><SelectContent>{Object.entries(scorerTypeConfig).map(([key, cfg]) => <SelectItem key={key} value={key}>{cfg.label}</SelectItem>)}</SelectContent></Select>
+              <span className="text-[10px] text-muted-foreground">{scorerTypeConfig[newScorerType]?.description}</span>
+            </div>
+            <div className="flex flex-col gap-2"><Label htmlFor="scorer-name" className="text-xs text-muted-foreground">Name</Label><Input id="scorer-name" value={newScorerName} onChange={(e) => setNewScorerName(e.target.value)} placeholder={scorerTypeConfig[newScorerType]?.label} data-testid="input-scorer-name" /></div>
+            <div className="flex flex-col gap-2"><Label htmlFor="scorer-weight" className="text-xs text-muted-foreground">Weight</Label><Input id="scorer-weight" type="number" min="0" step="0.1" value={newScorerWeight} onChange={(e) => setNewScorerWeight(e.target.value)} data-testid="input-scorer-weight" /></div>
+            <div className="flex flex-col gap-2"><Label htmlFor="scorer-params" className="text-xs text-muted-foreground">Parameters (JSON)</Label><Textarea id="scorer-params" value={newScorerParams} onChange={(e) => setNewScorerParams(e.target.value)} placeholder={getParamsPlaceholder(newScorerType)} className="font-mono text-xs" rows={3} data-testid="input-scorer-params" /></div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setAddScorerOpen(false)}>Cancel</Button>
+            <Button size="sm" data-testid="button-scorer-submit" onClick={handleAddScorer} disabled={updateScorerConfigMutation.isPending}>{updateScorerConfigMutation.isPending ? "Adding..." : "Add Scorer"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
