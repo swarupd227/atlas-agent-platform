@@ -39,6 +39,11 @@ import {
   TrendingDown,
   Lightbulb,
   AlertCircle,
+  Download,
+  Users,
+  Tag,
+  Eye,
+  Layers,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -56,7 +61,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import type { Agent, RunTrace, EvalSuite, OutcomeContract, ImprovementRecommendation, AutonomousActionLog } from "@shared/schema";
+import { Checkbox } from "@/components/ui/checkbox";
+import type { Agent, RunTrace, EvalSuite, OutcomeContract, ImprovementRecommendation, AutonomousActionLog, AgentVersion, Deployment, Policy, Approval } from "@shared/schema";
 
 export default function AgentDetail() {
   const [, params] = useRoute("/agents/:id");
@@ -98,6 +104,19 @@ export default function AgentDetail() {
     queryKey: ["/api/agents", agentId, "timeline"],
     enabled: !!agentId,
   });
+  const { data: agentVersions } = useQuery<AgentVersion[]>({
+    queryKey: ["/api/agents", agentId, "versions"],
+    enabled: !!agentId,
+  });
+  const { data: allDeployments } = useQuery<Deployment[]>({
+    queryKey: ["/api/deployments"],
+  });
+  const { data: allPolicies } = useQuery<Policy[]>({
+    queryKey: ["/api/policies"],
+  });
+  const { data: allApprovals } = useQuery<Approval[]>({
+    queryKey: ["/api/approvals"],
+  });
 
   const [, navigate] = useLocation();
   const { toast } = useToast();
@@ -105,6 +124,7 @@ export default function AgentDetail() {
   const [retireReason, setRetireReason] = useState("");
   const [replacementAgentId, setReplacementAgentId] = useState("");
   const [timelineFilter, setTimelineFilter] = useState<string>("all");
+  const [retirementChecklist, setRetirementChecklist] = useState<boolean[]>([false, false, false, false, false, false]);
 
   const retireMutation = useMutation({
     mutationFn: async (data: { status: string; description?: string }) => {
@@ -168,6 +188,34 @@ export default function AgentDetail() {
   const recentTraces = traces?.slice(0, 10) || [];
   const successTraces = recentTraces.filter((t) => t.status === "completed").length;
   const failedTraces = recentTraces.filter((t) => t.status === "failed").length;
+  const agentDeployments = allDeployments?.filter(d => d.agentId === agentId) || [];
+  const agentApprovals = allApprovals?.filter(a => a.objectId === agentId) || [];
+  const policyBindings = (agent.policyBindings || []) as Array<{ policyId: string; name: string; enforcement: string; description?: string }>;
+
+  const handleExportJSON = () => {
+    if (!timeline) return;
+    const blob = new Blob([JSON.stringify(timeline, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${agent.name}-audit-log.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportCSV = () => {
+    if (!timeline) return;
+    const headers = ["id", "timestamp", "category", "title", "description", "severity"];
+    const rows = timeline.map(e => headers.map(h => `"${String((e as any)[h] || "").replace(/"/g, '""')}"`).join(","));
+    const csv = [headers.join(","), ...rows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${agent.name}-audit-log.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div className="flex flex-col gap-6 p-6" data-testid="page-agent-detail">
@@ -189,13 +237,57 @@ export default function AgentDetail() {
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
-        <Badge variant="outline" className="text-xs">v{agent.currentVersion}</Badge>
-        <Badge variant="outline" className="text-xs">{agent.environment}</Badge>
+        <Select
+          value={agent.currentVersion || ""}
+          onValueChange={(val) => toast({ title: `Switched to version ${val}` })}
+        >
+          <SelectTrigger className="w-auto" data-testid="select-version">
+            <Badge variant="outline" className="text-xs no-default-hover-elevate no-default-active-elevate">v{agent.currentVersion}</Badge>
+          </SelectTrigger>
+          <SelectContent>
+            {agentVersions && agentVersions.length > 0 ? agentVersions.map(v => (
+              <SelectItem key={v.id} value={v.semver} data-testid={`version-option-${v.semver}`}>
+                v{v.semver} ({v.status})
+              </SelectItem>
+            )) : (
+              <SelectItem value={agent.currentVersion || "1.0.0"}>v{agent.currentVersion}</SelectItem>
+            )}
+          </SelectContent>
+        </Select>
+        <Select
+          value={agent.environment || "staging"}
+          onValueChange={(val) => toast({ title: `Switched to environment ${val}` })}
+        >
+          <SelectTrigger className="w-auto" data-testid="select-environment">
+            <Badge variant="outline" className="text-xs no-default-hover-elevate no-default-active-elevate">{agent.environment}</Badge>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="staging">Staging</SelectItem>
+            <SelectItem value="pilot">Pilot</SelectItem>
+            <SelectItem value="production">Production</SelectItem>
+          </SelectContent>
+        </Select>
         <Badge variant="outline" className="text-xs">{agent.modelProvider} / {agent.modelName}</Badge>
         {outcome && <Badge variant="outline" className="text-xs">{outcome.name}</Badge>}
+        {agent.toolAccessClass && (
+          <Badge variant="outline" className="text-xs" data-testid="badge-tool-access-class">
+            <Wrench className="w-3 h-3 mr-1" />{agent.toolAccessClass}
+          </Badge>
+        )}
+        {agent.complianceTags && (agent.complianceTags as string[]).length > 0 && (agent.complianceTags as string[]).map((tag) => (
+          <Badge key={tag} variant="outline" className="text-xs" data-testid={`badge-compliance-${tag}`}>
+            <Tag className="w-3 h-3 mr-1" />{tag}
+          </Badge>
+        ))}
         <div className="flex-1" />
         <Button variant="outline" size="sm" data-testid="button-run-test">
           <Play className="w-3.5 h-3.5 mr-1.5" /> Run Test
+        </Button>
+        <Button variant="outline" size="sm" data-testid="button-run-shadow-replay" onClick={() => toast({ title: "Shadow replay initiated" })}>
+          <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Run Shadow Replay
+        </Button>
+        <Button variant="outline" size="sm" data-testid="button-request-approval" onClick={() => toast({ title: "Approval request submitted" })}>
+          <Shield className="w-3.5 h-3.5 mr-1.5" /> Request Approval
         </Button>
         <Button variant="outline" size="sm" data-testid="button-rollback">
           <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> Rollback
@@ -216,13 +308,16 @@ export default function AgentDetail() {
       </div>
 
       <Tabs defaultValue="summary" className="flex flex-col gap-4">
-        <TabsList className="w-fit">
+        <TabsList className="w-fit flex-wrap">
           <TabsTrigger value="summary" data-testid="tab-summary">Summary</TabsTrigger>
           <TabsTrigger value="traces" data-testid="tab-traces">Runs & Traces</TabsTrigger>
           <TabsTrigger value="evals" data-testid="tab-evals">Evals</TabsTrigger>
+          <TabsTrigger value="releases" data-testid="tab-releases">Releases</TabsTrigger>
           <TabsTrigger value="blueprint" data-testid="tab-blueprint">Blueprint</TabsTrigger>
           <TabsTrigger value="lifecycle" data-testid="tab-lifecycle">Lifecycle</TabsTrigger>
+          <TabsTrigger value="monitor" data-testid="tab-monitor">Monitor</TabsTrigger>
           <TabsTrigger value="autonomous" data-testid="tab-autonomous">Autonomous</TabsTrigger>
+          <TabsTrigger value="governance" data-testid="tab-governance">Governance</TabsTrigger>
           <TabsTrigger value="timeline" data-testid="tab-timeline">Timeline</TabsTrigger>
         </TabsList>
 
@@ -354,6 +449,123 @@ export default function AgentDetail() {
           </Card>
         </TabsContent>
 
+        {/* RELEASES TAB */}
+        <TabsContent value="releases" className="flex flex-col gap-4 mt-0">
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2">
+                <GitBranch className="w-4 h-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Version Timeline</CardTitle>
+                {agentVersions && <Badge variant="outline" className="text-[10px] ml-auto">{agentVersions.length} versions</Badge>}
+              </div>
+            </CardHeader>
+            <CardContent>
+              {agentVersions && agentVersions.length > 0 ? (
+                <div className="relative" data-testid="version-timeline">
+                  <div className="absolute left-4 top-0 bottom-0 w-px bg-border" />
+                  <div className="flex flex-col gap-4">
+                    {agentVersions.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()).map(version => {
+                      const versionDeployments = agentDeployments.filter(d => d.version === version.semver || d.versionId === version.id);
+                      const deployedEnvs = [...new Set(versionDeployments.map(d => d.environment))];
+                      const rollbackPlan = agent.rollbackPlan as any;
+                      return (
+                        <div key={version.id} className="relative pl-10" data-testid={`version-entry-${version.id}`}>
+                          <div className={`absolute left-2.5 top-1 w-3 h-3 rounded-full ring-2 ring-background z-10 ${
+                            version.status === "deployed" ? "bg-emerald-500" :
+                            version.status === "draft" ? "bg-slate-400" :
+                            "bg-blue-500"
+                          }`} />
+                          <div className="flex flex-col gap-2 p-3 rounded-md border bg-background">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <Badge variant="outline" className="text-xs font-mono" data-testid={`version-semver-${version.id}`}>v{version.semver}</Badge>
+                              <StatusBadge status={version.status} />
+                              {version.createdBy && (
+                                <span className="text-[11px] text-muted-foreground flex items-center gap-1">
+                                  <Users className="w-3 h-3" /> {version.createdBy}
+                                </span>
+                              )}
+                              <span className="text-[11px] text-muted-foreground">
+                                {version.createdAt ? new Date(version.createdAt).toLocaleDateString() : ""}
+                              </span>
+                            </div>
+                            {deployedEnvs.length > 0 && (
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-[10px] text-muted-foreground">Deployed to:</span>
+                                {deployedEnvs.map(env => (
+                                  <Badge key={env} variant="outline" className="text-[10px]" data-testid={`version-env-${version.id}-${env}`}>{env}</Badge>
+                                ))}
+                              </div>
+                            )}
+                            {rollbackPlan?.canaryConfig && version.status === "deployed" && (
+                              <div className="flex items-center gap-2 flex-wrap text-[10px] text-muted-foreground">
+                                <Gauge className="w-3 h-3" />
+                                <span>Canary: {rollbackPlan.canaryConfig.startPercent}% start, {rollbackPlan.canaryConfig.stepPercent}% step, {rollbackPlan.canaryConfig.stepInterval} interval</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground text-center py-4">No versions recorded</p>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2">
+                <Rocket className="w-4 h-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Environment Promotion Flow</CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {(() => {
+                const stagingDep = agentDeployments.find(d => d.environment === "staging" && (d.status === "deployed" || d.status === "completed"));
+                const pilotDep = agentDeployments.find(d => d.environment === "pilot" && (d.status === "deployed" || d.status === "completed"));
+                const prodDep = agentDeployments.find(d => d.environment === "production" && (d.status === "deployed" || d.status === "completed"));
+                return (
+                  <div className="flex items-center gap-3 flex-wrap" data-testid="promotion-flow">
+                    <div className="flex-1 min-w-[140px] p-3 rounded-md border flex flex-col gap-1 text-center" data-testid="promotion-staging">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Staging</span>
+                      <span className="text-sm font-semibold">{stagingDep ? `v${stagingDep.version}` : "None"}</span>
+                      {stagingDep && <StatusBadge status={stagingDep.status} />}
+                    </div>
+                    <div className="flex flex-col items-center gap-1 shrink-0">
+                      <Button variant="outline" size="sm" data-testid="button-promote-staging-pilot" onClick={() => toast({ title: "Promotion initiated" })}>
+                        Promote <ChevronRight className="w-3 h-3 ml-1" />
+                      </Button>
+                      <Button variant="ghost" size="sm" data-testid="button-rollback-pilot-staging" onClick={() => toast({ title: "Rollback initiated" })}>
+                        <RotateCcw className="w-3 h-3 mr-1" /> Rollback
+                      </Button>
+                    </div>
+                    <div className="flex-1 min-w-[140px] p-3 rounded-md border flex flex-col gap-1 text-center" data-testid="promotion-pilot">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Pilot</span>
+                      <span className="text-sm font-semibold">{pilotDep ? `v${pilotDep.version}` : "None"}</span>
+                      {pilotDep && <StatusBadge status={pilotDep.status} />}
+                    </div>
+                    <div className="flex flex-col items-center gap-1 shrink-0">
+                      <Button variant="outline" size="sm" data-testid="button-promote-pilot-prod" onClick={() => toast({ title: "Promotion initiated" })}>
+                        Promote <ChevronRight className="w-3 h-3 ml-1" />
+                      </Button>
+                      <Button variant="ghost" size="sm" data-testid="button-rollback-prod-pilot" onClick={() => toast({ title: "Rollback initiated" })}>
+                        <RotateCcw className="w-3 h-3 mr-1" /> Rollback
+                      </Button>
+                    </div>
+                    <div className="flex-1 min-w-[140px] p-3 rounded-md border flex flex-col gap-1 text-center" data-testid="promotion-production">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Production</span>
+                      <span className="text-sm font-semibold">{prodDep ? `v${prodDep.version}` : "None"}</span>
+                      {prodDep && <StatusBadge status={prodDep.status} />}
+                    </div>
+                  </div>
+                );
+              })()}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         <TabsContent value="blueprint" className="mt-0 space-y-4">
           <BlueprintModelConfig agent={agent} />
           <BlueprintWorkflowGraph blueprint={agent.blueprintJson as any} />
@@ -477,6 +689,251 @@ export default function AgentDetail() {
               )}
             </CardContent>
           </Card>
+
+          {/* Retirement Plan */}
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2">
+                <Power className="w-4 h-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Retirement Plan</CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs text-muted-foreground">Deprecation Status</span>
+                  <span className="text-sm font-medium" data-testid="text-deprecation-status">
+                    {agent.status === "retiring" ? "In Progress" : agent.status === "retired" ? "Completed" : "Active"}
+                  </span>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs text-muted-foreground">Target Retirement Date</span>
+                  <span className="text-sm font-medium" data-testid="text-retirement-date">
+                    {agent.status === "retiring" ? new Date(Date.now() + 30 * 86400000).toLocaleDateString() : "Not scheduled"}
+                  </span>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs text-muted-foreground">Replacement Candidate</span>
+                  <span className="text-sm font-medium" data-testid="text-replacement-agent">
+                    {replacementAgentId || "No replacement designated"}
+                  </span>
+                </div>
+              </div>
+
+              <Separator />
+
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-xs font-medium">Knowledge Transfer Checklist</span>
+                  <Badge variant="outline" className="text-[10px]" data-testid="badge-checklist-progress">
+                    {retirementChecklist.filter(Boolean).length}/{retirementChecklist.length} completed
+                  </Badge>
+                </div>
+                <Progress value={(retirementChecklist.filter(Boolean).length / retirementChecklist.length) * 100} className="h-2" data-testid="progress-checklist" />
+                {[
+                  "Document agent purpose and business context",
+                  "Export evaluation suite results",
+                  "Transfer tool configurations to replacement",
+                  "Notify dependent outcome owners",
+                  "Archive run traces and audit logs",
+                  "Update routing rules to replacement agent",
+                ].map((item, i) => (
+                  <div key={i} className="flex items-center gap-2" data-testid={`checklist-item-${i}`}>
+                    <Checkbox
+                      checked={retirementChecklist[i]}
+                      onCheckedChange={(checked) => {
+                        const next = [...retirementChecklist];
+                        next[i] = !!checked;
+                        setRetirementChecklist(next);
+                      }}
+                      data-testid={`checkbox-checklist-${i}`}
+                    />
+                    <span className={`text-xs ${retirementChecklist[i] ? "line-through text-muted-foreground" : ""}`}>{item}</span>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* MONITOR TAB */}
+        <TabsContent value="monitor" className="flex flex-col gap-4 mt-0">
+          {(() => {
+            const actualAvailability = (agent.successRate || 0) * 100;
+            const targetAvailability = 99.5;
+            const availabilityOk = actualAvailability >= targetAvailability;
+
+            const actualLatency = agent.avgLatencyMs || 0;
+            const targetLatency = 500;
+            const latencyOk = actualLatency <= targetLatency;
+
+            const errorBudgetTarget = 100 - targetAvailability;
+            const errorBudgetUsed = 100 - actualAvailability;
+            const errorBudgetRemaining = errorBudgetTarget - errorBudgetUsed;
+            const errorBudgetOk = errorBudgetRemaining >= 0;
+
+            const monthlyCost = agent.monthlyCost || 0;
+            const costBudget = monthlyCost * 1.2;
+            const costUtilization = costBudget > 0 ? (monthlyCost / costBudget) * 100 : 0;
+            const costOk = monthlyCost <= costBudget;
+
+            const anomalies: Array<{ icon: typeof AlertCircle; severity: string; description: string; timestamp: string }> = [];
+            if ((agent.healthScore || 0) < 80) anomalies.push({ icon: AlertTriangle, severity: "warning", description: "Health score degradation detected", timestamp: new Date(Date.now() - 3600000).toISOString() });
+            if ((agent.successRate || 0) < 0.9) anomalies.push({ icon: XCircle, severity: "critical", description: "Success rate below threshold", timestamp: new Date(Date.now() - 7200000).toISOString() });
+            if ((agent.avgLatencyMs || 0) > 400) anomalies.push({ icon: Clock, severity: "warning", description: "Latency spike detected", timestamp: new Date(Date.now() - 1800000).toISOString() });
+            if ((agent.costPerRun || 0) > 0.1) anomalies.push({ icon: DollarSign, severity: "warning", description: "Cost per run exceeding budget", timestamp: new Date(Date.now() - 5400000).toISOString() });
+            if (anomalies.length === 0) anomalies.push({ icon: CheckCircle, severity: "info", description: "No critical anomalies in last 24h", timestamp: new Date().toISOString() });
+
+            const monthlyRevenue = agent.monthlyRevenue || 0;
+            const roi = monthlyCost > 0 ? ((monthlyRevenue - monthlyCost) / monthlyCost * 100) : 0;
+            const costEfficiency = (agent.totalRuns || 0) > 0 ? monthlyRevenue / (agent.totalRuns || 1) : 0;
+
+            return (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <Card data-testid="slo-availability">
+                    <CardContent className="p-4 flex flex-col gap-2">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <span className="text-xs text-muted-foreground">Availability SLO</span>
+                        <Badge variant="outline" className={`text-[10px] ${availabilityOk ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-red-500/15 text-red-600 dark:text-red-400"}`}>
+                          {availabilityOk ? "Within SLO" : "Breaching"}
+                        </Badge>
+                      </div>
+                      <div className="flex items-end gap-1">
+                        <span className="text-2xl font-semibold">{actualAvailability.toFixed(1)}%</span>
+                        <span className="text-xs text-muted-foreground mb-1">/ {targetAvailability}% target</span>
+                      </div>
+                      <Progress value={Math.min(actualAvailability, 100)} className="h-2" />
+                    </CardContent>
+                  </Card>
+
+                  <Card data-testid="slo-latency">
+                    <CardContent className="p-4 flex flex-col gap-2">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <span className="text-xs text-muted-foreground">Latency P95 SLO</span>
+                        <Badge variant="outline" className={`text-[10px] ${latencyOk ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-red-500/15 text-red-600 dark:text-red-400"}`}>
+                          {latencyOk ? "Within SLO" : "Breaching"}
+                        </Badge>
+                      </div>
+                      <div className="flex items-end gap-1">
+                        <span className="text-2xl font-semibold">{actualLatency}ms</span>
+                        <span className="text-xs text-muted-foreground mb-1">/ {targetLatency}ms target</span>
+                      </div>
+                      <Progress value={Math.min((actualLatency / targetLatency) * 100, 100)} className="h-2" />
+                    </CardContent>
+                  </Card>
+
+                  <Card data-testid="slo-error-budget">
+                    <CardContent className="p-4 flex flex-col gap-2">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <span className="text-xs text-muted-foreground">Error Budget</span>
+                        <Badge variant="outline" className={`text-[10px] ${errorBudgetOk ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-red-500/15 text-red-600 dark:text-red-400"}`}>
+                          {errorBudgetOk ? "Remaining" : "Exhausted"}
+                        </Badge>
+                      </div>
+                      <div className="flex items-end gap-1">
+                        <span className="text-2xl font-semibold">{errorBudgetRemaining.toFixed(2)}%</span>
+                        <span className="text-xs text-muted-foreground mb-1">budget {errorBudgetOk ? "remaining" : "overdrawn"}</span>
+                      </div>
+                      <Progress value={errorBudgetOk ? ((errorBudgetRemaining / errorBudgetTarget) * 100) : 100} className="h-2" />
+                    </CardContent>
+                  </Card>
+
+                  <Card data-testid="slo-cost-budget">
+                    <CardContent className="p-4 flex flex-col gap-2">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <span className="text-xs text-muted-foreground">Cost Budget</span>
+                        <Badge variant="outline" className={`text-[10px] ${costOk ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-amber-500/15 text-amber-600 dark:text-amber-400"}`}>
+                          {costOk ? "Within Budget" : "Over Budget"}
+                        </Badge>
+                      </div>
+                      <div className="flex items-end gap-1">
+                        <span className="text-2xl font-semibold">${monthlyCost.toLocaleString()}</span>
+                        <span className="text-xs text-muted-foreground mb-1">/ ${costBudget.toLocaleString()} budget</span>
+                      </div>
+                      <Progress value={Math.min(costUtilization, 100)} className="h-2" />
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <Card>
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center gap-2">
+                      <Eye className="w-4 h-4 text-muted-foreground" />
+                      <CardTitle className="text-sm font-medium">Anomaly Detection</CardTitle>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex flex-col gap-2">
+                      {anomalies.map((anomaly, i) => {
+                        const AnomalyIcon = anomaly.icon;
+                        return (
+                          <div key={i} className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted/30" data-testid={`anomaly-row-${i}`}>
+                            <div className="flex items-center gap-2 min-w-0">
+                              <AnomalyIcon className={`w-3.5 h-3.5 shrink-0 ${
+                                anomaly.severity === "critical" ? "text-red-500" :
+                                anomaly.severity === "warning" ? "text-amber-500" :
+                                "text-emerald-500"
+                              }`} />
+                              <span className="text-xs" data-testid={`anomaly-desc-${i}`}>{anomaly.description}</span>
+                              <Badge variant="outline" className={`text-[10px] ${
+                                anomaly.severity === "critical" ? "bg-red-500/15 text-red-600 dark:text-red-400" :
+                                anomaly.severity === "warning" ? "bg-amber-500/15 text-amber-600 dark:text-amber-400" :
+                                "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                              }`}>{anomaly.severity}</Badge>
+                            </div>
+                            <span className="text-[10px] text-muted-foreground shrink-0">{new Date(anomaly.timestamp).toLocaleString()}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center gap-2">
+                      <TrendingUp className="w-4 h-4 text-muted-foreground" />
+                      <CardTitle className="text-sm font-medium">Business Impact</CardTitle>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4" data-testid="business-impact">
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Monthly Revenue</span>
+                        <span className="text-lg font-semibold" data-testid="text-monthly-revenue">${monthlyRevenue.toLocaleString()}</span>
+                      </div>
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Monthly Cost</span>
+                        <span className="text-lg font-semibold" data-testid="text-monthly-cost">${monthlyCost.toLocaleString()}</span>
+                      </div>
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-[10px] text-muted-foreground uppercase tracking-wider">ROI</span>
+                        <span className={`text-lg font-semibold ${roi >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`} data-testid="text-roi">
+                          {roi.toFixed(1)}%
+                        </span>
+                      </div>
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Total Runs</span>
+                        <span className="text-lg font-semibold" data-testid="text-total-runs">{(agent.totalRuns || 0).toLocaleString()}</span>
+                      </div>
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Revenue / Run</span>
+                        <span className="text-lg font-semibold" data-testid="text-cost-efficiency">${costEfficiency.toFixed(3)}</span>
+                      </div>
+                    </div>
+                    {outcome && (
+                      <div className="flex items-center gap-2 mt-4 pt-3 border-t flex-wrap">
+                        <span className="text-xs text-muted-foreground">Linked Outcome:</span>
+                        <span className="text-xs font-medium" data-testid="text-linked-outcome">{outcome.name}</span>
+                        <StatusBadge status={outcome.status} />
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </>
+            );
+          })()}
         </TabsContent>
 
         <TabsContent value="autonomous" className="flex flex-col gap-4 mt-0">
@@ -552,6 +1009,227 @@ export default function AgentDetail() {
               )}
             </CardContent>
           </Card>
+
+          {/* A/B Experiments */}
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2">
+                <FlaskConical className="w-4 h-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">A/B Experiments</CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col gap-3">
+                {[
+                  {
+                    name: "Prompt v3.1 vs v3.0",
+                    status: "active",
+                    variantA: { label: "v3.0", success: 87 },
+                    variantB: { label: "v3.1", success: 91 },
+                    trafficSplit: "50/50",
+                    detail: "Started 3 days ago",
+                  },
+                  {
+                    name: "Temperature 0.3 vs 0.7",
+                    status: "completed",
+                    variantA: { label: "Temp 0.3", success: 94 },
+                    variantB: { label: "Temp 0.7", success: 89.8 },
+                    trafficSplit: "50/50",
+                    detail: "Winner: Variant A (0.3), +4.2% accuracy",
+                  },
+                  {
+                    name: "RAG top-k=5 vs top-k=10",
+                    status: "pending",
+                    variantA: { label: "top-k=5", success: 0 },
+                    variantB: { label: "top-k=10", success: 0 },
+                    trafficSplit: "50/50",
+                    detail: "Scheduled start: Tomorrow",
+                  },
+                ].map((exp, i) => (
+                  <div key={i} className="flex flex-col gap-2 p-3 rounded-md border" data-testid={`experiment-${i}`}>
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-medium">{exp.name}</span>
+                        <StatusBadge status={exp.status} />
+                        <Badge variant="outline" className="text-[10px]">{exp.trafficSplit} split</Badge>
+                      </div>
+                      <Button variant="outline" size="sm" data-testid={`button-view-experiment-${i}`} onClick={() => toast({ title: `Viewing experiment: ${exp.name}` })}>
+                        <Eye className="w-3.5 h-3.5 mr-1" /> View Details
+                      </Button>
+                    </div>
+                    {exp.status !== "pending" && (
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="p-2 rounded-md bg-muted/30 text-center">
+                          <span className="text-[10px] text-muted-foreground block">Variant A: {exp.variantA.label}</span>
+                          <span className="text-sm font-semibold">{exp.variantA.success}%</span>
+                        </div>
+                        <div className="p-2 rounded-md bg-muted/30 text-center">
+                          <span className="text-[10px] text-muted-foreground block">Variant B: {exp.variantB.label}</span>
+                          <span className="text-sm font-semibold">{exp.variantB.success}%</span>
+                        </div>
+                      </div>
+                    )}
+                    <span className="text-[10px] text-muted-foreground">{exp.detail}</span>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Cost Tuning */}
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2">
+                <DollarSign className="w-4 h-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Cost Tuning</CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-4">
+              <div className="grid grid-cols-3 gap-4">
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Per-Run Cost</span>
+                  <span className="text-lg font-semibold" data-testid="text-per-run-cost">${(agent.costPerRun || 0).toFixed(4)}</span>
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Monthly Projection</span>
+                  <span className="text-lg font-semibold" data-testid="text-monthly-projection">${(agent.monthlyCost || 0).toLocaleString()}</span>
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Budget Utilization</span>
+                  <span className="text-lg font-semibold" data-testid="text-budget-utilization">
+                    {((agent.monthlyCost || 0) > 0 ? ((agent.monthlyCost || 0) / ((agent.monthlyCost || 0) * 1.2) * 100).toFixed(0) : 0)}%
+                  </span>
+                </div>
+              </div>
+
+              <Separator />
+
+              <div className="flex flex-col gap-2">
+                <span className="text-xs font-medium">Suggested Optimizations</span>
+                {[
+                  { suggestion: "Switch to gpt-4.1-mini for classification steps", saving: "-35% cost", id: "opt-model" },
+                  { suggestion: "Reduce chunk overlap from 100 to 50", saving: "-12% retrieval cost", id: "opt-chunk" },
+                  { suggestion: "Enable response caching for repeated queries", saving: "-18% token usage", id: "opt-cache" },
+                ].map((opt) => (
+                  <div key={opt.id} className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted/30" data-testid={`cost-opt-${opt.id}`}>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Lightbulb className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                      <span className="text-xs">{opt.suggestion}: <span className="font-medium text-emerald-600 dark:text-emerald-400">{opt.saving}</span></span>
+                    </div>
+                    <Button variant="outline" size="sm" data-testid={`button-apply-${opt.id}`} onClick={() => toast({ title: `Applied: ${opt.suggestion}` })}>
+                      Apply
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* GOVERNANCE TAB */}
+        <TabsContent value="governance" className="flex flex-col gap-4 mt-0">
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Effective Policies</CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {policyBindings.length > 0 ? (
+                <div className="flex flex-col gap-2">
+                  {policyBindings.map((binding) => {
+                    const matchedPolicy = allPolicies?.find(p => p.id === binding.policyId);
+                    return (
+                      <div key={binding.policyId} className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted/30" data-testid={`governance-policy-${binding.policyId}`}>
+                        <div className="flex items-center gap-2 min-w-0 flex-wrap">
+                          {binding.enforcement === "hard_block" ? (
+                            <Lock className="w-3.5 h-3.5 text-red-500 shrink-0" />
+                          ) : (
+                            <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                          )}
+                          <span className="text-xs font-medium">{binding.name}</span>
+                          {matchedPolicy && (
+                            <>
+                              <Badge variant="outline" className="text-[10px]">{matchedPolicy.domain}</Badge>
+                              <Badge variant="outline" className="text-[10px]">v{matchedPolicy.version}</Badge>
+                              <StatusBadge status={matchedPolicy.status} />
+                            </>
+                          )}
+                        </div>
+                        <Badge variant="outline" className={`text-[10px] shrink-0 ${binding.enforcement === "hard_block" ? "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20" : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"}`}>
+                          {binding.enforcement.replace(/_/g, " ")}
+                        </Badge>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground text-center py-4">No policies bound to this agent</p>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2">
+                <Shield className="w-4 h-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Policy Exceptions</CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col gap-2">
+                {[
+                  { description: "PII detection bypass for internal testing", expiry: "2026-03-01", status: "active" },
+                  { description: "Cost threshold override for Q1 pilot", expiry: "2026-04-15", status: "active" },
+                ].map((exception, i) => (
+                  <div key={i} className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted/30" data-testid={`policy-exception-${i}`}>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <AlertCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                      <span className="text-xs">{exception.description}</span>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-[10px] text-muted-foreground">Expires {exception.expiry}</span>
+                      <StatusBadge status={exception.status} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Approval History</CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {agentApprovals.length > 0 ? (
+                <div className="flex flex-col gap-2">
+                  {agentApprovals.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()).map((approval) => (
+                    <div key={approval.id} className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted/30" data-testid={`approval-row-${approval.id}`}>
+                      <div className="flex flex-col gap-0.5 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-medium">{approval.type}</span>
+                          <StatusBadge status={approval.status} />
+                        </div>
+                        {approval.description && <span className="text-[10px] text-muted-foreground">{approval.description}</span>}
+                        <div className="flex items-center gap-2 text-[10px] text-muted-foreground flex-wrap">
+                          {approval.requestedBy && <span>Requested by: {approval.requestedBy}</span>}
+                          {approval.decidedBy && <span>Decided by: {approval.decidedBy}</span>}
+                          {approval.decidedAt && <span>{new Date(approval.decidedAt).toLocaleString()}</span>}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground text-center py-4">No approval history</p>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="timeline" className="flex flex-col gap-4 mt-0">
@@ -590,6 +1268,13 @@ export default function AgentDetail() {
                       {cat === "all" ? "All" : cat.charAt(0).toUpperCase() + cat.slice(1)}
                     </Button>
                   ))}
+                  <div className="flex-1" />
+                  <Button variant="outline" size="sm" onClick={handleExportJSON} data-testid="button-export-json">
+                    <Download className="w-3.5 h-3.5 mr-1.5" /> Export JSON
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={handleExportCSV} data-testid="button-export-csv">
+                    <Download className="w-3.5 h-3.5 mr-1.5" /> Export CSV
+                  </Button>
                 </div>
 
                 {markerEntry && changesSinceGood && changesSinceGood.length > 0 && (

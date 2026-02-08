@@ -440,6 +440,11 @@ export async function registerRoutes(
     res.json(logs);
   });
 
+  app.get("/api/agents/:id/versions", async (req, res) => {
+    const versions = await storage.getAgentVersions(req.params.id);
+    res.json(versions);
+  });
+
   app.get("/api/eval-suites", async (_req, res) => {
     const suites = await storage.getEvalSuites();
     res.json(suites);
