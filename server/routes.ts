@@ -156,6 +156,11 @@ export async function registerRoutes(
     res.json(logs);
   });
 
+  app.get("/api/eval-suites", async (_req, res) => {
+    const suites = await storage.getEvalSuites();
+    res.json(suites);
+  });
+
   app.get("/api/traces", async (_req, res) => {
     const traces = await storage.getTraces();
     res.json(traces);

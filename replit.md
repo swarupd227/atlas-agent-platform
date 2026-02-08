@@ -101,6 +101,19 @@ Components: `role-provider.tsx` (context + hook), `role-switcher.tsx` (header dr
 - **Expert Validation Gate**: Creating an outcome from discovery auto-creates an `outcome_review` approval in the Approvals queue. Shows proposed KPIs, proposed agents, and validation checklist. "Validate" button instead of "Approve".
 - **Business-first entry points**: Overview page "Start with a Business Outcome" CTA, Outcomes page "Discover with AI" button, Sidebar "Discover" nav item (visible to Outcome Owner and Agent Engineer roles)
 
+## Global App Shell
+- **Left Nav (Sidebar)**: Two groups — Platform (Overview, Discover, Outcomes, Agents, Templates, Evals, Deployments, Monitor) and Operations (Ops, Governance, Approvals, Billing, Integrations, Admin). Role-filtered.
+- **Top Bar**: Global search (queries agents, outcomes, policies, runs), Command palette (Cmd+K with Create Agent, Run Eval, Rollback, Open Incident actions), Environment selector (Staging/Pilot/Prod), Notification center (real-time pending approvals + drift alerts), Role switcher, Theme toggle
+- **Command Palette**: `client/src/components/command-palette.tsx` — Cmd+K shortcut, Quick Actions + Navigate groups, uses shadcn CommandDialog
+- **Global Search**: `client/src/components/global-search.tsx` — searches agents, outcomes, policies, run traces with results dropdown
+- **Environment Selector**: `client/src/components/environment-selector.tsx` — Staging/Pilot/Prod with localStorage persistence
+- **Notification Center**: `client/src/components/notification-center.tsx` — Popover with pending approvals + critical drift alerts from real API data
+
+## New Pages
+- **Evals Listing** (`/evals`): Browse all eval suites with status, scoring method, linked agents. Links to eval detail.
+- **Integrations** (`/integrations`): Integration categories (LLM Providers, Vector DBs, Monitoring, CI/CD, Ticketing, Communication) with configure actions.
+- **Admin** (`/admin`): Platform health stats (uptime, users, API calls, storage) + admin sections (User Management, System Settings, API Keys, Audit Logs).
+
 ## Recent Changes
 - 80/20 Model Gaps Closed:
   - Improvements page: Auto-generated recommendations from eval failures, drift signals, cost analysis, traces. Categories: retrain, model_swap, config_change, workflow_optimization, policy_update. Generate endpoint computes new recs from agent data. Cost source filter, agent name links, type badges, estimated savings stat.

@@ -10,8 +10,11 @@ import {
   CheckCircle,
   Zap,
   Library,
-  Lightbulb,
+  Wrench,
   Sparkles,
+  FlaskConical,
+  Plug,
+  ShieldCheck,
 } from "lucide-react";
 import {
   Sidebar,
@@ -28,21 +31,24 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { useRole } from "./role-provider";
 
-const mainNav = [
+const platformNav = [
   { title: "Overview", url: "/", icon: LayoutDashboard },
   { title: "Discover", url: "/outcomes/discover", icon: Sparkles },
   { title: "Outcomes", url: "/outcomes", icon: Target },
   { title: "Agents", url: "/agents", icon: Bot },
   { title: "Templates", url: "/templates", icon: Library },
+  { title: "Evals", url: "/evals", icon: FlaskConical },
   { title: "Deployments", url: "/deployments", icon: Rocket },
   { title: "Monitor", url: "/monitor", icon: Activity },
-  { title: "Improvements", url: "/improvements", icon: Lightbulb },
 ];
 
-const governanceNav = [
+const opsNav = [
+  { title: "Ops", url: "/improvements", icon: Wrench },
   { title: "Governance", url: "/governance", icon: Shield },
   { title: "Approvals", url: "/approvals", icon: CheckCircle },
   { title: "Billing", url: "/billing", icon: CreditCard },
+  { title: "Integrations", url: "/integrations", icon: Plug },
+  { title: "Admin", url: "/admin", icon: ShieldCheck },
 ];
 
 export function AppSidebar() {
@@ -56,8 +62,8 @@ export function AppSidebar() {
     return location.startsWith(url);
   };
 
-  const filteredMainNav = mainNav.filter((item) => isRouteAllowed(item.url));
-  const filteredGovNav = governanceNav.filter((item) => isRouteAllowed(item.url));
+  const filteredPlatformNav = platformNav.filter((item) => isRouteAllowed(item.url));
+  const filteredOpsNav = opsNav.filter((item) => isRouteAllowed(item.url));
 
   return (
     <Sidebar>
@@ -75,12 +81,12 @@ export function AppSidebar() {
         </Link>
       </SidebarHeader>
       <SidebarContent>
-        {filteredMainNav.length > 0 && (
+        {filteredPlatformNav.length > 0 && (
           <SidebarGroup>
             <SidebarGroupLabel>Platform</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
-                {filteredMainNav.map((item) => (
+                {filteredPlatformNav.map((item) => (
                   <SidebarMenuItem key={item.title}>
                     <SidebarMenuButton asChild data-active={isActive(item.url)}>
                       <Link href={item.url} data-testid={`link-nav-${item.title.toLowerCase()}`}>
@@ -94,12 +100,12 @@ export function AppSidebar() {
             </SidebarGroupContent>
           </SidebarGroup>
         )}
-        {filteredGovNav.length > 0 && (
+        {filteredOpsNav.length > 0 && (
           <SidebarGroup>
             <SidebarGroupLabel>Operations</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
-                {filteredGovNav.map((item) => (
+                {filteredOpsNav.map((item) => (
                   <SidebarMenuItem key={item.title}>
                     <SidebarMenuButton asChild data-active={isActive(item.url)}>
                       <Link href={item.url} data-testid={`link-nav-${item.title.toLowerCase()}`}>

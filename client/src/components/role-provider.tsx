@@ -44,7 +44,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "AE",
     description: "Designs blueprints, tools, memory, eval suites",
     icon: Bot,
-    allowedRoutes: ["/", "/agents", "/templates", "/evals", "/improvements", "/outcomes/discover"],
+    allowedRoutes: ["/", "/agents", "/templates", "/evals", "/improvements", "/outcomes/discover", "/integrations"],
   },
   {
     id: "ops_sre",
@@ -53,7 +53,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "SR",
     description: "Monitoring, incidents, reliability, rollback, cost controls",
     icon: Activity,
-    allowedRoutes: ["/", "/deployments", "/monitor", "/agents"],
+    allowedRoutes: ["/", "/deployments", "/monitor", "/agents", "/improvements", "/integrations"],
   },
   {
     id: "compliance_security",
@@ -62,7 +62,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "CS",
     description: "Policy authoring, audit exports, access controls",
     icon: Shield,
-    allowedRoutes: ["/", "/governance", "/approvals"],
+    allowedRoutes: ["/", "/governance", "/approvals", "/admin"],
   },
   {
     id: "expert_validator",

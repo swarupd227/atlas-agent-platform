@@ -9,8 +9,10 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { RoleProvider } from "@/components/role-provider";
 import { RoleSwitcher } from "@/components/role-switcher";
-import { Bell } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { CommandPalette } from "@/components/command-palette";
+import { GlobalSearch } from "@/components/global-search";
+import { EnvironmentSelector } from "@/components/environment-selector";
+import { NotificationCenter } from "@/components/notification-center";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import NotFound from "@/pages/not-found";
 import Overview from "@/pages/overview";
@@ -27,10 +29,13 @@ import ReleaseDetail from "@/pages/release-detail";
 import TraceDetail from "@/pages/trace-detail";
 import AgentWizard from "@/pages/agent-wizard";
 import EvalDetail from "@/pages/eval-detail";
+import Evals from "@/pages/evals";
 import Templates from "@/pages/templates";
 import TemplateDetail from "@/pages/template-detail";
 import Improvements from "@/pages/improvements";
 import OutcomeDiscover from "@/pages/outcome-discover";
+import Integrations from "@/pages/integrations";
+import Admin from "@/pages/admin";
 
 function Router() {
   return (
@@ -44,15 +49,18 @@ function Router() {
       <Route path="/templates/:id" component={TemplateDetail} />
       <Route path="/agents/wizard" component={AgentWizard} />
       <Route path="/agents/:id" component={AgentDetail} />
+      <Route path="/evals" component={Evals} />
+      <Route path="/evals/:id" component={EvalDetail} />
       <Route path="/deployments" component={Deployments} />
       <Route path="/deployments/:id" component={ReleaseDetail} />
       <Route path="/traces/:id" component={TraceDetail} />
-      <Route path="/evals/:id" component={EvalDetail} />
       <Route path="/monitor" component={Monitor} />
       <Route path="/governance" component={Governance} />
       <Route path="/approvals" component={Approvals} />
       <Route path="/improvements" component={Improvements} />
       <Route path="/billing" component={Billing} />
+      <Route path="/integrations" component={Integrations} />
+      <Route path="/admin" component={Admin} />
       <Route component={NotFound} />
     </Switch>
   );
@@ -76,12 +84,12 @@ function App() {
                   <header className="flex items-center justify-between gap-2 p-2 border-b shrink-0 h-12">
                     <div className="flex items-center gap-2 flex-wrap">
                       <SidebarTrigger data-testid="button-sidebar-toggle" />
+                      <GlobalSearch />
                     </div>
                     <div className="flex items-center gap-2 flex-wrap">
+                      <EnvironmentSelector />
                       <RoleSwitcher />
-                      <Button variant="ghost" size="icon" data-testid="button-notifications">
-                        <Bell className="w-4 h-4" />
-                      </Button>
+                      <NotificationCenter />
                       <ThemeToggle />
                     </div>
                   </header>
@@ -91,6 +99,7 @@ function App() {
                 </div>
               </div>
             </SidebarProvider>
+            <CommandPalette />
             <Toaster />
           </RoleProvider>
         </TooltipProvider>
