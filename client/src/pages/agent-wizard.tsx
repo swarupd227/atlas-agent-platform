@@ -579,7 +579,7 @@ export default function AgentWizard() {
         )}
       </div>
 
-      <div className="flex items-center justify-between gap-4 border-t pt-4">
+      <div className="flex items-center justify-between gap-4 border-t pt-4 sticky bottom-0 z-30 bg-background pb-4 -mx-6 px-6">
         <Button
           variant="outline"
           onClick={() => {
