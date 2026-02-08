@@ -1,0 +1,71 @@
+Autonomous Agent Design & Assembly (Blueprint Studio)
+UI: Blueprint Studio
+1) Create Agent Wizard (Outcome → Blueprint)
+Step 1: Outcome contract link
+•	Choose existing outcome contract or draft new
+•	Pick KPI targets relevant to this agent
+Step 2: Workflow & role
+•	“What process is this agent automating?” (template library)
+•	Inputs/outputs schema
+•	Stakeholders + escalation owner
+Step 3: Tooling
+•	Select from Tool Catalog
+•	Each tool shows:
+o	permission scope
+o	data classes touched
+o	failure modes
+o	rate limits + cost
+Step 4: Memory & knowledge
+•	Choose knowledge sources: docs, DB tables, tickets, CRM objects
+•	Retrieval settings:
+o	chunking rules
+o	freshness rules
+o	citations required or not
+•	Data classification tagging
+Step 5: Guardrails
+•	Policy bundle (default for org + overrides)
+•	Allowed actions, forbidden outputs
+•	“Stop conditions” + escalation triggers
+Step 6: Eval suite
+•	Choose baseline suite templates + add custom cases
+•	Define acceptance thresholds for pilot & prod
+Step 7: Rollout plan
+•	Shadow mode duration
+•	Canary % steps
+•	Auto rollback triggers
+2) Visual Workflow Graph (LangGraph-like, but platform-native)
+Nodes
+•	Input validation
+•	Retrieval
+•	Reason/plan
+•	Tool call (with tool proxy)
+•	Output formatting
+•	Policy check
+•	Escalation/handoff
+•	Writeback (CRM/ticket/etc.)
+Edge rules
+•	retries, backoff
+•	fallback path (model downgrade, tool failover)
+•	“human required” gates
+Right sidebar
+•	Node config (prompts, model, temperature, schema)
+•	Observability defaults (what to log/redact)
+•	Cost budget constraints
+Technical design
+Blueprint spec
+•	Stored as JSON (canonical), rendered as graph
+•	Hash-signed at release time
+•	Diffable node-by-node
+Assembly engine
+•	blueprint-compiler: validates schema, resolves tool permissions, generates runnable plan
+•	policy-resolver: computes effective policy set (org → outcome → agent → env)
+Autonomy
+•	Platform can propose:
+o	tool selection
+o	retrieval config
+o	prompt scaffolds
+o	initial eval cases
+•	Expert validation required if:
+o	tool touches regulated data
+o	write actions exist (mutation)
+o	high-impact outcome KPI
