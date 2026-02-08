@@ -321,19 +321,21 @@ export default function OutcomeDiscover() {
         recognition.lang = "en-US";
         let active = true;
 
+        let processedUpTo = 0;
         recognition.onresult = (event: any) => {
-          let finalText = "";
+          let newFinalText = "";
           let interim = "";
-          for (let i = 0; i < event.results.length; i++) {
+          for (let i = processedUpTo; i < event.results.length; i++) {
             const result = event.results[i];
             if (result.isFinal) {
-              finalText += result[0].transcript + " ";
+              newFinalText += result[0].transcript + " ";
+              processedUpTo = i + 1;
             } else {
               interim += result[0].transcript;
             }
           }
-          if (finalText) {
-            setLiveTranscript(prev => prev + finalText);
+          if (newFinalText) {
+            setLiveTranscript(prev => prev + newFinalText);
           }
           setInterimText(interim);
         };
