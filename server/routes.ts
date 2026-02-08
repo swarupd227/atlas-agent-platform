@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { ZodError } from "zod";
+import { z, ZodError } from "zod";
 import OpenAI from "openai";
 import {
   insertOutcomeContractSchema,
@@ -366,6 +366,45 @@ export async function registerRoutes(
       res.status(201).json(agent);
     } catch (e) {
       handleZodError(res, e);
+    }
+  });
+
+  app.post("/api/agents/bulk-action", async (req, res) => {
+    try {
+      const bulkActionSchema = z.object({
+        action: z.enum(["regression_eval", "freeze_deployments", "rotate_secrets", "export_audit"]),
+        agentIds: z.array(z.string()).min(1),
+      });
+      const { action, agentIds } = bulkActionSchema.parse(req.body);
+
+      const allAgents = await storage.getAgents();
+      const targetAgents = allAgents.filter(a => agentIds.includes(a.id));
+
+      for (const agent of targetAgents) {
+        let actionDescription = "";
+        if (action === "regression_eval") {
+          actionDescription = `Regression eval triggered for agent "${agent.name}"`;
+        } else if (action === "freeze_deployments") {
+          actionDescription = `Deployments frozen for agent "${agent.name}"`;
+        } else if (action === "rotate_secrets") {
+          actionDescription = `Secret rotation initiated for agent "${agent.name}"`;
+        } else if (action === "export_audit") {
+          actionDescription = `Audit bundle export requested for agent "${agent.name}"`;
+        }
+
+        await storage.createAuditEvent({
+          actorType: "user",
+          actorId: "ops_user",
+          action: `bulk_${action}`,
+          objectType: "agent",
+          objectId: agent.id,
+          details: actionDescription,
+        });
+      }
+
+      res.json({ success: true, processed: targetAgents.length, action });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Bulk action failed" });
     }
   });
 

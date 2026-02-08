@@ -266,6 +266,9 @@ export async function seedDatabase() {
       lastRollbackAt: null,
       canaryConfig: { startPercent: 5, stepPercent: 10, stepInterval: "10m", maxPercent: 100 },
     },
+    toolAccessClass: "privileged",
+    complianceTags: ["SOC2", "GDPR", "PII-Handler"],
+    lastIncidentAt: new Date("2026-01-22T14:30:00Z"),
   }).returning();
 
   const [agent2] = await db.insert(agents).values({
@@ -353,6 +356,9 @@ export async function seedDatabase() {
       lastRollbackAt: "2026-01-15T14:30:00Z",
       canaryConfig: { startPercent: 10, stepPercent: 20, stepInterval: "30m", maxPercent: 100 },
     },
+    toolAccessClass: "standard",
+    complianceTags: ["SOC2", "PCI-DSS"],
+    lastIncidentAt: new Date("2026-01-15T14:30:00Z"),
   }).returning();
 
   const [agent3] = await db.insert(agents).values({
@@ -439,6 +445,9 @@ export async function seedDatabase() {
       lastRollbackAt: null,
       canaryConfig: { startPercent: 25, stepPercent: 25, stepInterval: "15m", maxPercent: 100 },
     },
+    toolAccessClass: "read_only",
+    complianceTags: ["SOC2"],
+    lastIncidentAt: null,
   }).returning();
 
   const [agent4] = await db.insert(agents).values({
@@ -534,6 +543,9 @@ export async function seedDatabase() {
       lastRollbackAt: "2026-01-28T09:15:00Z",
       canaryConfig: { startPercent: 1, stepPercent: 5, stepInterval: "5m", maxPercent: 100 },
     },
+    toolAccessClass: "privileged",
+    complianceTags: ["SOC2", "GDPR", "CCPA", "Content-Safety"],
+    lastIncidentAt: new Date("2026-01-28T09:15:00Z"),
   }).returning();
 
   const [agent5] = await db.insert(agents).values({
@@ -620,6 +632,9 @@ export async function seedDatabase() {
       lastRollbackAt: null,
       canaryConfig: { startPercent: 50, stepPercent: 50, stepInterval: "1h", maxPercent: 100 },
     },
+    toolAccessClass: "standard",
+    complianceTags: ["SOC2", "GDPR"],
+    lastIncidentAt: null,
   }).returning();
 
   // Deployments - with promotion chains, signatures, canary & rollback configs

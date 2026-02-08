@@ -87,6 +87,8 @@ export const agents = pgTable("agents", {
   policyBindings: jsonb("policy_bindings"),
   evalBindings: jsonb("eval_bindings"),
   rollbackPlan: jsonb("rollback_plan"),
+  toolAccessClass: text("tool_access_class").default("standard"),
+  complianceTags: text("compliance_tags").array().default(sql`'{}'::text[]`),
   lastIncidentAt: timestamp("last_incident_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
