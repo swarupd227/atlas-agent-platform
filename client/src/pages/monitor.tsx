@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Activity,
   TrendingUp,
@@ -9,6 +9,7 @@ import {
   Zap,
   Shield,
   RefreshCcw,
+  Wrench,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +19,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatCard } from "@/components/stat-card";
 import { StatusBadge } from "@/components/status-badge";
+import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import type { Agent, RunTrace } from "@shared/schema";
 
 interface DriftSignal {
@@ -46,6 +49,43 @@ export default function Monitor() {
     queryKey: ["/api/drift-signals"],
   });
 
+  const { toast } = useToast();
+
+  const remediateMutation = useMutation({
+    mutationFn: async (signal: DriftSignal) => {
+      await apiRequest("POST", "/api/recommendations", {
+        agentId: signal.agentId,
+        source: "drift",
+        type: signal.metric === "pass_rate" ? "retrain" : "workflow_optimization",
+        title: `Auto-remediate: ${signal.agentName} ${signal.suiteName} ${signal.metric} drift`,
+        description: `${signal.metric === "pass_rate" ? "Pass rate" : "Avg latency"} drifted by ${Math.abs(signal.driftPercent).toFixed(1)}% (${signal.severity} severity). Baseline: ${signal.baseline}, Current: ${signal.current}.`,
+        severity: signal.severity,
+        status: "pending",
+        impact: signal.metric === "pass_rate" 
+          ? `Restore pass rate from ${(signal.current * 100).toFixed(1)}% back to ${(signal.baseline * 100).toFixed(1)}% baseline`
+          : `Reduce latency from ${signal.current}ms back to ${signal.baseline}ms baseline`,
+        suggestedChanges: {
+          action: signal.metric === "pass_rate" ? "retrain" : "optimize_latency",
+          driftSignalId: signal.id,
+          metric: signal.metric,
+          baseline: signal.baseline,
+          current: signal.current,
+          severity: signal.severity,
+        },
+      });
+    },
+    onSuccess: () => {
+      toast({ title: "Remediation created", description: "An improvement recommendation has been created from this drift signal." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to create remediation", description: err.message, variant: "destructive" });
+    },
+  });
+
+  function handleRemediate(signal: DriftSignal) {
+    remediateMutation.mutate(signal);
+  }
+
   if (isLoading) {
     return (
       <div className="flex flex-col gap-6 p-6">
@@ -69,6 +109,22 @@ export default function Monitor() {
     : 0;
   const totalCost = allTraces.reduce((sum, t) => sum + (t.costUsd || 0), 0);
   const policyViolations = allTraces.filter((t) => t.status === "blocked").length;
+
+  function getRemediationSuggestion(signal: DriftSignal): string {
+    if (signal.metric === "pass_rate") {
+      if (signal.severity === "critical") {
+        return "Suggested: Rollback to previous version or retrain on recent data";
+      }
+      return "Suggested: Review failing test cases and adjust configuration";
+    }
+    if (signal.metric === "avg_latency") {
+      if (signal.severity === "critical") {
+        return "Suggested: Scale resources or optimize workflow pipeline";
+      }
+      return "Suggested: Enable response caching or reduce token budget";
+    }
+    return "Suggested: Investigate root cause and update agent configuration";
+  }
 
   return (
     <div className="flex flex-col gap-6 p-6" data-testid="page-monitor">
@@ -172,6 +228,16 @@ export default function Monitor() {
                 </div>
               </CardHeader>
               <CardContent className="flex flex-col gap-3">
+                {driftSignals && driftSignals.length > 0 && (
+                  <div className="flex items-center gap-4 px-1 flex-wrap" data-testid="drift-summary">
+                    <span className="text-xs text-muted-foreground">
+                      {driftSignals.filter(s => s.status === "degraded").length} degraded
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {driftSignals.filter(s => s.status === "improved").length} improved
+                    </span>
+                  </div>
+                )}
                 {!driftSignals || driftSignals.length === 0 ? (
                   <div className="flex items-center gap-3 p-3 rounded-md bg-emerald-500/5 border border-emerald-500/20">
                     <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />
@@ -217,6 +283,23 @@ export default function Monitor() {
                             {" "}&rarr; current: {signal.metric === "pass_rate" ? `${(signal.current * 100).toFixed(1)}%` : `${signal.current}ms`})
                           </span>
                           <span className="text-[10px] text-muted-foreground">Detected: {new Date(signal.detectedAt).toLocaleString()}</span>
+                          {!isImproved && (
+                            <div className="flex items-center justify-between gap-2 mt-1.5 pt-1.5 border-t border-dashed" data-testid={`drift-remediation-${signal.id}`}>
+                              <span className="text-[10px] text-muted-foreground">
+                                {getRemediationSuggestion(signal)}
+                              </span>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleRemediate(signal)}
+                                disabled={remediateMutation.isPending}
+                                data-testid={`button-remediate-${signal.id}`}
+                              >
+                                <Wrench className="w-3 h-3 mr-1" />
+                                Remediate
+                              </Button>
+                            </div>
+                          )}
                         </div>
                       </div>
                     );

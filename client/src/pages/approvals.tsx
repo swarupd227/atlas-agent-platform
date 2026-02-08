@@ -15,6 +15,7 @@ import {
   ChevronDown,
   ChevronUp,
   FileText,
+  Award,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -82,6 +83,59 @@ export default function Approvals() {
           <span className="text-xs font-medium">Evidence Package</span>
         </div>
         
+        {approval.type === "outcome_certification" && (evidenceData as any)?.kpiAttainment && (
+          <div className="flex flex-col gap-2" data-testid={`certification-kpis-${approval.id}`}>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-2 flex-wrap">
+                <Award className="w-3.5 h-3.5 text-blue-500" />
+                <span className="text-xs font-medium">Outcome Certification</span>
+              </div>
+              {(evidenceData as any).overallAttainment && (
+                <Badge variant="outline" className="text-[10px]" data-testid={`badge-overall-attainment-${approval.id}`}>
+                  {(evidenceData as any).overallAttainment}% overall attainment
+                </Badge>
+              )}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+              {((evidenceData as any).kpiAttainment as Array<{name: string; target: number; current: number; attainment: number; status: string}>).map((kpi, idx) => (
+                <div key={idx} className="flex flex-col gap-1 p-2.5 rounded-md bg-muted/30" data-testid={`kpi-card-${approval.id}-${idx}`}>
+                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider">{kpi.name}</span>
+                  <div className="flex items-baseline gap-1.5 flex-wrap">
+                    <span className="text-sm font-semibold">{kpi.current}</span>
+                    <span className="text-[10px] text-muted-foreground">/ {kpi.target} target</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${kpi.attainment >= 100 ? "bg-emerald-500" : kpi.attainment >= 80 ? "bg-blue-500" : "bg-amber-500"}`}
+                        style={{ width: `${Math.min(100, kpi.attainment)}%` }}
+                      />
+                    </div>
+                    <span className={`text-[10px] font-medium ${kpi.attainment >= 100 ? "text-emerald-600 dark:text-emerald-400" : kpi.attainment >= 80 ? "text-blue-600 dark:text-blue-400" : "text-amber-600 dark:text-amber-400"}`}>
+                      {kpi.attainment.toFixed(1)}%
+                    </span>
+                  </div>
+                  <Badge variant="outline" className={`text-[9px] w-fit ${kpi.status === "exceeded" ? "text-emerald-600 dark:text-emerald-400" : kpi.status === "met" || kpi.status === "on_track" ? "text-blue-600 dark:text-blue-400" : "text-amber-600 dark:text-amber-400"}`}>
+                    {kpi.status.replace(/_/g, " ")}
+                  </Badge>
+                </div>
+              ))}
+            </div>
+            {(evidenceData as any).billingImpact && (
+              <div className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/20 flex-wrap" data-testid={`billing-impact-${approval.id}`}>
+                <span className="text-[11px] text-muted-foreground">Billing Impact</span>
+                <span className="text-[11px] font-medium">{(evidenceData as any).billingImpact}</span>
+              </div>
+            )}
+            {(evidenceData as any).recommendation && (
+              <div className="flex items-center gap-2 p-2 rounded-md bg-blue-500/5 border border-blue-500/10 flex-wrap" data-testid={`certification-recommendation-${approval.id}`}>
+                <span className="text-[11px] text-muted-foreground">Recommendation:</span>
+                <span className="text-[11px] font-medium">{(evidenceData as any).recommendation}</span>
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div className="flex flex-col gap-1.5 p-2.5 rounded-md bg-muted/30">
             <div className="flex items-center gap-1.5">
@@ -249,12 +303,16 @@ export default function Approvals() {
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex items-center gap-3 min-w-0">
                       <div className={`flex items-center justify-center w-9 h-9 rounded-md shrink-0 ${riskColors[riskLevel]}`}>
-                        <Shield className="w-4 h-4 text-amber-500" />
+                        {approval.type === "outcome_certification" ? (
+                          <Award className="w-4 h-4 text-blue-500" />
+                        ) : (
+                          <Shield className="w-4 h-4 text-amber-500" />
+                        )}
                       </div>
                       <div className="flex flex-col min-w-0">
                         <span className="text-sm font-semibold truncate">{approval.objectName || approval.type}</span>
                         <span className="text-xs text-muted-foreground">
-                          {approval.type} | {approval.objectType} | Risk: {approval.riskScore}/10
+                          {approval.type === "outcome_certification" ? "Outcome Certification" : approval.type.replace(/_/g, " ")} | {approval.objectType} | Risk: {approval.riskScore}/10
                         </span>
                       </div>
                     </div>
@@ -290,7 +348,7 @@ export default function Approvals() {
                       disabled={decideMutation.isPending}
                       data-testid={`button-approve-${approval.id}`}
                     >
-                      <CheckCircle className="w-3.5 h-3.5 mr-1" /> Approve
+                      <CheckCircle className="w-3.5 h-3.5 mr-1" /> {approval.type === "outcome_certification" ? "Certify" : "Approve"}
                     </Button>
                   </div>
                   {expandedEvidence === approval.id && renderEvidencePackage(approval)}
@@ -316,7 +374,7 @@ export default function Approvals() {
                   </div>
                   <div className="flex flex-col min-w-0">
                     <span className="text-xs font-medium truncate">{approval.objectName || approval.type}</span>
-                    <span className="text-[11px] text-muted-foreground">{approval.type} | Risk: {approval.riskScore}/10</span>
+                    <span className="text-[11px] text-muted-foreground">{approval.type === "outcome_certification" ? "Outcome Certification" : approval.type.replace(/_/g, " ")} | Risk: {approval.riskScore}/10</span>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">

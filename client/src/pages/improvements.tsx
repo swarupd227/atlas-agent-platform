@@ -7,9 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { StatCard } from "@/components/stat-card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Lightbulb, Check, X, Undo2, ChevronDown, ChevronRight, AlertTriangle, TrendingUp, FlaskConical, Shield, Clock } from "lucide-react";
+import { Lightbulb, Check, X, Undo2, ChevronDown, ChevronRight, AlertTriangle, TrendingUp, FlaskConical, Shield, Clock, RefreshCcw, DollarSign } from "lucide-react";
 import { Link } from "wouter";
-import type { ImprovementRecommendation } from "@shared/schema";
+import type { ImprovementRecommendation, Agent } from "@shared/schema";
 
 function formatDate(date: string | Date | null | undefined) {
   if (!date) return "\u2014";
@@ -34,10 +34,11 @@ const sourceIcons: Record<string, typeof FlaskConical> = {
   trace: TrendingUp,
   drift: AlertTriangle,
   policy: Shield,
+  cost: DollarSign,
 };
 
 const statusFilters = ["all", "pending", "applied", "dismissed"] as const;
-const sourceFilters = ["all", "eval", "trace", "drift", "policy"] as const;
+const sourceFilters = ["all", "eval", "trace", "drift", "policy", "cost"] as const;
 const severityFilters = ["all", "critical", "high", "medium", "low"] as const;
 
 export default function Improvements() {
@@ -49,6 +50,25 @@ export default function Improvements() {
 
   const { data: recommendations, isLoading } = useQuery<ImprovementRecommendation[]>({
     queryKey: ["/api/recommendations"],
+  });
+
+  const { data: agents } = useQuery<Agent[]>({
+    queryKey: ["/api/agents"],
+  });
+
+  const generateMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/recommendations/generate");
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/recommendations"] });
+      const count = data?.generated ?? 0;
+      toast({ title: "Recommendations generated", description: `${count} new recommendation${count !== 1 ? "s" : ""} generated.` });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to generate", description: err.message, variant: "destructive" });
+    },
   });
 
   const applyMutation = useMutation({
@@ -125,6 +145,8 @@ export default function Improvements() {
   const pendingCount = all.filter((r) => r.status === "pending").length;
   const appliedCount = all.filter((r) => r.status === "applied").length;
   const dismissedCount = all.filter((r) => r.status === "dismissed").length;
+  const costRecs = all.filter((r) => r.source === "cost" && r.status !== "dismissed").length;
+  const estimatedSavings = costRecs * 950;
 
   const filtered = all.filter((r) => {
     if (statusFilter !== "all" && r.status !== statusFilter) return false;
@@ -135,21 +157,33 @@ export default function Improvements() {
 
   return (
     <div className="flex flex-col gap-6 p-6" data-testid="page-improvements">
-      <div className="flex items-center gap-3">
-        <div className="flex items-center justify-center w-9 h-9 rounded-md bg-amber-500/10 shrink-0">
-          <Lightbulb className="w-4 h-4 text-amber-500" />
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center justify-center w-9 h-9 rounded-md bg-amber-500/10 shrink-0">
+            <Lightbulb className="w-4 h-4 text-amber-500" />
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-page-title">
+              Auto-Improvement Loop
+            </h1>
+            <p className="text-sm text-muted-foreground" data-testid="text-page-description">
+              AI-generated recommendations from traces, evaluations, and drift detection
+            </p>
+          </div>
         </div>
-        <div className="flex flex-col gap-0.5">
-          <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-page-title">
-            Auto-Improvement Loop
-          </h1>
-          <p className="text-sm text-muted-foreground" data-testid="text-page-description">
-            AI-generated recommendations from traces, evaluations, and drift detection
-          </p>
-        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => generateMutation.mutate()}
+          disabled={generateMutation.isPending}
+          data-testid="button-generate-recommendations"
+        >
+          <RefreshCcw className={`w-3.5 h-3.5 mr-1 ${generateMutation.isPending ? "animate-spin" : ""}`} />
+          Generate Recommendations
+        </Button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         <StatCard
           title="Total Recommendations"
           value={all.length}
@@ -177,6 +211,13 @@ export default function Improvements() {
           icon={X}
           variant="danger"
           testId="stat-dismissed"
+        />
+        <StatCard
+          title="Est. Monthly Savings"
+          value={`$${estimatedSavings.toLocaleString()}`}
+          icon={DollarSign}
+          variant="success"
+          testId="stat-estimated-savings"
         />
       </div>
 
@@ -257,6 +298,9 @@ export default function Improvements() {
                         <SourceIcon className="w-3 h-3 mr-1" />
                         {rec.source}
                       </Badge>
+                      <Badge variant="outline" className="text-[11px]" data-testid={`badge-type-${rec.id}`}>
+                        {rec.type.replace(/_/g, " ")}
+                      </Badge>
                       <Badge
                         variant="outline"
                         className={`text-[11px] ${sevConfig.color}`}
@@ -315,7 +359,7 @@ export default function Improvements() {
                   <div className="flex items-center gap-3 text-[11px] text-muted-foreground flex-wrap">
                     <Link href={`/agents/${rec.agentId}`}>
                       <span className="underline cursor-pointer" data-testid={`link-agent-${rec.id}`}>
-                        Agent {rec.agentId.substring(0, 8)}
+                        {agents?.find((a) => a.id === rec.agentId)?.name || "Agent " + rec.agentId.substring(0, 8)}
                       </span>
                     </Link>
                     <span data-testid={`text-created-${rec.id}`}>

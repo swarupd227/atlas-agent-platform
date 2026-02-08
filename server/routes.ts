@@ -704,5 +704,83 @@ Guidelines:
     }
   });
 
+  // Generate recommendations from drift signals and agent data
+  app.post("/api/recommendations/generate", async (_req, res) => {
+    try {
+      const allAgents = await storage.getAgents();
+      const existingRecs = await storage.getImprovementRecommendations();
+      const newRecs: Array<any> = [];
+
+      for (const agent of allAgents) {
+        // Cost-performance recommendations
+        if (agent.costPerRun && agent.monthlyRevenue && agent.monthlyCost) {
+          const roi = ((agent.monthlyRevenue - agent.monthlyCost) / agent.monthlyCost) * 100;
+          const hasExistingCostRec = existingRecs.some(r => r.agentId === agent.id && r.source === "cost" && r.status === "pending");
+          
+          if (roi < 150 && !hasExistingCostRec) {
+            newRecs.push({
+              agentId: agent.id,
+              source: "cost",
+              type: "model_swap",
+              title: `Optimize ${agent.name} cost-performance ratio`,
+              description: `Current ROI is ${roi.toFixed(0)}% with cost-per-run of $${agent.costPerRun}. Consider model downgrade or caching to improve margins.`,
+              severity: roi < 100 ? "critical" : "medium",
+              status: "pending",
+              impact: `Potential to improve ROI from ${roi.toFixed(0)}% to ${(roi * 1.5).toFixed(0)}% with model optimization`,
+              suggestedChanges: { action: "cost_optimization", currentCostPerRun: agent.costPerRun, currentROI: roi.toFixed(0) + "%", targetROI: (roi * 1.5).toFixed(0) + "%", strategies: ["model_downgrade", "response_caching", "token_budget_reduction"] },
+            });
+          }
+        }
+
+        // Success rate recommendations
+        if (agent.successRate && agent.successRate < 0.95) {
+          const hasExistingQualityRec = existingRecs.some(r => r.agentId === agent.id && r.source === "eval" && r.type === "retrain" && r.status === "pending");
+          if (!hasExistingQualityRec) {
+            newRecs.push({
+              agentId: agent.id,
+              source: "eval",
+              type: "retrain",
+              title: `Improve ${agent.name} success rate`,
+              description: `Success rate is ${(agent.successRate * 100).toFixed(1)}%, below the 95% target. Analysis of failed runs suggests retraining on recent failure patterns.`,
+              severity: agent.successRate < 0.90 ? "critical" : "high",
+              status: "pending",
+              impact: `Target improvement from ${(agent.successRate * 100).toFixed(1)}% to 95%+ success rate`,
+              suggestedChanges: { action: "retrain", currentSuccessRate: (agent.successRate * 100).toFixed(1) + "%", targetSuccessRate: "95%", analysisMethod: "failure_pattern_clustering" },
+            });
+          }
+        }
+
+        // Latency optimization recommendations
+        if (agent.avgLatencyMs && agent.avgLatencyMs > 3000) {
+          const hasExistingLatencyRec = existingRecs.some(r => r.agentId === agent.id && r.type === "workflow_optimization" && r.status === "pending");
+          if (!hasExistingLatencyRec) {
+            newRecs.push({
+              agentId: agent.id,
+              source: "trace",
+              type: "workflow_optimization",
+              title: `Reduce ${agent.name} latency`,
+              description: `Average latency is ${agent.avgLatencyMs}ms, above the 3000ms optimization threshold. Workflow analysis suggests parallelizing independent steps.`,
+              severity: agent.avgLatencyMs > 5000 ? "high" : "medium",
+              status: "pending",
+              impact: `Reduce latency from ${agent.avgLatencyMs}ms to ~${Math.round(agent.avgLatencyMs * 0.6)}ms with workflow parallelization`,
+              suggestedChanges: { action: "workflow_optimization", currentLatency: agent.avgLatencyMs, targetLatency: Math.round(agent.avgLatencyMs * 0.6), strategies: ["parallel_steps", "async_tool_calls", "response_streaming"] },
+            });
+          }
+        }
+      }
+
+      // Insert new recommendations
+      const created = [];
+      for (const rec of newRecs) {
+        const result = await storage.createImprovementRecommendation(rec);
+        created.push(result);
+      }
+
+      res.json({ generated: created.length, recommendations: created });
+    } catch (e) {
+      res.status(500).json({ message: "Failed to generate recommendations" });
+    }
+  });
+
   return httpServer;
 }

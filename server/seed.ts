@@ -2,7 +2,7 @@ import { db } from "./db";
 import { 
   outcomeContracts, kpiDefinitions, agents, deployments, 
   runTraces, evalSuites, policies, approvals, auditEvents, invoices,
-  agentTemplates, evalTestCases, evalRuns,
+  agentTemplates, evalTestCases, evalRuns, improvementRecommendations,
 } from "@shared/schema";
 import { batch1Templates } from "./templates-batch1";
 import { batch2Templates } from "./templates-batch2";
@@ -1658,6 +1658,122 @@ export async function seedDatabase() {
     }
     await db.insert(evalRuns).values(runData);
   }
+
+  // Improvement Recommendations
+  await db.insert(improvementRecommendations).values([
+    {
+      agentId: agent1.id,
+      source: "eval",
+      type: "retrain",
+      title: "Retrain RAG retrieval on recent ticket patterns",
+      description: "Edge Cases & Adversarial suite pass rate dropped to 87%. Recent ticket patterns show new categories (crypto refunds, AI-generated complaints) not well-represented in training data.",
+      severity: "high",
+      status: "pending",
+      impact: "Estimated +8% pass rate improvement on adversarial cases, reducing escalation rate by ~12%",
+      suggestedChanges: { action: "retrain", dataset: "tickets_last_90d", focusCategories: ["crypto_refunds", "ai_generated", "multi_language"], estimatedCost: "$45", estimatedDuration: "2h", rollbackPlan: "Revert to v2.3.1 embeddings" },
+    },
+    {
+      agentId: agent2.id,
+      source: "drift",
+      type: "config_change",
+      title: "Adjust extraction confidence threshold",
+      description: "Multi-format Handling suite shows 20% drift in pass rate. Lowering confidence threshold from 0.82 to 0.78 would recover 15% of false rejections without impacting accuracy.",
+      severity: "critical",
+      status: "pending",
+      impact: "Recover ~150 invoices/month currently requiring manual review, saving $2,250/month in labor",
+      suggestedChanges: { action: "config_update", parameter: "similarityThreshold", currentValue: 0.82, suggestedValue: 0.78, affectedComponent: "memoryRagConfig", testResults: { before: 0.625, after: 0.81 } },
+    },
+    {
+      agentId: agent3.id,
+      source: "cost",
+      type: "model_swap",
+      title: "Switch Lead Scorer to Claude 3.5 Haiku for cost reduction",
+      description: "Lead Scorer uses Claude 3.5 Sonnet at $0.078/run. Analysis shows Claude 3.5 Haiku achieves 96% equivalent accuracy at 1/5th the cost for scoring tasks.",
+      severity: "medium",
+      status: "pending",
+      impact: "Reduce cost-per-run from $0.078 to $0.016 (-79%), saving ~$2,880/month with minimal quality impact",
+      suggestedChanges: { action: "model_swap", currentModel: "claude-3.5-sonnet", suggestedModel: "claude-3.5-haiku", costReduction: "79%", qualityImpact: "-4% accuracy", validationRequired: true, rollbackTrigger: "scoring_accuracy < 0.80" },
+    },
+    {
+      agentId: agent1.id,
+      source: "trace",
+      type: "workflow_optimization",
+      title: "Add response caching for repeat ticket patterns",
+      description: "Trace analysis shows 34% of tickets match one of 12 common patterns. Implementing semantic caching could eliminate redundant LLM calls.",
+      severity: "medium",
+      status: "pending",
+      impact: "Reduce avg latency by ~40% for cached patterns, saving ~$420/month in LLM costs",
+      suggestedChanges: { action: "add_cache", cacheType: "semantic", hitRateEstimate: "34%", ttlMinutes: 60, maxEntries: 500, invalidateOn: ["kb_update", "prompt_change"] },
+    },
+    {
+      agentId: agent4.id,
+      source: "eval",
+      type: "retrain",
+      title: "Update content classification model for new violation types",
+      description: "New content categories (deepfake links, AI-generated spam) are being classified as 'borderline' instead of 'violation'. Bias Audit suite flagged 4% misclassification rate.",
+      severity: "high",
+      status: "pending",
+      impact: "Improve severe content detection by ~15%, reducing false negatives from 3% to <1%",
+      suggestedChanges: { action: "retrain", newCategories: ["deepfake_content", "ai_spam", "synthetic_media"], trainingExamples: 2500, estimatedDuration: "4h", estimatedCost: "$120" },
+    },
+    {
+      agentId: agent5.id,
+      source: "eval",
+      type: "config_change",
+      title: "Increase chunk size for better KB article coherence",
+      description: "Article Quality eval pass rate is 82% (below 85% threshold). Analysis suggests larger chunks improve context retention for complex topics.",
+      severity: "medium",
+      status: "pending",
+      impact: "Estimated +5% article quality score, reducing expert review rejections by ~20%",
+      suggestedChanges: { action: "config_update", parameter: "chunkSize", currentValue: 768, suggestedValue: 1024, affectedComponent: "memoryRagConfig", rationale: "Complex topics need more context" },
+    },
+    {
+      agentId: agent2.id,
+      source: "cost",
+      type: "model_swap",
+      title: "Use GPT-4o-mini for OCR pre-processing step",
+      description: "Invoice Extractor uses GPT-4o for all steps including simple OCR extraction. Pre-processing with GPT-4o-mini would reduce cost while maintaining accuracy for the extraction phase.",
+      severity: "low",
+      status: "applied",
+      impact: "Saved $630/month by using GPT-4o-mini for OCR step (applied 5 days ago)",
+      suggestedChanges: { action: "model_swap", step: "ocr", currentModel: "gpt-4o", suggestedModel: "gpt-4o-mini", costReduction: "30%", qualityImpact: "none for OCR step" },
+      appliedAt: new Date(Date.now() - 5 * 86400000),
+    },
+    {
+      agentId: agent3.id,
+      source: "drift",
+      type: "config_change",
+      title: "Update ICP scoring rubric to v4",
+      description: "Scoring Calibration suite shows 20% drift. Recent win/loss analysis indicates the v3 rubric under-weights product usage signals.",
+      severity: "high",
+      status: "pending",
+      impact: "Expected +6% scoring accuracy improvement, better alignment with actual conversion outcomes",
+      suggestedChanges: { action: "config_update", parameter: "scoringRubric", currentValue: "icp_fit_v3", suggestedValue: "icp_fit_v4", changes: ["Add product_usage_score weight: 0.2", "Reduce firmographic_size weight: 0.15 -> 0.10", "Add intent_signals composite"] },
+    },
+    {
+      agentId: agent1.id,
+      source: "policy",
+      type: "policy_update",
+      title: "Tighten escalation triggers for financial queries",
+      description: "Policy compliance check found 3 cases where financial advice was nearly provided without escalation. Recommend adding 'refund_amount > $500' to escalation triggers.",
+      severity: "high",
+      status: "dismissed",
+      impact: "Prevent potential policy violations in financial advice scenarios",
+      suggestedChanges: { action: "policy_update", policyId: "pol_escalation_path", addTrigger: "refund_amount > 500", existingTriggers: ["angry_customer", "legal_mention"], rationale: "Near-miss policy violations detected in traces" },
+      dismissedAt: new Date(Date.now() - 2 * 86400000),
+    },
+    {
+      agentId: agent4.id,
+      source: "cost",
+      type: "workflow_optimization",
+      title: "Implement batch processing for low-severity content",
+      description: "Content Moderator processes all items individually. Batching 'safe' pre-filtered content (67% of volume) could reduce API calls by 5x.",
+      severity: "low",
+      status: "pending",
+      impact: "Reduce monthly cost from $1,800 to ~$1,200 (-33%) by batching low-risk content classification",
+      suggestedChanges: { action: "add_batching", batchSize: 10, eligibleContent: "prefilter_result == 'safe'", estimatedHitRate: "67%", maxBatchLatencyMs: 2000 },
+    },
+  ]);
 
   console.log("Database seeded successfully");
 }

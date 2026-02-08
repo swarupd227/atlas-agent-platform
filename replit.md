@@ -89,6 +89,11 @@ Entry from Templates page: `/agents/wizard?templateId={id}` pre-fills all fields
 Components: `role-provider.tsx` (context + hook), `role-switcher.tsx` (header dropdown), sidebar filters nav by role
 
 ## Recent Changes
+- 80/20 Model Gaps Closed:
+  - Improvements page: Auto-generated recommendations from eval failures, drift signals, cost analysis, traces. Categories: retrain, model_swap, config_change, workflow_optimization, policy_update. Generate endpoint computes new recs from agent data. Cost source filter, agent name links, type badges, estimated savings stat.
+  - Automated Remediation: Monitor drift signals now show contextual fix suggestions (rollback, retrain, adjust threshold) with one-click "Remediate" button that creates improvement recommendations.
+  - Outcome Certification: New `outcome_certification` approval type in Approvals page with KPI attainment progress bars, overall attainment badge, billing impact, certification recommendation. "Certify" button instead of "Approve".
+  - Cost-Performance Tuning: /api/recommendations/generate computes cost optimization, success rate, and latency recommendations from agent data. Surfaced in Improvements page with "cost" source filter.
 - Role-based persona system: 6 roles with header switcher dropdown, sidebar navigation filtering per role, sidebar footer showing active role
 - Overview Dashboard: Transformed into "Lifecycle Command Center" with ROI summary (cost/revenue/ROI%/cost-per-run), portfolio health heatmap, urgent signals panel (drift + approvals), outcome attainment progress
 - Governance Page: Enhanced into compliance center with policy violations count, approval compliance rate, enforcement stats tab, audit timeline with filters (object/action/date), CSV export
