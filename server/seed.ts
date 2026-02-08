@@ -3,6 +3,7 @@ import {
   outcomeContracts, kpiDefinitions, agents, deployments, 
   runTraces, evalSuites, policies, approvals, auditEvents, invoices,
   agentTemplates, evalTestCases, evalRuns, improvementRecommendations,
+  agentVersions,
 } from "@shared/schema";
 import { batch1Templates } from "./templates-batch1";
 import { batch2Templates } from "./templates-batch2";
@@ -1561,11 +1562,118 @@ export async function seedDatabase() {
 
   // Approvals
   await db.insert(approvals).values([
-    { type: "deployment", objectType: "agent", objectName: "Support Triage Agent v2.4.0", riskScore: 7.5, status: "pending", requestedBy: "CI Pipeline", description: "New version with improved RAG retrieval and updated prompt templates" },
-    { type: "tool_permission", objectType: "agent", objectName: "Invoice Extractor - Salesforce Write", riskScore: 8.2, status: "pending", requestedBy: "Finance Ops", description: "Grant write access to Salesforce for automated invoice record creation" },
-    { type: "policy_exception", objectType: "policy", objectName: "PII Policy Exception - Support Agent", riskScore: 6.0, status: "pending", requestedBy: "Support Engineering", description: "Temporary exception to include customer name in personalized responses" },
-    { type: "deployment", objectType: "agent", objectName: "Content Moderator v4.1.0", riskScore: 5.0, status: "approved", requestedBy: "Trust & Safety", decidedBy: "Expert Validator", description: "Updated classification model with improved multi-language support", decidedAt: new Date(Date.now() - 86400000) },
-    { type: "model_upgrade", objectType: "agent", objectName: "Lead Scorer - Claude 3.5 Upgrade", riskScore: 4.5, status: "approved", requestedBy: "Revenue Ops", decidedBy: "Expert Validator", description: "Upgrade from Claude 3 to Claude 3.5 Sonnet for better scoring accuracy", decidedAt: new Date(Date.now() - 172800000) },
+    {
+      type: "deployment", objectType: "agent", objectName: "Support Triage Agent v2.4.0", riskScore: 7.5, status: "pending", requestedBy: "CI Pipeline", description: "New version with improved RAG retrieval and updated prompt templates",
+      evidenceJson: {
+        configDiff: {
+          changes: [
+            { field: "retrievalStrategy", from: "keyword", to: "semantic_hybrid", category: "blueprint" },
+            { field: "promptTemplate", from: "support_v3", to: "support_v4", category: "blueprint" },
+            { field: "maxRetrievedChunks", from: 5, to: 8, category: "config" },
+            { field: "similarityThreshold", from: 0.75, to: 0.78, category: "config" },
+          ],
+          summary: "4 changes across blueprint and config parameters",
+          version: { from: "2.3.1", to: "2.4.0" },
+        },
+        blastRadius: {
+          affectedUsers: 12500,
+          affectedRunsPerDay: 850,
+          revenueExposure: "$45,000/mo",
+          environment: "prod",
+          downstreamAgents: 2,
+          rollbackTimeEstimate: "< 5 min",
+        },
+      },
+    },
+    {
+      type: "tool_permission", objectType: "agent", objectName: "Invoice Extractor - Salesforce Write", riskScore: 8.2, status: "pending", requestedBy: "Finance Ops", description: "Grant write access to Salesforce for automated invoice record creation",
+      evidenceJson: {
+        configDiff: {
+          changes: [
+            { field: "salesforce.create_record", from: "denied", to: "allowed", category: "permission" },
+            { field: "salesforce.update_record", from: "denied", to: "allowed", category: "permission" },
+            { field: "rateLimit", from: "0/min", to: "50/min", category: "config" },
+          ],
+          summary: "2 permission grants and 1 rate limit change",
+          version: { from: "1.8.0", to: "1.8.1" },
+        },
+        blastRadius: {
+          affectedUsers: 3200,
+          affectedRunsPerDay: 430,
+          revenueExposure: "$8,750/mo",
+          environment: "prod",
+          downstreamAgents: 1,
+          rollbackTimeEstimate: "< 2 min",
+        },
+      },
+    },
+    {
+      type: "policy_exception", objectType: "policy", objectName: "PII Policy Exception - Support Agent", riskScore: 6.0, status: "pending", requestedBy: "Support Engineering", description: "Temporary exception to include customer name in personalized responses",
+      evidenceJson: {
+        configDiff: {
+          changes: [
+            { field: "pii_redaction.firstName", from: "block", to: "allow", category: "policy" },
+            { field: "pii_redaction.scope", from: "all_responses", to: "personalized_only", category: "policy" },
+            { field: "exceptionExpiry", from: "none", to: "30 days", category: "policy" },
+          ],
+          summary: "2 policy field changes with 30-day expiry",
+          version: { from: "3.0", to: "3.1-exception" },
+        },
+        blastRadius: {
+          affectedUsers: 12500,
+          affectedRunsPerDay: 850,
+          revenueExposure: "$45,000/mo",
+          environment: "prod",
+          downstreamAgents: 0,
+          rollbackTimeEstimate: "< 1 min",
+        },
+      },
+    },
+    {
+      type: "deployment", objectType: "agent", objectName: "Content Moderator v4.1.0", riskScore: 5.0, status: "approved", requestedBy: "Trust & Safety", decidedBy: "Expert Validator", description: "Updated classification model with improved multi-language support", decidedAt: new Date(Date.now() - 86400000),
+      evidenceJson: {
+        configDiff: {
+          changes: [
+            { field: "classificationModel", from: "mod_v3", to: "mod_v4_multilang", category: "blueprint" },
+            { field: "supportedLanguages", from: 12, to: 28, category: "config" },
+            { field: "confidenceThreshold", from: 0.85, to: 0.82, category: "config" },
+          ],
+          summary: "3 changes across classification model and language support",
+          version: { from: "4.0.0", to: "4.1.0" },
+        },
+        blastRadius: {
+          affectedUsers: 47800,
+          affectedRunsPerDay: 1600,
+          revenueExposure: "$15,000/mo",
+          environment: "prod",
+          downstreamAgents: 3,
+          rollbackTimeEstimate: "< 3 min",
+        },
+      },
+    },
+    {
+      type: "model_upgrade", objectType: "agent", objectName: "Lead Scorer - Claude 3.5 Upgrade", riskScore: 4.5, status: "approved", requestedBy: "Revenue Ops", decidedBy: "Expert Validator", description: "Upgrade from Claude 3 to Claude 3.5 Sonnet for better scoring accuracy", decidedAt: new Date(Date.now() - 172800000),
+      evidenceJson: {
+        configDiff: {
+          changes: [
+            { field: "modelName", from: "claude-3-sonnet", to: "claude-3.5-sonnet", category: "model" },
+            { field: "temperature", from: 0.7, to: 0.5, category: "config" },
+            { field: "maxTokens", from: 4096, to: 2048, category: "config" },
+            { field: "scoringRubric", from: "icp_fit_v2", to: "icp_fit_v3", category: "config" },
+          ],
+          summary: "4 config changes across model and scoring parameters",
+          version: { from: "3.0.9", to: "3.1.2" },
+        },
+        blastRadius: {
+          affectedUsers: 8500,
+          affectedRunsPerDay: 285,
+          revenueExposure: "$9,200/mo",
+          environment: "prod",
+          downstreamAgents: 1,
+          rollbackTimeEstimate: "< 5 min",
+        },
+      },
+    },
   ]);
 
   // Audit Events
@@ -1577,6 +1685,30 @@ export async function seedDatabase() {
     { actorType: "system", actorId: "eval-runner", action: "eval.completed", objectType: "eval_suite", details: "Nightly regression suite completed: 94% pass rate" },
     { actorType: "system", actorId: "monitor", action: "alert.triggered", objectType: "agent", objectId: agent5.id, details: "Health score dropped below 80% threshold" },
     { actorType: "user", actorId: "support-eng", action: "policy.created", objectType: "policy", details: "Created new citation policy for support agents" },
+    { actorType: "system", actorId: "model-registry", action: "model.updated", objectType: "agent", objectId: agent1.id, details: "Model changed from gpt-4 to gpt-4.1 for improved accuracy" },
+    { actorType: "user", actorId: "agent-engineer", action: "tools.modified", objectType: "agent", objectId: agent1.id, details: "Added web_search tool, removed legacy_api tool" },
+    { actorType: "system", actorId: "policy-engine", action: "policy.binding.added", objectType: "agent", objectId: agent1.id, details: "Bound PII redaction policy v3 to agent" },
+    { actorType: "system", actorId: "eval-engine", action: "eval.regression.detected", objectType: "agent", objectId: agent1.id, details: "Pass rate dropped 4.2% on Safety eval suite" },
+    { actorType: "system", actorId: "drift-monitor", action: "config.auto_adjusted", objectType: "agent", objectId: agent1.id, details: "Temperature reduced from 0.8 to 0.6 due to hallucination drift" },
+    { actorType: "system", actorId: "model-registry", action: "model.updated", objectType: "agent", objectId: agent2.id, details: "Switched OCR pre-processing to GPT-4o-mini" },
+    { actorType: "system", actorId: "deploy-pipeline", action: "deployment.promoted", objectType: "agent", objectId: agent2.id, details: "Promoted v3.2.0 from staging to production" },
+    { actorType: "user", actorId: "agent-engineer", action: "tools.modified", objectType: "agent", objectId: agent4.id, details: "Added image_classifier_v2 tool for deepfake detection" },
+    { actorType: "system", actorId: "autopatch-engine", action: "patch.applied", objectType: "agent", objectId: agent1.id, details: "Auto-applied prompt optimization: reduced hallucination rate by 12%" },
+  ]);
+
+  // Agent Versions
+  await db.insert(agentVersions).values([
+    { agentId: agent1.id, semver: "0.9.0", blueprintHash: "sha256:abc123", status: "archived", createdBy: "agent-engineer" },
+    { agentId: agent1.id, semver: "1.0.0", blueprintHash: "sha256:def456", status: "archived", createdBy: "agent-engineer" },
+    { agentId: agent1.id, semver: "1.1.0", blueprintHash: "sha256:ghi789", status: "active", createdBy: "system" },
+    { agentId: agent2.id, semver: "1.0.0", blueprintHash: "sha256:inv001", status: "archived", createdBy: "agent-engineer" },
+    { agentId: agent2.id, semver: "2.0.0", blueprintHash: "sha256:inv002", status: "archived", createdBy: "agent-engineer" },
+    { agentId: agent2.id, semver: "3.2.0", blueprintHash: "sha256:inv003", status: "active", createdBy: "system" },
+    { agentId: agent3.id, semver: "1.0.0", blueprintHash: "sha256:lead01", status: "archived", createdBy: "agent-engineer" },
+    { agentId: agent3.id, semver: "1.2.0", blueprintHash: "sha256:lead02", status: "active", createdBy: "agent-engineer" },
+    { agentId: agent4.id, semver: "3.0.0", blueprintHash: "sha256:mod001", status: "archived", createdBy: "trust-safety-lead" },
+    { agentId: agent4.id, semver: "4.1.0", blueprintHash: "sha256:mod002", status: "active", createdBy: "system" },
+    { agentId: agent5.id, semver: "1.0.0", blueprintHash: "sha256:kb0001", status: "active", createdBy: "agent-engineer" },
   ]);
 
   // Invoices

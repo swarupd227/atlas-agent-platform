@@ -37,6 +37,7 @@ import {
   Power,
   RefreshCw,
   TrendingUp,
+  TrendingDown,
   Lightbulb,
   AlertCircle,
 } from "lucide-react";
@@ -83,12 +84,26 @@ export default function AgentDetail() {
     queryKey: ["/api/agents", agentId, "autonomous-actions"],
     enabled: !!agentId,
   });
+  const { data: timeline } = useQuery<Array<{
+    id: string;
+    timestamp: string;
+    category: string;
+    title: string;
+    description: string;
+    severity: string;
+    diff?: { field: string; from: string; to: string }[];
+    correlatedMetric?: { metric: string; before: number; after: number; change: string };
+  }>>({
+    queryKey: ["/api/agents", agentId, "timeline"],
+    enabled: !!agentId,
+  });
 
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const [retireDialogOpen, setRetireDialogOpen] = useState(false);
   const [retireReason, setRetireReason] = useState("");
   const [replacementAgentId, setReplacementAgentId] = useState("");
+  const [timelineFilter, setTimelineFilter] = useState<string>("all");
 
   const retireMutation = useMutation({
     mutationFn: async (data: { status: string; description?: string }) => {
@@ -207,6 +222,7 @@ export default function AgentDetail() {
           <TabsTrigger value="blueprint" data-testid="tab-blueprint">Blueprint</TabsTrigger>
           <TabsTrigger value="lifecycle" data-testid="tab-lifecycle">Lifecycle</TabsTrigger>
           <TabsTrigger value="autonomous" data-testid="tab-autonomous">Autonomous</TabsTrigger>
+          <TabsTrigger value="timeline" data-testid="tab-timeline">Timeline</TabsTrigger>
         </TabsList>
 
         <TabsContent value="summary" className="flex flex-col gap-4 mt-0">
@@ -530,6 +546,144 @@ export default function AgentDetail() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="timeline" className="flex flex-col gap-4 mt-0">
+          {(() => {
+            const categoryConfig: Record<string, { icon: typeof GitBranch; color: string; dotColor: string }> = {
+              blueprint: { icon: GitBranch, color: "text-purple-600 dark:text-purple-400", dotColor: "bg-purple-500" },
+              model: { icon: Cpu, color: "text-blue-600 dark:text-blue-400", dotColor: "bg-blue-500" },
+              tools: { icon: Wrench, color: "text-indigo-600 dark:text-indigo-400", dotColor: "bg-indigo-500" },
+              policy: { icon: Shield, color: "text-amber-600 dark:text-amber-400", dotColor: "bg-amber-500" },
+              config: { icon: FileCode, color: "text-slate-600 dark:text-slate-400", dotColor: "bg-slate-500" },
+              deployment: { icon: Rocket, color: "text-emerald-600 dark:text-emerald-400", dotColor: "bg-emerald-500" },
+              evaluation: { icon: FlaskConical, color: "text-orange-600 dark:text-orange-400", dotColor: "bg-orange-500" },
+              autopatch: { icon: RefreshCw, color: "text-cyan-600 dark:text-cyan-400", dotColor: "bg-cyan-500" },
+              marker: { icon: CheckCircle, color: "text-emerald-600 dark:text-emerald-400", dotColor: "bg-emerald-500" },
+            };
+
+            const filterCategories = ["all", "blueprint", "model", "tools", "policy", "config", "deployment", "evaluation", "autopatch"];
+            const filteredTimeline = timeline?.filter(e => timelineFilter === "all" || e.category === timelineFilter);
+            const markerEntry = filteredTimeline?.find(e => e.category === "marker");
+            const changesSinceGood = markerEntry
+              ? filteredTimeline?.filter(e => e.category !== "marker" && new Date(e.timestamp) > new Date(markerEntry.timestamp))
+              : [];
+
+            return (
+              <>
+                <div className="flex items-center gap-2 flex-wrap" data-testid="timeline-filters">
+                  {filterCategories.map(cat => (
+                    <Button
+                      key={cat}
+                      variant={timelineFilter === cat ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setTimelineFilter(cat)}
+                      data-testid={`timeline-filter-${cat}`}
+                      className="toggle-elevate"
+                    >
+                      {cat === "all" ? "All" : cat.charAt(0).toUpperCase() + cat.slice(1)}
+                    </Button>
+                  ))}
+                </div>
+
+                {markerEntry && changesSinceGood && changesSinceGood.length > 0 && (
+                  <Card data-testid="timeline-changes-summary">
+                    <CardContent className="p-4 flex flex-col gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <History className="w-4 h-4 text-muted-foreground" />
+                        <span className="text-sm font-medium">Changes Since Last Good State</span>
+                        <Badge variant="outline" className="text-[10px]">{changesSinceGood.length} changes</Badge>
+                      </div>
+                      <div className="flex items-center gap-3 flex-wrap">
+                        {Object.entries(
+                          changesSinceGood.reduce((acc, e) => ({ ...acc, [e.category]: (acc[e.category] || 0) + 1 }), {} as Record<string, number>)
+                        ).map(([cat, count]) => (
+                          <Badge key={cat} variant="outline" className="text-[10px]">{count} {cat}</Badge>
+                        ))}
+                      </div>
+                      {markerEntry.correlatedMetric && (
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <TrendingDown className="w-3.5 h-3.5 text-amber-500" />
+                          <span className="text-xs text-muted-foreground">
+                            {markerEntry.correlatedMetric.metric}: {markerEntry.correlatedMetric.before}% &rarr; {markerEntry.correlatedMetric.after}% ({markerEntry.correlatedMetric.change})
+                          </span>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                )}
+
+                <div className="relative" data-testid="timeline-list">
+                  <div className="absolute left-4 top-0 bottom-0 w-px bg-border" />
+                  {filteredTimeline && filteredTimeline.length > 0 ? (
+                    <div className="flex flex-col gap-4">
+                      {filteredTimeline.map(entry => {
+                        const config = categoryConfig[entry.category] || categoryConfig.config;
+                        const Icon = config.icon;
+                        return (
+                          <div key={entry.id} className="relative pl-10" data-testid={`timeline-entry-${entry.id}`}>
+                            <div className={`absolute left-2.5 top-1 w-3 h-3 rounded-full ${config.dotColor} ring-2 ring-background z-10`} />
+                            {entry.category === "marker" ? (
+                              <div className="flex items-center gap-2 p-2 rounded-md bg-emerald-500/10 border border-emerald-500/20 flex-wrap" data-testid={`marker-${entry.id}`}>
+                                <CheckCircle className="w-4 h-4 text-emerald-500" />
+                                <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">{entry.title}</span>
+                                <span className="text-[11px] text-muted-foreground">{entry.description}</span>
+                              </div>
+                            ) : (
+                              <Card>
+                                <CardContent className="p-3 flex flex-col gap-1.5">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <Icon className={`w-3.5 h-3.5 shrink-0 ${config.color}`} />
+                                    <span className="text-sm font-medium" data-testid={`timeline-title-${entry.id}`}>{entry.title}</span>
+                                    <Badge variant="outline" className="text-[10px]">{entry.category}</Badge>
+                                    {entry.severity === "warning" && <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />}
+                                    {entry.severity === "critical" && <AlertCircle className="w-3.5 h-3.5 text-red-500" />}
+                                  </div>
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="text-[11px] text-muted-foreground">
+                                      {new Date(entry.timestamp).toLocaleString()}
+                                    </span>
+                                  </div>
+                                  {entry.description && (
+                                    <p className="text-xs text-muted-foreground" data-testid={`timeline-desc-${entry.id}`}>{entry.description}</p>
+                                  )}
+                                  {entry.diff && (
+                                    <div className="flex flex-col gap-1 mt-1">
+                                      {entry.diff.map((d, idx) => (
+                                        <div key={idx} className="flex items-center gap-2 text-[11px] flex-wrap" data-testid={`timeline-diff-${entry.id}-${idx}`}>
+                                          <span className="font-mono text-muted-foreground">{d.field}:</span>
+                                          <span className="text-red-500 dark:text-red-400 line-through">{d.from}</span>
+                                          <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0" />
+                                          <span className="text-emerald-600 dark:text-emerald-400">{d.to}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {entry.correlatedMetric && (
+                                    <div className="flex items-center gap-2 mt-1 flex-wrap" data-testid={`timeline-metric-${entry.id}`}>
+                                      <TrendingDown className="w-3.5 h-3.5 text-amber-500" />
+                                      <span className="text-[11px] text-muted-foreground">
+                                        {entry.correlatedMetric.metric}: {entry.correlatedMetric.before}% &rarr; {entry.correlatedMetric.after}% ({entry.correlatedMetric.change})
+                                      </span>
+                                    </div>
+                                  )}
+                                </CardContent>
+                              </Card>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center py-12 gap-2" data-testid="timeline-empty">
+                      <History className="w-8 h-8 text-muted-foreground/50" />
+                      <p className="text-sm text-muted-foreground">No timeline events found</p>
+                    </div>
+                  )}
+                </div>
+              </>
+            );
+          })()}
         </TabsContent>
       </Tabs>
 

@@ -1,4 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useState } from "react";
 import {
   Activity,
   TrendingUp,
@@ -8,6 +9,7 @@ import {
   BarChart3,
   Zap,
   Shield,
+  ShieldAlert,
   RefreshCcw,
   Wrench,
 } from "lucide-react";
@@ -17,9 +19,11 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { StatCard } from "@/components/stat-card";
+import { OutcomeKpiStrip } from "@/components/outcome-kpi-strip";
 import { StatusBadge } from "@/components/status-badge";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { Agent, RunTrace } from "@shared/schema";
 
@@ -39,6 +43,13 @@ interface DriftSignal {
 }
 
 export default function Monitor() {
+  const [policyCheckResult, setPolicyCheckResult] = useState<{
+    signal: DriftSignal;
+    allowed: boolean;
+    violations: Array<{ policyName: string; rule: string; severity: string; message: string }>;
+    sandboxAvailable: boolean;
+  } | null>(null);
+
   const { data: agents, isLoading } = useQuery<Agent[]>({
     queryKey: ["/api/agents"],
   });
@@ -82,8 +93,64 @@ export default function Monitor() {
     },
   });
 
+  const policyCheckMutation = useMutation({
+    mutationFn: async (signal: DriftSignal) => {
+      const res = await apiRequest("POST", "/api/policy-check", {
+        agentId: signal.agentId,
+        actionType: signal.metric === "pass_rate" ? "retrain" : "workflow_optimization",
+        changes: {
+          action: signal.metric === "pass_rate" ? "retrain" : "optimize_latency",
+          driftSignalId: signal.id,
+          metric: signal.metric,
+          baseline: signal.baseline,
+          current: signal.current,
+          severity: signal.severity,
+        },
+      });
+      return res.json();
+    },
+  });
+
+  const requestApprovalFromDriftMutation = useMutation({
+    mutationFn: async (signal: DriftSignal) => {
+      await apiRequest("POST", "/api/approvals", {
+        type: "auto_patch",
+        objectType: "drift_signal",
+        objectId: signal.id,
+        objectName: `Remediate: ${signal.agentName} ${signal.metric} drift`,
+        riskScore: signal.severity === "critical" ? 0.9 : signal.severity === "high" ? 0.7 : 0.5,
+        status: "pending",
+        requestedBy: "system",
+        description: `Policy guardrail blocked auto-remediation for ${signal.agentName}. ${signal.metric === "pass_rate" ? "Pass rate" : "Avg latency"} drifted by ${Math.abs(signal.driftPercent).toFixed(1)}%. Requires expert validation.`,
+        evidenceJson: {
+          driftSignalId: signal.id,
+          metric: signal.metric,
+          baseline: signal.baseline,
+          current: signal.current,
+          driftPercent: signal.driftPercent,
+          severity: signal.severity,
+        },
+      });
+    },
+    onSuccess: () => {
+      toast({ title: "Approval requested", description: "This remediation has been escalated for expert review." });
+      queryClient.invalidateQueries({ queryKey: ["/api/approvals"] });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to request approval", description: err.message, variant: "destructive" });
+    },
+  });
+
   function handleRemediate(signal: DriftSignal) {
-    remediateMutation.mutate(signal);
+    policyCheckMutation.mutate(signal, {
+      onSuccess: (result: any) => {
+        if (result.allowed) {
+          remediateMutation.mutate(signal);
+        } else {
+          setPolicyCheckResult({ signal, ...result });
+        }
+      },
+    });
   }
 
   if (isLoading) {
@@ -146,6 +213,8 @@ export default function Monitor() {
         <StatCard title="Total Cost" value={`$${totalCost.toFixed(2)}`} icon={BarChart3} variant="default" testId="stat-total-cost" />
         <StatCard title="Policy Violations" value={policyViolations} icon={Shield} variant={policyViolations > 0 ? "danger" : "success"} testId="stat-policy-violations" />
       </div>
+
+      <OutcomeKpiStrip compact />
 
       <Tabs defaultValue="sla" className="flex flex-col gap-4">
         <TabsList className="w-fit">
@@ -292,7 +361,7 @@ export default function Monitor() {
                                 variant="outline"
                                 size="sm"
                                 onClick={() => handleRemediate(signal)}
-                                disabled={remediateMutation.isPending}
+                                disabled={remediateMutation.isPending || policyCheckMutation.isPending || requestApprovalFromDriftMutation.isPending}
                                 data-testid={`button-remediate-${signal.id}`}
                               >
                                 <Wrench className="w-3 h-3 mr-1" />
@@ -310,6 +379,55 @@ export default function Monitor() {
           </div>
         </TabsContent>
       </Tabs>
+
+      <Dialog open={policyCheckResult !== null} onOpenChange={() => setPolicyCheckResult(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 flex-wrap">
+              <ShieldAlert className="w-5 h-5 text-amber-500" />
+              Policy Guardrail Triggered
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-3">
+            <p className="text-sm text-muted-foreground">
+              This remediation cannot be auto-applied because it exceeds policy bounds. Expert approval is required.
+            </p>
+            {policyCheckResult?.violations.map((v, idx) => (
+              <div key={idx} className="flex flex-col gap-1 p-3 rounded-md bg-amber-500/5 border border-amber-500/10" data-testid={`monitor-policy-violation-${idx}`}>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Badge variant="outline" className="text-[10px]">{v.policyName}</Badge>
+                  <Badge variant="outline" className={`text-[10px] ${v.severity === "high" ? "text-red-600 dark:text-red-400" : "text-amber-600 dark:text-amber-400"}`}>{v.severity}</Badge>
+                </div>
+                <span className="text-xs font-medium">{v.rule}</span>
+                <span className="text-[11px] text-muted-foreground">{v.message}</span>
+              </div>
+            ))}
+            {policyCheckResult?.sandboxAvailable && (
+              <div className="flex items-center gap-2 p-2 rounded-md bg-blue-500/5 border border-blue-500/10 flex-wrap" data-testid="monitor-sandbox-notice">
+                <Shield className="w-3.5 h-3.5 text-blue-500" />
+                <span className="text-[11px] text-muted-foreground">Sandbox testing is available for non-production environments</span>
+              </div>
+            )}
+          </div>
+          <div className="flex items-center justify-end gap-2 pt-2 flex-wrap">
+            <Button variant="outline" onClick={() => setPolicyCheckResult(null)} data-testid="button-cancel-monitor-policy">
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (policyCheckResult) {
+                  requestApprovalFromDriftMutation.mutate(policyCheckResult.signal);
+                }
+                setPolicyCheckResult(null);
+              }}
+              data-testid="button-request-approval-monitor"
+            >
+              <Shield className="w-4 h-4 mr-1.5" />
+              Request Expert Approval
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

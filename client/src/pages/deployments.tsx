@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { StatCard } from "@/components/stat-card";
+import { OutcomeKpiStrip } from "@/components/outcome-kpi-strip";
 import { StatusBadge } from "@/components/status-badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -216,6 +217,8 @@ export default function Deployments() {
         <StatCard title="Active" value={activeDeploys} icon={CheckCircle} variant="success" testId="stat-active-deploys" />
         <StatCard title="Pending" value={pendingDeploys} icon={Clock} variant="warning" testId="stat-pending-deploys" />
       </div>
+
+      <OutcomeKpiStrip compact />
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <EnvironmentPanel env="staging" deployments={allDeploys} onSelect={(id) => navigate(`/deployments/${id}`)} />

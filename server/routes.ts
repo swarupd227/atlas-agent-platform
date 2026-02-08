@@ -662,6 +662,70 @@ Guidelines:
     }
   });
 
+  // Policy Pre-Check for Autonomy Guardrails
+  app.post("/api/policy-check", async (req, res) => {
+    const { agentId, actionType, changes } = req.body;
+
+    const agent = await storage.getAgent(agentId);
+    if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+    const policies = await storage.getPolicies();
+    const agentPolicies = agent.policyBindings as Array<{ policyId: string; mode: string }> | null;
+
+    const violations: Array<{
+      policyId: string;
+      policyName: string;
+      rule: string;
+      severity: string;
+      message: string;
+    }> = [];
+
+    if (agent.riskTier === "HIGH" && (actionType === "model_swap" || actionType === "retrain")) {
+      const matchedPolicy = policies.find(p => p.domain === "model_governance" || p.domain === "deployment");
+      if (matchedPolicy) {
+        violations.push({
+          policyId: matchedPolicy.id,
+          policyName: matchedPolicy.name,
+          rule: "High-risk agents require expert approval for model changes",
+          severity: "high",
+          message: `Agent "${agent.name}" is ${agent.riskTier} risk. Model changes require expert validation.`,
+        });
+      }
+    }
+
+    if (agent.environment === "prod" && actionType !== "config_change") {
+      const matchedPolicy = policies.find(p => p.domain === "deployment" || p.domain === "data_handling");
+      if (matchedPolicy) {
+        violations.push({
+          policyId: matchedPolicy.id,
+          policyName: matchedPolicy.name,
+          rule: "Production changes require approval gate",
+          severity: "medium",
+          message: `Agent "${agent.name}" is deployed to production. Changes beyond config tweaks require approval.`,
+        });
+      }
+    }
+
+    if (agent.autonomyMode === "supervised") {
+      violations.push({
+        policyId: "built-in",
+        policyName: "Supervised Mode Policy",
+        rule: "Supervised agents require human approval for all changes",
+        severity: "high",
+        message: `Agent "${agent.name}" runs in supervised mode. All autonomous actions require expert sign-off.`,
+      });
+    }
+
+    const allowed = violations.length === 0;
+
+    res.json({
+      allowed,
+      violations,
+      requiresApproval: !allowed,
+      sandboxAvailable: agent.environment !== "prod",
+    });
+  });
+
   // Improvement Recommendations
   app.get("/api/recommendations", async (_req, res) => {
     const recs = await storage.getImprovementRecommendations();
@@ -780,6 +844,99 @@ Guidelines:
     } catch (e) {
       res.status(500).json({ message: "Failed to generate recommendations" });
     }
+  });
+
+  app.get("/api/agents/:id/timeline", async (req, res) => {
+    const agentId = req.params.id;
+    const agent = await storage.getAgent(agentId);
+    if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+    const versions = await storage.getAgentVersions(agentId);
+    const allAuditEvents = await storage.getAuditEvents();
+    const agentAudits = allAuditEvents.filter(e => e.objectId === agentId);
+    const recommendations = await storage.getImprovementRecommendations();
+    const agentRecs = recommendations.filter(r => r.agentId === agentId);
+
+    const timeline: Array<{
+      id: string;
+      timestamp: string;
+      category: string;
+      title: string;
+      description: string;
+      severity: string;
+      diff?: { field: string; from: string; to: string }[];
+      correlatedMetric?: { metric: string; before: number; after: number; change: string };
+    }> = [];
+
+    versions.forEach(v => {
+      timeline.push({
+        id: `ver-${v.id}`,
+        timestamp: v.createdAt?.toISOString() || new Date().toISOString(),
+        category: "blueprint",
+        title: `Version ${v.semver} created`,
+        description: `New version ${v.semver} (${v.status}) created by ${v.createdBy || "system"}`,
+        severity: "info",
+        diff: [
+          { field: "version", from: "previous", to: v.semver },
+          { field: "blueprintHash", from: "\u2014", to: v.blueprintHash || "\u2014" },
+        ],
+      });
+    });
+
+    agentAudits.forEach(e => {
+      let category = "config";
+      if (e.action.includes("policy")) category = "policy";
+      else if (e.action.includes("deploy")) category = "deployment";
+      else if (e.action.includes("model")) category = "model";
+      else if (e.action.includes("tool")) category = "tools";
+      else if (e.action.includes("eval")) category = "evaluation";
+      else if (e.action.includes("patch")) category = "autopatch";
+
+      timeline.push({
+        id: `audit-${e.id}`,
+        timestamp: e.createdAt?.toISOString() || new Date().toISOString(),
+        category,
+        title: `${e.action.replace(/\./g, " ").replace(/^\w/, c => c.toUpperCase())}`,
+        description: e.details || "",
+        severity: e.action.includes("violation") || e.action.includes("incident") ? "warning" : "info",
+      });
+    });
+
+    agentRecs.filter(r => r.status === "applied").forEach(r => {
+      timeline.push({
+        id: `rec-${r.id}`,
+        timestamp: r.createdAt?.toISOString() || new Date().toISOString(),
+        category: r.type || "config",
+        title: `Applied: ${r.title}`,
+        description: r.description || "",
+        severity: r.severity === "critical" ? "critical" : r.severity === "high" ? "warning" : "info",
+        diff: r.suggestedChanges ? [
+          { field: "action", from: "previous config", to: (r.suggestedChanges as any)?.action || r.type || "change" },
+        ] : undefined,
+      });
+    });
+
+    if (agent.healthScore && agent.healthScore < 90) {
+      const lastGoodTimestamp = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      timeline.push({
+        id: "marker-last-good",
+        timestamp: lastGoodTimestamp,
+        category: "marker",
+        title: "Last Known Good State",
+        description: `Health score was above 90%. Current: ${agent.healthScore}%`,
+        severity: "success",
+        correlatedMetric: {
+          metric: "healthScore",
+          before: 95,
+          after: agent.healthScore,
+          change: `${(agent.healthScore - 95).toFixed(1)}%`,
+        },
+      });
+    }
+
+    timeline.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+    res.json(timeline);
   });
 
   return httpServer;

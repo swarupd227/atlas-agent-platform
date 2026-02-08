@@ -88,6 +88,12 @@ Entry from Templates page: `/agents/wizard?templateId={id}` pre-fills all fields
 
 Components: `role-provider.tsx` (context + hook), `role-switcher.tsx` (header dropdown), sidebar filters nav by role
 
+## UX Design Principles (Implemented)
+1. **Outcome-first navigation**: Every screen answers "Are we delivering the KPI safely?" via `OutcomeKpiStrip` component on Agents, Deployments, Monitor, Improvements. Full mode shows KPI mini-cards; compact mode shows attainment + at-risk count.
+2. **Evidence-by-default**: Approvals show config diffs (field-level old→new, version badge, category tags) + blast radius (affected users, runs/day, revenue exposure, environment, downstream agents, rollback time) alongside eval proof.
+3. **Autonomy with guardrails**: POST /api/policy-check validates against agent risk tier, environment, autonomy mode. Apply/Remediate buttons pre-check policies; blocked actions show violation dialog with "Request Expert Approval" escalation to approvals queue.
+4. **Time travel**: GET /api/agents/:id/timeline aggregates version changes, audit events, applied recommendations. Agent detail "Timeline" tab with category filters, diff visualization, "Last Known Good State" marker, "Changes Since Last Good" summary.
+
 ## Recent Changes
 - 80/20 Model Gaps Closed:
   - Improvements page: Auto-generated recommendations from eval failures, drift signals, cost analysis, traces. Categories: retrain, model_swap, config_change, workflow_optimization, policy_update. Generate endpoint computes new recs from agent data. Cost source filter, agent name links, type badges, estimated savings stat.

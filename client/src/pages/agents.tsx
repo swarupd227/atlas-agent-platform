@@ -27,6 +27,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { StatCard } from "@/components/stat-card";
+import { OutcomeKpiStrip } from "@/components/outcome-kpi-strip";
 import { StatusBadge } from "@/components/status-badge";
 import { ErrorState } from "@/components/error-state";
 import { Link } from "wouter";
@@ -88,6 +89,8 @@ export default function Agents() {
         <StatCard title="Monthly Cost" value={`$${totalCost.toLocaleString()}`} icon={DollarSign} variant="default" testId="stat-monthly-cost" />
         <StatCard title="Autonomous" value={agents?.filter((a) => a.autonomyMode === "autonomous")?.length || 0} icon={Zap} variant="default" subtitle="fully autonomous" testId="stat-autonomous" />
       </div>
+
+      <OutcomeKpiStrip />
 
       <div className="flex items-center gap-3">
         <div className="relative flex-1 max-w-sm">

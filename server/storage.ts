@@ -4,7 +4,7 @@ import {
   users, agents, outcomeContracts, kpiDefinitions, deployments,
   runTraces, evalSuites, policies, approvals, auditEvents, invoices, outcomeEvents,
   agentTemplates, evalTestCases, evalRuns,
-  improvementRecommendations, autonomousActionLogs,
+  improvementRecommendations, autonomousActionLogs, agentVersions,
   type User, type InsertUser,
   type Agent, type InsertAgent,
   type OutcomeContract, type InsertOutcomeContract,
@@ -22,6 +22,7 @@ import {
   type EvalRun, type InsertEvalRun,
   type ImprovementRecommendation, type InsertImprovementRecommendation,
   type AutonomousActionLog, type InsertAutonomousActionLog,
+  type AgentVersion,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -105,6 +106,8 @@ export interface IStorage {
   getAutonomousActionLogs(): Promise<AutonomousActionLog[]>;
   getAutonomousActionLogsByAgent(agentId: string): Promise<AutonomousActionLog[]>;
   createAutonomousActionLog(log: InsertAutonomousActionLog): Promise<AutonomousActionLog>;
+
+  getAgentVersions(agentId: string): Promise<AgentVersion[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -390,6 +393,10 @@ export class DatabaseStorage implements IStorage {
   async createAutonomousActionLog(log: InsertAutonomousActionLog) {
     const [created] = await db.insert(autonomousActionLogs).values(log).returning();
     return created;
+  }
+
+  async getAgentVersions(agentId: string) {
+    return db.select().from(agentVersions).where(eq(agentVersions.agentId, agentId));
   }
 }
 
