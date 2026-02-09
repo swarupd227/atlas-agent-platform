@@ -68,6 +68,7 @@ import {
 } from "@/components/ui/table";
 import { StatCard } from "@/components/stat-card";
 import { StatusBadge } from "@/components/status-badge";
+import { usePermission, PermissionGate } from "@/components/role-provider";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Policy, AuditEvent, Approval, Agent, PolicyException, ComplianceReport } from "@shared/schema";
@@ -190,6 +191,7 @@ export default function Governance() {
   const [expandedEvidence, setExpandedEvidence] = useState<Record<string, boolean>>({});
   const [ethicalBoundaries, setEthicalBoundaries] = useState(initialEthicalBoundaries);
   const { toast } = useToast();
+  const policyPerm = usePermission("create_modify_policies");
 
   const { data: policies, isLoading } = useQuery<Policy[]>({
     queryKey: ["/api/policies"],
@@ -497,10 +499,18 @@ export default function Governance() {
             Policy-as-code, compliance controls, and audit trail
           </p>
         </div>
+        {!policyPerm.allowed ? (
+          <Button disabled title="You do not have permission to create policies" data-testid="button-create-policy">
+            <Plus className="w-4 h-4 mr-1.5" /> New Policy
+          </Button>
+        ) : (
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogTrigger asChild>
             <Button data-testid="button-create-policy">
               <Plus className="w-4 h-4 mr-1.5" /> New Policy
+              {policyPerm.permission.access === "conditional" && policyPerm.permission.annotation && (
+                <Badge variant="secondary" className="text-[10px] ml-1">{policyPerm.permission.annotation}</Badge>
+              )}
             </Button>
           </DialogTrigger>
           <DialogContent>
@@ -555,6 +565,7 @@ export default function Governance() {
             </form>
           </DialogContent>
         </Dialog>
+        )}
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">

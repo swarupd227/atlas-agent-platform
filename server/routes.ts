@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { z, ZodError } from "zod";
 import OpenAI, { toFile } from "openai";
 import multer from "multer";
+import { checkPermission, getRequestRole, getTraceRedactionLevel } from "./permissions";
 import {
   insertOutcomeContractSchema,
   insertKpiDefinitionSchema,
@@ -53,7 +54,7 @@ export async function registerRoutes(
     res.json(outcome);
   });
 
-  app.post("/api/outcomes", async (req, res) => {
+  app.post("/api/outcomes", checkPermission("create_modify_outcomes"), async (req, res) => {
     try {
       const data = insertOutcomeContractSchema.parse(req.body);
       const outcome = await storage.createOutcome(data);
@@ -218,7 +219,7 @@ export async function registerRoutes(
     res.json(agent);
   });
 
-  app.post("/api/agents", async (req, res) => {
+  app.post("/api/agents", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const data = insertAgentSchema.parse(req.body);
       const agent = await storage.createAgent(data);
@@ -479,7 +480,7 @@ export async function registerRoutes(
     res.json(deployments);
   });
 
-  app.post("/api/deployments", async (req, res) => {
+  app.post("/api/deployments", checkPermission("deploy_staging_pilot"), async (req, res) => {
     try {
       const data = insertDeploymentSchema.parse(req.body);
       const deployment = await storage.createDeployment(data);
@@ -978,7 +979,7 @@ export async function registerRoutes(
     res.json(policies);
   });
 
-  app.post("/api/policies", async (req, res) => {
+  app.post("/api/policies", checkPermission("create_modify_policies"), async (req, res) => {
     try {
       const data = insertPolicySchema.parse(req.body);
       const policy = await storage.createPolicy(data);
@@ -993,7 +994,7 @@ export async function registerRoutes(
     res.json(approvals);
   });
 
-  app.post("/api/approvals", async (req, res) => {
+  app.post("/api/approvals", checkPermission("approve_changes"), async (req, res) => {
     try {
       const data = insertApprovalSchema.parse(req.body);
       const approval = await storage.createApproval(data);
@@ -1068,7 +1069,7 @@ export async function registerRoutes(
     res.json(invoices);
   });
 
-  app.post("/api/invoices", async (req, res) => {
+  app.post("/api/invoices", checkPermission("billing_invoices"), async (req, res) => {
     try {
       const data = insertInvoiceSchema.parse(req.body);
       const invoice = await storage.createInvoice(data);

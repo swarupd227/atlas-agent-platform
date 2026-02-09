@@ -54,6 +54,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import { StatusBadge } from "@/components/status-badge";
 import { StatCard } from "@/components/stat-card";
+import { usePermission, PermissionGate } from "@/components/role-provider";
 import { InlineDiff } from "@/components/config-diff";
 import { ActionCard } from "@/components/action-card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -123,6 +124,9 @@ export default function AgentDetail() {
 
   const [, navigate] = useLocation();
   const { toast } = useToast();
+  const deployPerm = usePermission("deploy_staging_pilot");
+  const tracesPerm = usePermission("view_traces");
+  const approvalPerm = usePermission("approve_changes");
   const [retireDialogOpen, setRetireDialogOpen] = useState(false);
   const [retireReason, setRetireReason] = useState("");
   const [replacementAgentId, setReplacementAgentId] = useState("");
@@ -367,14 +371,20 @@ export default function AgentDetail() {
         <Button variant="outline" size="sm" data-testid="button-run-shadow-replay" onClick={() => { setShadowReplayOpen(true); setShadowResult(null); }}>
           <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Run Shadow Replay
         </Button>
-        <Button variant="outline" size="sm" data-testid="button-request-approval" onClick={() => toast({ title: "Approval request submitted" })}>
+        <Button variant="outline" size="sm" data-testid="button-request-approval" onClick={() => toast({ title: "Approval request submitted" })} disabled={!approvalPerm.allowed} title={!approvalPerm.allowed ? "You do not have permission to request approvals" : undefined}>
           <Shield className="w-3.5 h-3.5 mr-1.5" /> Request Approval
+          {approvalPerm.allowed && approvalPerm.permission.access === "conditional" && approvalPerm.permission.annotation && (
+            <Badge variant="secondary" className="text-[10px] ml-1">{approvalPerm.permission.annotation}</Badge>
+          )}
         </Button>
         <Button variant="outline" size="sm" data-testid="button-rollback">
           <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> Rollback
         </Button>
-        <Button size="sm" data-testid="button-deploy">
+        <Button size="sm" data-testid="button-deploy" disabled={!deployPerm.allowed} title={!deployPerm.allowed ? "You do not have permission to deploy" : undefined}>
           <Rocket className="w-3.5 h-3.5 mr-1.5" /> Deploy
+          {deployPerm.allowed && deployPerm.permission.access === "conditional" && deployPerm.permission.annotation && (
+            <Badge variant="secondary" className="text-[10px] ml-1">{deployPerm.permission.annotation}</Badge>
+          )}
         </Button>
         {agent.status !== "retired" && (
           <Button variant="outline" size="sm" onClick={() => setRetireDialogOpen(true)} data-testid="button-retire-agent">
@@ -618,11 +628,20 @@ export default function AgentDetail() {
                         )}
 
                         <div className="flex items-center gap-2 pt-2 border-t">
-                          <Link href={`/traces/${trace.id}`}>
-                            <Button variant="outline" size="sm" data-testid={`button-view-full-trace-${trace.id}`}>
+                          {!tracesPerm.allowed ? (
+                            <Button variant="outline" size="sm" disabled title="You do not have permission to view traces" data-testid={`button-view-full-trace-${trace.id}`}>
                               <Terminal className="w-3 h-3 mr-1" /> View Full Trace
                             </Button>
-                          </Link>
+                          ) : (
+                            <Link href={`/traces/${trace.id}`}>
+                              <Button variant="outline" size="sm" data-testid={`button-view-full-trace-${trace.id}`}>
+                                <Terminal className="w-3 h-3 mr-1" /> View Full Trace
+                                {tracesPerm.permission.access === "conditional" && tracesPerm.permission.annotation && (
+                                  <Badge variant="secondary" className="text-[10px] ml-1">{tracesPerm.permission.annotation}</Badge>
+                                )}
+                              </Button>
+                            </Link>
+                          )}
                         </div>
                       </div>
                     )}

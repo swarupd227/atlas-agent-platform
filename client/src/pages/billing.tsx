@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/table";
 import { StatCard } from "@/components/stat-card";
 import { StatusBadge } from "@/components/status-badge";
+import { usePermission, PermissionGate } from "@/components/role-provider";
 import type { Invoice, OutcomeContract } from "@shared/schema";
 
 export default function Billing() {
@@ -35,6 +36,7 @@ export default function Billing() {
   const { data: outcomes } = useQuery<OutcomeContract[]>({
     queryKey: ["/api/outcomes"],
   });
+  const billingPerm = usePermission("billing_invoices");
 
   if (isLoading) {
     return (
@@ -64,9 +66,18 @@ export default function Billing() {
             Outcome-based metering, invoices, and revenue tracking
           </p>
         </div>
-        <Button variant="outline" size="sm" data-testid="button-export-billing">
-          <Download className="w-3.5 h-3.5 mr-1.5" /> Export
-        </Button>
+        {!billingPerm.allowed ? (
+          <Button variant="outline" size="sm" disabled title="You do not have permission to export billing data" data-testid="button-export-billing">
+            <Download className="w-3.5 h-3.5 mr-1.5" /> Export
+          </Button>
+        ) : (
+          <Button variant="outline" size="sm" data-testid="button-export-billing">
+            <Download className="w-3.5 h-3.5 mr-1.5" /> Export
+            {billingPerm.permission.access === "conditional" && billingPerm.permission.annotation && (
+              <Badge variant="secondary" className="text-[10px] ml-1">{billingPerm.permission.annotation}</Badge>
+            )}
+          </Button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

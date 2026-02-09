@@ -60,6 +60,7 @@ import { StatCard } from "@/components/stat-card";
 import { OutcomeKpiStrip } from "@/components/outcome-kpi-strip";
 import { StatusBadge } from "@/components/status-badge";
 import { ErrorState } from "@/components/error-state";
+import { usePermission, PermissionGate } from "@/components/role-provider";
 import { Link } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -87,6 +88,8 @@ export default function Agents() {
   const [filterProvider, setFilterProvider] = useState<string>("all");
 
   const { toast } = useToast();
+  const blueprintPerm = usePermission("create_modify_blueprints");
+  const auditPerm = usePermission("export_audit_bundle");
 
   const { data: agents, isLoading, error, refetch } = useQuery<Agent[]>({
     queryKey: ["/api/agents"],
@@ -211,11 +214,20 @@ export default function Agents() {
             System of record for all AI agents across your organization
           </p>
         </div>
-        <Link href="/agents/wizard">
-          <Button data-testid="button-create-agent">
+        {!blueprintPerm.allowed ? (
+          <Button disabled title="You do not have permission to design agents" data-testid="button-create-agent">
             <Plus className="w-4 h-4 mr-1.5" /> Design New Agent
           </Button>
-        </Link>
+        ) : (
+          <Link href="/agents/wizard">
+            <Button data-testid="button-create-agent">
+              <Plus className="w-4 h-4 mr-1.5" /> Design New Agent
+              {blueprintPerm.permission.access === "conditional" && blueprintPerm.permission.annotation && (
+                <Badge variant="secondary" className="text-[10px] ml-1">{blueprintPerm.permission.annotation}</Badge>
+              )}
+            </Button>
+          </Link>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -332,9 +344,18 @@ export default function Agents() {
             <Button variant="outline" size="sm" onClick={() => setBulkAction("rotate_secrets")} data-testid="bulk-rotate-secrets">
               <KeyRound className="w-3.5 h-3.5 mr-1" /> Rotate Secrets
             </Button>
-            <Button variant="outline" size="sm" onClick={() => setBulkAction("export_audit")} data-testid="bulk-export-audit">
-              <FileDown className="w-3.5 h-3.5 mr-1" /> Export Audit Bundle
-            </Button>
+            {!auditPerm.allowed ? (
+              <Button variant="outline" size="sm" disabled title="You do not have permission to export audit bundles" data-testid="bulk-export-audit">
+                <FileDown className="w-3.5 h-3.5 mr-1" /> Export Audit Bundle
+              </Button>
+            ) : (
+              <Button variant="outline" size="sm" onClick={() => setBulkAction("export_audit")} data-testid="bulk-export-audit">
+                <FileDown className="w-3.5 h-3.5 mr-1" /> Export Audit Bundle
+                {auditPerm.permission.access === "conditional" && auditPerm.permission.annotation && (
+                  <Badge variant="secondary" className="text-[10px] ml-1">{auditPerm.permission.annotation}</Badge>
+                )}
+              </Button>
+            )}
             <Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set())} data-testid="button-deselect-all">
               <X className="w-3.5 h-3.5 mr-1" /> Deselect
             </Button>

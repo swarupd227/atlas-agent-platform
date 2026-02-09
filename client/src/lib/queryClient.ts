@@ -1,5 +1,12 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
+function getRole(): string {
+  if (typeof window !== "undefined") {
+    return localStorage.getItem("almp-role") || "admin";
+  }
+  return "admin";
+}
+
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
     const text = (await res.text()) || res.statusText;
@@ -12,9 +19,13 @@ export async function apiRequest(
   url: string,
   data?: unknown | undefined,
 ): Promise<Response> {
+  const headers: Record<string, string> = { "X-Role": getRole() };
+  if (data) {
+    headers["Content-Type"] = "application/json";
+  }
   const res = await fetch(url, {
     method,
-    headers: data ? { "Content-Type": "application/json" } : {},
+    headers,
     body: data ? JSON.stringify(data) : undefined,
     credentials: "include",
   });
@@ -31,6 +42,7 @@ export const getQueryFn: <T>(options: {
   async ({ queryKey }) => {
     const res = await fetch(queryKey.join("/") as string, {
       credentials: "include",
+      headers: { "X-Role": getRole() },
     });
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {

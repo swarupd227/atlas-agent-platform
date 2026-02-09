@@ -28,6 +28,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatCard } from "@/components/stat-card";
 import { StatusBadge } from "@/components/status-badge";
+import { PermissionGate, usePermission } from "@/components/role-provider";
 import { ConfigDiff } from "@/components/config-diff";
 import { BlastRadius } from "@/components/blast-radius";
 import { useToast } from "@/hooks/use-toast";
@@ -38,6 +39,7 @@ import type { Approval, EvalSuite, EvalRun } from "@shared/schema";
 export default function Approvals() {
   const [search, setSearch] = useState("");
   const { toast } = useToast();
+  const approvalPerm = usePermission("approve_changes");
 
   const { data: approvals, isLoading } = useQuery<Approval[]>({
     queryKey: ["/api/approvals"],
@@ -631,18 +633,26 @@ export default function Approvals() {
                       variant="outline"
                       size="sm"
                       onClick={() => decideMutation.mutate({ id: approval.id, status: "rejected" })}
-                      disabled={decideMutation.isPending}
+                      disabled={decideMutation.isPending || !approvalPerm.allowed}
+                      title={!approvalPerm.allowed ? "You do not have permission to reject changes" : undefined}
                       data-testid={`button-reject-${approval.id}`}
                     >
                       <XCircle className="w-3.5 h-3.5 mr-1" /> Reject
+                      {approvalPerm.allowed && approvalPerm.permission.access === "conditional" && approvalPerm.permission.annotation && (
+                        <Badge variant="secondary" className="text-[10px] ml-1">{approvalPerm.permission.annotation}</Badge>
+                      )}
                     </Button>
                     <Button
                       size="sm"
                       onClick={() => decideMutation.mutate({ id: approval.id, status: "approved" })}
-                      disabled={decideMutation.isPending}
+                      disabled={decideMutation.isPending || !approvalPerm.allowed}
+                      title={!approvalPerm.allowed ? "You do not have permission to approve changes" : undefined}
                       data-testid={`button-approve-${approval.id}`}
                     >
                       <CheckCircle className="w-3.5 h-3.5 mr-1" /> {approval.type === "outcome_certification" ? "Certify" : approval.type === "outcome_review" ? "Validate" : approval.type === "blueprint_review" ? "Validate Blueprint" : approval.type === "launch_readiness" ? "Clear for Launch" : "Approve"}
+                      {approvalPerm.allowed && approvalPerm.permission.access === "conditional" && approvalPerm.permission.annotation && (
+                        <Badge variant="secondary" className="text-[10px] ml-1">{approvalPerm.permission.annotation}</Badge>
+                      )}
                     </Button>
                     {approval.type === "outcome_review" && approval.objectId && (
                       <Link href={`/outcomes/${approval.objectId}`}>

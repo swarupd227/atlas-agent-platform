@@ -42,6 +42,7 @@ import { Switch } from "@/components/ui/switch";
 import { StatCard } from "@/components/stat-card";
 import { OutcomeKpiStrip } from "@/components/outcome-kpi-strip";
 import { StatusBadge } from "@/components/status-badge";
+import { usePermission, PermissionGate } from "@/components/role-provider";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Deployment, Agent, Approval } from "@shared/schema";
@@ -227,6 +228,8 @@ function CreateReleaseWizard({
   onSubmit: (data: Record<string, any>) => void;
   isPending: boolean;
 }) {
+  const wizardStagingPerm = usePermission("deploy_staging_pilot");
+  const wizardProdPerm = usePermission("deploy_prod");
   const [step, setStep] = useState(1);
   const [formData, setFormData] = useState({
     agentId: "",
@@ -613,10 +616,17 @@ function CreateReleaseWizard({
           ) : (
             <Button
               onClick={handleSubmit}
-              disabled={isPending || !formData.agentId}
+              disabled={isPending || !formData.agentId || (formData.environment === "prod" && !wizardProdPerm.allowed) || (formData.environment !== "prod" && !wizardStagingPerm.allowed)}
+              title={formData.environment === "prod" && !wizardProdPerm.allowed ? "You do not have permission to deploy to production" : formData.environment !== "prod" && !wizardStagingPerm.allowed ? "You do not have permission to deploy" : undefined}
               data-testid="button-wizard-submit"
             >
               {isPending ? "Creating..." : "Create Release"}
+              {formData.environment === "prod" && wizardProdPerm.allowed && wizardProdPerm.permission.access === "conditional" && wizardProdPerm.permission.annotation && (
+                <Badge variant="secondary" className="text-[10px] ml-1">{wizardProdPerm.permission.annotation}</Badge>
+              )}
+              {formData.environment !== "prod" && wizardStagingPerm.allowed && wizardStagingPerm.permission.access === "conditional" && wizardStagingPerm.permission.annotation && (
+                <Badge variant="secondary" className="text-[10px] ml-1">{wizardStagingPerm.permission.annotation}</Badge>
+              )}
             </Button>
           )}
         </DialogFooter>
@@ -779,6 +789,8 @@ export default function Deployments() {
   const [createOpen, setCreateOpen] = useState(false);
   const [, navigate] = useLocation();
   const { toast } = useToast();
+  const stagingPerm = usePermission("deploy_staging_pilot");
+  const prodPerm = usePermission("deploy_prod");
 
   const { data: deployments, isLoading } = useQuery<Deployment[]>({
     queryKey: ["/api/deployments"],
@@ -864,9 +876,18 @@ export default function Deployments() {
             Controlled rollout and release orchestration across environments
           </p>
         </div>
-        <Button onClick={() => setCreateOpen(true)} data-testid="button-create-deployment">
-          <Plus className="w-4 h-4 mr-1.5" /> New Release
-        </Button>
+        {!stagingPerm.allowed ? (
+          <Button disabled title="You do not have permission to create deployments" data-testid="button-create-deployment">
+            <Plus className="w-4 h-4 mr-1.5" /> New Release
+          </Button>
+        ) : (
+          <Button onClick={() => setCreateOpen(true)} data-testid="button-create-deployment">
+            <Plus className="w-4 h-4 mr-1.5" /> New Release
+            {stagingPerm.permission.access === "conditional" && stagingPerm.permission.annotation && (
+              <Badge variant="secondary" className="text-[10px] ml-1">{stagingPerm.permission.annotation}</Badge>
+            )}
+          </Button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

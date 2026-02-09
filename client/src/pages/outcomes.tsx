@@ -52,6 +52,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { StatCard } from "@/components/stat-card";
 import { StatusBadge } from "@/components/status-badge";
+import { usePermission, PermissionGate } from "@/components/role-provider";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { OutcomeContract, KpiDefinition, Invoice, Agent } from "@shared/schema";
@@ -148,6 +149,7 @@ export default function Outcomes() {
   const [simulateOpen, setSimulateOpen] = useState(false);
   const [expandedKpis, setExpandedKpis] = useState(true);
   const { toast } = useToast();
+  const outcomesPerm = usePermission("create_modify_outcomes");
 
   const { data: outcomes, isLoading } = useQuery<OutcomeContract[]>({
     queryKey: ["/api/outcomes"],
@@ -294,66 +296,75 @@ export default function Outcomes() {
               <Sparkles className="w-4 h-4 mr-1.5" /> Discover with AI
             </Button>
           </Link>
-          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-            <DialogTrigger asChild>
-              <Button data-testid="button-create-outcome">
-                <Plus className="w-4 h-4 mr-1.5" /> New Contract
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Create Outcome Contract</DialogTitle>
-              </DialogHeader>
-              <form
-                className="flex flex-col gap-4"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const fd = new FormData(e.currentTarget);
-                  createMutation.mutate({
-                    name: fd.get("name") as string,
-                    description: fd.get("description") as string,
-                    riskTier: fd.get("riskTier") as string,
-                    pricingModel: fd.get("pricingModel") as string,
-                    pricePerUnit: parseFloat(fd.get("pricePerUnit") as string) || 0,
-                  });
-                }}
-              >
-                <div className="flex flex-col gap-2">
-                  <Label htmlFor="name">Contract Name</Label>
-                  <Input id="name" name="name" required placeholder="e.g., Reduce Support Load" data-testid="input-outcome-name" />
-                </div>
-                <div className="flex flex-col gap-2">
-                  <Label htmlFor="description">Description</Label>
-                  <Textarea id="description" name="description" placeholder="Describe the business outcome..." data-testid="input-outcome-description" />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="flex flex-col gap-2">
-                    <Label>Risk Tier</Label>
-                    <select name="riskTier" className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm" defaultValue="MEDIUM">
-                      <option value="LOW">Low</option>
-                      <option value="MEDIUM">Medium</option>
-                      <option value="HIGH">High</option>
-                    </select>
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    <Label>Pricing Model</Label>
-                    <select name="pricingModel" className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm" defaultValue="PER_OUTCOME_EVENT">
-                      <option value="PER_OUTCOME_EVENT">Per Outcome Event</option>
-                      <option value="FIXED_MONTHLY">Fixed Monthly</option>
-                      <option value="TIERED">Tiered</option>
-                    </select>
-                  </div>
-                </div>
-                <div className="flex flex-col gap-2">
-                  <Label htmlFor="pricePerUnit">Price per Unit ($)</Label>
-                  <Input id="pricePerUnit" name="pricePerUnit" type="number" step="0.01" placeholder="2.50" data-testid="input-outcome-price" />
-                </div>
-                <Button type="submit" disabled={createMutation.isPending} data-testid="button-submit-outcome">
-                  {createMutation.isPending ? "Creating..." : "Create Contract"}
+          {!outcomesPerm.allowed ? (
+            <Button disabled title="You do not have permission to create outcome contracts" data-testid="button-create-outcome">
+              <Plus className="w-4 h-4 mr-1.5" /> New Contract
+            </Button>
+          ) : (
+            <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+              <DialogTrigger asChild>
+                <Button data-testid="button-create-outcome">
+                  <Plus className="w-4 h-4 mr-1.5" /> New Contract
+                  {outcomesPerm.permission.access === "conditional" && outcomesPerm.permission.annotation && (
+                    <Badge variant="secondary" className="text-[10px] ml-1">{outcomesPerm.permission.annotation}</Badge>
+                  )}
                 </Button>
-              </form>
-            </DialogContent>
-          </Dialog>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Create Outcome Contract</DialogTitle>
+                </DialogHeader>
+                <form
+                  className="flex flex-col gap-4"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const fd = new FormData(e.currentTarget);
+                    createMutation.mutate({
+                      name: fd.get("name") as string,
+                      description: fd.get("description") as string,
+                      riskTier: fd.get("riskTier") as string,
+                      pricingModel: fd.get("pricingModel") as string,
+                      pricePerUnit: parseFloat(fd.get("pricePerUnit") as string) || 0,
+                    });
+                  }}
+                >
+                  <div className="flex flex-col gap-2">
+                    <Label htmlFor="name">Contract Name</Label>
+                    <Input id="name" name="name" required placeholder="e.g., Reduce Support Load" data-testid="input-outcome-name" />
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <Label htmlFor="description">Description</Label>
+                    <Textarea id="description" name="description" placeholder="Describe the business outcome..." data-testid="input-outcome-description" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="flex flex-col gap-2">
+                      <Label>Risk Tier</Label>
+                      <select name="riskTier" className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm" defaultValue="MEDIUM">
+                        <option value="LOW">Low</option>
+                        <option value="MEDIUM">Medium</option>
+                        <option value="HIGH">High</option>
+                      </select>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <Label>Pricing Model</Label>
+                      <select name="pricingModel" className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm" defaultValue="PER_OUTCOME_EVENT">
+                        <option value="PER_OUTCOME_EVENT">Per Outcome Event</option>
+                        <option value="FIXED_MONTHLY">Fixed Monthly</option>
+                        <option value="TIERED">Tiered</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <Label htmlFor="pricePerUnit">Price per Unit ($)</Label>
+                    <Input id="pricePerUnit" name="pricePerUnit" type="number" step="0.01" placeholder="2.50" data-testid="input-outcome-price" />
+                  </div>
+                  <Button type="submit" disabled={createMutation.isPending} data-testid="button-submit-outcome">
+                    {createMutation.isPending ? "Creating..." : "Create Contract"}
+                  </Button>
+                </form>
+              </DialogContent>
+            </Dialog>
+          )}
         </div>
       </div>
 
