@@ -519,6 +519,73 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/deployments/freeze-status", async (_req, res) => {
+    try {
+      const auditEvents = await storage.getAuditEvents();
+      const freezeEvents = auditEvents.filter(
+        (e) => e.action === "deployment_freeze" || e.action === "deployment_unfreeze"
+      );
+      const statusMap: Record<string, any> = {};
+      for (const evt of freezeEvents) {
+        try {
+          const details = JSON.parse(evt.details || "{}");
+          const key = details.targetId || details.scope || "unknown";
+          if (evt.action === "deployment_freeze") {
+            statusMap[key] = {
+              frozen: true,
+              scope: details.scope,
+              reason: details.reason,
+              frozenBy: evt.actorId,
+              frozenAt: evt.createdAt,
+            };
+          } else if (evt.action === "deployment_unfreeze") {
+            delete statusMap[key];
+          }
+        } catch {}
+      }
+      res.json(statusMap);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  app.post("/api/deployments/freeze", async (req, res) => {
+    try {
+      const { action, scope, targetId, reason } = req.body;
+      if (!action || !scope) {
+        return res.status(400).json({ message: "action and scope are required" });
+      }
+
+      const auditEvents = await storage.getAuditEvents();
+      const maxSeq = auditEvents.reduce((max, e) => Math.max(max, e.sequenceNum || 0), 0);
+      const lastHash = auditEvents.length > 0 ? auditEvents[auditEvents.length - 1].eventHash || "" : "";
+      const crypto = await import("crypto");
+      const eventData = `${maxSeq + 1}:deployment_${action}:${targetId || scope}:${Date.now()}`;
+      const eventHash = `sha256:${crypto.createHash("sha256").update(eventData + lastHash).digest("hex")}`;
+
+      const auditEvent = await storage.createAuditEvent({
+        actorType: "user",
+        actorId: "operator",
+        action: action === "freeze" ? "deployment_freeze" : "deployment_unfreeze",
+        objectType: "deployment",
+        objectId: targetId || scope,
+        details: JSON.stringify({
+          scope,
+          targetId: targetId || scope,
+          reason: reason || "",
+          action,
+        }),
+        sequenceNum: maxSeq + 1,
+        previousHash: lastHash,
+        eventHash,
+      });
+
+      res.json({ success: true, event: auditEvent });
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
   app.get("/api/deployments/:id", async (req, res) => {
     const deployment = await storage.getDeployment(req.params.id);
     if (!deployment) return res.status(404).json({ message: "Deployment not found" });
@@ -749,7 +816,143 @@ export async function registerRoutes(
         status: "rolled_back",
         completedAt: new Date(),
       });
+
+      const reason = req.body?.reason || "Manual rollback triggered";
+      const auditEvents = await storage.getAuditEvents();
+      const maxSeq = auditEvents.reduce((max, e) => Math.max(max, e.sequenceNum || 0), 0);
+      const lastHash = auditEvents.length > 0 ? auditEvents[auditEvents.length - 1].eventHash || "" : "";
+      const crypto = await import("crypto");
+      const eventData = `${maxSeq + 1}:deployment_rollback:${deployment.id}:${Date.now()}`;
+      const eventHash = `sha256:${crypto.createHash("sha256").update(eventData + lastHash).digest("hex")}`;
+
+      await storage.createAuditEvent({
+        actorType: "system",
+        actorId: "release-service",
+        action: "deployment_rollback_incident",
+        objectType: "deployment",
+        objectId: deployment.id,
+        details: JSON.stringify({
+          type: "incident",
+          severity: deployment.environment === "prod" ? "high" : "medium",
+          agentId: deployment.agentId,
+          agentName: deployment.agentName,
+          version: deployment.version,
+          environment: deployment.environment,
+          rolloutStrategy: deployment.rolloutStrategy,
+          reason,
+          rolledBackAt: new Date().toISOString(),
+          previousStatus: deployment.status,
+        }),
+        sequenceNum: maxSeq + 1,
+        previousHash: lastHash,
+        eventHash,
+      });
+
       res.json(updated);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  app.post("/api/deployments/:id/auto-promote", async (req, res) => {
+    try {
+      const deployment = await storage.getDeployment(req.params.id);
+      if (!deployment) return res.status(404).json({ message: "Deployment not found" });
+
+      if (deployment.environment !== "staging") {
+        return res.status(400).json({ message: "Auto-promote is only available for staging deployments" });
+      }
+
+      const agent = await storage.getAgent(deployment.agentId);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+
+      if (agent.riskTier === "HIGH" || agent.riskTier === "CRITICAL") {
+        return res.status(400).json({
+          message: `Auto-promote blocked: agent risk tier is ${agent.riskTier}. Manual promotion required.`,
+          eligible: false,
+        });
+      }
+
+      const traces = await storage.getTracesByAgent(deployment.agentId);
+      const sortedTraces = [...traces].sort((a, b) =>
+        new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime()
+      );
+      const recentTraces = sortedTraces.slice(0, 30);
+      const totalT = recentTraces.length;
+      const failedT = recentTraces.filter(t => t.status === "failed" || t.status === "error").length;
+      const successRate = totalT > 0 ? ((totalT - failedT) / totalT * 100) : 100;
+
+      const evalSuites = await storage.getEvalSuites();
+      const agentSuites = evalSuites.filter(s => s.agentId === deployment.agentId);
+      let latestPassRate = 0;
+      for (const suite of agentSuites) {
+        const runs = await storage.getEvalRunsBySuite(suite.id);
+        if (runs.length > 0) {
+          const sorted = [...runs].sort((a, b) =>
+            new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime()
+          );
+          latestPassRate = Math.max(latestPassRate, sorted[0].passRate || 0);
+        }
+      }
+
+      if (successRate < 95 || (agentSuites.length > 0 && latestPassRate < 80)) {
+        return res.status(400).json({
+          message: "Auto-promote blocked: readiness checks not passing",
+          eligible: false,
+          checks: {
+            successRate: { value: successRate.toFixed(1), threshold: 95, pass: successRate >= 95 },
+            evalPassRate: { value: latestPassRate.toFixed(1), threshold: 80, pass: latestPassRate >= 80 },
+          },
+        });
+      }
+
+      await storage.updateDeployment(deployment.id, { status: "promoted", promotedAt: new Date() });
+
+      const promoted = await storage.createDeployment({
+        agentId: deployment.agentId,
+        agentName: deployment.agentName,
+        environment: "pilot",
+        versionId: deployment.versionId,
+        version: deployment.version,
+        status: "deployed",
+        canaryPercent: deployment.canaryConfig ? (deployment.canaryConfig as any).startPercent || 0 : 0,
+        rolloutStrategy: deployment.rolloutStrategy,
+        approvedBy: "System (Auto-Promote)",
+        signatureHash: deployment.signatureHash,
+        promotedFrom: deployment.id,
+        canaryConfig: deployment.canaryConfig as any,
+        rollbackConfig: deployment.rollbackConfig as any,
+        deployedAt: new Date(),
+      });
+
+      const auditEvents = await storage.getAuditEvents();
+      const maxSeq = auditEvents.reduce((max, e) => Math.max(max, e.sequenceNum || 0), 0);
+      const lastHash = auditEvents.length > 0 ? auditEvents[auditEvents.length - 1].eventHash || "" : "";
+      const crypto = await import("crypto");
+      const eventData = `${maxSeq + 1}:auto_promote:${deployment.id}:${Date.now()}`;
+      const eventHash = `sha256:${crypto.createHash("sha256").update(eventData + lastHash).digest("hex")}`;
+
+      await storage.createAuditEvent({
+        actorType: "system",
+        actorId: "release-service",
+        action: "deployment_auto_promoted",
+        objectType: "deployment",
+        objectId: promoted.id,
+        details: JSON.stringify({
+          fromEnvironment: "staging",
+          toEnvironment: "pilot",
+          agentName: deployment.agentName,
+          version: deployment.version,
+          riskTier: agent.riskTier,
+          successRate: successRate.toFixed(1) + "%",
+          evalPassRate: latestPassRate.toFixed(1) + "%",
+        }),
+        sequenceNum: maxSeq + 1,
+        previousHash: lastHash,
+        eventHash,
+      });
+
+      res.status(201).json({ promoted, autoPromoted: true });
     } catch (e) {
       handleZodError(res, e);
     }
