@@ -78,7 +78,7 @@ export function GlobalSearch() {
           onChange={(e) => setQuery(e.target.value)}
           onFocus={() => setFocused(true)}
           placeholder="Search agents, outcomes, policies..."
-          className="w-56 h-8 pl-8 pr-8 text-xs"
+          className="w-64 h-8 pl-8 pr-14 text-xs"
           data-testid="input-global-search"
         />
         {query && (
