@@ -1,9 +1,18 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { Search, Bot, Target, Shield, FileText, X } from "lucide-react";
-import { Input } from "@/components/ui/input";
+import { Search, Bot, Target, Shield, FileText } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  CommandDialog,
+  CommandInput,
+  CommandList,
+  CommandEmpty,
+  CommandGroup,
+  CommandItem,
+  CommandSeparator,
+} from "@/components/ui/command";
 
 interface Agent {
   id: number;
@@ -31,128 +40,138 @@ interface RunTrace {
 }
 
 export function GlobalSearch() {
-  const [query, setQuery] = useState("");
-  const [focused, setFocused] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
   const [, navigate] = useLocation();
-  const inputRef = useRef<HTMLInputElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
 
   const { data: agents } = useQuery<Agent[]>({ queryKey: ["/api/agents"] });
   const { data: outcomes } = useQuery<OutcomeContract[]>({ queryKey: ["/api/outcomes"] });
   const { data: policies } = useQuery<Policy[]>({ queryKey: ["/api/policies"] });
   const { data: traces } = useQuery<RunTrace[]>({ queryKey: ["/api/traces"] });
 
-  const lq = query.toLowerCase().trim();
-
-  const filteredAgents = lq ? (agents || []).filter((a) => a.name?.toLowerCase().includes(lq)).slice(0, 3) : [];
-  const filteredOutcomes = lq ? (outcomes || []).filter((o) => o.name?.toLowerCase().includes(lq)).slice(0, 3) : [];
-  const filteredPolicies = lq ? (policies || []).filter((p) => p.name?.toLowerCase().includes(lq)).slice(0, 3) : [];
-  const filteredTraces = lq ? (traces || []).filter((t) => (t.triggeredBy || "").toLowerCase().includes(lq) || String(t.id).includes(lq)).slice(0, 3) : [];
-
-  const hasResults = filteredAgents.length + filteredOutcomes.length + filteredPolicies.length + filteredTraces.length > 0;
-  const showDropdown = focused && lq.length > 0;
+  const go = useCallback((path: string) => {
+    navigate(path);
+    setOpen(false);
+    setSearch("");
+  }, [navigate]);
 
   useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setFocused(false);
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setOpen(prev => !prev);
       }
     };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  const go = (path: string) => {
-    navigate(path);
-    setQuery("");
-    setFocused(false);
-  };
+  const agentList = agents || [];
+  const outcomeList = outcomes || [];
+  const policyList = policies || [];
+  const traceList = traces || [];
 
   return (
-    <div ref={containerRef} className="relative hidden md:block">
-      <div className="relative">
-        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
-        <Input
-          ref={inputRef}
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onFocus={() => setFocused(true)}
-          placeholder="Search agents, outcomes, policies..."
-          className="w-64 h-8 pl-8 pr-14 text-xs"
-          data-testid="input-global-search"
-        />
-        {query && (
-          <button
-            className="absolute right-2 top-1/2 -translate-y-1/2"
-            onClick={() => { setQuery(""); inputRef.current?.focus(); }}
-            data-testid="button-clear-search"
-          >
-            <X className="w-3 h-3 text-muted-foreground" />
-          </button>
-        )}
-        <kbd className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-[10px] text-muted-foreground border rounded px-1 hidden lg:inline-block" style={{ display: query ? "none" : undefined }}>
-          {navigator.platform.includes("Mac") ? "\u2318" : "Ctrl+"}K
+    <>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => setOpen(true)}
+        className="hidden md:inline-flex gap-2 text-muted-foreground"
+        data-testid="button-open-search"
+      >
+        <Search className="w-3.5 h-3.5" />
+        <span className="text-xs">Search...</span>
+        <kbd className="ml-1 text-[10px] border rounded px-1 py-0.5 bg-muted text-muted-foreground">
+          {typeof navigator !== "undefined" && navigator.platform?.includes("Mac") ? "\u2318K" : "Ctrl K"}
         </kbd>
-      </div>
+      </Button>
 
-      {showDropdown && (
-        <div className="absolute top-full left-0 mt-1 w-72 bg-popover border rounded-md shadow-lg z-50" data-testid="panel-search-results">
-          {!hasResults ? (
-            <p className="p-3 text-xs text-muted-foreground text-center">No results for "{query}"</p>
-          ) : (
-            <div className="max-h-64 overflow-y-auto">
-              {filteredAgents.length > 0 && (
-                <div className="p-1">
-                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider px-2">Agents</span>
-                  {filteredAgents.map((a) => (
-                    <button key={a.id} className="w-full flex items-center gap-2 p-2 rounded-md text-left hover-elevate" onClick={() => go(`/agents/${a.id}`)} data-testid={`search-result-agent-${a.id}`}>
-                      <Bot className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
-                      <span className="text-xs flex-1 truncate">{a.name}</span>
-                      <Badge variant="secondary" className="text-[10px]">{a.status}</Badge>
-                    </button>
-                  ))}
-                </div>
-              )}
-              {filteredOutcomes.length > 0 && (
-                <div className="p-1 border-t">
-                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider px-2">Outcomes</span>
-                  {filteredOutcomes.map((o) => (
-                    <button key={o.id} className="w-full flex items-center gap-2 p-2 rounded-md text-left hover-elevate" onClick={() => go(`/outcomes/${o.id}`)} data-testid={`search-result-outcome-${o.id}`}>
-                      <Target className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
-                      <span className="text-xs flex-1 truncate">{o.name}</span>
-                      <Badge variant="secondary" className="text-[10px]">{o.status}</Badge>
-                    </button>
-                  ))}
-                </div>
-              )}
-              {filteredPolicies.length > 0 && (
-                <div className="p-1 border-t">
-                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider px-2">Policies</span>
-                  {filteredPolicies.map((p) => (
-                    <button key={p.id} className="w-full flex items-center gap-2 p-2 rounded-md text-left hover-elevate" onClick={() => go(`/governance`)} data-testid={`search-result-policy-${p.id}`}>
-                      <Shield className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
-                      <span className="text-xs flex-1 truncate">{p.name}</span>
-                      <Badge variant="secondary" className="text-[10px]">{p.type}</Badge>
-                    </button>
-                  ))}
-                </div>
-              )}
-              {filteredTraces.length > 0 && (
-                <div className="p-1 border-t">
-                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider px-2">Runs</span>
-                  {filteredTraces.map((t) => (
-                    <button key={t.id} className="w-full flex items-center gap-2 p-2 rounded-md text-left hover-elevate" onClick={() => go(`/traces/${t.id}`)} data-testid={`search-result-trace-${t.id}`}>
-                      <FileText className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
-                      <span className="text-xs flex-1 truncate">Run #{t.id}</span>
-                      <Badge variant="secondary" className="text-[10px]">{t.status}</Badge>
-                    </button>
-                  ))}
-                </div>
-              )}
+      <CommandDialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) setSearch(""); }} data-testid="dialog-command-palette">
+        <CommandInput placeholder="Search agents, outcomes, policies, runs..." value={search} onValueChange={setSearch} data-testid="input-command-search" />
+        <CommandList data-testid="panel-search-results">
+          {!search.trim() ? (
+            <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
+              <Search className="w-6 h-6 mb-2 opacity-30" />
+              <p className="text-xs">Start typing to search across the platform</p>
             </div>
+          ) : (
+            <CommandEmpty>
+              <div className="flex flex-col items-center py-4 text-muted-foreground">
+                <p className="text-sm">No results found</p>
+                <p className="text-xs mt-1">Try a different search term</p>
+              </div>
+            </CommandEmpty>
           )}
+
+          {search.trim() && (
+            <>
+              {agentList.length > 0 && (
+                <CommandGroup heading="Agents">
+                  {agentList.slice(0, 6).map((a) => (
+                    <CommandItem key={`agent-${a.id}`} value={`agent ${a.name}`} onSelect={() => go(`/agents/${a.id}`)} data-testid={`search-result-agent-${a.id}`}>
+                      <Bot className="text-muted-foreground" />
+                      <span className="flex-1 truncate">{a.name}</span>
+                      <Badge variant="secondary" className="text-[10px]">{a.status}</Badge>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              )}
+
+              {outcomeList.length > 0 && (
+                <>
+                  <CommandSeparator />
+                  <CommandGroup heading="Outcomes">
+                    {outcomeList.slice(0, 6).map((o) => (
+                      <CommandItem key={`outcome-${o.id}`} value={`outcome ${o.name}`} onSelect={() => go(`/outcomes/${o.id}`)} data-testid={`search-result-outcome-${o.id}`}>
+                        <Target className="text-muted-foreground" />
+                        <span className="flex-1 truncate">{o.name}</span>
+                        <Badge variant="secondary" className="text-[10px]">{o.status}</Badge>
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                </>
+              )}
+
+              {policyList.length > 0 && (
+                <>
+                  <CommandSeparator />
+                  <CommandGroup heading="Policies">
+                    {policyList.slice(0, 6).map((p) => (
+                      <CommandItem key={`policy-${p.id}`} value={`policy ${p.name}`} onSelect={() => go(`/governance`)} data-testid={`search-result-policy-${p.id}`}>
+                        <Shield className="text-muted-foreground" />
+                        <span className="flex-1 truncate">{p.name}</span>
+                        <Badge variant="secondary" className="text-[10px]">{p.type}</Badge>
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                </>
+              )}
+
+              {traceList.length > 0 && (
+                <>
+                  <CommandSeparator />
+                  <CommandGroup heading="Runs">
+                    {traceList.slice(0, 6).map((t) => (
+                      <CommandItem key={`trace-${t.id}`} value={`run ${t.id} ${t.triggeredBy || ""}`} onSelect={() => go(`/traces/${t.id}`)} data-testid={`search-result-trace-${t.id}`}>
+                        <FileText className="text-muted-foreground" />
+                        <span className="flex-1 truncate">Run #{t.id}</span>
+                        <Badge variant="secondary" className="text-[10px]">{t.status}</Badge>
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                </>
+              )}
+            </>
+          )}
+        </CommandList>
+
+        <div className="flex items-center gap-3 px-3 py-2 border-t text-[10px] text-muted-foreground">
+          <span className="flex items-center gap-1"><kbd className="border rounded px-1 py-0.5 bg-muted">&#8593;&#8595;</kbd> Navigate</span>
+          <span className="flex items-center gap-1"><kbd className="border rounded px-1 py-0.5 bg-muted">&#8629;</kbd> Open</span>
+          <span className="flex items-center gap-1"><kbd className="border rounded px-1 py-0.5 bg-muted">Esc</kbd> Close</span>
         </div>
-      )}
-    </div>
+      </CommandDialog>
+    </>
   );
 }
