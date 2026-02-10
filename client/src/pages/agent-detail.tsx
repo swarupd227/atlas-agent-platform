@@ -886,7 +886,6 @@ export default function AgentDetail() {
           </Card>
         </TabsContent>
 
-        {/* RELEASES TAB */}
         <TabsContent value="releases" className="flex flex-col gap-4 mt-0">
           <Card>
             <CardHeader className="pb-3">
@@ -901,15 +900,14 @@ export default function AgentDetail() {
                 <div className="relative" data-testid="version-timeline">
                   <div className="absolute left-4 top-0 bottom-0 w-px bg-border" />
                   <div className="flex flex-col gap-4">
-                    {agentVersions.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()).map(version => {
-                      const versionDeployments = agentDeployments.filter(d => d.version === version.semver || d.versionId === version.id);
-                      const deployedEnvs = Array.from(new Set(versionDeployments.map(d => d.environment)));
-                      const rollbackPlan = agent.rollbackPlan as any;
+                    {[...agentVersions].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()).map(version => {
+                      const versionAny = version as any;
                       return (
                         <div key={version.id} className="relative pl-10" data-testid={`version-entry-${version.id}`}>
                           <div className={`absolute left-2.5 top-1 w-3 h-3 rounded-full ring-2 ring-background z-10 ${
-                            version.status === "deployed" ? "bg-emerald-500" :
-                            version.status === "draft" ? "bg-slate-400" :
+                            version.status === "active" || version.status === "deployed" ? "bg-emerald-500" :
+                            version.status === "deprecated" ? "bg-slate-400" :
+                            version.status === "draft" ? "bg-blue-400" :
                             "bg-blue-500"
                           }`} />
                           <div className="flex flex-col gap-2 p-3 rounded-md border bg-background">
@@ -925,18 +923,15 @@ export default function AgentDetail() {
                                 {version.createdAt ? new Date(version.createdAt).toLocaleDateString() : ""}
                               </span>
                             </div>
-                            {deployedEnvs.length > 0 && (
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className="text-[10px] text-muted-foreground">Deployed to:</span>
-                                {deployedEnvs.map(env => (
-                                  <Badge key={env} variant="outline" className="text-[10px]" data-testid={`version-env-${version.id}-${env}`}>{env}</Badge>
-                                ))}
-                              </div>
+                            {versionAny.changelog && (
+                              <p className="text-xs text-muted-foreground" data-testid={`version-changelog-${version.id}`}>
+                                {versionAny.changelog}
+                              </p>
                             )}
-                            {rollbackPlan?.canaryConfig && version.status === "deployed" && (
-                              <div className="flex items-center gap-2 flex-wrap text-[10px] text-muted-foreground">
-                                <Gauge className="w-3 h-3" />
-                                <span>Canary: {rollbackPlan.canaryConfig.startPercent}% start, {rollbackPlan.canaryConfig.stepPercent}% step, {rollbackPlan.canaryConfig.stepInterval} interval</span>
+                            {versionAny.configSnapshot && (
+                              <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground" data-testid={`version-diff-indicator-${version.id}`}>
+                                <FileCode className="w-3 h-3" />
+                                <span>Config snapshot available</span>
                               </div>
                             )}
                           </div>
@@ -955,47 +950,135 @@ export default function AgentDetail() {
             <CardHeader className="pb-3">
               <div className="flex items-center gap-2">
                 <Rocket className="w-4 h-4 text-muted-foreground" />
-                <CardTitle className="text-sm font-medium">Environment Promotion Flow</CardTitle>
+                <CardTitle className="text-sm font-medium">Linked Deployments</CardTitle>
+                {agentDeployments.length > 0 && <Badge variant="outline" className="text-[10px] ml-auto">{agentDeployments.length} deployments</Badge>}
               </div>
             </CardHeader>
             <CardContent>
-              {(() => {
-                const stagingDep = agentDeployments.find(d => d.environment === "staging" && (d.status === "deployed" || d.status === "completed"));
-                const pilotDep = agentDeployments.find(d => d.environment === "pilot" && (d.status === "deployed" || d.status === "completed"));
-                const prodDep = agentDeployments.find(d => d.environment === "production" && (d.status === "deployed" || d.status === "completed"));
+              {agentDeployments.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3" data-testid="linked-deployments">
+                  {[...agentDeployments].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()).map(dep => (
+                    <Link key={dep.id} href={`/deployments/${dep.id}`}>
+                      <Card className="hover-elevate" data-testid={`deployment-card-${dep.id}`}>
+                        <CardContent className="p-4 flex flex-col gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <StatusBadge status={dep.environment} />
+                            <StatusBadge status={dep.rolloutStrategy || "direct"} />
+                            <StatusBadge status={dep.status} />
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {dep.version && (
+                              <Badge variant="outline" className="text-xs font-mono" data-testid={`deployment-version-${dep.id}`}>v{dep.version}</Badge>
+                            )}
+                            {dep.canaryPercent != null && dep.canaryPercent > 0 && (
+                              <span className="text-[11px] text-muted-foreground" data-testid={`deployment-canary-${dep.id}`}>
+                                <Gauge className="w-3 h-3 inline mr-1" />{dep.canaryPercent}% canary
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[11px] text-muted-foreground">
+                            {dep.createdAt ? new Date(dep.createdAt).toLocaleDateString() : ""}
+                          </span>
+                        </CardContent>
+                      </Card>
+                    </Link>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground text-center py-4">No deployments found</p>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2">
+                <Layers className="w-4 h-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Version Diff Selector</CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-4">
+              <div className="flex items-center gap-3 flex-wrap" data-testid="version-diff-selector">
+                <Select value={diffVersionA} onValueChange={(val) => { setDiffVersionA(val); setShowDiff(false); }}>
+                  <SelectTrigger className="w-[180px]" data-testid="select-diff-version-a">
+                    <SelectValue placeholder="Version A" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {agentVersions && agentVersions.map(v => (
+                      <SelectItem key={v.id} value={v.id} data-testid={`diff-version-a-${v.id}`}>v{v.semver}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <span className="text-sm text-muted-foreground">vs</span>
+                <Select value={diffVersionB} onValueChange={(val) => { setDiffVersionB(val); setShowDiff(false); }}>
+                  <SelectTrigger className="w-[180px]" data-testid="select-diff-version-b">
+                    <SelectValue placeholder="Version B" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {agentVersions && agentVersions.map(v => (
+                      <SelectItem key={v.id} value={v.id} data-testid={`diff-version-b-${v.id}`}>v{v.semver}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!diffVersionA || !diffVersionB || diffVersionA === diffVersionB}
+                  onClick={() => setShowDiff(true)}
+                  data-testid="button-compare-versions"
+                >
+                  Compare
+                </Button>
+              </div>
+              {showDiff && diffVersionA && diffVersionB && (() => {
+                const vA = agentVersions?.find(v => v.id === diffVersionA);
+                const vB = agentVersions?.find(v => v.id === diffVersionB);
+                if (!vA || !vB) return null;
+                const snapshotA = (vA as any).configSnapshot;
+                const snapshotB = (vB as any).configSnapshot;
                 return (
-                  <div className="flex items-center gap-3 flex-wrap" data-testid="promotion-flow">
-                    <div className="flex-1 min-w-[140px] p-3 rounded-md border flex flex-col gap-1 text-center" data-testid="promotion-staging">
-                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Staging</span>
-                      <span className="text-sm font-semibold">{stagingDep ? `v${stagingDep.version}` : "None"}</span>
-                      {stagingDep && <StatusBadge status={stagingDep.status} />}
+                  <div className="flex flex-col gap-3" data-testid="version-diff-result">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Badge variant="outline" className="text-xs font-mono">v{vA.semver}</Badge>
+                      <span className="text-xs text-muted-foreground">vs</span>
+                      <Badge variant="outline" className="text-xs font-mono">v{vB.semver}</Badge>
                     </div>
-                    <div className="flex flex-col items-center gap-1 shrink-0">
-                      <Button variant="outline" size="sm" data-testid="button-promote-staging-pilot" onClick={() => toast({ title: "Promotion initiated" })}>
-                        Promote <ChevronRight className="w-3 h-3 ml-1" />
-                      </Button>
-                      <Button variant="ghost" size="sm" data-testid="button-rollback-pilot-staging" onClick={() => toast({ title: "Rollback initiated" })}>
-                        <RotateCcw className="w-3 h-3 mr-1" /> Rollback
-                      </Button>
-                    </div>
-                    <div className="flex-1 min-w-[140px] p-3 rounded-md border flex flex-col gap-1 text-center" data-testid="promotion-pilot">
-                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Pilot</span>
-                      <span className="text-sm font-semibold">{pilotDep ? `v${pilotDep.version}` : "None"}</span>
-                      {pilotDep && <StatusBadge status={pilotDep.status} />}
-                    </div>
-                    <div className="flex flex-col items-center gap-1 shrink-0">
-                      <Button variant="outline" size="sm" data-testid="button-promote-pilot-prod" onClick={() => toast({ title: "Promotion initiated" })}>
-                        Promote <ChevronRight className="w-3 h-3 ml-1" />
-                      </Button>
-                      <Button variant="ghost" size="sm" data-testid="button-rollback-prod-pilot" onClick={() => toast({ title: "Rollback initiated" })}>
-                        <RotateCcw className="w-3 h-3 mr-1" /> Rollback
-                      </Button>
-                    </div>
-                    <div className="flex-1 min-w-[140px] p-3 rounded-md border flex flex-col gap-1 text-center" data-testid="promotion-production">
-                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Production</span>
-                      <span className="text-sm font-semibold">{prodDep ? `v${prodDep.version}` : "None"}</span>
-                      {prodDep && <StatusBadge status={prodDep.status} />}
-                    </div>
+                    <Separator />
+                    {snapshotA && snapshotB ? (
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3" data-testid="diff-side-by-side">
+                        <div className="flex flex-col gap-1">
+                          <span className="text-[11px] font-medium text-muted-foreground">v{vA.semver}</span>
+                          <pre className="text-xs font-mono bg-muted/30 p-3 rounded-md overflow-auto max-h-[400px]" data-testid="diff-snapshot-a">
+                            <code>{JSON.stringify(snapshotA, null, 2)}</code>
+                          </pre>
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <span className="text-[11px] font-medium text-muted-foreground">v{vB.semver}</span>
+                          <pre className="text-xs font-mono bg-muted/30 p-3 rounded-md overflow-auto max-h-[400px]" data-testid="diff-snapshot-b">
+                            <code>{JSON.stringify(snapshotB, null, 2)}</code>
+                          </pre>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-2">
+                        <p className="text-xs text-muted-foreground text-center py-2">
+                          {!snapshotA && !snapshotB
+                            ? "Neither version has a config snapshot"
+                            : !snapshotA
+                              ? `v${vA.semver} has no config snapshot`
+                              : `v${vB.semver} has no config snapshot`}
+                        </p>
+                        <InlineDiff
+                          diffs={[
+                            { field: "semver", from: vA.semver, to: vB.semver },
+                            { field: "status", from: vA.status, to: vB.status },
+                            { field: "createdBy", from: vA.createdBy || "unknown", to: vB.createdBy || "unknown" },
+                            { field: "blueprintHash", from: vA.blueprintHash || "none", to: vB.blueprintHash || "none" },
+                          ]}
+                          testIdPrefix="version-diff"
+                        />
+                      </div>
+                    )}
                   </div>
                 );
               })()}

@@ -576,12 +576,34 @@ export default function ApprovalDetail() {
                             <span className="text-xs text-muted-foreground">{beforeRate.toFixed(1)}%</span>
                             <ArrowLeft className="w-3 h-3 text-muted-foreground rotate-180" />
                             <span className={`text-sm font-medium ${passColor}`}>{passRate.toFixed(1)}%</span>
-                            <Badge
-                              variant="outline"
-                              className={`text-[10px] ${delta >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}
-                            >
-                              {delta >= 0 ? "+" : ""}{delta.toFixed(1)}%
-                            </Badge>
+                            {delta > 0 ? (
+                              <div className="flex items-center gap-1" data-testid={`eval-delta-improved-${i}`}>
+                                <TrendingUp className="w-3.5 h-3.5 text-emerald-500" />
+                                <Badge
+                                  variant="outline"
+                                  className="text-[10px] text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                                >
+                                  +{delta.toFixed(1)}% improved
+                                </Badge>
+                              </div>
+                            ) : delta < 0 ? (
+                              <div className="flex items-center gap-1" data-testid={`eval-delta-regressed-${i}`}>
+                                <TrendingDown className="w-3.5 h-3.5 text-red-500" />
+                                <Badge
+                                  variant="outline"
+                                  className="text-[10px] text-red-600 dark:text-red-400 border-red-500/20"
+                                >
+                                  {delta.toFixed(1)}% regressed
+                                </Badge>
+                              </div>
+                            ) : (
+                              <Badge
+                                variant="outline"
+                                className="text-[10px] text-muted-foreground"
+                              >
+                                No change
+                              </Badge>
+                            )}
                           </div>
                         </div>
                       );
@@ -661,73 +683,68 @@ export default function ApprovalDetail() {
           </CardContent>
         </Card>
 
-        {/* Blast Radius Panel */}
+        {/* Blast Radius Analysis Panel */}
         <Card data-testid="panel-blast-radius">
-          <CardHeader className="flex flex-row items-center gap-2 space-y-0 pb-2">
+          <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
             <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
-              <Zap className="w-4 h-4 text-muted-foreground" />
-              Blast Radius
+              <Activity className="w-4 h-4 text-muted-foreground" />
+              Blast Radius Analysis
             </CardTitle>
           </CardHeader>
           <CardContent>
             {evidence.blastRadius ? (
               <div className="flex flex-col gap-3" data-testid="blast-radius-data">
+                <div className="grid grid-cols-3 gap-2" data-testid="blast-radius-stats">
+                  <div className="rounded-md border p-2.5 flex flex-col items-center gap-1" data-testid="stat-deployments">
+                    <span className="text-lg font-semibold">
+                      {(evidence.blastRadius as any).affectedDeployments?.length ?? (evidence.blastRadius as any).deploymentCount ?? 0}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Deployments</span>
+                  </div>
+                  <div className="rounded-md border p-2.5 flex flex-col items-center gap-1" data-testid="stat-outcomes">
+                    <span className="text-lg font-semibold">
+                      {(evidence.blastRadius as any).affectedOutcomes?.length ?? 0}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Outcomes</span>
+                  </div>
+                  <div className="rounded-md border p-2.5 flex flex-col items-center gap-1" data-testid="stat-agents">
+                    <span className="text-lg font-semibold">
+                      {(evidence.blastRadius as any).affectedAgents?.length ?? (evidence.blastRadius as any).agentCount ?? 1}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Agents</span>
+                  </div>
+                </div>
+
                 {(evidence.blastRadius as any).affectedOutcomes?.length > 0 && (
-                  <div className="flex flex-col gap-2">
-                    <div className="flex items-center gap-1.5">
-                      <Target className="w-3 h-3 text-muted-foreground" />
-                      <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
-                        Affected Outcomes ({(evidence.blastRadius as any).affectedOutcomes.length})
-                      </span>
-                    </div>
-                    <div className="flex flex-col gap-1.5">
-                      {((evidence.blastRadius as any).affectedOutcomes as Array<{ name: string; riskTier?: string; kpiImpact?: string }>).map((outcome, idx) => (
-                        <div key={idx} className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/30 flex-wrap" data-testid={`blast-outcome-${idx}`}>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-xs font-medium">{outcome.name}</span>
-                            {outcome.riskTier && (
-                              <Badge variant="outline" className="text-[9px]">{outcome.riskTier}</Badge>
-                            )}
-                          </div>
-                          {outcome.kpiImpact && (
-                            <span className="text-[11px] text-muted-foreground">{outcome.kpiImpact}</span>
-                          )}
+                  <div className="flex flex-col gap-1.5">
+                    {((evidence.blastRadius as any).affectedOutcomes as Array<{ name: string; riskTier?: string; status?: string }>).map((outcome, idx) => (
+                      <div key={idx} className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/30 flex-wrap" data-testid={`blast-outcome-${idx}`}>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Target className="w-3 h-3 text-muted-foreground shrink-0" />
+                          <span className="text-xs font-medium">{outcome.name}</span>
                         </div>
-                      ))}
-                    </div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {outcome.riskTier && <StatusBadge status={outcome.riskTier} />}
+                          {outcome.status && <StatusBadge status={outcome.status} />}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
 
                 {(evidence.blastRadius as any).affectedSegments?.length > 0 && (
-                  <div className="flex flex-col gap-2">
-                    <div className="flex items-center gap-1.5">
-                      <Layers className="w-3 h-3 text-muted-foreground" />
-                      <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
-                        Affected Segments ({(evidence.blastRadius as any).affectedSegments.length})
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {((evidence.blastRadius as any).affectedSegments as Array<{ name: string; userCount?: number; revenueImpact?: string }>).map((seg, idx) => (
-                        <div key={idx} className="flex flex-col gap-0.5 p-2 rounded-md bg-muted/30" data-testid={`blast-segment-${idx}`}>
+                  <div className="flex flex-col gap-1.5">
+                    {((evidence.blastRadius as any).affectedSegments as Array<{ name: string; userCount?: number }>).map((seg, idx) => (
+                      <div key={idx} className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/30 flex-wrap" data-testid={`blast-segment-${idx}`}>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Layers className="w-3 h-3 text-muted-foreground shrink-0" />
                           <span className="text-xs font-medium">{seg.name}</span>
-                          {seg.userCount && (
-                            <span className="text-[10px] text-muted-foreground">{seg.userCount.toLocaleString()} users</span>
-                          )}
-                          {seg.revenueImpact && (
-                            <span className="text-[10px] text-muted-foreground">{seg.revenueImpact}</span>
-                          )}
                         </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {(evidence.blastRadius as any).totalUsersAffected && (
-                  <div className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/20">
-                    <span className="text-[11px] text-muted-foreground">Total Users Affected</span>
-                    <span className="text-xs font-semibold" data-testid="text-total-users-affected">
-                      {(evidence.blastRadius as any).totalUsersAffected.toLocaleString()}
-                    </span>
+                        {seg.userCount && (
+                          <span className="text-[10px] text-muted-foreground">{seg.userCount.toLocaleString()} users</span>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 )}
 
@@ -739,9 +756,48 @@ export default function ApprovalDetail() {
                 )}
               </div>
             ) : (
-              <p className="text-xs text-muted-foreground" data-testid="text-no-blast-radius">
-                No blast radius data available
-              </p>
+              <div className="flex flex-col gap-3" data-testid="blast-radius-derived">
+                <div className="grid grid-cols-3 gap-2" data-testid="blast-radius-stats">
+                  <div className="rounded-md border p-2.5 flex flex-col items-center gap-1" data-testid="stat-deployments">
+                    <span className="text-lg font-semibold">1</span>
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Deployments</span>
+                  </div>
+                  <div className="rounded-md border p-2.5 flex flex-col items-center gap-1" data-testid="stat-outcomes">
+                    <span className="text-lg font-semibold">{approval.outcome ? 1 : 0}</span>
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Outcomes</span>
+                  </div>
+                  <div className="rounded-md border p-2.5 flex flex-col items-center gap-1" data-testid="stat-agents">
+                    <span className="text-lg font-semibold">{approval.agent ? 1 : 0}</span>
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Agents</span>
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  {approval.agent && (
+                    <div className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/30 flex-wrap" data-testid="blast-derived-agent">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Users className="w-3 h-3 text-muted-foreground shrink-0" />
+                        <span className="text-xs font-medium">Agent: {approval.agent.name}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {approval.environment && <StatusBadge status={approval.environment} />}
+                        {approval.agent.riskTier && <StatusBadge status={approval.agent.riskTier} />}
+                      </div>
+                    </div>
+                  )}
+                  {approval.outcome && (
+                    <div className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/30 flex-wrap" data-testid="blast-derived-outcome">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Target className="w-3 h-3 text-muted-foreground shrink-0" />
+                        <span className="text-xs font-medium">Outcome: {approval.outcome.name}</span>
+                      </div>
+                      <StatusBadge status={approval.outcome.riskTier} />
+                    </div>
+                  )}
+                  {!approval.agent && !approval.outcome && (
+                    <p className="text-xs text-muted-foreground">No blast radius data available</p>
+                  )}
+                </div>
+              </div>
             )}
           </CardContent>
         </Card>
@@ -869,6 +925,145 @@ export default function ApprovalDetail() {
                     {approval.agent.riskTier && <StatusBadge status={approval.agent.riskTier} />}
                   </div>
                 )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Policy Compliance Panel */}
+        <Card data-testid="panel-policy-checks">
+          <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
+              <Shield className="w-4 h-4 text-muted-foreground" />
+              Policy Compliance
+            </CardTitle>
+            {(() => {
+              const checks = evidence.policyChecks as Array<{ name: string; passed: boolean; detail?: string }> | undefined;
+              const policies = approval.effectivePolicies;
+              const source = checks || policies;
+              if (!source || source.length === 0) return null;
+              const passedCount = checks
+                ? checks.filter(c => c.passed).length
+                : policies.length;
+              const totalCount = source.length;
+              return (
+                <Badge
+                  variant="outline"
+                  className={`text-[10px] ${passedCount === totalCount ? "text-emerald-600 dark:text-emerald-400 border-emerald-500/20" : "text-amber-600 dark:text-amber-400 border-amber-500/20"}`}
+                  data-testid="badge-policy-summary"
+                >
+                  {passedCount}/{totalCount} passed
+                </Badge>
+              );
+            })()}
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-col gap-2">
+              {evidence.policyChecks && Array.isArray(evidence.policyChecks) && evidence.policyChecks.length > 0 ? (
+                (evidence.policyChecks as Array<{ name: string; passed: boolean; detail?: string }>).map((check, i) => (
+                  <div key={i} className="flex items-start gap-2 p-2 rounded-md bg-muted/30" data-testid={`policy-check-${i}`}>
+                    {check.passed ? (
+                      <CheckCircle className="w-3.5 h-3.5 text-emerald-500 mt-0.5 shrink-0" />
+                    ) : (
+                      <XCircle className="w-3.5 h-3.5 text-red-500 mt-0.5 shrink-0" />
+                    )}
+                    <div className="flex flex-col gap-0.5 min-w-0">
+                      <span className="text-xs font-medium">{check.name}</span>
+                      {check.detail && (
+                        <span className="text-[11px] text-muted-foreground">{check.detail}</span>
+                      )}
+                    </div>
+                  </div>
+                ))
+              ) : approval.effectivePolicies && approval.effectivePolicies.length > 0 ? (
+                approval.effectivePolicies.map((policy) => (
+                  <div key={policy.id} className="flex items-start gap-2 p-2 rounded-md bg-muted/30" data-testid={`policy-check-${policy.id}`}>
+                    <CheckCircle className="w-3.5 h-3.5 text-emerald-500 mt-0.5 shrink-0" />
+                    <div className="flex flex-col gap-0.5 min-w-0">
+                      <span className="text-xs font-medium">{policy.name}</span>
+                      <span className="text-[11px] text-muted-foreground">{policy.domain || (policy as any).type || "Active policy"}</span>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <p className="text-xs text-muted-foreground" data-testid="text-no-policy-checks">No policy checks available</p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Approval Audit Trail Panel */}
+        <Card data-testid="panel-audit-trail">
+          <CardHeader className="flex flex-row items-center gap-2 space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
+              <ScrollText className="w-4 h-4 text-muted-foreground" />
+              Approval Audit Trail
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-col gap-3">
+              {approval.auditTrail && approval.auditTrail.length > 0 ? (
+                <div className="flex flex-col gap-2" data-testid="audit-trail-events">
+                  {[...approval.auditTrail]
+                    .sort((a, b) => {
+                      const da = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+                      const db = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+                      return db - da;
+                    })
+                    .map((event) => {
+                      const eventTime = event.createdAt ? new Date(event.createdAt) : null;
+                      const relativeTime = eventTime
+                        ? (() => {
+                            const diffMs = Date.now() - eventTime.getTime();
+                            const diffMin = Math.floor(diffMs / 60000);
+                            if (diffMin < 1) return "Just now";
+                            if (diffMin < 60) return `${diffMin}m ago`;
+                            const diffHrs = Math.floor(diffMin / 60);
+                            if (diffHrs < 24) return `${diffHrs}h ago`;
+                            const diffDays = Math.floor(diffHrs / 24);
+                            return `${diffDays}d ago`;
+                          })()
+                        : "N/A";
+                      return (
+                        <div key={event.id} className="flex items-center gap-2 flex-wrap" data-testid={`audit-trail-event-${event.id}`}>
+                          <span className="text-[10px] text-muted-foreground min-w-[52px] shrink-0">{relativeTime}</span>
+                          <Badge variant="outline" className="text-[10px]" data-testid={`audit-trail-action-${event.id}`}>
+                            {event.action}
+                          </Badge>
+                          <span className="text-xs text-muted-foreground">{event.actorId}</span>
+                          {event.details && (
+                            <span className="text-[11px] text-muted-foreground truncate max-w-[200px]">{event.details}</span>
+                          )}
+                        </div>
+                      );
+                    })}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground" data-testid="text-no-audit-events">No audit events</p>
+              )}
+
+              <div className="border-t pt-3 mt-1" data-testid="ai-recommendation-section">
+                <div className="flex items-start gap-2 p-2.5 rounded-md bg-muted/30">
+                  <Lightbulb className={`w-4 h-4 mt-0.5 shrink-0 ${
+                    computedRecommendation.toLowerCase().includes("reject") || computedRecommendation.toLowerCase().includes("request changes")
+                      ? "text-amber-500"
+                      : computedRecommendation.toLowerCase().includes("condition")
+                        ? "text-blue-500"
+                        : "text-emerald-500"
+                  }`} />
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">AI Recommendation</span>
+                    <span className={`text-sm font-medium ${
+                      computedRecommendation.toLowerCase().includes("reject") || computedRecommendation.toLowerCase().includes("request changes")
+                        ? "text-amber-600 dark:text-amber-400"
+                        : computedRecommendation.toLowerCase().includes("condition")
+                          ? "text-blue-600 dark:text-blue-400"
+                          : "text-emerald-600 dark:text-emerald-400"
+                    }`} data-testid="text-ai-recommendation">
+                      {computedRecommendation}
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
           </CardContent>

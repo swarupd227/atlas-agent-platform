@@ -149,6 +149,7 @@ export default function EvalDetail() {
   const [expandedScorerOutputs, setExpandedScorerOutputs] = useState<Set<string>>(new Set());
   const [diffRunA, setDiffRunA] = useState<string>("");
   const [diffRunB, setDiffRunB] = useState<string>("");
+  const [diffFilter, setDiffFilter] = useState<"all" | "improved" | "regressed">("all");
   const [generatedCases, setGeneratedCases] = useState<Array<{ name: string; inputData: unknown; expectedOutput: unknown; tags: string[]; weight: number; rationale: string }>>([]);
 
   const { data: suite, isLoading } = useQuery<EvalSuite>({
@@ -662,58 +663,133 @@ export default function EvalDetail() {
                 No runs yet
               </div>
             ) : (
-              <Table data-testid="table-run-history">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Run Date</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Pass Rate</TableHead>
-                    <TableHead className="text-right">Passed</TableHead>
-                    <TableHead className="text-right">Failed</TableHead>
-                    <TableHead className="text-right">Avg Latency</TableHead>
-                    <TableHead className="text-right">Avg Cost</TableHead>
-                    <TableHead>Triggered By</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {sortedRuns.map((run) => (
-                    <TableRow key={run.id} data-testid={`row-run-${run.id}`}>
-                      <TableCell className="text-sm">{formatDate(run.startedAt)}</TableCell>
-                      <TableCell>
-                        <StatusBadge status={run.status} />
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2 min-w-[120px]">
-                          <Progress
-                            value={(run.passRate || 0) * 100}
-                            className={`h-2 flex-1 ${passRateProgressColor(run.passRate)}`}
+              <div className="flex flex-col gap-0">
+                {(() => {
+                  const sparkRuns = [...sortedRuns].reverse().slice(-10);
+                  const passThreshold = (thresholdConfig?.passThreshold as number) || 0.8;
+                  if (sparkRuns.length >= 2) {
+                    const values = sparkRuns.map((r) => r.passRate || 0);
+                    const allVals = [...values, passThreshold];
+                    const min = Math.min(...allVals);
+                    const max = Math.max(...allVals);
+                    const range = max - min || 1;
+                    const svgW = 200;
+                    const svgH = 40;
+                    const pad = 4;
+                    const w = svgW - pad * 2;
+                    const h = svgH - pad * 2;
+                    const pathPoints = values.map((v, i) => {
+                      const x = pad + (i / (values.length - 1)) * w;
+                      const y = pad + h - ((v - min) / range) * h;
+                      return `${x},${y}`;
+                    });
+                    const d = `M${pathPoints.join(" L")}`;
+                    const threshY = pad + h - ((passThreshold - min) / range) * h;
+                    return (
+                      <div className="flex items-center gap-3 px-6 py-3 flex-wrap">
+                        <span className="text-xs text-muted-foreground">Pass Rate Trend (last {sparkRuns.length} runs)</span>
+                        <svg
+                          width={svgW}
+                          height={svgH}
+                          viewBox={`0 0 ${svgW} ${svgH}`}
+                          data-testid="run-trend-sparkline"
+                        >
+                          <line
+                            x1={pad}
+                            y1={threshY}
+                            x2={svgW - pad}
+                            y2={threshY}
+                            stroke="currentColor"
+                            strokeWidth="1"
+                            strokeDasharray="3,3"
+                            className="text-muted-foreground/40"
                           />
-                          <span className={`text-xs font-medium ${passRateColor(run.passRate)}`}>
-                            {((run.passRate || 0) * 100).toFixed(1)}%
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right text-sm text-emerald-600 dark:text-emerald-400">
-                        {run.passedCases ?? 0}
-                      </TableCell>
-                      <TableCell className="text-right text-sm text-red-600 dark:text-red-400">
-                        {run.failedCases ?? 0}
-                      </TableCell>
-                      <TableCell className="text-right text-sm">
-                        {run.avgLatencyMs ?? 0}ms
-                      </TableCell>
-                      <TableCell className="text-right text-sm">
-                        ${(run.avgCostUsd || 0).toFixed(4)}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="text-[10px]">
-                          {run.triggeredBy || "manual"}
-                        </Badge>
-                      </TableCell>
+                          <path
+                            d={d}
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            className="text-emerald-500"
+                          />
+                        </svg>
+                        <span className="text-[10px] text-muted-foreground">
+                          Threshold: {(passThreshold * 100).toFixed(0)}%
+                        </span>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
+                <Table data-testid="table-run-history">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Run Date</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Pass Rate</TableHead>
+                      <TableHead className="text-right">Passed</TableHead>
+                      <TableHead className="text-right">Failed</TableHead>
+                      <TableHead className="text-right">Avg Latency</TableHead>
+                      <TableHead className="text-right">Avg Cost</TableHead>
+                      <TableHead>Version</TableHead>
+                      <TableHead>Triggered By</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {sortedRuns.map((run) => {
+                      const pct = (run.passRate || 0) * 100;
+                      const dotColor = pct > 90 ? "bg-emerald-500" : pct > 75 ? "bg-amber-500" : "bg-red-500";
+                      return (
+                        <TableRow key={run.id} data-testid={`row-run-${run.id}`}>
+                          <TableCell className="text-sm">{formatDate(run.startedAt)}</TableCell>
+                          <TableCell>
+                            <StatusBadge status={run.status} />
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-2 min-w-[120px]">
+                              <div className={`w-2 h-2 rounded-full shrink-0 ${dotColor}`} data-testid={`dot-run-${run.id}`} />
+                              <Progress
+                                value={pct}
+                                className={`h-2 flex-1 ${passRateProgressColor(run.passRate)}`}
+                              />
+                              <span className={`text-xs font-medium ${passRateColor(run.passRate)}`}>
+                                {pct.toFixed(1)}%
+                              </span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right text-sm text-emerald-600 dark:text-emerald-400">
+                            {run.passedCases ?? 0}
+                          </TableCell>
+                          <TableCell className="text-right text-sm text-red-600 dark:text-red-400">
+                            {run.failedCases ?? 0}
+                          </TableCell>
+                          <TableCell className="text-right text-sm">
+                            {run.avgLatencyMs ?? 0}ms
+                          </TableCell>
+                          <TableCell className="text-right text-sm">
+                            ${(run.avgCostUsd || 0).toFixed(4)}
+                          </TableCell>
+                          <TableCell>
+                            {run.versionId ? (
+                              <Badge variant="outline" className="text-[10px]">
+                                {run.versionId}
+                              </Badge>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">{"\u2014"}</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="text-[10px]">
+                              {run.triggeredBy || "manual"}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
             )}
           </CardContent>
         </Card>
@@ -1371,10 +1447,45 @@ export default function EvalDetail() {
                     });
                   }
 
+                  const passThreshold = (thresholdConfig?.passThreshold as number) || 0.8;
+                  const belowThreshold = rateB < passThreshold;
+
+                  const latA = runA.avgLatencyMs || 0;
+                  const latB = runB.avgLatencyMs || 0;
+                  const latDelta = latB - latA;
+                  const costA = runA.avgCostUsd || 0;
+                  const costB = runB.avgCostUsd || 0;
+                  const costDelta = costB - costA;
+
+                  const totalCases = improved + regressed + unchanged;
+                  const improvedPct = totalCases > 0 ? (improved / totalCases) * 100 : 0;
+                  const regressedPct = totalCases > 0 ? (regressed / totalCases) * 100 : 0;
+                  const unchangedPct = totalCases > 0 ? (unchanged / totalCases) * 100 : 0;
+
+                  const sortedRows = [...comparisonRows].sort((a, b) => {
+                    const order: Record<string, number> = { regressed: 0, improved: 1, same: 2 };
+                    return (order[a.delta] ?? 2) - (order[b.delta] ?? 2);
+                  });
+
+                  const filteredRows = sortedRows.filter((row) => {
+                    if (diffFilter === "regressed") return row.delta === "regressed";
+                    if (diffFilter === "improved") return row.delta === "improved";
+                    return true;
+                  });
+
                   return (
                     <div className="flex flex-col gap-4">
-                      <div className="flex items-center gap-3 flex-wrap" data-testid="diff-summary">
-                        <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/30 flex-1 min-w-[120px]">
+                      {belowThreshold && (
+                        <div className="flex items-center gap-2 p-3 rounded-md bg-red-500/10 border border-red-500/20" data-testid="threshold-warning">
+                          <AlertTriangle className="w-4 h-4 text-red-500 shrink-0" />
+                          <span className="text-sm font-medium text-red-600 dark:text-red-400">
+                            Below threshold: {(rateB * 100).toFixed(1)}% &lt; {(passThreshold * 100).toFixed(1)}%
+                          </span>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3" data-testid="diff-summary">
+                        <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/30">
                           <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Pass Rate Delta</span>
                           <span className={`text-xl font-bold ${deltaColor}`} data-testid="text-pass-rate-delta">
                             {delta > 0 ? "+" : ""}{(delta * 100).toFixed(1)}%
@@ -1383,8 +1494,29 @@ export default function EvalDetail() {
                             {(rateA * 100).toFixed(1)}% &rarr; {(rateB * 100).toFixed(1)}%
                           </span>
                         </div>
-                        {hasResults && (
-                          <>
+                        <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/30">
+                          <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Avg Latency Delta</span>
+                          <span className={`text-xl font-bold ${latDelta > 0 ? "text-red-600 dark:text-red-400" : latDelta < 0 ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`} data-testid="text-latency-delta">
+                            {latDelta > 0 ? "+" : ""}{latDelta.toFixed(0)}ms
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            {latA.toFixed(0)}ms &rarr; {latB.toFixed(0)}ms
+                          </span>
+                        </div>
+                        <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/30">
+                          <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Avg Cost Delta</span>
+                          <span className={`text-xl font-bold ${costDelta > 0 ? "text-red-600 dark:text-red-400" : costDelta < 0 ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`} data-testid="text-cost-delta">
+                            {costDelta > 0 ? "+" : ""}${costDelta.toFixed(4)}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            ${costA.toFixed(4)} &rarr; ${costB.toFixed(4)}
+                          </span>
+                        </div>
+                      </div>
+
+                      {hasResults && (
+                        <div className="flex flex-col gap-2">
+                          <div className="flex items-center gap-3 flex-wrap">
                             <Badge variant="outline" className="text-[11px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" data-testid="badge-improved">
                               {improved} improved
                             </Badge>
@@ -1394,35 +1526,74 @@ export default function EvalDetail() {
                             <Badge variant="outline" className="text-[11px]" data-testid="badge-unchanged">
                               {unchanged} unchanged
                             </Badge>
-                          </>
-                        )}
-                      </div>
+                          </div>
+                          <div className="flex h-3 w-full rounded-md overflow-hidden" data-testid="diff-visual-bar">
+                            {regressedPct > 0 && (
+                              <div className="bg-red-500 transition-all" style={{ width: `${regressedPct}%` }} title={`${regressed} regressed`} />
+                            )}
+                            {improvedPct > 0 && (
+                              <div className="bg-emerald-500 transition-all" style={{ width: `${improvedPct}%` }} title={`${improved} improved`} />
+                            )}
+                            {unchangedPct > 0 && (
+                              <div className="bg-muted-foreground/30 transition-all" style={{ width: `${unchangedPct}%` }} title={`${unchanged} unchanged`} />
+                            )}
+                          </div>
+                        </div>
+                      )}
 
                       {hasResults ? (
-                        <Table data-testid="table-regression-diff">
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead>Case Name</TableHead>
-                              <TableHead>Run A</TableHead>
-                              <TableHead>Run B</TableHead>
-                              <TableHead>Delta</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {comparisonRows.map((row) => (
-                              <TableRow key={row.caseId} data-testid={`row-diff-${row.caseId}`}>
-                                <TableCell className="font-medium text-sm">{row.name}</TableCell>
-                                <TableCell><PassFailBadge passed={row.passedA} /></TableCell>
-                                <TableCell><PassFailBadge passed={row.passedB} /></TableCell>
-                                <TableCell>
-                                  {row.delta === "improved" && <CheckCircle className="w-4 h-4 text-emerald-500" />}
-                                  {row.delta === "regressed" && <TrendingDown className="w-4 h-4 text-red-500" />}
-                                  {row.delta === "same" && <span className="text-xs text-muted-foreground">{"\u2014"}</span>}
-                                </TableCell>
+                        <div className="flex flex-col gap-3">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <Button
+                              variant={diffFilter === "all" ? "default" : "outline"}
+                              size="sm"
+                              data-testid="diff-filter-all"
+                              onClick={() => setDiffFilter("all")}
+                            >
+                              All
+                            </Button>
+                            <Button
+                              variant={diffFilter === "regressed" ? "default" : "outline"}
+                              size="sm"
+                              data-testid="diff-filter-regressed"
+                              onClick={() => setDiffFilter("regressed")}
+                            >
+                              Regressed Only
+                            </Button>
+                            <Button
+                              variant={diffFilter === "improved" ? "default" : "outline"}
+                              size="sm"
+                              data-testid="diff-filter-improved"
+                              onClick={() => setDiffFilter("improved")}
+                            >
+                              Improved Only
+                            </Button>
+                          </div>
+                          <Table data-testid="table-regression-diff">
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>Case Name</TableHead>
+                                <TableHead>Run A</TableHead>
+                                <TableHead>Run B</TableHead>
+                                <TableHead>Delta</TableHead>
                               </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
+                            </TableHeader>
+                            <TableBody>
+                              {filteredRows.map((row) => (
+                                <TableRow key={row.caseId} data-testid={`row-diff-${row.caseId}`}>
+                                  <TableCell className="font-medium text-sm">{row.name}</TableCell>
+                                  <TableCell><PassFailBadge passed={row.passedA} /></TableCell>
+                                  <TableCell><PassFailBadge passed={row.passedB} /></TableCell>
+                                  <TableCell>
+                                    {row.delta === "improved" && <CheckCircle className="w-4 h-4 text-emerald-500" />}
+                                    {row.delta === "regressed" && <TrendingDown className="w-4 h-4 text-red-500" />}
+                                    {row.delta === "same" && <span className="text-xs text-muted-foreground">{"\u2014"}</span>}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
                       ) : null}
                     </div>
                   );

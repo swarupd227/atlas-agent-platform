@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRoute, Link } from "wouter";
 import {
@@ -15,6 +16,7 @@ import {
   XCircle,
   AlertTriangle,
   ChevronRight,
+  ChevronDown,
   Zap,
   Brain,
   Search,
@@ -22,6 +24,8 @@ import {
   Timer,
   Hash,
   Bot,
+  Play,
+  Square,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -74,9 +78,254 @@ interface PromptInputs {
   contextVariables: Record<string, unknown>;
 }
 
+type TimelineStep =
+  | { type: "prompt"; data: PromptInputs | null }
+  | { type: "decision"; data: Decision; originalIndex: number }
+  | { type: "toolcall"; data: ToolCall; originalIndex: number }
+  | { type: "policycheck"; data: PolicyCheck; originalIndex: number }
+  | { type: "output"; data: string | null };
+
+function buildTimelineSteps(
+  promptInputs: PromptInputs | null,
+  decisions: Decision[],
+  toolCalls: ToolCall[],
+  policyChecks: PolicyCheck[],
+  outputSummary: string | null | undefined,
+): TimelineStep[] {
+  const steps: TimelineStep[] = [];
+
+  steps.push({ type: "prompt", data: promptInputs });
+
+  const maxInterleave = Math.max(decisions.length, toolCalls.length);
+  for (let i = 0; i < maxInterleave; i++) {
+    if (i < decisions.length) {
+      steps.push({ type: "decision", data: decisions[i], originalIndex: i });
+    }
+    if (i < toolCalls.length) {
+      steps.push({ type: "toolcall", data: toolCalls[i], originalIndex: i });
+    }
+  }
+
+  policyChecks.forEach((pc, i) => {
+    steps.push({ type: "policycheck", data: pc, originalIndex: i });
+  });
+
+  steps.push({ type: "output", data: outputSummary || null });
+
+  return steps;
+}
+
+function getStepDotColor(type: TimelineStep["type"]) {
+  switch (type) {
+    case "prompt":
+    case "output":
+      return "bg-emerald-500";
+    case "decision":
+      return "bg-purple-500";
+    case "toolcall":
+      return "bg-blue-500";
+    case "policycheck":
+      return "bg-amber-500";
+  }
+}
+
+function getStepLineColor(type: TimelineStep["type"]) {
+  switch (type) {
+    case "prompt":
+    case "output":
+      return "border-emerald-500/30";
+    case "decision":
+      return "border-purple-500/30";
+    case "toolcall":
+      return "border-blue-500/30";
+    case "policycheck":
+      return "border-amber-500/30";
+  }
+}
+
+function getStepTypeBadge(type: TimelineStep["type"]) {
+  switch (type) {
+    case "prompt":
+      return (
+        <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">
+          <MessageSquare className="w-3 h-3 mr-0.5" />
+          Prompt Input
+        </Badge>
+      );
+    case "decision":
+      return (
+        <Badge variant="outline" className="text-[10px] bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20">
+          <Brain className="w-3 h-3 mr-0.5" />
+          Decision
+        </Badge>
+      );
+    case "toolcall":
+      return (
+        <Badge variant="outline" className="text-[10px] bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20">
+          <Wrench className="w-3 h-3 mr-0.5" />
+          Tool Call
+        </Badge>
+      );
+    case "policycheck":
+      return (
+        <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20">
+          <Shield className="w-3 h-3 mr-0.5" />
+          Policy Check
+        </Badge>
+      );
+    case "output":
+      return (
+        <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">
+          <Square className="w-3 h-3 mr-0.5" />
+          Output
+        </Badge>
+      );
+  }
+}
+
+function getStepTitle(step: TimelineStep): string {
+  switch (step.type) {
+    case "prompt":
+      return "System prompt & user message configured";
+    case "decision":
+      return step.data.step;
+    case "toolcall":
+      return step.data.name;
+    case "policycheck":
+      return step.data.policyName;
+    case "output":
+      return "Final output generated";
+  }
+}
+
+function getStepStatus(step: TimelineStep): "success" | "fail" | "neutral" {
+  switch (step.type) {
+    case "prompt":
+      return step.data ? "success" : "neutral";
+    case "decision":
+      return "success";
+    case "toolcall":
+      return step.data.status === "success" ? "success" : "fail";
+    case "policycheck":
+      return step.data.passed ? "success" : "fail";
+    case "output":
+      return step.data ? "success" : "neutral";
+  }
+}
+
+function TimelineStepContent({ step }: { step: TimelineStep }) {
+  switch (step.type) {
+    case "prompt": {
+      const pi = step.data;
+      if (!pi) return <p className="text-xs text-muted-foreground">No prompt data recorded</p>;
+      return (
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">System Prompt</span>
+            <div className="p-3 rounded-md bg-muted/40 text-xs leading-relaxed font-mono whitespace-pre-wrap" data-testid="prompt-system">
+              {pi.systemPrompt}
+            </div>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">User Message</span>
+            <div className="p-3 rounded-md bg-muted/40 text-xs leading-relaxed" data-testid="prompt-user">
+              {pi.userMessage}
+            </div>
+          </div>
+          {pi.contextVariables && Object.keys(pi.contextVariables).length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Context Variables</span>
+              <div className="flex flex-col gap-1">
+                {Object.entries(pi.contextVariables).map(([key, val]) => (
+                  <div key={key} className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/30">
+                    <span className="text-[11px] font-mono text-muted-foreground">{key}</span>
+                    <span className="text-xs font-medium truncate max-w-[60%] text-right">{String(val)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+    case "decision": {
+      const dec = step.data;
+      return (
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-muted-foreground">Confidence</span>
+            <div className="w-16">
+              <Progress value={dec.confidence * 100} className="h-1.5" />
+            </div>
+            <span className="text-[10px] font-medium">{(dec.confidence * 100).toFixed(0)}%</span>
+          </div>
+          <p className="text-[11px] text-muted-foreground leading-relaxed">{dec.reasoning}</p>
+          <div className="flex items-center gap-1.5">
+            <ChevronRight className="w-3 h-3 text-muted-foreground" />
+            <span className="text-xs font-medium">{dec.outcome}</span>
+          </div>
+        </div>
+      );
+    }
+    case "toolcall": {
+      const tc = step.data;
+      return (
+        <div className="flex flex-col gap-2">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Arguments</span>
+              <div className="p-2 rounded bg-background/50 text-[11px] font-mono overflow-x-auto whitespace-pre-wrap break-all">
+                {JSON.stringify(tc.arguments, null, 2)}
+              </div>
+            </div>
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Result</span>
+              <div className="p-2 rounded bg-background/50 text-[11px] font-mono overflow-x-auto whitespace-pre-wrap break-all">
+                {typeof tc.result === "string" ? tc.result : JSON.stringify(tc.result, null, 2)}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    case "policycheck": {
+      const pc = step.data;
+      return (
+        <div className="flex flex-col gap-1.5">
+          <p className="text-[11px] text-muted-foreground leading-relaxed">{pc.details}</p>
+          {pc.checkedAt && (
+            <span className="text-[10px] text-muted-foreground">Checked at: {formatDate(pc.checkedAt)}</span>
+          )}
+        </div>
+      );
+    }
+    case "output":
+      return step.data ? (
+        <div className="p-3 rounded-md bg-muted/40 text-xs leading-relaxed">
+          {step.data}
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">No output recorded</p>
+      );
+  }
+}
+
 export default function TraceDetail() {
   const [, params] = useRoute("/traces/:id");
   const traceId = params?.id;
+  const [expandedSteps, setExpandedSteps] = useState<Set<number>>(new Set());
+
+  const toggleStep = (index: number) => {
+    setExpandedSteps((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) {
+        next.delete(index);
+      } else {
+        next.add(index);
+      }
+      return next;
+    });
+  };
 
   const { data: trace, isLoading } = useQuery<RunTrace>({
     queryKey: ["/api/traces", traceId],
@@ -118,6 +367,8 @@ export default function TraceDetail() {
 
   const totalToolLatency = toolCalls.reduce((sum, tc) => sum + (tc.latencyMs || 0), 0);
   const modelLatency = (trace.latencyMs || 0) - totalToolLatency;
+
+  const timelineSteps = buildTimelineSteps(promptInputs, decisions, toolCalls, policyChecks, trace.outputSummary);
 
   return (
     <div className="p-6 flex flex-col gap-6 max-w-7xl mx-auto overflow-y-auto h-full" data-testid="page-trace-detail">
@@ -184,139 +435,128 @@ export default function TraceDetail() {
               <Hash className="w-3.5 h-3.5" />
               <span className="text-[11px]">Tokens</span>
             </div>
-            <span className="text-lg font-semibold" data-testid="stat-tokens">{tokenUsage ? tokenUsage.totalTokens.toLocaleString() : "—"}</span>
+            <span className="text-lg font-semibold" data-testid="stat-tokens">{tokenUsage ? tokenUsage.totalTokens.toLocaleString() : "\u2014"}</span>
           </CardContent>
         </Card>
       </div>
 
+      <Card data-testid="section-execution-summary">
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-2">
+            <BarChart3 className="w-4 h-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Execution Summary</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-0">
+          <InfoRow label="Agent ID" value={<span className="font-mono text-xs">{trace.agentId.substring(0, 12)}...</span>} testId="info-agent-id" />
+          {trace.versionId && <InfoRow label="Version" value={trace.versionId} testId="info-version" />}
+          <InfoRow label="Environment" value={<Badge variant="outline" className="text-[10px]">{trace.environment}</Badge>} testId="info-env" />
+          <InfoRow label="Status" value={<StatusBadge status={trace.status} />} testId="info-status" />
+          <InfoRow label="Model" value={trace.modelId || "\u2014"} testId="info-model" />
+          <InfoRow label="Started" value={formatDate(trace.startedAt)} testId="info-started" />
+          <InfoRow label="Ended" value={formatDate(trace.endedAt)} testId="info-ended" />
+          <InfoRow label="Duration" value={formatMs(trace.latencyMs)} testId="info-duration" />
+          <InfoRow label="Cost" value={`$${trace.costUsd?.toFixed(4)}`} testId="info-cost" />
+          {tokenUsage && (
+            <>
+              <InfoRow label="Prompt Tokens" value={tokenUsage.promptTokens.toLocaleString()} testId="info-prompt-tokens" />
+              <InfoRow label="Completion Tokens" value={tokenUsage.completionTokens.toLocaleString()} testId="info-completion-tokens" />
+              <InfoRow label="Total Tokens" value={tokenUsage.totalTokens.toLocaleString()} testId="info-total-tokens" />
+            </>
+          )}
+          {trace.outputSummary && <InfoRow label="Output" value={trace.outputSummary} testId="info-output" />}
+        </CardContent>
+      </Card>
+
+      <Card data-testid="execution-timeline">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-2">
+              <GitBranch className="w-4 h-4 text-muted-foreground" />
+              <CardTitle className="text-sm font-medium">Execution Timeline</CardTitle>
+            </div>
+            <Badge variant="outline" className="text-[10px]">{timelineSteps.length} steps</Badge>
+          </div>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-0 pl-6">
+          {timelineSteps.map((step, index) => {
+            const isExpanded = expandedSteps.has(index);
+            const isLast = index === timelineSteps.length - 1;
+            const status = getStepStatus(step);
+            const dotColor = getStepDotColor(step.type);
+            const lineColor = getStepLineColor(step.type);
+
+            return (
+              <div
+                key={index}
+                className={`relative pl-8 pb-6 ${!isLast ? `border-l-2 ${lineColor}` : ""}`}
+                data-testid={`timeline-step-${index}`}
+              >
+                <div className={`absolute left-[-5px] top-0 w-2.5 h-2.5 rounded-full ${dotColor} ring-2 ring-background`} />
+
+                <div className="flex flex-col gap-2">
+                  <button
+                    type="button"
+                    className="flex items-start justify-between gap-3 text-left w-full group"
+                    onClick={() => toggleStep(index)}
+                    data-testid={`button-toggle-step-${index}`}
+                  >
+                    <div className="flex flex-col gap-1.5 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="flex items-center justify-center w-5 h-5 rounded-full bg-muted text-muted-foreground text-[10px] font-medium shrink-0">
+                          {index + 1}
+                        </span>
+                        <span className="text-sm font-medium truncate">{getStepTitle(step)}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {getStepTypeBadge(step.type)}
+                        {step.type === "toolcall" && (
+                          <>
+                            <Badge variant="outline" className="text-[10px]">
+                              <Timer className="w-3 h-3 mr-0.5" />
+                              {formatMs(step.data.latencyMs)}
+                            </Badge>
+                            <Badge variant="outline" className="text-[10px] bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20">
+                              Proxied
+                            </Badge>
+                          </>
+                        )}
+                        {status === "success" && (
+                          <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">
+                            <CheckCircle className="w-3 h-3 mr-0.5" />
+                            Success
+                          </Badge>
+                        )}
+                        {status === "fail" && (
+                          <Badge variant="outline" className="text-[10px] bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20">
+                            <XCircle className="w-3 h-3 mr-0.5" />
+                            Failed
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                    <div className="mt-0.5 shrink-0 text-muted-foreground">
+                      {isExpanded ? (
+                        <ChevronDown className="w-4 h-4" />
+                      ) : (
+                        <ChevronRight className="w-4 h-4" />
+                      )}
+                    </div>
+                  </button>
+
+                  {isExpanded && (
+                    <div className="mt-1 p-3 rounded-md bg-muted/30">
+                      <TimelineStepContent step={step} />
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </CardContent>
+      </Card>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card data-testid="section-execution-summary">
-          <CardHeader className="pb-3">
-            <div className="flex items-center gap-2">
-              <BarChart3 className="w-4 h-4 text-muted-foreground" />
-              <CardTitle className="text-sm font-medium">Execution Summary</CardTitle>
-            </div>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-0">
-            <InfoRow label="Agent ID" value={<span className="font-mono text-xs">{trace.agentId.substring(0, 12)}...</span>} testId="info-agent-id" />
-            {trace.versionId && <InfoRow label="Version" value={trace.versionId} testId="info-version" />}
-            <InfoRow label="Environment" value={<Badge variant="outline" className="text-[10px]">{trace.environment}</Badge>} testId="info-env" />
-            <InfoRow label="Status" value={<StatusBadge status={trace.status} />} testId="info-status" />
-            <InfoRow label="Model" value={trace.modelId || "—"} testId="info-model" />
-            <InfoRow label="Started" value={formatDate(trace.startedAt)} testId="info-started" />
-            <InfoRow label="Ended" value={formatDate(trace.endedAt)} testId="info-ended" />
-            <InfoRow label="Duration" value={formatMs(trace.latencyMs)} testId="info-duration" />
-            <InfoRow label="Cost" value={`$${trace.costUsd?.toFixed(4)}`} testId="info-cost" />
-            {tokenUsage && (
-              <>
-                <InfoRow label="Prompt Tokens" value={tokenUsage.promptTokens.toLocaleString()} testId="info-prompt-tokens" />
-                <InfoRow label="Completion Tokens" value={tokenUsage.completionTokens.toLocaleString()} testId="info-completion-tokens" />
-                <InfoRow label="Total Tokens" value={tokenUsage.totalTokens.toLocaleString()} testId="info-total-tokens" />
-              </>
-            )}
-            {trace.outputSummary && <InfoRow label="Output" value={trace.outputSummary} testId="info-output" />}
-          </CardContent>
-        </Card>
-
-        <Card data-testid="section-prompt-inputs">
-          <CardHeader className="pb-3">
-            <div className="flex items-center gap-2">
-              <MessageSquare className="w-4 h-4 text-muted-foreground" />
-              <CardTitle className="text-sm font-medium">Prompt Inputs</CardTitle>
-            </div>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-3">
-            {promptInputs ? (
-              <>
-                <div className="flex flex-col gap-1.5">
-                  <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">System Prompt</span>
-                  <div className="p-3 rounded-md bg-muted/40 text-xs leading-relaxed font-mono whitespace-pre-wrap" data-testid="prompt-system">
-                    {promptInputs.systemPrompt}
-                  </div>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">User Message</span>
-                  <div className="p-3 rounded-md bg-muted/40 text-xs leading-relaxed" data-testid="prompt-user">
-                    {promptInputs.userMessage}
-                  </div>
-                </div>
-                {promptInputs.contextVariables && Object.keys(promptInputs.contextVariables).length > 0 && (
-                  <div className="flex flex-col gap-1.5">
-                    <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Context Variables</span>
-                    <div className="flex flex-col gap-1">
-                      {Object.entries(promptInputs.contextVariables).map(([key, val]) => (
-                        <div key={key} className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/30">
-                          <span className="text-[11px] font-mono text-muted-foreground">{key}</span>
-                          <span className="text-xs font-medium truncate max-w-[60%] text-right">{String(val)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </>
-            ) : (
-              <p className="text-sm text-muted-foreground py-4 text-center">No prompt data recorded</p>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className="lg:col-span-2" data-testid="section-tool-calls">
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <Wrench className="w-4 h-4 text-muted-foreground" />
-                <CardTitle className="text-sm font-medium">Tool Calls</CardTitle>
-              </div>
-              <Badge variant="outline" className="text-[10px]">{toolCalls.length} calls</Badge>
-            </div>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-2">
-            {toolCalls.length > 0 ? toolCalls.map((tc, i) => (
-              <div key={i} className="flex flex-col gap-2 p-3 rounded-md bg-muted/30" data-testid={`tool-call-${i}`}>
-                <div className="flex items-center justify-between gap-3 flex-wrap">
-                  <div className="flex items-center gap-2">
-                    <div className="flex items-center justify-center w-5 h-5 rounded-full bg-muted text-muted-foreground text-[10px] font-medium shrink-0">{i + 1}</div>
-                    <span className="text-sm font-medium font-mono">{tc.name}</span>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <Badge variant="outline" className="text-[10px]">
-                      <Timer className="w-3 h-3 mr-0.5" />
-                      {formatMs(tc.latencyMs)}
-                    </Badge>
-                    {tc.status === "success" ? (
-                      <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">
-                        <CheckCircle className="w-3 h-3 mr-0.5" />
-                        Success
-                      </Badge>
-                    ) : (
-                      <Badge variant="outline" className="text-[10px] bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20">
-                        <XCircle className="w-3 h-3 mr-0.5" />
-                        Error
-                      </Badge>
-                    )}
-                  </div>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  <div className="flex flex-col gap-1">
-                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Arguments</span>
-                    <div className="p-2 rounded bg-background/50 text-[11px] font-mono overflow-x-auto whitespace-pre-wrap break-all">
-                      {JSON.stringify(tc.arguments, null, 2)}
-                    </div>
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Result</span>
-                    <div className="p-2 rounded bg-background/50 text-[11px] font-mono overflow-x-auto whitespace-pre-wrap break-all">
-                      {typeof tc.result === "string" ? tc.result : JSON.stringify(tc.result, null, 2)}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )) : (
-              <p className="text-sm text-muted-foreground py-4 text-center">No tool calls recorded</p>
-            )}
-          </CardContent>
-        </Card>
-
         <Card data-testid="section-retrieved-docs">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between gap-2">
@@ -349,84 +589,6 @@ export default function TraceDetail() {
               </div>
             )) : (
               <p className="text-sm text-muted-foreground py-4 text-center">No documents retrieved</p>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card data-testid="section-decisions">
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <Brain className="w-4 h-4 text-muted-foreground" />
-                <CardTitle className="text-sm font-medium">Decisions</CardTitle>
-              </div>
-              <Badge variant="outline" className="text-[10px]">{decisions.length} decisions</Badge>
-            </div>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-2">
-            {decisions.length > 0 ? decisions.map((dec, i) => (
-              <div key={i} className="flex flex-col gap-1.5 p-3 rounded-md bg-muted/30" data-testid={`decision-${i}`}>
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <div className="flex items-center gap-2">
-                    <div className="flex items-center justify-center w-5 h-5 rounded-full bg-muted text-muted-foreground text-[10px] font-medium shrink-0">{i + 1}</div>
-                    <span className="text-xs font-medium">{dec.step}</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <span className="text-[10px] text-muted-foreground">Confidence</span>
-                    <div className="w-12">
-                      <Progress value={dec.confidence * 100} className="h-1.5" />
-                    </div>
-                    <span className="text-[10px] font-medium w-8 text-right">{(dec.confidence * 100).toFixed(0)}%</span>
-                  </div>
-                </div>
-                <p className="text-[11px] text-muted-foreground leading-relaxed">{dec.reasoning}</p>
-                <div className="flex items-center gap-1.5">
-                  <ChevronRight className="w-3 h-3 text-muted-foreground" />
-                  <span className="text-xs font-medium">{dec.outcome}</span>
-                </div>
-              </div>
-            )) : (
-              <p className="text-sm text-muted-foreground py-4 text-center">No decisions recorded</p>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card data-testid="section-policy-checks">
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <Shield className="w-4 h-4 text-muted-foreground" />
-                <CardTitle className="text-sm font-medium">Policy Checks</CardTitle>
-              </div>
-              <Badge variant="outline" className="text-[10px]">{policyChecks.length} checks</Badge>
-            </div>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-2">
-            {policyChecks.length > 0 ? policyChecks.map((pc, i) => (
-              <div key={i} className="flex items-center justify-between gap-3 p-3 rounded-md bg-muted/30" data-testid={`policy-check-${i}`}>
-                <div className="flex items-center gap-2 min-w-0">
-                  {pc.passed ? (
-                    <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />
-                  ) : (
-                    <XCircle className="w-4 h-4 text-red-500 shrink-0" />
-                  )}
-                  <div className="flex flex-col min-w-0">
-                    <span className="text-xs font-medium">{pc.policyName}</span>
-                    <span className="text-[11px] text-muted-foreground truncate">{pc.details}</span>
-                  </div>
-                </div>
-                <Badge
-                  variant="outline"
-                  className={`text-[10px] shrink-0 ${pc.passed
-                    ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
-                    : "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20"
-                  }`}
-                >
-                  {pc.passed ? "Passed" : "Failed"}
-                </Badge>
-              </div>
-            )) : (
-              <p className="text-sm text-muted-foreground py-4 text-center">No policy checks recorded</p>
             )}
           </CardContent>
         </Card>

@@ -147,7 +147,7 @@ function Sparkline({
         strokeWidth="1.5"
         strokeLinecap="round"
         strokeLinejoin="round"
-        className="text-primary"
+        className="text-emerald-500"
       />
     </svg>
   );
@@ -270,6 +270,10 @@ export default function OutcomeDetail() {
   }>({
     queryKey: [`/api/outcomes/${outcomeId}/snapshots?window=${evidenceWindow}`],
     enabled: !!outcomeId,
+  });
+
+  const { data: invoices } = useQuery<Array<{id: string; status: string; totalAmount: number; periodStart: string; periodEnd: string; lineItems: any[]}>>({
+    queryKey: ["/api/billing/invoices"],
   });
 
   const { data: allApprovals } = useQuery<Approval[]>({
@@ -881,22 +885,60 @@ export default function OutcomeDetail() {
                           </div>
                         </div>
                       ) : (
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                          <div className="flex flex-col gap-0.5">
-                            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Baseline</span>
-                            <span className="text-sm font-medium" data-testid={`text-baseline-${kpi.id}`}>{kpi.baseline ?? "N/A"} {kpi.unit}</span>
-                          </div>
-                          <div className="flex flex-col gap-0.5">
-                            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Current</span>
-                            <span className="text-sm font-medium">{kpi.currentValue ?? 0} {kpi.unit}</span>
-                          </div>
-                          <div className="flex flex-col gap-0.5">
-                            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Target</span>
-                            <span className="text-sm font-medium" data-testid={`text-target-${kpi.id}`}>{kpi.target} {kpi.unit}</span>
-                          </div>
-                          <div className="flex flex-col gap-0.5">
-                            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">SLA Threshold</span>
-                            <span className="text-sm font-medium" data-testid={`text-sla-${kpi.id}`}>{kpi.slaThreshold ?? "N/A"} {kpi.unit}</span>
+                        <div className="flex flex-col gap-3">
+                          <div className="flex items-center gap-4 flex-wrap">
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 flex-1 min-w-0">
+                              <div className="flex flex-col gap-0.5">
+                                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Baseline</span>
+                                {(() => {
+                                  const aboveBaseline = kpi.baseline != null && kpi.target && (kpi.currentValue || 0) >= kpi.baseline;
+                                  const colorClass = kpi.baseline != null && kpi.target
+                                    ? (aboveBaseline ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")
+                                    : "";
+                                  return <span className={`text-sm font-medium ${colorClass}`} data-testid={`text-baseline-${kpi.id}`}>{kpi.baseline ?? "N/A"} {kpi.unit}</span>;
+                                })()}
+                              </div>
+                              <div className="flex flex-col gap-0.5">
+                                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Current</span>
+                                {(() => {
+                                  const meetsTarget = kpi.target
+                                    ? (isInverse ? (kpi.currentValue || 0) <= kpi.target : (kpi.currentValue || 0) >= kpi.target)
+                                    : null;
+                                  const colorClass = meetsTarget != null
+                                    ? (meetsTarget ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")
+                                    : "";
+                                  return <span className={`text-sm font-semibold ${colorClass}`} data-testid={`text-current-${kpi.id}`}>{kpi.currentValue ?? 0} {kpi.unit}</span>;
+                                })()}
+                              </div>
+                              <div className="flex flex-col gap-0.5">
+                                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Target</span>
+                                <span className="text-sm font-medium" data-testid={`text-target-${kpi.id}`}>{kpi.target} {kpi.unit}</span>
+                              </div>
+                              <div className="flex flex-col gap-0.5">
+                                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">SLA Threshold</span>
+                                <span className="text-sm font-medium" data-testid={`text-sla-${kpi.id}`}>{kpi.slaThreshold ?? "N/A"} {kpi.unit}</span>
+                              </div>
+                            </div>
+                            {(() => {
+                              const kpiTs = evidence?.kpiTimeSeries?.find(ts => ts.kpiId === kpi.id);
+                              if (!kpiTs || !kpiTs.points || kpiTs.points.length < 2) return null;
+                              const lastPt = kpiTs.points[kpiTs.points.length - 1];
+                              const firstPt = kpiTs.points[0];
+                              const trendDir = lastPt.value > firstPt.value ? "up" : lastPt.value < firstPt.value ? "down" : "stable";
+                              return (
+                                <div className="flex flex-col items-center gap-1 shrink-0" data-testid={`kpi-sparkline-${kpi.id}`}>
+                                  <Sparkline points={kpiTs.points} target={kpiTs.target} width={120} height={32} />
+                                  <div className="flex items-center gap-1">
+                                    {trendDir === "up" && <TrendingUp className="w-3 h-3 text-emerald-500" />}
+                                    {trendDir === "down" && <TrendingDown className="w-3 h-3 text-red-500" />}
+                                    {trendDir === "stable" && <Minus className="w-3 h-3 text-muted-foreground" />}
+                                    <span className="text-[10px] text-muted-foreground">
+                                      {trendDir === "up" ? "Trending up" : trendDir === "down" ? "Trending down" : "Stable"}
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            })()}
                           </div>
                         </div>
                       )}
@@ -1192,81 +1234,90 @@ export default function OutcomeDetail() {
                 </div>
               )}
 
-              <div className="space-y-3">
-                <h3 className="text-sm font-semibold">Evidence Table</h3>
-                <Card>
-                  <CardContent className="p-0">
-                    {snapshots?.snapshots && snapshots.snapshots.length > 0 ? (
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead>
-                            <tr className="border-b">
-                              <th className="text-left px-4 py-2 text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Date</th>
-                              {snapshots.snapshots[0]?.kpiValues.map((kv) => (
-                                <th key={kv.kpiId} className="text-left px-4 py-2 text-[10px] text-muted-foreground uppercase tracking-wider font-medium">{kv.kpiName}</th>
-                              ))}
-                              <th className="text-left px-4 py-2 text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Confidence</th>
-                              <th className="text-left px-4 py-2 text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Top Agents</th>
-                              <th className="text-left px-4 py-2 text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Events</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {snapshots.snapshots.slice(-14).reverse().map((snap, i) => (
-                              <tr key={snap.date} className="border-b last:border-0 hover-elevate" data-testid={`row-evidence-${snap.date}`}>
-                                <td className="px-4 py-2 text-xs font-medium whitespace-nowrap">
-                                  <button
-                                    className="text-primary underline-offset-2 hover:underline"
-                                    onClick={() => {
-                                      toast({
-                                        title: `Events on ${snap.date}`,
-                                        description: `${snap.eventCount} events (${snap.billableCount} billable)`,
-                                      });
-                                    }}
-                                    data-testid={`button-drilldown-${snap.date}`}
-                                  >
-                                    {snap.date}
-                                  </button>
-                                </td>
-                                {snap.kpiValues.map((kv) => (
-                                  <td key={kv.kpiId} className="px-4 py-2 text-xs font-medium">{kv.value}</td>
-                                ))}
-                                <td className="px-4 py-2">
-                                  {snap.kpiValues.length > 0 && (
-                                    <Badge variant="outline" className={`text-[9px] ${
-                                      (snap.kpiValues[0].confidence || 0) >= 0.8 ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
-                                      : (snap.kpiValues[0].confidence || 0) >= 0.5 ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20"
-                                      : "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20"
-                                    }`}>
-                                      {((snap.kpiValues[0].confidence || 0) * 100).toFixed(0)}%
-                                    </Badge>
-                                  )}
-                                </td>
-                                <td className="px-4 py-2">
-                                  <div className="flex items-center gap-1 flex-wrap">
-                                    {snap.topAgents.slice(0, 2).map((a) => (
-                                      <Badge key={a.agentId} variant="outline" className="text-[9px]">
-                                        {a.agentName.length > 12 ? a.agentName.slice(0, 12) + "..." : a.agentName}
+              <div className="space-y-3" data-testid="snapshot-timeline">
+                <div className="flex items-center justify-between gap-4 flex-wrap">
+                  <h3 className="text-sm font-semibold">Snapshot Timeline</h3>
+                  <div className="flex items-center gap-1">
+                    {["7d", "30d", "90d"].map((w) => (
+                      <Button
+                        key={w}
+                        variant={evidenceWindow === w ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => setEvidenceWindow(w)}
+                        data-testid={`button-window-${w}`}
+                      >
+                        {w}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+                {snapshots?.snapshots && snapshots.snapshots.length > 0 ? (
+                  <div className="space-y-0">
+                    {[...snapshots.snapshots].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map((snap, i, arr) => (
+                      <div key={snap.date} className="flex gap-3" data-testid={`timeline-entry-${snap.date}`}>
+                        <div className="flex flex-col items-center shrink-0">
+                          <div className={`w-3 h-3 rounded-full border-2 ${i === 0 ? "bg-primary border-primary" : "bg-background border-muted-foreground/30"}`} />
+                          {i < arr.length - 1 && <div className="w-0.5 flex-1 bg-muted-foreground/20 min-h-[2rem]" />}
+                        </div>
+                        <Card className="flex-1 mb-3">
+                          <CardContent className="p-4">
+                            <div className="flex flex-col gap-2">
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                <div className="flex items-center gap-2">
+                                  <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
+                                  <span className="text-sm font-semibold">{snap.date}</span>
+                                  {i === 0 && <Badge variant="outline" className="text-[9px] bg-primary/15 text-primary border-primary/20">Latest</Badge>}
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Badge variant="outline" className="text-[9px]">{snap.eventCount} events</Badge>
+                                  <Badge variant="outline" className="text-[9px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">{snap.billableCount} billable</Badge>
+                                </div>
+                              </div>
+                              {snap.kpiValues.length > 0 && (
+                                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                                  {snap.kpiValues.map((kv) => (
+                                    <div key={kv.kpiId} className="flex flex-col gap-0.5 p-2 rounded-md bg-muted/50">
+                                      <span className="text-[10px] text-muted-foreground truncate">{kv.kpiName}</span>
+                                      <span className="text-sm font-semibold">{kv.value}</span>
+                                      <Badge variant="outline" className={`text-[8px] w-fit ${
+                                        (kv.confidence || 0) >= 0.8 ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                                        : (kv.confidence || 0) >= 0.5 ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20"
+                                        : "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20"
+                                      }`}>
+                                        {((kv.confidence || 0) * 100).toFixed(0)}% conf
                                       </Badge>
-                                    ))}
-                                    {snap.topAgents.length > 2 && (
-                                      <span className="text-[10px] text-muted-foreground">+{snap.topAgents.length - 2}</span>
-                                    )}
-                                  </div>
-                                </td>
-                                <td className="px-4 py-2 text-xs">{snap.eventCount}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              {snap.topAgents.length > 0 && (
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="text-[10px] text-muted-foreground">Top agents:</span>
+                                  {snap.topAgents.map((a) => (
+                                    <div key={a.agentId} className="flex items-center gap-1" data-testid={`badge-agent-${a.agentId}`}>
+                                      <div className="w-5 h-5 rounded-full bg-primary/15 flex items-center justify-center shrink-0">
+                                        <Bot className="w-3 h-3 text-primary" />
+                                      </div>
+                                      <span className="text-[10px] font-medium">{a.agentName.length > 15 ? a.agentName.slice(0, 15) + "..." : a.agentName}</span>
+                                      <Badge variant="outline" className="text-[8px]">{(a.contribution * 100).toFixed(0)}%</Badge>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </CardContent>
+                        </Card>
                       </div>
-                    ) : (
-                      <div className="flex flex-col items-center justify-center py-8 gap-2">
-                        <BarChart3 className="w-8 h-8 text-muted-foreground/50" />
-                        <p className="text-sm text-muted-foreground">No snapshot data available for this window</p>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
+                    ))}
+                  </div>
+                ) : (
+                  <Card>
+                    <CardContent className="flex flex-col items-center justify-center py-8 gap-2">
+                      <BarChart3 className="w-8 h-8 text-muted-foreground/50" />
+                      <p className="text-sm text-muted-foreground">No snapshot data available for this window</p>
+                    </CardContent>
+                  </Card>
+                )}
               </div>
 
               <div className="space-y-3">
@@ -1372,32 +1423,102 @@ export default function OutcomeDetail() {
             <p className="text-sm text-muted-foreground">Pricing, metering rules, and outcome event activity</p>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <Card data-testid="card-commercial-total-events">
-              <CardContent className="p-4">
-                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Total Events</span>
-                <p className="text-lg font-semibold mt-1">{totalEventsCount}</p>
-              </CardContent>
-            </Card>
-            <Card data-testid="card-commercial-billable-events">
-              <CardContent className="p-4">
-                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Billable Events</span>
-                <p className="text-lg font-semibold mt-1">{billableEventsCount}</p>
-              </CardContent>
-            </Card>
-            <Card data-testid="card-commercial-revenue">
-              <CardContent className="p-4">
-                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Revenue</span>
-                <p className="text-lg font-semibold mt-1">{outcome.currency || "USD"} {estimatedRevenue.toFixed(2)}</p>
-              </CardContent>
-            </Card>
-            <Card data-testid="card-commercial-exclusion-rate">
-              <CardContent className="p-4">
-                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Exclusion Rate</span>
-                <p className="text-lg font-semibold mt-1">{exclusionRate.toFixed(1)}%</p>
-              </CardContent>
-            </Card>
-          </div>
+          <Card data-testid="metering-summary">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
+                <Activity className="w-4 h-4 text-primary" /> Metering Summary
+                <Badge variant="outline" className="text-[9px]">{outcome.pricingModel?.replace(/_/g, " ")}</Badge>
+                <span className="text-xs text-muted-foreground ml-auto">{outcome.currency || "USD"} {outcome.pricePerUnit?.toFixed(2)} / unit</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-4">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                <StatCard
+                  title="Total Events"
+                  value={totalEventsCount}
+                  icon={Database}
+                  variant="default"
+                  testId="stat-metering-total"
+                />
+                <StatCard
+                  title="Billable Events"
+                  value={billableEventsCount}
+                  icon={CheckCircle}
+                  variant="success"
+                  testId="stat-metering-billable"
+                />
+                <StatCard
+                  title="Exclusion Rate"
+                  value={`${exclusionRate.toFixed(1)}%`}
+                  icon={XCircle}
+                  variant={exclusionRate > 20 ? "warning" : "default"}
+                  testId="stat-metering-exclusion"
+                />
+                <StatCard
+                  title="Est. Revenue"
+                  value={`${outcome.currency || "USD"} ${estimatedRevenue.toFixed(2)}`}
+                  icon={DollarSign}
+                  variant="success"
+                  testId="stat-metering-revenue"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5" data-testid="bar-billable-excluded">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-muted-foreground">Billable vs Excluded</span>
+                  <span className="text-xs font-medium">{billableEventsCount} / {totalEventsCount}</span>
+                </div>
+                <div className="flex h-2.5 rounded-full overflow-hidden bg-muted/50">
+                  {totalEventsCount > 0 && (
+                    <>
+                      <div
+                        className="bg-emerald-500 rounded-l-full transition-all"
+                        style={{ width: `${(billableEventsCount / totalEventsCount) * 100}%` }}
+                      />
+                      <div
+                        className="bg-muted-foreground/20 rounded-r-full transition-all"
+                        style={{ width: `${((totalEventsCount - billableEventsCount) / totalEventsCount) * 100}%` }}
+                      />
+                    </>
+                  )}
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1">
+                    <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                    <span className="text-[10px] text-muted-foreground">Billable ({totalEventsCount > 0 ? ((billableEventsCount / totalEventsCount) * 100).toFixed(1) : 0}%)</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <div className="w-2 h-2 rounded-full bg-muted-foreground/20" />
+                    <span className="text-[10px] text-muted-foreground">Excluded ({totalEventsCount > 0 ? (((totalEventsCount - billableEventsCount) / totalEventsCount) * 100).toFixed(1) : 0}%)</span>
+                  </div>
+                </div>
+              </div>
+
+              {recentEvents.length > 0 && (
+                <div className="flex flex-col gap-2">
+                  <span className="text-xs font-semibold">Recent Events</span>
+                  <div className="divide-y rounded-md border">
+                    {recentEvents.slice(0, 5).map((evt) => (
+                      <div key={evt.id} className="flex items-center justify-between gap-3 px-3 py-2" data-testid={`metering-event-${evt.id}`}>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <CircleDot className="w-3 h-3 text-muted-foreground shrink-0" />
+                          <span className="text-xs font-medium truncate">{evt.type}</span>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {evt.billable ? (
+                            <Badge variant="outline" className="text-[9px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">Billable</Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-[9px] bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/20">Excluded</Badge>
+                          )}
+                          <span className="text-[10px] text-muted-foreground whitespace-nowrap">{relativeTime(evt.createdAt as string | null)}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Card>
@@ -1711,6 +1832,58 @@ export default function OutcomeDetail() {
               })()}
             </CardContent>
           </Card>
+
+          {(() => {
+            const relevantInvoices = invoices?.filter(inv =>
+              inv.lineItems?.some((li: any) => li.outcomeId === outcomeId) || true
+            ) || [];
+            const latestInvoice = relevantInvoices.length > 0
+              ? relevantInvoices.sort((a, b) => new Date(b.periodEnd).getTime() - new Date(a.periodEnd).getTime())[0]
+              : null;
+
+            return (
+              <Card data-testid="invoice-status">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
+                    <FileText className="w-4 h-4 text-primary" /> Invoice Status
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-4 pt-0">
+                  {latestInvoice ? (
+                    <div className="flex flex-col gap-3">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium">Latest Invoice</span>
+                          <Badge variant="outline" className={`text-[9px] ${
+                            latestInvoice.status === "paid" ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                            : latestInvoice.status === "sent" ? "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/20"
+                            : "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20"
+                          }`} data-testid="badge-invoice-status">
+                            {latestInvoice.status.charAt(0).toUpperCase() + latestInvoice.status.slice(1)}
+                          </Badge>
+                        </div>
+                        <span className="text-lg font-semibold" data-testid="text-invoice-amount">
+                          {outcome.currency || "USD"} {latestInvoice.totalAmount.toFixed(2)}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground" data-testid="text-invoice-period">
+                        <Calendar className="w-3.5 h-3.5" />
+                        <span>{latestInvoice.periodStart} - {latestInvoice.periodEnd}</span>
+                      </div>
+                      {relevantInvoices.length > 1 && (
+                        <span className="text-[10px] text-muted-foreground">{relevantInvoices.length} total invoices on file</span>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center py-6 gap-2">
+                      <FileText className="w-8 h-8 text-muted-foreground/50" />
+                      <p className="text-sm text-muted-foreground" data-testid="text-no-invoices">No invoices generated</p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })()}
 
           <div className="space-y-3">
             <h3 className="text-sm font-semibold">Recent Outcome Events</h3>
