@@ -1,0 +1,46 @@
+Most modern “agent platforms” separate agent definition from agent execution: the agent is primarily a configuration (instructions, knowledge, actions/tools), and a managed runtime orchestrates it. 
+ describes “declarative agents” as a configuration-based way to provide instructions, actions, and knowledge, running on the same orchestrator and inheriting governance controls rather than requiring per-agent bespoke application code. 
+
+Similarly, 
+ frames Amazon Bedrock Agents as build-time configuration of components (foundation model choice, orchestration prompts/templates, knowledge bases, and actions) and explicitly supports tracing the step-by-step process when testing, reinforcing that “agent behavior” is largely driven by configurable orchestration/prompt templates rather than unique codebases per agent. 
+
+At the same time, agent execution in production still requires real code for tool execution: 
+’s tool-calling flow explicitly includes “execute code on the application side” when the model requests a tool call. This is the canonical boundary where implementation code must exist (the runtime/tool layer), even when the agent definition is declarative. 
+
+For the “code generation / export” path specifically, 
+’s Agent Engine deployment documentation is a strong reference pattern: it distinguishes between deploying from an in-memory “agent object” and deploying “from source files,” where the latter is “well-suited for automated workflows such as CI/CD pipelines” and “fully declarative and automated deployments.” It also documents that deployments may bundle artifacts like dependency specifications (for example, requirements.txt) and emphasizes best practices like pinning versions for reproducibility and minimizing dependency count. 
+
+Open-source ecosystems reinforce the same split: 
+ documents that agents can be created either via YAML configuration (recommended) or directly in code, and its CLI can scaffold projects (a template-based code generation approach for developers who want repos). 
+
+Finally, agent application structure guidance in the 
+ ecosystem (LangGraph) provides a concrete “export target” definition: a deployable project typically includes a configuration/manifest, code implementing graphs/nodes/tools, a dependency file, and environment variable configuration. That’s a directly reusable pattern for what ALMP should generate in “export as code.” 
+
+This research underpins a practical UX requirement: your codegen option must make it obvious what is generated, why it is needed, and how it maps to the declarative blueprint—while keeping the default platform mode config-driven. 
+
+Recommended ALMP stance on “agent code generation”
+The cleanest “recommended” path is a dual-mode system:
+
+ALMP default mode is “configuration executed by a shared runtime,” because that aligns with declarative-agent patterns and makes lifecycle governance and ongoing improvement practical at scale. 
+
+ALMP code generation mode is an explicit, guided export workflow that generates a deployable repo/package “from source files,” because that aligns with modern CI/CD workflows and the “deploy from source files” pattern documented by Agent Engine, and with scaffolding approaches used by frameworks like CrewAI. 
+
+In this model, the “implementation code” that gets created falls into two buckets:
+
+Agent runtime wrapper code: a generated entrypoint that loads the signed agent artifact/manifest and runs the orchestration loop; this echoes the reality that tool calling requires application-side execution for tools. 
+Tool adapters and custom nodes: generated stubs (or packaged existing adapters) because external actions must be performed by real code, and deployment-from-source patterns expect a dependency file and source structure. 
+This section is not “how ALMP must work,” but what makes the codegen option coherent and unsurprising given how major platforms and frameworks structure build vs deploy. 
+
+Navigation entry points and mental model mapping
+A code generation workflow becomes understandable if it is available in exactly three obvious places—mapped to the three times users discover they “need code.”
+
+Entry point from the agent lifecycle (most common)
+From Agents → Agent Detail → Blueprint tab, an “Export / Generate Code” action is available only for a versioned blueprint (not drafts), because exports should be reproducible and align with the “pin versions / reproducible builds” expectation in source-based deployments. 
+
+Entry point from tools (when integrations demand code)
+From Integrations → Tool Catalog → Tool Detail, a “Generate Adapter” action exists because tool calling requires application-side execution of tool logic, and therefore tool adapters are the most natural “code creation” surface. 
+
+Entry point from releases (when the user thinks in deployment terms)
+From Deployments → Create Release, a “Deploy as Source Package” option exists in addition to “Deploy artifact to managed runtime,” mirroring the “deploy from agent object vs deploy from source files” split that users increasingly recognize. 
+
+These entry points also keep the UI honest: codegen is not “how agents always work,” it is a deliberate pathway chosen when repo-based deployment, portability, or customer governance requires it. 
