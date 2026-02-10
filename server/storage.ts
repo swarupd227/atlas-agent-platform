@@ -1,4 +1,5 @@
-import { eq } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
+import { createHash } from "crypto";
 import { db } from "./db";
 import {
   users, agents, outcomeContracts, kpiDefinitions, deployments,
@@ -426,7 +427,32 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createAuditEvent(event: InsertAuditEvent) {
-    const [created] = await db.insert(auditEvents).values(event).returning();
+    const [lastEvent] = await db.select({
+      sequenceNum: auditEvents.sequenceNum,
+      eventHash: auditEvents.eventHash,
+    }).from(auditEvents).orderBy(desc(auditEvents.sequenceNum)).limit(1);
+
+    const prevHash = lastEvent?.eventHash || "GENESIS";
+    const seqNum = (lastEvent?.sequenceNum || 0) + 1;
+
+    const canonicalObj: Record<string, unknown> = {
+      action: event.action,
+      actorId: event.actorId,
+      actorType: event.actorType,
+      details: event.details,
+      objectId: event.objectId,
+      objectType: event.objectType,
+      sequenceNum: seqNum,
+    };
+    const canonicalPayload = JSON.stringify(canonicalObj, Object.keys(canonicalObj).sort());
+    const eventHash = createHash("sha256").update(prevHash + canonicalPayload).digest("hex");
+
+    const [created] = await db.insert(auditEvents).values({
+      ...event,
+      sequenceNum: seqNum,
+      previousHash: prevHash,
+      eventHash,
+    }).returning();
     return created;
   }
 

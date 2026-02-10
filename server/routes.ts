@@ -5,7 +5,8 @@ import { z, ZodError } from "zod";
 import { startWorker, jobEvents } from "./worker";
 import OpenAI, { toFile } from "openai";
 import multer from "multer";
-import { checkPermission, getRequestRole, getTraceRedactionLevel } from "./permissions";
+import { checkPermission, getRequestRole, getTraceRedactionLevel, getRedactionLevel, redactPayload } from "./permissions";
+import type { RedactionLevel } from "./permissions";
 import {
   insertOutcomeContractSchema,
   insertKpiDefinitionSchema,
@@ -718,15 +719,19 @@ export async function registerRoutes(
     res.json(suites);
   });
 
-  app.get("/api/traces", async (_req, res) => {
+  app.get("/api/traces", checkPermission("view_traces"), async (req, res) => {
+    const role = getRequestRole(req);
+    const level = getRedactionLevel(role);
     const traces = await storage.getTraces();
-    res.json(traces);
+    res.json(traces.map(t => redactPayload(t, level)));
   });
 
-  app.get("/api/traces/:id", async (req, res) => {
+  app.get("/api/traces/:id", checkPermission("view_traces"), async (req, res) => {
+    const role = getRequestRole(req);
+    const level = getRedactionLevel(role);
     const trace = await storage.getTrace(req.params.id);
     if (!trace) return res.status(404).json({ error: "Trace not found" });
-    res.json(trace);
+    res.json(redactPayload(trace, level));
   });
 
   app.post("/api/traces", async (req, res) => {
@@ -1897,9 +1902,123 @@ export async function registerRoutes(
     res.json({ approvalId: approval.id, requirements });
   });
 
-  app.get("/api/audit-events", async (_req, res) => {
+  app.get("/api/redaction-profiles", async (req, res) => {
+    const role = getRequestRole(req);
+    const level = getRedactionLevel(role);
+    res.json({
+      currentRole: role,
+      redactionLevel: level,
+      profiles: {
+        R0: { label: "Full Access", description: "No redaction. All PII, PHI, PCI, financial data visible.", roles: ["admin", "compliance_security"] },
+        R1: { label: "PII/PHI/PCI Redacted", description: "Identity fields and PII patterns redacted. Financial and operational data visible.", roles: ["agent_engineer", "ops_sre", "expert_validator"] },
+        R2: { label: "Highly Redacted", description: "PII, financial data, and sensitive payloads all redacted.", roles: ["outcome_owner", "finance"] },
+      },
+    });
+  });
+
+  app.get("/api/audit-events", async (req, res) => {
+    const role = getRequestRole(req);
+    const level = getRedactionLevel(role);
     const events = await storage.getAuditEvents();
-    res.json(events);
+    res.json(events.map(e => redactPayload(e, level)));
+  });
+
+  // Verify hash chain integrity
+  app.get("/api/audit-events/verify-chain", async (_req, res) => {
+    try {
+      const crypto = await import("crypto");
+      const events = await storage.getAuditEvents();
+      const sorted = events
+        .filter(e => e.sequenceNum !== null && e.sequenceNum !== undefined)
+        .sort((a, b) => (a.sequenceNum || 0) - (b.sequenceNum || 0));
+
+      if (sorted.length === 0) {
+        return res.json({
+          valid: true,
+          totalEvents: events.length,
+          chainedEvents: 0,
+          unchainedEvents: events.length,
+          message: "No chained events found yet",
+        });
+      }
+
+      let valid = true;
+      const breaks: Array<{ sequenceNum: number; eventId: string; reason: string }> = [];
+
+      for (let i = 0; i < sorted.length; i++) {
+        const event = sorted[i];
+        const expectedPrevHash = i === 0 ? "GENESIS" : sorted[i - 1].eventHash;
+
+        if (event.previousHash !== expectedPrevHash) {
+          valid = false;
+          breaks.push({
+            sequenceNum: event.sequenceNum!,
+            eventId: event.id,
+            reason: `previousHash mismatch: expected "${expectedPrevHash?.slice(0, 16)}...", got "${event.previousHash?.slice(0, 16)}..."`,
+          });
+          continue;
+        }
+
+        const canonicalObj: Record<string, unknown> = {
+          action: event.action,
+          actorId: event.actorId,
+          actorType: event.actorType,
+          details: event.details,
+          objectId: event.objectId,
+          objectType: event.objectType,
+          sequenceNum: event.sequenceNum,
+        };
+        const canonicalPayload = JSON.stringify(canonicalObj, Object.keys(canonicalObj).sort());
+        const computedHash = crypto.createHash("sha256")
+          .update((event.previousHash || "GENESIS") + canonicalPayload)
+          .digest("hex");
+
+        if (computedHash !== event.eventHash) {
+          valid = false;
+          breaks.push({
+            sequenceNum: event.sequenceNum!,
+            eventId: event.id,
+            reason: `eventHash mismatch: computed "${computedHash.slice(0, 16)}...", stored "${event.eventHash?.slice(0, 16)}..."`,
+          });
+        }
+
+        // Gap/duplicate detection
+        if (i > 0) {
+          const prevSeq = sorted[i - 1].sequenceNum || 0;
+          const curSeq = event.sequenceNum || 0;
+          if (curSeq === prevSeq) {
+            valid = false;
+            breaks.push({
+              sequenceNum: curSeq,
+              eventId: event.id,
+              reason: `Duplicate sequenceNum ${curSeq} detected`,
+            });
+          } else if (curSeq !== prevSeq + 1) {
+            valid = false;
+            breaks.push({
+              sequenceNum: curSeq,
+              eventId: event.id,
+              reason: `Sequence gap: expected ${prevSeq + 1}, got ${curSeq}`,
+            });
+          }
+        }
+      }
+
+      res.json({
+        valid,
+        totalEvents: events.length,
+        chainedEvents: sorted.length,
+        unchainedEvents: events.length - sorted.length,
+        firstSequence: sorted[0]?.sequenceNum,
+        lastSequence: sorted[sorted.length - 1]?.sequenceNum,
+        breaks: breaks.length > 0 ? breaks : undefined,
+        message: valid
+          ? `Chain verified: ${sorted.length} events, sequence ${sorted[0]?.sequenceNum} to ${sorted[sorted.length - 1]?.sequenceNum}`
+          : `Chain BROKEN: ${breaks.length} break(s) detected`,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message || "Chain verification failed" });
+    }
   });
 
   app.get("/api/audit-events/export-bundle", async (req, res) => {
@@ -6522,19 +6641,43 @@ Eval Suites: ${evalSuites.length} configured`,
   }
 
   // ──────────────────────────────────
-  // Tool Proxy
+  // Tool Proxy with rate limiting, retry/backoff, shadow dry-run, audit logging
   // ──────────────────────────────────
-  function proxyToolCall(
+  const toolRateLimiter: Map<string, { timestamps: number[]; limit: number; windowMs: number }> = new Map();
+
+  function checkRateLimit(agentId: string, toolName: string): { allowed: boolean; remaining: number; retryAfterMs?: number } {
+    const key = `${agentId}:${toolName}`;
+    const now = Date.now();
+    const windowMs = 60_000;
+    const limit = 100;
+
+    if (!toolRateLimiter.has(key)) {
+      toolRateLimiter.set(key, { timestamps: [], limit, windowMs });
+    }
+    const bucket = toolRateLimiter.get(key)!;
+    bucket.timestamps = bucket.timestamps.filter(t => now - t < windowMs);
+
+    if (bucket.timestamps.length >= limit) {
+      const oldest = bucket.timestamps[0];
+      return { allowed: false, remaining: 0, retryAfterMs: windowMs - (now - oldest) };
+    }
+
+    bucket.timestamps.push(now);
+    return { allowed: true, remaining: limit - bucket.timestamps.length };
+  }
+
+  async function proxyToolCall(
     toolName: string,
     toolInput: Record<string, unknown>,
-    policyBundle: Awaited<ReturnType<typeof resolvePolicyBundle>>
-  ): { allowed: boolean; result: Record<string, unknown>; policyCheck: Record<string, unknown> } {
+    policyBundle: Awaited<ReturnType<typeof resolvePolicyBundle>>,
+    options: { agentId: string; traceId?: string; environment?: string; shadow?: boolean } = { agentId: "unknown" }
+  ): Promise<{ allowed: boolean; result: Record<string, unknown>; policyCheck: Record<string, unknown>; rateLimit?: { remaining: number }; shadow?: boolean; retryAttempts?: number }> {
     const blocked = policyBundle.blockedTools.includes(toolName);
     const allowlistExists = policyBundle.toolAllowlist.length > 0;
     const onAllowlist = policyBundle.toolAllowlist.includes(toolName);
     const allowed = !blocked && (!allowlistExists || onAllowlist);
 
-    const policyCheck = {
+    const policyCheck: Record<string, unknown> = {
       tool: toolName,
       allowed,
       reason: blocked
@@ -6545,6 +6688,15 @@ Eval Suites: ${evalSuites.length} configured`,
       checkedPolicies: policyBundle.appliedPolicies.map(p => p.name),
     };
 
+    await storage.createAuditEvent({
+      action: "tool_proxy_call",
+      objectType: "tool",
+      objectId: toolName,
+      actorId: options.agentId,
+      actorType: "agent",
+      details: `Tool proxy: ${toolName} by agent ${options.agentId}. Allowed=${allowed}, env=${options.environment || "unknown"}, shadow=${options.shadow || false}, inputKeys=[${Object.keys(toolInput).join(",")}]`,
+    });
+
     if (!allowed) {
       return {
         allowed: false,
@@ -6553,6 +6705,28 @@ Eval Suites: ${evalSuites.length} configured`,
       };
     }
 
+    // Rate limiting check
+    const rateCheck = checkRateLimit(options.agentId, toolName);
+    if (!rateCheck.allowed) {
+      policyCheck.rateLimited = true;
+      policyCheck.retryAfterMs = rateCheck.retryAfterMs;
+      await storage.createAuditEvent({
+        action: "tool_proxy_rate_limited",
+        objectType: "tool",
+        objectId: toolName,
+        actorId: options.agentId,
+        actorType: "agent",
+        details: `Rate limit exceeded for ${toolName} by agent ${options.agentId}. Retry after ${rateCheck.retryAfterMs}ms`,
+      });
+      return {
+        allowed: false,
+        result: { error: `Rate limit exceeded for tool "${toolName}". Retry after ${rateCheck.retryAfterMs}ms`, rateLimited: true, retryAfterMs: rateCheck.retryAfterMs },
+        policyCheck,
+        rateLimit: { remaining: 0 },
+      };
+    }
+
+    // Apply redaction to input
     let redactedInput = { ...toolInput };
     for (const pattern of policyBundle.redactPatterns) {
       try {
@@ -6565,16 +6739,84 @@ Eval Suites: ${evalSuites.length} configured`,
       } catch {}
     }
 
-    const simulatedResult: Record<string, unknown> = {
-      toolName,
-      status: "success",
-      output: `Executed ${toolName} successfully`,
-      executedAt: new Date().toISOString(),
-      redactedFields: policyBundle.redactPatterns.length > 0 ? policyBundle.redactPatterns : undefined,
-    };
+    // Shadow dry-run mode: log but don't execute
+    if (options.shadow) {
+      const dryRunResult: Record<string, unknown> = {
+        toolName,
+        status: "dry_run",
+        mode: "shadow",
+        output: `[DRY RUN] Would execute ${toolName} in shadow mode`,
+        input: redactedInput,
+        executedAt: new Date().toISOString(),
+      };
+      await storage.createAuditEvent({
+        action: "tool_proxy_shadow_dry_run",
+        objectType: "tool",
+        objectId: toolName,
+        actorId: options.agentId,
+        actorType: "agent",
+        details: `Shadow dry-run: ${toolName} for agent ${options.agentId}. Input logged but not executed.`,
+      });
+      return { allowed: true, result: dryRunResult, policyCheck, rateLimit: { remaining: rateCheck.remaining }, shadow: true };
+    }
 
-    return { allowed: true, result: simulatedResult, policyCheck };
+    // Simulate execution with retry/backoff logic
+    const maxRetries = 3;
+    let retryAttempts = 0;
+    let lastError: string | null = null;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const simulatedResult: Record<string, unknown> = {
+          toolName,
+          status: "success",
+          output: `Executed ${toolName} successfully`,
+          executedAt: new Date().toISOString(),
+          redactedFields: policyBundle.redactPatterns.length > 0 ? policyBundle.redactPatterns : undefined,
+          attempt: attempt + 1,
+        };
+        return { allowed: true, result: simulatedResult, policyCheck, rateLimit: { remaining: rateCheck.remaining }, retryAttempts };
+      } catch (err: any) {
+        retryAttempts = attempt + 1;
+        lastError = err.message || "Unknown error";
+        if (attempt < maxRetries) {
+          const backoffMs = Math.min(1000 * Math.pow(2, attempt), 8000);
+          await new Promise(resolve => setTimeout(resolve, backoffMs));
+        }
+      }
+    }
+
+    return {
+      allowed: true,
+      result: { toolName, status: "failed", error: lastError, retryAttempts },
+      policyCheck,
+      rateLimit: { remaining: rateCheck.remaining },
+      retryAttempts,
+    };
   }
+
+  // GET /api/tool-proxy/status - rate limiter and proxy status
+  app.get("/api/tool-proxy/status", async (req, res) => {
+    const entries: Array<{ key: string; callsInWindow: number; limit: number; windowMs: number }> = [];
+    const now = Date.now();
+    toolRateLimiter.forEach((bucket, key) => {
+      const active = bucket.timestamps.filter((t: number) => now - t < bucket.windowMs);
+      entries.push({ key, callsInWindow: active.length, limit: bucket.limit, windowMs: bucket.windowMs });
+    });
+    res.json({
+      activeRateLimiters: entries.length,
+      rateLimiters: entries,
+      features: {
+        allowlist: true,
+        blocklist: true,
+        rateLimiting: true,
+        retryBackoff: { maxRetries: 3, strategy: "exponential", maxBackoffMs: 8000 },
+        shadowDryRun: true,
+        redaction: true,
+        auditLogging: true,
+      },
+    });
+  });
 
   // ──────────────────────────────────
   // POST /api/runtime/run
@@ -6681,7 +6923,8 @@ Eval Suites: ${evalSuites.length} configured`,
       for (const tool of toolsToCall) {
         const toolStart = Date.now();
         const toolInput = (tool as any).input || { query: input.slice(0, 100) };
-        const proxyResult = proxyToolCall(tool.name, toolInput, policyBundle);
+        const isShadow = environment === "shadow";
+        const proxyResult = await proxyToolCall(tool.name, toolInput, policyBundle, { agentId, traceId: trace.id, environment, shadow: isShadow });
 
         toolCalls.push({
           tool: tool.name,

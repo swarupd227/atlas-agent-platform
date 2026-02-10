@@ -128,6 +128,24 @@ export function checkPermission(action: PermissionAction) {
   };
 }
 
+export type RedactionLevel = "R0" | "R1" | "R2";
+
+export function getRedactionLevel(role: RoleId): RedactionLevel {
+  switch (role) {
+    case "admin":
+    case "compliance_security":
+      return "R0";
+    case "agent_engineer":
+    case "ops_sre":
+    case "expert_validator":
+      return "R1";
+    case "outcome_owner":
+    case "finance":
+    default:
+      return "R2";
+  }
+}
+
 export function getTraceRedactionLevel(role: RoleId): "full" | "less_redaction" | "redacted" | "denied" {
   switch (role) {
     case "admin":
@@ -143,4 +161,61 @@ export function getTraceRedactionLevel(role: RoleId): "full" | "less_redaction" 
     default:
       return "denied";
   }
+}
+
+const PII_PATTERNS = [
+  /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,
+  /\b\d{3}[-.\s]?\d{2}[-.\s]?\d{4}\b/g,
+  /\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b/g,
+  /\b(?:\d{4}[-\s]?){3}\d{4}\b/g,
+];
+
+const FINANCIAL_KEYS = ["costUsd", "amount", "revenue", "revenueExposure", "unitPrice", "pricePerUnit", "unitValue", "totalAmount"];
+const SENSITIVE_KEYS = ["evidenceJson", "constraintsJson", "payload", "policyJson", "diff", "evidenceBundle", "toolsConfig", "permissionsConfig"];
+const IDENTITY_KEYS = ["actorId", "requestedBy", "decidedBy", "approvedBy", "owner", "submittedBy", "signedBy"];
+
+export function redactPayload(data: any, level: RedactionLevel): any {
+  if (level === "R0") return data;
+  if (data === null || data === undefined) return data;
+  if (typeof data !== "object") return data;
+
+  if (Array.isArray(data)) {
+    return data.map(item => redactPayload(item, level));
+  }
+
+  const result: Record<string, any> = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (level === "R1" || level === "R2") {
+      if (IDENTITY_KEYS.includes(key) && typeof value === "string") {
+        result[key] = "[PII_REDACTED]";
+        continue;
+      }
+      if (typeof value === "string") {
+        let redacted = value;
+        for (const pattern of PII_PATTERNS) {
+          redacted = redacted.replace(new RegExp(pattern.source, pattern.flags), "[PII_REDACTED]");
+        }
+        result[key] = redacted;
+        continue;
+      }
+    }
+
+    if (level === "R2") {
+      if (FINANCIAL_KEYS.includes(key)) {
+        result[key] = "[FINANCIAL_REDACTED]";
+        continue;
+      }
+      if (SENSITIVE_KEYS.includes(key)) {
+        result[key] = "[SENSITIVE_REDACTED]";
+        continue;
+      }
+    }
+
+    if (typeof value === "object" && value !== null) {
+      result[key] = redactPayload(value, level);
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
 }
