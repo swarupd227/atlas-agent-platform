@@ -5556,6 +5556,346 @@ Eval Suites: ${evalSuites.length} configured`,
     });
   });
 
+  // ──────────────────────────────────
+  // Policy Resolver
+  // ──────────────────────────────────
+  async function resolvePolicyBundle(agentId: string) {
+    const agent = await storage.getAgent(agentId);
+    const allPolicies = await storage.getPolicies();
+    const activePolicies = allPolicies.filter(p => p.status === "active");
+
+    const orgPolicies = activePolicies.filter(p => p.scopeType === "org");
+    const outcomePolicies = agent?.outcomeId
+      ? activePolicies.filter(p => p.scopeType === "outcome" && p.scopeId === agent.outcomeId)
+      : [];
+    const agentPolicies = activePolicies.filter(p => p.scopeType === "agent" && p.scopeId === agentId);
+    const envPolicies = agent?.environment
+      ? activePolicies.filter(p => p.scopeType === "env" && p.scopeId === agent.environment)
+      : [];
+
+    const toolAllowlist: string[] = [];
+    const blockedTools: string[] = [];
+    const guardrails: string[] = [];
+    const redactPatterns: string[] = [];
+
+    const allScoped = [...orgPolicies, ...outcomePolicies, ...agentPolicies, ...envPolicies];
+    for (const p of allScoped) {
+      const pj = p.policyJson as Record<string, unknown> | null;
+      if (!pj) continue;
+      if (Array.isArray(pj.toolAllowlist)) toolAllowlist.push(...(pj.toolAllowlist as string[]));
+      if (Array.isArray(pj.blockedTools)) blockedTools.push(...(pj.blockedTools as string[]));
+      if (Array.isArray(pj.guardrails)) guardrails.push(...(pj.guardrails as string[]));
+      if (Array.isArray(pj.redactPatterns)) redactPatterns.push(...(pj.redactPatterns as string[]));
+    }
+
+    return {
+      appliedPolicies: allScoped.map(p => ({ id: p.id, name: p.name, scope: p.scopeType, domain: p.domain })),
+      toolAllowlist: Array.from(new Set(toolAllowlist)),
+      blockedTools: Array.from(new Set(blockedTools)),
+      guardrails: Array.from(new Set(guardrails)),
+      redactPatterns: Array.from(new Set(redactPatterns)),
+      agentConfig: agent ? {
+        autonomyMode: agent.autonomyMode,
+        riskTier: agent.riskTier,
+        modelProvider: agent.modelProvider,
+        modelName: agent.modelName,
+        toolAccessClass: agent.toolAccessClass,
+      } : null,
+    };
+  }
+
+  // ──────────────────────────────────
+  // Tool Proxy
+  // ──────────────────────────────────
+  function proxyToolCall(
+    toolName: string,
+    toolInput: Record<string, unknown>,
+    policyBundle: Awaited<ReturnType<typeof resolvePolicyBundle>>
+  ): { allowed: boolean; result: Record<string, unknown>; policyCheck: Record<string, unknown> } {
+    const blocked = policyBundle.blockedTools.includes(toolName);
+    const allowlistExists = policyBundle.toolAllowlist.length > 0;
+    const onAllowlist = policyBundle.toolAllowlist.includes(toolName);
+    const allowed = !blocked && (!allowlistExists || onAllowlist);
+
+    const policyCheck = {
+      tool: toolName,
+      allowed,
+      reason: blocked
+        ? `Tool "${toolName}" is blocked by policy`
+        : (allowlistExists && !onAllowlist)
+          ? `Tool "${toolName}" is not on the allowlist`
+          : "Allowed",
+      checkedPolicies: policyBundle.appliedPolicies.map(p => p.name),
+    };
+
+    if (!allowed) {
+      return {
+        allowed: false,
+        result: { error: policyCheck.reason, blocked: true },
+        policyCheck,
+      };
+    }
+
+    let redactedInput = { ...toolInput };
+    for (const pattern of policyBundle.redactPatterns) {
+      try {
+        const re = new RegExp(pattern, "gi");
+        for (const key of Object.keys(redactedInput)) {
+          if (typeof redactedInput[key] === "string") {
+            redactedInput[key] = (redactedInput[key] as string).replace(re, "[REDACTED]");
+          }
+        }
+      } catch {}
+    }
+
+    const simulatedResult: Record<string, unknown> = {
+      toolName,
+      status: "success",
+      output: `Executed ${toolName} successfully`,
+      executedAt: new Date().toISOString(),
+      redactedFields: policyBundle.redactPatterns.length > 0 ? policyBundle.redactPatterns : undefined,
+    };
+
+    return { allowed: true, result: simulatedResult, policyCheck };
+  }
+
+  // ──────────────────────────────────
+  // POST /api/runtime/run
+  // ──────────────────────────────────
+  app.post("/api/runtime/run", async (req, res) => {
+    const startTime = Date.now();
+    try {
+      const schema = z.object({
+        agentId: z.string(),
+        input: z.string(),
+        environment: z.string().optional().default("staging"),
+      });
+      const { agentId, input, environment } = schema.parse(req.body);
+
+      const agent = await storage.getAgent(agentId);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+
+      const policyBundle = await resolvePolicyBundle(agentId);
+
+      const trace = await storage.createTrace({
+        agentId,
+        versionId: agent.currentVersion,
+        environment,
+        status: "running",
+        inputSummary: input.slice(0, 500),
+        modelId: agent.modelName || "gpt-4.1",
+        policyChecks: policyBundle.appliedPolicies,
+      });
+
+      let stepIndex = 0;
+
+      await storage.createRunStep({
+        runId: trace.id,
+        stepIndex: stepIndex++,
+        type: "policy_resolve",
+        status: "completed",
+        input: { agentId, environment },
+        output: {
+          appliedPolicies: policyBundle.appliedPolicies,
+          toolAllowlist: policyBundle.toolAllowlist,
+          blockedTools: policyBundle.blockedTools,
+          guardrails: policyBundle.guardrails,
+        },
+        durationMs: Date.now() - startTime,
+      });
+
+      await storage.createRunStep({
+        runId: trace.id,
+        stepIndex: stepIndex++,
+        type: "run_started",
+        status: "completed",
+        input: { agentId, input: input.slice(0, 200) },
+        output: { traceId: trace.id },
+        durationMs: 0,
+      });
+
+      let plan = "";
+      let planTokens = { prompt_tokens: 0, completion_tokens: 0 };
+      const planStart = Date.now();
+      try {
+        const guardrailPrompt = policyBundle.guardrails.length > 0
+          ? `\nGuardrails to follow:\n${policyBundle.guardrails.map((g, i) => `${i + 1}. ${g}`).join("\n")}`
+          : "";
+
+        const chatResponse = await openai.chat.completions.create({
+          model: "gpt-4.1",
+          max_tokens: 500,
+          messages: [
+            {
+              role: "system",
+              content: `You are an AI agent execution planner. Given a user request, produce a concise execution plan with numbered steps. Include any tool calls needed. Agent autonomy mode: ${agent.autonomyMode}. Risk tier: ${agent.riskTier}.${guardrailPrompt}`,
+            },
+            { role: "user", content: input },
+          ],
+        });
+        plan = chatResponse.choices[0]?.message?.content || "No plan generated";
+        planTokens = {
+          prompt_tokens: chatResponse.usage?.prompt_tokens || 0,
+          completion_tokens: chatResponse.usage?.completion_tokens || 0,
+        };
+      } catch (err: any) {
+        plan = `Planning fallback: Process "${input}" using standard agent workflow`;
+      }
+
+      await storage.createRunStep({
+        runId: trace.id,
+        stepIndex: stepIndex++,
+        type: "llm_plan",
+        status: "completed",
+        input: { prompt: input.slice(0, 200), model: agent.modelName || "gpt-4.1" },
+        output: { plan: plan.slice(0, 1000) },
+        tokenUsage: planTokens,
+        durationMs: Date.now() - planStart,
+      });
+
+      const toolCalls: Array<Record<string, unknown>> = [];
+      const policyCheckResults: Array<Record<string, unknown>> = [];
+
+      const agentTools = (agent.toolsConfig as Array<{ name: string; input?: Record<string, unknown> }>) || [];
+      const toolsToCall = agentTools.length > 0
+        ? agentTools.slice(0, 3)
+        : [{ name: "knowledge_search", input: { query: input.slice(0, 100) } }];
+
+      for (const tool of toolsToCall) {
+        const toolStart = Date.now();
+        const toolInput = (tool as any).input || { query: input.slice(0, 100) };
+        const proxyResult = proxyToolCall(tool.name, toolInput, policyBundle);
+
+        toolCalls.push({
+          tool: tool.name,
+          input: toolInput,
+          output: proxyResult.result,
+          allowed: proxyResult.allowed,
+          durationMs: Date.now() - toolStart,
+        });
+        policyCheckResults.push(proxyResult.policyCheck);
+
+        await storage.createRunStep({
+          runId: trace.id,
+          stepIndex: stepIndex++,
+          type: proxyResult.allowed ? "tool_call" : "tool_blocked",
+          status: proxyResult.allowed ? "completed" : "blocked",
+          toolName: tool.name,
+          input: toolInput,
+          output: proxyResult.result,
+          policyResult: proxyResult.policyCheck,
+          durationMs: Date.now() - toolStart,
+        });
+      }
+
+      let finalOutput = "";
+      let outputTokens = { prompt_tokens: 0, completion_tokens: 0 };
+      const outputStart = Date.now();
+      try {
+        const outputResponse = await openai.chat.completions.create({
+          model: "gpt-4.1",
+          max_tokens: 500,
+          messages: [
+            {
+              role: "system",
+              content: "You are an AI agent producing a final response. Summarize the execution results concisely.",
+            },
+            { role: "user", content: input },
+            { role: "assistant", content: `Plan: ${plan.slice(0, 300)}` },
+            {
+              role: "user",
+              content: `Tool results: ${JSON.stringify(toolCalls.map(t => ({ tool: t.tool, allowed: t.allowed, output: t.output })).slice(0, 3))}.\n\nProduce the final output.`,
+            },
+          ],
+        });
+        finalOutput = outputResponse.choices[0]?.message?.content || "Execution completed";
+        outputTokens = {
+          prompt_tokens: outputResponse.usage?.prompt_tokens || 0,
+          completion_tokens: outputResponse.usage?.completion_tokens || 0,
+        };
+      } catch (err: any) {
+        finalOutput = `Completed processing: "${input}" with ${toolCalls.length} tool calls`;
+      }
+
+      await storage.createRunStep({
+        runId: trace.id,
+        stepIndex: stepIndex++,
+        type: "llm_output",
+        status: "completed",
+        input: { context: "final_response_formatting" },
+        output: { response: finalOutput.slice(0, 1000) },
+        tokenUsage: outputTokens,
+        durationMs: Date.now() - outputStart,
+      });
+
+      const totalTokens = {
+        prompt_tokens: planTokens.prompt_tokens + outputTokens.prompt_tokens,
+        completion_tokens: planTokens.completion_tokens + outputTokens.completion_tokens,
+        total_tokens: planTokens.prompt_tokens + planTokens.completion_tokens + outputTokens.prompt_tokens + outputTokens.completion_tokens,
+      };
+      const costUsd = (totalTokens.prompt_tokens * 0.00001 + totalTokens.completion_tokens * 0.00003);
+      const latencyMs = Date.now() - startTime;
+
+      await storage.createRunStep({
+        runId: trace.id,
+        stepIndex: stepIndex++,
+        type: "run_completed",
+        status: "completed",
+        output: { costUsd, latencyMs, totalTokens, status: "completed" },
+        durationMs: latencyMs,
+      });
+
+      await storage.updateTrace(trace.id, {
+        status: "completed",
+        outputSummary: finalOutput.slice(0, 500),
+        costUsd: Math.round(costUsd * 100000) / 100000,
+        latencyMs,
+        toolCalls,
+        policyChecks: policyCheckResults,
+        tokenUsage: totalTokens,
+        stepsJson: { stepCount: stepIndex },
+        endedAt: new Date(),
+      });
+
+      await storage.updateAgent(agentId, {
+        totalRuns: (agent.totalRuns || 0) + 1,
+        avgLatencyMs: Math.round(((agent.avgLatencyMs || 250) * (agent.totalRuns || 0) + latencyMs) / ((agent.totalRuns || 0) + 1)),
+        costPerRun: Math.round(costUsd * 100000) / 100000,
+      });
+
+      res.json({
+        traceId: trace.id,
+        agentId,
+        status: "completed",
+        output: finalOutput,
+        plan: plan.slice(0, 500),
+        toolCalls: toolCalls.length,
+        policyChecks: policyCheckResults.length,
+        costUsd: Math.round(costUsd * 100000) / 100000,
+        latencyMs,
+        totalTokens,
+      });
+    } catch (e) {
+      if (e instanceof ZodError) return res.status(400).json({ message: "Validation error", errors: e.errors });
+      console.error("[runtime/run] Error:", e);
+      res.status(500).json({ message: "Runtime execution failed" });
+    }
+  });
+
+  // GET /api/runtime/runs/:id — full trace with steps
+  app.get("/api/runtime/runs/:id", async (req, res) => {
+    const trace = await storage.getTrace(req.params.id);
+    if (!trace) return res.status(404).json({ message: "Run not found" });
+
+    const steps = await storage.getRunSteps(req.params.id);
+    const sortedSteps = steps.sort((a, b) => a.stepIndex - b.stepIndex);
+
+    res.json({
+      ...trace,
+      steps: sortedSteps,
+    });
+  });
+
   // Start the job worker
   startWorker();
 

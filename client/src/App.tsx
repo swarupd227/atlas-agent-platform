@@ -44,6 +44,7 @@ import Blueprints from "@/pages/blueprints";
 import BlueprintDetail from "@/pages/blueprint-detail";
 import ShadowReplay from "@/pages/shadow-replay";
 import AuditTrail from "@/pages/audit-trail";
+import RunDetail from "@/pages/run-detail";
 
 function Router() {
   return (
@@ -65,6 +66,7 @@ function Router() {
       <Route path="/deployments" component={Deployments} />
       <Route path="/deployments/:id" component={ReleaseDetail} />
       <Route path="/traces/:id" component={TraceDetail} />
+      <Route path="/runtime/runs/:id" component={RunDetail} />
       <Route path="/monitor" component={Monitor} />
       <Route path="/governance" component={Governance} />
       <Route path="/audit-trail" component={AuditTrail} />

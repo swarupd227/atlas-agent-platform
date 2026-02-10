@@ -55,6 +55,8 @@ import {
   type AdminWebhook, type InsertAdminWebhook,
   jobs,
   type Job, type InsertJob,
+  runSteps,
+  type RunStep, type InsertRunStep,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -236,6 +238,13 @@ export interface IStorage {
   dequeueNextJob(): Promise<Job | undefined>;
   completeJob(id: string, result: Record<string, unknown>): Promise<Job | undefined>;
   failJob(id: string, error: string): Promise<Job | undefined>;
+
+  getRunSteps(runId: string): Promise<RunStep[]>;
+  createRunStep(step: InsertRunStep): Promise<RunStep>;
+  updateRunStep(id: string, data: Partial<RunStep>): Promise<RunStep | undefined>;
+
+  getPoliciesByScope(scopeType: string, scopeId?: string): Promise<Policy[]>;
+  updateTrace(id: string, data: Partial<RunTrace>): Promise<RunTrace | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -916,6 +925,34 @@ export class DatabaseStorage implements IStorage {
       .set({ status: "failed", error, completedAt: new Date() })
       .where(eq(jobs.id, id))
       .returning();
+    return updated;
+  }
+
+  async getRunSteps(runId: string) {
+    return db.select().from(runSteps).where(eq(runSteps.runId, runId));
+  }
+
+  async createRunStep(step: InsertRunStep) {
+    const [created] = await db.insert(runSteps).values(step).returning();
+    return created;
+  }
+
+  async updateRunStep(id: string, data: Partial<RunStep>) {
+    const [updated] = await db.update(runSteps).set(data).where(eq(runSteps.id, id)).returning();
+    return updated;
+  }
+
+  async getPoliciesByScope(scopeType: string, scopeId?: string) {
+    if (scopeId) {
+      return db.select().from(policies).where(
+        eq(policies.scopeType, scopeType)
+      );
+    }
+    return db.select().from(policies).where(eq(policies.scopeType, scopeType));
+  }
+
+  async updateTrace(id: string, data: Partial<RunTrace>) {
+    const [updated] = await db.update(runTraces).set(data).where(eq(runTraces.id, id)).returning();
     return updated;
   }
 }

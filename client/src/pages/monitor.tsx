@@ -1,5 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState } from "react";
+import { Link } from "wouter";
 import {
   Activity,
   TrendingUp,
@@ -1032,9 +1033,17 @@ export default function Monitor() {
                   </div>
                   {expandedTraceId === trace.id && (
                     <div className="ml-4 mt-1 mb-2 p-3 rounded-md border bg-muted/10 flex flex-col gap-2" data-testid={`flight-recorder-${trace.id}`}>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <Badge variant="outline" className="text-[9px]">Flight Recorder</Badge>
-                        <span className="text-[10px] text-muted-foreground">Trace: {trace.id.slice(0, 8)}...</span>
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Badge variant="outline" className="text-[9px]">Flight Recorder</Badge>
+                          <span className="text-[10px] text-muted-foreground">Trace: {trace.id.slice(0, 8)}...</span>
+                        </div>
+                        <Link href={`/runtime/runs/${trace.id}`}>
+                          <Button variant="outline" size="sm" data-testid={`button-view-run-${trace.id}`}>
+                            <Eye className="w-3 h-3 mr-1" />
+                            Run Details
+                          </Button>
+                        </Link>
                       </div>
                       <div className="flex flex-col gap-1.5">
                         {generateTraceEvents(trace).map((event, idx) => (

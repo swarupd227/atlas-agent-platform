@@ -721,4 +721,24 @@ export const insertJobSchema = createInsertSchema(jobs).omit({ id: true, created
 export type InsertJob = z.infer<typeof insertJobSchema>;
 export type Job = typeof jobs.$inferSelect;
 
+export const runSteps = pgTable("run_steps", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  runId: varchar("run_id").notNull(),
+  stepIndex: integer("step_index").notNull().default(0),
+  type: text("type").notNull(),
+  status: text("status").notNull().default("pending"),
+  input: jsonb("input"),
+  output: jsonb("output"),
+  toolName: text("tool_name"),
+  policyResult: jsonb("policy_result"),
+  durationMs: integer("duration_ms").default(0),
+  tokenUsage: jsonb("token_usage"),
+  error: text("error"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertRunStepSchema = createInsertSchema(runSteps).omit({ id: true, createdAt: true });
+export type InsertRunStep = z.infer<typeof insertRunStepSchema>;
+export type RunStep = typeof runSteps.$inferSelect;
+
 export * from "./models/chat";
