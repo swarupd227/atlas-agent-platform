@@ -54,6 +54,10 @@ import {
   BookOpenCheck,
   Blocks,
   ArrowRight,
+  Workflow,
+  Cloud,
+  Box,
+  Boxes,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -160,6 +164,7 @@ export default function AgentDetail() {
   const [exportLlmProvider, setExportLlmProvider] = useState<"openai" | "anthropic">("openai");
   const [exportMaxIterations, setExportMaxIterations] = useState(20);
   const [exportCompletionPromise, setExportCompletionPromise] = useState("TASK_COMPLETE");
+  const [exportFramework, setExportFramework] = useState<string>("generic");
   const [exportPreview, setExportPreview] = useState<{ files: Record<string, string>; metadata: any } | null>(null);
   const [exportPreviewFile, setExportPreviewFile] = useState<string>("");
   const [exportStep, setExportStep] = useState<"select" | "configure" | "preview">("select");
@@ -273,7 +278,7 @@ export default function AgentDetail() {
   });
 
   const exportCodeMutation = useMutation({
-    mutationFn: async (params: { format: string; llmProvider: string; maxIterations: number; completionPromise: string }) => {
+    mutationFn: async (params: { format: string; llmProvider: string; maxIterations: number; completionPromise: string; framework?: string }) => {
       const res = await apiRequest("POST", `/api/agents/${agentId}/export-code`, params);
       return res.json();
     },
@@ -697,7 +702,7 @@ export default function AgentDetail() {
                       variant="default"
                       size="sm"
                       className="w-full"
-                      onClick={() => { setExportStep("select"); setExportPreview(null); setExportDialogOpen(true); }}
+                      onClick={() => { setExportStep("select"); setExportPreview(null); setExportFramework("generic"); setExportDialogOpen(true); }}
                       data-testid="button-summary-export-code"
                     >
                       <Package className="w-3.5 h-3.5 mr-1.5" /> Export / Generate Code
@@ -1248,7 +1253,7 @@ export default function AgentDetail() {
             <Button variant="outline" size="sm" onClick={() => toast({ title: "Version comparison opened" })} data-testid="button-compare-version">
               <Layers className="w-3.5 h-3.5 mr-1.5" /> Compare vs Version...
             </Button>
-            <Button variant="outline" size="sm" onClick={() => { setExportStep("select"); setExportPreview(null); setExportDialogOpen(true); }} data-testid="button-export-code">
+            <Button variant="outline" size="sm" onClick={() => { setExportStep("select"); setExportPreview(null); setExportFramework("generic"); setExportDialogOpen(true); }} data-testid="button-export-code">
               <Download className="w-3.5 h-3.5 mr-1.5" /> Export as Code
             </Button>
             <div className="flex-1" />
@@ -1310,7 +1315,7 @@ export default function AgentDetail() {
           <ImplementationGraph
             agent={agent}
             toolConnectors={allToolConnectors || []}
-            onGenerateExport={() => { setExportStep("select"); setExportPreview(null); setExportDialogOpen(true); }}
+            onGenerateExport={() => { setExportStep("select"); setExportPreview(null); setExportFramework("generic"); setExportDialogOpen(true); }}
           />
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4" data-testid="blueprint-config-grid">
@@ -2805,7 +2810,87 @@ export default function AgentDetail() {
             </div>
           )}
 
-          {exportStep === "configure" && (
+          {exportStep === "configure" && (() => {
+            const frameworkOptions = [
+              { id: "generic", label: "Generic Tool-Calling Runtime", desc: "Minimal tool-calling agent — universal baseline", icon: Cpu, recommended: true },
+              { id: "langgraph", label: "LangGraph Graph App", desc: "Graph-oriented state machine with nodes and edges", icon: Network },
+              { id: "crewai", label: "CrewAI Project Scaffold", desc: "YAML-first multi-agent crew with role definitions", icon: Users },
+              { id: "foundry", label: "Microsoft Foundry Agent", desc: "Foundry-compatible project with manifest and skills", icon: Boxes },
+              { id: "bedrock", label: "AWS Bedrock Agent", desc: "Action groups with Lambda handlers and OpenAPI specs", icon: Cloud },
+              { id: "n8n", label: "N8N Workflow", desc: "Workflow JSON with custom node stubs and credentials", icon: Workflow },
+              { id: "vertex", label: "GCP Vertex AI Agent", desc: "Vertex Agent Builder layout with tools and extensions", icon: Box },
+            ];
+            const frameworkFileMap: Record<string, Array<{ label: string; desc: string }>> = {
+              generic: [
+                { label: "agent.yaml", desc: "Agent manifest with config" },
+                { label: exportFormat === "typescript" ? "entrypoint.ts" : "entrypoint.py", desc: "Ralph Loop orchestration" },
+                { label: exportFormat === "typescript" ? "tools/index.ts" : "tools/__init__.py", desc: "Tool adapter registry" },
+                { label: exportFormat === "typescript" ? "package.json" : "requirements.txt", desc: "Dependencies" },
+                { label: ".env.example", desc: "Environment variables" },
+                { label: "Dockerfile", desc: "Container build for CI/CD" },
+              ],
+              langgraph: [
+                { label: "agent.yaml", desc: "Agent manifest with config" },
+                { label: exportFormat === "typescript" ? "graph.ts" : "graph.py", desc: "LangGraph state graph definition" },
+                { label: exportFormat === "typescript" ? "nodes/index.ts" : "nodes/__init__.py", desc: "Graph node implementations" },
+                { label: exportFormat === "typescript" ? "tools/index.ts" : "tools/__init__.py", desc: "Tool adapter registry" },
+                { label: "langgraph.json", desc: "LangGraph manifest and config" },
+                { label: exportFormat === "typescript" ? "package.json" : "requirements.txt", desc: "Dependencies" },
+                { label: ".env.example", desc: "Environment variables" },
+                { label: "Dockerfile", desc: "Container build for CI/CD" },
+              ],
+              crewai: [
+                { label: "agent.yaml", desc: "Agent manifest with config" },
+                { label: "config/agents.yaml", desc: "CrewAI agent role definitions" },
+                { label: "config/tasks.yaml", desc: "CrewAI task definitions" },
+                { label: exportFormat === "typescript" ? "crew.ts" : "crew.py", desc: "Crew orchestration entry point" },
+                { label: exportFormat === "typescript" ? "tools/index.ts" : "tools/__init__.py", desc: "Tool adapter registry" },
+                { label: exportFormat === "typescript" ? "package.json" : "requirements.txt", desc: "Dependencies" },
+                { label: ".env.example", desc: "Environment variables" },
+                { label: "Dockerfile", desc: "Container build for CI/CD" },
+              ],
+              foundry: [
+                { label: "agent.yaml", desc: "Agent manifest with config" },
+                { label: "foundry.manifest.json", desc: "Foundry agent manifest" },
+                { label: exportFormat === "typescript" ? "skills/index.ts" : "skills/__init__.py", desc: "Skill implementations" },
+                { label: exportFormat === "typescript" ? "tools/index.ts" : "tools/__init__.py", desc: "Tool adapter registry" },
+                { label: exportFormat === "typescript" ? "entrypoint.ts" : "entrypoint.py", desc: "Agent entry point" },
+                { label: exportFormat === "typescript" ? "package.json" : "requirements.txt", desc: "Dependencies" },
+                { label: ".env.example", desc: "Environment variables" },
+                { label: "Dockerfile", desc: "Container build for CI/CD" },
+              ],
+              bedrock: [
+                { label: "agent.yaml", desc: "Agent manifest with config" },
+                { label: "agent-config.json", desc: "Bedrock agent configuration" },
+                { label: "action-groups/openapi.yaml", desc: "OpenAPI spec for action groups" },
+                { label: exportFormat === "typescript" ? "lambda/handler.ts" : "lambda/handler.py", desc: "Lambda function handler" },
+                { label: exportFormat === "typescript" ? "tools/index.ts" : "tools/__init__.py", desc: "Tool adapter registry" },
+                { label: "template.yaml", desc: "SAM/CloudFormation template" },
+                { label: exportFormat === "typescript" ? "package.json" : "requirements.txt", desc: "Dependencies" },
+                { label: ".env.example", desc: "Environment variables" },
+              ],
+              n8n: [
+                { label: "agent.yaml", desc: "Agent manifest with config" },
+                { label: "workflow.json", desc: "N8N workflow definition" },
+                { label: exportFormat === "typescript" ? "nodes/AgentNode.ts" : "nodes/agent_node.py", desc: "Custom agent node" },
+                { label: exportFormat === "typescript" ? "nodes/ToolNode.ts" : "nodes/tool_node.py", desc: "Custom tool node" },
+                { label: "credentials/AgentCredentials.json", desc: "Credential type definitions" },
+                { label: exportFormat === "typescript" ? "package.json" : "requirements.txt", desc: "Dependencies" },
+                { label: ".env.example", desc: "Environment variables" },
+              ],
+              vertex: [
+                { label: "agent.yaml", desc: "Agent manifest with config" },
+                { label: "agent-config.json", desc: "Vertex AI agent definition" },
+                { label: exportFormat === "typescript" ? "extensions/index.ts" : "extensions/__init__.py", desc: "Extension implementations" },
+                { label: exportFormat === "typescript" ? "tools/index.ts" : "tools/__init__.py", desc: "Tool adapter registry" },
+                { label: exportFormat === "typescript" ? "entrypoint.ts" : "entrypoint.py", desc: "Agent entry point" },
+                { label: exportFormat === "typescript" ? "package.json" : "requirements.txt", desc: "Dependencies" },
+                { label: ".env.example", desc: "Environment variables" },
+                { label: "Dockerfile", desc: "Container build for CI/CD" },
+              ],
+            };
+            const currentFiles = frameworkFileMap[exportFramework] || frameworkFileMap.generic;
+            return (
             <div className="flex flex-col gap-5 py-2">
               <div className="flex items-center gap-2 mb-1 flex-wrap">
                 <span className="text-[11px] text-muted-foreground/40">Export Type</span>
@@ -2816,6 +2901,33 @@ export default function AgentDetail() {
                 </div>
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                 <span className="text-[11px] text-muted-foreground/40">Preview</span>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <Label>Template & Framework</Label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[200px] overflow-y-auto pr-1">
+                  {frameworkOptions.map(fw => {
+                    const Icon = fw.icon;
+                    const selected = exportFramework === fw.id;
+                    return (
+                      <div
+                        key={fw.id}
+                        className={`flex items-start gap-2.5 p-2.5 rounded-md border cursor-pointer hover-elevate ${selected ? "border-primary bg-primary/5" : ""}`}
+                        onClick={() => setExportFramework(fw.id)}
+                        data-testid={`framework-${fw.id}`}
+                      >
+                        <Icon className={`w-4 h-4 mt-0.5 shrink-0 ${selected ? "text-primary" : "text-muted-foreground"}`} />
+                        <div className="flex flex-col min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-xs font-medium truncate">{fw.label}</span>
+                            {fw.recommended && <Badge variant="secondary" className="text-[9px] px-1.5 py-0">Recommended</Badge>}
+                          </div>
+                          <span className="text-[10px] text-muted-foreground leading-tight">{fw.desc}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -2885,14 +2997,7 @@ export default function AgentDetail() {
                     <span className="text-sm font-medium">Source Files Generated</span>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {[
-                      { label: "agent.yaml", desc: "Agent manifest with config" },
-                      { label: exportFormat === "typescript" ? "entrypoint.ts" : "entrypoint.py", desc: "Ralph Loop orchestration" },
-                      { label: exportFormat === "typescript" ? "tools/index.ts" : "tools/__init__.py", desc: "Tool adapter registry" },
-                      { label: exportFormat === "typescript" ? "package.json" : "requirements.txt", desc: "Dependencies" },
-                      { label: ".env.example", desc: "Environment variables" },
-                      { label: "Dockerfile", desc: "Container build for CI/CD" },
-                    ].map(f => (
+                    {currentFiles.map(f => (
                       <div key={f.label} className="flex items-center gap-2 p-2 rounded-md bg-muted/30" data-testid={`source-file-${f.label.replace(/[/.]/g, "-")}`}>
                         <FileCode className="w-3 h-3 text-muted-foreground shrink-0" />
                         <div className="flex flex-col min-w-0">
@@ -2905,7 +3010,8 @@ export default function AgentDetail() {
                 </CardContent>
               </Card>
             </div>
-          )}
+            );
+          })()}
 
           {exportStep === "preview" && (
             <div className="flex flex-col gap-3 flex-1 min-h-0">
@@ -2965,7 +3071,7 @@ export default function AgentDetail() {
             </Button>
             {exportStep === "configure" && (
               <Button
-                onClick={() => exportCodeMutation.mutate({ format: exportFormat, llmProvider: exportLlmProvider, maxIterations: exportMaxIterations, completionPromise: exportCompletionPromise })}
+                onClick={() => exportCodeMutation.mutate({ format: exportFormat, llmProvider: exportLlmProvider, maxIterations: exportMaxIterations, completionPromise: exportCompletionPromise, framework: exportFramework })}
                 disabled={exportCodeMutation.isPending}
                 data-testid="button-export-generate"
               >
