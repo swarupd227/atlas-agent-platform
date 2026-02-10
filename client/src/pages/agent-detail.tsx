@@ -45,6 +45,7 @@ import {
   Eye,
   Layers,
   FileText,
+  PenTool,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -1004,6 +1005,11 @@ export default function AgentDetail() {
 
         <TabsContent value="blueprint" className="mt-0 space-y-4">
           <div className="flex items-center gap-2 flex-wrap" data-testid="blueprint-action-bar">
+            <Link href={`/blueprints?agentId=${agent.id}`}>
+              <Button variant="default" size="sm" data-testid="button-edit-in-studio">
+                <PenTool className="w-3.5 h-3.5 mr-1.5" /> Edit in Blueprint Studio
+              </Button>
+            </Link>
             <Button variant="outline" size="sm" onClick={() => toast({ title: "Draft saved" })} data-testid="button-save-draft">
               <FileCode className="w-3.5 h-3.5 mr-1.5" /> Save as Draft
             </Button>

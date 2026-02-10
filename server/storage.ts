@@ -37,6 +37,8 @@ import {
   experiments,
   type Experiment, type InsertExperiment,
   type BillingDispute, type InsertBillingDispute,
+  blueprints,
+  type Blueprint, type InsertBlueprint,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -164,6 +166,12 @@ export interface IStorage {
   getExperimentsByAgent(agentId: string): Promise<Experiment[]>;
   createExperiment(experiment: InsertExperiment): Promise<Experiment>;
   updateExperiment(id: string, data: Partial<Experiment>): Promise<Experiment | undefined>;
+
+  getBlueprints(): Promise<Blueprint[]>;
+  getBlueprint(id: string): Promise<Blueprint | undefined>;
+  getBlueprintsByAgent(agentId: string): Promise<Blueprint[]>;
+  createBlueprint(blueprint: InsertBlueprint): Promise<Blueprint>;
+  updateBlueprint(id: string, data: Partial<Blueprint>): Promise<Blueprint | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -625,6 +633,29 @@ export class DatabaseStorage implements IStorage {
 
   async updateExperiment(id: string, data: Partial<Experiment>) {
     const [updated] = await db.update(experiments).set(data).where(eq(experiments.id, id)).returning();
+    return updated;
+  }
+
+  async getBlueprints() {
+    return db.select().from(blueprints);
+  }
+
+  async getBlueprint(id: string) {
+    const [blueprint] = await db.select().from(blueprints).where(eq(blueprints.id, id));
+    return blueprint;
+  }
+
+  async getBlueprintsByAgent(agentId: string) {
+    return db.select().from(blueprints).where(eq(blueprints.agentId, agentId));
+  }
+
+  async createBlueprint(blueprint: InsertBlueprint) {
+    const [created] = await db.insert(blueprints).values(blueprint).returning();
+    return created;
+  }
+
+  async updateBlueprint(id: string, data: Partial<Blueprint>) {
+    const [updated] = await db.update(blueprints).set(data).where(eq(blueprints.id, id)).returning();
     return updated;
   }
 }

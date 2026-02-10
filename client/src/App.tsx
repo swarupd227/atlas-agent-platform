@@ -40,6 +40,8 @@ import Integrations from "@/pages/integrations";
 import Admin from "@/pages/admin";
 import Optimization from "@/pages/optimization";
 import ApprovalDetail from "@/pages/approval-detail";
+import Blueprints from "@/pages/blueprints";
+import BlueprintDetail from "@/pages/blueprint-detail";
 
 function Router() {
   return (
@@ -53,6 +55,8 @@ function Router() {
       <Route path="/templates/:id" component={TemplateDetail} />
       <Route path="/agents/wizard" component={AgentWizard} />
       <Route path="/agents/:id" component={AgentDetail} />
+      <Route path="/blueprints" component={Blueprints} />
+      <Route path="/blueprints/:id" component={BlueprintDetail} />
       <Route path="/evals" component={Evals} />
       <Route path="/evals/:id" component={EvalDetail} />
       <Route path="/deployments" component={Deployments} />

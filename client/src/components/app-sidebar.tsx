@@ -16,6 +16,7 @@ import {
   Plug,
   ShieldCheck,
   RotateCcw,
+  PenTool,
 } from "lucide-react";
 import {
   Sidebar,
@@ -38,6 +39,7 @@ const platformNav = [
   { title: "Outcomes", url: "/outcomes", icon: Target },
   { title: "Agents", url: "/agents", icon: Bot },
   { title: "Templates", url: "/templates", icon: Library },
+  { title: "Blueprints", url: "/blueprints", icon: PenTool },
   { title: "Evals", url: "/evals", icon: FlaskConical },
   { title: "Deployments", url: "/deployments", icon: Rocket },
   { title: "Monitor", url: "/monitor", icon: Activity },

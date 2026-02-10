@@ -27,6 +27,7 @@ import {
   insertPatchSchema,
   insertExperimentSchema,
   insertBillingDisputeSchema,
+  insertBlueprintSchema,
 } from "@shared/schema";
 
 const openai = new OpenAI({
@@ -1845,6 +1846,216 @@ export async function registerRoutes(
     } catch (e) {
       handleZodError(res, e);
     }
+  });
+
+  // Blueprint Studio Routes
+  app.get("/api/blueprints", async (_req, res) => {
+    const blueprints = await storage.getBlueprints();
+    res.json(blueprints);
+  });
+
+  app.get("/api/blueprints/:id", async (req, res) => {
+    const blueprint = await storage.getBlueprint(req.params.id);
+    if (!blueprint) return res.status(404).json({ error: "Blueprint not found" });
+    res.json(blueprint);
+  });
+
+  app.post("/api/blueprints", async (req, res) => {
+    try {
+      const validated = insertBlueprintSchema.parse(req.body);
+      const blueprint = await storage.createBlueprint({ ...validated, version: 0 });
+      res.status(201).json(blueprint);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  app.patch("/api/blueprints/:id", async (req, res) => {
+    const allowedFields = ["name", "description", "agentId", "blueprintJson", "status"];
+    const sanitized: Record<string, any> = {};
+    for (const key of allowedFields) {
+      if (key in req.body) sanitized[key] = req.body[key];
+    }
+    if (sanitized.status && !["draft"].includes(sanitized.status)) {
+      return res.status(400).json({ error: "Can only set status to 'draft' via update" });
+    }
+    sanitized.status = "draft";
+    const updated = await storage.updateBlueprint(req.params.id, sanitized);
+    if (!updated) return res.status(404).json({ error: "Blueprint not found" });
+    res.json(updated);
+  });
+
+  app.post("/api/blueprints/:id/compile", async (req, res) => {
+    const blueprint = await storage.getBlueprint(req.params.id);
+    if (!blueprint) return res.status(404).json({ error: "Blueprint not found" });
+
+    const bpJson = blueprint.blueprintJson as any;
+    const warnings: Array<{ type: string; severity: string; message: string; nodeId?: string }> = [];
+    const errors: Array<{ type: string; severity: string; message: string; nodeId?: string }> = [];
+
+    if (!bpJson || !bpJson.nodes || !Array.isArray(bpJson.nodes) || bpJson.nodes.length === 0) {
+      errors.push({ type: "schema", severity: "error", message: "Blueprint must contain at least one node" });
+    } else {
+      for (const node of bpJson.nodes) {
+        if (!node.id) errors.push({ type: "schema", severity: "error", message: `Node missing required 'id' field`, nodeId: node.id });
+        if (!node.type) errors.push({ type: "schema", severity: "error", message: `Node '${node.id || 'unknown'}' missing required 'type' field`, nodeId: node.id });
+        if (!node.label) warnings.push({ type: "schema", severity: "warning", message: `Node '${node.id || 'unknown'}' missing 'label' field`, nodeId: node.id });
+
+        const validTypes = ["llm_call", "tool_call", "rag", "classifier", "router", "human_review", "schema_validate"];
+        if (node.type && !validTypes.includes(node.type)) {
+          errors.push({ type: "schema", severity: "error", message: `Node '${node.id}' has invalid type '${node.type}'`, nodeId: node.id });
+        }
+      }
+
+      const nodeIds = bpJson.nodes.map((n: any) => n.id).filter(Boolean);
+      const duplicates = nodeIds.filter((id: string, index: number) => nodeIds.indexOf(id) !== index);
+      if (duplicates.length > 0) {
+        errors.push({ type: "schema", severity: "error", message: `Duplicate node IDs: ${Array.from(new Set(duplicates)).join(", ")}` });
+      }
+
+      if (bpJson.edges && Array.isArray(bpJson.edges)) {
+        for (const edge of bpJson.edges) {
+          if (!nodeIds.includes(edge.from)) {
+            errors.push({ type: "schema", severity: "error", message: `Edge references non-existent source node '${edge.from}'` });
+          }
+          if (!nodeIds.includes(edge.to)) {
+            errors.push({ type: "schema", severity: "error", message: `Edge references non-existent target node '${edge.to}'` });
+          }
+        }
+      }
+
+      if (bpJson.edges && Array.isArray(bpJson.edges)) {
+        const connectedNodes = new Set<string>();
+        for (const edge of bpJson.edges) {
+          connectedNodes.add(edge.from);
+          connectedNodes.add(edge.to);
+        }
+        for (const node of bpJson.nodes) {
+          if (node.id && !connectedNodes.has(node.id) && bpJson.nodes.length > 1) {
+            warnings.push({ type: "schema", severity: "warning", message: `Node '${node.id}' is disconnected from the workflow`, nodeId: node.id });
+          }
+        }
+      } else if (bpJson.nodes.length > 1) {
+        warnings.push({ type: "schema", severity: "warning", message: "No edges defined — nodes are not connected" });
+      }
+    }
+
+    const toolNodes = (bpJson?.nodes || []).filter((n: any) => n.type === "tool_call");
+    if (toolNodes.length > 0 && blueprint.agentId) {
+      const policies = await storage.getPolicies();
+      const toolPolicies = policies.filter((p: any) => p.domain === "tool_permissions" && p.status === "active");
+      for (const toolNode of toolNodes) {
+        if (toolNode.toolName) {
+          for (const policy of toolPolicies) {
+            const rules = (policy as any).rules;
+            if (rules && Array.isArray(rules)) {
+              for (const rule of rules) {
+                if (rule.blockedTools && Array.isArray(rule.blockedTools) && rule.blockedTools.includes(toolNode.toolName)) {
+                  errors.push({ type: "tool_permission", severity: "error", message: `Tool '${toolNode.toolName}' in node '${toolNode.id}' is blocked by policy '${policy.name}'`, nodeId: toolNode.id });
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    const humanReviewNodes = (bpJson?.nodes || []).filter((n: any) => n.type === "human_review");
+    if (blueprint.agentId) {
+      const agent = await storage.getAgent(blueprint.agentId);
+      if (agent && (agent.riskTier === "HIGH" || agent.riskTier === "CRITICAL") && humanReviewNodes.length === 0) {
+        warnings.push({ type: "policy", severity: "warning", message: "High/Critical risk agents should include at least one human_review node" });
+      }
+    }
+
+    const llmNodes = (bpJson?.nodes || []).filter((n: any) => n.type === "llm_call");
+    if (llmNodes.length > 10) {
+      warnings.push({ type: "budget", severity: "warning", message: `Blueprint has ${llmNodes.length} LLM calls — consider consolidating to reduce costs` });
+    }
+
+    const validationResults = {
+      compiledAt: new Date().toISOString(),
+      passed: errors.length === 0,
+      errors,
+      warnings,
+      summary: {
+        totalNodes: bpJson?.nodes?.length || 0,
+        totalEdges: bpJson?.edges?.length || 0,
+        errorCount: errors.length,
+        warningCount: warnings.length,
+      }
+    };
+
+    const newStatus = errors.length === 0 ? "compiled" : "draft";
+    const updated = await storage.updateBlueprint(req.params.id, {
+      validationResults,
+      status: newStatus,
+    });
+
+    res.json({ ...updated, validationResults });
+  });
+
+  app.post("/api/blueprints/:id/sign", async (req, res) => {
+    const blueprint = await storage.getBlueprint(req.params.id);
+    if (!blueprint) return res.status(404).json({ error: "Blueprint not found" });
+
+    if (blueprint.status !== "compiled") {
+      return res.status(400).json({ error: "Blueprint must be compiled successfully before signing" });
+    }
+
+    const { signedBy } = req.body;
+
+    const newVersion = (blueprint.version || 0) + 1;
+    const historyEntry = {
+      version: newVersion,
+      signedBy: signedBy || "system",
+      signedAt: new Date().toISOString(),
+      blueprintJson: blueprint.blueprintJson,
+      validationResults: blueprint.validationResults,
+    };
+    const existingHistory = Array.isArray(blueprint.versionHistory) ? blueprint.versionHistory : [];
+    const versionHistory = [...(existingHistory as any[]), historyEntry];
+
+    const updated = await storage.updateBlueprint(req.params.id, {
+      status: "signed",
+      version: newVersion,
+      versionHistory,
+      signedBy: signedBy || "system",
+      signedAt: new Date(),
+    });
+
+    if (blueprint.agentId) {
+      const agent = await storage.getAgent(blueprint.agentId);
+      if (agent && (agent.riskTier === "HIGH" || agent.riskTier === "CRITICAL")) {
+        await storage.createApproval({
+          type: "blueprint_review",
+          objectType: "blueprint",
+          objectId: blueprint.id,
+          objectName: blueprint.name,
+          status: "pending",
+          requestedBy: signedBy || "system",
+          description: `Blueprint signing review for "${blueprint.name}" (v${newVersion})`,
+          evidenceJson: {
+            blueprintName: blueprint.name,
+            agentName: agent.name,
+            riskTier: agent.riskTier,
+            version: newVersion,
+            validationResults: blueprint.validationResults,
+          },
+        });
+      }
+    }
+
+    await storage.createAuditEvent({
+      actorType: "user",
+      actorId: signedBy || "system",
+      action: "blueprint_signed",
+      objectType: "blueprint",
+      objectId: blueprint.id,
+      details: JSON.stringify({ version: newVersion, agentId: blueprint.agentId }),
+    });
+
+    res.json(updated);
   });
 
   // AI Template Matching

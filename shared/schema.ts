@@ -554,4 +554,25 @@ export const insertExperimentSchema = createInsertSchema(experiments).omit({ id:
 export type InsertExperiment = z.infer<typeof insertExperimentSchema>;
 export type Experiment = typeof experiments.$inferSelect;
 
+export const blueprints = pgTable("blueprints", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  description: text("description"),
+  agentId: varchar("agent_id"),
+  status: text("status").notNull().default("draft"),
+  blueprintJson: jsonb("blueprint_json"),
+  validationResults: jsonb("validation_results"),
+  version: integer("version").notNull().default(0),
+  versionHistory: jsonb("version_history"),
+  signedBy: text("signed_by"),
+  signedAt: timestamp("signed_at"),
+  lastEvalAt: timestamp("last_eval_at"),
+  lastDeployAt: timestamp("last_deploy_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertBlueprintSchema = createInsertSchema(blueprints).omit({ id: true, createdAt: true });
+export type InsertBlueprint = z.infer<typeof insertBlueprintSchema>;
+export type Blueprint = typeof blueprints.$inferSelect;
+
 export * from "./models/chat";

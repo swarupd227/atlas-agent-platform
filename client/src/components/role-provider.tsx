@@ -37,7 +37,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "AD",
     description: "Full platform access, user management, system configuration",
     icon: ShieldCheck,
-    allowedRoutes: ["/", "/outcomes", "/outcomes/discover", "/agents", "/templates", "/evals", "/deployments", "/monitor", "/governance", "/approvals", "/billing", "/improvements", "/improvement-loop", "/integrations", "/admin"],
+    allowedRoutes: ["/", "/outcomes", "/outcomes/discover", "/agents", "/templates", "/blueprints", "/evals", "/deployments", "/monitor", "/governance", "/approvals", "/billing", "/improvements", "/improvement-loop", "/integrations", "/admin"],
   },
   {
     id: "outcome_owner",
@@ -55,7 +55,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "AE",
     description: "Designs blueprints, tools, memory, eval suites",
     icon: Bot,
-    allowedRoutes: ["/", "/agents", "/templates", "/evals", "/improvements", "/improvement-loop", "/outcomes/discover", "/integrations", "/deployments"],
+    allowedRoutes: ["/", "/agents", "/templates", "/blueprints", "/evals", "/improvements", "/improvement-loop", "/outcomes/discover", "/integrations", "/deployments"],
   },
   {
     id: "ops_sre",
