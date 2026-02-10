@@ -38,6 +38,7 @@ import OutcomeDiscover from "@/pages/outcome-discover";
 import Integrations from "@/pages/integrations";
 import Admin from "@/pages/admin";
 import Optimization from "@/pages/optimization";
+import ApprovalDetail from "@/pages/approval-detail";
 
 function Router() {
   return (
@@ -59,6 +60,7 @@ function Router() {
       <Route path="/monitor" component={Monitor} />
       <Route path="/governance" component={Governance} />
       <Route path="/approvals" component={Approvals} />
+      <Route path="/approvals/:id" component={ApprovalDetail} />
       <Route path="/improvements" component={Improvements} />
       <Route path="/improvement-loop" component={ImprovementLoop} />
       <Route path="/optimization" component={Optimization} />

@@ -1579,7 +1579,12 @@ export async function seedDatabase() {
   // Approvals
   await db.insert(approvals).values([
     {
-      type: "deployment", objectType: "agent", objectName: "Support Triage Agent v2.4.0", riskScore: 7.5, status: "pending", requestedBy: "CI Pipeline", description: "New version with improved RAG retrieval and updated prompt templates",
+      type: "deployment", objectType: "agent", objectName: "Support Triage Agent v2.4.0", riskScore: 7.5, status: "pending", requestedBy: "CI Pipeline", requesterType: "system",
+      description: "New version with improved RAG retrieval and updated prompt templates",
+      agentId: agent1.id, outcomeId: outcome1.id, environment: "production", changeType: "blueprint_change", toolPermissionClass: "STANDARD",
+      dueDate: new Date(Date.now() + 12 * 60 * 60 * 1000), escalationLevel: 0,
+      diffSummary: "Changed retrieval strategy from keyword to semantic_hybrid, updated prompt template v3 to v4, increased chunk count 5 to 8",
+      recommendedAction: "approve_with_conditions",
       evidenceJson: {
         configDiff: {
           changes: [
@@ -1599,10 +1604,36 @@ export async function seedDatabase() {
           downstreamAgents: 2,
           rollbackTimeEstimate: "< 5 min",
         },
+        evalResults: [
+          { name: "Core Regression Suite", passRate: 94, totalCases: 120, beforePassRate: 91 },
+          { name: "Safety & Compliance", passRate: 98, totalCases: 45, beforePassRate: 97 },
+        ],
+        shadowReplayResults: {
+          divergenceCount: 7,
+          totalReplayed: 200,
+          divergenceRate: 0.035,
+          samples: [
+            { input: "How do I reset my password?", oldOutput: "Please visit settings...", newOutput: "Navigate to Account > Security > Reset Password", divergenceType: "improved_response" },
+            { input: "Billing question about invoice", oldOutput: "I can help with that...", newOutput: "Let me look up your invoice details...", divergenceType: "minor_difference" },
+          ],
+        },
+        policyDeltas: ["No PII in Response", "Mandatory Citation"],
+        blueprintSummary: {
+          modelProvider: "anthropic", modelName: "claude-3.5-sonnet", toolCount: 4,
+          tools: ["search_kb", "create_ticket", "route_to_human", "check_sla"],
+          workflowNodeCount: 6,
+          workflowNodes: [{ type: "classify", label: "Classify Intent" }, { type: "retrieve", label: "Search KB" }, { type: "generate", label: "Draft Response" }],
+          hasMemoryRag: true, evalTestCaseCount: 165,
+        },
       },
     },
     {
-      type: "tool_permission", objectType: "agent", objectName: "Invoice Extractor - Salesforce Write", riskScore: 8.2, status: "pending", requestedBy: "Finance Ops", description: "Grant write access to Salesforce for automated invoice record creation",
+      type: "tool_permission", objectType: "agent", objectName: "Invoice Extractor - Salesforce Write", riskScore: 8.2, status: "pending", requestedBy: "Finance Ops", requesterType: "human",
+      description: "Grant write access to Salesforce for automated invoice record creation",
+      agentId: agent3.id, outcomeId: outcome2.id, environment: "production", changeType: "tool_change", toolPermissionClass: "CRITICAL",
+      dueDate: new Date(Date.now() + 4 * 60 * 60 * 1000), escalationLevel: 1,
+      diffSummary: "Granting Salesforce write permissions (create_record, update_record) with 50/min rate limit",
+      recommendedAction: "approve_with_conditions",
       evidenceJson: {
         configDiff: {
           changes: [
@@ -1621,10 +1652,18 @@ export async function seedDatabase() {
           downstreamAgents: 1,
           rollbackTimeEstimate: "< 2 min",
         },
+        evalResults: [
+          { name: "Extraction Accuracy Suite", passRate: 96, totalCases: 80, beforePassRate: 95 },
+        ],
       },
     },
     {
-      type: "policy_exception", objectType: "policy", objectName: "PII Policy Exception - Support Agent", riskScore: 6.0, status: "pending", requestedBy: "Support Engineering", description: "Temporary exception to include customer name in personalized responses",
+      type: "policy_exception", objectType: "policy", objectName: "PII Policy Exception - Support Agent", riskScore: 6.0, status: "pending", requestedBy: "Support Engineering", requesterType: "human",
+      description: "Temporary exception to include customer name in personalized responses",
+      agentId: agent1.id, outcomeId: outcome1.id, environment: "production", changeType: "policy_change", toolPermissionClass: "STANDARD",
+      dueDate: new Date(Date.now() + 48 * 60 * 60 * 1000), escalationLevel: 0,
+      diffSummary: "PII redaction exception for firstName field in personalized responses, 30-day expiry",
+      recommendedAction: "request_changes",
       evidenceJson: {
         configDiff: {
           changes: [
@@ -1643,10 +1682,15 @@ export async function seedDatabase() {
           downstreamAgents: 0,
           rollbackTimeEstimate: "< 1 min",
         },
+        policyDeltas: ["No PII in Response"],
       },
     },
     {
-      type: "deployment", objectType: "agent", objectName: "Content Moderator v4.1.0", riskScore: 5.0, status: "approved", requestedBy: "Trust & Safety", decidedBy: "Expert Validator", description: "Updated classification model with improved multi-language support", decidedAt: new Date(Date.now() - 86400000),
+      type: "deployment", objectType: "agent", objectName: "Content Moderator v4.1.0", riskScore: 5.0, status: "approved", requestedBy: "Trust & Safety", requesterType: "human",
+      decidedBy: "Expert Validator", description: "Updated classification model with improved multi-language support", decidedAt: new Date(Date.now() - 86400000),
+      agentId: agent5.id, environment: "staging", changeType: "model_change", toolPermissionClass: "RESTRICTED",
+      diffSummary: "Classification model upgrade v3 to v4 multilang, expanded from 12 to 28 languages",
+      recommendedAction: "approve",
       evidenceJson: {
         configDiff: {
           changes: [
@@ -1668,7 +1712,11 @@ export async function seedDatabase() {
       },
     },
     {
-      type: "model_upgrade", objectType: "agent", objectName: "Lead Scorer - Claude 3.5 Upgrade", riskScore: 4.5, status: "approved", requestedBy: "Revenue Ops", decidedBy: "Expert Validator", description: "Upgrade from Claude 3 to Claude 3.5 Sonnet for better scoring accuracy", decidedAt: new Date(Date.now() - 172800000),
+      type: "model_upgrade", objectType: "agent", objectName: "Lead Scorer - Claude 3.5 Upgrade", riskScore: 4.5, status: "approved", requestedBy: "Revenue Ops", requesterType: "human",
+      decidedBy: "Expert Validator", description: "Upgrade from Claude 3 to Claude 3.5 Sonnet for better scoring accuracy", decidedAt: new Date(Date.now() - 172800000),
+      agentId: agent4.id, outcomeId: outcome2.id, environment: "pilot", changeType: "model_change", toolPermissionClass: "STANDARD",
+      diffSummary: "Model upgrade claude-3-sonnet to claude-3.5-sonnet with updated scoring rubric v3",
+      recommendedAction: "approve",
       evidenceJson: {
         configDiff: {
           changes: [
@@ -1687,6 +1735,49 @@ export async function seedDatabase() {
           environment: "prod",
           downstreamAgents: 1,
           rollbackTimeEstimate: "< 5 min",
+        },
+      },
+    },
+    {
+      type: "patch_approval", objectType: "agent", objectName: "Support Triage Agent - Prompt Optimization", riskScore: 3.5, status: "pending", requestedBy: "Auto-Optimization Engine", requesterType: "system",
+      description: "AI-proposed prompt tweak to improve response quality based on drift analysis",
+      agentId: agent1.id, outcomeId: outcome1.id, environment: "staging", changeType: "prompt_change", toolPermissionClass: "OPEN",
+      dueDate: new Date(Date.now() + 72 * 60 * 60 * 1000), escalationLevel: 0,
+      diffSummary: "System prompt updated with latest product catalog entries and dynamic context injection",
+      recommendedAction: "approve",
+      evidenceJson: {
+        evalResults: [
+          { name: "Core Regression Suite", passRate: 97, totalCases: 120, beforePassRate: 94 },
+          { name: "Edge Cases & Adversarial", passRate: 88, totalCases: 32, beforePassRate: 85 },
+        ],
+        shadowReplayResults: {
+          divergenceCount: 3,
+          totalReplayed: 150,
+          divergenceRate: 0.02,
+          samples: [
+            { input: "Product inquiry about new features", oldOutput: "Our product includes...", newOutput: "Our latest product (v5.2) includes the following new features...", divergenceType: "improved_response" },
+          ],
+        },
+      },
+    },
+    {
+      type: "deployment", objectType: "agent", objectName: "KB Sync Agent - Production Promotion", riskScore: 9.0, status: "pending", requestedBy: "System (Auto-Promotion)", requesterType: "system",
+      description: "Auto-promotion to production after staging readiness checks passed",
+      agentId: agent6.id, environment: "production", changeType: "deployment_promotion", toolPermissionClass: "RESTRICTED",
+      dueDate: new Date(Date.now() - 2 * 60 * 60 * 1000), escalationLevel: 2,
+      diffSummary: "Promoting KB Sync Agent v2.1.0 from staging to production after 72h canary period",
+      recommendedAction: "approve_with_conditions",
+      evidenceJson: {
+        evalResults: [
+          { name: "Sync Accuracy", passRate: 99, totalCases: 200, beforePassRate: 98 },
+        ],
+        blastRadius: {
+          affectedUsers: 25000,
+          affectedRunsPerDay: 500,
+          revenueExposure: "$32,000/mo",
+          environment: "prod",
+          downstreamAgents: 4,
+          rollbackTimeEstimate: "< 10 min",
         },
       },
     },

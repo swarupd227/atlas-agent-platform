@@ -1016,6 +1016,36 @@ export async function registerRoutes(
     res.json(approvals);
   });
 
+  app.get("/api/approvals/:id", async (req, res) => {
+    const approval = await storage.getApproval(req.params.id as string);
+    if (!approval) return res.status(404).json({ message: "Approval not found" });
+
+    const agents = await storage.getAgents();
+    const outcomes = await storage.getOutcomes();
+    const evalSuites = await storage.getEvalSuites();
+    const policies = await storage.getPolicies();
+    const auditEvents = await storage.getAuditEvents();
+
+    const agent = approval.agentId ? agents.find(a => a.id === approval.agentId) : agents.find(a => a.id === approval.objectId);
+    const outcome = approval.outcomeId ? outcomes.find(o => o.id === approval.outcomeId) : null;
+    const agentSuites = agent ? evalSuites.filter(s => s.agentId === agent.id) : [];
+    const relatedAudit = auditEvents.filter(e => e.objectId === approval.id || e.objectId === approval.objectId).slice(0, 20);
+    const effectivePolicies = policies.filter(p => {
+      if (!agent) return false;
+      const scope = (p as any).scope;
+      return scope === "global" || scope === agent.riskTier?.toLowerCase();
+    });
+
+    res.json({
+      ...approval,
+      agent,
+      outcome,
+      evalSuites: agentSuites,
+      effectivePolicies: effectivePolicies,
+      auditTrail: relatedAudit,
+    });
+  });
+
   app.post("/api/approvals", checkPermission("approve_changes"), async (req, res) => {
     try {
       const data = insertApprovalSchema.parse(req.body);
@@ -1026,13 +1056,78 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/approvals/:id", async (req, res) => {
-    const updated = await storage.updateApproval(req.params.id, {
-      ...req.body,
-      decidedAt: new Date(),
+  app.patch("/api/approvals/:id", checkPermission("approve_changes"), async (req, res) => {
+    const approval = await storage.getApproval(req.params.id as string);
+    if (!approval) return res.status(404).json({ message: "Approval not found" });
+
+    const { status, decidedBy, constraintsJson, followUpTask } = req.body;
+    const updateData: any = { decidedAt: new Date() };
+    if (status) updateData.status = status;
+    if (decidedBy) updateData.decidedBy = decidedBy;
+    if (constraintsJson) updateData.constraintsJson = constraintsJson;
+
+    if (status === "rejected" && followUpTask) {
+      const followUp = await storage.createApproval({
+        type: "follow_up_task",
+        objectType: approval.objectType,
+        objectId: approval.objectId,
+        objectName: `Follow-up: ${approval.objectName || approval.type}`,
+        status: "pending",
+        requestedBy: decidedBy || "Expert Validator",
+        description: followUpTask.description || `Follow-up from rejected ${approval.type}`,
+        riskScore: approval.riskScore,
+        agentId: approval.agentId,
+        outcomeId: approval.outcomeId,
+        environment: approval.environment,
+        evidenceJson: { parentApprovalId: approval.id, reason: followUpTask.reason },
+      });
+      updateData.followUpTaskId = followUp.id;
+    }
+
+    const updated = await storage.updateApproval(req.params.id as string, updateData);
+
+    const allEvents = await storage.getAuditEvents();
+    const prevHash = allEvents.length > 0 ? allEvents[allEvents.length - 1] : null;
+    await storage.createAuditEvent({
+      actorType: "expert_validator",
+      actorId: decidedBy || "system",
+      action: `approval_${status || "updated"}`,
+      objectType: "approval",
+      objectId: approval.id,
+      details: `Approval "${approval.objectName || approval.type}" ${status || "updated"} by ${decidedBy || "system"}${constraintsJson ? " with constraints" : ""}`,
+      sequenceNum: allEvents.length + 1,
+      previousHash: prevHash?.eventHash || null,
+      eventHash: `sha256:${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`,
     });
-    if (!updated) return res.status(404).json({ message: "Not found" });
+
     res.json(updated);
+  });
+
+  app.get("/api/approvals/:id/requirements", async (req, res) => {
+    const approval = await storage.getApproval(req.params.id as string);
+    if (!approval) return res.status(404).json({ message: "Not found" });
+
+    const requirements: Array<{ rule: string; met: boolean; detail: string }> = [];
+
+    const riskScore = approval.riskScore || 0;
+    if (riskScore > 7) {
+      requirements.push({ rule: "High-risk outcome tier", met: false, detail: "Requires senior expert approval for risk score > 7" });
+    }
+    if (approval.toolPermissionClass === "CRITICAL" || approval.toolPermissionClass === "RESTRICTED") {
+      requirements.push({ rule: "Restricted tool access", met: false, detail: `Tool permission class "${approval.toolPermissionClass}" requires security review` });
+    }
+    if (approval.environment === "production" || approval.environment === "pilot") {
+      requirements.push({ rule: "Production/pilot environment", met: false, detail: `Changes to ${approval.environment} require additional validation` });
+    }
+    const highRiskChangeTypes = ["model_change", "tool_change", "policy_change"];
+    if (approval.changeType && highRiskChangeTypes.includes(approval.changeType)) {
+      requirements.push({ rule: "High-risk change type", met: false, detail: `${approval.changeType.replace(/_/g, " ")} changes require expert review` });
+    }
+    if (requirements.length === 0) {
+      requirements.push({ rule: "Standard review", met: true, detail: "Standard approval process applies" });
+    }
+
+    res.json({ approvalId: approval.id, requirements });
   });
 
   app.get("/api/audit-events", async (_req, res) => {

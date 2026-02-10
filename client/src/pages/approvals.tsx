@@ -19,6 +19,11 @@ import {
   Target,
   ArrowRight,
   Rocket,
+  Filter,
+  X,
+  CalendarClock,
+  User,
+  Bot,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -26,6 +31,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { StatCard } from "@/components/stat-card";
 import { StatusBadge } from "@/components/status-badge";
 import { PermissionGate, usePermission } from "@/components/role-provider";
@@ -34,10 +40,15 @@ import { BlastRadius } from "@/components/blast-radius";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Link } from "wouter";
-import type { Approval, EvalSuite, EvalRun } from "@shared/schema";
+import type { Approval, EvalSuite, EvalRun, Agent, OutcomeContract } from "@shared/schema";
 
 export default function Approvals() {
   const [search, setSearch] = useState("");
+  const [riskTierFilter, setRiskTierFilter] = useState<string>("all");
+  const [outcomeFilter, setOutcomeFilter] = useState<string>("all");
+  const [agentFilter, setAgentFilter] = useState<string>("all");
+  const [requesterFilter, setRequesterFilter] = useState<string>("all");
+  const [dueDateFilter, setDueDateFilter] = useState<string>("all");
   const { toast } = useToast();
   const approvalPerm = usePermission("approve_changes");
 
@@ -49,6 +60,12 @@ export default function Approvals() {
 
   const { data: evalSuites } = useQuery<EvalSuite[]>({
     queryKey: ["/api/evals"],
+  });
+  const { data: agents } = useQuery<Agent[]>({
+    queryKey: ["/api/agents"],
+  });
+  const { data: outcomes } = useQuery<OutcomeContract[]>({
+    queryKey: ["/api/outcomes"],
   });
   const { data: driftSignals } = useQuery<Array<{
     id: string;
@@ -525,9 +542,52 @@ export default function Approvals() {
     );
   };
 
-  const filtered = approvals?.filter((a) =>
-    (a.objectName || a.type || "").toLowerCase().includes(search.toLowerCase())
-  );
+  const hasActiveFilters = riskTierFilter !== "all" || outcomeFilter !== "all" || agentFilter !== "all" || requesterFilter !== "all" || dueDateFilter !== "all";
+
+  const clearAllFilters = () => {
+    setRiskTierFilter("all");
+    setOutcomeFilter("all");
+    setAgentFilter("all");
+    setRequesterFilter("all");
+    setDueDateFilter("all");
+    setSearch("");
+  };
+
+  const filtered = approvals?.filter((a) => {
+    if (search && !(a.objectName || a.type || "").toLowerCase().includes(search.toLowerCase())) return false;
+
+    if (riskTierFilter !== "all") {
+      const riskLevel = (a.riskScore || 0) > 7 ? "high" : (a.riskScore || 0) > 4 ? "medium" : "low";
+      if (riskLevel !== riskTierFilter) return false;
+    }
+
+    if (outcomeFilter !== "all") {
+      if (a.outcomeId !== outcomeFilter && a.objectId !== outcomeFilter) return false;
+    }
+
+    if (agentFilter !== "all") {
+      if (a.agentId !== agentFilter && a.objectId !== agentFilter) return false;
+    }
+
+    if (requesterFilter !== "all") {
+      const isAuto = (a.requesterType === "system" || a.requesterType === "auto" || (a.requestedBy || "").toLowerCase().includes("system") || (a.requestedBy || "").toLowerCase().includes("auto"));
+      if (requesterFilter === "human" && isAuto) return false;
+      if (requesterFilter === "auto" && !isAuto) return false;
+    }
+
+    if (dueDateFilter !== "all" && a.dueDate) {
+      const now = new Date();
+      const due = new Date(a.dueDate);
+      const hoursLeft = (due.getTime() - now.getTime()) / (1000 * 60 * 60);
+      if (dueDateFilter === "overdue" && hoursLeft > 0) return false;
+      if (dueDateFilter === "due_soon" && (hoursLeft <= 0 || hoursLeft > 24)) return false;
+      if (dueDateFilter === "on_track" && hoursLeft <= 24) return false;
+    } else if (dueDateFilter !== "all" && !a.dueDate) {
+      if (dueDateFilter === "overdue" || dueDateFilter === "due_soon") return false;
+    }
+
+    return true;
+  });
 
   if (isLoading) {
     return (
@@ -567,15 +627,82 @@ export default function Approvals() {
         <StatCard title="Rejected" value={rejected} icon={XCircle} variant="danger" testId="stat-rejected" />
       </div>
 
-      <div className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <Input
-          placeholder="Search approvals..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="pl-9"
-          data-testid="input-search-approvals"
-        />
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Filter className="w-4 h-4 text-muted-foreground shrink-0" />
+          <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Filters</span>
+          {hasActiveFilters && (
+            <Button variant="ghost" size="sm" onClick={clearAllFilters} data-testid="button-clear-filters">
+              <X className="w-3 h-3 mr-1" /> Clear all
+            </Button>
+          )}
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="relative w-48">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+            <Input
+              placeholder="Search..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-9"
+              data-testid="input-search-approvals"
+            />
+          </div>
+          <Select value={riskTierFilter} onValueChange={setRiskTierFilter}>
+            <SelectTrigger className="w-36" data-testid="select-risk-tier">
+              <SelectValue placeholder="Risk Tier" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Risk Tiers</SelectItem>
+              <SelectItem value="high">High Risk</SelectItem>
+              <SelectItem value="medium">Medium Risk</SelectItem>
+              <SelectItem value="low">Low Risk</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={outcomeFilter} onValueChange={setOutcomeFilter}>
+            <SelectTrigger className="w-44" data-testid="select-outcome">
+              <SelectValue placeholder="Outcome" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Outcomes</SelectItem>
+              {outcomes?.map((o) => (
+                <SelectItem key={o.id} value={o.id}>{o.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={agentFilter} onValueChange={setAgentFilter}>
+            <SelectTrigger className="w-44" data-testid="select-agent">
+              <SelectValue placeholder="Agent" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Agents</SelectItem>
+              {agents?.map((a) => (
+                <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={requesterFilter} onValueChange={setRequesterFilter}>
+            <SelectTrigger className="w-40" data-testid="select-requester">
+              <SelectValue placeholder="Requester" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Requesters</SelectItem>
+              <SelectItem value="human">Human</SelectItem>
+              <SelectItem value="auto">Automated</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={dueDateFilter} onValueChange={setDueDateFilter}>
+            <SelectTrigger className="w-36" data-testid="select-due-date">
+              <SelectValue placeholder="Due Date" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Due Dates</SelectItem>
+              <SelectItem value="overdue">Overdue</SelectItem>
+              <SelectItem value="due_soon">Due Soon (24h)</SelectItem>
+              <SelectItem value="on_track">On Track</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       <Tabs defaultValue="pending" className="flex flex-col gap-4">
@@ -607,15 +734,49 @@ export default function Approvals() {
                       </div>
                       <div className="flex flex-col min-w-0">
                         <span className="text-sm font-semibold truncate">{approval.objectName || approval.type}</span>
-                        <span className="text-xs text-muted-foreground">
-                          {approval.type === "outcome_certification" ? "Outcome Certification" : approval.type === "outcome_review" ? "Outcome Review" : approval.type === "launch_readiness" ? "Launch Readiness" : approval.type.replace(/_/g, " ")} | {approval.objectType} | Risk: {approval.riskScore}/10
-                        </span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-xs text-muted-foreground">
+                            {approval.type === "outcome_certification" ? "Outcome Certification" : approval.type === "outcome_review" ? "Outcome Review" : approval.type === "launch_readiness" ? "Launch Readiness" : approval.type.replace(/_/g, " ")} | Risk: {approval.riskScore}/10
+                          </span>
+                          {approval.requesterType === "system" || approval.requesterType === "auto" ? (
+                            <Badge variant="outline" className="text-[9px]"><Bot className="w-2.5 h-2.5 mr-0.5" />Auto</Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-[9px]"><User className="w-2.5 h-2.5 mr-0.5" />Human</Badge>
+                          )}
+                          {approval.environment && (
+                            <Badge variant="outline" className="text-[9px]">{approval.environment}</Badge>
+                          )}
+                        </div>
                       </div>
                     </div>
-                    <StatusBadge status={approval.status} />
+                    <div className="flex items-center gap-2 shrink-0">
+                      {approval.dueDate && (() => {
+                        const hoursLeft = (new Date(approval.dueDate).getTime() - Date.now()) / (1000 * 60 * 60);
+                        return (
+                          <Badge variant="outline" className={`text-[9px] ${hoursLeft <= 0 ? "text-red-600 dark:text-red-400 border-red-500/30" : hoursLeft <= 24 ? "text-amber-600 dark:text-amber-400 border-amber-500/30" : "text-muted-foreground"}`} data-testid={`badge-sla-${approval.id}`}>
+                            <CalendarClock className="w-2.5 h-2.5 mr-0.5" />
+                            {hoursLeft <= 0 ? "Overdue" : hoursLeft <= 24 ? `${Math.round(hoursLeft)}h left` : `${Math.round(hoursLeft / 24)}d left`}
+                          </Badge>
+                        );
+                      })()}
+                      <StatusBadge status={approval.status} />
+                    </div>
                   </div>
+                  {approval.diffSummary && (
+                    <div className="flex items-start gap-2 p-2 rounded-md bg-muted/30">
+                      <FileText className="w-3 h-3 text-muted-foreground mt-0.5 shrink-0" />
+                      <span className="text-[11px] text-muted-foreground">{approval.diffSummary}</span>
+                    </div>
+                  )}
                   {approval.description && (
                     <p className="text-xs text-muted-foreground">{approval.description}</p>
+                  )}
+                  {approval.recommendedAction && (
+                    <div className="flex items-center gap-2">
+                      <Badge variant="secondary" className="text-[10px]" data-testid={`badge-recommended-${approval.id}`}>
+                        Recommended: {approval.recommendedAction.replace(/_/g, " ")}
+                      </Badge>
+                    </div>
                   )}
                   <div className="flex items-center gap-2 pt-2 border-t flex-wrap">
                     <span className="text-[11px] text-muted-foreground">Requested by {approval.requestedBy || "System"}</span>
@@ -654,6 +815,11 @@ export default function Approvals() {
                         <Badge variant="secondary" className="text-[10px] ml-1">{approvalPerm.permission.annotation}</Badge>
                       )}
                     </Button>
+                    <Link href={`/approvals/${approval.id}`}>
+                      <Button size="sm" variant="outline" data-testid={`button-view-details-${approval.id}`}>
+                        <Eye className="w-3.5 h-3.5 mr-1" /> View Details
+                      </Button>
+                    </Link>
                     {approval.type === "outcome_review" && approval.objectId && (
                       <Link href={`/outcomes/${approval.objectId}`}>
                         <Button size="sm" variant="outline" data-testid={`button-view-outcome-${approval.id}`}>

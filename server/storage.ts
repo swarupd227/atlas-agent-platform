@@ -75,6 +75,7 @@ export interface IStorage {
   createPolicy(policy: InsertPolicy): Promise<Policy>;
 
   getApprovals(): Promise<Approval[]>;
+  getApproval(id: string): Promise<Approval | undefined>;
   createApproval(approval: InsertApproval): Promise<Approval>;
   updateApproval(id: string, data: Partial<Approval>): Promise<Approval | undefined>;
 
@@ -286,6 +287,11 @@ export class DatabaseStorage implements IStorage {
 
   async getApprovals() {
     return db.select().from(approvals);
+  }
+
+  async getApproval(id: string) {
+    const [approval] = await db.select().from(approvals).where(eq(approvals.id, id));
+    return approval;
   }
 
   async createApproval(approval: InsertApproval) {
