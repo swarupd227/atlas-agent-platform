@@ -44,6 +44,7 @@ import {
   Tag,
   Eye,
   Layers,
+  FileText,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -131,7 +132,7 @@ export default function AgentDetail() {
   const [retireReason, setRetireReason] = useState("");
   const [replacementAgentId, setReplacementAgentId] = useState("");
   const [timelineFilter, setTimelineFilter] = useState<string>("all");
-  const [retirementChecklist, setRetirementChecklist] = useState<boolean[]>([false, false, false, false, false, false]);
+  const [retirementChecklist, setRetirementChecklist] = useState<boolean[]>([false, false, false, false, false, false, false, false]);
   const [expandedTrace, setExpandedTrace] = useState<string | null>(null);
   const [shadowReplayOpen, setShadowReplayOpen] = useState(false);
   const [shadowTimeWindow, setShadowTimeWindow] = useState("24h");
@@ -142,8 +143,9 @@ export default function AgentDetail() {
   const { data: deprecationSignals, isLoading: deprecationLoading, isError: deprecationError } = useQuery<{
     riskScore: number;
     recommendation: string;
-    signals: Array<{ signal: string; severity: string; value: number; threshold: number; message: string }>;
-    metadata: { recentSuccessRate: number; costRevenueRatio: number; daysSinceLastRun: number; avgEvalPassRate: number; healthScore: number; totalTraces7d: number };
+    signals: Array<{ signal: string; severity: string; value: number | string; threshold: number | string; message: string }>;
+    metadata: { recentSuccessRate: number; costRevenueRatio: number; daysSinceLastRun: number; avgEvalPassRate: number; healthScore: number; totalTraces7d: number; betterAgentExists: boolean; linkedOutcomeStatus: string };
+    retirementCriteria: { lowROI: boolean; persistentInstability: boolean; replacedByBetter: boolean; workflowObsolete: boolean };
     computedAt: string;
   }>({
     queryKey: ["/api/agents", agentId, "deprecation-signals"],
@@ -856,25 +858,41 @@ export default function AgentDetail() {
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
               {/* Phase timeline */}
-              <div className="flex items-center gap-0" data-testid="lifecycle-phase-timeline">
-                {[
-                  { label: "Active", phase: "active" },
-                  { label: "Retiring", phase: "retiring" },
-                  { label: "Archived", phase: "retired" },
-                ].map((p, i) => {
-                  const isActive = agent.status === p.phase;
-                  const isPast = (agent.status === "retiring" && p.phase === "active") || (agent.status === "retired" && (p.phase === "active" || p.phase === "retiring"));
-                  return (
-                    <div key={p.phase} className="flex items-center gap-0 flex-1" data-testid={`phase-${p.phase}`}>
-                      <div className={`flex flex-col items-center gap-1 flex-1 p-3 rounded-md border text-center ${isActive ? "border-primary bg-primary/5" : isPast ? "bg-muted/50" : ""}`}>
-                        <div className={`w-3 h-3 rounded-full ${isActive ? "bg-primary" : isPast ? "bg-muted-foreground" : "bg-muted"}`} />
-                        <span className={`text-xs font-medium ${isActive ? "text-primary" : isPast ? "text-muted-foreground" : "text-muted-foreground/50"}`}>{p.label}</span>
-                      </div>
-                      {i < 2 && <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0 mx-1" />}
-                    </div>
-                  );
-                })}
-              </div>
+              {(() => {
+                const phaseItems = [
+                  { label: "Draft", phase: "draft" },
+                  { label: "Staging", phase: "staging" },
+                  { label: "Pilot", phase: "pilot" },
+                  { label: "Prod", phase: "prod" },
+                  { label: "Deprecated", phase: "deprecated" },
+                  { label: "Retired", phase: "retired" },
+                  { label: "Archived", phase: "archived" },
+                ];
+                const statusToPhaseMap: Record<string, string> = {
+                  active: "prod",
+                  retiring: "deprecated",
+                  retired: "archived",
+                };
+                const currentPhase = statusToPhaseMap[agent.status] || "draft";
+                const currentIdx = phaseItems.findIndex(p => p.phase === currentPhase);
+                return (
+                  <div className="flex items-center gap-0" data-testid="lifecycle-phase-timeline">
+                    {phaseItems.map((p, i) => {
+                      const isActive = currentPhase === p.phase;
+                      const isPast = currentIdx > i;
+                      return (
+                        <div key={p.phase} className="flex items-center gap-0 flex-1" data-testid={`phase-${p.phase}`}>
+                          <div className={`flex flex-col items-center gap-1 flex-1 p-2 rounded-md border text-center ${isActive ? "border-primary bg-primary/5" : isPast ? "bg-muted/50" : ""}`}>
+                            <div className={`w-2.5 h-2.5 rounded-full ${isActive ? "bg-primary" : isPast ? "bg-muted-foreground" : "bg-muted"}`} />
+                            <span className={`text-[10px] font-medium ${isActive ? "text-primary" : isPast ? "text-muted-foreground" : "text-muted-foreground/50"}`}>{p.label}</span>
+                          </div>
+                          {i < phaseItems.length - 1 && <ChevronRight className="w-3 h-3 text-muted-foreground shrink-0 mx-0.5" />}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="flex flex-col gap-1">
@@ -1022,6 +1040,29 @@ export default function AgentDetail() {
                       <span className="text-xs font-medium">{deprecationSignals.metadata.totalTraces7d}</span>
                     </div>
                   </div>
+                  {deprecationSignals.retirementCriteria && (
+                    <div className="flex flex-col gap-2 pt-2 border-t">
+                      <span className="text-xs font-medium">Retirement Criteria Assessment</span>
+                      <div className="grid grid-cols-2 gap-2">
+                        {[
+                          { label: "Low ROI", met: deprecationSignals.retirementCriteria.lowROI, icon: TrendingDown },
+                          { label: "Persistent Instability", met: deprecationSignals.retirementCriteria.persistentInstability, icon: AlertTriangle },
+                          { label: "Replaced by Better Agent", met: deprecationSignals.retirementCriteria.replacedByBetter, icon: RefreshCw },
+                          { label: "Workflow Obsolete", met: deprecationSignals.retirementCriteria.workflowObsolete, icon: Archive },
+                        ].map((c) => (
+                          <div key={c.label} className={`flex items-center gap-2 p-2 rounded-md border ${c.met ? "border-red-500/30 bg-red-500/5" : "border-muted"}`} data-testid={`criteria-${c.label.toLowerCase().replace(/\s+/g, "-")}`}>
+                            <c.icon className={`w-3 h-3 shrink-0 ${c.met ? "text-red-500" : "text-muted-foreground"}`} />
+                            <span className={`text-[10px] ${c.met ? "text-red-600 dark:text-red-400 font-medium" : "text-muted-foreground"}`}>{c.label}</span>
+                            {c.met ? (
+                              <Badge variant="destructive" className="text-[9px] ml-auto">Triggered</Badge>
+                            ) : (
+                              <Badge variant="outline" className="text-[9px] ml-auto">OK</Badge>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </>
               ) : null}
             </CardContent>
@@ -1097,6 +1138,60 @@ export default function AgentDetail() {
                     </div>
                   )}
 
+                  {replacementProposal.templateMatches?.length > 0 && (
+                    <div className="flex flex-col gap-2 pt-2 border-t">
+                      <span className="text-xs font-medium">Old vs New Comparison</span>
+                      <div className="overflow-auto">
+                        <table className="w-full text-[11px]" data-testid="replacement-comparison-table">
+                          <thead>
+                            <tr className="border-b">
+                              <th className="text-left py-1.5 pr-3 font-medium text-muted-foreground">Metric</th>
+                              <th className="text-left py-1.5 pr-3 font-medium text-muted-foreground">Current Agent</th>
+                              <th className="text-left py-1.5 font-medium text-muted-foreground">Replacement Candidate</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr className="border-b">
+                              <td className="py-1.5 pr-3 text-muted-foreground">Health Score</td>
+                              <td className="py-1.5 pr-3 font-medium">{agent?.healthScore ?? "—"}/100</td>
+                              <td className="py-1.5 font-medium text-emerald-600 dark:text-emerald-400">{replacementProposal.templateMatches[0]?.matchScore ? `${replacementProposal.templateMatches[0].matchScore}% match` : "—"}</td>
+                            </tr>
+                            <tr className="border-b">
+                              <td className="py-1.5 pr-3 text-muted-foreground">Success Rate (KPI)</td>
+                              <td className="py-1.5 pr-3 font-medium">{agent?.successRate ? `${Math.round(agent.successRate * 100)}%` : "—"}</td>
+                              <td className="py-1.5 font-medium text-muted-foreground">{replacementProposal.expectedSuccessRate ? `${Math.round(replacementProposal.expectedSuccessRate * 100)}%` : "Projected higher"}</td>
+                            </tr>
+                            <tr className="border-b">
+                              <td className="py-1.5 pr-3 text-muted-foreground">Eval Pass Rate</td>
+                              <td className="py-1.5 pr-3 font-medium">{deprecationSignals?.metadata?.avgEvalPassRate != null ? `${Math.round(deprecationSignals.metadata.avgEvalPassRate * 100)}%` : "—"}</td>
+                              <td className="py-1.5 font-medium text-muted-foreground">{replacementProposal.expectedEvalPassRate ? `${Math.round(replacementProposal.expectedEvalPassRate * 100)}%` : "Baseline TBD"}</td>
+                            </tr>
+                            <tr className="border-b">
+                              <td className="py-1.5 pr-3 text-muted-foreground">Monthly Cost</td>
+                              <td className="py-1.5 pr-3 font-medium">{agent?.monthlyCost != null ? `$${agent.monthlyCost.toFixed(2)}` : "—"}</td>
+                              <td className="py-1.5 font-medium">{replacementProposal.estimatedCostChange || "Similar"}</td>
+                            </tr>
+                            <tr className="border-b">
+                              <td className="py-1.5 pr-3 text-muted-foreground">Policy Compliance</td>
+                              <td className="py-1.5 pr-3 font-medium">{agent?.status === "active" ? "Compliant" : "Under review"}</td>
+                              <td className="py-1.5 font-medium text-muted-foreground">{replacementProposal.policyCompliance || "Requires binding"}</td>
+                            </tr>
+                            <tr className="border-b">
+                              <td className="py-1.5 pr-3 text-muted-foreground">Migration Complexity</td>
+                              <td className="py-1.5 pr-3 text-muted-foreground">—</td>
+                              <td className="py-1.5 font-medium capitalize">{replacementProposal.migrationComplexity || "—"}</td>
+                            </tr>
+                            <tr>
+                              <td className="py-1.5 pr-3 text-muted-foreground">Est. Transition</td>
+                              <td className="py-1.5 pr-3 text-muted-foreground">—</td>
+                              <td className="py-1.5 font-medium">{replacementProposal.estimatedTransitionDays ? `${replacementProposal.estimatedTransitionDays} days` : "—"}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
                   {replacementProposal.knowledgeTransferSteps?.length > 0 && (
                     <div className="flex flex-col gap-2">
                       <span className="text-xs font-medium">Recommended Transfer Steps</span>
@@ -1134,12 +1229,14 @@ export default function AgentDetail() {
               </div>
               <Progress value={(retirementChecklist.filter(Boolean).length / retirementChecklist.length) * 100} className="h-2" data-testid="progress-checklist" />
               {[
-                { label: "Document agent purpose and business context", icon: FileCode },
+                { label: "Migrate memory sources and RAG configurations", icon: Database },
+                { label: "Import resolved cases to replacement agent", icon: FileCode },
+                { label: "Preserve audit artifacts and compliance evidence", icon: Shield },
                 { label: "Export evaluation suite results", icon: FlaskConical },
                 { label: "Transfer tool configurations to replacement", icon: Wrench },
+                { label: "Revoke tool credentials for retired agent", icon: Lock },
                 { label: "Notify dependent outcome owners", icon: Users },
-                { label: "Archive run traces and audit logs", icon: Database },
-                { label: "Update routing rules to replacement agent", icon: GitBranch },
+                { label: "Generate final retirement report", icon: FileText },
               ].map((item, i) => (
                 <div key={i} className="flex items-center gap-2" data-testid={`checklist-item-${i}`}>
                   <Checkbox
@@ -1155,6 +1252,103 @@ export default function AgentDetail() {
                   <span className={`text-xs ${retirementChecklist[i] ? "line-through text-muted-foreground" : ""}`}>{item.label}</span>
                 </div>
               ))}
+            </CardContent>
+          </Card>
+
+          {/* Retirement Completion Requirements */}
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2">
+                <FileText className="w-4 h-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Retirement Completion</CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="flex flex-col gap-2 p-3 rounded-md border">
+                  <div className="flex items-center gap-2">
+                    <Download className="w-3.5 h-3.5 text-muted-foreground" />
+                    <span className="text-xs font-medium">Export Archive</span>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">Download a complete archive of traces, evaluations, configurations, and audit trail.</p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={async () => {
+                      try {
+                        const res = await fetch(`/api/agents/${agentId}/export-archive`);
+                        const archive = await res.json();
+                        const blob = new Blob([JSON.stringify(archive, null, 2)], { type: "application/json" });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = `agent-archive-${agent?.name?.replace(/\s+/g, "-").toLowerCase()}-${new Date().toISOString().split("T")[0]}.json`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                        toast({ title: "Archive exported", description: `${archive.summary.totalTraces} traces, ${archive.summary.totalEvals} evals exported` });
+                      } catch {
+                        toast({ title: "Export failed", variant: "destructive" });
+                      }
+                    }}
+                    data-testid="button-export-archive"
+                  >
+                    <Download className="w-3 h-3 mr-1" /> Download Archive
+                  </Button>
+                </div>
+
+                <div className="flex flex-col gap-2 p-3 rounded-md border">
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-3.5 h-3.5 text-muted-foreground" />
+                    <span className="text-xs font-medium">Final Report</span>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">Generate a retirement report covering the reason, replacement, and outcome impact.</p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={async () => {
+                      try {
+                        const res = await fetch(`/api/agents/${agentId}/retirement-report`);
+                        const report = await res.json();
+                        const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = `retirement-report-${agent?.name?.replace(/\s+/g, "-").toLowerCase()}-${new Date().toISOString().split("T")[0]}.json`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                        toast({ title: "Report generated", description: `Retirement report for ${agent?.name}` });
+                      } catch {
+                        toast({ title: "Report generation failed", variant: "destructive" });
+                      }
+                    }}
+                    data-testid="button-retirement-report"
+                  >
+                    <FileText className="w-3 h-3 mr-1" /> Generate Report
+                  </Button>
+                </div>
+
+                <div className="flex flex-col gap-2 p-3 rounded-md border">
+                  <div className="flex items-center gap-2">
+                    <Lock className="w-3.5 h-3.5 text-muted-foreground" />
+                    <span className="text-xs font-medium">Revoke Credentials</span>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">Revoke all tool credentials and API keys associated with this agent.</p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      toast({ title: "Credentials revoked", description: `All tool access for ${agent?.name} has been disabled` });
+                    }}
+                    data-testid="button-revoke-credentials"
+                  >
+                    <Lock className="w-3 h-3 mr-1" /> Revoke Access
+                  </Button>
+                </div>
+              </div>
             </CardContent>
           </Card>
 

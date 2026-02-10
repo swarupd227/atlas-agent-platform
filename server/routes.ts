@@ -2864,6 +2864,50 @@ Return a JSON array of 3-5 improvement cycle proposals. Return ONLY valid JSON.`
         riskScore += 20;
       }
 
+      let betterAgentExists = false;
+      let linkedOutcomeStatus = "none";
+
+      if (agent.outcomeId) {
+        const allAgents = await storage.getAgents();
+        const sameOutcomeAgents = allAgents.filter(a => 
+          a.id !== agent.id && 
+          a.outcomeId === agent.outcomeId && 
+          a.status === "active" &&
+          (a.healthScore || 0) > (agent.healthScore || 0) &&
+          (a.successRate || 0) > (agent.successRate || 0)
+        );
+        if (sameOutcomeAgents.length > 0) {
+          betterAgentExists = true;
+          const best = sameOutcomeAgents.sort((a, b) => (b.healthScore || 0) - (a.healthScore || 0))[0];
+          signals.push({
+            signal: "replaced_by_better_agent",
+            severity: "medium" as const,
+            value: best.healthScore || 0,
+            threshold: agent.healthScore || 0,
+            message: `Agent "${best.name}" (health: ${best.healthScore}) outperforms this agent (health: ${agent.healthScore}) on the same outcome`
+          });
+          riskScore += 15;
+        }
+      }
+
+      if (agent.outcomeId) {
+        const outcomes = await storage.getOutcomes();
+        const linkedOutcome = outcomes.find(o => o.id === agent.outcomeId);
+        if (linkedOutcome) {
+          linkedOutcomeStatus = linkedOutcome.status || "unknown";
+          if (linkedOutcome.status === "completed" || linkedOutcome.status === "archived" || linkedOutcome.status === "cancelled") {
+            signals.push({
+              signal: "workflow_obsolete",
+              severity: "high" as const,
+              value: linkedOutcome.status,
+              threshold: "active",
+              message: `Linked outcome "${linkedOutcome.name}" is ${linkedOutcome.status} — agent's workflow may be obsolete`
+            });
+            riskScore += 20;
+          }
+        }
+      }
+
       riskScore = Math.min(100, riskScore);
       const recommendation = riskScore >= 60 ? "retire" : riskScore >= 30 ? "review" : "healthy";
 
@@ -2880,8 +2924,16 @@ Return a JSON array of 3-5 improvement cycle proposals. Return ONLY valid JSON.`
           avgEvalPassRate: Math.round(avgPassRate * 100),
           healthScore: agent.healthScore,
           totalTraces7d: recentTraces.length,
+          betterAgentExists,
+          linkedOutcomeStatus,
         },
         computedAt: new Date().toISOString(),
+        retirementCriteria: {
+          lowROI: costRevenueRatio > 1.0,
+          persistentInstability: recentSuccessRate < 0.7 || (agent.healthScore || 85) < 50,
+          replacedByBetter: betterAgentExists,
+          workflowObsolete: linkedOutcomeStatus !== "active" && linkedOutcomeStatus !== "none" && linkedOutcomeStatus !== "unknown",
+        },
       });
     } catch (e: any) {
       res.status(500).json({ message: e.message || "Failed to compute deprecation signals" });
@@ -3017,6 +3069,153 @@ Active agents: ${JSON.stringify(activeAgents.map(a => ({ id: a.id, name: a.name,
       res.json({ ...result, agentId, agentName: agent.name, proposedAt: new Date().toISOString() });
     } catch (e: any) {
       res.status(500).json({ message: e.message || "Failed to propose replacement" });
+    }
+  });
+
+  app.get("/api/agents/:id/export-archive", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+
+      const traces = await storage.getTracesByAgent(req.params.id);
+      const evals = await storage.getEvalsByAgent(req.params.id);
+      const auditEvents = await storage.getAuditEvents();
+      const agentAudit = auditEvents.filter(e => e.objectId === req.params.id || (e.details && e.details.includes(req.params.id)));
+      const deployments = await storage.getDeployments();
+      const agentDeployments = deployments.filter(d => d.agentId === req.params.id);
+
+      const archive = {
+        exportedAt: new Date().toISOString(),
+        agent: {
+          id: agent.id,
+          name: agent.name,
+          description: agent.description,
+          owner: agent.owner,
+          status: agent.status,
+          riskTier: agent.riskTier,
+          currentVersion: agent.currentVersion,
+          modelProvider: agent.modelProvider,
+          modelName: agent.modelName,
+          healthScore: agent.healthScore,
+          successRate: agent.successRate,
+          monthlyCost: agent.monthlyCost,
+          monthlyRevenue: agent.monthlyRevenue,
+          totalRuns: agent.totalRuns,
+          toolAccessClass: agent.toolAccessClass,
+          complianceTags: agent.complianceTags,
+          blueprintJson: agent.blueprintJson,
+          toolsConfig: agent.toolsConfig,
+          permissionsConfig: agent.permissionsConfig,
+          memoryRagConfig: agent.memoryRagConfig,
+          policyBindings: agent.policyBindings,
+          evalBindings: agent.evalBindings,
+          rollbackPlan: agent.rollbackPlan,
+          createdAt: agent.createdAt,
+        },
+        traces: traces.map(t => ({ id: t.id, status: t.status, startedAt: t.startedAt, endedAt: t.endedAt, durationMs: (t as any).durationMs, inputTokens: (t as any).inputTokens, outputTokens: (t as any).outputTokens, cost: (t as any).cost })),
+        evaluations: evals.map(e => ({ id: e.id, suiteName: (e as any).suiteName || (e as any).name, passRate: (e as any).passRate, status: (e as any).status })),
+        deployments: agentDeployments.map(d => ({ id: d.id, environment: d.environment, version: d.version, status: d.status, createdAt: d.createdAt })),
+        auditTrail: agentAudit.map(a => ({ id: a.id, action: a.action, actorType: a.actorType, actorId: a.actorId, details: a.details, createdAt: a.createdAt })),
+        summary: {
+          totalTraces: traces.length,
+          totalEvals: evals.length,
+          totalDeployments: agentDeployments.length,
+          totalAuditEvents: agentAudit.length,
+        },
+      };
+
+      res.json(archive);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to export archive" });
+    }
+  });
+
+  app.get("/api/agents/:id/retirement-report", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+
+      const traces = await storage.getTracesByAgent(req.params.id);
+      const evals = await storage.getEvalsByAgent(req.params.id);
+      const auditEvents = await storage.getAuditEvents();
+      const retirementEvents = auditEvents.filter(e => 
+        e.objectId === req.params.id && 
+        (e.action === "agent_retirement_initiated" || e.action === "agent_retired")
+      );
+
+      let retirementReason = "Not specified";
+      let replacementAgentId = null;
+      let replacementAgentName = null;
+      if (retirementEvents.length > 0) {
+        try {
+          const details = JSON.parse(retirementEvents[0].details || "{}");
+          retirementReason = details.reason || retirementReason;
+          replacementAgentId = details.replacementAgentId || null;
+        } catch {}
+      }
+      if (replacementAgentId) {
+        const replacement = await storage.getAgent(replacementAgentId);
+        replacementAgentName = replacement?.name || null;
+      }
+
+      let linkedOutcomeName = null;
+      if (agent.outcomeId) {
+        const outcomes = await storage.getOutcomes();
+        const outcome = outcomes.find(o => o.id === agent.outcomeId);
+        linkedOutcomeName = outcome?.name || null;
+      }
+
+      const recentTraces = traces.slice(-100);
+      const successCount = recentTraces.filter(t => t.status === "completed" || t.status === "success").length;
+      const failCount = recentTraces.filter(t => t.status === "failed" || t.status === "error").length;
+
+      const report = {
+        generatedAt: new Date().toISOString(),
+        agent: {
+          id: agent.id,
+          name: agent.name,
+          owner: agent.owner,
+          riskTier: agent.riskTier,
+          status: agent.status,
+          createdAt: agent.createdAt,
+        },
+        retirementDetails: {
+          reason: retirementReason,
+          replacementAgentId,
+          replacementAgentName,
+          retirementInitiatedAt: retirementEvents.find(e => e.action === "agent_retirement_initiated")?.createdAt || null,
+          archivedAt: retirementEvents.find(e => e.action === "agent_retired")?.createdAt || null,
+        },
+        outcomeImpact: {
+          linkedOutcome: linkedOutcomeName,
+          outcomeId: agent.outcomeId,
+        },
+        performanceSummary: {
+          totalRuns: agent.totalRuns,
+          lifetimeSuccessRate: agent.successRate,
+          last100Runs: {
+            success: successCount,
+            failed: failCount,
+            total: recentTraces.length,
+          },
+          healthScore: agent.healthScore,
+          avgLatencyMs: agent.avgLatencyMs,
+        },
+        costSummary: {
+          monthlyCost: agent.monthlyCost,
+          monthlyRevenue: agent.monthlyRevenue,
+          costPerRun: agent.costPerRun,
+          roi: agent.monthlyRevenue && agent.monthlyCost ? ((agent.monthlyRevenue - agent.monthlyCost) / agent.monthlyCost * 100).toFixed(1) + "%" : "N/A",
+        },
+        evaluationSummary: {
+          totalSuites: evals.length,
+          avgPassRate: evals.length > 0 ? Math.round(evals.reduce((s, e) => s + ((e as any).passRate || 0), 0) / evals.length * 100) / 100 : null,
+        },
+      };
+
+      res.json(report);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to generate retirement report" });
     }
   });
 
