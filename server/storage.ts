@@ -116,9 +116,11 @@ export interface IStorage {
   updateInvoice(id: string, data: Partial<Invoice>): Promise<Invoice | undefined>;
 
   getOutcomeEvents(): Promise<OutcomeEvent[]>;
+  getOutcomeEvent(id: string): Promise<OutcomeEvent | undefined>;
   getOutcomeEventsByInvoice(invoiceId: string): Promise<OutcomeEvent[]>;
   getOutcomeEventsByOutcome(outcomeId: string): Promise<OutcomeEvent[]>;
   createOutcomeEvent(event: InsertOutcomeEvent): Promise<OutcomeEvent>;
+  updateOutcomeEvent(id: string, data: Partial<OutcomeEvent>): Promise<OutcomeEvent | undefined>;
 
   getBillingDisputes(): Promise<BillingDispute[]>;
   getBillingDisputesByInvoice(invoiceId: string): Promise<BillingDispute[]>;
@@ -451,6 +453,11 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(outcomeEvents);
   }
 
+  async getOutcomeEvent(id: string) {
+    const [event] = await db.select().from(outcomeEvents).where(eq(outcomeEvents.id, id));
+    return event;
+  }
+
   async getOutcomeEventsByInvoice(invoiceId: string) {
     return db.select().from(outcomeEvents).where(eq(outcomeEvents.invoiceId, invoiceId));
   }
@@ -462,6 +469,11 @@ export class DatabaseStorage implements IStorage {
   async createOutcomeEvent(event: InsertOutcomeEvent) {
     const [created] = await db.insert(outcomeEvents).values(event).returning();
     return created;
+  }
+
+  async updateOutcomeEvent(id: string, data: Partial<OutcomeEvent>) {
+    const [updated] = await db.update(outcomeEvents).set(data).where(eq(outcomeEvents.id, id)).returning();
+    return updated;
   }
 
   async getBillingDisputes() {

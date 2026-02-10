@@ -2269,6 +2269,305 @@ export async function registerRoutes(
     }
   });
 
+  // ========== BILLING METERING PIPELINE ==========
+
+  // Step 1: Runtime emits outcome candidate event
+  // Applies exclusion rules, deduplication, fraud checks, signed hash
+  app.post("/api/outcome-events", checkPermission("billing_invoices"), async (req, res) => {
+    try {
+      const eventSchema = z.object({
+        outcomeId: z.string().min(1, "outcomeId is required"),
+        agentId: z.string().optional().nullable(),
+        traceId: z.string().optional().nullable(),
+        type: z.string().min(1, "type is required"),
+        payload: z.any().optional().nullable(),
+        unitCount: z.number().int().positive().optional().default(1),
+        unitValue: z.number().optional().nullable(),
+      });
+      const parsed = eventSchema.parse(req.body);
+      const { outcomeId, agentId, traceId, type, payload, unitCount, unitValue } = parsed;
+
+      const outcome = await storage.getOutcome(outcomeId);
+      if (!outcome) {
+        return res.status(404).json({ error: "Outcome not found" });
+      }
+
+      let billable = true;
+      let excludeReason: string | null = null;
+      const checks: string[] = [];
+
+      // --- Exclusion rules ---
+      if (outcome.status !== "active") {
+        billable = false;
+        excludeReason = "outcome_inactive";
+        checks.push("EXCLUDED: outcome is not active");
+      }
+
+      if (billable && outcome.volumeCap) {
+        const existingEvents = await storage.getOutcomeEventsByOutcome(outcomeId);
+        const billableCount = existingEvents.filter(e => e.billable).length;
+        if (billableCount >= outcome.volumeCap) {
+          billable = false;
+          excludeReason = "volume_cap_exceeded";
+          checks.push(`EXCLUDED: volume cap ${outcome.volumeCap} reached (current: ${billableCount})`);
+        }
+      }
+
+      // --- Deduplication: same traceId + outcomeId within 5-minute window ---
+      if (billable && traceId) {
+        const existingEvents = await storage.getOutcomeEventsByOutcome(outcomeId);
+        const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000);
+        const duplicate = existingEvents.find(e =>
+          e.traceId === traceId &&
+          e.createdAt && new Date(e.createdAt) > fiveMinAgo
+        );
+        if (duplicate) {
+          billable = false;
+          excludeReason = "duplicate_event";
+          checks.push(`EXCLUDED: duplicate trace ${traceId} within 5-minute window (existing event: ${duplicate.id})`);
+        }
+      }
+
+      // --- Fraud checks: volume spike detection ---
+      if (billable) {
+        const existingEvents = await storage.getOutcomeEventsByOutcome(outcomeId);
+        const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+        const recentCount = existingEvents.filter(e =>
+          e.createdAt && new Date(e.createdAt) > oneHourAgo
+        ).length;
+        const avgHourlyRate = existingEvents.length > 0
+          ? existingEvents.length / Math.max(1, (Date.now() - new Date(existingEvents[existingEvents.length - 1]?.createdAt || Date.now()).getTime()) / (60 * 60 * 1000))
+          : 0;
+        if (avgHourlyRate > 0 && recentCount > avgHourlyRate * 5) {
+          billable = false;
+          excludeReason = "fraud_volume_spike";
+          checks.push(`EXCLUDED: volume spike detected (${recentCount} events in last hour vs avg ${Math.round(avgHourlyRate)}/hr)`);
+        }
+      }
+
+      // --- Value anomaly check ---
+      if (billable && unitValue !== undefined && unitValue !== null) {
+        const existingEvents = await storage.getOutcomeEventsByOutcome(outcomeId);
+        const billableValues = existingEvents
+          .filter(e => e.billable && e.unitValue !== null && e.unitValue !== undefined)
+          .map(e => e.unitValue as number);
+        if (billableValues.length >= 5) {
+          const mean = billableValues.reduce((s, v) => s + v, 0) / billableValues.length;
+          const stdDev = Math.sqrt(billableValues.reduce((s, v) => s + (v - mean) ** 2, 0) / billableValues.length);
+          if (stdDev > 0 && Math.abs(unitValue - mean) > 3 * stdDev) {
+            billable = false;
+            excludeReason = "fraud_value_anomaly";
+            checks.push(`EXCLUDED: value anomaly (${unitValue} is >3 std devs from mean ${mean.toFixed(2)})`);
+          }
+        }
+      }
+
+      // --- Compute signed hash for tamper evidence ---
+      const crypto = await import("crypto");
+      const hashPayload = JSON.stringify({
+        outcomeId, agentId, traceId, type, unitCount, unitValue,
+        billable, excludeReason, timestamp: new Date().toISOString(),
+      });
+      const signedHash = crypto.createHash("sha256").update(hashPayload).digest("hex");
+
+      const event = await storage.createOutcomeEvent({
+        outcomeId,
+        agentId: agentId || null,
+        traceId: traceId || null,
+        type,
+        billable,
+        excludeReason,
+        unitCount: unitCount || 1,
+        unitValue: unitValue || (outcome.pricePerUnit || 0),
+        signedHash,
+        payload: payload || null,
+      });
+
+      await storage.createAuditEvent({
+        action: "outcome_event_ingested",
+        objectType: "outcome_event",
+        objectId: event.id,
+        actorId: "metering_service",
+        actorType: "system",
+        details: `Event ${event.id} for outcome "${outcome.name}": billable=${billable}${excludeReason ? `, reason=${excludeReason}` : ""}. Checks: ${checks.length > 0 ? checks.join("; ") : "all passed"}`,
+      });
+
+      res.status(201).json({
+        event,
+        metering: { billable, excludeReason, checks, signedHash },
+      });
+    } catch (e: any) {
+      if (e.name === "ZodError") {
+        return res.status(400).json({ error: "Validation failed", details: e.errors });
+      }
+      res.status(500).json({ error: e.message || "Failed to ingest outcome event" });
+    }
+  });
+
+  // GET all outcome events
+  app.get("/api/outcome-events", async (_req, res) => {
+    const events = await storage.getOutcomeEvents();
+    res.json(events);
+  });
+
+  // GET single outcome event
+  app.get("/api/outcome-events/:id", async (req, res) => {
+    const event = await storage.getOutcomeEvent(req.params.id);
+    if (!event) return res.status(404).json({ error: "Outcome event not found" });
+    res.json(event);
+  });
+
+  // GET outcome event -> trace drill-down
+  app.get("/api/outcome-events/:id/trace", async (req, res) => {
+    const event = await storage.getOutcomeEvent(req.params.id);
+    if (!event) return res.status(404).json({ error: "Outcome event not found" });
+    if (!event.traceId) return res.status(404).json({ error: "No trace linked to this event" });
+    const trace = await storage.getTrace(event.traceId);
+    if (!trace) return res.status(404).json({ error: "Linked trace not found" });
+    const outcome = await storage.getOutcome(event.outcomeId);
+    const agent = event.agentId ? await storage.getAgent(event.agentId) : null;
+    res.json({
+      event,
+      trace,
+      outcome: outcome ? { id: outcome.id, name: outcome.name, pricingModel: outcome.pricingModel } : null,
+      agent: agent ? { id: agent.id, name: agent.name } : null,
+    });
+  });
+
+  // Step 4-5: Billing aggregates events for period, creates invoice + line items
+  app.post("/api/billing/generate-invoice", checkPermission("billing_invoices"), async (req, res) => {
+    try {
+      const { outcomeId, periodStart, periodEnd } = req.body;
+      if (!outcomeId) {
+        return res.status(400).json({ error: "outcomeId is required" });
+      }
+
+      const outcome = await storage.getOutcome(outcomeId);
+      if (!outcome) {
+        return res.status(404).json({ error: "Outcome not found" });
+      }
+
+      const pStart = periodStart ? new Date(periodStart) : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+      const pEnd = periodEnd ? new Date(periodEnd) : new Date();
+
+      // Get all billable events for this outcome in the period that are not yet invoiced
+      const allEvents = await storage.getOutcomeEventsByOutcome(outcomeId);
+      const eligibleEvents = allEvents.filter(e => {
+        if (!e.billable) return false;
+        if (e.invoiceId) return false;
+        if (!e.createdAt) return false;
+        const eventDate = new Date(e.createdAt);
+        return eventDate >= pStart && eventDate <= pEnd;
+      });
+
+      if (eligibleEvents.length === 0) {
+        return res.status(400).json({ error: "No unbilled billable events found for this period" });
+      }
+
+      // Compute totals based on pricing model
+      let totalAmount = 0;
+      const totalUnits = eligibleEvents.reduce((sum, e) => sum + (e.unitCount || 1), 0);
+      const pricingModel = outcome.pricingModel || "PER_OUTCOME_EVENT";
+
+      if (pricingModel === "PER_OUTCOME_EVENT") {
+        const pricePerUnit = outcome.pricePerUnit || 0;
+        totalAmount = totalUnits * pricePerUnit;
+      } else if (pricingModel === "TIERED") {
+        const tiers = (outcome.pricingTiers as Array<{ upTo: number; price: number }>) || [];
+        let remaining = totalUnits;
+        let prevLimit = 0;
+        for (const tier of tiers) {
+          const tierUnits = Math.min(remaining, (tier.upTo || Infinity) - prevLimit);
+          if (tierUnits <= 0) break;
+          totalAmount += tierUnits * (tier.price || 0);
+          remaining -= tierUnits;
+          prevLimit = tier.upTo || Infinity;
+        }
+        if (remaining > 0 && tiers.length > 0) {
+          totalAmount += remaining * (tiers[tiers.length - 1].price || 0);
+        }
+      } else if (pricingModel === "MONTHLY_FIXED") {
+        totalAmount = outcome.pricePerUnit || 0;
+      }
+
+      // Create the invoice
+      const invoice = await storage.createInvoice({
+        outcomeId,
+        outcomeName: outcome.name,
+        periodStart: pStart,
+        periodEnd: pEnd,
+        totalUnits,
+        billableUnits: totalUnits,
+        excludedUnits: 0,
+        unitPrice: outcome.pricePerUnit || 0,
+        amount: Math.round(totalAmount * 100) / 100,
+        status: "pending",
+      });
+
+      // Link all eligible events to this invoice
+      let linkedCount = 0;
+      for (const event of eligibleEvents) {
+        try {
+          await storage.updateOutcomeEvent(event.id, { invoiceId: invoice.id });
+          linkedCount++;
+        } catch (linkErr: any) {
+          await storage.createAuditEvent({
+            action: "invoice_event_link_failed",
+            objectType: "outcome_event",
+            objectId: event.id,
+            actorId: "billing_service",
+            actorType: "system",
+            details: `Failed to link event ${event.id} to invoice ${invoice.id}: ${linkErr.message}`,
+          });
+        }
+      }
+
+      if (linkedCount < eligibleEvents.length) {
+        await storage.updateInvoice(invoice.id, {
+          billableUnits: linkedCount,
+          totalUnits: linkedCount,
+        });
+      }
+
+      // Audit event
+      await storage.createAuditEvent({
+        action: "invoice_generated",
+        objectType: "invoice",
+        objectId: invoice.id,
+        actorId: "billing_service",
+        actorType: "system",
+        details: `Invoice ${invoice.id} generated for outcome "${outcome.name}": ${totalUnits} units, $${totalAmount.toFixed(2)} (${pricingModel}), period ${pStart.toISOString().split("T")[0]} to ${pEnd.toISOString().split("T")[0]}`,
+      });
+
+      // Notification audit event for finance users
+      await storage.createAuditEvent({
+        action: "invoice_ready_notification",
+        objectType: "invoice",
+        objectId: invoice.id,
+        actorId: "billing_service",
+        actorType: "system",
+        details: `Invoice ready for review: $${totalAmount.toFixed(2)} for "${outcome.name}" (${eligibleEvents.length} events, ${totalUnits} units). Period: ${pStart.toISOString().split("T")[0]} to ${pEnd.toISOString().split("T")[0]}`,
+      });
+
+      res.status(201).json({
+        invoice,
+        summary: {
+          pricingModel,
+          eventsLinked: eligibleEvents.length,
+          totalUnits,
+          unitPrice: outcome.pricePerUnit || 0,
+          totalAmount: Math.round(totalAmount * 100) / 100,
+          periodStart: pStart.toISOString(),
+          periodEnd: pEnd.toISOString(),
+        },
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message || "Failed to generate invoice" });
+    }
+  });
+
+  // ========== END BILLING METERING PIPELINE ==========
+
   app.get("/api/outcome-risk-drivers", async (_req, res) => {
     try {
       const traces = await storage.getTraces();
