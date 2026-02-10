@@ -1576,6 +1576,7 @@ Guidelines:
             breachStatus,
             trend: kpi.trend || "stable",
             weight: kpi.weight || 1,
+            confidence: kpi.confidence || 0.85,
           };
         });
 
@@ -1632,6 +1633,77 @@ Guidelines:
       res.json(impactData);
     } catch (e) {
       res.status(500).json({ message: "Failed to compute monitor impact data" });
+    }
+  });
+
+  app.post("/api/monitor/auto-incident", async (req, res) => {
+    try {
+      const { agentId, agentName, metric, severity, driftPercent, baseline, current } = req.body;
+      const incidentId = `inc-${crypto.randomUUID().slice(0, 8)}`;
+      const metricLabel = metric === "pass_rate" ? "Pass Rate" : metric === "hallucination" ? "Faithfulness" : "Avg Latency";
+      
+      await storage.createAuditEvent({
+        action: "incident_created",
+        objectType: "agent",
+        objectId: agentId,
+        actorId: "monitoring_system",
+        actorType: "system",
+        details: `Auto-incident ${incidentId}: ${metricLabel} threshold violated for ${agentName}. Drift: ${Math.abs(driftPercent).toFixed(1)}% (${severity})`,
+      });
+
+      res.json({
+        incidentId,
+        status: "created",
+        severity,
+        message: `Incident ${incidentId} auto-created for ${agentName}: ${metricLabel} threshold violation (${severity})`,
+        actions: [
+          { type: "replay", label: "Auto-start shadow replay to isolate regression" },
+          { type: "eval", label: "Run targeted eval suite" },
+          { type: "rollback", label: "Prepare rollback evidence bundle" },
+        ],
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to create auto-incident" });
+    }
+  });
+
+  app.post("/api/monitor/auto-rollback-suggestion", async (req, res) => {
+    try {
+      const { agentId, agentName, driftSignals } = req.body;
+      const agent = await storage.getAgent(agentId);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+
+      const deployments = await storage.getDeployments();
+      const agentDeployments = deployments
+        .filter(d => d.agentId === agentId && d.status === "deployed")
+        .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+
+      const currentDeployment = agentDeployments[0];
+      const previousDeployment = agentDeployments[1];
+
+      res.json({
+        suggestion: "rollback",
+        agent: { id: agent.id, name: agent.name, currentVersion: agent.currentVersion },
+        currentDeployment: currentDeployment ? {
+          id: currentDeployment.id,
+          version: currentDeployment.version,
+          environment: currentDeployment.environment,
+          deployedAt: currentDeployment.createdAt,
+        } : null,
+        rollbackTarget: previousDeployment ? {
+          id: previousDeployment.id,
+          version: previousDeployment.version,
+          environment: previousDeployment.environment,
+        } : null,
+        evidenceBundle: {
+          driftSignalCount: driftSignals?.length || 0,
+          criticalSignals: (driftSignals || []).filter((s: any) => s.severity === "critical").length,
+          affectedMetrics: Array.from(new Set((driftSignals || []).map((s: any) => s.metric))),
+          recommendation: "Rollback to previous stable version based on multiple critical drift signals",
+        },
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to generate rollback suggestion" });
     }
   });
 
