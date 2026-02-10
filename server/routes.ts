@@ -7557,9 +7557,11 @@ def ${tool.name}(args: dict) -> dict:
         framework: z.enum(["generic", "langgraph", "crewai", "foundry", "bedrock", "n8n", "vertex"]).default("generic"),
         toolAdapters: z.record(z.enum(["builtin", "customer", "stub"])).optional(),
         pinVersions: z.boolean().default(true),
+        otelEnabled: z.boolean().default(false),
+        spanGranularity: z.enum(["none", "agent", "tool", "full", "per-node", "per-tool-call"]).default("per-node"),
       });
 
-      const { format, llmProvider, maxIterations, completionPromise, framework, toolAdapters, pinVersions } = exportSchema.parse(req.body || {});
+      const { format, llmProvider, maxIterations, completionPromise, framework, toolAdapters, pinVersions, otelEnabled, spanGranularity } = exportSchema.parse(req.body || {});
 
       const blueprintJson = (agent.blueprintJson && typeof agent.blueprintJson === "object")
         ? agent.blueprintJson as Record<string, unknown>
@@ -7618,26 +7620,112 @@ def ${tool.name}(args: dict) -> dict:
       };
 
       if (framework === "generic") {
+        const crypto = await import("crypto");
+        const blueprintHash = crypto.createHash("sha256").update(agentYaml).digest("hex");
+        const generatedAt = new Date().toISOString();
+        const agentVersion = agent.currentVersion || "1.0.0";
+
+        const manifestJson = JSON.stringify({
+          name: agent.name,
+          description: agent.description || "",
+          version: agentVersion,
+          blueprintHash,
+          framework,
+          format,
+          llmProvider,
+          generatedAt,
+        }, null, 2);
+
+        files["almp.manifest.json"] = `${manifestJson}\n`;
+
+        files["src/agent/prompts/system.txt"] = systemPrompt;
+
+        const inputSchema = { type: "object", properties: { input: { type: "string", description: "Primary input for the agent" } }, required: ["input"] };
+        const outputSchema = { type: "object", properties: { output: { type: "string", description: "Agent response output" }, status: { type: "string", enum: ["success", "error"] } }, required: ["output", "status"] };
+        files["src/agent/schemas/input.json"] = JSON.stringify(inputSchema, null, 2) + "\n";
+        files["src/agent/schemas/output.json"] = JSON.stringify(outputSchema, null, 2) + "\n";
+
+        const envLines = [
+          llmProvider === "openai" ? "OPENAI_API_KEY=sk-your-api-key-here" : "ANTHROPIC_API_KEY=sk-ant-your-api-key-here",
+          `AGENT_NAME=${agent.name}`,
+        ];
+        if (otelEnabled) {
+          envLines.push("OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318");
+          envLines.push(`OTEL_SERVICE_NAME=${agentSlug}`);
+        }
+        files[".env.example"] = envLines.join("\n") + "\n";
+
+        const toolList = tools.map(t => `\`${t.name}\``).join(", ");
+        const fileExt = format === "typescript" ? "ts" : "py";
+        const depCmd = format === "typescript" ? "npm install" : "pip install -r requirements.txt";
+        const runCmd = format === "typescript" ? "npm start" : "python src/runtime/orchestrator.py";
+
+        files["README.md"] = `<!-- ALMP-generated README -->\n# ${agent.name}\n\n${agent.description || ""}\n\n## Setup\n\n1. Install dependencies:\n   \`\`\`bash\n   ${depCmd}\n   \`\`\`\n2. Copy \`.env.example\` to \`.env\` and fill in your API keys.\n3. Run the agent:\n   \`\`\`bash\n   ${runCmd}\n   \`\`\`\n\n## File Structure\n\n\`\`\`\n${format === "typescript" ? `src/\n  runtime/\n    orchestrator.ts    # Main agent loop\n    policy.ts          # Policy evaluation hooks\n    tracing.ts         # OpenTelemetry tracing setup\n  agent/\n    graph.ts           # Graph construction from blueprint\n    prompts/\n      system.txt       # System prompt\n    schemas/\n      input.json       # Input JSON schema\n      output.json      # Output JSON schema\n  tools/\n    index.ts           # Tool registry\n    {tool}.ts          # Individual tool adapters\ntests/\n  eval_smoke.test.ts   # Smoke evaluation test\npackage.json\nagent.yaml\nalmp.manifest.json\n.env.example` : `src/\n  runtime/\n    orchestrator.py    # Main agent loop\n    policy.py          # Policy evaluation hooks\n    tracing.py         # OpenTelemetry tracing setup\n  agent/\n    graph.py           # Graph construction from blueprint\n    prompts/\n      system.txt       # System prompt\n    schemas/\n      input.json       # Input JSON schema\n      output.json      # Output JSON schema\n  tools/\n    __init__.py        # Tool registry\n    {tool}.py          # Individual tool adapters\ntests/\n  eval_smoke_test.py   # Smoke evaluation test\nrequirements.txt\nagent.yaml\nalmp.manifest.json\n.env.example`}\n\`\`\`\n\n## Tools\n\n${tools.length > 0 ? toolList : "No tools configured."}\n`;
+
         if (format === "typescript") {
-          files["entrypoint.ts"] = llmProvider === "openai"
+          files["src/runtime/orchestrator.ts"] = llmProvider === "openai"
             ? generateTsEntrypointOpenAI(tools, maxIterations, completionPromise)
             : generateTsEntrypointAnthropic(tools, maxIterations, completionPromise);
-          files["tools/index.ts"] = generateTsToolsIndex(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.ts`] = generateTsToolAdapter(tool, getAdapterType(tool.name)); }
-          const deps = { ...baseDeps };
+
+          files["src/tools/index.ts"] = generateTsToolsIndex(tools);
+          for (const tool of tools) { files[`src/tools/${tool.name}.ts`] = generateTsToolAdapter(tool, getAdapterType(tool.name)); }
+
+          files["src/runtime/policy.ts"] = `// ALMP-generated: Policy evaluation hooks (stub)\n// Replace with your policy enforcement logic\n\nexport interface PolicyContext {\n  agentName: string;\n  action: string;\n  toolName?: string;\n  input?: Record<string, any>;\n}\n\nexport interface PolicyResult {\n  allowed: boolean;\n  reason?: string;\n}\n\nexport async function evaluatePolicy(ctx: PolicyContext): Promise<PolicyResult> {\n  // Stub: allow all actions by default\n  return { allowed: true };\n}\n\nexport async function onBeforeToolCall(toolName: string, args: Record<string, any>): Promise<PolicyResult> {\n  return evaluatePolicy({ agentName: "${agent.name}", action: "tool_call", toolName, input: args });\n}\n\nexport async function onBeforeResponse(response: string): Promise<PolicyResult> {\n  return evaluatePolicy({ agentName: "${agent.name}", action: "respond" });\n}\n`;
+
+          if (otelEnabled) {
+            files["src/runtime/tracing.ts"] = `// ALMP-generated: OpenTelemetry tracing setup\nimport { NodeSDK } from "@opentelemetry/sdk-node";\nimport { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";\nimport { trace, SpanStatusCode } from "@opentelemetry/api";\n\nconst exporter = new OTLPTraceExporter({\n  url: process.env.OTEL_EXPORTER_OTLP_ENDPOINT || "http://localhost:4318/v1/traces",\n});\n\nconst sdk = new NodeSDK({\n  traceExporter: exporter,\n  serviceName: process.env.OTEL_SERVICE_NAME || "${agentSlug}",\n});\n\nsdk.start();\nprocess.on("SIGTERM", () => sdk.shutdown());\n\nconst tracer = trace.getTracer("${agentSlug}");\n\nexport type SpanGranularity = "none" | "agent" | "tool" | "full";\nconst granularity: SpanGranularity = "${spanGranularity}" as SpanGranularity;\n\nexport function startAgentSpan(name: string) {\n  if (granularity === "none") return undefined;\n  return tracer.startSpan(name);\n}\n\nexport function startToolSpan(name: string) {\n  if (granularity === "none" || granularity === "agent") return undefined;\n  return tracer.startSpan(\`tool.\${name}\`);\n}\n\nexport { tracer, SpanStatusCode };\n`;
+          } else {
+            files["src/runtime/tracing.ts"] = `// ALMP-generated: Tracing no-op stub (OpenTelemetry disabled)\n// Set otelEnabled=true during export to generate full tracing setup\n\nexport type SpanGranularity = "none" | "agent" | "tool" | "full";\n\nexport function startAgentSpan(_name: string) {\n  return undefined;\n}\n\nexport function startToolSpan(_name: string) {\n  return undefined;\n}\n\nexport const tracer = undefined;\n`;
+          }
+
+          const blueprintNodes = Array.isArray(blueprintJson.nodes) ? blueprintJson.nodes as Array<{ id?: string; type?: string; label?: string }> : [];
+          const nodesLiteral = blueprintNodes.length > 0
+            ? blueprintNodes.map(n => `  { id: ${JSON.stringify(n.id || "")}, type: ${JSON.stringify(n.type || "")}, label: ${JSON.stringify(n.label || "")} }`).join(",\n")
+            : `  { id: "start", type: "entry", label: "Start" },\n  { id: "agent_loop", type: "agent", label: "Agent Loop" },\n  { id: "end", type: "exit", label: "End" }`;
+          files["src/agent/graph.ts"] = `// ALMP-generated: Graph construction from blueprint configuration\n\nexport interface GraphNode {\n  id: string;\n  type: string;\n  label: string;\n}\n\nexport const agentName = ${JSON.stringify(agent.name)};\nexport const maxIterations = ${maxIterations};\nexport const completionPromise = ${JSON.stringify(completionPromise)};\n\nexport const nodes: GraphNode[] = [\n${nodesLiteral}\n];\n\nexport function getNode(id: string): GraphNode | undefined {\n  return nodes.find(n => n.id === id);\n}\n\nexport function getEntryNode(): GraphNode | undefined {\n  return nodes.find(n => n.type === "entry") || nodes[0];\n}\n`;
+
+          files["tests/eval_smoke.test.ts"] = `// ALMP-generated: Smoke evaluation test\nimport * as assert from "assert";\n\nasync function smokeTest() {\n  const orchestrator = await import("../src/runtime/orchestrator");\n  assert.ok(orchestrator, "Orchestrator module should be importable");\n  console.log("[PASS] Smoke test: orchestrator module loads successfully");\n\n  const graph = await import("../src/agent/graph");\n  assert.ok(graph.nodes, "Graph nodes should be defined");\n  assert.ok(graph.nodes.length > 0, "Graph should have at least one node");\n  console.log("[PASS] Smoke test: graph module loads with nodes");\n\n  const policy = await import("../src/runtime/policy");\n  const result = await policy.evaluatePolicy({ agentName: ${JSON.stringify(agent.name)}, action: "test" });\n  assert.strictEqual(result.allowed, true, "Default policy should allow actions");\n  console.log("[PASS] Smoke test: policy stub allows actions");\n\n  console.log("[ALL PASS] Smoke evaluation complete");\n}\n\nsmokeTest().catch((err) => {\n  console.error("[FAIL]", err);\n  process.exit(1);\n});\n`;
+
+          const deps: Record<string, string> = { ...baseDeps };
           addLlmDep(deps, []);
-          if (llmProvider === "openai") deps["openai"] = "^4.0.0"; else deps["@anthropic-ai/sdk"] = "^0.30.0";
-          files["package.json"] = JSON.stringify({ name: agentSlug, version: "1.0.0", private: true, scripts: { start: "ts-node entrypoint.ts" }, dependencies: deps }, null, 2);
-          files["Dockerfile"] = dockerfile;
+          if (llmProvider === "openai") deps["openai"] = pin ? "4.77.0" : "^4.0.0"; else deps["@anthropic-ai/sdk"] = pin ? "0.30.1" : "^0.30.0";
+          if (otelEnabled) {
+            deps["@opentelemetry/api"] = pin ? "1.9.0" : "^1.9.0";
+            deps["@opentelemetry/sdk-node"] = pin ? "0.56.0" : "^0.56.0";
+            deps["@opentelemetry/exporter-trace-otlp-http"] = pin ? "0.56.0" : "^0.56.0";
+          }
+          files["package.json"] = JSON.stringify({ name: agentSlug, version: agentVersion, private: true, scripts: { start: "ts-node src/runtime/orchestrator.ts", test: "ts-node tests/eval_smoke.test.ts" }, dependencies: deps }, null, 2);
         } else {
-          files["entrypoint.py"] = llmProvider === "openai"
+          files["src/runtime/orchestrator.py"] = llmProvider === "openai"
             ? generatePyEntrypointOpenAI(tools, maxIterations, completionPromise)
             : generatePyEntrypointAnthropic(tools, maxIterations, completionPromise);
-          files["tools/__init__.py"] = generatePyToolsInit(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.py`] = generatePyToolAdapter(tool, getAdapterType(tool.name)); }
+
+          files["src/tools/__init__.py"] = generatePyToolsInit(tools);
+          for (const tool of tools) { files[`src/tools/${tool.name}.py`] = generatePyToolAdapter(tool, getAdapterType(tool.name)); }
+
+          files["src/runtime/policy.py"] = `# ALMP-generated: Policy evaluation hooks (stub)\n# Replace with your policy enforcement logic\n\nfrom typing import Optional\n\n\ndef evaluate_policy(agent_name: str, action: str, tool_name: Optional[str] = None, input_data: Optional[dict] = None) -> dict:\n    \"\"\"Evaluate whether an action is allowed by policy. Stub: allows all.\"\"\"\n    return {"allowed": True}\n\n\ndef on_before_tool_call(tool_name: str, args: dict) -> dict:\n    return evaluate_policy("${agent.name}", "tool_call", tool_name=tool_name, input_data=args)\n\n\ndef on_before_response(response: str) -> dict:\n    return evaluate_policy("${agent.name}", "respond")\n`;
+
+          if (otelEnabled) {
+            files["src/runtime/tracing.py"] = `# ALMP-generated: OpenTelemetry tracing setup\nimport os\nfrom opentelemetry import trace\nfrom opentelemetry.sdk.trace import TracerProvider\nfrom opentelemetry.sdk.trace.export import BatchSpanProcessor\nfrom opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter\n\nendpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318/v1/traces")\nservice_name = os.environ.get("OTEL_SERVICE_NAME", "${agentSlug}")\n\nprovider = TracerProvider()\nexporter = OTLPSpanExporter(endpoint=endpoint)\nprovider.add_span_processor(BatchSpanProcessor(exporter))\ntrace.set_tracer_provider(provider)\n\ntracer = trace.get_tracer(service_name)\n\nSPAN_GRANULARITY = "${spanGranularity}"\n\n\ndef start_agent_span(name: str):\n    if SPAN_GRANULARITY == "none":\n        return None\n    return tracer.start_span(name)\n\n\ndef start_tool_span(name: str):\n    if SPAN_GRANULARITY in ("none", "agent"):\n        return None\n    return tracer.start_span(f"tool.{name}")\n`;
+          } else {
+            files["src/runtime/tracing.py"] = `# ALMP-generated: Tracing no-op stub (OpenTelemetry disabled)\n# Set otelEnabled=true during export to generate full tracing setup\n\nSPAN_GRANULARITY = "none"\n\n\ndef start_agent_span(name: str):\n    return None\n\n\ndef start_tool_span(name: str):\n    return None\n\n\ntracer = None\n`;
+          }
+
+          const blueprintNodes = Array.isArray(blueprintJson.nodes) ? blueprintJson.nodes as Array<{ id?: string; type?: string; label?: string }> : [];
+          const nodesLiteral = blueprintNodes.length > 0
+            ? blueprintNodes.map(n => `    {"id": ${JSON.stringify(n.id || "")}, "type": ${JSON.stringify(n.type || "")}, "label": ${JSON.stringify(n.label || "")}}`).join(",\n")
+            : `    {"id": "start", "type": "entry", "label": "Start"},\n    {"id": "agent_loop", "type": "agent", "label": "Agent Loop"},\n    {"id": "end", "type": "exit", "label": "End"}`;
+          files["src/agent/graph.py"] = `# ALMP-generated: Graph construction from blueprint configuration\n\nAGENT_NAME = ${JSON.stringify(agent.name)}\nMAX_ITERATIONS = ${maxIterations}\nCOMPLETION_PROMISE = ${JSON.stringify(completionPromise)}\n\nNODES = [\n${nodesLiteral}\n]\n\n\ndef get_node(node_id: str):\n    return next((n for n in NODES if n["id"] == node_id), None)\n\n\ndef get_entry_node():\n    entry = next((n for n in NODES if n["type"] == "entry"), None)\n    return entry or (NODES[0] if NODES else None)\n`;
+
+          files["tests/eval_smoke_test.py"] = `# ALMP-generated: Smoke evaluation test\nimport importlib\nimport sys\n\n\ndef smoke_test():\n    orchestrator = importlib.import_module("src.runtime.orchestrator")\n    assert orchestrator is not None, "Orchestrator module should be importable"\n    print("[PASS] Smoke test: orchestrator module loads successfully")\n\n    graph = importlib.import_module("src.agent.graph")\n    assert hasattr(graph, "NODES"), "Graph NODES should be defined"\n    assert len(graph.NODES) > 0, "Graph should have at least one node"\n    print("[PASS] Smoke test: graph module loads with nodes")\n\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.evaluate_policy(${JSON.stringify(agent.name)}, "test")\n    assert result["allowed"] is True, "Default policy should allow actions"\n    print("[PASS] Smoke test: policy stub allows actions")\n\n    print("[ALL PASS] Smoke evaluation complete")\n\n\nif __name__ == "__main__":\n    try:\n        smoke_test()\n    except Exception as e:\n        print(f"[FAIL] {e}")\n        sys.exit(1)\n`;
+
           const reqs = [...baseReqs]; addLlmDep({}, reqs);
+          if (otelEnabled) {
+            reqs.push(pin ? "opentelemetry-api==1.28.0" : "opentelemetry-api>=1.28.0");
+            reqs.push(pin ? "opentelemetry-sdk==1.28.0" : "opentelemetry-sdk>=1.28.0");
+            reqs.push(pin ? "opentelemetry-exporter-otlp-proto-http==1.28.0" : "opentelemetry-exporter-otlp-proto-http>=1.28.0");
+          }
           files["requirements.txt"] = reqs.join("\n") + "\n";
-          files["Dockerfile"] = dockerfilePy;
         }
       } else if (framework === "langgraph") {
         const toolNames = tools.map(t => t.name).join(", ");

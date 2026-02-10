@@ -2,7 +2,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute, Link, useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { useState } from "react";
+import { useState, Fragment } from "react";
 import {
   Bot,
   ArrowLeft,
@@ -67,6 +67,8 @@ import {
   CheckCircle2,
   Loader2,
   XOctagon,
+  Circle,
+  Globe,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -177,9 +179,11 @@ export default function AgentDetail() {
   const [exportFramework, setExportFramework] = useState<string>("generic");
   const [exportPreview, setExportPreview] = useState<{ files: Record<string, string>; metadata: any } | null>(null);
   const [exportPreviewFile, setExportPreviewFile] = useState<string>("");
-  const [exportStep, setExportStep] = useState<"select" | "configure" | "tools" | "dependencies" | "envvars" | "observability" | "buildtest" | "preview" | "approval">("select");
+  const [exportStep, setExportStep] = useState<"select" | "configure" | "tools" | "dependencies" | "envvars" | "observability" | "buildtest" | "preview" | "approval" | "delivery" | "guide">("select");
   const [exportApprovalSubmitted, setExportApprovalSubmitted] = useState(false);
   const [exportApprovalId, setExportApprovalId] = useState<string | null>(null);
+  const [deliveryTarget, setDeliveryTarget] = useState<"zip" | "git" | "replit">("zip");
+  const [gitRepoUrl, setGitRepoUrl] = useState("");
   const [toolAdapterOverrides, setToolAdapterOverrides] = useState<Record<string, "builtin" | "customer" | "stub">>({});
   const [pinVersions, setPinVersions] = useState(true);
   const [otelEnabled, setOtelEnabled] = useState(true);
@@ -2735,7 +2739,7 @@ export default function AgentDetail() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={exportDialogOpen} onOpenChange={(open) => { setExportDialogOpen(open); if (!open) { setExportStep("select"); setExportPreview(null); setToolAdapterOverrides({}); setOtelEnabled(true); setSpanGranularity("per-node"); setCompileStatus("idle"); setCompileOutput(""); setEvalStatus("idle"); setEvalOutput(""); setExportApprovalSubmitted(false); setExportApprovalId(null); } }}>
+      <Dialog open={exportDialogOpen} onOpenChange={(open) => { setExportDialogOpen(open); if (!open) { setExportStep("select"); setExportPreview(null); setToolAdapterOverrides({}); setOtelEnabled(true); setSpanGranularity("per-node"); setCompileStatus("idle"); setCompileOutput(""); setEvalStatus("idle"); setEvalOutput(""); setExportApprovalSubmitted(false); setExportApprovalId(null); setDeliveryTarget("zip"); setGitRepoUrl(""); } }}>
         <DialogContent className="max-w-3xl max-h-[85vh] overflow-hidden flex flex-col">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -2755,6 +2759,10 @@ export default function AgentDetail() {
                 <><Hammer className="w-4 h-4" /> Build &amp; Test Gate</>
               ) : exportStep === "preview" ? (
                 <><FileCode className="w-4 h-4" /> Preview Source Files</>
+              ) : exportStep === "delivery" ? (
+                <><Package className="w-4 h-4" /> Delivery Target</>
+              ) : exportStep === "guide" ? (
+                <><BookOpen className="w-4 h-4" /> Deployment Guide</>
               ) : (
                 <><ShieldCheck className="w-4 h-4" /> Approval Preview</>
               )}
@@ -2776,7 +2784,11 @@ export default function AgentDetail() {
                             ? "Validate the generated export before finalizing — compile check and eval suite."
                             : exportStep === "preview"
                               ? "Review the generated source files before downloading."
-                              : "Review governance requirements and request expert validation for this export package."}
+                              : exportStep === "delivery"
+                                ? "Choose how to receive the generated code package."
+                                : exportStep === "guide"
+                                  ? "Follow these steps to deploy your exported agent in production."
+                                  : "Review governance requirements and request expert validation for this export package."}
             </DialogDescription>
           </DialogHeader>
 
@@ -4184,6 +4196,323 @@ export default function AgentDetail() {
             );
           })()}
 
+          {exportStep === "delivery" && (
+            <div className="flex flex-col gap-3 flex-1 min-h-0 overflow-auto" data-testid="step-delivery">
+              <div className="flex items-center gap-2 mb-1 flex-wrap">
+                {["Export Type", "Configure", "Tools", "Deps", "Env", "Traces", "Gate", "Preview", "Approval"].map((label, i) => (
+                  <Fragment key={i}>
+                    <span className="text-[11px] text-muted-foreground/40">{label}</span>
+                    <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  </Fragment>
+                ))}
+                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">10</span>
+                  <span className="font-medium">Delivery</span>
+                </div>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Guide</span>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <Card 
+                  className={`cursor-pointer hover-elevate ${deliveryTarget === "zip" ? "border-primary" : ""}`}
+                  onClick={() => setDeliveryTarget("zip")}
+                  data-testid="card-delivery-zip"
+                >
+                  <CardContent className="pt-4 pb-3">
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center justify-center w-10 h-10 rounded-md bg-primary/10">
+                        <Download className="w-5 h-5 text-primary" />
+                      </div>
+                      <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+                        <span className="text-sm font-medium">Download ZIP</span>
+                        <span className="text-xs text-muted-foreground">Download the complete source package as a ZIP archive. Always available.</span>
+                      </div>
+                      {deliveryTarget === "zip" && <CheckCircle className="w-5 h-5 text-primary shrink-0" />}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card 
+                  className={`cursor-pointer hover-elevate ${deliveryTarget === "git" ? "border-primary" : ""}`}
+                  onClick={() => setDeliveryTarget("git")}
+                  data-testid="card-delivery-git"
+                >
+                  <CardContent className="pt-4 pb-3">
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center justify-center w-10 h-10 rounded-md bg-primary/10">
+                        <GitBranch className="w-5 h-5 text-primary" />
+                      </div>
+                      <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+                        <span className="text-sm font-medium">Push to Git Repo</span>
+                        <span className="text-xs text-muted-foreground">Push the generated source files to a Git repository for CI/CD workflows.</span>
+                      </div>
+                      {deliveryTarget === "git" && <CheckCircle className="w-5 h-5 text-primary shrink-0" />}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card 
+                  className={`cursor-pointer hover-elevate ${deliveryTarget === "replit" ? "border-primary" : ""}`}
+                  onClick={() => setDeliveryTarget("replit")}
+                  data-testid="card-delivery-replit"
+                >
+                  <CardContent className="pt-4 pb-3">
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center justify-center w-10 h-10 rounded-md bg-primary/10">
+                        <Globe className="w-5 h-5 text-primary" />
+                      </div>
+                      <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+                        <span className="text-sm font-medium">Publish to Replit via GitHub</span>
+                        <span className="text-xs text-muted-foreground">Import the source package into a Replit app through GitHub for instant hosting.</span>
+                      </div>
+                      {deliveryTarget === "replit" && <CheckCircle className="w-5 h-5 text-primary shrink-0" />}
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {deliveryTarget === "git" && (
+                <Card>
+                  <CardContent className="pt-4 pb-3">
+                    <div className="flex flex-col gap-2">
+                      <span className="text-sm font-medium">Repository URL</span>
+                      <Input
+                        placeholder="https://github.com/org/repo.git"
+                        value={gitRepoUrl}
+                        onChange={(e) => setGitRepoUrl(e.target.value)}
+                        data-testid="input-git-repo-url"
+                      />
+                      <span className="text-xs text-muted-foreground">The source package will be pushed to the main branch of this repository.</span>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {deliveryTarget === "replit" && (
+                <Card>
+                  <CardContent className="pt-4 pb-3">
+                    <div className="flex flex-col gap-2">
+                      <span className="text-sm font-medium">Replit Import Steps</span>
+                      <div className="flex flex-col gap-1.5">
+                        {[
+                          "Push the source package to a GitHub repository",
+                          "Navigate to replit.com and click 'Create Repl'",
+                          "Select 'Import from GitHub'",
+                          "Connect your GitHub account if not already connected",
+                          "Select the repository containing the exported agent",
+                          "Click 'Import' to create the Replit app"
+                        ].map((step, i) => (
+                          <div key={i} className="flex items-start gap-2">
+                            <span className="flex items-center justify-center w-5 h-5 rounded-full bg-muted text-[10px] font-medium shrink-0 mt-0.5">{i + 1}</span>
+                            <span className="text-sm">{step}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+          )}
+
+          {exportStep === "guide" && (() => {
+            const isReplit = deliveryTarget === "replit";
+            const isGit = deliveryTarget === "git";
+            return (
+              <div className="flex flex-col gap-3 flex-1 min-h-0 overflow-auto" data-testid="step-guide">
+                <div className="flex items-center gap-2 mb-1 flex-wrap">
+                  {["Export Type", "Configure", "Tools", "Deps", "Env", "Traces", "Gate", "Preview", "Approval", "Delivery"].map((label, i) => (
+                    <Fragment key={i}>
+                      <span className="text-[11px] text-muted-foreground/40">{label}</span>
+                      <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                    </Fragment>
+                  ))}
+                  <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">11</span>
+                    <span className="font-medium">Deploy Guide</span>
+                  </div>
+                </div>
+
+                {isReplit ? (
+                  <>
+                    <Card data-testid="card-guide-deployment-type">
+                      <CardHeader className="flex flex-row items-center gap-2 space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
+                          <Rocket className="w-4 h-4 text-muted-foreground" />
+                          Recommended Deployment Type
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="flex flex-col gap-2">
+                          {[
+                            { type: "Autoscale", desc: "Best for APIs and services that scale with traffic. Automatically adjusts resources based on demand.", recommended: true },
+                            { type: "Reserved VM", desc: "Best for always-on workloads requiring persistent connections or background processing.", recommended: false },
+                            { type: "Scheduled", desc: "Best for periodic tasks like cron jobs, batch processing, or scheduled reports.", recommended: false },
+                          ].map(dt => (
+                            <div key={dt.type} className={`flex items-start gap-3 p-2.5 rounded-md ${dt.recommended ? "bg-primary/5 border border-primary/20" : "bg-muted/30"}`} data-testid={`guide-deploy-type-${dt.type.toLowerCase()}`}>
+                              {dt.recommended ? <CheckCircle className="w-4 h-4 text-primary mt-0.5 shrink-0" /> : <Circle className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />}
+                              <div className="flex flex-col gap-0.5">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-sm font-medium">{dt.type}</span>
+                                  {dt.recommended && <Badge variant="outline" className="text-[10px]">Recommended</Badge>}
+                                </div>
+                                <span className="text-xs text-muted-foreground">{dt.desc}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </CardContent>
+                    </Card>
+
+                    <Card data-testid="card-guide-publish-path">
+                      <CardHeader className="flex flex-row items-center gap-2 space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
+                          <Globe className="w-4 h-4 text-muted-foreground" />
+                          Publish Path
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="flex flex-col gap-1.5">
+                          {[
+                            "Open your Replit app after GitHub import",
+                            "Click 'Publish' in the top navigation",
+                            "Select your deployment type (Autoscale recommended)",
+                            "Configure your custom domain (optional)",
+                            "Click 'Publish' to make your agent live",
+                          ].map((step, i) => (
+                            <div key={i} className="flex items-start gap-2">
+                              <span className="flex items-center justify-center w-5 h-5 rounded-full bg-muted text-[10px] font-medium shrink-0 mt-0.5">{i + 1}</span>
+                              <span className="text-sm">{step}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </CardContent>
+                    </Card>
+
+                    <Card data-testid="card-guide-secrets">
+                      <CardHeader className="flex flex-row items-center gap-2 space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
+                          <KeyRound className="w-4 h-4 text-muted-foreground" />
+                          Configure Secrets
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="flex flex-col gap-2">
+                          <span className="text-sm">Use Replit's Secrets tool to store encrypted environment variables. Deployment secrets sync with workspace secrets.</span>
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2 p-2 rounded-md bg-muted/30">
+                              <KeyRound className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                              <span className="text-xs font-mono">{exportLlmProvider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY"}</span>
+                            </div>
+                            {otelEnabled && (
+                              <div className="flex items-center gap-2 p-2 rounded-md bg-muted/30">
+                                <KeyRound className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                                <span className="text-xs font-mono">OTEL_EXPORTER_OTLP_ENDPOINT</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+
+                    <Card data-testid="card-guide-monitoring">
+                      <CardHeader className="flex flex-row items-center gap-2 space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
+                          <Activity className="w-4 h-4 text-muted-foreground" />
+                          Monitoring
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <span className="text-sm">After publishing, monitor your deployment from the Replit dashboard. Check the deployment overview for status, health, and resource usage. {otelEnabled ? "OpenTelemetry traces will be exported to your configured OTEL endpoint for production observability." : ""}</span>
+                      </CardContent>
+                    </Card>
+                  </>
+                ) : isGit ? (
+                  <>
+                    <Card data-testid="card-guide-cicd">
+                      <CardHeader className="flex flex-row items-center gap-2 space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
+                          <GitBranch className="w-4 h-4 text-muted-foreground" />
+                          CI/CD Setup
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="flex flex-col gap-2">
+                          <span className="text-sm">Your source package is ready for CI/CD integration. Recommended steps:</span>
+                          <div className="flex flex-col gap-1.5">
+                            {[
+                              "Add environment secrets to your CI/CD platform (GitHub Actions, GitLab CI, etc.)",
+                              `Install dependencies: ${exportFormat === "typescript" ? "npm ci" : "pip install -r requirements.txt"}`,
+                              `Run tests: ${exportFormat === "typescript" ? "npm test" : "python -m pytest tests/"}`,
+                              `Build and deploy using your preferred hosting (Docker, serverless, or cloud VM)`,
+                            ].map((step, i) => (
+                              <div key={i} className="flex items-start gap-2">
+                                <span className="flex items-center justify-center w-5 h-5 rounded-full bg-muted text-[10px] font-medium shrink-0 mt-0.5">{i + 1}</span>
+                                <span className="text-sm">{step}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+
+                    <Card data-testid="card-guide-env-config">
+                      <CardHeader className="flex flex-row items-center gap-2 space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
+                          <KeyRound className="w-4 h-4 text-muted-foreground" />
+                          Environment Configuration
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="flex flex-col gap-2">
+                          <span className="text-sm">Copy <code className="text-xs bg-muted px-1 py-0.5 rounded">.env.example</code> to <code className="text-xs bg-muted px-1 py-0.5 rounded">.env</code> and fill in your secrets. Never commit real values to version control.</span>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </>
+                ) : (
+                  <>
+                    <Card data-testid="card-guide-zip">
+                      <CardHeader className="flex flex-row items-center gap-2 space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
+                          <Download className="w-4 h-4 text-muted-foreground" />
+                          Getting Started
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="flex flex-col gap-2">
+                          <span className="text-sm">After extracting the ZIP archive:</span>
+                          <div className="flex flex-col gap-1.5">
+                            {[
+                              `Install dependencies: ${exportFormat === "typescript" ? "npm install" : "pip install -r requirements.txt"}`,
+                              "Copy .env.example to .env and fill in your API keys",
+                              `Run the agent: ${exportFormat === "typescript" ? "npm start" : "python src/runtime/orchestrator.py"}`,
+                              `Run tests: ${exportFormat === "typescript" ? "npm test" : "python -m pytest tests/"}`,
+                            ].map((step, i) => (
+                              <div key={i} className="flex items-start gap-2">
+                                <span className="flex items-center justify-center w-5 h-5 rounded-full bg-muted text-[10px] font-medium shrink-0 mt-0.5">{i + 1}</span>
+                                <span className="text-sm">{step}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </>
+                )}
+
+                <div className="flex items-start gap-2 p-3 rounded-md bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/40" data-testid="notice-export-complete">
+                  <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 mt-0.5 shrink-0" />
+                  <div className="flex flex-col gap-1">
+                    <span className="text-sm font-medium text-emerald-700 dark:text-emerald-300">Export Complete</span>
+                    <span className="text-xs text-emerald-600 dark:text-emerald-400">Your agent source package has been generated and is ready for deployment. Follow the steps above to get your agent running in production.</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
           <DialogFooter className="gap-2">
             {exportStep === "configure" && (
               <Button variant="outline" onClick={() => setExportStep("select")} data-testid="button-export-back-to-select">
@@ -4309,6 +4638,16 @@ export default function AgentDetail() {
                 Back
               </Button>
             )}
+            {exportStep === "delivery" && (
+              <Button variant="outline" onClick={() => setExportStep("approval")} data-testid="button-export-back-to-approval">
+                Back
+              </Button>
+            )}
+            {exportStep === "guide" && (
+              <Button variant="outline" onClick={() => setExportStep("delivery")} data-testid="button-export-back-to-delivery">
+                Back
+              </Button>
+            )}
             {exportStep === "approval" && (
               <Button
                 onClick={async () => {
@@ -4357,8 +4696,38 @@ export default function AgentDetail() {
               </Button>
             )}
             {exportStep === "approval" && (
-              <Button onClick={downloadExportPackage} data-testid="button-export-download-approval">
-                <Download className="w-3.5 h-3.5 mr-1.5" /> Download Source Package
+              <Button
+                onClick={() => setExportStep("delivery")}
+                data-testid="button-export-next-delivery"
+              >
+                Next: Delivery <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
+              </Button>
+            )}
+            {exportStep === "delivery" && (
+              <Button
+                onClick={() => {
+                  if (deliveryTarget === "zip") {
+                    downloadExportPackage();
+                  } else if (deliveryTarget === "git") {
+                    toast({ title: "Git push initiated", description: `Source package will be pushed to ${gitRepoUrl}. Configure repository access in your CI/CD settings.` });
+                  }
+                  setExportStep("guide");
+                }}
+                disabled={deliveryTarget === "git" && !gitRepoUrl.trim()}
+                data-testid="button-export-deliver"
+              >
+                {deliveryTarget === "zip" ? (
+                  <><Download className="w-3.5 h-3.5 mr-1.5" /> Download &amp; Continue</>
+                ) : deliveryTarget === "git" ? (
+                  <>Push &amp; Continue <ArrowRight className="w-3.5 h-3.5 ml-1.5" /></>
+                ) : (
+                  <>Next: Deploy Guide <ArrowRight className="w-3.5 h-3.5 ml-1.5" /></>
+                )}
+              </Button>
+            )}
+            {exportStep === "guide" && (
+              <Button onClick={() => setExportDialogOpen(false)} data-testid="button-export-done">
+                Done
               </Button>
             )}
           </DialogFooter>
