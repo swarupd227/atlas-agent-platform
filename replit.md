@@ -37,7 +37,9 @@ The platform is built with a modern web stack: React, Vite, Tailwind CSS, shadcn
 - **Shadow Replay**: Replaying production traces against candidate versions for comparison and validation.
 - **Autonomy Hooks**: Automated actions like expanding eval suites on drift or quarantining agents on confidence drops.
 - **AI Endpoints**: Dedicated API endpoints for conversational design, template matching, outcome discovery, agent/replacement proposals, and AI-generated test cases.
-- **Data Model**: Comprehensive schema for all platform entities.
+- **Self-Healing Loop**: Incident → AutoPatch → Approval → Deployment → Incident closure. POST /api/incidents creates persistent incidents, auto-generates AI patches with safety checks, auto-creates approval records. When approved, patches auto-deploy via canary rollout linked to incident. Full rollout auto-closes incident with remediation record. Rollback (manual or canary gate failure) auto-reopens incident. Incident statuses: open → investigating → patching → deploying → resolved/needs_review.
+- **Deployment Sequence**: staging → shadow → canary → prod with auto-computed approvals, shadow replay evidence, canary monitor (30s interval) with auto-promote/auto-rollback.
+- **Data Model**: Comprehensive schema for all platform entities including incidents, patches, deployments with full traceability links (incidentId, patchId on deployments).
 
 ## External Dependencies
 - **LLM Providers**: For AI capabilities (e.g., GPT-4.1).

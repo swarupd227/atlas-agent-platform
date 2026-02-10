@@ -128,6 +128,8 @@ export const deployments = pgTable("deployments", {
   canaryConfig: jsonb("canary_config"),
   rollbackConfig: jsonb("rollback_config"),
   autopromoteConfig: jsonb("autopromote_config"),
+  incidentId: varchar("incident_id"),
+  patchId: varchar("patch_id"),
   promotedAt: timestamp("promoted_at"),
   deployedAt: timestamp("deployed_at"),
   completedAt: timestamp("completed_at"),
@@ -514,6 +516,7 @@ export type ImprovementCycle = typeof improvementCycles.$inferSelect;
 export const patches = pgTable("patches", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   agentId: varchar("agent_id").notNull(),
+  incidentId: varchar("incident_id"),
   changeType: text("change_type").notNull().default("prompt_tweak"),
   title: text("title").notNull(),
   description: text("description"),
@@ -740,5 +743,26 @@ export const runSteps = pgTable("run_steps", {
 export const insertRunStepSchema = createInsertSchema(runSteps).omit({ id: true, createdAt: true });
 export type InsertRunStep = z.infer<typeof insertRunStepSchema>;
 export type RunStep = typeof runSteps.$inferSelect;
+
+export const incidents = pgTable("incidents", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  agentId: varchar("agent_id").notNull(),
+  agentName: text("agent_name"),
+  severity: text("severity").notNull().default("medium"),
+  status: text("status").notNull().default("open"),
+  sourceMetric: text("source_metric"),
+  sourceDetails: jsonb("source_details"),
+  evidenceWindow: jsonb("evidence_window"),
+  patchId: varchar("patch_id"),
+  deploymentId: varchar("deployment_id"),
+  remediationRecord: jsonb("remediation_record"),
+  resolvedAt: timestamp("resolved_at"),
+  closedAt: timestamp("closed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertIncidentSchema = createInsertSchema(incidents).omit({ id: true, createdAt: true });
+export type InsertIncident = z.infer<typeof insertIncidentSchema>;
+export type Incident = typeof incidents.$inferSelect;
 
 export * from "./models/chat";

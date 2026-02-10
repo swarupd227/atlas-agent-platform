@@ -227,6 +227,35 @@ async function monitorCanaryDeployments() {
           objectId: dep.id,
           details: `Canary auto-rolled back for ${dep.agentName}: errorRate=${errorRate.toFixed(1)}% (max ${maxErrorRate}%), successRate=${successRate.toFixed(1)}% (min ${successThreshold}%), latency=${avgLatency}ms (max ${latencyThreshold}ms)`,
         });
+
+        if (dep.incidentId) {
+          try {
+            const incident = await storage.getIncident(dep.incidentId);
+            if (incident && incident.status !== "open") {
+              await storage.updateIncident(incident.id, {
+                status: "open",
+                remediationRecord: {
+                  ...(incident.remediationRecord as object || {}),
+                  rollbackAt: new Date().toISOString(),
+                  rollbackDeploymentId: dep.id,
+                  rollbackReason: `Canary gates failed: errorRate=${errorRate.toFixed(1)}%, successRate=${successRate.toFixed(1)}%, latency=${avgLatency}ms`,
+                  autoRollback: true,
+                },
+              });
+              await storage.createAuditEvent({
+                actorType: "system",
+                actorId: "canary_monitor",
+                action: "incident_reopened",
+                objectType: "incident",
+                objectId: incident.id,
+                details: `Incident ${incident.id} reopened: canary auto-rollback on deployment ${dep.id}`,
+              });
+            }
+          } catch (e) {
+            console.error("[canary-monitor] Failed to reopen incident:", e);
+          }
+        }
+
         jobEvents.emit("canary_rollback", { deploymentId: dep.id, agentId: dep.agentId });
       }
       continue;
@@ -251,6 +280,37 @@ async function monitorCanaryDeployments() {
       objectId: dep.id,
       details: `Canary ${newPercent >= 100 ? "promoted to full" : `increased to ${newPercent}%`} for ${dep.agentName}. Gates passed: errorRate=${errorRate.toFixed(1)}%, successRate=${successRate.toFixed(1)}%, latency=${avgLatency}ms`,
     });
+
+    if (newPercent >= 100 && dep.incidentId) {
+      try {
+        const incident = await storage.getIncident(dep.incidentId);
+        if (incident && incident.status !== "resolved" && incident.status !== "closed") {
+          await storage.updateIncident(incident.id, {
+            status: "resolved",
+            resolvedAt: new Date(),
+            remediationRecord: {
+              patchId: dep.patchId || null,
+              deploymentId: dep.id,
+              rolloutStrategy: dep.rolloutStrategy,
+              finalCanaryPercent: 100,
+              resolvedAt: new Date().toISOString(),
+              autoPromoted: true,
+              duration: incident.createdAt ? `${Math.round((Date.now() - new Date(incident.createdAt).getTime()) / 60000)}m` : "unknown",
+            },
+          });
+          await storage.createAuditEvent({
+            actorType: "system",
+            actorId: "canary_monitor",
+            action: "incident_resolved",
+            objectType: "incident",
+            objectId: incident.id,
+            details: `Incident ${incident.id} auto-resolved: canary promoted to full for deployment ${dep.id}`,
+          });
+        }
+      } catch (e) {
+        console.error("[canary-monitor] Failed to resolve incident:", e);
+      }
+    }
 
     console.log(`[canary-monitor] ${dep.agentName}: canary ${currentPercent}% -> ${newPercent}%`);
     jobEvents.emit("canary_progress", { deploymentId: dep.id, agentId: dep.agentId, canaryPercent: newPercent });

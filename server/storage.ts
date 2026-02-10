@@ -57,6 +57,8 @@ import {
   type Job, type InsertJob,
   runSteps,
   type RunStep, type InsertRunStep,
+  incidents,
+  type Incident, type InsertIncident,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -177,6 +179,12 @@ export interface IStorage {
   createComplianceReport(report: InsertComplianceReport): Promise<ComplianceReport>;
 
   verifyAuditChainIntegrity(): Promise<{ valid: boolean; totalEvents: number; verifiedEvents: number; brokenAt?: number }>;
+
+  getIncidents(): Promise<Incident[]>;
+  getIncident(id: string): Promise<Incident | undefined>;
+  getIncidentsByAgent(agentId: string): Promise<Incident[]>;
+  createIncident(incident: InsertIncident): Promise<Incident>;
+  updateIncident(id: string, data: Partial<Incident>): Promise<Incident | undefined>;
 
   getPatches(): Promise<Patch[]>;
   getPatchesByAgent(agentId: string): Promise<Patch[]>;
@@ -685,6 +693,29 @@ export class DatabaseStorage implements IStorage {
     }
 
     return { valid, totalEvents: events.length, verifiedEvents: sorted.length, brokenAt };
+  }
+
+  async getIncidents() {
+    return db.select().from(incidents);
+  }
+
+  async getIncident(id: string) {
+    const [incident] = await db.select().from(incidents).where(eq(incidents.id, id));
+    return incident;
+  }
+
+  async getIncidentsByAgent(agentId: string) {
+    return db.select().from(incidents).where(eq(incidents.agentId, agentId));
+  }
+
+  async createIncident(incident: InsertIncident) {
+    const [created] = await db.insert(incidents).values(incident).returning();
+    return created;
+  }
+
+  async updateIncident(id: string, data: Partial<Incident>) {
+    const [updated] = await db.update(incidents).set(data).where(eq(incidents.id, id)).returning();
+    return updated;
   }
 
   async getPatches() {

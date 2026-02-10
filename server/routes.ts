@@ -32,6 +32,7 @@ import {
   insertLoggingIntegrationSchema,
   insertToolConnectorSchema,
   insertJobSchema,
+  insertIncidentSchema,
 } from "@shared/schema";
 
 const openai = new OpenAI({
@@ -1060,10 +1061,59 @@ export async function registerRoutes(
         updateData.status = "active";
         updateData.shadowEnabled = false;
         updateData.completedAt = new Date();
+
+        if (deployment.incidentId) {
+          const incident = await storage.getIncident(deployment.incidentId);
+          if (incident && incident.status !== "resolved" && incident.status !== "closed") {
+            await storage.updateIncident(incident.id, {
+              status: "resolved",
+              resolvedAt: new Date(),
+              remediationRecord: {
+                patchId: deployment.patchId || null,
+                deploymentId: deployment.id,
+                rolloutStrategy: deployment.rolloutStrategy,
+                finalCanaryPercent: 100,
+                resolvedAt: new Date().toISOString(),
+                duration: incident.createdAt ? `${Math.round((Date.now() - new Date(incident.createdAt).getTime()) / 60000)}m` : "unknown",
+              },
+            });
+            await storage.createAuditEvent({
+              actorType: "system",
+              actorId: "self_healing_service",
+              action: "incident_resolved",
+              objectType: "incident",
+              objectId: incident.id,
+              details: `Incident ${incident.id} resolved via full rollout of deployment ${deployment.id}. Patch: ${deployment.patchId || "N/A"}`,
+            });
+          }
+        }
       } else if (action === "rollback") {
         updateData.status = "rolled_back";
         updateData.canaryPercent = 0;
         updateData.shadowEnabled = false;
+
+        if (deployment.incidentId) {
+          const incident = await storage.getIncident(deployment.incidentId);
+          if (incident && incident.status !== "open") {
+            await storage.updateIncident(incident.id, {
+              status: "open",
+              remediationRecord: {
+                ...(incident.remediationRecord as object || {}),
+                rollbackAt: new Date().toISOString(),
+                rollbackDeploymentId: deployment.id,
+                rollbackReason: "Canary gates failed or manual rollback triggered",
+              },
+            });
+            await storage.createAuditEvent({
+              actorType: "system",
+              actorId: "self_healing_service",
+              action: "incident_reopened",
+              objectType: "incident",
+              objectId: incident.id,
+              details: `Incident ${incident.id} reopened: deployment ${deployment.id} rolled back`,
+            });
+          }
+        }
       } else {
         if (shadowEnabled !== undefined) updateData.shadowEnabled = shadowEnabled;
         if (canaryPercent !== undefined) updateData.canaryPercent = canaryPercent;
@@ -1672,6 +1722,99 @@ export async function registerRoutes(
       previousHash: prevHash?.eventHash || null,
       eventHash: `sha256:${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`,
     });
+
+    if (status === "approved" && approval.objectType === "patch" && approval.objectId) {
+      const allPatches = await storage.getPatches();
+      const patch = allPatches.find(p => p.id === approval.objectId);
+      if (patch && (patch.status === "pending_approval" || patch.status === "proposed")) {
+        await storage.updatePatch(patch.id, { status: "approved" });
+
+        const rolloutPlan = patch.rolloutPlan as any;
+        const strategy = rolloutPlan?.strategy || "canary";
+        const startPercent = rolloutPlan?.startPercent || 10;
+        const stepPercent = rolloutPlan?.stepPercent || 10;
+        const maxErrorRate = rolloutPlan?.maxErrorRate || 5;
+        const successThreshold = rolloutPlan?.successThreshold || 95;
+
+        const deployment = await storage.createDeployment({
+          agentId: patch.agentId,
+          agentName: (await storage.getAgent(patch.agentId))?.name || "agent",
+          environment: "pilot",
+          version: `patch-${patch.id.slice(0, 8)}`,
+          status: "pending",
+          rolloutStrategy: strategy,
+          shadowEnabled: strategy === "shadow",
+          patchId: patch.id,
+          incidentId: patch.incidentId || undefined,
+          canaryConfig: {
+            startPercent,
+            stepPercent,
+            maxErrorRate,
+            successThreshold,
+          },
+          rollbackConfig: {
+            errorRateThreshold: maxErrorRate * 2,
+            autoRollback: true,
+          },
+          autopromoteConfig: {
+            enabled: true,
+            stepPercent,
+            rollbackOnFailure: true,
+          },
+        });
+
+        if (patch.incidentId) {
+          await storage.updateIncident(patch.incidentId, {
+            deploymentId: deployment.id,
+            status: "deploying",
+          });
+        }
+
+        const depStrategy = deployment.rolloutStrategy || "canary";
+        const depUpdate: Record<string, unknown> = {
+          approvedBy: decidedBy || "Expert Validator",
+        };
+
+        if (depStrategy === "shadow") {
+          depUpdate.shadowEnabled = true;
+          depUpdate.status = "shadow";
+        } else if (depStrategy === "canary") {
+          depUpdate.canaryPercent = startPercent;
+          depUpdate.status = "canary";
+          depUpdate.deployedAt = new Date();
+        } else {
+          depUpdate.canaryPercent = 100;
+          depUpdate.status = "active";
+          depUpdate.deployedAt = new Date();
+          depUpdate.completedAt = new Date();
+        }
+
+        if (constraintsJson) {
+          try {
+            const constraints = typeof constraintsJson === "string" ? JSON.parse(constraintsJson) : constraintsJson;
+            if (constraints.maxCanaryPercent) {
+              depUpdate.canaryPercent = Math.min(depUpdate.canaryPercent as number || 10, constraints.maxCanaryPercent);
+            }
+            if (constraints.shadowOnly) {
+              depUpdate.shadowEnabled = true;
+              depUpdate.status = "shadow";
+              depUpdate.canaryPercent = 0;
+            }
+          } catch {}
+        }
+
+        await storage.updateDeployment(deployment.id, depUpdate);
+
+        await storage.createAuditEvent({
+          actorType: "system",
+          actorId: "self_healing_service",
+          action: "patch_deployment_created",
+          objectType: "deployment",
+          objectId: deployment.id,
+          details: `Patch ${patch.title} approved → deployment created (${depUpdate.status}, canary: ${depUpdate.canaryPercent || 0}%)${patch.incidentId ? ` for incident ${patch.incidentId}` : ""}`,
+        });
+      }
+    }
 
     if (status === "approved" && approval.objectType === "deployment" && approval.objectId) {
       const deployment = await storage.getDeployment(approval.objectId);
@@ -2922,26 +3065,278 @@ Guidelines:
     }
   });
 
+  app.get("/api/incidents", async (_req, res) => {
+    const allIncidents = await storage.getIncidents();
+    res.json(allIncidents);
+  });
+
+  app.get("/api/incidents/:id", async (req, res) => {
+    const incident = await storage.getIncident(req.params.id as string);
+    if (!incident) return res.status(404).json({ message: "Incident not found" });
+    res.json(incident);
+  });
+
+  app.patch("/api/incidents/:id", async (req, res) => {
+    try {
+      const updated = await storage.updateIncident(req.params.id as string, req.body);
+      if (!updated) return res.status(404).json({ message: "Incident not found" });
+      res.json(updated);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.post("/api/incidents", async (req, res) => {
+    try {
+      const { agentId, agentName, metric, severity, driftPercent, baseline, current, autoTriggerPatch } = req.body;
+      if (!agentId) return res.status(400).json({ message: "agentId required" });
+
+      const metricLabel = metric === "pass_rate" ? "Pass Rate" : metric === "hallucination" ? "Faithfulness" : "Avg Latency";
+
+      const incident = await storage.createIncident({
+        agentId,
+        agentName: agentName || "Unknown Agent",
+        severity: severity || "medium",
+        status: "open",
+        sourceMetric: metric || "unknown",
+        sourceDetails: {
+          metric,
+          driftPercent,
+          baseline,
+          current,
+          detectedAt: new Date().toISOString(),
+        },
+        evidenceWindow: {
+          windowStart: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+          windowEnd: new Date().toISOString(),
+          traceCount: 0,
+          metricLabel,
+        },
+      });
+
+      await storage.createAuditEvent({
+        action: "incident_created",
+        objectType: "incident",
+        objectId: incident.id,
+        actorId: "monitoring_system",
+        actorType: "system",
+        details: `Incident ${incident.id}: ${metricLabel} threshold violated for ${agentName || agentId}. Drift: ${Math.abs(driftPercent || 0).toFixed(1)}% (${severity || "medium"})`,
+      });
+
+      let patchResult: { patches: any[]; generated: number } | null = null;
+
+      if (autoTriggerPatch !== false) {
+        await storage.updateIncident(incident.id, { status: "investigating" });
+
+        try {
+          const agent = await storage.getAgent(agentId);
+          if (agent) {
+            const recommendations = await storage.getImprovementRecommendationsByAgent(agentId);
+            const driftSignals = recommendations.filter(r => r.source === "drift" || r.severity === "high" || r.severity === "critical");
+            const evalSuites = await storage.getEvalsByAgent(agentId);
+
+            const response = await openai.chat.completions.create({
+              model: "gpt-4.1",
+              messages: [
+                {
+                  role: "system",
+                  content: `You are an autonomous agent self-healing engine responding to an active incident. Based on the incident details and agent data, generate 1-3 targeted patch candidates to remediate the issue.
+
+Return a JSON array. Each patch must have:
+- changeType: one of "prompt_tweak", "retrieval_change", "tool_retry_fallback", "model_upgrade_downgrade", "cost_cap_tuning"
+- title: short descriptive title referencing the incident
+- description: what the patch does and why it addresses the incident
+- diff: JSON object describing the change (before/after config)
+- expectedKpiImpact: expected improvement
+- expectedCostImpact: cost change description
+- riskLevel: "low", "medium", "high", or "critical"
+- requiredApprovals: number (0 for low risk, 1 for medium, 2+ for high/critical)
+- rolloutPlan: JSON with strategy ("canary"/"shadow"), startPercent, stepPercent, maxErrorRate, successThreshold
+
+SAFETY CONSTRAINTS:
+- Cannot propose expanding tool permissions
+- Cannot change write-action behavior without high-tier approval
+- Cannot alter redaction/audit policies autonomously
+- Focus on minimal, targeted fixes for the specific incident
+
+Return ONLY valid JSON array.`,
+                },
+                {
+                  role: "user",
+                  content: `ACTIVE INCIDENT: ${metricLabel} threshold violation
+Agent: ${agent.name} (${agent.modelProvider || "general"})
+Severity: ${severity || "medium"}
+Drift: ${driftPercent || 0}% from baseline
+Baseline: ${baseline || "N/A"}, Current: ${current || "N/A"}
+Success Rate: ${((agent.successRate || 0) * 100).toFixed(1)}%
+Avg Latency: ${agent.avgLatencyMs || 0}ms
+Drift Signals: ${JSON.stringify(driftSignals.slice(0, 3))}
+Eval Suites: ${evalSuites.length} configured`,
+                },
+              ],
+              response_format: { type: "json_object" },
+            });
+
+            const content = response.choices[0]?.message?.content || "[]";
+            let parsedPatches: any[];
+            try {
+              const parsed = JSON.parse(content);
+              parsedPatches = Array.isArray(parsed) ? parsed : parsed.patches || [parsed];
+            } catch {
+              parsedPatches = [];
+            }
+
+            const createdPatches = [];
+            for (const p of parsedPatches) {
+              const safetyCheck = checkPatchSafety(p);
+              if (safetyCheck) {
+                p.riskLevel = "critical";
+                p.requiredApprovals = 3;
+                p.description = `[SAFETY FLAG: ${safetyCheck}] ${p.description || ""}`;
+              }
+
+              const patch = await storage.createPatch({
+                agentId,
+                incidentId: incident.id,
+                changeType: p.changeType || "prompt_tweak",
+                title: p.title || `Incident remediation: ${metricLabel}`,
+                description: p.description,
+                diff: p.diff,
+                expectedKpiImpact: p.expectedKpiImpact,
+                expectedCostImpact: p.expectedCostImpact,
+                riskLevel: p.riskLevel || "medium",
+                requiredApprovals: p.requiredApprovals || 1,
+                rolloutPlan: p.rolloutPlan,
+                evidenceBundle: {
+                  source: "incident_auto_heal",
+                  incidentId: incident.id,
+                  incidentSeverity: severity,
+                  driftPercent,
+                  generatedAt: new Date().toISOString(),
+                },
+                status: "proposed",
+              });
+
+              const approval = await storage.createApproval({
+                type: "patch_approval",
+                objectType: "patch",
+                objectId: patch.id,
+                objectName: patch.title,
+                requestedBy: "autopatch-engine",
+                status: "pending",
+                riskScore: p.riskLevel === "critical" ? 9 : p.riskLevel === "high" ? 7 : p.riskLevel === "medium" ? 5 : 3,
+                agentId: patch.agentId,
+                evidenceJson: {
+                  patchId: patch.id,
+                  incidentId: incident.id,
+                  changeType: patch.changeType,
+                  riskLevel: patch.riskLevel,
+                  expectedKpiImpact: patch.expectedKpiImpact,
+                  expectedCostImpact: patch.expectedCostImpact,
+                  rolloutPlan: patch.rolloutPlan,
+                  safetyFlag: safetyCheck || null,
+                },
+              });
+
+              await storage.updatePatch(patch.id, { status: "pending_approval" });
+
+              await storage.createAuditEvent({
+                action: "patch_approval_created",
+                objectType: "approval",
+                objectId: approval.id,
+                actorId: "autopatch_engine",
+                actorType: "system",
+                details: `Approval ${approval.id} created for patch "${patch.title}" (risk: ${patch.riskLevel}) linked to incident ${incident.id}`,
+              });
+
+              createdPatches.push({ ...patch, approvalId: approval.id });
+            }
+
+            if (createdPatches.length > 0) {
+              await storage.updateIncident(incident.id, {
+                status: "patching",
+                patchId: createdPatches[0].id,
+              });
+            } else {
+              await storage.updateIncident(incident.id, { status: "needs_review" });
+              await storage.createAuditEvent({
+                action: "autopatch_no_candidates",
+                objectType: "incident",
+                objectId: incident.id,
+                actorId: "autopatch_engine",
+                actorType: "system",
+                details: `AutoPatch generated 0 candidates for incident ${incident.id}. Manual review required.`,
+              });
+            }
+
+            patchResult = { patches: createdPatches, generated: createdPatches.length };
+
+            await storage.createAuditEvent({
+              action: "autopatch_triggered",
+              objectType: "incident",
+              objectId: incident.id,
+              actorId: "autopatch_engine",
+              actorType: "system",
+              details: `AutoPatch generated ${createdPatches.length} candidate patches for incident ${incident.id}`,
+            });
+          }
+        } catch (patchErr: any) {
+          console.error("AutoPatch generation failed for incident:", patchErr.message);
+          await storage.updateIncident(incident.id, { status: "needs_review" });
+          await storage.createAuditEvent({
+            action: "autopatch_failed",
+            objectType: "incident",
+            objectId: incident.id,
+            actorId: "autopatch_engine",
+            actorType: "system",
+            details: `AutoPatch failed: ${patchErr.message}. Incident requires manual review.`,
+          });
+        }
+      }
+
+      res.status(201).json({
+        incident,
+        patchResult,
+        message: `Incident created for ${agentName || agentId}: ${metricLabel} violation (${severity || "medium"})`,
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to create incident" });
+    }
+  });
+
   app.post("/api/monitor/auto-incident", async (req, res) => {
     try {
       const { agentId, agentName, metric, severity, driftPercent, baseline, current } = req.body;
-      const incidentId = `inc-${crypto.randomUUID().slice(0, 8)}`;
+
+      const incident = await storage.createIncident({
+        agentId,
+        agentName: agentName || "Unknown Agent",
+        severity: severity || "medium",
+        status: "open",
+        sourceMetric: metric || "unknown",
+        sourceDetails: { metric, driftPercent, baseline, current, detectedAt: new Date().toISOString() },
+        evidenceWindow: {
+          windowStart: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+          windowEnd: new Date().toISOString(),
+        },
+      });
+
       const metricLabel = metric === "pass_rate" ? "Pass Rate" : metric === "hallucination" ? "Faithfulness" : "Avg Latency";
-      
+
       await storage.createAuditEvent({
         action: "incident_created",
-        objectType: "agent",
-        objectId: agentId,
+        objectType: "incident",
+        objectId: incident.id,
         actorId: "monitoring_system",
         actorType: "system",
-        details: `Auto-incident ${incidentId}: ${metricLabel} threshold violated for ${agentName}. Drift: ${Math.abs(driftPercent).toFixed(1)}% (${severity})`,
+        details: `Auto-incident ${incident.id}: ${metricLabel} threshold violated for ${agentName}. Drift: ${Math.abs(driftPercent).toFixed(1)}% (${severity})`,
       });
 
       res.json({
-        incidentId,
+        incidentId: incident.id,
         status: "created",
         severity,
-        message: `Incident ${incidentId} auto-created for ${agentName}: ${metricLabel} threshold violation (${severity})`,
+        message: `Incident ${incident.id} auto-created for ${agentName}: ${metricLabel} threshold violation (${severity})`,
         actions: [
           { type: "replay", label: "Auto-start shadow replay to isolate regression" },
           { type: "eval", label: "Run targeted eval suite" },
