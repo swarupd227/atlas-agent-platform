@@ -7556,9 +7556,10 @@ def ${tool.name}(args: dict) -> dict:
         completionPromise: z.string().default("TASK_COMPLETE"),
         framework: z.enum(["generic", "langgraph", "crewai", "foundry", "bedrock", "n8n", "vertex"]).default("generic"),
         toolAdapters: z.record(z.enum(["builtin", "customer", "stub"])).optional(),
+        pinVersions: z.boolean().default(true),
       });
 
-      const { format, llmProvider, maxIterations, completionPromise, framework, toolAdapters } = exportSchema.parse(req.body || {});
+      const { format, llmProvider, maxIterations, completionPromise, framework, toolAdapters, pinVersions } = exportSchema.parse(req.body || {});
 
       const blueprintJson = (agent.blueprintJson && typeof agent.blueprintJson === "object")
         ? agent.blueprintJson as Record<string, unknown>
@@ -7582,18 +7583,19 @@ def ${tool.name}(args: dict) -> dict:
         "agent.yaml": agentYaml,
       };
 
+      const pin = pinVersions;
       const baseDeps: Record<string, string> = {
-        "typescript": "^5.0.0",
-        "ts-node": "^10.9.0",
-        "js-yaml": "^4.1.0",
-        "@types/js-yaml": "^4.0.9",
-        "@types/node": "^20.0.0",
+        "typescript": pin ? "5.6.3" : "^5.0.0",
+        "ts-node": pin ? "10.9.2" : "^10.9.0",
+        "js-yaml": pin ? "4.1.0" : "^4.1.0",
+        "@types/js-yaml": pin ? "4.0.9" : "^4.0.9",
+        "@types/node": pin ? "20.17.12" : "^20.0.0",
       };
-      const baseReqs = ["pyyaml>=6.0"];
+      const baseReqs = [pin ? "pyyaml==6.0.2" : "pyyaml>=6.0"];
 
       const addLlmDep = (deps: Record<string, string>, reqs: string[]) => {
-        if (llmProvider === "openai") { deps["openai"] = "^4.0.0"; reqs.push("openai>=1.0"); }
-        else { deps["@anthropic-ai/sdk"] = "^0.30.0"; reqs.push("anthropic>=0.30"); }
+        if (llmProvider === "openai") { deps["openai"] = pin ? "4.77.0" : "^4.0.0"; reqs.push(pin ? "openai==1.58.1" : "openai>=1.0"); }
+        else { deps["@anthropic-ai/sdk"] = pin ? "0.30.1" : "^0.30.0"; reqs.push(pin ? "anthropic==0.30.1" : "anthropic>=0.30"); }
       };
 
       const envExample = llmProvider === "openai"
@@ -7645,8 +7647,8 @@ def ${tool.name}(args: dict) -> dict:
           files["tools/index.ts"] = generateTsToolsIndex(tools);
           for (const tool of tools) { files[`tools/${tool.name}.ts`] = generateTsToolAdapter(tool, getAdapterType(tool.name)); }
           files["langgraph.json"] = JSON.stringify({ graphs: { agent: "./graph.ts:app" }, env: llmProvider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY" }, null, 2);
-          const deps: Record<string, string> = { ...baseDeps, "@langchain/langgraph": "^0.2.0", "@langchain/core": "^0.3.0" };
-          if (llmProvider === "openai") { deps["@langchain/openai"] = "^0.3.0"; deps["openai"] = "^4.0.0"; } else { deps["@langchain/anthropic"] = "^0.3.0"; deps["@anthropic-ai/sdk"] = "^0.30.0"; }
+          const deps: Record<string, string> = { ...baseDeps, "@langchain/langgraph": pin ? "0.2.36" : "^0.2.0", "@langchain/core": pin ? "0.3.26" : "^0.3.0" };
+          if (llmProvider === "openai") { deps["@langchain/openai"] = pin ? "0.3.16" : "^0.3.0"; deps["openai"] = pin ? "4.77.0" : "^4.0.0"; } else { deps["@langchain/anthropic"] = pin ? "0.3.12" : "^0.3.0"; deps["@anthropic-ai/sdk"] = pin ? "0.30.1" : "^0.30.0"; }
           files["package.json"] = JSON.stringify({ name: agentSlug, version: "1.0.0", private: true, scripts: { start: "ts-node graph.ts", "langgraph:dev": "langgraph dev" }, dependencies: deps }, null, 2);
         } else {
           files["graph.py"] = `# LangGraph State Graph Definition\n# Generated for ${agent.name}\nfrom langgraph.graph import StateGraph, END\nfrom typing import TypedDict, Any\nfrom tools import load_tools\n\nclass AgentState(TypedDict):\n    messages: list\n    tool_results: dict\n    iterations: int\n\ntools = load_tools()\n\ndef agent_node(state: AgentState) -> AgentState:\n    \"\"\"Agent reasoning node — calls LLM with tool descriptions.\"\"\"\n    # Tools available: ${toolNames}\n    return {**state, "iterations": state["iterations"] + 1}\n\ndef tool_node(state: AgentState) -> AgentState:\n    \"\"\"Execute selected tool and return result.\"\"\"\n    return state\n\ndef should_continue(state: AgentState) -> str:\n    if state["iterations"] >= ${maxIterations}:\n        return "end"\n    return "tools"\n\ngraph = StateGraph(AgentState)\ngraph.add_node("agent", agent_node)\ngraph.add_node("tools", tool_node)\ngraph.set_entry_point("agent")\ngraph.add_conditional_edges("agent", should_continue, {"tools": "tools", "end": END})\ngraph.add_edge("tools", "agent")\n\napp = graph.compile()\n`;
@@ -7654,8 +7656,8 @@ def ${tool.name}(args: dict) -> dict:
           files["tools/__init__.py"] = generatePyToolsInit(tools);
           for (const tool of tools) { files[`tools/${tool.name}.py`] = generatePyToolAdapter(tool, getAdapterType(tool.name)); }
           files["langgraph.json"] = JSON.stringify({ graphs: { agent: "./graph.py:app" }, env: llmProvider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY" }, null, 2);
-          const reqs = [...baseReqs, "langgraph>=0.2.0", "langchain-core>=0.3.0"];
-          if (llmProvider === "openai") reqs.push("langchain-openai>=0.2.0", "openai>=1.0"); else reqs.push("langchain-anthropic>=0.2.0", "anthropic>=0.30");
+          const reqs = [...baseReqs, pin ? "langgraph==0.2.60" : "langgraph>=0.2.0", pin ? "langchain-core==0.3.28" : "langchain-core>=0.3.0"];
+          if (llmProvider === "openai") reqs.push(pin ? "langchain-openai==0.2.14" : "langchain-openai>=0.2.0", pin ? "openai==1.58.1" : "openai>=1.0"); else reqs.push(pin ? "langchain-anthropic==0.2.8" : "langchain-anthropic>=0.2.0", pin ? "anthropic==0.30.1" : "anthropic>=0.30");
           files["requirements.txt"] = reqs.join("\n") + "\n";
         }
         files["Dockerfile"] = format === "typescript" ? dockerfile : dockerfilePy;
@@ -7672,7 +7674,7 @@ def ${tool.name}(args: dict) -> dict:
           files["crew.py"] = `# CrewAI-style Crew Orchestration\n# Generated for ${agent.name}\nimport yaml\nfrom tools import load_tools\n\nwith open("config/agents.yaml") as f:\n    agents_config = yaml.safe_load(f)\nwith open("config/tasks.yaml") as f:\n    tasks_config = yaml.safe_load(f)\n\ntools = load_tools()\n\ndef run_crew():\n    print("Starting crew with agents:", [a["name"] for a in agents_config["agents"]])\n    print("Tasks:", [t["name"] for t in tasks_config["tasks"]])\n    for task in tasks_config["tasks"]:\n        print(f"Executing task: {task['name']}")\n        # TODO: Wire up LLM calls with agent config\n\nif __name__ == "__main__":\n    run_crew()\n`;
           files["tools/__init__.py"] = generatePyToolsInit(tools);
           for (const tool of tools) { files[`tools/${tool.name}.py`] = generatePyToolAdapter(tool, getAdapterType(tool.name)); }
-          const reqs = [...baseReqs, "crewai>=0.80.0"]; addLlmDep({}, reqs);
+          const reqs = [...baseReqs, pin ? "crewai==0.80.0" : "crewai>=0.80.0"]; addLlmDep({}, reqs);
           files["requirements.txt"] = reqs.join("\n") + "\n";
         }
         files["Dockerfile"] = format === "typescript" ? dockerfile : dockerfilePy;
@@ -7721,14 +7723,14 @@ def ${tool.name}(args: dict) -> dict:
           files["tools/index.ts"] = generateTsToolsIndex(tools);
           for (const tool of tools) { files[`tools/${tool.name}.ts`] = generateTsToolAdapter(tool, getAdapterType(tool.name)); }
           files["template.yaml"] = `AWSTemplateFormatVersion: "2010-09-09"\nTransform: AWS::Serverless-2016-10-31\nDescription: "${agent.name} Bedrock Agent Lambda"\nResources:\n  AgentFunction:\n    Type: AWS::Serverless::Function\n    Properties:\n      Handler: lambda/handler.handler\n      Runtime: nodejs20.x\n      Timeout: 30\n      MemorySize: 256\n`;
-          const deps = { ...baseDeps, "@aws-sdk/client-bedrock-agent-runtime": "^3.0.0" }; addLlmDep(deps, []);
+          const deps = { ...baseDeps, "@aws-sdk/client-bedrock-agent-runtime": pin ? "3.712.0" : "^3.0.0" }; addLlmDep(deps, []);
           files["package.json"] = JSON.stringify({ name: agentSlug, version: "1.0.0", private: true, scripts: { start: "ts-node lambda/handler.ts", "sam:build": "sam build", "sam:deploy": "sam deploy --guided" }, dependencies: deps }, null, 2);
         } else {
           files["lambda/handler.py"] = `# AWS Lambda Handler for Bedrock Action Groups\n# Generated for ${agent.name}\nfrom tools import load_tools\nimport json\n\ntools = load_tools()\n\ndef handler(event, context):\n    action_group = event.get("actionGroup", "")\n    api_path = event.get("apiPath", "")\n    parameters = event.get("parameters", [])\n    tool_name = api_path.lstrip("/")\n\n    print(f"[Bedrock] Action: {action_group}, Path: {api_path}")\n\n    if tool_name in tools:\n        params = {p["name"]: p["value"] for p in parameters}\n        result = tools[tool_name](params)\n        return {\n            "messageVersion": "1.0",\n            "response": {\n                "actionGroup": action_group, "apiPath": api_path,\n                "httpMethod": "POST", "httpStatusCode": 200,\n                "responseBody": {"application/json": {"body": json.dumps(result)}}\n            }\n        }\n\n    return {"messageVersion": "1.0", "response": {"actionGroup": action_group, "apiPath": api_path,\n        "httpMethod": "POST", "httpStatusCode": 404,\n        "responseBody": {"application/json": {"body": json.dumps({"error": "Tool not found"})}}}}\n`;
           files["tools/__init__.py"] = generatePyToolsInit(tools);
           for (const tool of tools) { files[`tools/${tool.name}.py`] = generatePyToolAdapter(tool, getAdapterType(tool.name)); }
           files["template.yaml"] = `AWSTemplateFormatVersion: "2010-09-09"\nTransform: AWS::Serverless-2016-10-31\nDescription: "${agent.name} Bedrock Agent Lambda"\nResources:\n  AgentFunction:\n    Type: AWS::Serverless::Function\n    Properties:\n      Handler: lambda/handler.handler\n      Runtime: python3.11\n      Timeout: 30\n      MemorySize: 256\n`;
-          const reqs = [...baseReqs, "boto3>=1.34.0"]; addLlmDep({}, reqs);
+          const reqs = [...baseReqs, pin ? "boto3==1.34.162" : "boto3>=1.34.0"]; addLlmDep({}, reqs);
           files["requirements.txt"] = reqs.join("\n") + "\n";
         }
         files[".env.example"] = envExample + "AWS_REGION=us-east-1\nAWS_ACCESS_KEY_ID=\nAWS_SECRET_ACCESS_KEY=\n";
@@ -7759,7 +7761,7 @@ def ${tool.name}(args: dict) -> dict:
           }, null, 2);
           files["tools/index.ts"] = generateTsToolsIndex(tools);
           for (const tool of tools) { files[`tools/${tool.name}.ts`] = generateTsToolAdapter(tool, getAdapterType(tool.name)); }
-          const deps = { ...baseDeps, "n8n-workflow": "^1.0.0" }; addLlmDep(deps, []);
+          const deps = { ...baseDeps, "n8n-workflow": pin ? "1.69.2" : "^1.0.0" }; addLlmDep(deps, []);
           files["package.json"] = JSON.stringify({ name: agentSlug, version: "1.0.0", private: true, scripts: { start: "ts-node nodes/AgentNode.ts" }, dependencies: deps }, null, 2);
         } else {
           files["nodes/agent_node.py"] = `# N8N Custom Agent Node (Python)\n# Generated for ${agent.name}\nfrom tools import load_tools\n\nclass AgentNode:\n    \"\"\"${agent.name} - Custom agent node for N8N.\"\"\"\n    def __init__(self):\n        self.tools = load_tools()\n        self.max_iterations = ${maxIterations}\n        self.system_prompt = \"\"\"${systemPrompt.substring(0, 200)}\"\"\"\n\n    def execute(self, input_data):\n        # TODO: Implement agent logic with LLM calls\n        return input_data\n`;
@@ -7787,14 +7789,14 @@ def ${tool.name}(args: dict) -> dict:
           files["extensions/index.ts"] = `// Vertex AI Extension implementations\n${tools.map(t => `export { default as ${t.name} } from "../tools/${t.name}";`).join("\n")}\n\nexport function loadExtensions() {\n  return { ${tools.map(t => t.name).join(", ")} };\n}\n`;
           files["tools/index.ts"] = generateTsToolsIndex(tools);
           for (const tool of tools) { files[`tools/${tool.name}.ts`] = generateTsToolAdapter(tool, getAdapterType(tool.name)); }
-          const deps = { ...baseDeps, "@google-cloud/aiplatform": "^3.0.0" }; addLlmDep(deps, []);
+          const deps = { ...baseDeps, "@google-cloud/aiplatform": pin ? "3.34.0" : "^3.0.0" }; addLlmDep(deps, []);
           files["package.json"] = JSON.stringify({ name: agentSlug, version: "1.0.0", private: true, scripts: { start: "ts-node entrypoint.ts" }, dependencies: deps }, null, 2);
         } else {
           files["entrypoint.py"] = `# GCP Vertex AI Agent Entry Point\n# Generated for ${agent.name}\nimport yaml\nimport json\nfrom extensions import load_extensions\n\nwith open("agent-config.json") as f:\n    agent_config = json.load(f)\nwith open("agent.yaml") as f:\n    config = yaml.safe_load(f)\n\nextensions = load_extensions()\n\ndef main():\n    print(f"[Vertex AI Agent] {agent_config['displayName']} starting...")\n    print(f"Extensions loaded: {', '.join(extensions.keys())}")\n    iteration = 0\n    while iteration < ${maxIterations}:\n        iteration += 1\n        print(f"Iteration {iteration}")\n        # TODO: Call Vertex AI Gemini, invoke extensions, check completion\n        break\n\nif __name__ == "__main__":\n    main()\n`;
           files["extensions/__init__.py"] = `# Vertex AI Extension implementations\n${tools.map(t => `from tools.${t.name} import execute as ${t.name}_execute`).join("\n")}\n\ndef load_extensions():\n    return { ${tools.map(t => `"${t.name}": ${t.name}_execute`).join(", ")} }\n`;
           files["tools/__init__.py"] = generatePyToolsInit(tools);
           for (const tool of tools) { files[`tools/${tool.name}.py`] = generatePyToolAdapter(tool, getAdapterType(tool.name)); }
-          const reqs = [...baseReqs, "google-cloud-aiplatform>=1.60.0"]; addLlmDep({}, reqs);
+          const reqs = [...baseReqs, pin ? "google-cloud-aiplatform==1.60.0" : "google-cloud-aiplatform>=1.60.0"]; addLlmDep({}, reqs);
           files["requirements.txt"] = reqs.join("\n") + "\n";
         }
         files["Dockerfile"] = format === "typescript" ? dockerfile : dockerfilePy;
@@ -7814,6 +7816,7 @@ def ${tool.name}(args: dict) -> dict:
           framework,
           pattern: "ralph_loop",
           toolAdapters: toolAdapters || {},
+          pinVersions,
           generatedAt: new Date().toISOString(),
         },
       });

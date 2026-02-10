@@ -74,6 +74,7 @@ import { ActionCard } from "@/components/action-card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -167,8 +168,9 @@ export default function AgentDetail() {
   const [exportFramework, setExportFramework] = useState<string>("generic");
   const [exportPreview, setExportPreview] = useState<{ files: Record<string, string>; metadata: any } | null>(null);
   const [exportPreviewFile, setExportPreviewFile] = useState<string>("");
-  const [exportStep, setExportStep] = useState<"select" | "configure" | "tools" | "preview">("select");
+  const [exportStep, setExportStep] = useState<"select" | "configure" | "tools" | "dependencies" | "preview">("select");
   const [toolAdapterOverrides, setToolAdapterOverrides] = useState<Record<string, "builtin" | "customer" | "stub">>({});
+  const [pinVersions, setPinVersions] = useState(true);
 
   const { data: deprecationSignals, isLoading: deprecationLoading, isError: deprecationError } = useQuery<{
     riskScore: number;
@@ -279,7 +281,7 @@ export default function AgentDetail() {
   });
 
   const exportCodeMutation = useMutation({
-    mutationFn: async (params: { format: string; llmProvider: string; maxIterations: number; completionPromise: string; framework?: string; toolAdapters?: Record<string, string> }) => {
+    mutationFn: async (params: { format: string; llmProvider: string; maxIterations: number; completionPromise: string; framework?: string; toolAdapters?: Record<string, string>; pinVersions?: boolean }) => {
       const res = await apiRequest("POST", `/api/agents/${agentId}/export-code`, params);
       return res.json();
     },
@@ -2726,6 +2728,8 @@ export default function AgentDetail() {
                 <><Code className="w-4 h-4" /> Configure Source Export</>
               ) : exportStep === "tools" ? (
                 <><Wrench className="w-4 h-4" /> Tool Adapter Resolution</>
+              ) : exportStep === "dependencies" ? (
+                <><Layers className="w-4 h-4" /> Dependencies &amp; Reproducibility</>
               ) : (
                 <><FileCode className="w-4 h-4" /> Preview Source Files</>
               )}
@@ -2737,7 +2741,9 @@ export default function AgentDetail() {
                   ? "Configure source files for standalone deployment via your CI/CD pipeline."
                   : exportStep === "tools"
                     ? "Ensure every tool reference has an implementation path in the export package."
-                    : "Review the generated source files before downloading."}
+                    : exportStep === "dependencies"
+                      ? "Review what will be installed and ensure reproducible builds."
+                      : "Review the generated source files before downloading."}
             </DialogDescription>
           </DialogHeader>
 
@@ -2752,6 +2758,8 @@ export default function AgentDetail() {
                 <span className="text-[11px] text-muted-foreground/40">Configure</span>
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                 <span className="text-[11px] text-muted-foreground/40">Tool Adapters</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Dependencies</span>
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                 <span className="text-[11px] text-muted-foreground/40">Preview</span>
               </div>
@@ -2908,6 +2916,8 @@ export default function AgentDetail() {
                 </div>
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                 <span className="text-[11px] text-muted-foreground/40">Tool Adapters</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Dependencies</span>
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                 <span className="text-[11px] text-muted-foreground/40">Preview</span>
               </div>
@@ -3071,6 +3081,8 @@ export default function AgentDetail() {
                     <span className="font-medium">Tool Adapters</span>
                   </div>
                   <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  <span className="text-[11px] text-muted-foreground/40">Dependencies</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                   <span className="text-[11px] text-muted-foreground/40">Preview</span>
                 </div>
 
@@ -3193,6 +3205,197 @@ export default function AgentDetail() {
             );
           })()}
 
+          {exportStep === "dependencies" && (() => {
+            const depData = (() => {
+              const fw = exportFramework;
+              const fmt = exportFormat;
+              const llm = exportLlmProvider;
+
+              if (fmt === "typescript") {
+                const deps: Record<string, string> = {
+                  "typescript": pinVersions ? "5.6.3" : "^5.0.0",
+                  "ts-node": pinVersions ? "10.9.2" : "^10.9.0",
+                  "js-yaml": pinVersions ? "4.1.0" : "^4.1.0",
+                  "@types/js-yaml": pinVersions ? "4.0.9" : "^4.0.9",
+                  "@types/node": pinVersions ? "20.17.12" : "^20.0.0",
+                };
+                if (llm === "openai") deps["openai"] = pinVersions ? "4.77.0" : "^4.0.0";
+                else deps["@anthropic-ai/sdk"] = pinVersions ? "0.30.1" : "^0.30.0";
+
+                if (fw === "langgraph") {
+                  deps["@langchain/langgraph"] = pinVersions ? "0.2.36" : "^0.2.0";
+                  deps["@langchain/core"] = pinVersions ? "0.3.26" : "^0.3.0";
+                  if (llm === "openai") { deps["@langchain/openai"] = pinVersions ? "0.3.16" : "^0.3.0"; }
+                  else { deps["@langchain/anthropic"] = pinVersions ? "0.3.12" : "^0.3.0"; }
+                }
+                if (fw === "bedrock") deps["@aws-sdk/client-bedrock-agent-runtime"] = pinVersions ? "3.712.0" : "^3.0.0";
+                if (fw === "n8n") deps["n8n-workflow"] = pinVersions ? "1.69.2" : "^1.0.0";
+                if (fw === "vertex") deps["@google-cloud/aiplatform"] = pinVersions ? "3.34.0" : "^3.0.0";
+
+                return {
+                  fileName: "package.json",
+                  content: JSON.stringify({
+                    name: (agent?.name || "agent").toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+                    version: "1.0.0",
+                    private: true,
+                    scripts: { start: fw === "langgraph" ? "ts-node graph.ts" : "ts-node entrypoint.ts" },
+                    dependencies: deps,
+                  }, null, 2),
+                  deps,
+                };
+              } else {
+                const reqs: Array<{ name: string; pinned: string; range: string }> = [
+                  { name: "pyyaml", pinned: "6.0.2", range: ">=6.0" },
+                ];
+                if (llm === "openai") reqs.push({ name: "openai", pinned: "1.58.1", range: ">=1.0" });
+                else reqs.push({ name: "anthropic", pinned: "0.30.1", range: ">=0.30" });
+
+                if (fw === "langgraph") {
+                  reqs.push({ name: "langgraph", pinned: "0.2.60", range: ">=0.2.0" });
+                  reqs.push({ name: "langchain-core", pinned: "0.3.28", range: ">=0.3.0" });
+                  if (llm === "openai") reqs.push({ name: "langchain-openai", pinned: "0.2.14", range: ">=0.2.0" });
+                  else reqs.push({ name: "langchain-anthropic", pinned: "0.2.8", range: ">=0.2.0" });
+                }
+                if (fw === "crewai") reqs.push({ name: "crewai", pinned: "0.80.0", range: ">=0.80.0" });
+                if (fw === "bedrock") reqs.push({ name: "boto3", pinned: "1.34.162", range: ">=1.34.0" });
+                if (fw === "vertex") reqs.push({ name: "google-cloud-aiplatform", pinned: "1.60.0", range: ">=1.60.0" });
+
+                const content = reqs.map(r => pinVersions ? `${r.name}==${r.pinned}` : `${r.name}${r.range}`).join("\n") + "\n";
+                const depsMap: Record<string, string> = {};
+                reqs.forEach(r => { depsMap[r.name] = pinVersions ? r.pinned : r.range; });
+
+                return {
+                  fileName: "requirements.txt",
+                  content,
+                  deps: depsMap,
+                };
+              }
+            })();
+
+            const depCount = Object.keys(depData.deps).length;
+            const warnings: string[] = [];
+
+            if (exportFormat === "typescript") {
+              if (depData.deps["@types/js-yaml"] && depData.deps["@types/node"]) {
+                warnings.push("Type definition packages (@types/*) add build-time overhead — consider removing if not needed in production.");
+              }
+              if (depCount > 8) {
+                warnings.push(`${depCount} dependencies detected — review if all are required for your deployment target.`);
+              }
+            }
+            if (exportFormat === "python") {
+              if (depCount > 5) {
+                warnings.push(`${depCount} packages listed — verify all are needed for your deployment environment.`);
+              }
+            }
+            if (exportFramework === "langgraph") {
+              warnings.push("LangGraph + LangChain pull in transitive dependencies — consider pinning sub-dependencies in a lockfile.");
+            }
+            if (!pinVersions) {
+              warnings.push("Unpinned versions may cause non-reproducible builds — enable pinning for production deployments.");
+            }
+
+            return (
+              <div className="flex flex-col gap-4 py-2 flex-1 min-h-0" data-testid="step-dependencies">
+                <div className="flex items-center gap-2 mb-1 flex-wrap">
+                  <span className="text-[11px] text-muted-foreground/40">Export Type</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  <span className="text-[11px] text-muted-foreground/40">Configure</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  <span className="text-[11px] text-muted-foreground/40">Tool Adapters</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">4</span>
+                    <span className="font-medium">Dependencies</span>
+                  </div>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  <span className="text-[11px] text-muted-foreground/40">Preview</span>
+                </div>
+
+                <div className="flex items-center justify-between gap-4 flex-wrap">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <Badge variant="outline" className="text-[10px]" data-testid="badge-dep-count">
+                      <Package className="w-3 h-3 mr-1" /> {depCount} {depCount === 1 ? "dependency" : "dependencies"}
+                    </Badge>
+                    <Badge variant="outline" className="text-[10px]" data-testid="badge-dep-file">
+                      <FileCode className="w-3 h-3 mr-1" /> {depData.fileName}
+                    </Badge>
+                    {warnings.length > 0 && (
+                      <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-600 dark:text-amber-400" data-testid="badge-dep-warnings">
+                        <AlertTriangle className="w-3 h-3 mr-1" /> {warnings.length} {warnings.length === 1 ? "warning" : "warnings"}
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="pin-versions-toggle" className="text-xs cursor-pointer">Pin versions</Label>
+                    <Switch
+                      id="pin-versions-toggle"
+                      checked={pinVersions}
+                      onCheckedChange={setPinVersions}
+                      data-testid="toggle-pin-versions"
+                    />
+                  </div>
+                </div>
+
+                <Card>
+                  <CardContent className="p-0">
+                    <div className="flex items-center gap-2 px-4 py-2.5 border-b">
+                      <FileCode className="w-3.5 h-3.5 text-muted-foreground" />
+                      <span className="text-xs font-medium font-mono">{depData.fileName}</span>
+                      {pinVersions && (
+                        <Badge variant="secondary" className="text-[9px] ml-auto">
+                          <Lock className="w-2.5 h-2.5 mr-1" /> Pinned
+                        </Badge>
+                      )}
+                      {!pinVersions && (
+                        <Badge variant="secondary" className="text-[9px] ml-auto bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                          <Unlock className="w-2.5 h-2.5 mr-1" /> Unpinned
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="overflow-auto max-h-[200px]">
+                      <pre className="text-xs font-mono p-4 whitespace-pre-wrap" data-testid="dep-file-preview">
+                        <code>{depData.content}</code>
+                      </pre>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {warnings.length > 0 && (
+                  <Card>
+                    <CardContent className="p-4 flex flex-col gap-2">
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+                        <span className="text-xs font-medium">Minimize Dependencies</span>
+                        <Badge variant="secondary" className="text-[9px]">{warnings.length}</Badge>
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        {warnings.map((w, i) => (
+                          <div key={i} className="flex items-start gap-2 text-xs text-muted-foreground" data-testid={`dep-warning-${i}`}>
+                            <AlertCircle className="w-3 h-3 mt-0.5 shrink-0 text-amber-500/70" />
+                            <span>{w}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {pinVersions && (
+                  <div className="flex items-start gap-2 p-3 rounded-md bg-emerald-500/5 border border-emerald-500/20" data-testid="notice-pinned-info">
+                    <CheckCircle className="w-4 h-4 text-emerald-500 mt-0.5 shrink-0" />
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-xs font-medium">Reproducible build configured</span>
+                      <span className="text-[11px] text-muted-foreground">
+                        All {depCount} dependencies are pinned to exact versions. Builds will produce identical results across environments.
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
           {exportStep === "preview" && (
             <div className="flex flex-col gap-3 flex-1 min-h-0">
               <div className="flex items-center gap-2 mb-1 flex-wrap">
@@ -3202,8 +3405,10 @@ export default function AgentDetail() {
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                 <span className="text-[11px] text-muted-foreground/40">Tool Adapters</span>
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Dependencies</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                 <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">4</span>
+                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">5</span>
                   <span className="font-medium">Preview</span>
                 </div>
               </div>
@@ -3248,8 +3453,13 @@ export default function AgentDetail() {
                 Back
               </Button>
             )}
+            {exportStep === "dependencies" && (
+              <Button variant="outline" onClick={() => setExportStep("tools")} data-testid="button-export-back-to-tools">
+                Back
+              </Button>
+            )}
             {exportStep === "preview" && (
-              <Button variant="outline" onClick={() => setExportStep("tools")} data-testid="button-export-back">
+              <Button variant="outline" onClick={() => setExportStep("dependencies")} data-testid="button-export-back">
                 Back
               </Button>
             )}
@@ -3285,7 +3495,15 @@ export default function AgentDetail() {
             )}
             {exportStep === "tools" && (
               <Button
-                onClick={() => exportCodeMutation.mutate({ format: exportFormat, llmProvider: exportLlmProvider, maxIterations: exportMaxIterations, completionPromise: exportCompletionPromise, framework: exportFramework, toolAdapters: toolAdapterOverrides })}
+                onClick={() => setExportStep("dependencies")}
+                data-testid="button-export-next-deps"
+              >
+                Next: Dependencies <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
+              </Button>
+            )}
+            {exportStep === "dependencies" && (
+              <Button
+                onClick={() => exportCodeMutation.mutate({ format: exportFormat, llmProvider: exportLlmProvider, maxIterations: exportMaxIterations, completionPromise: exportCompletionPromise, framework: exportFramework, toolAdapters: toolAdapterOverrides, pinVersions })}
                 disabled={exportCodeMutation.isPending}
                 data-testid="button-export-generate"
               >
