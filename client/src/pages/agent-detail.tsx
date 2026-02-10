@@ -177,7 +177,9 @@ export default function AgentDetail() {
   const [exportFramework, setExportFramework] = useState<string>("generic");
   const [exportPreview, setExportPreview] = useState<{ files: Record<string, string>; metadata: any } | null>(null);
   const [exportPreviewFile, setExportPreviewFile] = useState<string>("");
-  const [exportStep, setExportStep] = useState<"select" | "configure" | "tools" | "dependencies" | "envvars" | "observability" | "buildtest" | "preview">("select");
+  const [exportStep, setExportStep] = useState<"select" | "configure" | "tools" | "dependencies" | "envvars" | "observability" | "buildtest" | "preview" | "approval">("select");
+  const [exportApprovalSubmitted, setExportApprovalSubmitted] = useState(false);
+  const [exportApprovalId, setExportApprovalId] = useState<string | null>(null);
   const [toolAdapterOverrides, setToolAdapterOverrides] = useState<Record<string, "builtin" | "customer" | "stub">>({});
   const [pinVersions, setPinVersions] = useState(true);
   const [otelEnabled, setOtelEnabled] = useState(true);
@@ -2733,7 +2735,7 @@ export default function AgentDetail() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={exportDialogOpen} onOpenChange={(open) => { setExportDialogOpen(open); if (!open) { setExportStep("select"); setExportPreview(null); setToolAdapterOverrides({}); setOtelEnabled(true); setSpanGranularity("per-node"); setCompileStatus("idle"); setCompileOutput(""); setEvalStatus("idle"); setEvalOutput(""); } }}>
+      <Dialog open={exportDialogOpen} onOpenChange={(open) => { setExportDialogOpen(open); if (!open) { setExportStep("select"); setExportPreview(null); setToolAdapterOverrides({}); setOtelEnabled(true); setSpanGranularity("per-node"); setCompileStatus("idle"); setCompileOutput(""); setEvalStatus("idle"); setEvalOutput(""); setExportApprovalSubmitted(false); setExportApprovalId(null); } }}>
         <DialogContent className="max-w-3xl max-h-[85vh] overflow-hidden flex flex-col">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -2751,8 +2753,10 @@ export default function AgentDetail() {
                 <><Radio className="w-4 h-4" /> Observability &amp; Trace Settings</>
               ) : exportStep === "buildtest" ? (
                 <><Hammer className="w-4 h-4" /> Build &amp; Test Gate</>
-              ) : (
+              ) : exportStep === "preview" ? (
                 <><FileCode className="w-4 h-4" /> Preview Source Files</>
+              ) : (
+                <><ShieldCheck className="w-4 h-4" /> Approval Preview</>
               )}
             </DialogTitle>
             <DialogDescription>
@@ -2770,7 +2774,9 @@ export default function AgentDetail() {
                           ? "Preserve the ALMP flight recorder by configuring OpenTelemetry trace settings."
                           : exportStep === "buildtest"
                             ? "Validate the generated export before finalizing — compile check and eval suite."
-                            : "Review the generated source files before downloading."}
+                            : exportStep === "preview"
+                              ? "Review the generated source files before downloading."
+                              : "Review governance requirements and request expert validation for this export package."}
             </DialogDescription>
           </DialogHeader>
 
@@ -2795,6 +2801,8 @@ export default function AgentDetail() {
                 <span className="text-[11px] text-muted-foreground/40">Gate</span>
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                 <span className="text-[11px] text-muted-foreground/40">Preview</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Approval</span>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -2959,6 +2967,8 @@ export default function AgentDetail() {
                 <span className="text-[11px] text-muted-foreground/40">Gate</span>
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                 <span className="text-[11px] text-muted-foreground/40">Preview</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Approval</span>
               </div>
 
               <div className="flex flex-col gap-2">
@@ -3129,6 +3139,8 @@ export default function AgentDetail() {
                   <span className="text-[11px] text-muted-foreground/40">Gate</span>
                   <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                   <span className="text-[11px] text-muted-foreground/40">Preview</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  <span className="text-[11px] text-muted-foreground/40">Approval</span>
                 </div>
 
                 <div className="flex items-center gap-3 flex-wrap">
@@ -3361,6 +3373,8 @@ export default function AgentDetail() {
                   <span className="text-[11px] text-muted-foreground/40">Gate</span>
                   <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                   <span className="text-[11px] text-muted-foreground/40">Preview</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  <span className="text-[11px] text-muted-foreground/40">Approval</span>
                 </div>
 
                 <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -3523,6 +3537,8 @@ export default function AgentDetail() {
                   <span className="text-[11px] text-muted-foreground/40">Gate</span>
                   <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                   <span className="text-[11px] text-muted-foreground/40">Preview</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  <span className="text-[11px] text-muted-foreground/40">Approval</span>
                 </div>
 
                 <div className="flex items-center gap-3 flex-wrap">
@@ -3643,6 +3659,8 @@ export default function AgentDetail() {
                 <span className="text-[11px] text-muted-foreground/40">Gate</span>
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                 <span className="text-[11px] text-muted-foreground/40">Preview</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Approval</span>
               </div>
 
               <Card>
@@ -3797,6 +3815,8 @@ export default function AgentDetail() {
                 </div>
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                 <span className="text-[11px] text-muted-foreground/40">Preview</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Approval</span>
               </div>
 
               <div className="flex items-center gap-3 flex-wrap">
@@ -3955,6 +3975,8 @@ export default function AgentDetail() {
                   <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">8</span>
                   <span className="font-medium">Preview</span>
                 </div>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Approval</span>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
                 {exportPreview && Object.keys(exportPreview.files).map(fname => (
@@ -3985,6 +4007,182 @@ export default function AgentDetail() {
               )}
             </div>
           )}
+
+          {exportStep === "approval" && (() => {
+            const stubCount = Object.values(toolAdapterOverrides).filter(v => v === "stub").length;
+            const customerCount = Object.values(toolAdapterOverrides).filter(v => v === "customer").length;
+            const builtinCount = Object.values(toolAdapterOverrides).filter(v => v === "builtin").length;
+            const totalTools = Object.keys(toolAdapterOverrides).length;
+            const hasNewStubs = stubCount > 0;
+            const hasCustomerAdapters = customerCount > 0;
+            const compileGatePassed = compileStatus === "passed";
+            const evalGatePassed = evalStatus === "passed";
+            const fileCount = exportPreview ? Object.keys(exportPreview.files).length : 0;
+
+            const riskTier = (() => {
+              if (hasNewStubs && stubCount >= 3) return "critical";
+              if (hasNewStubs || !compileGatePassed || !evalGatePassed) return "high";
+              if (hasCustomerAdapters || !otelEnabled) return "medium";
+              return "low";
+            })();
+            const riskTierColor = riskTier === "critical" ? "text-red-600 dark:text-red-400 border-red-500/20" : riskTier === "high" ? "text-amber-600 dark:text-amber-400 border-amber-500/20" : riskTier === "medium" ? "text-yellow-600 dark:text-yellow-400 border-yellow-500/20" : "text-emerald-600 dark:text-emerald-400 border-emerald-500/20";
+            const riskTierBg = riskTier === "critical" ? "bg-red-50 dark:bg-red-950/30" : riskTier === "high" ? "bg-amber-50 dark:bg-amber-950/30" : riskTier === "medium" ? "bg-yellow-50 dark:bg-yellow-950/30" : "bg-emerald-50 dark:bg-emerald-950/30";
+
+            const changeSummary: string[] = [];
+            changeSummary.push(`${fileCount} source file${fileCount !== 1 ? "s" : ""} generated`);
+            changeSummary.push(`Framework: ${exportFramework}`);
+            changeSummary.push(`Format: ${exportFormat}`);
+            changeSummary.push(`LLM Provider: ${exportLlmProvider}`);
+            if (pinVersions) changeSummary.push("Pinned dependency versions");
+            if (otelEnabled) changeSummary.push(`OpenTelemetry traces enabled (${spanGranularity})`);
+            else changeSummary.push("OpenTelemetry traces disabled");
+
+            return (
+              <div className="flex flex-col gap-3 flex-1 min-h-0 overflow-auto" data-testid="step-approval">
+                <div className="flex items-center gap-2 mb-1 flex-wrap">
+                  <span className="text-[11px] text-muted-foreground/40">Export Type</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  <span className="text-[11px] text-muted-foreground/40">Configure</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  <span className="text-[11px] text-muted-foreground/40">Tools</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  <span className="text-[11px] text-muted-foreground/40">Deps</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  <span className="text-[11px] text-muted-foreground/40">Env</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  <span className="text-[11px] text-muted-foreground/40">Traces</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  <span className="text-[11px] text-muted-foreground/40">Gate</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  <span className="text-[11px] text-muted-foreground/40">Preview</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">9</span>
+                    <span className="font-medium">Approval</span>
+                  </div>
+                </div>
+
+                <Card data-testid="card-risk-tier">
+                  <CardContent className="pt-4 pb-3">
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <div className="flex items-center gap-3">
+                        <div className={`flex items-center justify-center w-10 h-10 rounded-md ${riskTierBg}`}>
+                          <Shield className={`w-5 h-5 ${riskTierColor.split(" ")[0]}`} />
+                        </div>
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-sm font-medium">Risk Assessment</span>
+                          <span className="text-xs text-muted-foreground">Governance tier computed from export configuration</span>
+                        </div>
+                      </div>
+                      <Badge variant="outline" className={`text-xs font-semibold uppercase ${riskTierColor}`} data-testid="badge-export-risk-tier">
+                        {riskTier} risk
+                      </Badge>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card data-testid="card-change-summary">
+                  <CardHeader className="flex flex-row items-center gap-2 space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
+                      <FileText className="w-4 h-4 text-muted-foreground" />
+                      What Changed
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex flex-col gap-1.5">
+                      {changeSummary.map((item, i) => (
+                        <div key={i} className="flex items-center gap-2" data-testid={`text-change-${i}`}>
+                          <ChevronRight className="w-3 h-3 text-muted-foreground shrink-0" />
+                          <span className="text-sm">{item}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card data-testid="card-tool-permissions">
+                  <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
+                      <Wrench className="w-4 h-4 text-muted-foreground" />
+                      Tool Permissions
+                    </CardTitle>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <Badge variant="outline" className="text-[10px]" data-testid="badge-tools-builtin">{builtinCount} built-in</Badge>
+                      <Badge variant="outline" className="text-[10px]" data-testid="badge-tools-customer">{customerCount} customer</Badge>
+                      {hasNewStubs && (
+                        <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400 border-amber-500/20" data-testid="badge-tools-stub">{stubCount} stub</Badge>
+                      )}
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex flex-col gap-1.5">
+                      {totalTools === 0 ? (
+                        <span className="text-xs text-muted-foreground">No tool adapters configured</span>
+                      ) : (
+                        Object.entries(toolAdapterOverrides).map(([name, status]) => (
+                          <div key={name} className="flex items-center justify-between gap-2 flex-wrap" data-testid={`tool-perm-${name}`}>
+                            <span className="text-sm">{name}</span>
+                            <Badge
+                              variant="outline"
+                              className={`text-[10px] ${status === "stub" ? "text-amber-600 dark:text-amber-400 border-amber-500/20" : status === "customer" ? "text-blue-600 dark:text-blue-400 border-blue-500/20" : "text-emerald-600 dark:text-emerald-400 border-emerald-500/20"}`}
+                            >
+                              {status === "stub" ? "Stub (new permission)" : status === "customer" ? "Customer adapter" : "Built-in"}
+                            </Badge>
+                          </div>
+                        ))
+                      )}
+                      {hasNewStubs && (
+                        <div className="flex items-start gap-2 mt-2 p-2.5 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/40">
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+                          <span className="text-xs text-amber-700 dark:text-amber-300">{stubCount} stub adapter{stubCount !== 1 ? "s" : ""} will be generated with placeholder implementations. These introduce new tool permissions that require expert review.</span>
+                        </div>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card data-testid="card-gate-results">
+                  <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
+                      <FlaskConical className="w-4 h-4 text-muted-foreground" />
+                      Validation Gate Results
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center justify-between gap-2 flex-wrap" data-testid="gate-compile-result">
+                        <span className="text-sm">Static Compile</span>
+                        <Badge variant="outline" className={`text-[10px] ${compileGatePassed ? "text-emerald-600 dark:text-emerald-400 border-emerald-500/20" : compileStatus === "failed" ? "text-red-600 dark:text-red-400 border-red-500/20" : "text-muted-foreground"}`}>
+                          {compileGatePassed ? "Passed" : compileStatus === "failed" ? "Failed" : "Not run"}
+                        </Badge>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 flex-wrap" data-testid="gate-eval-result">
+                        <span className="text-sm">Eval Suite</span>
+                        <Badge variant="outline" className={`text-[10px] ${evalGatePassed ? "text-emerald-600 dark:text-emerald-400 border-emerald-500/20" : evalStatus === "failed" ? "text-red-600 dark:text-red-400 border-red-500/20" : "text-muted-foreground"}`}>
+                          {evalGatePassed ? "Passed" : evalStatus === "failed" ? "Failed" : "Not run"}
+                        </Badge>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {exportApprovalSubmitted && exportApprovalId && (
+                  <div className="flex items-start gap-2 p-3 rounded-md bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/40" data-testid="notice-approval-submitted">
+                    <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 mt-0.5 shrink-0" />
+                    <div className="flex flex-col gap-1">
+                      <span className="text-sm font-medium text-emerald-700 dark:text-emerald-300">Export approval requested</span>
+                      <span className="text-xs text-emerald-600 dark:text-emerald-400">An approval record has been created for expert validation. Reviewers can inspect the full evidence bundle including source files, dependencies, and eval results.</span>
+                      <Link href={`/approvals/${exportApprovalId}`}>
+                        <Button variant="outline" size="sm" className="mt-1 w-fit" data-testid="button-view-approval">
+                          View Approval <ArrowRight className="w-3 h-3 ml-1" />
+                        </Button>
+                      </Link>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           <DialogFooter className="gap-2">
             {exportStep === "configure" && (
@@ -4094,7 +4292,72 @@ export default function AgentDetail() {
               </Button>
             )}
             {exportStep === "preview" && (
+              <Button
+                onClick={() => setExportStep("approval")}
+                data-testid="button-export-next-approval"
+              >
+                Next: Approval <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
+              </Button>
+            )}
+            {exportStep === "preview" && (
               <Button onClick={downloadExportPackage} data-testid="button-export-download">
+                <Download className="w-3.5 h-3.5 mr-1.5" /> Download Source Package
+              </Button>
+            )}
+            {exportStep === "approval" && (
+              <Button variant="outline" onClick={() => setExportStep("preview")} data-testid="button-export-back-to-preview">
+                Back
+              </Button>
+            )}
+            {exportStep === "approval" && (
+              <Button
+                onClick={async () => {
+                  try {
+                    const stubCount = Object.values(toolAdapterOverrides).filter(v => v === "stub").length;
+                    const riskTier = stubCount >= 3 ? "critical" : stubCount > 0 || compileStatus !== "passed" || evalStatus !== "passed" ? "high" : Object.values(toolAdapterOverrides).some(v => v === "customer") || !otelEnabled ? "medium" : "low";
+                    const riskScore = riskTier === "critical" ? 9 : riskTier === "high" ? 7 : riskTier === "medium" ? 4 : 1;
+                    const res = await apiRequest("POST", "/api/approvals", {
+                      type: "export_review",
+                      objectType: "export_package",
+                      objectId: agentId,
+                      objectName: `Export: ${agent?.name || "Agent"} (${exportFramework})`,
+                      riskScore,
+                      status: "pending",
+                      requestedBy: "System",
+                      requesterType: "system",
+                      agentId,
+                      description: `Code export package for ${agent?.name} using ${exportFramework} framework, ${exportFormat} format, ${exportLlmProvider} provider`,
+                      changeType: "export",
+                      toolPermissionClass: stubCount > 0 ? "elevated" : "standard",
+                      diffSummary: `${exportPreview ? Object.keys(exportPreview.files).length : 0} files generated, ${stubCount} stub adapters, ${Object.values(toolAdapterOverrides).filter(v => v === "builtin").length} built-in adapters`,
+                      evidenceJson: {
+                        exportConfig: { framework: exportFramework, format: exportFormat, llmProvider: exportLlmProvider, pinVersions, otelEnabled, spanGranularity, maxIterations: exportMaxIterations },
+                        fileTree: exportPreview ? Object.keys(exportPreview.files) : [],
+                        fileContents: exportPreview?.files || {},
+                        toolAdapters: toolAdapterOverrides,
+                        gateResults: { compileStatus, compileOutput, evalStatus, evalOutput },
+                        riskTier,
+                        metadata: exportPreview?.metadata || {},
+                      },
+                    });
+                    const data = await res.json();
+                    setExportApprovalSubmitted(true);
+                    setExportApprovalId(data.id);
+                    queryClient.invalidateQueries({ queryKey: ["/api/approvals"] });
+                    toast({ title: "Export approval requested", description: "An expert validator will review the export package." });
+                  } catch (err) {
+                    toast({ title: "Failed to request approval", description: "Could not create approval record.", variant: "destructive" });
+                  }
+                }}
+                disabled={exportApprovalSubmitted}
+                data-testid="button-request-export-approval"
+              >
+                <ShieldCheck className="w-3.5 h-3.5 mr-1.5" />
+                {exportApprovalSubmitted ? "Approval Requested" : "Request Export Approval"}
+              </Button>
+            )}
+            {exportStep === "approval" && (
+              <Button onClick={downloadExportPackage} data-testid="button-export-download-approval">
                 <Download className="w-3.5 h-3.5 mr-1.5" /> Download Source Package
               </Button>
             )}

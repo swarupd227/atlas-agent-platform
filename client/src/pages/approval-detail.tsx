@@ -28,6 +28,7 @@ import {
   TrendingUp,
   TrendingDown,
   ArrowRight,
+  Wrench,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -460,6 +461,173 @@ export default function ApprovalDetail() {
           </div>
         </PermissionGate>
       </div>
+
+      {approval.objectType === "export_package" && evidence.exportConfig && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4" data-testid="export-package-panels">
+          <Card data-testid="panel-export-file-tree">
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
+                <FileCode className="w-4 h-4 text-muted-foreground" />
+                Exported File Tree
+              </CardTitle>
+              <Badge variant="outline" className="text-[10px]" data-testid="badge-file-count">
+                {Array.isArray(evidence.fileTree) ? evidence.fileTree.length : 0} files
+              </Badge>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col gap-1.5">
+                {Array.isArray(evidence.fileTree) && evidence.fileTree.length > 0 ? (
+                  evidence.fileTree.map((fileName: string, i: number) => (
+                    <div key={i} className="flex items-center gap-2 p-1.5 rounded-md bg-muted/30" data-testid={`export-file-${i}`}>
+                      <FileCode className="w-3 h-3 text-muted-foreground shrink-0" />
+                      <span className="text-xs font-mono">{fileName}</span>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-xs text-muted-foreground">No file tree data</p>
+                )}
+                <div className="flex items-center gap-2 mt-1 flex-wrap">
+                  <Badge variant="outline" className="text-[10px]">{(evidence.exportConfig as any)?.framework || "unknown"}</Badge>
+                  <Badge variant="outline" className="text-[10px]">{(evidence.exportConfig as any)?.format || "unknown"}</Badge>
+                  <Badge variant="outline" className="text-[10px]">{(evidence.exportConfig as any)?.llmProvider || "unknown"}</Badge>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card data-testid="panel-export-deps">
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
+                <Layers className="w-4 h-4 text-muted-foreground" />
+                Dependency Diff
+              </CardTitle>
+              {(evidence.exportConfig as any)?.pinVersions && (
+                <Badge variant="outline" className="text-[10px] text-emerald-600 dark:text-emerald-400 border-emerald-500/20" data-testid="badge-pinned">
+                  Pinned
+                </Badge>
+              )}
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col gap-2">
+                {(() => {
+                  const fileTree = evidence.fileTree as string[] | undefined;
+                  const fileContents = evidence.fileContents as Record<string, string> | undefined;
+                  const depFile = fileTree?.find((f: string) => f === "package.json" || f === "requirements.txt");
+                  if (depFile && fileContents?.[depFile]) {
+                    return (
+                      <div className="flex flex-col gap-1.5" data-testid="dep-file-preview">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-medium">{depFile}</span>
+                          <Badge variant="outline" className="text-[10px]">new file</Badge>
+                        </div>
+                        <pre className="text-[11px] font-mono bg-muted/30 rounded-md p-2.5 overflow-auto max-h-48 whitespace-pre-wrap">{fileContents[depFile]}</pre>
+                      </div>
+                    );
+                  }
+                  return <p className="text-xs text-muted-foreground">No dependency file in export</p>;
+                })()}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card data-testid="panel-export-eval-results">
+            <CardHeader className="flex flex-row items-center gap-2 space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
+                <FlaskConical className="w-4 h-4 text-muted-foreground" />
+                Eval Results Summary
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col gap-2">
+                {evidence.gateResults ? (
+                  <>
+                    <div className="flex items-center justify-between gap-2 flex-wrap" data-testid="gate-compile">
+                      <span className="text-sm">Static Compile</span>
+                      <Badge
+                        variant="outline"
+                        className={`text-[10px] ${(evidence.gateResults as any).compileStatus === "passed" ? "text-emerald-600 dark:text-emerald-400 border-emerald-500/20" : (evidence.gateResults as any).compileStatus === "failed" ? "text-red-600 dark:text-red-400 border-red-500/20" : "text-muted-foreground"}`}
+                        data-testid="badge-gate-compile"
+                      >
+                        {(evidence.gateResults as any).compileStatus === "passed" ? "Passed" : (evidence.gateResults as any).compileStatus === "failed" ? "Failed" : "Not run"}
+                      </Badge>
+                    </div>
+                    {(evidence.gateResults as any).compileOutput && (
+                      <pre className="text-[11px] font-mono bg-muted/30 rounded-md p-2 overflow-auto max-h-24 whitespace-pre-wrap" data-testid="output-compile">{(evidence.gateResults as any).compileOutput}</pre>
+                    )}
+                    <div className="flex items-center justify-between gap-2 flex-wrap" data-testid="gate-eval">
+                      <span className="text-sm">Eval Suite</span>
+                      <Badge
+                        variant="outline"
+                        className={`text-[10px] ${(evidence.gateResults as any).evalStatus === "passed" ? "text-emerald-600 dark:text-emerald-400 border-emerald-500/20" : (evidence.gateResults as any).evalStatus === "failed" ? "text-red-600 dark:text-red-400 border-red-500/20" : "text-muted-foreground"}`}
+                        data-testid="badge-gate-eval"
+                      >
+                        {(evidence.gateResults as any).evalStatus === "passed" ? "Passed" : (evidence.gateResults as any).evalStatus === "failed" ? "Failed" : "Not run"}
+                      </Badge>
+                    </div>
+                    {(evidence.gateResults as any).evalOutput && (
+                      <pre className="text-[11px] font-mono bg-muted/30 rounded-md p-2 overflow-auto max-h-24 whitespace-pre-wrap" data-testid="output-eval">{(evidence.gateResults as any).evalOutput}</pre>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-xs text-muted-foreground">No gate results available</p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card data-testid="panel-export-tool-stubs">
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
+                <Wrench className="w-4 h-4 text-muted-foreground" />
+                Tool Adapter Stubs
+              </CardTitle>
+              {(() => {
+                const adapters = evidence.toolAdapters as Record<string, string> | undefined;
+                if (!adapters) return null;
+                const stubCount = Object.values(adapters).filter(v => v === "stub").length;
+                return stubCount > 0 ? (
+                  <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400 border-amber-500/20" data-testid="badge-stub-count">
+                    {stubCount} stub{stubCount !== 1 ? "s" : ""}
+                  </Badge>
+                ) : null;
+              })()}
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col gap-1.5">
+                {evidence.toolAdapters && Object.keys(evidence.toolAdapters as Record<string, string>).length > 0 ? (
+                  Object.entries(evidence.toolAdapters as Record<string, string>).map(([name, status]) => (
+                    <div key={name} className="flex items-center justify-between gap-2 flex-wrap" data-testid={`tool-adapter-${name}`}>
+                      <span className="text-sm">{name}</span>
+                      <Badge
+                        variant="outline"
+                        className={`text-[10px] ${status === "stub" ? "text-amber-600 dark:text-amber-400 border-amber-500/20" : status === "customer" ? "text-blue-600 dark:text-blue-400 border-blue-500/20" : "text-emerald-600 dark:text-emerald-400 border-emerald-500/20"}`}
+                      >
+                        {status === "stub" ? "Stub (new)" : status === "customer" ? "Customer" : "Built-in"}
+                      </Badge>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-xs text-muted-foreground">No tool adapters configured</p>
+                )}
+                {(() => {
+                  const adapters = evidence.toolAdapters as Record<string, string> | undefined;
+                  if (!adapters) return null;
+                  const stubCount = Object.values(adapters).filter(v => v === "stub").length;
+                  if (stubCount === 0) return null;
+                  return (
+                    <div className="flex items-start gap-2 mt-1.5 p-2.5 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/40">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+                      <span className="text-xs text-amber-700 dark:text-amber-300">
+                        {stubCount} tool adapter{stubCount !== 1 ? "s" : ""} generated as stubs with placeholder implementations. These require implementation before production use and introduce elevated tool permissions.
+                      </span>
+                    </div>
+                  );
+                })()}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Approval Requirements Panel */}
