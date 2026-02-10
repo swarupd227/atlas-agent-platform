@@ -46,6 +46,7 @@ import {
   Layers,
   FileText,
   PenTool,
+  Package,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -65,7 +66,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import type { Agent, RunTrace, EvalSuite, OutcomeContract, ImprovementRecommendation, AutonomousActionLog, AgentVersion, Deployment, Policy, Approval, PolicyException } from "@shared/schema";
+import type { Agent, RunTrace, EvalSuite, OutcomeContract, ImprovementRecommendation, AutonomousActionLog, AgentVersion, Deployment, Policy, Approval, PolicyException, ToolConnector } from "@shared/schema";
 
 export default function AgentDetail() {
   const [, params] = useRoute("/agents/:id");
@@ -122,6 +123,9 @@ export default function AgentDetail() {
   });
   const { data: agentExceptions } = useQuery<PolicyException[]>({
     queryKey: ["/api/policy-exceptions/agent", agentId],
+  });
+  const { data: allToolConnectors } = useQuery<ToolConnector[]>({
+    queryKey: ["/api/tool-connectors"],
   });
 
   const [, navigate] = useLocation();
@@ -608,6 +612,96 @@ export default function AgentDetail() {
                       )}
                     </div>
                   </div>
+                </CardContent>
+              </Card>
+            );
+          })()}
+
+          {(() => {
+            const pinnedVersions = (agentVersions || []).filter(v => v.status !== "draft");
+            const hasPinnedVersion = pinnedVersions.length > 0;
+            const latestPinned = hasPinnedVersion
+              ? [...pinnedVersions].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())[0]
+              : null;
+
+            const agentEvals = evals || [];
+            const hasEvals = agentEvals.length > 0;
+            const evalsPassed = agentEvals.filter(e => e.lastRunAt && (e.passRate || 0) >= 0.8);
+            const evalsNotRun = agentEvals.filter(e => !e.lastRunAt);
+            const allEvalsPassed = hasEvals && evalsPassed.length === agentEvals.length;
+            const evalDetail = !hasEvals
+              ? "No eval suites configured"
+              : evalsNotRun.length > 0
+                ? `${evalsPassed.length}/${agentEvals.length} passing (${evalsNotRun.length} not run)`
+                : `${evalsPassed.length}/${agentEvals.length} passing`;
+
+            const agentTools = Array.isArray(agent.toolsConfig) ? agent.toolsConfig as any[] : [];
+            const connectors = allToolConnectors || [];
+            const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+            const connectorMap = new Map(connectors.map(c => [normalize(c.name), c]));
+            const toolsWithAdapter = agentTools.filter(t => {
+              const name = normalize(t.name || "");
+              const connector = connectorMap.get(name);
+              return connector && connector.status === "connected";
+            });
+            const allAdaptersComplete = agentTools.length > 0 && toolsWithAdapter.length === agentTools.length;
+            const hasTools = agentTools.length > 0;
+
+            const readyChecks = [
+              { key: "version", label: "Pinned version", detail: latestPinned ? `v${latestPinned.semver}` : "No signed version", passed: hasPinnedVersion },
+              { key: "evals", label: "Eval suites passed", detail: evalDetail, passed: allEvalsPassed },
+              { key: "adapters", label: "Tool adapters complete", detail: hasTools ? `${toolsWithAdapter.length}/${agentTools.length} connected` : "No tools configured", passed: allAdaptersComplete },
+            ];
+            const readyCount = readyChecks.filter(c => c.passed).length;
+            const isReady = readyCount === readyChecks.length;
+
+            return (
+              <Card data-testid="card-export-readiness">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <CardTitle className="text-sm font-medium">Export Readiness</CardTitle>
+                    <Badge
+                      variant="outline"
+                      className={`text-[10px] ${isReady ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : readyCount > 0 ? "bg-amber-500/10 text-amber-600 dark:text-amber-400" : "bg-red-500/10 text-red-600 dark:text-red-400"}`}
+                      data-testid="badge-export-readiness"
+                    >
+                      {isReady ? "Ready" : `${readyCount}/${readyChecks.length} checks`}
+                    </Badge>
+                  </div>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-3">
+                  <div className="flex flex-col gap-2">
+                    {readyChecks.map(check => (
+                      <div key={check.key} className="flex items-center gap-3 p-2.5 rounded-md bg-muted/30" data-testid={`check-${check.key}`}>
+                        {check.passed ? (
+                          <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />
+                        ) : (
+                          <AlertCircle className="w-4 h-4 text-amber-500 shrink-0" />
+                        )}
+                        <div className="flex flex-col min-w-0">
+                          <span className="text-xs font-medium">{check.label}</span>
+                          <span className="text-[11px] text-muted-foreground">{check.detail}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {hasPinnedVersion && (
+                    <Button
+                      variant="default"
+                      size="sm"
+                      className="w-full"
+                      onClick={() => { setExportStep("configure"); setExportPreview(null); setExportDialogOpen(true); }}
+                      data-testid="button-summary-export-code"
+                    >
+                      <Package className="w-3.5 h-3.5 mr-1.5" /> Export / Generate Code
+                    </Button>
+                  )}
+                  {!hasPinnedVersion && (
+                    <div className="flex items-center gap-2 p-2.5 rounded-md bg-amber-500/5 border border-amber-500/10" data-testid="warning-no-pinned-version">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                      <span className="text-[11px] text-muted-foreground" data-testid="text-no-pinned-version">Create and pin a version before exporting</span>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             );
