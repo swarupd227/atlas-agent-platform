@@ -27,6 +27,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/status-badge";
 import { ErrorState } from "@/components/error-state";
 import { Link } from "wouter";
+import { useRole, type RoleId } from "@/components/role-provider";
 
 interface KpiSummary {
   id: string;
@@ -99,6 +100,134 @@ interface OverviewData {
   };
 }
 
+interface PolicyViolation {
+  id: string;
+  agentId: string;
+  agentName: string;
+  policyName: string;
+  rule: string;
+  severity: string;
+  traceId: string;
+  timestamp: string;
+  action: string;
+}
+
+interface RoleWidgetConfig {
+  title: string;
+  description: string;
+  showOutcomeHealth: boolean;
+  showAgentsAtRisk: boolean;
+  showApprovalQueue: boolean;
+  showFinancialSnapshot: boolean;
+  showSystemStatus: boolean;
+  showPolicyViolations: boolean;
+  outcomeCompact: boolean;
+  approvalProminent: boolean;
+  financialProminent: boolean;
+  systemProminent: boolean;
+}
+
+const ROLE_WIDGETS: Record<RoleId, RoleWidgetConfig> = {
+  admin: {
+    title: "Admin Dashboard",
+    description: "Full platform overview and management",
+    showOutcomeHealth: true,
+    showAgentsAtRisk: true,
+    showApprovalQueue: true,
+    showFinancialSnapshot: true,
+    showSystemStatus: true,
+    showPolicyViolations: false,
+    outcomeCompact: false,
+    approvalProminent: false,
+    financialProminent: false,
+    systemProminent: false,
+  },
+  outcome_owner: {
+    title: "Outcome Owner Dashboard",
+    description: "KPI delivery and business outcomes",
+    showOutcomeHealth: true,
+    showAgentsAtRisk: false,
+    showApprovalQueue: true,
+    showFinancialSnapshot: true,
+    showSystemStatus: false,
+    showPolicyViolations: false,
+    outcomeCompact: false,
+    approvalProminent: false,
+    financialProminent: false,
+    systemProminent: false,
+  },
+  agent_engineer: {
+    title: "Agent Engineer Dashboard",
+    description: "Agent performance and development",
+    showOutcomeHealth: true,
+    showAgentsAtRisk: true,
+    showApprovalQueue: false,
+    showFinancialSnapshot: false,
+    showSystemStatus: true,
+    showPolicyViolations: false,
+    outcomeCompact: true,
+    approvalProminent: false,
+    financialProminent: false,
+    systemProminent: false,
+  },
+  ops_sre: {
+    title: "Ops / SRE Dashboard",
+    description: "Operations, reliability, and incidents",
+    showOutcomeHealth: false,
+    showAgentsAtRisk: true,
+    showApprovalQueue: true,
+    showFinancialSnapshot: false,
+    showSystemStatus: true,
+    showPolicyViolations: false,
+    outcomeCompact: false,
+    approvalProminent: false,
+    financialProminent: false,
+    systemProminent: true,
+  },
+  compliance_security: {
+    title: "Compliance / Security Dashboard",
+    description: "Policy enforcement and compliance",
+    showOutcomeHealth: false,
+    showAgentsAtRisk: false,
+    showApprovalQueue: true,
+    showFinancialSnapshot: false,
+    showSystemStatus: true,
+    showPolicyViolations: true,
+    outcomeCompact: false,
+    approvalProminent: false,
+    financialProminent: false,
+    systemProminent: false,
+  },
+  expert_validator: {
+    title: "Expert Validator Dashboard",
+    description: "Pending approvals and high-risk changes",
+    showOutcomeHealth: false,
+    showAgentsAtRisk: true,
+    showApprovalQueue: true,
+    showFinancialSnapshot: false,
+    showSystemStatus: false,
+    showPolicyViolations: false,
+    outcomeCompact: false,
+    approvalProminent: true,
+    financialProminent: false,
+    systemProminent: false,
+  },
+  finance: {
+    title: "Finance Dashboard",
+    description: "Billing, revenue, and cost tracking",
+    showOutcomeHealth: true,
+    showAgentsAtRisk: false,
+    showApprovalQueue: false,
+    showFinancialSnapshot: true,
+    showSystemStatus: false,
+    showPolicyViolations: false,
+    outcomeCompact: true,
+    approvalProminent: false,
+    financialProminent: true,
+    systemProminent: false,
+  },
+};
+
 function OverviewSkeleton() {
   return (
     <div className="flex flex-col gap-6 p-6" data-testid="overview-skeleton">
@@ -153,9 +282,428 @@ function TrendIcon({ trend }: { trend: string | null }) {
   return <Minus className="w-3 h-3 text-muted-foreground" />;
 }
 
+function PolicyViolationsSection({ violations, isLoading }: { violations: PolicyViolation[]; isLoading: boolean }) {
+  if (isLoading) {
+    return (
+      <Card data-testid="card-policy-violations">
+        <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
+          <CardTitle className="text-sm font-medium">Recent Policy Violations</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Skeleton className="h-24 w-full" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card data-testid="card-policy-violations">
+      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <CardTitle className="text-sm font-medium">Recent Policy Violations</CardTitle>
+          {violations.length > 0 && (
+            <Badge variant="secondary" className="text-[10px]">{violations.length}</Badge>
+          )}
+        </div>
+        <Link href="/governance">
+          <Button variant="ghost" size="sm" data-testid="link-view-governance">
+            View All <ArrowRight className="w-3.5 h-3.5 ml-1" />
+          </Button>
+        </Link>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2">
+        {violations.length > 0 ? (
+          violations.slice(0, 5).map((violation) => (
+            <Link key={violation.id} href={`/agents/${violation.agentId}`}>
+              <div
+                className="flex flex-col gap-1.5 p-2.5 rounded-md hover-elevate cursor-pointer"
+                data-testid={`violation-preview-${violation.id}`}
+              >
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-xs font-medium truncate">{violation.policyName}</span>
+                  <Badge
+                    variant="outline"
+                    className="text-[10px] bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20"
+                  >
+                    <CircleAlert className="w-2.5 h-2.5 mr-0.5" />
+                    {violation.severity}
+                  </Badge>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[11px] text-muted-foreground truncate">{violation.rule}</span>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Badge variant="outline" className="text-[10px]">{violation.agentName}</Badge>
+                  <Badge variant="outline" className="text-[10px]">{violation.action}</Badge>
+                  <span className="text-[10px] text-muted-foreground">{timeAgo(violation.timestamp)}</span>
+                </div>
+              </div>
+            </Link>
+          ))
+        ) : (
+          <div className="flex items-center gap-3 p-4 rounded-md bg-emerald-500/5">
+            <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <span className="text-xs text-muted-foreground">No recent policy violations</span>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function OutcomeHealthSection({ outcomes, compact }: { outcomes: OutcomeHealth[]; compact: boolean }) {
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <h2 className="text-sm font-medium text-muted-foreground">Outcome Health</h2>
+        <Link href="/outcomes">
+          <Button variant="ghost" size="sm" data-testid="link-view-outcomes">
+            View All <ArrowRight className="w-3.5 h-3.5 ml-1" />
+          </Button>
+        </Link>
+      </div>
+      <div className={`grid gap-4 ${compact ? "grid-cols-1 md:grid-cols-2 xl:grid-cols-4" : "grid-cols-1 md:grid-cols-2 xl:grid-cols-3"}`} data-testid="grid-outcome-health">
+        {outcomes.map((outcome) => (
+          <Link key={outcome.id} href={`/outcomes/${outcome.id}`}>
+            <Card className="hover-elevate cursor-pointer h-full" data-testid={`tile-outcome-${outcome.id}`}>
+              <CardContent className="p-4 flex flex-col gap-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex flex-col gap-0.5 min-w-0">
+                    <span className="text-sm font-medium truncate">{outcome.name}</span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <StatusBadge status={outcome.status} />
+                      {!compact && (
+                        <Badge
+                          variant="outline"
+                          className={`text-[10px] ${
+                            outcome.slaStatus === "breach"
+                              ? "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20"
+                              : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                          }`}
+                          data-testid={`sla-status-${outcome.id}`}
+                        >
+                          SLA: {outcome.slaStatus === "breach" ? "Breach" : "Healthy"}
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-end gap-0.5 shrink-0">
+                    <span className="text-lg font-semibold">{Math.round(outcome.confidence * 100)}%</span>
+                    <span className="text-[10px] text-muted-foreground">confidence</span>
+                  </div>
+                </div>
+                {!compact && outcome.kpis.length > 0 && (
+                  <div className="flex flex-col gap-2">
+                    {outcome.kpis.slice(0, 3).map((kpi) => (
+                      <div key={kpi.id} className="flex flex-col gap-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1 min-w-0">
+                            <TrendIcon trend={kpi.trend} />
+                            <span className="text-[11px] text-muted-foreground truncate">{kpi.name}</span>
+                          </div>
+                          <span className="text-[11px] font-medium shrink-0">
+                            {kpi.current.toLocaleString()} / {kpi.target.toLocaleString()} {kpi.unit}
+                          </span>
+                        </div>
+                        <Progress value={kpi.progress} className="h-1" />
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {compact && outcome.kpis.length > 0 && (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {outcome.kpis.slice(0, 3).map((kpi) => (
+                      <div key={kpi.id} className="flex items-center gap-1">
+                        <TrendIcon trend={kpi.trend} />
+                        <span className="text-[11px] text-muted-foreground">{kpi.name}:</span>
+                        <span className="text-[11px] font-medium">{kpi.current.toLocaleString()}/{kpi.target.toLocaleString()}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {outcome.kpis.length === 0 && (
+                  <p className="text-[11px] text-muted-foreground">No KPIs configured</p>
+                )}
+              </CardContent>
+            </Card>
+          </Link>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AgentsAtRiskSection({ agents }: { agents: AgentAtRisk[] }) {
+  return (
+    <Card className="lg:col-span-2" data-testid="card-agents-at-risk">
+      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
+        <CardTitle className="text-sm font-medium">Agents At Risk</CardTitle>
+        <Link href="/agents">
+          <Button variant="ghost" size="sm" data-testid="link-view-agents">
+            View All <ArrowRight className="w-3.5 h-3.5 ml-1" />
+          </Button>
+        </Link>
+      </CardHeader>
+      <CardContent>
+        {agents.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs" data-testid="table-agents-at-risk">
+              <thead>
+                <tr className="border-b">
+                  <th className="text-left py-2 pr-3 font-medium text-muted-foreground">Agent</th>
+                  <th className="text-left py-2 pr-3 font-medium text-muted-foreground">Env</th>
+                  <th className="text-left py-2 pr-3 font-medium text-muted-foreground">Risk</th>
+                  <th className="text-right py-2 pr-3 font-medium text-muted-foreground">Drift</th>
+                  <th className="text-right py-2 pr-3 font-medium text-muted-foreground">Incidents</th>
+                  <th className="text-right py-2 pr-3 font-medium text-muted-foreground">p95 Lat</th>
+                  <th className="text-right py-2 font-medium text-muted-foreground">Cost/Run</th>
+                </tr>
+              </thead>
+              <tbody>
+                {agents.map((agent) => (
+                  <tr key={agent.id} className="border-b last:border-0">
+                    <td className="py-2 pr-3">
+                      <Link href={`/agents/${agent.id}`}>
+                        <span className="font-medium hover:underline cursor-pointer" data-testid={`link-agent-${agent.id}`}>
+                          {agent.name}
+                        </span>
+                      </Link>
+                    </td>
+                    <td className="py-2 pr-3">
+                      <Badge variant="outline" className="text-[10px]">{agent.environment || "staging"}</Badge>
+                    </td>
+                    <td className="py-2 pr-3">
+                      <StatusBadge status={agent.riskTier} />
+                    </td>
+                    <td className="py-2 pr-3 text-right">
+                      {agent.lastDrift ? (
+                        <span className={agent.lastDrift.driftPercent < 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}>
+                          {agent.lastDrift.driftPercent > 0 ? "+" : ""}{agent.lastDrift.driftPercent}%
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">-</span>
+                      )}
+                    </td>
+                    <td className="py-2 pr-3 text-right">
+                      {agent.openIncidents > 0 ? (
+                        <span className="text-red-600 dark:text-red-400 font-medium">{agent.openIncidents}</span>
+                      ) : (
+                        <span className="text-muted-foreground">0</span>
+                      )}
+                    </td>
+                    <td className="py-2 pr-3 text-right">{agent.p95Latency}ms</td>
+                    <td className="py-2 text-right">{formatCurrency(agent.costPerRun)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="flex items-center gap-3 p-4 rounded-md bg-emerald-500/5">
+            <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <span className="text-xs text-muted-foreground">All agents are operating within safe parameters</span>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ApprovalQueueSection({ approvalQueue, prominent }: { approvalQueue: OverviewData["approvalQueue"]; prominent: boolean }) {
+  return (
+    <Card className={prominent ? "lg:col-span-2" : ""} data-testid="card-approval-queue">
+      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <CardTitle className="text-sm font-medium">Approval Queue</CardTitle>
+          {approvalQueue.totalPending > 0 && (
+            <Badge variant="secondary" className="text-[10px]">{approvalQueue.totalPending}</Badge>
+          )}
+        </div>
+        <Link href="/approvals">
+          <Button variant="ghost" size="sm" data-testid="link-view-approvals">
+            View All <ArrowRight className="w-3.5 h-3.5 ml-1" />
+          </Button>
+        </Link>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2">
+        {approvalQueue.items.length > 0 ? (
+          (prominent ? approvalQueue.items : approvalQueue.items).map((approval) => (
+            <Link key={approval.id} href={`/approvals/${approval.id}`}>
+              <div
+                className="flex flex-col gap-1.5 p-2.5 rounded-md hover-elevate cursor-pointer"
+                data-testid={`approval-preview-${approval.id}`}
+              >
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-xs font-medium truncate">{approval.objectName || approval.type}</span>
+                  {approval.dueDate && (
+                    <Badge
+                      variant="outline"
+                      className={`text-[10px] ${
+                        new Date(approval.dueDate).getTime() < Date.now()
+                          ? "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20"
+                          : "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20"
+                      }`}
+                    >
+                      <Clock className="w-2.5 h-2.5 mr-0.5" />
+                      {dueIn(approval.dueDate)}
+                    </Badge>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Badge variant="outline" className="text-[10px]">{approval.type.replace(/_/g, " ")}</Badge>
+                  {approval.environment && (
+                    <Badge variant="outline" className="text-[10px]">{approval.environment}</Badge>
+                  )}
+                  {approval.createdAt && (
+                    <span className="text-[10px] text-muted-foreground">{timeAgo(approval.createdAt)}</span>
+                  )}
+                </div>
+              </div>
+            </Link>
+          ))
+        ) : (
+          <div className="flex items-center gap-3 p-4 rounded-md bg-emerald-500/5">
+            <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <span className="text-xs text-muted-foreground">No pending approvals</span>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function FinancialSnapshotSection({ financialSnapshot, prominent }: { financialSnapshot: OverviewData["financialSnapshot"]; prominent: boolean }) {
+  return (
+    <Card className={prominent ? "lg:col-span-2" : ""} data-testid="card-financial-snapshot">
+      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
+        <CardTitle className="text-sm font-medium">Financial Snapshot</CardTitle>
+        <Link href="/billing">
+          <Button variant="ghost" size="sm" data-testid="link-view-billing">
+            View Billing <ArrowRight className="w-3.5 h-3.5 ml-1" />
+          </Button>
+        </Link>
+      </CardHeader>
+      <CardContent>
+        <div className="flex flex-col gap-4">
+          <p className="text-[11px] text-muted-foreground">Last 30 days</p>
+          <div className={`grid gap-3 ${prominent ? "grid-cols-2 md:grid-cols-4" : "grid-cols-3"}`}>
+            <div className="flex flex-col gap-1 p-3 rounded-md bg-emerald-500/5">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Billed</span>
+              <span className="text-lg font-semibold text-emerald-600 dark:text-emerald-400" data-testid="text-billed-amount">
+                {formatCurrency(financialSnapshot.billed)}
+              </span>
+            </div>
+            <div className="flex flex-col gap-1 p-3 rounded-md bg-amber-500/5">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Pending</span>
+              <span className="text-lg font-semibold text-amber-600 dark:text-amber-400" data-testid="text-pending-amount">
+                {formatCurrency(financialSnapshot.pending)}
+              </span>
+            </div>
+            <div className="flex flex-col gap-1 p-3 rounded-md bg-red-500/5">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Disputed</span>
+              <span className="text-lg font-semibold text-red-600 dark:text-red-400" data-testid="text-disputed-amount">
+                {formatCurrency(financialSnapshot.disputed)}
+              </span>
+            </div>
+            {prominent && (
+              <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/50">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Revenue (30d)</span>
+                <span className="text-lg font-semibold" data-testid="text-total-revenue-30d-prominent">
+                  {formatCurrency(financialSnapshot.totalRevenue30d)}
+                </span>
+              </div>
+            )}
+          </div>
+          {!prominent && financialSnapshot.totalRevenue30d > 0 && (
+            <div className="flex items-center justify-between gap-2 pt-1">
+              <span className="text-xs text-muted-foreground">Total Revenue (30d)</span>
+              <span className="text-sm font-medium" data-testid="text-total-revenue-30d">
+                {formatCurrency(financialSnapshot.totalRevenue30d)}
+              </span>
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function SystemStatusSection({ systemStatus, prominent }: { systemStatus: OverviewData["systemStatus"]; prominent: boolean }) {
+  return (
+    <Card className={prominent ? "lg:col-span-2" : ""} data-testid="card-system-status">
+      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
+        <CardTitle className="text-sm font-medium">System Status</CardTitle>
+        <Link href="/monitor">
+          <Button variant="ghost" size="sm" data-testid="link-view-monitor">
+            View Monitor <ArrowRight className="w-3.5 h-3.5 ml-1" />
+          </Button>
+        </Link>
+      </CardHeader>
+      <CardContent>
+        <div className={`grid gap-3 ${prominent ? "grid-cols-2 md:grid-cols-4" : "grid-cols-2"}`}>
+          <div className="flex flex-col gap-1.5 p-3 rounded-md bg-muted/50" data-testid="status-tool-error-rate">
+            <div className="flex items-center gap-1.5">
+              <AlertTriangle className="w-3.5 h-3.5 text-muted-foreground" />
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Error Rate</span>
+            </div>
+            <span className={`text-lg font-semibold ${systemStatus.toolErrorRate > 5 ? "text-red-600 dark:text-red-400" : "text-foreground"}`}>
+              {systemStatus.toolErrorRate}%
+            </span>
+          </div>
+          <div className="flex flex-col gap-1.5 p-3 rounded-md bg-muted/50" data-testid="status-queue-depth">
+            <div className="flex items-center gap-1.5">
+              <Clock className="w-3.5 h-3.5 text-muted-foreground" />
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Queue Depth</span>
+            </div>
+            <span className={`text-lg font-semibold ${systemStatus.queueDepth > 10 ? "text-amber-600 dark:text-amber-400" : "text-foreground"}`}>
+              {systemStatus.queueDepth}
+            </span>
+          </div>
+          <div className="flex flex-col gap-1.5 p-3 rounded-md bg-muted/50" data-testid="status-eval-backlog">
+            <div className="flex items-center gap-1.5">
+              <FlaskConical className="w-3.5 h-3.5 text-muted-foreground" />
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Eval Backlog</span>
+            </div>
+            <span className={`text-lg font-semibold ${systemStatus.evalBacklog > 5 ? "text-amber-600 dark:text-amber-400" : "text-foreground"}`}>
+              {systemStatus.evalBacklog}
+            </span>
+          </div>
+          <div className="flex flex-col gap-1.5 p-3 rounded-md bg-muted/50" data-testid="status-connector-health">
+            <div className="flex items-center gap-1.5">
+              {systemStatus.connectorHealth >= 80 ? (
+                <Wifi className="w-3.5 h-3.5 text-muted-foreground" />
+              ) : (
+                <WifiOff className="w-3.5 h-3.5 text-red-500" />
+              )}
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Connectors</span>
+            </div>
+            <span className={`text-lg font-semibold ${systemStatus.connectorHealth < 80 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+              {systemStatus.connectorHealth}%
+            </span>
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-2 mt-3 pt-3 border-t">
+          <span className="text-xs text-muted-foreground">Active Agents</span>
+          <span className="text-xs font-medium">
+            {systemStatus.activeAgents} / {systemStatus.totalAgents}
+          </span>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Overview() {
+  const { role } = useRole();
+  const config = ROLE_WIDGETS[role.id];
+
   const { data, isLoading, error, refetch } = useQuery<OverviewData>({
     queryKey: ["/api/overview"],
+  });
+
+  const { data: violations, isLoading: violationsLoading } = useQuery<PolicyViolation[]>({
+    queryKey: ["/api/alerts/critical-violations"],
+    enabled: config.showPolicyViolations,
   });
 
   if (isLoading) return <OverviewSkeleton />;
@@ -199,13 +747,19 @@ export default function Overview() {
     );
   }
 
+  const showAgentsAndApprovalRow = config.showAgentsAtRisk || config.showApprovalQueue;
+  const showFinancialAndSystemRow = config.showFinancialSnapshot || config.showSystemStatus;
+
   return (
     <div className="flex flex-col gap-6 p-6" data-testid="page-overview">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Platform Overview</h1>
-          <p className="text-sm text-muted-foreground">
-            Are we delivering outcomes safely, right now?
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-dashboard-title">{config.title}</h1>
+            <Badge variant="outline" className="text-[10px]" data-testid="badge-role-label">{role.label}</Badge>
+          </div>
+          <p className="text-sm text-muted-foreground" data-testid="text-dashboard-description">
+            {config.description}
           </p>
         </div>
         <Link href="/outcomes/discover">
@@ -216,316 +770,53 @@ export default function Overview() {
         </Link>
       </div>
 
-      {/* Outcome Health Grid */}
-      <div className="flex flex-col gap-3">
-        <div className="flex items-center justify-between gap-2 flex-wrap">
-          <h2 className="text-sm font-medium text-muted-foreground">Outcome Health</h2>
-          <Link href="/outcomes">
-            <Button variant="ghost" size="sm" data-testid="link-view-outcomes">
-              View All <ArrowRight className="w-3.5 h-3.5 ml-1" />
-            </Button>
-          </Link>
+      {config.showOutcomeHealth && (
+        <OutcomeHealthSection outcomes={data.outcomeHealth} compact={config.outcomeCompact} />
+      )}
+
+      {showAgentsAndApprovalRow && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {config.showAgentsAtRisk && (
+            <AgentsAtRiskSection agents={data.agentsAtRisk} />
+          )}
+          {config.showApprovalQueue && !config.approvalProminent && (
+            <ApprovalQueueSection approvalQueue={data.approvalQueue} prominent={false} />
+          )}
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" data-testid="grid-outcome-health">
-          {data.outcomeHealth.map((outcome) => (
-            <Link key={outcome.id} href={`/outcomes/${outcome.id}`}>
-              <Card className="hover-elevate cursor-pointer h-full" data-testid={`tile-outcome-${outcome.id}`}>
-                <CardContent className="p-4 flex flex-col gap-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex flex-col gap-0.5 min-w-0">
-                      <span className="text-sm font-medium truncate">{outcome.name}</span>
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <StatusBadge status={outcome.status} />
-                        <Badge
-                          variant="outline"
-                          className={`text-[10px] ${
-                            outcome.slaStatus === "breach"
-                              ? "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20"
-                              : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
-                          }`}
-                          data-testid={`sla-status-${outcome.id}`}
-                        >
-                          SLA: {outcome.slaStatus === "breach" ? "Breach" : "Healthy"}
-                        </Badge>
-                      </div>
-                    </div>
-                    <div className="flex flex-col items-end gap-0.5 shrink-0">
-                      <span className="text-lg font-semibold">{Math.round(outcome.confidence * 100)}%</span>
-                      <span className="text-[10px] text-muted-foreground">confidence</span>
-                    </div>
-                  </div>
-                  {outcome.kpis.length > 0 && (
-                    <div className="flex flex-col gap-2">
-                      {outcome.kpis.slice(0, 3).map((kpi) => (
-                        <div key={kpi.id} className="flex flex-col gap-1">
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-1 min-w-0">
-                              <TrendIcon trend={kpi.trend} />
-                              <span className="text-[11px] text-muted-foreground truncate">{kpi.name}</span>
-                            </div>
-                            <span className="text-[11px] font-medium shrink-0">
-                              {kpi.current.toLocaleString()} / {kpi.target.toLocaleString()} {kpi.unit}
-                            </span>
-                          </div>
-                          <Progress value={kpi.progress} className="h-1" />
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {outcome.kpis.length === 0 && (
-                    <p className="text-[11px] text-muted-foreground">No KPIs configured</p>
-                  )}
-                </CardContent>
-              </Card>
-            </Link>
-          ))}
+      )}
+
+      {config.approvalProminent && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <ApprovalQueueSection approvalQueue={data.approvalQueue} prominent={true} />
         </div>
-      </div>
+      )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Agents At Risk */}
-        <Card className="lg:col-span-2" data-testid="card-agents-at-risk">
-          <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
-            <CardTitle className="text-sm font-medium">Agents At Risk</CardTitle>
-            <Link href="/agents">
-              <Button variant="ghost" size="sm" data-testid="link-view-agents">
-                View All <ArrowRight className="w-3.5 h-3.5 ml-1" />
-              </Button>
-            </Link>
-          </CardHeader>
-          <CardContent>
-            {data.agentsAtRisk.length > 0 ? (
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs" data-testid="table-agents-at-risk">
-                  <thead>
-                    <tr className="border-b">
-                      <th className="text-left py-2 pr-3 font-medium text-muted-foreground">Agent</th>
-                      <th className="text-left py-2 pr-3 font-medium text-muted-foreground">Env</th>
-                      <th className="text-left py-2 pr-3 font-medium text-muted-foreground">Risk</th>
-                      <th className="text-right py-2 pr-3 font-medium text-muted-foreground">Drift</th>
-                      <th className="text-right py-2 pr-3 font-medium text-muted-foreground">Incidents</th>
-                      <th className="text-right py-2 pr-3 font-medium text-muted-foreground">p95 Lat</th>
-                      <th className="text-right py-2 font-medium text-muted-foreground">Cost/Run</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.agentsAtRisk.map((agent) => (
-                      <tr key={agent.id} className="border-b last:border-0">
-                        <td className="py-2 pr-3">
-                          <Link href={`/agents/${agent.id}`}>
-                            <span className="font-medium hover:underline cursor-pointer" data-testid={`link-agent-${agent.id}`}>
-                              {agent.name}
-                            </span>
-                          </Link>
-                        </td>
-                        <td className="py-2 pr-3">
-                          <Badge variant="outline" className="text-[10px]">{agent.environment || "staging"}</Badge>
-                        </td>
-                        <td className="py-2 pr-3">
-                          <StatusBadge status={agent.riskTier} />
-                        </td>
-                        <td className="py-2 pr-3 text-right">
-                          {agent.lastDrift ? (
-                            <span className={agent.lastDrift.driftPercent < 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}>
-                              {agent.lastDrift.driftPercent > 0 ? "+" : ""}{agent.lastDrift.driftPercent}%
-                            </span>
-                          ) : (
-                            <span className="text-muted-foreground">-</span>
-                          )}
-                        </td>
-                        <td className="py-2 pr-3 text-right">
-                          {agent.openIncidents > 0 ? (
-                            <span className="text-red-600 dark:text-red-400 font-medium">{agent.openIncidents}</span>
-                          ) : (
-                            <span className="text-muted-foreground">0</span>
-                          )}
-                        </td>
-                        <td className="py-2 pr-3 text-right">{agent.p95Latency}ms</td>
-                        <td className="py-2 text-right">{formatCurrency(agent.costPerRun)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <div className="flex items-center gap-3 p-4 rounded-md bg-emerald-500/5">
-                <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                <span className="text-xs text-muted-foreground">All agents are operating within safe parameters</span>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+      {config.showPolicyViolations && (
+        <PolicyViolationsSection violations={violations || []} isLoading={violationsLoading} />
+      )}
 
-        {/* Approval Queue Preview */}
-        <Card data-testid="card-approval-queue">
-          <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
-            <div className="flex items-center gap-2">
-              <CardTitle className="text-sm font-medium">Approval Queue</CardTitle>
-              {data.approvalQueue.totalPending > 0 && (
-                <Badge variant="secondary" className="text-[10px]">{data.approvalQueue.totalPending}</Badge>
-              )}
-            </div>
-            <Link href="/approvals">
-              <Button variant="ghost" size="sm" data-testid="link-view-approvals">
-                View All <ArrowRight className="w-3.5 h-3.5 ml-1" />
-              </Button>
-            </Link>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-2">
-            {data.approvalQueue.items.length > 0 ? (
-              data.approvalQueue.items.map((approval) => (
-                <Link key={approval.id} href={`/approvals/${approval.id}`}>
-                  <div
-                    className="flex flex-col gap-1.5 p-2.5 rounded-md hover-elevate cursor-pointer"
-                    data-testid={`approval-preview-${approval.id}`}
-                  >
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <span className="text-xs font-medium truncate">{approval.objectName || approval.type}</span>
-                      {approval.dueDate && (
-                        <Badge
-                          variant="outline"
-                          className={`text-[10px] ${
-                            new Date(approval.dueDate).getTime() < Date.now()
-                              ? "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20"
-                              : "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20"
-                          }`}
-                        >
-                          <Clock className="w-2.5 h-2.5 mr-0.5" />
-                          {dueIn(approval.dueDate)}
-                        </Badge>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <Badge variant="outline" className="text-[10px]">{approval.type.replace(/_/g, " ")}</Badge>
-                      {approval.environment && (
-                        <Badge variant="outline" className="text-[10px]">{approval.environment}</Badge>
-                      )}
-                      {approval.createdAt && (
-                        <span className="text-[10px] text-muted-foreground">{timeAgo(approval.createdAt)}</span>
-                      )}
-                    </div>
-                  </div>
-                </Link>
-              ))
-            ) : (
-              <div className="flex items-center gap-3 p-4 rounded-md bg-emerald-500/5">
-                <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                <span className="text-xs text-muted-foreground">No pending approvals</span>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+      {config.financialProminent && (
+        <div className="grid grid-cols-1 gap-4">
+          <FinancialSnapshotSection financialSnapshot={data.financialSnapshot} prominent={true} />
+        </div>
+      )}
 
-      {/* Financial Snapshot + System Status */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Financial Snapshot */}
-        <Card data-testid="card-financial-snapshot">
-          <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
-            <CardTitle className="text-sm font-medium">Financial Snapshot</CardTitle>
-            <Link href="/billing">
-              <Button variant="ghost" size="sm" data-testid="link-view-billing">
-                View Billing <ArrowRight className="w-3.5 h-3.5 ml-1" />
-              </Button>
-            </Link>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-col gap-4">
-              <p className="text-[11px] text-muted-foreground">Last 30 days</p>
-              <div className="grid grid-cols-3 gap-3">
-                <div className="flex flex-col gap-1 p-3 rounded-md bg-emerald-500/5">
-                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Billed</span>
-                  <span className="text-lg font-semibold text-emerald-600 dark:text-emerald-400" data-testid="text-billed-amount">
-                    {formatCurrency(data.financialSnapshot.billed)}
-                  </span>
-                </div>
-                <div className="flex flex-col gap-1 p-3 rounded-md bg-amber-500/5">
-                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Pending</span>
-                  <span className="text-lg font-semibold text-amber-600 dark:text-amber-400" data-testid="text-pending-amount">
-                    {formatCurrency(data.financialSnapshot.pending)}
-                  </span>
-                </div>
-                <div className="flex flex-col gap-1 p-3 rounded-md bg-red-500/5">
-                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Disputed</span>
-                  <span className="text-lg font-semibold text-red-600 dark:text-red-400" data-testid="text-disputed-amount">
-                    {formatCurrency(data.financialSnapshot.disputed)}
-                  </span>
-                </div>
-              </div>
-              {data.financialSnapshot.totalRevenue30d > 0 && (
-                <div className="flex items-center justify-between gap-2 pt-1">
-                  <span className="text-xs text-muted-foreground">Total Revenue (30d)</span>
-                  <span className="text-sm font-medium" data-testid="text-total-revenue-30d">
-                    {formatCurrency(data.financialSnapshot.totalRevenue30d)}
-                  </span>
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+      {showFinancialAndSystemRow && !config.financialProminent && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {config.showFinancialSnapshot && (
+            <FinancialSnapshotSection financialSnapshot={data.financialSnapshot} prominent={false} />
+          )}
+          {config.showSystemStatus && (
+            <SystemStatusSection systemStatus={data.systemStatus} prominent={config.systemProminent} />
+          )}
+        </div>
+      )}
 
-        {/* System Status */}
-        <Card data-testid="card-system-status">
-          <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
-            <CardTitle className="text-sm font-medium">System Status</CardTitle>
-            <Link href="/monitor">
-              <Button variant="ghost" size="sm" data-testid="link-view-monitor">
-                View Monitor <ArrowRight className="w-3.5 h-3.5 ml-1" />
-              </Button>
-            </Link>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="flex flex-col gap-1.5 p-3 rounded-md bg-muted/50" data-testid="status-tool-error-rate">
-                <div className="flex items-center gap-1.5">
-                  <AlertTriangle className="w-3.5 h-3.5 text-muted-foreground" />
-                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Error Rate</span>
-                </div>
-                <span className={`text-lg font-semibold ${data.systemStatus.toolErrorRate > 5 ? "text-red-600 dark:text-red-400" : "text-foreground"}`}>
-                  {data.systemStatus.toolErrorRate}%
-                </span>
-              </div>
-              <div className="flex flex-col gap-1.5 p-3 rounded-md bg-muted/50" data-testid="status-queue-depth">
-                <div className="flex items-center gap-1.5">
-                  <Clock className="w-3.5 h-3.5 text-muted-foreground" />
-                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Queue Depth</span>
-                </div>
-                <span className={`text-lg font-semibold ${data.systemStatus.queueDepth > 10 ? "text-amber-600 dark:text-amber-400" : "text-foreground"}`}>
-                  {data.systemStatus.queueDepth}
-                </span>
-              </div>
-              <div className="flex flex-col gap-1.5 p-3 rounded-md bg-muted/50" data-testid="status-eval-backlog">
-                <div className="flex items-center gap-1.5">
-                  <FlaskConical className="w-3.5 h-3.5 text-muted-foreground" />
-                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Eval Backlog</span>
-                </div>
-                <span className={`text-lg font-semibold ${data.systemStatus.evalBacklog > 5 ? "text-amber-600 dark:text-amber-400" : "text-foreground"}`}>
-                  {data.systemStatus.evalBacklog}
-                </span>
-              </div>
-              <div className="flex flex-col gap-1.5 p-3 rounded-md bg-muted/50" data-testid="status-connector-health">
-                <div className="flex items-center gap-1.5">
-                  {data.systemStatus.connectorHealth >= 80 ? (
-                    <Wifi className="w-3.5 h-3.5 text-muted-foreground" />
-                  ) : (
-                    <WifiOff className="w-3.5 h-3.5 text-red-500" />
-                  )}
-                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Connectors</span>
-                </div>
-                <span className={`text-lg font-semibold ${data.systemStatus.connectorHealth < 80 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`}>
-                  {data.systemStatus.connectorHealth}%
-                </span>
-              </div>
-            </div>
-            <div className="flex items-center justify-between gap-2 mt-3 pt-3 border-t">
-              <span className="text-xs text-muted-foreground">Active Agents</span>
-              <span className="text-xs font-medium">
-                {data.systemStatus.activeAgents} / {data.systemStatus.totalAgents}
-              </span>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      {config.financialProminent && config.showSystemStatus && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <SystemStatusSection systemStatus={data.systemStatus} prominent={config.systemProminent} />
+        </div>
+      )}
     </div>
   );
 }

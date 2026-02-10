@@ -39,6 +39,8 @@ import {
   type BillingDispute, type InsertBillingDispute,
   blueprints,
   type Blueprint, type InsertBlueprint,
+  loggingIntegrations,
+  type LoggingIntegration, type InsertLoggingIntegration,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -173,6 +175,12 @@ export interface IStorage {
   getBlueprintsByAgent(agentId: string): Promise<Blueprint[]>;
   createBlueprint(blueprint: InsertBlueprint): Promise<Blueprint>;
   updateBlueprint(id: string, data: Partial<Blueprint>): Promise<Blueprint | undefined>;
+
+  getLoggingIntegrations(): Promise<LoggingIntegration[]>;
+  getLoggingIntegration(id: string): Promise<LoggingIntegration | undefined>;
+  createLoggingIntegration(integration: InsertLoggingIntegration): Promise<LoggingIntegration>;
+  updateLoggingIntegration(id: string, data: Partial<LoggingIntegration>): Promise<LoggingIntegration | undefined>;
+  deleteLoggingIntegration(id: string): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -662,6 +670,30 @@ export class DatabaseStorage implements IStorage {
   async updateBlueprint(id: string, data: Partial<Blueprint>) {
     const [updated] = await db.update(blueprints).set(data).where(eq(blueprints.id, id)).returning();
     return updated;
+  }
+
+  async getLoggingIntegrations() {
+    return db.select().from(loggingIntegrations);
+  }
+
+  async getLoggingIntegration(id: string) {
+    const [integration] = await db.select().from(loggingIntegrations).where(eq(loggingIntegrations.id, id));
+    return integration;
+  }
+
+  async createLoggingIntegration(integration: InsertLoggingIntegration) {
+    const [created] = await db.insert(loggingIntegrations).values(integration).returning();
+    return created;
+  }
+
+  async updateLoggingIntegration(id: string, data: Partial<LoggingIntegration>) {
+    const [updated] = await db.update(loggingIntegrations).set(data).where(eq(loggingIntegrations.id, id)).returning();
+    return updated;
+  }
+
+  async deleteLoggingIntegration(id: string) {
+    await db.delete(loggingIntegrations).where(eq(loggingIntegrations.id, id));
+    return true;
   }
 }
 

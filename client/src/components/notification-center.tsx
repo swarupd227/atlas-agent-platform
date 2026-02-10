@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { useState, useEffect, useRef } from "react";
 import {
   Bell, CheckCircle, AlertTriangle, TrendingDown, ArrowRight,
-  CreditCard, Clock, ShieldAlert, Zap,
+  CreditCard, Clock, ShieldAlert, Zap, Ban,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -12,6 +13,19 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useToast } from "@/hooks/use-toast";
+
+interface CriticalViolation {
+  id: string;
+  agentId: string;
+  agentName: string;
+  policyName: string;
+  rule: string;
+  severity: string;
+  traceId: string;
+  timestamp: string;
+  action: string;
+}
 
 interface Approval {
   id: string;
@@ -63,6 +77,8 @@ interface AuditEvent {
 
 export function NotificationCenter() {
   const [, navigate] = useLocation();
+  const { toast } = useToast();
+  const seenViolationIds = useRef<Set<string>>(new Set());
 
   const { data: approvals } = useQuery<Approval[]>({
     queryKey: ["/api/approvals"],
@@ -84,8 +100,29 @@ export function NotificationCenter() {
     queryKey: ["/api/audit-events"],
   });
 
+  const { data: criticalViolations } = useQuery<CriticalViolation[]>({
+    queryKey: ["/api/alerts/critical-violations"],
+    refetchInterval: 30000,
+  });
+
+  useEffect(() => {
+    if (!criticalViolations) return;
+    const newViolations = criticalViolations.filter((v) => !seenViolationIds.current.has(v.id));
+    if (newViolations.length > 0 && seenViolationIds.current.size > 0) {
+      newViolations.forEach((v) => {
+        toast({
+          title: "Critical Policy Violation",
+          description: `${v.agentName}: ${v.policyName} - ${v.rule}`,
+          variant: "destructive",
+        });
+      });
+    }
+    criticalViolations.forEach((v) => seenViolationIds.current.add(v.id));
+  }, [criticalViolations, toast]);
+
   const pendingApprovals = approvals?.filter((a) => a.status === "pending") || [];
   const criticalDrift = driftSignals?.filter((d) => d.severity === "critical" || d.severity === "high") || [];
+  const activeCriticalViolations = criticalViolations || [];
 
   const readyInvoices = invoices?.filter((i) => i.status === "sent") || [];
 
@@ -104,7 +141,7 @@ export function NotificationCenter() {
     return ts > oneDayAgo;
   }).slice(0, 3);
 
-  const totalCount = pendingApprovals.length + criticalDrift.length + readyInvoices.length + expiringExceptions.length + recentIncidents.length;
+  const totalCount = pendingApprovals.length + criticalDrift.length + readyInvoices.length + expiringExceptions.length + recentIncidents.length + activeCriticalViolations.length;
 
   return (
     <Popover>
@@ -161,6 +198,21 @@ export function NotificationCenter() {
                       subtitle={`${d.metric} drift (${d.severity})`}
                       onClick={() => navigate("/monitor")}
                       testId={`notification-drift-${i}`}
+                    />
+                  ))}
+                </NotificationSection>
+              )}
+
+              {activeCriticalViolations.length > 0 && (
+                <NotificationSection title="Policy Violations" bordered>
+                  {activeCriticalViolations.slice(0, 4).map((v, i) => (
+                    <NotificationItem
+                      key={v.id}
+                      icon={<Ban className="w-3.5 h-3.5 text-red-500 shrink-0" />}
+                      title={`${v.agentName}: ${v.policyName}`}
+                      subtitle={`${v.rule} · ${v.severity}`}
+                      onClick={() => navigate("/governance")}
+                      testId={`notification-violation-${i}`}
                     />
                   ))}
                 </NotificationSection>

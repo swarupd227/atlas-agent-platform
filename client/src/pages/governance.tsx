@@ -620,6 +620,7 @@ export default function Governance() {
           <TabsTrigger value="exceptions" data-testid="tab-exceptions">Policy Exceptions</TabsTrigger>
           <TabsTrigger value="tool-access" data-testid="tab-tool-access">Tool Access</TabsTrigger>
           <TabsTrigger value="ethics" data-testid="tab-ethics">Ethical Boundaries</TabsTrigger>
+          <TabsTrigger value="what-if" data-testid="tab-what-if">What-If Analysis</TabsTrigger>
         </TabsList>
 
         <TabsContent value="policies" className="mt-0 flex flex-col gap-4">
@@ -1513,7 +1514,219 @@ export default function Governance() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        <TabsContent value="what-if" className="mt-0 flex flex-col gap-4">
+          <WhatIfAnalysis policies={policies || []} />
+        </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+interface WhatIfResult {
+  affectedAgents: { id: string; name: string; currentStatus: string }[];
+  tracesBlockedCount: number;
+  totalTracesAnalyzed: number;
+  estimatedCostImpact: number;
+  riskAssessment: string;
+}
+
+function WhatIfAnalysis({ policies }: { policies: Policy[] }) {
+  const [domain, setDomain] = useState("data_handling");
+  const [thresholdField, setThresholdField] = useState("max_latency_ms");
+  const [currentValue, setCurrentValue] = useState(5000);
+  const [proposedValue, setProposedValue] = useState(3000);
+  const [result, setResult] = useState<WhatIfResult | null>(null);
+
+  const simulation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/governance/what-if", {
+        policyDomain: domain,
+        thresholdField,
+        currentValue,
+        proposedValue,
+      });
+      return res.json();
+    },
+    onSuccess: (data: WhatIfResult) => setResult(data),
+  });
+
+  const domainOptions = [
+    { value: "data_handling", label: "Data Handling" },
+    { value: "tool_permissions", label: "Tool Permissions" },
+    { value: "logging", label: "Logging" },
+    { value: "allowed_actions", label: "Allowed Actions" },
+    { value: "content_boundaries", label: "Content Boundaries" },
+  ];
+
+  const thresholdOptions = [
+    { value: "max_latency_ms", label: "Max Latency (ms)" },
+    { value: "max_cost_per_run", label: "Max Cost per Run ($)" },
+    { value: "min_success_rate", label: "Min Success Rate (%)" },
+    { value: "max_error_rate", label: "Max Error Rate (%)" },
+    { value: "max_drift_percent", label: "Max Drift (%)" },
+  ];
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-1">
+        <h3 className="text-sm font-medium">Policy Impact Simulator</h3>
+        <p className="text-xs text-muted-foreground">
+          Preview the impact of policy threshold changes before enforcing them
+        </p>
+      </div>
+
+      <Card>
+        <CardContent className="p-4 flex flex-col gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="flex flex-col gap-2">
+              <Label className="text-xs">Policy Domain</Label>
+              <Select value={domain} onValueChange={setDomain}>
+                <SelectTrigger data-testid="select-whatif-domain">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {domainOptions.map((d) => (
+                    <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label className="text-xs">Threshold Field</Label>
+              <Select value={thresholdField} onValueChange={setThresholdField}>
+                <SelectTrigger data-testid="select-whatif-threshold">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {thresholdOptions.map((t) => (
+                    <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="flex flex-col gap-2">
+              <Label className="text-xs">Current Value</Label>
+              <Input
+                type="number"
+                value={currentValue}
+                onChange={(e) => setCurrentValue(Number(e.target.value))}
+                data-testid="input-whatif-current"
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label className="text-xs">Proposed Value</Label>
+              <Input
+                type="number"
+                value={proposedValue}
+                onChange={(e) => setProposedValue(Number(e.target.value))}
+                data-testid="input-whatif-proposed"
+              />
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              onClick={() => simulation.mutate()}
+              disabled={simulation.isPending}
+              data-testid="button-run-simulation"
+            >
+              {simulation.isPending ? (
+                <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" />
+              ) : (
+                <Sparkles className="w-4 h-4 mr-1.5" />
+              )}
+              Run Simulation
+            </Button>
+            <span className="text-[11px] text-muted-foreground">
+              Analyzes historical traces and current agent configurations
+            </span>
+          </div>
+        </CardContent>
+      </Card>
+
+      {result && (
+        <div className="flex flex-col gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <Card>
+              <CardContent className="p-4 flex flex-col gap-1">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Traces Analyzed</span>
+                <span className="text-lg font-semibold" data-testid="text-whatif-total-traces">
+                  {result.totalTracesAnalyzed.toLocaleString()}
+                </span>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4 flex flex-col gap-1">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Would Be Blocked</span>
+                <span className="text-lg font-semibold text-red-600 dark:text-red-400" data-testid="text-whatif-blocked">
+                  {result.tracesBlockedCount.toLocaleString()}
+                </span>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4 flex flex-col gap-1">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Cost Impact</span>
+                <span className="text-lg font-semibold text-amber-600 dark:text-amber-400" data-testid="text-whatif-cost">
+                  ${result.estimatedCostImpact.toFixed(2)}
+                </span>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4 flex flex-col gap-1">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Agents Affected</span>
+                <span className="text-lg font-semibold" data-testid="text-whatif-agents">
+                  {result.affectedAgents.length}
+                </span>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
+              <CardTitle className="text-sm font-medium">Risk Assessment</CardTitle>
+              <Badge
+                variant={result.riskAssessment === "low" ? "outline" : result.riskAssessment === "high" ? "destructive" : "secondary"}
+                data-testid="badge-whatif-risk"
+              >
+                {result.riskAssessment} risk
+              </Badge>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <span className="text-xs font-medium">Impact Summary</span>
+                <p className="text-xs text-muted-foreground">
+                  Changing {thresholdField.replace(/_/g, " ")} from {currentValue} to {proposedValue} in the {domain.replace(/_/g, " ")} domain would
+                  block {result.tracesBlockedCount} of {result.totalTracesAnalyzed} analyzed traces
+                  ({result.totalTracesAnalyzed > 0 ? ((result.tracesBlockedCount / result.totalTracesAnalyzed) * 100).toFixed(1) : 0}%) and
+                  affect {result.affectedAgents.length} agent{result.affectedAgents.length !== 1 ? "s" : ""}.
+                </p>
+              </div>
+
+              {result.affectedAgents.length > 0 && (
+                <div className="flex flex-col gap-2">
+                  <span className="text-xs font-medium">Affected Agents</span>
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-4 px-2 py-1 border-b">
+                      <span className="text-[10px] text-muted-foreground font-medium flex-1">Agent</span>
+                      <span className="text-[10px] text-muted-foreground font-medium w-24">Status</span>
+                    </div>
+                    {result.affectedAgents.map((agent) => (
+                      <div key={agent.id} className="flex items-center gap-4 px-2 py-1.5">
+                        <span className="text-xs font-medium flex-1" data-testid={`text-whatif-agent-${agent.id}`}>{agent.name}</span>
+                        <div className="w-24">
+                          <StatusBadge status={agent.currentStatus} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

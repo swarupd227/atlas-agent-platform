@@ -28,6 +28,7 @@ import {
   insertExperimentSchema,
   insertBillingDisputeSchema,
   insertBlueprintSchema,
+  insertLoggingIntegrationSchema,
 } from "@shared/schema";
 
 const openai = new OpenAI({
@@ -4639,6 +4640,274 @@ Eval Suites: ${evalSuites.length} configured`,
           totalAgents: agents.length,
         },
       });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.get("/api/logging-integrations", async (_req, res) => {
+    const integrations = await storage.getLoggingIntegrations();
+    res.json(integrations);
+  });
+
+  app.post("/api/logging-integrations", async (req, res) => {
+    try {
+      const data = insertLoggingIntegrationSchema.parse(req.body);
+      const integration = await storage.createLoggingIntegration(data);
+      res.status(201).json(integration);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  app.patch("/api/logging-integrations/:id", async (req, res) => {
+    const updated = await storage.updateLoggingIntegration(req.params.id, req.body);
+    if (!updated) return res.status(404).json({ message: "Not found" });
+    res.json(updated);
+  });
+
+  app.delete("/api/logging-integrations/:id", async (req, res) => {
+    await storage.deleteLoggingIntegration(req.params.id);
+    res.status(204).send();
+  });
+
+  app.get("/api/alerts/critical-violations", async (_req, res) => {
+    try {
+      const traces = await storage.getTraces();
+      const agents = await storage.getAgents();
+      const agentMap = new Map(agents.map(a => [a.id, a]));
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+
+      const violations: Array<{
+        id: string;
+        agentId: string;
+        agentName: string;
+        policyName: string;
+        rule: string;
+        severity: string;
+        traceId: string;
+        timestamp: string;
+        action: string;
+      }> = [];
+
+      for (const trace of traces) {
+        if (trace.status !== "blocked") continue;
+        const traceTime = trace.startedAt ? new Date(trace.startedAt) : null;
+        if (!traceTime || traceTime < oneHourAgo) continue;
+
+        const policyChecks = trace.policyChecks;
+        if (!policyChecks || !Array.isArray(policyChecks)) continue;
+
+        for (const check of policyChecks as Array<any>) {
+          if (check.severity === "critical") {
+            const agent = agentMap.get(trace.agentId);
+            violations.push({
+              id: `${trace.id}-${check.policyName || check.policy || "unknown"}`,
+              agentId: trace.agentId,
+              agentName: agent?.name || "Unknown Agent",
+              policyName: check.policyName || check.policy || "Unknown Policy",
+              rule: check.rule || check.description || "Policy violation",
+              severity: "critical",
+              traceId: trace.id,
+              timestamp: traceTime.toISOString(),
+              action: check.action || "blocked",
+            });
+          }
+        }
+      }
+
+      res.json(violations);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.post("/api/governance/what-if", async (req, res) => {
+    try {
+      const whatIfSchema = z.object({
+        policyDomain: z.string(),
+        thresholdField: z.string(),
+        currentValue: z.number(),
+        proposedValue: z.number(),
+      });
+      const { policyDomain, thresholdField, currentValue, proposedValue } = whatIfSchema.parse(req.body);
+
+      const traces = await storage.getTraces();
+      const agents = await storage.getAgents();
+      const agentMap = new Map(agents.map(a => [a.id, a]));
+
+      const affectedAgentIds = new Set<string>();
+      let tracesBlockedCount = 0;
+      let totalTracesAnalyzed = 0;
+
+      for (const trace of traces) {
+        const toolCalls = trace.toolCalls as Array<any> | null;
+        const policyChecks = trace.policyChecks as Array<any> | null;
+
+        let matchesDomain = false;
+
+        if (toolCalls && Array.isArray(toolCalls)) {
+          for (const tc of toolCalls) {
+            if (tc.domain === policyDomain || tc.category === policyDomain || tc.type === policyDomain) {
+              matchesDomain = true;
+              break;
+            }
+          }
+        }
+
+        if (!matchesDomain && policyChecks && Array.isArray(policyChecks)) {
+          for (const pc of policyChecks) {
+            if (pc.domain === policyDomain || pc.policyDomain === policyDomain || pc.category === policyDomain) {
+              matchesDomain = true;
+              break;
+            }
+          }
+        }
+
+        if (matchesDomain) {
+          totalTracesAnalyzed++;
+          affectedAgentIds.add(trace.agentId);
+
+          const wouldBeBlocked = proposedValue < currentValue;
+          if (wouldBeBlocked && trace.status !== "blocked") {
+            const random = Math.random();
+            const blockProbability = Math.abs(proposedValue - currentValue) / Math.max(currentValue, 1);
+            if (random < blockProbability) {
+              tracesBlockedCount++;
+            }
+          }
+        }
+      }
+
+      const affectedAgents = Array.from(affectedAgentIds).map(id => {
+        const agent = agentMap.get(id);
+        return {
+          id,
+          name: agent?.name || "Unknown Agent",
+          currentStatus: agent?.status || "unknown",
+        };
+      });
+
+      const estimatedCostImpact = tracesBlockedCount * (agents.length > 0
+        ? agents.reduce((sum, a) => sum + (a.costPerRun || 0), 0) / agents.length
+        : 0.05);
+
+      let riskAssessment = "low";
+      if (tracesBlockedCount > totalTracesAnalyzed * 0.3) {
+        riskAssessment = "high";
+      } else if (tracesBlockedCount > totalTracesAnalyzed * 0.1) {
+        riskAssessment = "medium";
+      }
+
+      res.json({
+        affectedAgents,
+        tracesBlockedCount,
+        totalTracesAnalyzed,
+        estimatedCostImpact: Math.round(estimatedCostImpact * 100) / 100,
+        riskAssessment,
+      });
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  app.get("/api/audit-events/filtered", async (req, res) => {
+    try {
+      const { actorType, action, objectType, search, startDate, endDate } = req.query;
+      const page = parseInt(req.query.page as string) || 1;
+      const limit = parseInt(req.query.limit as string) || 50;
+
+      let events = await storage.getAuditEvents();
+
+      if (actorType) {
+        events = events.filter(e => e.actorType === actorType);
+      }
+      if (action) {
+        events = events.filter(e => e.action === action);
+      }
+      if (objectType) {
+        events = events.filter(e => e.objectType === objectType);
+      }
+      if (search) {
+        const searchStr = (search as string).toLowerCase();
+        events = events.filter(e =>
+          (e.action && e.action.toLowerCase().includes(searchStr)) ||
+          (e.details && e.details.toLowerCase().includes(searchStr)) ||
+          (e.objectId && e.objectId.toLowerCase().includes(searchStr)) ||
+          (e.actorId && e.actorId.toLowerCase().includes(searchStr))
+        );
+      }
+      if (startDate) {
+        const start = new Date(startDate as string);
+        if (!isNaN(start.getTime())) {
+          events = events.filter(e => e.createdAt && new Date(e.createdAt) >= start);
+        }
+      }
+      if (endDate) {
+        const end = new Date(endDate as string);
+        if (!isNaN(end.getTime())) {
+          events = events.filter(e => e.createdAt && new Date(e.createdAt) <= end);
+        }
+      }
+
+      const total = events.length;
+      const totalPages = Math.ceil(total / limit);
+      const offset = (page - 1) * limit;
+      const paginatedEvents = events.slice(offset, offset + limit);
+
+      res.json({ events: paginatedEvents, total, page, totalPages });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.get("/api/audit-events/export", async (req, res) => {
+    try {
+      const { actorType, action, objectType, search, startDate, endDate } = req.query;
+
+      let events = await storage.getAuditEvents();
+
+      if (actorType) {
+        events = events.filter(e => e.actorType === actorType);
+      }
+      if (action) {
+        events = events.filter(e => e.action === action);
+      }
+      if (objectType) {
+        events = events.filter(e => e.objectType === objectType);
+      }
+      if (search) {
+        const searchStr = (search as string).toLowerCase();
+        events = events.filter(e =>
+          (e.action && e.action.toLowerCase().includes(searchStr)) ||
+          (e.details && e.details.toLowerCase().includes(searchStr)) ||
+          (e.objectId && e.objectId.toLowerCase().includes(searchStr)) ||
+          (e.actorId && e.actorId.toLowerCase().includes(searchStr))
+        );
+      }
+      if (startDate) {
+        const start = new Date(startDate as string);
+        if (!isNaN(start.getTime())) {
+          events = events.filter(e => e.createdAt && new Date(e.createdAt) >= start);
+        }
+      }
+      if (endDate) {
+        const end = new Date(endDate as string);
+        if (!isNaN(end.getTime())) {
+          events = events.filter(e => e.createdAt && new Date(e.createdAt) <= end);
+        }
+      }
+
+      const csvHeader = "id,actorType,actorId,action,objectType,objectId,details,sequenceNum,createdAt";
+      const csvRows = events.map(e => {
+        const details = (e.details || "").replace(/"/g, '""');
+        return `${e.id},${e.actorType},${e.actorId || ""},${e.action},${e.objectType},${e.objectId || ""},"${details}",${e.sequenceNum || ""},${e.createdAt ? new Date(e.createdAt).toISOString() : ""}`;
+      });
+      const csv = [csvHeader, ...csvRows].join("\n");
+
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", "attachment; filename=audit-events.csv");
+      res.send(csv);
     } catch (e: any) {
       res.status(500).json({ message: e.message });
     }

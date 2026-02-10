@@ -43,6 +43,7 @@ import ApprovalDetail from "@/pages/approval-detail";
 import Blueprints from "@/pages/blueprints";
 import BlueprintDetail from "@/pages/blueprint-detail";
 import ShadowReplay from "@/pages/shadow-replay";
+import AuditTrail from "@/pages/audit-trail";
 
 function Router() {
   return (
@@ -66,6 +67,7 @@ function Router() {
       <Route path="/traces/:id" component={TraceDetail} />
       <Route path="/monitor" component={Monitor} />
       <Route path="/governance" component={Governance} />
+      <Route path="/audit-trail" component={AuditTrail} />
       <Route path="/approvals" component={Approvals} />
       <Route path="/approvals/:id" component={ApprovalDetail} />
       <Route path="/improvements" component={Improvements} />

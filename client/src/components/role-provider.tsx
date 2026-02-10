@@ -37,7 +37,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "AD",
     description: "Full platform access, user management, system configuration",
     icon: ShieldCheck,
-    allowedRoutes: ["/", "/outcomes", "/outcomes/discover", "/agents", "/templates", "/blueprints", "/evals", "/deployments", "/monitor", "/governance", "/approvals", "/billing", "/improvements", "/improvement-loop", "/integrations", "/admin"],
+    allowedRoutes: ["/", "/outcomes", "/outcomes/discover", "/agents", "/templates", "/blueprints", "/evals", "/deployments", "/monitor", "/governance", "/audit-trail", "/approvals", "/billing", "/improvements", "/improvement-loop", "/integrations", "/admin"],
   },
   {
     id: "outcome_owner",
@@ -73,7 +73,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "CS",
     description: "Policy authoring, audit exports, access controls",
     icon: Shield,
-    allowedRoutes: ["/", "/governance", "/approvals", "/admin", "/agents", "/deployments", "/monitor"],
+    allowedRoutes: ["/", "/governance", "/audit-trail", "/approvals", "/admin", "/agents", "/deployments", "/monitor"],
   },
   {
     id: "expert_validator",
@@ -82,7 +82,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "EV",
     description: "Approves high-risk changes, exceptions, major releases",
     icon: UserCheck,
-    allowedRoutes: ["/", "/approvals", "/agents", "/deployments", "/evals", "/governance"],
+    allowedRoutes: ["/", "/approvals", "/agents", "/deployments", "/evals", "/governance", "/audit-trail"],
   },
   {
     id: "finance",

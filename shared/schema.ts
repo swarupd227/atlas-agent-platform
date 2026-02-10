@@ -577,4 +577,23 @@ export const insertBlueprintSchema = createInsertSchema(blueprints).omit({ id: t
 export type InsertBlueprint = z.infer<typeof insertBlueprintSchema>;
 export type Blueprint = typeof blueprints.$inferSelect;
 
+export const loggingIntegrations = pgTable("logging_integrations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  provider: text("provider").notNull(),
+  endpointUrl: text("endpoint_url"),
+  eventTypes: text("event_types").array().notNull(),
+  status: text("status").notNull().default("active"),
+  lastDeliveryAt: timestamp("last_delivery_at"),
+  lastDeliveryStatus: text("last_delivery_status"),
+  deliveredCount: integer("delivered_count").default(0),
+  failedCount: integer("failed_count").default(0),
+  configJson: jsonb("config_json"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertLoggingIntegrationSchema = createInsertSchema(loggingIntegrations).omit({ id: true, createdAt: true, lastDeliveryAt: true, lastDeliveryStatus: true, deliveredCount: true, failedCount: true });
+export type InsertLoggingIntegration = z.infer<typeof insertLoggingIntegrationSchema>;
+export type LoggingIntegration = typeof loggingIntegrations.$inferSelect;
+
 export * from "./models/chat";
