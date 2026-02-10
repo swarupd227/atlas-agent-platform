@@ -1,0 +1,144 @@
+Screen-by-screen navigation for the code generation option
+Below is the recommended navigation “spine,” written as a sequence of screens the user visits, what they see, and what ALMP does behind the scenes. The flow is designed so that each step produces a concrete artifact or decision, matching the “source file deployment + dependencies + env vars” pattern documented in practice. 
+
+Screen: Agents → Agent Detail (Summary)
+User goal: decide whether they’re exporting the right thing.
+UI: an “Export / Generate Code” button is visible when a signed version exists; a small “Export readiness” badge shows whether required eval suites passed and whether tool adapters are complete. This aligns with the idea that you shouldn’t ship source artifacts without pinned dependencies and some proof of correctness. 
+
+Screen: Agent Detail → Blueprint tab → Implementation subpanel
+User goal: understand what will be generated before they generate it.
+UI: “Implementation Graph” view shows which parts are declarative (instructions, orchestration config, knowledge config) vs which require code (tool adapters, custom nodes). This reflects (a) declarative agent configuration concepts and (b) that tool calls must be executed by application code. 
+
+Action: user clicks Generate Export Package.
+
+Screen: Export Wizard → Export Type
+User goal: choose the mode and expected output.
+Choices:
+
+“Managed Runtime Artifact (no code export)” (default)
+“Source Export (recommended for CI/CD and portability)” (the option you’re asking about)
+The language in the UI should explicitly reference “source files” and “CI/CD,” because this maps to how deployment systems describe this mode in the wild. 
+Screen: Export Wizard → Template & Framework
+User goal: pick what kind of repo ALMP will generate.
+UI options (examples):
+
+“Generic Tool-Calling Runtime (minimal)” (recommended baseline because tool calling is the universal need) 
+“LangGraph-style Graph App” (graph-oriented structure: config/manifest + graph code + tools + env vars) 
+“CrewAI-style Project Scaffold (YAML-first)” (repo scaffold with declarative config emphasized) 
+
+You are not claiming you are implementing those projects’ internals; you’re borrowing their widely-recognized structural patterns (manifest/config + dependency file + env + tool code) because they match what developers expect. 
+Screen: Export Wizard → Tool Adapter Resolution
+User goal: ensure every tool reference has an implementation path.
+UI shows a table-like list (without being a literal table if you prefer) of tools referenced by the blueprint and their status:
+
+“Built-in adapter included”
+“Customer adapter required”
+“Stub will be generated”
+Rationale: because tool calling requires actual code execution, the export must not silently omit tool implementations. 
+
+Actions:
+“Generate stubs now” (creates code files in the export package)
+“Attach existing adapter version” (pulls from ALMP’s tool registry)
+Screen: Export Wizard → Dependencies & Reproducibility
+User goal: review what will be installed and ensure reproduction.
+UI displays:
+
+dependency file preview (requirements.txt or package.json)
+“pin versions” toggle (default on)
+“minimize dependencies” warnings and a count
+This is directly aligned with best-practice guidance for source-based deployments emphasizing pinned versions and minimized dependency sets for stability. 
+Screen: Export Wizard → Environment Variables & Secrets Map
+User goal: know exactly what needs to be configured in the deployment environment.
+UI shows:
+
+Required env vars (LLM keys, tool tokens, DB URLs if needed)
+An “.env.example” preview (never contains real values)
+This reflects standard deployable agent application structure patterns that separate code from env vars. 
+
+If the target is the Replit ecosystem, the UI should guide users toward storing these as encrypted secrets (not in code), consistent with the platform’s “Secrets as environment variables” model. 
+Screen: Export Wizard → Observability & Trace Settings
+User goal: preserve the ALMP “flight recorder” in exported form.
+UI toggles:
+
+OpenTelemetry-compatible traces on/off
+Span granularity: per node, per tool call
+Because traces are built from spans representing units of work, mapping workflow nodes and tool calls to spans in the generated code preserves debuggability. 
+Screen: Export Wizard → Build & Test Gate
+User goal: get a “generated repo health check” before publishing.
+UI actions:
+
+“Run static compile” (ensures the exported code compiles)
+“Run eval suite locally” (executes the same eval bundles ALMP uses)
+This mirrors the “test the agent with trace” build-time expectations seen in managed agent systems, and it prevents generating a repo that fails immediately. 
+Screen: Export Wizard → Approval Preview
+User goal: understand if expert validation is required.
+UI shows:
+
+risk tier
+what changed
+whether new tool permissions were introduced
+The logic aligns with the broader notion that declarative agent systems inherit governance constraints, and in an ALMP the export should preserve that by introducing explicit approval gates. 
+
+Actions:
+“Request Export Approval” (creates an approval object with the generated evidence bundle)
+Screen: Approvals → Approval Detail (Export Package)
+User goal: approve a code-export artifact with evidence.
+UI shows:
+
+blueprint diff → exported file tree diff
+dependency diff
+eval results summary
+any new tool adapter stubs created
+This is the code-export equivalent of “deploy from source files” governance: you review the concrete source package and its dependencies. 
+Screen: Export Wizard → Delivery Target
+User goal: decide how to receive/publish the generated code.
+Options:
+
+“Download ZIP” (always available)
+“Push to Git repo” (best for CI/CD workflows implied by source-based deployment) 
+“Publish to a Replit App via GitHub import instructions” (guidance-driven, not necessarily API-driven)
+If choosing Replit import, ALMP displays the exact user steps supported by Replit: navigate to import, choose GitHub, connect account, select repo, import. 
+Screen: Post-export → Deployment Guide (Target-specific)
+User goal: get the generated agent running in production.
+If targeting Replit hosting, ALMP should show:
+
+recommended deployment type: Autoscale for APIs that scale with traffic; Reserved VM for always-on workloads; Scheduled Deployments for periodic tasks, matching how these deployment types are described. 
+“Publish” UI path: select Publish, choose deployment type. 
+Configure secrets: use Secrets tool to store encrypted values as environment variables, and note that deployment secrets can sync with workspace secrets (reducing redeploy errors). 
+Monitoring: where to see the deployment overview and status in the deployment tool. 
+This completes the screen flow end-to-end: the user always sees (a) what they’re exporting, (b) what code will exist, (c) how it maps to tools, (d) how to configure env vars, and (e) how to deploy in their chosen environment. 
+
+What the generated code package should look like
+A reliable “export as code” experience needs a predictable repo structure that includes: a manifest/config, dependency file, optional env template, graph/orchestration code, and tool code. This is consistent with real-world agent app structure guidance (manifest/config + dependencies + env vars + graph/tools code). 
+
+A recommended output (example structure) is:
+
+text
+Copy
+exported-agent/
+  README.md
+  almp.manifest.json            # references signed blueprint hash + version
+  src/
+    runtime/
+      orchestrator.ts           # runs the node graph (generated wrapper)
+      policy.ts                 # policy evaluation hooks
+      tracing.ts                # OpenTelemetry exporter hooks
+    agent/
+      graph.ts                  # generated graph construction from blueprint
+      prompts/                  # prompt templates (files)
+      schemas/                  # input/output JSON schemas
+    tools/
+      index.ts                  # tool registry
+      zendesk.ts                # tool adapter (real or stub)
+      crm.ts                    # tool adapter (real or stub)
+  tests/
+    eval_smoke.test.ts          # generated smoke eval gate
+  package.json                  # or requirements.txt for Python
+  .env.example
+The strong rationale for including a manifest, dependencies, and env template is that deployment systems and agent deployment guides rely on these to be explicit and portable. 
+
+The strong rationale for including tool adapter modules is that tool calling requires application-side code execution when the model requests a tool call. 
+
+The strong rationale for including tracing hooks is that traces are composed of spans representing units of work; mapping nodes/tool calls to spans preserves production operability. 
+
+If you want a “framework-shaped” export variant, you can also generate a graph-app structure that aligns with known patterns (config file + graphs + dependency file + env vars). 
