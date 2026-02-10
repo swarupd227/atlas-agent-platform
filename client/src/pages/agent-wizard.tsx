@@ -265,6 +265,60 @@ export default function AgentWizard() {
   const searchParams = useSearch();
   const { toast } = useToast();
 
+  const [jobProgress, setJobProgress] = useState<{
+    agentId: string;
+    agentName: string;
+    jobId: string;
+    suiteId: string;
+    progress: number;
+    step: string;
+    status: "running" | "completed" | "failed";
+    result?: Record<string, unknown>;
+    error?: string;
+  } | null>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
+
+  useEffect(() => {
+    return () => {
+      eventSourceRef.current?.close();
+    };
+  }, []);
+
+  function startJobTracking(agentId: string, jobId: string, suiteId: string, agentName: string) {
+    setJobProgress({ agentId, jobId, suiteId, agentName, progress: 0, step: "queued", status: "running" });
+
+    const es = new EventSource(`/api/events/stream?agentId=${agentId}`);
+    eventSourceRef.current = es;
+
+    let errorRetries = 0;
+    const maxRetries = 3;
+
+    es.onmessage = (event) => {
+      try {
+        errorRetries = 0;
+        const data = JSON.parse(event.data);
+        if (data.type === "progress" && data.jobId === jobId) {
+          setJobProgress((prev) => prev ? { ...prev, progress: data.progress, step: data.step } : prev);
+        } else if (data.type === "completed" && data.jobId === jobId) {
+          setJobProgress((prev) => prev ? { ...prev, progress: 100, step: "completed", status: "completed", result: data.result } : prev);
+          es.close();
+        } else if (data.type === "failed" && data.jobId === jobId) {
+          setJobProgress((prev) => prev ? { ...prev, status: "failed", error: data.error, step: "failed" } : prev);
+          es.close();
+        }
+      } catch {}
+    };
+
+    es.onerror = () => {
+      errorRetries++;
+      if (errorRetries >= maxRetries) {
+        es.close();
+        setJobProgress((prev) => prev ? { ...prev, status: "failed", error: "Lost connection to server. The evaluation may still be running in the background.", step: "connection_lost" } : prev);
+        toast({ title: "Connection lost", description: "Progress tracking disconnected. You can check the agent status from the agents list.", variant: "destructive" });
+      }
+    };
+  }
+
   const { data: templates, isLoading: templatesLoading } = useQuery<AgentTemplate[]>({
     queryKey: ["/api/agent-templates"],
   });
@@ -278,10 +332,14 @@ export default function AgentWizard() {
       const res = await apiRequest("POST", "/api/agents", data);
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: { id: string; name: string; suiteId?: string; jobId?: string }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
-      toast({ title: "Agent created successfully" });
-      navigate("/agents");
+      if (data.jobId && data.suiteId) {
+        startJobTracking(data.id, data.jobId, data.suiteId, data.name || wizardState.name);
+      } else {
+        toast({ title: "Agent created successfully" });
+        navigate("/agents");
+      }
     },
     onError: (err: Error) => {
       toast({ title: "Failed to create agent", description: err.message, variant: "destructive" });
@@ -523,6 +581,150 @@ export default function AgentWizard() {
     setSelectedTemplateId(template.id);
     applyTemplate(template);
     setCurrentStep(3);
+  }
+
+  const stepLabels: Record<string, string> = {
+    queued: "Waiting in queue...",
+    compiling_blueprint: "Compiling blueprint...",
+    static_checks_complete: "Static checks passed",
+    running_eval_cases: "Running evaluation cases...",
+    evaluating_test_cases: "Evaluating test cases...",
+    finalizing_results: "Finalizing results...",
+    completed: "Baseline evaluation complete",
+    failed: "Evaluation failed",
+    connection_lost: "Connection lost",
+  };
+
+  function getStepLabel(step: string): string {
+    if (stepLabels[step]) return stepLabels[step];
+    const caseMatch = step.match(/evaluated_case_(\d+)_of_(\d+)/);
+    if (caseMatch) return `Evaluated test case ${caseMatch[1]} of ${caseMatch[2]}`;
+    return step.replace(/_/g, " ");
+  }
+
+  if (jobProgress) {
+    const evalResults = jobProgress.result?.evalResults as { passRate?: number; totalCases?: number; passed?: number } | undefined;
+    const passRate = evalResults?.passRate;
+    const totalCases = evalResults?.totalCases;
+    const passedCases = evalResults?.passed;
+
+    return (
+      <div className="flex flex-col gap-6 p-6 items-center justify-center min-h-[60vh]" data-testid="job-progress-panel">
+        <div className="flex flex-col gap-6 w-full max-w-lg">
+          <div className="flex flex-col gap-2 text-center">
+            <h1 className="text-2xl font-semibold tracking-tight">
+              {jobProgress.status === "completed" ? "Agent Ready" : jobProgress.status === "failed" ? "Evaluation Failed" : "Setting Up Agent"}
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              {jobProgress.status === "running"
+                ? `Running baseline evaluation for "${jobProgress.agentName}"`
+                : jobProgress.status === "completed"
+                  ? `"${jobProgress.agentName}" passed baseline evaluation`
+                  : `Baseline evaluation for "${jobProgress.agentName}" encountered an error`}
+            </p>
+          </div>
+
+          <Card>
+            <CardContent className="pt-6 flex flex-col gap-4">
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-sm font-medium">{getStepLabel(jobProgress.step)}</span>
+                <span className="text-sm text-muted-foreground">{jobProgress.progress}%</span>
+              </div>
+              <div className="w-full bg-muted rounded-full h-2.5 overflow-hidden" data-testid="progress-bar">
+                <div
+                  className={`h-full rounded-full transition-all duration-500 ${
+                    jobProgress.status === "failed"
+                      ? "bg-destructive"
+                      : jobProgress.status === "completed"
+                        ? "bg-green-500"
+                        : "bg-primary"
+                  }`}
+                  style={{ width: `${jobProgress.progress}%` }}
+                />
+              </div>
+
+              {jobProgress.status === "running" && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  <span>Processing baseline evaluation...</span>
+                </div>
+              )}
+
+              {jobProgress.status === "completed" && passRate !== undefined && (
+                <div className="flex flex-col gap-3 mt-2">
+                  <div className="flex items-center gap-2">
+                    <Check className="w-4 h-4 text-green-500" />
+                    <span className="text-sm font-medium">Baseline established</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/30" data-testid="result-pass-rate">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Pass Rate</span>
+                      <span className="text-lg font-semibold">{passRate?.toFixed(1)}%</span>
+                    </div>
+                    <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/30" data-testid="result-passed">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Passed</span>
+                      <span className="text-lg font-semibold">{passedCases ?? "—"}</span>
+                    </div>
+                    <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/30" data-testid="result-total">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Total Cases</span>
+                      <span className="text-lg font-semibold">{totalCases ?? "—"}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {jobProgress.status === "failed" && jobProgress.error && (
+                <div className="flex items-start gap-2 p-3 rounded-md bg-destructive/10 text-sm" data-testid="job-error">
+                  <AlertTriangle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
+                  <span className="text-destructive">{jobProgress.error}</span>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <div className="flex items-center gap-3 justify-center">
+            {jobProgress.status === "completed" && (
+              <>
+                <Button
+                  onClick={() => navigate(`/agents/${jobProgress.agentId}`)}
+                  data-testid="button-view-agent"
+                >
+                  View Agent
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => navigate("/agents")}
+                  data-testid="button-go-to-agents"
+                >
+                  All Agents
+                </Button>
+              </>
+            )}
+            {jobProgress.status === "failed" && (
+              <>
+                <Button
+                  onClick={() => navigate(`/agents/${jobProgress.agentId}`)}
+                  data-testid="button-view-agent-failed"
+                >
+                  View Agent Anyway
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setJobProgress(null);
+                    setCurrentStep(8);
+                  }}
+                  data-testid="button-back-to-wizard"
+                >
+                  <RotateCcw className="w-4 h-4 mr-1.5" />
+                  Back to Wizard
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -3009,7 +3211,7 @@ function Step5Review({
         className="w-full"
         onClick={onCreate}
         disabled={isPending || !state.name}
-        data-testid="button-create-agent"
+        data-testid="button-create-agent-review"
       >
         {isPending ? "Creating Agent..." : "Create Agent"}
       </Button>
