@@ -4400,6 +4400,88 @@ Eval Suites: ${evalSuites.length} configured`,
         { title: "Expand context window for complex queries", changeType: "prompt_tweak", desc: "Complex multi-step queries failing at 15% rate due to truncated context. Expanding context window from 4K to 8K tokens for qualifying queries.", kpi: "+6% success rate on complex queries", cost: "+35% cost/run for affected queries (~8% of traffic)", risk: "high", approvals: 2 },
       ];
 
+      const sampleDiffs = [
+        { lines: [
+          { type: "context", content: "system_prompt:" },
+          { type: "removed", content: "  You are a helpful, harmless, and honest AI assistant. Your goal is to provide comprehensive, detailed answers that address every aspect of the user's question. Always explain your reasoning step by step." },
+          { type: "added", content: "  You are a concise AI assistant. Answer directly and accurately. Use step-by-step reasoning only for complex queries." },
+          { type: "context", content: "temperature: 0.7" },
+          { type: "context", content: "max_tokens: 2048" },
+        ]},
+        { lines: [
+          { type: "context", content: "retrieval:" },
+          { type: "removed", content: "  engine: keyword_bm25" },
+          { type: "removed", content: "  top_k: 5" },
+          { type: "added", content: "  engine: hybrid_semantic_keyword" },
+          { type: "added", content: "  top_k: 8" },
+          { type: "added", content: "  reranker: cross_encoder_v2" },
+          { type: "context", content: "  chunk_size: 512" },
+        ]},
+        { lines: [
+          { type: "context", content: "tools:" },
+          { type: "context", content: "  - name: external_api" },
+          { type: "removed", content: "    retry: none" },
+          { type: "added", content: "    retry:" },
+          { type: "added", content: "      strategy: exponential_backoff" },
+          { type: "added", content: "      max_attempts: 3" },
+          { type: "added", content: "      initial_delay_ms: 200" },
+          { type: "added", content: "    fallback: cached_response" },
+          { type: "context", content: "    timeout_ms: 5000" },
+        ]},
+        { lines: [
+          { type: "context", content: "models:" },
+          { type: "context", content: "  classification:" },
+          { type: "removed", content: "    model: gpt-4.1" },
+          { type: "removed", content: "    cost_per_1k: $0.030" },
+          { type: "added", content: "    model: gpt-4.1-mini" },
+          { type: "added", content: "    cost_per_1k: $0.008" },
+          { type: "context", content: "  generation:" },
+          { type: "context", content: "    model: gpt-4.1" },
+        ]},
+        { lines: [
+          { type: "context", content: "cost_controls:" },
+          { type: "removed", content: "  max_cost_per_run: $0.05" },
+          { type: "added", content: "  max_cost_per_run: $0.04" },
+          { type: "context", content: "  budget_alert_threshold: 80%" },
+        ]},
+        { lines: [
+          { type: "context", content: "context:" },
+          { type: "removed", content: "  max_tokens: 4096" },
+          { type: "removed", content: "  truncation: tail" },
+          { type: "added", content: "  max_tokens: 8192" },
+          { type: "added", content: "  truncation: smart_summarize" },
+          { type: "added", content: "  qualify_threshold: complexity_score > 0.7" },
+          { type: "context", content: "  include_history: true" },
+        ]},
+      ];
+
+      const sampleEvidence = [
+        { source: "drift_detection", triggers: [
+          { type: "eval_failure", label: "Eval Suite: Conciseness Check", evalSuiteId: "es-001", runId: "er-042", detail: "3 of 10 test cases failed (response length exceeded 500 tokens)" },
+          { type: "metric_alert", label: "Latency p95 > 3200ms", metricId: "m-latency-p95", detail: "Triggered 4 times in last 24h" },
+        ], detectedAt: new Date(Date.now() - 2 * 86400000).toISOString() },
+        { source: "drift_detection", triggers: [
+          { type: "eval_failure", label: "Eval Suite: Faithfulness", evalSuiteId: "es-003", runId: "er-089", detail: "Faithfulness score dropped from 0.91 to 0.78 over 7 days" },
+          { type: "incident", label: "INC-2847: Hallucinated policy references", incidentId: "inc-2847", detail: "Customer reported incorrect policy citations in 3 responses" },
+        ], detectedAt: new Date(Date.now() - 3 * 86400000).toISOString() },
+        { source: "incident_response", triggers: [
+          { type: "incident", label: "INC-2851: API tool timeout cascade", incidentId: "inc-2851", detail: "External API failures caused 23% of runs to fail in last 24h" },
+          { type: "metric_alert", label: "Tool failure rate > 15%", metricId: "m-tool-fail", detail: "Sustained above threshold for 6h" },
+        ], detectedAt: new Date(Date.now() - 1 * 86400000).toISOString() },
+        { source: "eval_analysis", triggers: [
+          { type: "eval_failure", label: "Eval Suite: Classification Accuracy", evalSuiteId: "es-007", runId: "er-112", detail: "Mini model achieved 99.2% vs full model 99.5% across 5000 test cases" },
+          { type: "cost_signal", label: "Cost anomaly: classification subtask", detail: "Classification costs 42% of total despite being a simple subtask" },
+        ], detectedAt: new Date(Date.now() - 4 * 86400000).toISOString() },
+        { source: "eval_analysis", triggers: [
+          { type: "cost_signal", label: "Budget utilization at 94%", detail: "Monthly budget on track to exceed allocation by 18%" },
+        ], detectedAt: new Date(Date.now() - 1 * 86400000).toISOString() },
+        { source: "eval_analysis", triggers: [
+          { type: "eval_failure", label: "Eval Suite: Complex Query Handling", evalSuiteId: "es-012", runId: "er-156", detail: "15% failure rate on multi-step queries due to context truncation" },
+          { type: "eval_failure", label: "Eval Suite: Context Retention", evalSuiteId: "es-014", runId: "er-161", detail: "Information loss detected in 28% of queries exceeding 3K tokens" },
+          { type: "incident", label: "INC-2863: Incomplete analysis reports", incidentId: "inc-2863", detail: "3 customer complaints about truncated analysis outputs" },
+        ], detectedAt: new Date(Date.now() - 2 * 86400000).toISOString() },
+      ];
+
       const createdPatches = [];
       for (let i = 0; i < samplePatches.length; i++) {
         const sp = samplePatches[i];
@@ -4409,13 +4491,13 @@ Eval Suites: ${evalSuites.length} configured`,
           changeType: sp.changeType,
           title: sp.title,
           description: sp.desc,
-          diff: { before: { config: "original" }, after: { config: "modified", changeType: sp.changeType } },
+          diff: sampleDiffs[i] || { lines: [{ type: "context", content: "// no diff available" }] },
           expectedKpiImpact: sp.kpi,
           expectedCostImpact: sp.cost,
           riskLevel: sp.risk,
           requiredApprovals: sp.approvals,
           status: i === 2 ? "pending_approval" : i === 4 ? "applied" : "proposed",
-          evidenceBundle: { source: i < 3 ? "drift_detection" : "eval_analysis", signalCount: Math.floor(Math.random() * 5) + 1, detectedAt: new Date(Date.now() - Math.random() * 7 * 86400000).toISOString() },
+          evidenceBundle: sampleEvidence[i] || { source: "system", triggers: [] },
           rolloutPlan: { strategy: sp.risk === "high" ? "canary" : sp.risk === "medium" ? "shadow" : "direct", trafficPercent: sp.risk === "high" ? 5 : sp.risk === "medium" ? 20 : 100, duration: sp.risk === "high" ? "48h" : sp.risk === "medium" ? "24h" : "immediate" },
         });
         createdPatches.push(patch);

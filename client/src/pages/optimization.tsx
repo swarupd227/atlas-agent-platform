@@ -18,6 +18,12 @@ import {
   Beaker,
   Activity,
   Undo2,
+  FileCode,
+  ExternalLink,
+  ChevronDown,
+  ChevronRight,
+  CircleAlert,
+  TrendingUp,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -49,6 +55,7 @@ import { WhyBadge } from "@/components/why-badge";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { formatDate } from "@/components/shared-utils";
+import { useLocation } from "wouter";
 import type { Patch, Experiment, Agent } from "@shared/schema";
 
 interface TimelineEntry {
@@ -139,10 +146,15 @@ const experimentStatusConfig: Record<string, { className: string }> = {
     className:
       "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20",
   },
+  rolled_back: {
+    className:
+      "bg-orange-500/15 text-orange-600 dark:text-orange-400 border-orange-500/20",
+  },
 };
 
 export default function Optimization() {
   const { toast } = useToast();
+  const [, navigate] = useLocation();
 
   const [changeTypeFilter, setChangeTypeFilter] = useState("all");
   const [riskFilter, setRiskFilter] = useState("all");
@@ -159,6 +171,10 @@ export default function Optimization() {
     noPolicyViolationIncrease: true,
     maxLatencyIncrease: 20,
     minSuccessRate: 90,
+    stopOnRegression: true,
+    maxErrorRate: 10,
+    maxDurationHours: 168,
+    maxSampleSize: 10000,
   });
 
   const { data: patches, isLoading: patchesLoading } = useQuery<Patch[]>({
@@ -314,6 +330,10 @@ export default function Optimization() {
         noPolicyViolationIncrease: true,
         maxLatencyIncrease: 20,
         minSuccessRate: 90,
+        stopOnRegression: true,
+        maxErrorRate: 10,
+        maxDurationHours: 168,
+        maxSampleSize: 10000,
       });
       toast({
         title: "Experiment created",
@@ -349,6 +369,26 @@ export default function Optimization() {
     onError: (err: Error) => {
       toast({
         title: "Update failed",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const rollbackExperimentMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await apiRequest("PATCH", `/api/experiments/${id}`, { status: "rolled_back" });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/experiments"] });
+      toast({
+        title: "Experiment rolled back",
+        description: "The experiment changes have been reverted.",
+      });
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Rollback failed",
         description: err.message,
         variant: "destructive",
       });
@@ -689,17 +729,62 @@ export default function Optimization() {
                           )}
                         </div>
 
-                        {evidence && (
+                        {evidence?.triggers && Array.isArray(evidence.triggers) && evidence.triggers.length > 0 && (
+                          <div className="flex flex-col gap-1.5" data-testid={`trigger-evidence-${patch.id}`}>
+                            <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Trigger Evidence</span>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {(evidence.triggers as Array<Record<string, string>>).map((trigger, ti) => {
+                                const isEval = trigger.type === "eval_failure";
+                                const isIncident = trigger.type === "incident";
+                                const isCost = trigger.type === "cost_signal";
+                                const isMetric = trigger.type === "metric_alert";
+                                return (
+                                  <Badge
+                                    key={ti}
+                                    variant="outline"
+                                    className={`text-[11px] gap-1 cursor-pointer ${
+                                      isEval ? "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20" :
+                                      isIncident ? "bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/20" :
+                                      isCost ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" :
+                                      isMetric ? "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20" :
+                                      ""
+                                    }`}
+                                    data-testid={`badge-trigger-${patch.id}-${ti}`}
+                                    title={trigger.detail || ""}
+                                    onClick={() => {
+                                      if (isEval) {
+                                        navigate("/eval-studio");
+                                      } else if (isIncident) {
+                                        navigate("/monitor");
+                                      }
+                                    }}
+                                  >
+                                    {isEval && <FlaskConical className="w-3 h-3" />}
+                                    {isIncident && <CircleAlert className="w-3 h-3" />}
+                                    {isCost && <DollarSign className="w-3 h-3" />}
+                                    {isMetric && <TrendingUp className="w-3 h-3" />}
+                                    {trigger.label}
+                                    {(isEval || isIncident) && <ExternalLink className="w-2.5 h-2.5 ml-0.5" />}
+                                  </Badge>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        {evidence && !evidence.triggers && (
                           <div className="flex items-center gap-2 flex-wrap">
                             <WhyBadge
                               compact
-                              trigger={(evidence.source as string) || (evidence.trigger as string) || "Signal detected"}
+                              trigger={(evidence.source as string) || "Signal detected"}
                               decision={patch.title || "Apply patch"}
                               evidence={(evidence.reason as string) || (evidence.metric as string) || "Evidence-based recommendation"}
                               rollback={patch.riskLevel === "high" || patch.riskLevel === "critical" ? "Requires approval" : undefined}
                             />
                           </div>
                         )}
+
+                        <PatchDiffPreview diff={patch.diff} patchId={patch.id} />
 
                         <div className="flex items-center gap-4 flex-wrap text-xs">
                           {patch.expectedKpiImpact && (
@@ -1007,6 +1092,10 @@ export default function Optimization() {
                         </span>
                       </div>
 
+                      {exp.guardrails ? (
+                        <ExperimentGuardrailsDisplay guardrails={exp.guardrails as Record<string, unknown>} expId={exp.id} />
+                      ) : null}
+
                       {results && (
                         <div
                           className="p-3 rounded-md bg-muted/50"
@@ -1141,6 +1230,20 @@ export default function Optimization() {
                           >
                             <X className="w-3.5 h-3.5 mr-1" />
                             Stop
+                          </Button>
+                        )}
+                        {exp.status === "completed" && results && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() =>
+                              rollbackExperimentMutation.mutate(exp.id)
+                            }
+                            disabled={rollbackExperimentMutation.isPending}
+                            data-testid={`button-rollback-experiment-${exp.id}`}
+                          >
+                            <Undo2 className="w-3.5 h-3.5 mr-1" />
+                            Rollback
                           </Button>
                         )}
                       </div>
@@ -1319,6 +1422,80 @@ export default function Optimization() {
                     <span className="text-sm text-muted-foreground">%</span>
                   </div>
                 </div>
+
+                <div className="flex flex-col gap-3">
+                  <Label>Stop Conditions</Label>
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="stop-regression"
+                      checked={newExperiment.stopOnRegression}
+                      onCheckedChange={(v) =>
+                        setNewExperiment({
+                          ...newExperiment,
+                          stopOnRegression: v === true,
+                        })
+                      }
+                      data-testid="checkbox-stop-on-regression"
+                    />
+                    <Label htmlFor="stop-regression" className="text-sm">
+                      Auto-stop on eval regression
+                    </Label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Label className="text-sm shrink-0">
+                      Max error rate:
+                    </Label>
+                    <Input
+                      type="number"
+                      value={newExperiment.maxErrorRate}
+                      onChange={(e) =>
+                        setNewExperiment({
+                          ...newExperiment,
+                          maxErrorRate: Number(e.target.value),
+                        })
+                      }
+                      className="w-20"
+                      data-testid="input-max-error-rate"
+                    />
+                    <span className="text-sm text-muted-foreground">%</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Label className="text-sm shrink-0">
+                      Max duration:
+                    </Label>
+                    <Input
+                      type="number"
+                      value={newExperiment.maxDurationHours}
+                      onChange={(e) =>
+                        setNewExperiment({
+                          ...newExperiment,
+                          maxDurationHours: Number(e.target.value),
+                        })
+                      }
+                      className="w-20"
+                      data-testid="input-max-duration"
+                    />
+                    <span className="text-sm text-muted-foreground">hours</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Label className="text-sm shrink-0">
+                      Max sample size:
+                    </Label>
+                    <Input
+                      type="number"
+                      value={newExperiment.maxSampleSize}
+                      onChange={(e) =>
+                        setNewExperiment({
+                          ...newExperiment,
+                          maxSampleSize: Number(e.target.value),
+                        })
+                      }
+                      className="w-20"
+                      data-testid="input-max-sample-size"
+                    />
+                    <span className="text-sm text-muted-foreground">runs</span>
+                  </div>
+                </div>
               </div>
               <DialogFooter>
                 <Button
@@ -1341,6 +1518,10 @@ export default function Optimization() {
                           newExperiment.noPolicyViolationIncrease,
                         maxLatencyIncrease: newExperiment.maxLatencyIncrease,
                         minSuccessRate: newExperiment.minSuccessRate,
+                        stopOnRegression: newExperiment.stopOnRegression,
+                        maxErrorRate: newExperiment.maxErrorRate,
+                        maxDurationHours: newExperiment.maxDurationHours,
+                        maxSampleSize: newExperiment.maxSampleSize,
                       },
                     })
                   }
@@ -1461,6 +1642,117 @@ export default function Optimization() {
           </div>
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+interface DiffLine {
+  type: "context" | "added" | "removed";
+  content: string;
+}
+
+function PatchDiffPreview({ diff, patchId }: { diff: unknown; patchId: string }) {
+  const [expanded, setExpanded] = useState(false);
+
+  const diffData = diff as { lines?: DiffLine[] } | null;
+  if (!diffData?.lines || !Array.isArray(diffData.lines) || diffData.lines.length === 0) {
+    return null;
+  }
+
+  const lines = diffData.lines as DiffLine[];
+  const addedCount = lines.filter(l => l.type === "added").length;
+  const removedCount = lines.filter(l => l.type === "removed").length;
+
+  return (
+    <div className="flex flex-col gap-1" data-testid={`diff-preview-${patchId}`}>
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-1.5 text-[11px] text-muted-foreground font-medium hover-elevate rounded-md px-1.5 py-1 -ml-1.5 w-fit"
+        data-testid={`button-toggle-diff-${patchId}`}
+      >
+        {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+        <FileCode className="w-3 h-3" />
+        Diff Preview
+        <span className="text-emerald-600 dark:text-emerald-400">+{addedCount}</span>
+        <span className="text-red-600 dark:text-red-400">-{removedCount}</span>
+      </button>
+      {expanded && (
+        <div className="rounded-md border bg-muted/30 overflow-x-auto text-[11px] font-mono" data-testid={`diff-content-${patchId}`}>
+          {lines.map((line, i) => (
+            <div
+              key={i}
+              className={`px-3 py-0.5 whitespace-pre ${
+                line.type === "added"
+                  ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                  : line.type === "removed"
+                  ? "bg-red-500/10 text-red-700 dark:text-red-300"
+                  : "text-muted-foreground"
+              }`}
+            >
+              <span className="select-none mr-2 opacity-60">
+                {line.type === "added" ? "+" : line.type === "removed" ? "-" : " "}
+              </span>
+              {line.content}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ExperimentGuardrailsDisplay({ guardrails, expId }: { guardrails: Record<string, unknown>; expId: string }) {
+  const [expanded, setExpanded] = useState(false);
+
+  const items: { label: string; value: string; active: boolean }[] = [];
+
+  if (guardrails.noPolicyViolationIncrease || guardrails.maxPolicyViolationIncrease === 0) {
+    items.push({ label: "No policy violation increase", value: "enforced", active: true });
+  }
+  if (guardrails.maxLatencyIncrease != null) {
+    items.push({ label: "Max latency increase", value: `${guardrails.maxLatencyIncrease}%`, active: true });
+  }
+  if (guardrails.minSuccessRate != null) {
+    const val = Number(guardrails.minSuccessRate);
+    items.push({ label: "Min success rate", value: `${val < 1 ? (val * 100).toFixed(0) : val}%`, active: true });
+  }
+  if (guardrails.stopOnRegression) {
+    items.push({ label: "Auto-stop on regression", value: "enabled", active: true });
+  }
+  if (guardrails.maxErrorRate != null) {
+    items.push({ label: "Max error rate", value: `${guardrails.maxErrorRate}%`, active: true });
+  }
+  if (guardrails.maxDurationHours != null) {
+    items.push({ label: "Max duration", value: `${guardrails.maxDurationHours}h`, active: true });
+  }
+  if (guardrails.maxSampleSize != null) {
+    items.push({ label: "Max sample size", value: `${Number(guardrails.maxSampleSize).toLocaleString()} runs`, active: true });
+  }
+
+  if (items.length === 0) return null;
+
+  return (
+    <div className="flex flex-col gap-1" data-testid={`guardrails-${expId}`}>
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-1.5 text-[11px] text-muted-foreground font-medium hover-elevate rounded-md px-1.5 py-1 -ml-1.5 w-fit"
+        data-testid={`button-toggle-guardrails-${expId}`}
+      >
+        {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+        <Shield className="w-3 h-3" />
+        Guardrails & Stop Conditions
+        <Badge variant="outline" className="text-[10px] ml-1">{items.length}</Badge>
+      </button>
+      {expanded && (
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1 px-2 text-xs">
+          {items.map((item, i) => (
+            <div key={i} className="flex items-center justify-between gap-2 py-0.5">
+              <span className="text-muted-foreground">{item.label}</span>
+              <span className="font-medium text-emerald-600 dark:text-emerald-400">{item.value}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
