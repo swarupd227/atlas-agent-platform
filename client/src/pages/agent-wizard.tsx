@@ -387,6 +387,17 @@ export default function AgentWizard() {
     const linkedOutcome = outcomes?.find((o) => o.id === wizardState.outcomeId);
 
     try {
+      const slimTemplates = templates.map((t) => ({
+        id: t.id,
+        name: t.name,
+        description: t.description,
+        category: t.category,
+        industry: t.industry,
+        tags: t.tags,
+        complexity: t.complexity,
+        defaultRiskTier: t.defaultRiskTier,
+        defaultAutonomyMode: t.defaultAutonomyMode,
+      }));
       const res = await apiRequest("POST", "/api/ai/match-templates", {
         basicInfo: {
           name: wizardState.name,
@@ -396,7 +407,7 @@ export default function AgentWizard() {
           autonomyMode: wizardState.autonomyMode,
           outcomeName: linkedOutcome?.name || "",
         },
-        templates,
+        templates: slimTemplates,
       });
       const data = await res.json();
       setTemplateMatches(data.matches || []);
