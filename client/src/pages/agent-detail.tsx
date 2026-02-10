@@ -139,6 +139,10 @@ export default function AgentDetail() {
   const [shadowEnvironment, setShadowEnvironment] = useState("staging");
   const [shadowSampleSize, setShadowSampleSize] = useState("10");
   const [shadowResult, setShadowResult] = useState<{ status: string; summary: string; tracesReplayed: number; passRate: number; divergences: Array<{ traceId: string; original: string; replay: string; divergenceType: string }> } | null>(null);
+  const [blueprintView, setBlueprintView] = useState<"graph" | "json">("graph");
+  const [diffVersionA, setDiffVersionA] = useState("");
+  const [diffVersionB, setDiffVersionB] = useState("");
+  const [showDiff, setShowDiff] = useState(false);
 
   const { data: deprecationSignals, isLoading: deprecationLoading, isError: deprecationError } = useQuery<{
     riskScore: number;
@@ -475,6 +479,96 @@ export default function AgentDetail() {
               </CardContent>
             </Card>
           </div>
+
+          {(() => {
+            const pendingApprovals = agentApprovals.filter(a => a.status === "pending");
+            const now = new Date();
+            const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+            const fourteenDaysFromNow = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+            const hasRecentIncident = agent.lastIncidentAt && new Date(agent.lastIncidentAt) > sevenDaysAgo;
+            const expiringExceptions = (agentExceptions || []).filter((ex: PolicyException) => {
+              if (ex.status !== "approved" || !ex.expiresAt) return false;
+              const expDate = new Date(ex.expiresAt);
+              return expDate > now && expDate <= fourteenDaysFromNow;
+            });
+
+            function formatTimeAgo(dateStr: string | Date | null | undefined): string {
+              if (!dateStr) return "Never";
+              const d = new Date(dateStr);
+              const diffMs = now.getTime() - d.getTime();
+              const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+              if (diffDays === 0) return "Today";
+              if (diffDays === 1) return "1d ago";
+              if (diffDays < 30) return `${diffDays}d ago`;
+              return `${Math.floor(diffDays / 30)}mo ago`;
+            }
+
+            return (
+              <Card data-testid="card-open-items">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium">Open Items</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="flex flex-col gap-2" data-testid="section-pending-approvals">
+                      <div className="flex items-center gap-2">
+                        <Shield className="w-4 h-4 text-amber-500" />
+                        <span className="text-xs font-medium">Pending Approvals</span>
+                        <Badge variant="outline" className="text-[10px] ml-auto">{pendingApprovals.length}</Badge>
+                      </div>
+                      {pendingApprovals.length > 0 ? pendingApprovals.map((approval) => (
+                        <Link key={approval.id} href={`/approvals/${approval.id}`}>
+                          <div className="p-2 rounded-md bg-muted/30 hover-elevate cursor-pointer" data-testid={`pending-approval-${approval.id}`}>
+                            <span className="text-xs font-medium block">{(approval.type || "").replace(/_/g, " ")}</span>
+                            <span className="text-[11px] text-muted-foreground truncate block">{(approval.description || "").slice(0, 60)}</span>
+                          </div>
+                        </Link>
+                      )) : (
+                        <p className="text-[11px] text-muted-foreground py-3 text-center">No pending approvals</p>
+                      )}
+                    </div>
+
+                    <div className="flex flex-col gap-2" data-testid="section-active-incidents">
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 text-amber-500" />
+                        <span className="text-xs font-medium">Active Incidents</span>
+                      </div>
+                      {hasRecentIncident ? (
+                        <div className="p-2 rounded-md bg-amber-500/10 flex items-center gap-2" data-testid="incident-active">
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                          <span className="text-xs">Incident reported {formatTimeAgo(agent.lastIncidentAt)}</span>
+                        </div>
+                      ) : (
+                        <div className="p-2 rounded-md bg-emerald-500/10 flex items-center gap-2" data-testid="incident-none">
+                          <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                          <span className="text-xs">No recent incidents</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex flex-col gap-2" data-testid="section-expiring-exceptions">
+                      <div className="flex items-center gap-2">
+                        <Clock className="w-4 h-4 text-amber-500" />
+                        <span className="text-xs font-medium">Expiring Exceptions</span>
+                        <Badge variant="outline" className="text-[10px] ml-auto">{expiringExceptions.length}</Badge>
+                      </div>
+                      {expiringExceptions.length > 0 ? expiringExceptions.map((ex: PolicyException) => {
+                        const daysLeft = Math.ceil((new Date(ex.expiresAt!).getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+                        return (
+                          <div key={ex.id} className="p-2 rounded-md bg-muted/30" data-testid={`expiring-exception-${ex.id}`}>
+                            <span className="text-xs font-medium block">Policy: {ex.policyId}</span>
+                            <span className="text-[11px] text-muted-foreground">{daysLeft} day{daysLeft !== 1 ? "s" : ""} until expiry</span>
+                          </div>
+                        );
+                      }) : (
+                        <p className="text-[11px] text-muted-foreground py-3 text-center">No expiring exceptions</p>
+                      )}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })()}
         </TabsContent>
 
         <TabsContent value="traces" className="flex flex-col gap-4 mt-0">
@@ -656,7 +750,7 @@ export default function AgentDetail() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="evals" className="mt-0">
+        <TabsContent value="evals" className="mt-0 space-y-4">
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium">Evaluation Suites</CardTitle>
@@ -683,6 +777,110 @@ export default function AgentDetail() {
               )) : (
                 <p className="text-sm text-muted-foreground py-8 text-center">No eval suites configured</p>
               )}
+            </CardContent>
+          </Card>
+
+          <Card data-testid="card-regression-diff">
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2">
+                <Layers className="w-4 h-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Regression Diff</CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-4">
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex flex-col gap-1">
+                  <Label className="text-[11px] text-muted-foreground">Version A</Label>
+                  <Select value={diffVersionA} onValueChange={(val) => { setDiffVersionA(val); setShowDiff(false); }}>
+                    <SelectTrigger className="w-[140px]" data-testid="select-diff-version-a">
+                      <SelectValue placeholder="Select..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {agentVersions && agentVersions.length > 0 ? agentVersions.map(v => (
+                        <SelectItem key={v.id} value={v.semver} data-testid={`diff-version-a-${v.semver}`}>v{v.semver}</SelectItem>
+                      )) : (
+                        <SelectItem value="none" disabled>No versions</SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <Label className="text-[11px] text-muted-foreground">Version B</Label>
+                  <Select value={diffVersionB} onValueChange={(val) => { setDiffVersionB(val); setShowDiff(false); }}>
+                    <SelectTrigger className="w-[140px]" data-testid="select-diff-version-b">
+                      <SelectValue placeholder="Select..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {agentVersions && agentVersions.length > 0 ? agentVersions.map(v => (
+                        <SelectItem key={v.id} value={v.semver} data-testid={`diff-version-b-${v.semver}`}>v{v.semver}</SelectItem>
+                      )) : (
+                        <SelectItem value="none" disabled>No versions</SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <Label className="text-[11px] text-muted-foreground invisible">Action</Label>
+                  <Button size="sm" disabled={!diffVersionA || !diffVersionB} onClick={() => setShowDiff(true)} data-testid="button-compare-diff">
+                    Compare
+                  </Button>
+                </div>
+              </div>
+
+              {showDiff && diffVersionA && diffVersionB && (() => {
+                const regressionMetrics = [
+                  { metric: "Overall Pass Rate", versionA: 94.2, versionB: 91.8, unit: "%", higherIsBetter: true },
+                  { metric: "Safety Suite", versionA: 98.0, versionB: 97.5, unit: "%", higherIsBetter: true },
+                  { metric: "Compliance Suite", versionA: 96.1, versionB: 93.4, unit: "%", higherIsBetter: true },
+                  { metric: "Edge Cases", versionA: 87.3, versionB: 85.1, unit: "%", higherIsBetter: true },
+                  { metric: "Adversarial", versionA: 82.5, versionB: 79.0, unit: "%", higherIsBetter: true },
+                  { metric: "Avg Latency", versionA: 245, versionB: 312, unit: "ms", higherIsBetter: false },
+                  { metric: "Avg Cost", versionA: 0.023, versionB: 0.031, unit: "$", higherIsBetter: false },
+                ];
+                const regressions = regressionMetrics.filter(m => {
+                  const delta = m.versionB - m.versionA;
+                  return m.higherIsBetter ? delta < 0 : delta > 0;
+                }).length;
+
+                return (
+                  <div className="flex flex-col gap-3" data-testid="regression-diff-results">
+                    <div className={`text-xs font-medium p-2 rounded-md ${regressions > 0 ? "bg-red-500/10 text-red-600 dark:text-red-400" : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"}`} data-testid="text-regression-summary">
+                      Comparing v{diffVersionA} → v{diffVersionB}: {regressions} regression{regressions !== 1 ? "s" : ""} detected
+                    </div>
+                    <div className="overflow-auto">
+                      <table className="w-full text-xs" data-testid="table-regression-diff">
+                        <thead>
+                          <tr className="border-b">
+                            <th className="text-left py-2 pr-4 font-medium text-muted-foreground">Metric</th>
+                            <th className="text-right py-2 px-4 font-medium text-muted-foreground">v{diffVersionA}</th>
+                            <th className="text-right py-2 px-4 font-medium text-muted-foreground">v{diffVersionB}</th>
+                            <th className="text-right py-2 pl-4 font-medium text-muted-foreground">Delta</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {regressionMetrics.map((m) => {
+                            const delta = m.versionB - m.versionA;
+                            const isImprovement = m.higherIsBetter ? delta > 0 : delta < 0;
+                            const isRegression = m.higherIsBetter ? delta < 0 : delta > 0;
+                            const deltaStr = m.unit === "$" ? `${delta >= 0 ? "+" : ""}${delta.toFixed(3)}` : `${delta >= 0 ? "+" : ""}${delta.toFixed(1)}`;
+                            return (
+                              <tr key={m.metric} className="border-b last:border-0" data-testid={`regression-row-${m.metric.replace(/\s+/g, "-").toLowerCase()}`}>
+                                <td className="py-2 pr-4 font-medium">{m.metric}</td>
+                                <td className="text-right py-2 px-4">{m.unit === "$" ? `$${m.versionA.toFixed(3)}` : `${m.versionA}${m.unit}`}</td>
+                                <td className="text-right py-2 px-4">{m.unit === "$" ? `$${m.versionB.toFixed(3)}` : `${m.versionB}${m.unit}`}</td>
+                                <td className={`text-right py-2 pl-4 font-medium flex items-center justify-end gap-1 ${isRegression ? "text-red-600 dark:text-red-400" : isImprovement ? "text-emerald-600 dark:text-emerald-400" : ""}`}>
+                                  {isRegression ? <TrendingDown className="w-3 h-3" /> : isImprovement ? <TrendingUp className="w-3 h-3" /> : null}
+                                  {deltaStr}{m.unit}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })()}
             </CardContent>
           </Card>
         </TabsContent>
@@ -805,13 +1003,83 @@ export default function AgentDetail() {
         </TabsContent>
 
         <TabsContent value="blueprint" className="mt-0 space-y-4">
-          <BlueprintModelConfig agent={agent} />
-          <BlueprintWorkflowGraph blueprint={agent.blueprintJson as any} />
-          <BlueprintToolsPermissions tools={agent.toolsConfig as any} permissions={agent.permissionsConfig as any} />
-          <BlueprintMemoryRag config={agent.memoryRagConfig as any} />
-          <BlueprintPolicyBindings bindings={agent.policyBindings as any} />
-          <BlueprintEvalBindings bindings={agent.evalBindings as any} />
-          <BlueprintRollbackPlan plan={agent.rollbackPlan as any} />
+          <div className="flex items-center gap-2 flex-wrap" data-testid="blueprint-action-bar">
+            <Button variant="outline" size="sm" onClick={() => toast({ title: "Draft saved" })} data-testid="button-save-draft">
+              <FileCode className="w-3.5 h-3.5 mr-1.5" /> Save as Draft
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => toast({ title: "New version created" })} data-testid="button-create-version">
+              <GitBranch className="w-3.5 h-3.5 mr-1.5" /> Create Version
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => toast({ title: "Eval suite triggered" })} data-testid="button-run-eval-suite">
+              <FlaskConical className="w-3.5 h-3.5 mr-1.5" /> Run Eval Suite
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => toast({ title: "Version comparison opened" })} data-testid="button-compare-version">
+              <Layers className="w-3.5 h-3.5 mr-1.5" /> Compare vs Version...
+            </Button>
+            <div className="flex-1" />
+            <div className="flex items-center gap-1" data-testid="blueprint-view-toggle">
+              <Button size="icon" variant="ghost" className={`toggle-elevate ${blueprintView === "graph" ? "toggle-elevated" : ""}`} onClick={() => setBlueprintView("graph")} data-testid="button-view-graph">
+                <GitBranch className="w-4 h-4" />
+              </Button>
+              <Button size="icon" variant="ghost" className={`toggle-elevate ${blueprintView === "json" ? "toggle-elevated" : ""}`} onClick={() => setBlueprintView("json")} data-testid="button-view-json">
+                <FileCode className="w-4 h-4" />
+              </Button>
+            </div>
+          </div>
+
+          {blueprintView === "graph" ? (
+            <div className="flex gap-4" data-testid="blueprint-split-view">
+              <div className="flex-[2] min-w-0">
+                <BlueprintWorkflowGraph blueprint={agent.blueprintJson as any} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <Card data-testid="card-node-inspector">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-medium">Node Inspector</CardTitle>
+                  </CardHeader>
+                  <CardContent className="flex flex-col gap-4">
+                    <p className="text-xs text-muted-foreground text-center py-4" data-testid="text-node-inspector-placeholder">Click a node to inspect</p>
+                    <Separator />
+                    <div className="flex flex-col gap-3">
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[11px] font-medium text-muted-foreground">Prompt Template</span>
+                        <span className="text-xs text-muted-foreground/60">Select a node to view prompt</span>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[11px] font-medium text-muted-foreground">Tool Selection</span>
+                        <span className="text-xs text-muted-foreground/60">Select a node to view tools</span>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[11px] font-medium text-muted-foreground">Budgets</span>
+                        <span className="text-xs text-muted-foreground/60">Select a node to view budgets</span>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[11px] font-medium text-muted-foreground">Redaction Settings</span>
+                        <span className="text-xs text-muted-foreground/60">Select a node to view redaction</span>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+          ) : (
+            <Card data-testid="card-blueprint-json">
+              <CardContent className="pt-6">
+                <pre className="text-xs font-mono bg-muted/30 p-4 rounded-md overflow-auto max-h-[600px]" data-testid="blueprint-json-view">
+                  <code>{JSON.stringify(agent.blueprintJson, null, 2)}</code>
+                </pre>
+              </CardContent>
+            </Card>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4" data-testid="blueprint-config-grid">
+            <BlueprintModelConfig agent={agent} />
+            <BlueprintToolsPermissions tools={agent.toolsConfig as any} permissions={agent.permissionsConfig as any} />
+            <BlueprintMemoryRag config={agent.memoryRagConfig as any} />
+            <BlueprintPolicyBindings bindings={agent.policyBindings as any} />
+            <BlueprintEvalBindings bindings={agent.evalBindings as any} />
+            <BlueprintRollbackPlan plan={agent.rollbackPlan as any} />
+          </div>
         </TabsContent>
 
         <TabsContent value="lifecycle" className="flex flex-col gap-4 mt-0">
