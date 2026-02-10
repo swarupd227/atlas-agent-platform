@@ -162,7 +162,7 @@ export default function AgentDetail() {
   const [exportCompletionPromise, setExportCompletionPromise] = useState("TASK_COMPLETE");
   const [exportPreview, setExportPreview] = useState<{ files: Record<string, string>; metadata: any } | null>(null);
   const [exportPreviewFile, setExportPreviewFile] = useState<string>("");
-  const [exportStep, setExportStep] = useState<"configure" | "preview">("configure");
+  const [exportStep, setExportStep] = useState<"select" | "configure" | "preview">("select");
 
   const { data: deprecationSignals, isLoading: deprecationLoading, isError: deprecationError } = useQuery<{
     riskScore: number;
@@ -697,7 +697,7 @@ export default function AgentDetail() {
                       variant="default"
                       size="sm"
                       className="w-full"
-                      onClick={() => { setExportStep("configure"); setExportPreview(null); setExportDialogOpen(true); }}
+                      onClick={() => { setExportStep("select"); setExportPreview(null); setExportDialogOpen(true); }}
                       data-testid="button-summary-export-code"
                     >
                       <Package className="w-3.5 h-3.5 mr-1.5" /> Export / Generate Code
@@ -1248,7 +1248,7 @@ export default function AgentDetail() {
             <Button variant="outline" size="sm" onClick={() => toast({ title: "Version comparison opened" })} data-testid="button-compare-version">
               <Layers className="w-3.5 h-3.5 mr-1.5" /> Compare vs Version...
             </Button>
-            <Button variant="outline" size="sm" onClick={() => { setExportStep("configure"); setExportPreview(null); setExportDialogOpen(true); }} data-testid="button-export-code">
+            <Button variant="outline" size="sm" onClick={() => { setExportStep("select"); setExportPreview(null); setExportDialogOpen(true); }} data-testid="button-export-code">
               <Download className="w-3.5 h-3.5 mr-1.5" /> Export as Code
             </Button>
             <div className="flex-1" />
@@ -1310,7 +1310,7 @@ export default function AgentDetail() {
           <ImplementationGraph
             agent={agent}
             toolConnectors={allToolConnectors || []}
-            onGenerateExport={() => { setExportStep("configure"); setExportPreview(null); setExportDialogOpen(true); }}
+            onGenerateExport={() => { setExportStep("select"); setExportPreview(null); setExportDialogOpen(true); }}
           />
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4" data-testid="blueprint-config-grid">
@@ -2710,20 +2710,114 @@ export default function AgentDetail() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={exportDialogOpen} onOpenChange={(open) => { setExportDialogOpen(open); if (!open) { setExportStep("configure"); setExportPreview(null); } }}>
+      <Dialog open={exportDialogOpen} onOpenChange={(open) => { setExportDialogOpen(open); if (!open) { setExportStep("select"); setExportPreview(null); } }}>
         <DialogContent className="max-w-3xl max-h-[85vh] overflow-hidden flex flex-col">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Download className="w-4 h-4" />
-              Export as Code
+              {exportStep === "select" ? (
+                <><Package className="w-4 h-4" /> Export Agent</>
+              ) : exportStep === "configure" ? (
+                <><Code className="w-4 h-4" /> Configure Source Export</>
+              ) : (
+                <><FileCode className="w-4 h-4" /> Preview Source Files</>
+              )}
             </DialogTitle>
             <DialogDescription>
-              Generate a deployable code package from this agent's blueprint using the Ralph Loop pattern.
+              {exportStep === "select"
+                ? "Choose how this agent should be packaged for deployment."
+                : exportStep === "configure"
+                  ? "Configure source files for standalone deployment via your CI/CD pipeline."
+                  : "Review the generated source files before downloading."}
             </DialogDescription>
           </DialogHeader>
 
-          {exportStep === "configure" ? (
+          {exportStep === "select" && (
+            <div className="flex flex-col gap-4 py-2">
+              <div className="flex items-center gap-2 mb-1 flex-wrap">
+                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">1</span>
+                  <span className="font-medium">Export Type</span>
+                </div>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Configure</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Preview</span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div
+                  className="flex flex-col gap-3 p-4 rounded-md border hover-elevate cursor-pointer"
+                  onClick={() => {
+                    setExportDialogOpen(false);
+                    toast({ title: "Managed Runtime", description: "This agent is already configured for managed runtime deployment. No export needed." });
+                  }}
+                  data-testid="card-export-managed"
+                >
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center justify-center w-8 h-8 rounded-md bg-primary/10 shrink-0">
+                      <Rocket className="w-4 h-4 text-primary" />
+                    </div>
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-sm font-medium">Managed Runtime Artifact</span>
+                      <Badge variant="outline" className="text-[10px] w-fit mt-0.5">Default</Badge>
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Deploy through the platform runtime. No source files are exported — the agent runs using its declarative configuration.
+                  </p>
+                  <div className="flex flex-col gap-1.5 mt-auto">
+                    {["Platform-managed lifecycle", "Automatic scaling and monitoring", "No CI/CD setup required"].map(f => (
+                      <div key={f} className="flex items-center gap-2">
+                        <CheckCircle className="w-3 h-3 text-emerald-500 shrink-0" />
+                        <span className="text-[11px] text-muted-foreground">{f}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div
+                  className="flex flex-col gap-3 p-4 rounded-md border hover-elevate cursor-pointer"
+                  onClick={() => setExportStep("configure")}
+                  data-testid="card-export-source"
+                >
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center justify-center w-8 h-8 rounded-md bg-primary/10 shrink-0">
+                      <Code className="w-4 h-4 text-primary" />
+                    </div>
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-sm font-medium">Source Export</span>
+                      <Badge variant="outline" className="text-[10px] w-fit mt-0.5">CI/CD &amp; Portability</Badge>
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Generate source files for standalone deployment. Integrate into your CI/CD pipeline or run independently outside the platform.
+                  </p>
+                  <div className="flex flex-col gap-1.5 mt-auto">
+                    {["Downloadable source files (TypeScript / Python)", "CI/CD pipeline integration ready", "Full portability — deploy anywhere"].map(f => (
+                      <div key={f} className="flex items-center gap-2">
+                        <CheckCircle className="w-3 h-3 text-emerald-500 shrink-0" />
+                        <span className="text-[11px] text-muted-foreground">{f}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {exportStep === "configure" && (
             <div className="flex flex-col gap-5 py-2">
+              <div className="flex items-center gap-2 mb-1 flex-wrap">
+                <span className="text-[11px] text-muted-foreground/40">Export Type</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">2</span>
+                  <span className="font-medium">Configure</span>
+                </div>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Preview</span>
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div className="flex flex-col gap-2">
                   <Label>Language</Label>
@@ -2788,7 +2882,7 @@ export default function AgentDetail() {
                 <CardContent className="p-4">
                   <div className="flex items-center gap-2 mb-3">
                     <Terminal className="w-3.5 h-3.5 text-muted-foreground" />
-                    <span className="text-sm font-medium">What Gets Generated</span>
+                    <span className="text-sm font-medium">Source Files Generated</span>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {[
@@ -2797,8 +2891,9 @@ export default function AgentDetail() {
                       { label: exportFormat === "typescript" ? "tools/index.ts" : "tools/__init__.py", desc: "Tool adapter registry" },
                       { label: exportFormat === "typescript" ? "package.json" : "requirements.txt", desc: "Dependencies" },
                       { label: ".env.example", desc: "Environment variables" },
+                      { label: "Dockerfile", desc: "Container build for CI/CD" },
                     ].map(f => (
-                      <div key={f.label} className="flex items-center gap-2 p-2 rounded-md bg-muted/30">
+                      <div key={f.label} className="flex items-center gap-2 p-2 rounded-md bg-muted/30" data-testid={`source-file-${f.label.replace(/[/.]/g, "-")}`}>
                         <FileCode className="w-3 h-3 text-muted-foreground shrink-0" />
                         <div className="flex flex-col min-w-0">
                           <span className="text-xs font-mono truncate">{f.label}</span>
@@ -2810,8 +2905,20 @@ export default function AgentDetail() {
                 </CardContent>
               </Card>
             </div>
-          ) : (
+          )}
+
+          {exportStep === "preview" && (
             <div className="flex flex-col gap-3 flex-1 min-h-0">
+              <div className="flex items-center gap-2 mb-1 flex-wrap">
+                <span className="text-[11px] text-muted-foreground/40">Export Type</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Configure</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">3</span>
+                  <span className="font-medium">Preview</span>
+                </div>
+              </div>
               <div className="flex items-center gap-2 flex-wrap">
                 {exportPreview && Object.keys(exportPreview.files).map(fname => (
                   <Button
@@ -2843,6 +2950,11 @@ export default function AgentDetail() {
           )}
 
           <DialogFooter className="gap-2">
+            {exportStep === "configure" && (
+              <Button variant="outline" onClick={() => setExportStep("select")} data-testid="button-export-back-to-select">
+                Back
+              </Button>
+            )}
             {exportStep === "preview" && (
               <Button variant="outline" onClick={() => setExportStep("configure")} data-testid="button-export-back">
                 Back
@@ -2851,17 +2963,18 @@ export default function AgentDetail() {
             <Button variant="outline" onClick={() => setExportDialogOpen(false)} data-testid="button-export-cancel">
               Cancel
             </Button>
-            {exportStep === "configure" ? (
+            {exportStep === "configure" && (
               <Button
                 onClick={() => exportCodeMutation.mutate({ format: exportFormat, llmProvider: exportLlmProvider, maxIterations: exportMaxIterations, completionPromise: exportCompletionPromise })}
                 disabled={exportCodeMutation.isPending}
                 data-testid="button-export-generate"
               >
-                {exportCodeMutation.isPending ? "Generating..." : "Generate Code"}
+                {exportCodeMutation.isPending ? "Generating Source Files..." : "Generate Source Files"}
               </Button>
-            ) : (
+            )}
+            {exportStep === "preview" && (
               <Button onClick={downloadExportPackage} data-testid="button-export-download">
-                <Download className="w-3.5 h-3.5 mr-1.5" /> Download Package
+                <Download className="w-3.5 h-3.5 mr-1.5" /> Download Source Package
               </Button>
             )}
           </DialogFooter>
