@@ -21,7 +21,7 @@ The platform is built with a modern web stack: React, Vite, Tailwind CSS, shadcn
 - **Agents**: Agent Registry for managing and monitoring agents, including detailed cockpit views, lifecycle management (retirement and replacement), and a design wizard.
 - **Blueprint Studio**: Visual editor for creating, versioning, and compiling agent blueprints with static checks and approval flows.
 - **Templates**: Library of agent templates.
-- **Deployments**: Release Orchestrator with environment management (staging/pilot/prod), rollout strategies (shadow/canary/direct), and auto-incident generation.
+- **Deployments**: Release Orchestrator with environment management (staging/pilot/prod), rollout strategies (shadow/canary/direct), auto-incident generation. Environment board shows per-deployment cards with active version, canary %, shadow on/off indicator, rollback triggers armed status, and last approval link. Create Release wizard (4-step dialog): Step 1 (agent/version/target env/strategy/shadow toggle), Step 2 (rollback safeguards with eval regression, policy violation, KPI drop triggers), Step 3 (autopromote rules — conditional canary promotion e.g. "If eval suite A passes and no violations in 2h, raise canary to 25%"), Step 4 (review/submit with auto-generated approval requirement panel). Freeze Center for deployment freeze management.
 - **Monitor**: Outcome SLA Dashboard, live runs, drift detection, and agent health monitoring.
 - **Governance**: Certified Agent Compliance Layer with policy management, enforcement, audit trails, compliance reports, policy exceptions, and tool access controls.
 - **Optimization (Patch Center)**: Autonomous optimization and self-healing with AI-proposed changes, experiment management (A/B testing), and auto-remediation.

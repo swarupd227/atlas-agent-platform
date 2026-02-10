@@ -45,7 +45,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { usePermission, PermissionGate } from "@/components/role-provider";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { Deployment, Agent, Approval } from "@shared/schema";
+import type { Deployment, Agent, Approval, EvalSuite } from "@shared/schema";
 
 const envColors: Record<string, string> = {
   staging: "bg-purple-500/10 text-purple-600 dark:text-purple-400",
@@ -72,6 +72,7 @@ function EnvironmentPanel({
   env,
   deployments,
   onSelect,
+  onNavigate,
   health,
   approvals,
   freezeStatus,
@@ -79,6 +80,7 @@ function EnvironmentPanel({
   env: string;
   deployments: Deployment[];
   onSelect: (id: string) => void;
+  onNavigate: (path: string) => void;
   health?: EnvHealth;
   approvals?: Approval[];
   freezeStatus?: FreezeStatus;
@@ -181,30 +183,70 @@ function EnvironmentPanel({
           </div>
         )}
         {envDeploys.length > 0 ? (
-          envDeploys.slice(0, 5).map((dep) => (
-            <div
-              key={dep.id}
-              className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted/30 hover-elevate cursor-pointer"
-              onClick={() => onSelect(dep.id)}
-              data-testid={`deploy-env-row-${dep.id}`}
-            >
-              <div className="flex flex-col min-w-0">
-                <span className="text-xs font-medium truncate">{dep.agentName || "Agent"}</span>
-                <span className="text-[11px] text-muted-foreground">
-                  v{dep.version} | {dep.rolloutStrategy}
-                </span>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                {dep.canaryPercent && dep.canaryPercent > 0 && (
-                  <Badge variant="outline" className="text-[10px]">
-                    {dep.canaryPercent}% canary
+          envDeploys.slice(0, 5).map((dep) => {
+            const rollbackCfg = dep.rollbackConfig as { autoRollbackEnabled?: boolean; triggers?: any[] } | null;
+            const triggersArmed = rollbackCfg?.autoRollbackEnabled && (rollbackCfg?.triggers?.length || 0) > 0;
+            const lastApproval = approvals?.find(
+              (a) => a.objectType === "deployment" && a.objectId === dep.id
+            );
+            return (
+              <div
+                key={dep.id}
+                className="flex flex-col gap-2 p-2.5 rounded-md bg-muted/30 hover-elevate cursor-pointer"
+                onClick={() => onSelect(dep.id)}
+                data-testid={`deploy-env-row-${dep.id}`}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex flex-col min-w-0">
+                    <span className="text-xs font-medium truncate">{dep.agentName || "Agent"}</span>
+                    <span className="text-[11px] text-muted-foreground">
+                      v{dep.version} | {dep.rolloutStrategy}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <StatusBadge status={dep.status} />
+                    <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {dep.canaryPercent != null && dep.canaryPercent > 0 && (
+                    <Badge variant="outline" className="text-[10px]" data-testid={`badge-canary-${dep.id}`}>
+                      {dep.canaryPercent}% canary
+                    </Badge>
+                  )}
+                  <Badge
+                    variant="outline"
+                    className={`text-[10px] ${dep.shadowEnabled ? "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400" : "text-muted-foreground"}`}
+                    data-testid={`badge-shadow-${dep.id}`}
+                  >
+                    {dep.shadowEnabled ? "Shadow ON" : "Shadow OFF"}
                   </Badge>
-                )}
-                <StatusBadge status={dep.status} />
-                <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
+                  <Badge
+                    variant="outline"
+                    className={`text-[10px] ${triggersArmed ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`}
+                    data-testid={`badge-rollback-${dep.id}`}
+                  >
+                    <ShieldAlert className="w-3 h-3 mr-0.5" />
+                    {triggersArmed ? "Triggers Armed" : "No Triggers"}
+                  </Badge>
+                  {lastApproval && (
+                    <Badge
+                      variant="outline"
+                      className={`text-[10px] cursor-pointer ${lastApproval.status === "approved" ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : lastApproval.status === "pending" ? "bg-amber-500/10 text-amber-600 dark:text-amber-400" : "text-muted-foreground"}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onNavigate(`/approvals`);
+                      }}
+                      data-testid={`badge-approval-${dep.id}`}
+                    >
+                      <Shield className="w-3 h-3 mr-0.5" />
+                      {lastApproval.status === "approved" ? "Approved" : lastApproval.status === "pending" ? "Pending Approval" : lastApproval.status}
+                    </Badge>
+                  )}
+                </div>
               </div>
-            </div>
-          ))
+            );
+          })
         ) : (
           <p className="text-xs text-muted-foreground py-4 text-center">No deployments</p>
         )}
@@ -213,11 +255,21 @@ function EnvironmentPanel({
   );
 }
 
+interface AutopromoteRule {
+  id: string;
+  evalSuiteId: string;
+  evalSuiteName: string;
+  noViolationsWindowHours: number;
+  targetCanaryPercent: number;
+  enabled: boolean;
+}
+
 function CreateReleaseWizard({
   open,
   onOpenChange,
   agents,
   approvals,
+  evalSuites,
   onSubmit,
   isPending,
 }: {
@@ -225,6 +277,7 @@ function CreateReleaseWizard({
   onOpenChange: (open: boolean) => void;
   agents: Agent[];
   approvals: Approval[];
+  evalSuites: EvalSuite[];
   onSubmit: (data: Record<string, any>) => void;
   isPending: boolean;
 }) {
@@ -237,6 +290,7 @@ function CreateReleaseWizard({
     version: "1.0.0",
     rolloutStrategy: "canary",
     canaryPercent: 10,
+    shadowEnabled: false,
     evalRegressionEnabled: true,
     evalRegressionThreshold: 10,
     policyViolationEnabled: true,
@@ -245,6 +299,7 @@ function CreateReleaseWizard({
     kpiDropThreshold: 0.7,
     autoRollbackEnabled: true,
   });
+  const [autopromoteRules, setAutopromoteRules] = useState<AutopromoteRule[]>([]);
 
   const selectedAgent = agents?.find((a) => a.id === formData.agentId);
   const requiresApproval = formData.environment === "prod" || (formData.environment === "pilot" && selectedAgent?.riskTier === "HIGH");
@@ -298,6 +353,17 @@ function CreateReleaseWizard({
           }
         : undefined;
 
+    const autopromoteConfig = autopromoteRules.filter(r => r.enabled).length > 0
+      ? {
+          rules: autopromoteRules.filter(r => r.enabled).map(r => ({
+            evalSuiteId: r.evalSuiteId,
+            evalSuiteName: r.evalSuiteName,
+            noViolationsWindowHours: r.noViolationsWindowHours,
+            targetCanaryPercent: r.targetCanaryPercent,
+          })),
+        }
+      : undefined;
+
     onSubmit({
       agentId: formData.agentId,
       agentName: selectedAgent?.name,
@@ -305,8 +371,10 @@ function CreateReleaseWizard({
       version: formData.version,
       rolloutStrategy: formData.rolloutStrategy,
       canaryPercent: formData.canaryPercent,
+      shadowEnabled: formData.shadowEnabled,
       rollbackConfig,
       canaryConfig,
+      autopromoteConfig,
     });
   };
 
@@ -325,12 +393,12 @@ function CreateReleaseWizard({
         <DialogHeader>
           <DialogTitle>Create Release</DialogTitle>
           <DialogDescription>
-            Step {step} of 3 — {step === 1 ? "Source & Target" : step === 2 ? "Rollback Safeguards" : "Review & Submit"}
+            Step {step} of 4 — {step === 1 ? "Source & Target" : step === 2 ? "Rollback Safeguards" : step === 3 ? "Autopromote Rules" : "Review & Submit"}
           </DialogDescription>
         </DialogHeader>
 
         <div className="flex items-center gap-1 mb-2">
-          {[1, 2, 3].map((s) => (
+          {[1, 2, 3, 4].map((s) => (
             <div
               key={s}
               className={`flex-1 h-1.5 rounded-full ${s <= step ? "bg-primary" : "bg-muted"}`}
@@ -405,6 +473,20 @@ function CreateReleaseWizard({
                   />
                 </div>
               )}
+            </div>
+            <div className="flex items-center justify-between gap-3 p-3 rounded-md bg-muted/30">
+              <div className="flex items-center gap-2">
+                <Activity className="w-4 h-4 text-muted-foreground" />
+                <div className="flex flex-col">
+                  <span className="text-xs font-medium">Shadow Mode</span>
+                  <span className="text-[10px] text-muted-foreground">Mirror traffic to candidate in dry-run</span>
+                </div>
+              </div>
+              <Switch
+                checked={formData.shadowEnabled}
+                onCheckedChange={(val: boolean) => setFormData({ ...formData, shadowEnabled: val })}
+                data-testid="switch-shadow-enabled"
+              />
             </div>
             {formData.rolloutStrategy === "shadow" && (
               <div className="flex items-center gap-2 p-2.5 rounded-md bg-indigo-500/5 border border-indigo-500/10">
@@ -518,6 +600,137 @@ function CreateReleaseWizard({
         {step === 3 && (
           <div className="flex flex-col gap-4" data-testid="wizard-step-3">
             <div className="flex flex-col gap-2">
+              <span className="text-xs font-medium text-muted-foreground">Autopromote Rules</span>
+              <p className="text-[11px] text-muted-foreground">
+                Define conditions under which the canary percentage automatically increases. Each rule specifies an eval suite that must pass and a violation-free window before promotion.
+              </p>
+            </div>
+
+            {autopromoteRules.map((rule, idx) => {
+              const agentSuites = evalSuites?.filter((s) => s.agentId === formData.agentId) || [];
+              return (
+                <div key={rule.id} className="flex flex-col gap-3 p-3 rounded-md bg-muted/20" data-testid={`autopromote-rule-${idx}`}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        checked={rule.enabled}
+                        onCheckedChange={(val: boolean) => {
+                          const updated = [...autopromoteRules];
+                          updated[idx] = { ...rule, enabled: val };
+                          setAutopromoteRules(updated);
+                        }}
+                        data-testid={`switch-autopromote-${idx}`}
+                      />
+                      <span className="text-xs font-medium">Rule {idx + 1}</span>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setAutopromoteRules(autopromoteRules.filter((_, i) => i !== idx))}
+                      data-testid={`button-remove-rule-${idx}`}
+                    >
+                      <Ban className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <Label className="text-[11px]">If eval suite</Label>
+                    <select
+                      className={selectClass}
+                      value={rule.evalSuiteId}
+                      onChange={(e) => {
+                        const suite = agentSuites.find((s) => s.id === e.target.value);
+                        const updated = [...autopromoteRules];
+                        updated[idx] = { ...rule, evalSuiteId: e.target.value, evalSuiteName: suite?.name || "" };
+                        setAutopromoteRules(updated);
+                      }}
+                      data-testid={`select-eval-suite-${idx}`}
+                    >
+                      <option value="">Select eval suite...</option>
+                      {agentSuites.map((s) => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="flex flex-col gap-1.5">
+                      <Label className="text-[11px]">passes and no violations in</Label>
+                      <div className="flex items-center gap-1.5">
+                        <Input
+                          type="number"
+                          className="text-xs"
+                          value={rule.noViolationsWindowHours}
+                          onChange={(e) => {
+                            const updated = [...autopromoteRules];
+                            updated[idx] = { ...rule, noViolationsWindowHours: parseInt(e.target.value) || 1 };
+                            setAutopromoteRules(updated);
+                          }}
+                          data-testid={`input-window-hours-${idx}`}
+                        />
+                        <span className="text-[10px] text-muted-foreground whitespace-nowrap">hours</span>
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Label className="text-[11px]">raise canary to</Label>
+                      <div className="flex items-center gap-1.5">
+                        <Input
+                          type="number"
+                          className="text-xs"
+                          value={rule.targetCanaryPercent}
+                          onChange={(e) => {
+                            const updated = [...autopromoteRules];
+                            updated[idx] = { ...rule, targetCanaryPercent: parseInt(e.target.value) || 0 };
+                            setAutopromoteRules(updated);
+                          }}
+                          data-testid={`input-target-canary-${idx}`}
+                        />
+                        <span className="text-[10px] text-muted-foreground">%</span>
+                      </div>
+                    </div>
+                  </div>
+                  {rule.enabled && rule.evalSuiteId && (
+                    <div className="flex items-center gap-2 p-2 rounded-md bg-emerald-500/5 border border-emerald-500/10">
+                      <Zap className="w-3 h-3 text-emerald-500 shrink-0" />
+                      <span className="text-[10px] text-muted-foreground">
+                        If <span className="font-medium text-foreground">{rule.evalSuiteName || "suite"}</span> passes and no violations in {rule.noViolationsWindowHours}h, raise canary to {rule.targetCanaryPercent}%
+                      </span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            <Button
+              variant="outline"
+              onClick={() => setAutopromoteRules([
+                ...autopromoteRules,
+                {
+                  id: crypto.randomUUID(),
+                  evalSuiteId: "",
+                  evalSuiteName: "",
+                  noViolationsWindowHours: 2,
+                  targetCanaryPercent: 25,
+                  enabled: true,
+                },
+              ])}
+              data-testid="button-add-autopromote-rule"
+            >
+              <Plus className="w-4 h-4 mr-1.5" /> Add Autopromote Rule
+            </Button>
+
+            {autopromoteRules.length === 0 && (
+              <div className="flex items-center gap-2 p-2.5 rounded-md bg-muted/20">
+                <Clock className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                <span className="text-[11px] text-muted-foreground">
+                  No autopromote rules. Canary percentage will only change manually.
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {step === 4 && (
+          <div className="flex flex-col gap-4" data-testid="wizard-step-4">
+            <div className="flex flex-col gap-2">
               <span className="text-xs font-medium text-muted-foreground">Release Summary</span>
               <div className="flex flex-col gap-1.5 p-3 rounded-md bg-muted/20">
                 <div className="flex items-center justify-between gap-2">
@@ -544,6 +757,12 @@ function CreateReleaseWizard({
                     <span className="text-xs font-medium">{formData.canaryPercent}%</span>
                   </div>
                 )}
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-muted-foreground">Shadow Mode</span>
+                  <Badge variant="outline" className={`text-[10px] ${formData.shadowEnabled ? "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400" : ""}`}>
+                    {formData.shadowEnabled ? "Enabled" : "Disabled"}
+                  </Badge>
+                </div>
               </div>
             </div>
 
@@ -577,6 +796,22 @@ function CreateReleaseWizard({
               </div>
             </div>
 
+            {autopromoteRules.filter(r => r.enabled).length > 0 && (
+              <div className="flex flex-col gap-2">
+                <span className="text-xs font-medium text-muted-foreground">Autopromote Rules</span>
+                <div className="flex flex-col gap-1.5">
+                  {autopromoteRules.filter(r => r.enabled).map((rule, idx) => (
+                    <div key={rule.id} className="flex items-center gap-2 p-2 rounded-md bg-emerald-500/5 border border-emerald-500/10" data-testid={`review-autopromote-${idx}`}>
+                      <Zap className="w-3 h-3 text-emerald-500 shrink-0" />
+                      <span className="text-[11px]">
+                        If <span className="font-medium">{rule.evalSuiteName || "suite"}</span> passes and no violations in {rule.noViolationsWindowHours}h, raise canary to {rule.targetCanaryPercent}%
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {requiresApproval && (
               <div className="flex items-center gap-2 p-2.5 rounded-md bg-blue-500/5 border border-blue-500/10" data-testid="review-approval-required">
                 <Shield className="w-3.5 h-3.5 text-blue-500 shrink-0" />
@@ -605,7 +840,7 @@ function CreateReleaseWizard({
               <ChevronLeft className="w-4 h-4 mr-1" /> Back
             </Button>
           )}
-          {step < 3 ? (
+          {step < 4 ? (
             <Button
               onClick={() => setStep(step + 1)}
               disabled={step === 1 && !formData.agentId}
@@ -807,6 +1042,9 @@ export default function Deployments() {
   const { data: freezeStatus } = useQuery<Record<string, FreezeStatus>>({
     queryKey: ["/api/deployments/freeze-status"],
   });
+  const { data: evalSuites } = useQuery<EvalSuite[]>({
+    queryKey: ["/api/eval-suites"],
+  });
 
   const createMutation = useMutation({
     mutationFn: async (data: Record<string, any>) => {
@@ -903,6 +1141,7 @@ export default function Deployments() {
           env="staging"
           deployments={allDeploys}
           onSelect={(id) => navigate(`/deployments/${id}`)}
+          onNavigate={navigate}
           health={envHealth?.staging}
           approvals={approvals}
           freezeStatus={envFreezeMap.staging}
@@ -911,6 +1150,7 @@ export default function Deployments() {
           env="pilot"
           deployments={allDeploys}
           onSelect={(id) => navigate(`/deployments/${id}`)}
+          onNavigate={navigate}
           health={envHealth?.pilot}
           approvals={approvals}
           freezeStatus={envFreezeMap.pilot}
@@ -919,6 +1159,7 @@ export default function Deployments() {
           env="prod"
           deployments={allDeploys}
           onSelect={(id) => navigate(`/deployments/${id}`)}
+          onNavigate={navigate}
           health={envHealth?.prod}
           approvals={approvals}
           freezeStatus={envFreezeMap.prod}
@@ -977,6 +1218,7 @@ export default function Deployments() {
         onOpenChange={setCreateOpen}
         agents={agents || []}
         approvals={approvals || []}
+        evalSuites={evalSuites || []}
         onSubmit={(data) => createMutation.mutate(data)}
         isPending={createMutation.isPending}
       />
