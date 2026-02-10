@@ -21,6 +21,13 @@ import {
   Tag,
   ShieldCheck,
   Users,
+  MessageSquare,
+  Zap,
+  Target,
+  Layers,
+  TrendingUp,
+  TrendingDown,
+  ArrowRight,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -70,6 +77,8 @@ export default function ApprovalDetail() {
   const [constraintsOpen, setConstraintsOpen] = useState(false);
   const [labelingOpen, setLabelingOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
+  const [requestChangesOpen, setRequestChangesOpen] = useState(false);
+  const [requestChangesComment, setRequestChangesComment] = useState("");
 
   const [canaryPercent, setCanaryPercent] = useState("10");
   const [duration, setDuration] = useState("24h");
@@ -146,6 +155,19 @@ export default function ApprovalDetail() {
         description: followUpDescription,
       },
     });
+  };
+
+  const handleRequestChanges = () => {
+    decideMutation.mutate({
+      status: "changes_requested",
+      decidedBy: "Expert Validator",
+      constraintsJson: {
+        requestedChanges: requestChangesComment,
+        requestedBy: "Expert Validator",
+      },
+    } as any);
+    setRequestChangesOpen(false);
+    setRequestChangesComment("");
   };
 
   if (isLoading) {
@@ -347,6 +369,43 @@ export default function ApprovalDetail() {
                     data-testid="button-submit-labeling"
                   >
                     Submit Request
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog open={requestChangesOpen} onOpenChange={setRequestChangesOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline" data-testid="button-request-changes">
+                  <MessageSquare className="w-4 h-4 mr-1.5" />
+                  Request Changes
+                </Button>
+              </DialogTrigger>
+              <DialogContent data-testid="dialog-request-changes">
+                <DialogHeader>
+                  <DialogTitle>Request Changes</DialogTitle>
+                </DialogHeader>
+                <div className="flex flex-col gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-sm font-medium">What changes are needed?</label>
+                    <Textarea
+                      value={requestChangesComment}
+                      onChange={(e) => setRequestChangesComment(e.target.value)}
+                      placeholder="Describe the changes needed before this can be approved..."
+                      data-testid="textarea-request-changes"
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setRequestChangesOpen(false)} data-testid="button-cancel-request-changes">
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={handleRequestChanges}
+                    disabled={decideMutation.isPending || !requestChangesComment.trim()}
+                    data-testid="button-submit-request-changes"
+                  >
+                    Submit Feedback
                   </Button>
                 </DialogFooter>
               </DialogContent>
@@ -597,6 +656,91 @@ export default function ApprovalDetail() {
             ) : (
               <p className="text-xs text-muted-foreground" data-testid="text-no-shadow-replay">
                 No shadow replay data available
+              </p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Blast Radius Panel */}
+        <Card data-testid="panel-blast-radius">
+          <CardHeader className="flex flex-row items-center gap-2 space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
+              <Zap className="w-4 h-4 text-muted-foreground" />
+              Blast Radius
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {evidence.blastRadius ? (
+              <div className="flex flex-col gap-3" data-testid="blast-radius-data">
+                {(evidence.blastRadius as any).affectedOutcomes?.length > 0 && (
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <Target className="w-3 h-3 text-muted-foreground" />
+                      <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                        Affected Outcomes ({(evidence.blastRadius as any).affectedOutcomes.length})
+                      </span>
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      {((evidence.blastRadius as any).affectedOutcomes as Array<{ name: string; riskTier?: string; kpiImpact?: string }>).map((outcome, idx) => (
+                        <div key={idx} className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/30 flex-wrap" data-testid={`blast-outcome-${idx}`}>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-medium">{outcome.name}</span>
+                            {outcome.riskTier && (
+                              <Badge variant="outline" className="text-[9px]">{outcome.riskTier}</Badge>
+                            )}
+                          </div>
+                          {outcome.kpiImpact && (
+                            <span className="text-[11px] text-muted-foreground">{outcome.kpiImpact}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {(evidence.blastRadius as any).affectedSegments?.length > 0 && (
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <Layers className="w-3 h-3 text-muted-foreground" />
+                      <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                        Affected Segments ({(evidence.blastRadius as any).affectedSegments.length})
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {((evidence.blastRadius as any).affectedSegments as Array<{ name: string; userCount?: number; revenueImpact?: string }>).map((seg, idx) => (
+                        <div key={idx} className="flex flex-col gap-0.5 p-2 rounded-md bg-muted/30" data-testid={`blast-segment-${idx}`}>
+                          <span className="text-xs font-medium">{seg.name}</span>
+                          {seg.userCount && (
+                            <span className="text-[10px] text-muted-foreground">{seg.userCount.toLocaleString()} users</span>
+                          )}
+                          {seg.revenueImpact && (
+                            <span className="text-[10px] text-muted-foreground">{seg.revenueImpact}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {(evidence.blastRadius as any).totalUsersAffected && (
+                  <div className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/20">
+                    <span className="text-[11px] text-muted-foreground">Total Users Affected</span>
+                    <span className="text-xs font-semibold" data-testid="text-total-users-affected">
+                      {(evidence.blastRadius as any).totalUsersAffected.toLocaleString()}
+                    </span>
+                  </div>
+                )}
+
+                {(evidence.blastRadius as any).riskSummary && (
+                  <div className="flex items-start gap-2 p-2.5 rounded-md bg-amber-500/5 border border-amber-500/10">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-500 mt-0.5 shrink-0" />
+                    <span className="text-[11px]" data-testid="text-risk-summary">{(evidence.blastRadius as any).riskSummary}</span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground" data-testid="text-no-blast-radius">
+                No blast radius data available
               </p>
             )}
           </CardContent>

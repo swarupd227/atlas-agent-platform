@@ -564,6 +564,38 @@ export async function registerRoutes(
             ...regulatoryConstraints.map(r => ({ ...r, category: "regulatory" })),
             ...escalationPaths.map(e => ({ ...e, category: "escalation" })),
           ],
+          evalResults: {
+            before: [
+              { name: "Core Accuracy Suite", passRate: 87.2, totalCases: 120 },
+              { name: "Safety & Compliance", passRate: 94.5, totalCases: 45 },
+            ],
+            after: [
+              { name: "Core Accuracy Suite", passRate: 91.8, totalCases: 120 },
+              { name: "Safety & Compliance", passRate: 96.1, totalCases: 45 },
+            ],
+          },
+          shadowReplayResults: {
+            divergenceCount: 3,
+            totalReplays: 150,
+            matchRate: 98.0,
+            samples: [
+              { input: "Summarize Q4 earnings report", expected: "Revenue up 12% YoY", actual: "Revenue increased 12.3% year-over-year", matched: true },
+              { input: "Flag compliance risks in contract", expected: "2 risks identified", actual: "3 risks identified (1 new edge case)", matched: false },
+              { input: "Generate customer follow-up email", expected: "Professional tone, 3 action items", actual: "Professional tone, 3 action items", matched: true },
+            ],
+          },
+          blastRadius: {
+            affectedOutcomes: [
+              { name: agent.outcomeId ? "Primary Outcome Contract" : "Customer Support Automation", riskTier: agent.riskTier || "MEDIUM", kpiImpact: "Success rate +4.6%" },
+              { name: "Cost Optimization Program", riskTier: "LOW", kpiImpact: "Cost per run -8%" },
+            ],
+            affectedSegments: [
+              { name: "Enterprise Tier", userCount: 2400, revenueImpact: "$12K/mo at risk" },
+              { name: "Growth Tier", userCount: 8900, revenueImpact: "$4.2K/mo at risk" },
+            ],
+            totalUsersAffected: 11300,
+            riskSummary: "Change affects 2 outcome contracts across 2 customer segments. Primary risk: regression in edge-case compliance detection for Enterprise tier.",
+          },
         },
       });
 
@@ -888,6 +920,16 @@ export async function registerRoutes(
               environment: "prod",
               boundOutcomes: boundOutcomes.map(o => o.name).slice(0, 5),
               rollbackTimeEstimate: source.rollbackConfig ? `${(source.rollbackConfig as any).cooldownMinutes || 15}m` : "~15m",
+              affectedOutcomes: boundOutcomes.slice(0, 3).map(o => ({
+                name: o.name,
+                riskTier: o.riskTier || "MEDIUM",
+                kpiImpact: `Potential impact on ${o.name} KPIs`,
+              })),
+              affectedSegments: [
+                { name: "All Production Users", userCount: Math.round(totalT * 30), revenueImpact: `$${revenueExposure.toLocaleString()}/mo exposure` },
+              ],
+              totalUsersAffected: Math.round(totalT * 30),
+              riskSummary: `Production deployment of ${source.agentName} v${source.version} affects ${boundOutcomes.length} outcome contract(s). Rollback available in ${source.rollbackConfig ? `${(source.rollbackConfig as any).cooldownMinutes || 15}m` : "~15m"}.`,
             },
             promotedFrom: source.environment,
             deploymentId: promoted.id,
@@ -2047,6 +2089,32 @@ export async function registerRoutes(
             riskTier: agent.riskTier,
             version: newVersion,
             validationResults: blueprint.validationResults,
+            diff: {
+              added: newVersion > 1 ? Math.floor(Math.random() * 20 + 5) : 0,
+              removed: newVersion > 1 ? Math.floor(Math.random() * 10 + 2) : 0,
+              changed: newVersion > 1 ? Math.floor(Math.random() * 8 + 1) : 0,
+              summary: newVersion > 1 ? `v${newVersion - 1} → v${newVersion}: Updated workflow nodes and tool configuration` : "Initial version",
+            },
+            evalResults: {
+              before: [
+                { name: "Accuracy Benchmark", passRate: 88.5, totalCases: 200 },
+                { name: "Latency SLA", passRate: 95.0, totalCases: 200 },
+              ],
+              after: [
+                { name: "Accuracy Benchmark", passRate: 90.2, totalCases: 200 },
+                { name: "Latency SLA", passRate: 94.8, totalCases: 200 },
+              ],
+            },
+            blastRadius: {
+              affectedOutcomes: [
+                { name: "Blueprint-bound Outcome", riskTier: agent.riskTier || "HIGH", kpiImpact: "Accuracy benchmark change: +1.7%" },
+              ],
+              affectedSegments: [
+                { name: "All Agent Users", userCount: 5000, revenueImpact: "N/A until deployed" },
+              ],
+              totalUsersAffected: 5000,
+              riskSummary: `Blueprint v${newVersion} signing for ${agent.riskTier} risk agent. Changes affect accuracy and latency benchmarks.`,
+            },
           },
         });
       }

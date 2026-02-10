@@ -24,10 +24,13 @@ import {
   CalendarClock,
   User,
   Bot,
+  MessageSquare,
+  BarChart3,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -45,10 +48,13 @@ import type { Approval, EvalSuite, EvalRun, Agent, OutcomeContract } from "@shar
 export default function Approvals() {
   const [search, setSearch] = useState("");
   const [riskTierFilter, setRiskTierFilter] = useState<string>("all");
+  const [objectTypeFilter, setObjectTypeFilter] = useState<string>("all");
   const [outcomeFilter, setOutcomeFilter] = useState<string>("all");
   const [agentFilter, setAgentFilter] = useState<string>("all");
   const [requesterFilter, setRequesterFilter] = useState<string>("all");
   const [dueDateFilter, setDueDateFilter] = useState<string>("all");
+  const [requestChangesId, setRequestChangesId] = useState<string | null>(null);
+  const [requestChangesComment, setRequestChangesComment] = useState("");
   const { toast } = useToast();
   const approvalPerm = usePermission("approve_changes");
 
@@ -81,18 +87,32 @@ export default function Approvals() {
   });
 
   const decideMutation = useMutation({
-    mutationFn: async ({ id, status }: { id: string; status: string }) => {
-      const res = await apiRequest("PATCH", `/api/approvals/${id}`, { status, decidedBy: "Expert Validator" });
+    mutationFn: async ({ id, status, constraintsJson }: { id: string; status: string; constraintsJson?: Record<string, unknown> }) => {
+      const res = await apiRequest("PATCH", `/api/approvals/${id}`, { status, decidedBy: "Expert Validator", constraintsJson });
       return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/approvals"] });
       toast({ title: "Approval updated" });
+      setRequestChangesId(null);
+      setRequestChangesComment("");
     },
     onError: (err: Error) => {
       toast({ title: "Failed to update approval", description: err.message, variant: "destructive" });
     },
   });
+
+  const computeEvidenceCompleteness = (approval: Approval): number => {
+    const evidence = approval.evidenceJson as Record<string, unknown> | null;
+    let score = 0;
+    let total = 5;
+    if (approval.diffSummary || (evidence as any)?.configDiff) score++;
+    if ((evidence as any)?.evalResults || (evidence as any)?.kpiAttainment) score++;
+    if ((evidence as any)?.shadowReplayResults) score++;
+    if ((evidence as any)?.blastRadius || (evidence as any)?.affectedOutcomes) score++;
+    if (approval.riskScore !== null && approval.riskScore !== undefined) score++;
+    return Math.round((score / total) * 100);
+  };
 
   const renderEvidencePackage = (approval: Approval) => {
     const evidenceData = approval.evidenceJson as Record<string, unknown> | null;
@@ -542,10 +562,11 @@ export default function Approvals() {
     );
   };
 
-  const hasActiveFilters = riskTierFilter !== "all" || outcomeFilter !== "all" || agentFilter !== "all" || requesterFilter !== "all" || dueDateFilter !== "all";
+  const hasActiveFilters = riskTierFilter !== "all" || objectTypeFilter !== "all" || outcomeFilter !== "all" || agentFilter !== "all" || requesterFilter !== "all" || dueDateFilter !== "all";
 
   const clearAllFilters = () => {
     setRiskTierFilter("all");
+    setObjectTypeFilter("all");
     setOutcomeFilter("all");
     setAgentFilter("all");
     setRequesterFilter("all");
@@ -559,6 +580,10 @@ export default function Approvals() {
     if (riskTierFilter !== "all") {
       const riskLevel = (a.riskScore || 0) > 7 ? "high" : (a.riskScore || 0) > 4 ? "medium" : "low";
       if (riskLevel !== riskTierFilter) return false;
+    }
+
+    if (objectTypeFilter !== "all") {
+      if (a.objectType !== objectTypeFilter) return false;
     }
 
     if (outcomeFilter !== "all") {
@@ -659,6 +684,21 @@ export default function Approvals() {
               <SelectItem value="low">Low Risk</SelectItem>
             </SelectContent>
           </Select>
+          <Select value={objectTypeFilter} onValueChange={setObjectTypeFilter}>
+            <SelectTrigger className="w-40" data-testid="select-object-type">
+              <SelectValue placeholder="Object Type" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Types</SelectItem>
+              <SelectItem value="agent">Agent</SelectItem>
+              <SelectItem value="agent_version">Version</SelectItem>
+              <SelectItem value="policy">Policy</SelectItem>
+              <SelectItem value="policy_exception">Exception</SelectItem>
+              <SelectItem value="deployment">Deployment</SelectItem>
+              <SelectItem value="outcome">Outcome</SelectItem>
+              <SelectItem value="patch">Patch</SelectItem>
+            </SelectContent>
+          </Select>
           <Select value={outcomeFilter} onValueChange={setOutcomeFilter}>
             <SelectTrigger className="w-44" data-testid="select-outcome">
               <SelectValue placeholder="Outcome" />
@@ -716,6 +756,8 @@ export default function Approvals() {
         <TabsContent value="pending" className="mt-0 flex flex-col gap-3">
           {filtered?.filter((a) => a.status === "pending").map((approval) => {
             const riskLevel = (approval.riskScore || 0) > 7 ? "high" : (approval.riskScore || 0) > 4 ? "medium" : "low";
+            const completeness = computeEvidenceCompleteness(approval);
+            const completenessColor = completeness >= 80 ? "bg-emerald-500" : completeness >= 50 ? "bg-amber-500" : "bg-red-500";
             return (
               <Card key={approval.id} data-testid={`card-approval-${approval.id}`}>
                 <CardContent className="p-4 flex flex-col gap-3">
@@ -732,9 +774,10 @@ export default function Approvals() {
                           <Shield className="w-4 h-4 text-amber-500" />
                         )}
                       </div>
-                      <div className="flex flex-col min-w-0">
+                      <div className="flex flex-col gap-1 min-w-0">
                         <span className="text-sm font-semibold truncate">{approval.objectName || approval.type}</span>
                         <div className="flex items-center gap-1.5 flex-wrap">
+                          <Badge variant="outline" className="text-[9px]">{approval.objectType?.replace(/_/g, " ") || "unknown"}</Badge>
                           <span className="text-xs text-muted-foreground">
                             {approval.type === "outcome_certification" ? "Outcome Certification" : approval.type === "outcome_review" ? "Outcome Review" : approval.type === "launch_readiness" ? "Launch Readiness" : approval.type.replace(/_/g, " ")} | Risk: {approval.riskScore}/10
                           </span>
@@ -746,6 +789,18 @@ export default function Approvals() {
                           {approval.environment && (
                             <Badge variant="outline" className="text-[9px]">{approval.environment}</Badge>
                           )}
+                        </div>
+                        <div className="flex items-center gap-2" data-testid={`evidence-meter-${approval.id}`}>
+                          <span className="text-[10px] text-muted-foreground shrink-0">Evidence</span>
+                          <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden max-w-[120px]">
+                            <div
+                              className={`h-full rounded-full ${completenessColor} transition-all`}
+                              style={{ width: `${completeness}%` }}
+                            />
+                          </div>
+                          <span className={`text-[10px] font-medium ${completeness >= 80 ? "text-emerald-600 dark:text-emerald-400" : completeness >= 50 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"}`}>
+                            {completeness}%
+                          </span>
                         </div>
                       </div>
                     </div>
@@ -799,9 +854,16 @@ export default function Approvals() {
                       data-testid={`button-reject-${approval.id}`}
                     >
                       <XCircle className="w-3.5 h-3.5 mr-1" /> Reject
-                      {approvalPerm.allowed && approvalPerm.permission.access === "conditional" && approvalPerm.permission.annotation && (
-                        <Badge variant="secondary" className="text-[10px] ml-1">{approvalPerm.permission.annotation}</Badge>
-                      )}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setRequestChangesId(requestChangesId === approval.id ? null : approval.id)}
+                      disabled={!approvalPerm.allowed}
+                      title={!approvalPerm.allowed ? "You do not have permission" : undefined}
+                      data-testid={`button-request-changes-${approval.id}`}
+                    >
+                      <MessageSquare className="w-3.5 h-3.5 mr-1" /> Request Changes
                     </Button>
                     <Button
                       size="sm"
@@ -811,9 +873,6 @@ export default function Approvals() {
                       data-testid={`button-approve-${approval.id}`}
                     >
                       <CheckCircle className="w-3.5 h-3.5 mr-1" /> {approval.type === "outcome_certification" ? "Certify" : approval.type === "outcome_review" ? "Validate" : approval.type === "blueprint_review" ? "Validate Blueprint" : approval.type === "launch_readiness" ? "Clear for Launch" : "Approve"}
-                      {approvalPerm.allowed && approvalPerm.permission.access === "conditional" && approvalPerm.permission.annotation && (
-                        <Badge variant="secondary" className="text-[10px] ml-1">{approvalPerm.permission.annotation}</Badge>
-                      )}
                     </Button>
                     <Link href={`/approvals/${approval.id}`}>
                       <Button size="sm" variant="outline" data-testid={`button-view-details-${approval.id}`}>
@@ -842,6 +901,44 @@ export default function Approvals() {
                       </Link>
                     )}
                   </div>
+                  {requestChangesId === approval.id && (
+                    <div className="flex flex-col gap-2 p-3 rounded-md bg-muted/30 border" data-testid={`request-changes-form-${approval.id}`}>
+                      <div className="flex items-center gap-2">
+                        <MessageSquare className="w-3.5 h-3.5 text-muted-foreground" />
+                        <span className="text-xs font-medium">Request Changes</span>
+                      </div>
+                      <Textarea
+                        placeholder="Describe what changes are needed before this can be approved..."
+                        value={requestChangesComment}
+                        onChange={(e) => setRequestChangesComment(e.target.value)}
+                        className="text-sm"
+                        data-testid={`textarea-request-changes-${approval.id}`}
+                      />
+                      <div className="flex items-center gap-2 justify-end">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => { setRequestChangesId(null); setRequestChangesComment(""); }}
+                          data-testid={`button-cancel-request-changes-${approval.id}`}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => decideMutation.mutate({
+                            id: approval.id,
+                            status: "changes_requested",
+                            constraintsJson: { requestedChanges: requestChangesComment, requestedBy: "Expert Validator" },
+                          })}
+                          disabled={decideMutation.isPending || !requestChangesComment.trim()}
+                          data-testid={`button-submit-request-changes-${approval.id}`}
+                        >
+                          Submit Feedback
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                   {expandedEvidence === approval.id && renderEvidencePackage(approval)}
                 </CardContent>
               </Card>
@@ -856,19 +953,31 @@ export default function Approvals() {
         </TabsContent>
 
         <TabsContent value="all" className="mt-0 flex flex-col gap-2">
-          {filtered?.map((approval) => (
+          {filtered?.map((approval) => {
+            const allCompleteness = computeEvidenceCompleteness(approval);
+            const allCompColor = allCompleteness >= 80 ? "bg-emerald-500" : allCompleteness >= 50 ? "bg-amber-500" : "bg-red-500";
+            return (
             <div key={approval.id} className="flex flex-col gap-0 rounded-md bg-muted/30 hover-elevate" data-testid={`approval-all-row-${approval.id}`}>
               <div className="flex items-center justify-between gap-3 p-3 cursor-pointer" onClick={() => setExpandedEvidence(expandedEvidence === approval.id ? null : approval.id)}>
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="w-7 h-7 rounded-md bg-muted flex items-center justify-center shrink-0">
                     <Shield className="w-3.5 h-3.5 text-muted-foreground" />
                   </div>
-                  <div className="flex flex-col min-w-0">
-                    <span className="text-xs font-medium truncate">{approval.objectName || approval.type}</span>
+                  <div className="flex flex-col gap-0.5 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-xs font-medium truncate">{approval.objectName || approval.type}</span>
+                      <Badge variant="outline" className="text-[9px]">{approval.objectType?.replace(/_/g, " ") || "unknown"}</Badge>
+                    </div>
                     <span className="text-[11px] text-muted-foreground">{approval.type === "outcome_certification" ? "Outcome Certification" : approval.type === "outcome_review" ? "Outcome Review" : approval.type === "launch_readiness" ? "Launch Readiness" : approval.type.replace(/_/g, " ")} | Risk: {approval.riskScore}/10</span>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex items-center gap-3 shrink-0">
+                  <div className="flex items-center gap-1.5" data-testid={`evidence-meter-all-${approval.id}`}>
+                    <div className="w-16 h-1.5 rounded-full bg-muted overflow-hidden">
+                      <div className={`h-full rounded-full ${allCompColor}`} style={{ width: `${allCompleteness}%` }} />
+                    </div>
+                    <span className="text-[10px] text-muted-foreground">{allCompleteness}%</span>
+                  </div>
                   {approval.decidedBy && (
                     <span className="text-[11px] text-muted-foreground">by {approval.decidedBy}</span>
                   )}
@@ -881,7 +990,8 @@ export default function Approvals() {
                 </div>
               )}
             </div>
-          ))}
+            );
+          })}
         </TabsContent>
       </Tabs>
     </div>
