@@ -447,4 +447,49 @@ export const insertImprovementCycleSchema = createInsertSchema(improvementCycles
 export type InsertImprovementCycle = z.infer<typeof insertImprovementCycleSchema>;
 export type ImprovementCycle = typeof improvementCycles.$inferSelect;
 
+export const patches = pgTable("patches", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  agentId: varchar("agent_id").notNull(),
+  changeType: text("change_type").notNull().default("prompt_tweak"),
+  title: text("title").notNull(),
+  description: text("description"),
+  diff: jsonb("diff"),
+  evidenceBundle: jsonb("evidence_bundle"),
+  evalBundle: jsonb("eval_bundle"),
+  rolloutPlan: jsonb("rollout_plan"),
+  expectedKpiImpact: text("expected_kpi_impact"),
+  expectedCostImpact: text("expected_cost_impact"),
+  riskLevel: text("risk_level").notNull().default("low"),
+  requiredApprovals: integer("required_approvals").default(0),
+  status: text("status").notNull().default("proposed"),
+  sandboxId: varchar("sandbox_id"),
+  simulationResult: jsonb("simulation_result"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertPatchSchema = createInsertSchema(patches).omit({ id: true, createdAt: true });
+export type InsertPatch = z.infer<typeof insertPatchSchema>;
+export type Patch = typeof patches.$inferSelect;
+
+export const experiments = pgTable("experiments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  agentId: varchar("agent_id").notNull(),
+  patchId: varchar("patch_id"),
+  name: text("name").notNull(),
+  description: text("description"),
+  trafficPercent: integer("traffic_percent").notNull().default(10),
+  successMetric: text("success_metric").notNull().default("success_rate"),
+  evalGate: text("eval_gate"),
+  guardrails: jsonb("guardrails"),
+  status: text("status").notNull().default("draft"),
+  results: jsonb("results"),
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertExperimentSchema = createInsertSchema(experiments).omit({ id: true, createdAt: true });
+export type InsertExperiment = z.infer<typeof insertExperimentSchema>;
+export type Experiment = typeof experiments.$inferSelect;
+
 export * from "./models/chat";

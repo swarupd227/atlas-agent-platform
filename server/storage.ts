@@ -29,6 +29,10 @@ import {
   type ImprovementCycle, type InsertImprovementCycle,
   type PolicyException, type InsertPolicyException,
   type ComplianceReport, type InsertComplianceReport,
+  patches,
+  type Patch, type InsertPatch,
+  experiments,
+  type Experiment, type InsertExperiment,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -133,6 +137,16 @@ export interface IStorage {
   createComplianceReport(report: InsertComplianceReport): Promise<ComplianceReport>;
 
   verifyAuditChainIntegrity(): Promise<{ valid: boolean; totalEvents: number; verifiedEvents: number; brokenAt?: number }>;
+
+  getPatches(): Promise<Patch[]>;
+  getPatchesByAgent(agentId: string): Promise<Patch[]>;
+  createPatch(patch: InsertPatch): Promise<Patch>;
+  updatePatch(id: string, data: Partial<Patch>): Promise<Patch | undefined>;
+
+  getExperiments(): Promise<Experiment[]>;
+  getExperimentsByAgent(agentId: string): Promise<Experiment[]>;
+  createExperiment(experiment: InsertExperiment): Promise<Experiment>;
+  updateExperiment(id: string, data: Partial<Experiment>): Promise<Experiment | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -509,6 +523,42 @@ export class DatabaseStorage implements IStorage {
     }
 
     return { valid, totalEvents: events.length, verifiedEvents: sorted.length, brokenAt };
+  }
+
+  async getPatches() {
+    return db.select().from(patches);
+  }
+
+  async getPatchesByAgent(agentId: string) {
+    return db.select().from(patches).where(eq(patches.agentId, agentId));
+  }
+
+  async createPatch(patch: InsertPatch) {
+    const [created] = await db.insert(patches).values(patch).returning();
+    return created;
+  }
+
+  async updatePatch(id: string, data: Partial<Patch>) {
+    const [updated] = await db.update(patches).set(data).where(eq(patches.id, id)).returning();
+    return updated;
+  }
+
+  async getExperiments() {
+    return db.select().from(experiments);
+  }
+
+  async getExperimentsByAgent(agentId: string) {
+    return db.select().from(experiments).where(eq(experiments.agentId, agentId));
+  }
+
+  async createExperiment(experiment: InsertExperiment) {
+    const [created] = await db.insert(experiments).values(experiment).returning();
+    return created;
+  }
+
+  async updateExperiment(id: string, data: Partial<Experiment>) {
+    const [updated] = await db.update(experiments).set(data).where(eq(experiments.id, id)).returning();
+    return updated;
   }
 }
 
