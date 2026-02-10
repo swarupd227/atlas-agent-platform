@@ -1243,6 +1243,52 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/policies/:id", async (req, res) => {
+    const policy = await storage.getPolicy(req.params.id as string);
+    if (!policy) return res.status(404).json({ error: "Policy not found" });
+    res.json(policy);
+  });
+
+  app.patch("/api/policies/:id", checkPermission("create_modify_policies"), async (req, res) => {
+    const policy = await storage.getPolicy(req.params.id as string);
+    if (!policy) return res.status(404).json({ error: "Policy not found" });
+
+    const { policyJson, description, name, status } = req.body;
+    const updateData: Record<string, any> = {};
+    if (policyJson !== undefined) updateData.policyJson = policyJson;
+    if (description !== undefined) updateData.description = description;
+    if (name !== undefined) updateData.name = name;
+    if (status !== undefined) updateData.status = status;
+
+    if (policyJson !== undefined) {
+      const newVersion = (policy.version || 1) + 1;
+      updateData.version = newVersion;
+      const historyEntry = {
+        version: policy.version || 1,
+        changedBy: req.body.changedBy || "system",
+        changedAt: new Date().toISOString(),
+        summary: req.body.changeSummary || "Rules updated",
+        previousRules: policy.policyJson,
+      };
+      const existingHistory = Array.isArray(policy.versionHistory) ? policy.versionHistory : [];
+      updateData.versionHistory = [...(existingHistory as any[]), historyEntry];
+    }
+
+    const updated = await storage.updatePolicy(req.params.id as string, updateData);
+    if (!updated) return res.status(500).json({ error: "Failed to update policy" });
+
+    await storage.createAuditEvent({
+      actorType: "user",
+      actorId: req.body.changedBy || "system",
+      action: "policy_updated",
+      objectType: "policy",
+      objectId: policy.id,
+      details: `Policy "${policy.name}" updated${policyJson !== undefined ? " (rules changed, v" + updateData.version + ")" : ""}`,
+    });
+
+    res.json(updated);
+  });
+
   app.get("/api/policies/:id/test-cases", async (req, res) => {
     const testCases = await storage.getPolicyTestCases(req.params.id);
     res.json(testCases);
@@ -1254,6 +1300,135 @@ export async function registerRoutes(
       policyId: req.params.id,
     });
     res.json(testCase);
+  });
+
+  app.post("/api/policies/:id/test-cases/:testId/run", async (req, res) => {
+    const testCases = await storage.getPolicyTestCases(req.params.id);
+    const testCase = testCases.find(tc => tc.id === req.params.testId);
+    if (!testCase) return res.status(404).json({ error: "Test case not found" });
+
+    const policy = await storage.getPolicy(req.params.id);
+    if (!policy) return res.status(404).json({ error: "Policy not found" });
+
+    const rules = (policy.policyJson as any)?.rules || [];
+    const scenario = testCase.inputScenario as any;
+    let wouldBlock = false;
+    const ruleResults: any[] = [];
+
+    for (const rule of rules) {
+      const field = rule.field || rule.check;
+      const op = rule.operator || rule.op || "equals";
+      const threshold = rule.value ?? rule.threshold;
+      const scenarioValue = scenario?.[field];
+
+      let triggered = false;
+      if (scenarioValue !== undefined && threshold !== undefined) {
+        if (op === "greater_than" || op === "gt") triggered = Number(scenarioValue) > Number(threshold);
+        else if (op === "less_than" || op === "lt") triggered = Number(scenarioValue) < Number(threshold);
+        else if (op === "equals" || op === "eq") triggered = String(scenarioValue) === String(threshold);
+        else if (op === "contains") triggered = String(scenarioValue).includes(String(threshold));
+        else if (op === "not_contains") triggered = !String(scenarioValue).includes(String(threshold));
+      }
+
+      ruleResults.push({
+        rule: rule.name || field || "unnamed",
+        field,
+        operator: op,
+        threshold,
+        scenarioValue,
+        triggered,
+      });
+
+      if (triggered && (rule.action === "block" || rule.action === "hard_block")) {
+        wouldBlock = true;
+      }
+    }
+
+    const passed = testCase.expectedOutcome === "block" ? wouldBlock : !wouldBlock;
+    const status = passed ? "passed" : "failed";
+
+    res.json({
+      testCaseId: testCase.id,
+      status,
+      wouldBlock,
+      expectedOutcome: testCase.expectedOutcome,
+      ruleResults,
+      runAt: new Date().toISOString(),
+    });
+  });
+
+  app.post("/api/policies/:id/simulate-traces", async (req, res) => {
+    const policy = await storage.getPolicy(req.params.id);
+    if (!policy) return res.status(404).json({ error: "Policy not found" });
+
+    const { traceIds, agentId, limit: traceLimit } = req.body;
+    let traces = await storage.getTraces();
+
+    if (traceIds && Array.isArray(traceIds) && traceIds.length > 0) {
+      traces = traces.filter(t => traceIds.includes(t.id));
+    } else if (agentId) {
+      traces = traces.filter(t => t.agentId === agentId);
+    }
+
+    const maxTraces = traceLimit || 100;
+    traces = traces.slice(0, maxTraces);
+
+    const rules = (policy.policyJson as any)?.rules || [];
+    const results: any[] = [];
+    let blockedCount = 0;
+
+    for (const trace of traces) {
+      const traceData: Record<string, any> = {
+        latencyMs: trace.latencyMs,
+        status: trace.status,
+        costUsd: trace.costUsd,
+        ...(typeof (trace as any).metadata === "object" && (trace as any).metadata !== null ? (trace as any).metadata : {}),
+      };
+
+      let wouldBlock = false;
+      const triggeredRules: string[] = [];
+
+      for (const rule of rules) {
+        const field = rule.field || rule.check;
+        const op = rule.operator || rule.op || "equals";
+        const threshold = rule.value ?? rule.threshold;
+        const val = traceData[field];
+
+        let triggered = false;
+        if (val !== undefined && threshold !== undefined) {
+          if (op === "greater_than" || op === "gt") triggered = Number(val) > Number(threshold);
+          else if (op === "less_than" || op === "lt") triggered = Number(val) < Number(threshold);
+          else if (op === "equals" || op === "eq") triggered = String(val) === String(threshold);
+          else if (op === "contains") triggered = String(val).includes(String(threshold));
+        }
+
+        if (triggered) {
+          triggeredRules.push(rule.name || field || "unnamed");
+          if (rule.action === "block" || rule.action === "hard_block") wouldBlock = true;
+        }
+      }
+
+      if (wouldBlock) blockedCount++;
+      results.push({
+        traceId: trace.id,
+        agentId: trace.agentId,
+        status: trace.status,
+        wouldBlock,
+        triggeredRules,
+        latencyMs: trace.latencyMs,
+        costUsd: trace.costUsd,
+      });
+    }
+
+    res.json({
+      policyId: policy.id,
+      policyName: policy.name,
+      totalTraces: traces.length,
+      blockedCount,
+      passCount: traces.length - blockedCount,
+      blockRate: traces.length > 0 ? ((blockedCount / traces.length) * 100).toFixed(1) : "0",
+      results,
+    });
   });
 
   app.get("/api/approvals", async (_req, res) => {
@@ -1381,7 +1556,7 @@ export async function registerRoutes(
   });
 
   app.get("/api/audit-events/export-bundle", async (req, res) => {
-    const { type, startDate, endDate, includeHashes } = req.query;
+    const { type, startDate, endDate, includeHashes, objectFilter, redaction } = req.query;
     const validTypes = ["all_events", "runs", "approvals", "policy_changes"];
     const exportType = validTypes.includes(type as string) ? (type as string) : "all_events";
     let data: any[] = [];
@@ -1422,12 +1597,65 @@ export async function registerRoutes(
       });
     }
 
+    if (objectFilter && objectFilter !== "all") {
+      const objType = (objectFilter as string).toLowerCase();
+      data = data.filter((item: any) => {
+        const itemType = (item.objectType || "").toLowerCase();
+        const itemAction = (item.action || "").toLowerCase();
+        return itemType === objType || itemAction.includes(objType);
+      });
+    }
+
+    const redactionProfile = (redaction as string) || "none";
+    const applyRedaction = (record: any): any => {
+      if (redactionProfile === "none") return record;
+      const redacted = { ...record };
+      if (redactionProfile === "pii" || redactionProfile === "full") {
+        if (redacted.actorId) redacted.actorId = "[REDACTED]";
+        if (redacted.requestedBy) redacted.requestedBy = "[REDACTED]";
+        if (redacted.decidedBy) redacted.decidedBy = "[REDACTED]";
+        if (redacted.approvedBy) redacted.approvedBy = "[REDACTED]";
+        if (redacted.owner) redacted.owner = "[REDACTED]";
+        if (redacted.details && typeof redacted.details === "string") {
+          redacted.details = redacted.details.replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, "[EMAIL_REDACTED]");
+        }
+      }
+      if (redactionProfile === "financial" || redactionProfile === "full") {
+        if (redacted.costUsd !== undefined) redacted.costUsd = "[REDACTED]";
+        if (redacted.amount !== undefined) redacted.amount = "[REDACTED]";
+        if (redacted.revenue !== undefined) redacted.revenue = "[REDACTED]";
+        if (redacted.revenueExposure !== undefined) redacted.revenueExposure = "[REDACTED]";
+      }
+      if (redactionProfile === "full") {
+        if (redacted.evidenceJson) redacted.evidenceJson = "[REDACTED]";
+        if (redacted.constraintsJson) redacted.constraintsJson = "[REDACTED]";
+      }
+      return redacted;
+    };
+
+    const redactedData = data.map(applyRedaction);
+
+    const csvHeaders = ["Date", "Action", "ActorType", "ActorID", "ObjectType", "ObjectID", "Details"];
+    const csvRows = redactedData.map((r: any) => [
+      r.createdAt || r.startedAt || "",
+      r.action || r.status || "",
+      r.actorType || "",
+      r.actorId || "",
+      r.objectType || "",
+      r.objectId || r.id || "",
+      ((r.details || "").toString()).replace(/"/g, '""'),
+    ]);
+
     const bundle: any = {
       exportType,
       exportedAt: new Date().toISOString(),
       timeWindow: { start: start.toISOString(), end: end.toISOString() },
-      totalRecords: data.length,
-      records: data,
+      objectFilter: objectFilter || "all",
+      redactionProfile,
+      totalRecords: redactedData.length,
+      records: redactedData,
+      csvHeaders,
+      csvRows,
     };
 
     if (includeHashes === "true") {

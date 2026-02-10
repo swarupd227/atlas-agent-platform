@@ -80,7 +80,9 @@ export interface IStorage {
   createEvalSuite(suite: InsertEvalSuite): Promise<EvalSuite>;
 
   getPolicies(): Promise<Policy[]>;
+  getPolicy(id: string): Promise<Policy | undefined>;
   createPolicy(policy: InsertPolicy): Promise<Policy>;
+  updatePolicy(id: string, data: Partial<Policy>): Promise<Policy | undefined>;
 
   getApprovals(): Promise<Approval[]>;
   getApproval(id: string): Promise<Approval | undefined>;
@@ -313,9 +315,19 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(policies);
   }
 
+  async getPolicy(id: string) {
+    const [policy] = await db.select().from(policies).where(eq(policies.id, id));
+    return policy;
+  }
+
   async createPolicy(policy: InsertPolicy) {
     const [created] = await db.insert(policies).values(policy).returning();
     return created;
+  }
+
+  async updatePolicy(id: string, data: Partial<Policy>) {
+    const [updated] = await db.update(policies).set(data).where(eq(policies.id, id)).returning();
+    return updated;
   }
 
   async getApprovals() {

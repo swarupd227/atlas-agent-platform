@@ -28,6 +28,8 @@ import {
   Sparkles,
   BookOpen,
   Layers,
+  Play,
+  Trash2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -72,7 +74,7 @@ import { useEvidenceDrawer } from "@/components/evidence-drawer";
 import { usePermission, PermissionGate } from "@/components/role-provider";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { Policy, AuditEvent, Approval, Agent, PolicyException, ComplianceReport } from "@shared/schema";
+import type { Policy, AuditEvent, Approval, Agent, PolicyException, ComplianceReport, PolicyTestCase } from "@shared/schema";
 
 const domainIcons: Record<string, typeof Shield> = {
   data_handling: Lock,
@@ -193,11 +195,14 @@ export default function Governance() {
   const [expandedEvidence, setExpandedEvidence] = useState<Record<string, boolean>>({});
   const [ethicalBoundaries, setEthicalBoundaries] = useState(initialEthicalBoundaries);
   const [expandedVersions, setExpandedVersions] = useState<Record<string, boolean>>({});
+  const [selectedPolicyId, setSelectedPolicyId] = useState<string | null>(null);
   const [exportBundleOpen, setExportBundleOpen] = useState(false);
   const [exportType, setExportType] = useState("all_events");
   const [exportStartDate, setExportStartDate] = useState("");
   const [exportEndDate, setExportEndDate] = useState("");
   const [exportIncludeHashes, setExportIncludeHashes] = useState(false);
+  const [exportObjectFilter, setExportObjectFilter] = useState("all");
+  const [exportRedactionProfile, setExportRedactionProfile] = useState("none");
   const { toast } = useToast();
   const evidenceDrawer = useEvidenceDrawer();
   const policyPerm = usePermission("create_modify_policies");
@@ -663,7 +668,7 @@ export default function Governance() {
                   {(domainPolicies as Policy[]).map((policy) => {
                     const DIcon = domainIcons[policy.domain] || Shield;
                     return (
-                      <Card key={policy.id} className="hover-elevate" data-testid={`card-policy-${policy.id}`}>
+                      <Card key={policy.id} className="hover-elevate cursor-pointer" onClick={() => setSelectedPolicyId(policy.id)} data-testid={`card-policy-${policy.id}`}>
                         <CardContent className="p-4 flex flex-col gap-3">
                           <div className="flex items-start justify-between gap-2">
                             <div className="flex items-center gap-2">
@@ -685,6 +690,16 @@ export default function Governance() {
                             {(policy as any).versionHistory && Array.isArray((policy as any).versionHistory) && (
                               <Badge variant="secondary" className="text-[10px]">{((policy as any).versionHistory as any[]).length} prior versions</Badge>
                             )}
+                            <span className="text-[10px] text-muted-foreground ml-auto" data-testid={`text-policy-date-${policy.id}`}>
+                              {(() => {
+                                const vh = (policy as any).versionHistory;
+                                if (vh && Array.isArray(vh) && vh.length > 0) {
+                                  const last = vh[vh.length - 1];
+                                  return `Updated ${last.changedAt ? new Date(last.changedAt).toLocaleDateString() : "N/A"}`;
+                                }
+                                return policy.createdAt ? `Created ${new Date(policy.createdAt).toLocaleDateString()}` : "";
+                              })()}
+                            </span>
                           </div>
                           {(policy as any).versionHistory && Array.isArray((policy as any).versionHistory) && ((policy as any).versionHistory as any[]).length > 0 && (
                             <div className="flex flex-col gap-1">
@@ -849,7 +864,7 @@ export default function Governance() {
                     <Layers className="w-4 h-4 mr-1.5" /> Export Bundle
                   </Button>
                 </DialogTrigger>
-                <DialogContent>
+                <DialogContent className="max-w-lg">
                   <DialogHeader>
                     <DialogTitle>Export Audit Bundle</DialogTitle>
                   </DialogHeader>
@@ -878,6 +893,43 @@ export default function Governance() {
                         <Input type="date" value={exportEndDate} onChange={(e) => setExportEndDate(e.target.value)} data-testid="input-export-end" />
                       </div>
                     </div>
+                    <div className="flex flex-col gap-2">
+                      <Label>Object Filter</Label>
+                      <Select value={exportObjectFilter} onValueChange={setExportObjectFilter}>
+                        <SelectTrigger data-testid="select-export-object">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All Objects</SelectItem>
+                          <SelectItem value="agent">Agents Only</SelectItem>
+                          <SelectItem value="policy">Policies Only</SelectItem>
+                          <SelectItem value="deployment">Deployments Only</SelectItem>
+                          <SelectItem value="approval">Approvals Only</SelectItem>
+                          <SelectItem value="blueprint">Blueprints Only</SelectItem>
+                          <SelectItem value="outcome">Outcomes Only</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <Label>Redaction Profile</Label>
+                      <Select value={exportRedactionProfile} onValueChange={setExportRedactionProfile}>
+                        <SelectTrigger data-testid="select-export-redaction">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">No Redaction</SelectItem>
+                          <SelectItem value="pii">Redact PII (names, emails, IDs)</SelectItem>
+                          <SelectItem value="financial">Redact Financial Data</SelectItem>
+                          <SelectItem value="full">Full Redaction (PII + Financial + Secrets)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <span className="text-[10px] text-muted-foreground">
+                        {exportRedactionProfile === "none" && "Raw data, no fields redacted"}
+                        {exportRedactionProfile === "pii" && "Actor IDs, user names, and email addresses will be masked"}
+                        {exportRedactionProfile === "financial" && "Cost, revenue, and billing fields will be masked"}
+                        {exportRedactionProfile === "full" && "All PII, financial data, and secret references will be masked"}
+                      </span>
+                    </div>
                     <div className="flex items-center gap-2">
                       <Switch checked={exportIncludeHashes} onCheckedChange={setExportIncludeHashes} data-testid="switch-include-hashes" />
                       <Label className="text-sm">Include cryptographic integrity (hash chain)</Label>
@@ -889,20 +941,76 @@ export default function Governance() {
                         if (exportStartDate) params.set("startDate", exportStartDate);
                         if (exportEndDate) params.set("endDate", exportEndDate);
                         if (exportIncludeHashes) params.set("includeHashes", "true");
+                        if (exportObjectFilter !== "all") params.set("objectFilter", exportObjectFilter);
+                        if (exportRedactionProfile !== "none") params.set("redaction", exportRedactionProfile);
+                        params.set("format", "bundle");
                         try {
                           const res = await fetch(`/api/audit-events/export-bundle?${params.toString()}`);
                           const bundle = await res.json();
-                          const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
-                          const url = URL.createObjectURL(blob);
-                          const a = document.createElement("a");
-                          a.href = url;
-                          a.download = `audit-bundle-${exportType}-${new Date().toISOString().split("T")[0]}.json`;
-                          document.body.appendChild(a);
-                          a.click();
-                          document.body.removeChild(a);
-                          URL.revokeObjectURL(url);
+
+                          const jsonContent = JSON.stringify(bundle.json || bundle, null, 2);
+
+                          const csvHeaders = bundle.csvHeaders || ["Date", "Action", "ActorType", "ActorID", "ObjectType", "ObjectID", "Details"];
+                          const csvRows = (bundle.csvRows || (bundle.json?.records || bundle.records || []).map((r: any) => [
+                            r.createdAt || r.startedAt || "",
+                            r.action || r.status || "",
+                            r.actorType || "",
+                            r.actorId || "",
+                            r.objectType || "",
+                            r.objectId || r.id || "",
+                            (r.details || "").replace(/"/g, '""'),
+                          ]));
+                          const csvContent = [
+                            csvHeaders.join(","),
+                            ...csvRows.map((row: any[]) => row.map((v: any) => `"${v}"`).join(",")),
+                          ].join("\n");
+
+                          const manifest = {
+                            exportedAt: bundle.exportedAt || new Date().toISOString(),
+                            exportType,
+                            objectFilter: exportObjectFilter,
+                            redactionProfile: exportRedactionProfile,
+                            timeWindow: bundle.timeWindow || bundle.json?.timeWindow,
+                            totalRecords: bundle.totalRecords || bundle.json?.totalRecords || 0,
+                            integrityInfo: bundle.integrityInfo || bundle.json?.integrityInfo || null,
+                            files: ["audit-data.json", "audit-data.csv", "manifest.json"],
+                            signature: exportIncludeHashes ? (bundle.integrityInfo?.lastHash || bundle.json?.integrityInfo?.lastHash || "unsigned") : "unsigned",
+                          };
+
+                          const bundleDate = new Date().toISOString().split("T")[0];
+
+                          const jsonBlob = new Blob([jsonContent], { type: "application/json" });
+                          const jsonUrl = URL.createObjectURL(jsonBlob);
+                          const jsonLink = document.createElement("a");
+                          jsonLink.href = jsonUrl;
+                          jsonLink.download = `audit-bundle-${bundleDate}.json`;
+                          document.body.appendChild(jsonLink);
+                          jsonLink.click();
+                          document.body.removeChild(jsonLink);
+                          URL.revokeObjectURL(jsonUrl);
+
+                          const csvBlob = new Blob([csvContent], { type: "text/csv" });
+                          const csvUrl = URL.createObjectURL(csvBlob);
+                          const csvLink = document.createElement("a");
+                          csvLink.href = csvUrl;
+                          csvLink.download = `audit-bundle-${bundleDate}.csv`;
+                          document.body.appendChild(csvLink);
+                          csvLink.click();
+                          document.body.removeChild(csvLink);
+                          URL.revokeObjectURL(csvUrl);
+
+                          const manifestBlob = new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" });
+                          const manifestUrl = URL.createObjectURL(manifestBlob);
+                          const manifestLink = document.createElement("a");
+                          manifestLink.href = manifestUrl;
+                          manifestLink.download = `audit-manifest-${bundleDate}.json`;
+                          document.body.appendChild(manifestLink);
+                          manifestLink.click();
+                          document.body.removeChild(manifestLink);
+                          URL.revokeObjectURL(manifestUrl);
+
                           setExportBundleOpen(false);
-                          toast({ title: "Bundle exported", description: `${bundle.totalRecords} records exported` });
+                          toast({ title: "Bundle exported", description: `${manifest.totalRecords} records exported as JSON + CSV + signed manifest` });
                         } catch (err) {
                           toast({ title: "Export failed", variant: "destructive" });
                         }
@@ -911,6 +1019,9 @@ export default function Governance() {
                     >
                       <Download className="w-4 h-4 mr-1.5" /> Download Bundle
                     </Button>
+                    <span className="text-[10px] text-muted-foreground text-center">
+                      Downloads 3 files: JSON data, CSV spreadsheet, and signed manifest
+                    </span>
                   </div>
                 </DialogContent>
               </Dialog>
@@ -1518,8 +1629,461 @@ export default function Governance() {
         <TabsContent value="what-if" className="mt-0 flex flex-col gap-4">
           <WhatIfAnalysis policies={policies || []} />
         </TabsContent>
+
+        {selectedPolicyId && (
+          <PolicyDetailDialog
+            policyId={selectedPolicyId}
+            open={!!selectedPolicyId}
+            onOpenChange={(open) => { if (!open) setSelectedPolicyId(null); }}
+          />
+        )}
       </Tabs>
     </div>
+  );
+}
+
+function PolicyDetailDialog({ policyId, open, onOpenChange }: { policyId: string; open: boolean; onOpenChange: (open: boolean) => void }) {
+  const { toast } = useToast();
+  const { data: policy, isLoading: policyLoading } = useQuery<Policy>({
+    queryKey: ['/api/policies', policyId],
+    enabled: !!policyId && open,
+  });
+  const { data: testCases } = useQuery<PolicyTestCase[]>({
+    queryKey: ['/api/policies', policyId, 'test-cases'],
+    enabled: !!policyId && open,
+  });
+  const { data: agents } = useQuery<Agent[]>({
+    queryKey: ['/api/agents'],
+  });
+
+  const [editRules, setEditRules] = useState<Array<{ name: string; field: string; operator: string; value: string; action: string }>>([]);
+  const [rulesInitialized, setRulesInitialized] = useState(false);
+  const [testRunResults, setTestRunResults] = useState<Record<string, any>>({});
+  const [addTestOpen, setAddTestOpen] = useState(false);
+  const [newTestName, setNewTestName] = useState("");
+  const [newTestDescription, setNewTestDescription] = useState("");
+  const [newTestExpected, setNewTestExpected] = useState("pass");
+  const [newTestInput, setNewTestInput] = useState("{}");
+  const [simAgentId, setSimAgentId] = useState("");
+  const [simLimit, setSimLimit] = useState(50);
+  const [simResult, setSimResult] = useState<any>(null);
+  const [simRunning, setSimRunning] = useState(false);
+  const [runningAllTests, setRunningAllTests] = useState(false);
+
+  if (policy && !rulesInitialized) {
+    const pj = policy.policyJson as any;
+    const rules = pj?.rules || [];
+    setEditRules(rules.map((r: any) => ({
+      name: r.name || "",
+      field: r.field || r.check || "",
+      operator: r.operator || r.op || "equals",
+      value: String(r.value ?? r.threshold ?? ""),
+      action: r.action || "warn",
+    })));
+    setRulesInitialized(true);
+  }
+
+  const saveRulesMutation = useMutation({
+    mutationFn: async () => {
+      const pj = (policy?.policyJson as any) || {};
+      const updatedJson = {
+        ...pj,
+        rules: editRules.map((r) => ({
+          name: r.name,
+          field: r.field,
+          operator: r.operator,
+          value: r.value,
+          action: r.action,
+        })),
+      };
+      const res = await apiRequest("PATCH", `/api/policies/${policyId}`, { policyJson: updatedJson });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/policies', policyId] });
+      queryClient.invalidateQueries({ queryKey: ['/api/policies'] });
+      toast({ title: "Rules saved" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to save rules", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const addTestMutation = useMutation({
+    mutationFn: async () => {
+      let inputScenario = {};
+      try { inputScenario = JSON.parse(newTestInput); } catch { inputScenario = {}; }
+      const res = await apiRequest("POST", `/api/policies/${policyId}/test-cases`, {
+        name: newTestName,
+        description: newTestDescription,
+        expectedOutcome: newTestExpected,
+        inputScenario,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/policies', policyId, 'test-cases'] });
+      setAddTestOpen(false);
+      setNewTestName("");
+      setNewTestDescription("");
+      setNewTestExpected("pass");
+      setNewTestInput("{}");
+      toast({ title: "Test case added" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to add test case", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const runTestCase = async (testId: string) => {
+    try {
+      const res = await apiRequest("POST", `/api/policies/${policyId}/test-cases/${testId}/run`, {});
+      const result = await res.json();
+      setTestRunResults((prev) => ({ ...prev, [testId]: result }));
+    } catch {
+      toast({ title: "Failed to run test", variant: "destructive" });
+    }
+  };
+
+  const runAllTests = async () => {
+    if (!testCases) return;
+    setRunningAllTests(true);
+    for (const tc of testCases) {
+      await runTestCase(tc.id);
+    }
+    setRunningAllTests(false);
+  };
+
+  const runSimulation = async () => {
+    setSimRunning(true);
+    try {
+      const res = await apiRequest("POST", `/api/policies/${policyId}/simulate-traces`, {
+        agentId: simAgentId || undefined,
+        limit: simLimit,
+      });
+      const result = await res.json();
+      setSimResult(result);
+    } catch {
+      toast({ title: "Simulation failed", variant: "destructive" });
+    }
+    setSimRunning(false);
+  };
+
+  const addRule = () => {
+    setEditRules((prev) => [...prev, { name: "", field: "", operator: "equals", value: "", action: "warn" }]);
+  };
+
+  const removeRule = (index: number) => {
+    setEditRules((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const updateRule = (index: number, key: string, val: string) => {
+    setEditRules((prev) => prev.map((r, i) => (i === index ? { ...r, [key]: val } : r)));
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto" data-testid="dialog-policy-detail">
+        {policyLoading ? (
+          <div className="flex flex-col gap-4 p-4">
+            <Skeleton className="h-6 w-48" />
+            <Skeleton className="h-4 w-72" />
+            <Skeleton className="h-40 w-full" />
+          </div>
+        ) : !policy ? (
+          <div className="flex flex-col items-center justify-center py-12 gap-3">
+            <Shield className="w-10 h-10 text-muted-foreground/50" />
+            <p className="text-sm text-muted-foreground">Policy not found</p>
+          </div>
+        ) : (
+        <>
+        <DialogHeader>
+          <div className="flex items-center gap-2 flex-wrap">
+            <DialogTitle data-testid="text-policy-detail-name">{policy.name}</DialogTitle>
+            <Badge variant="outline" className="text-[10px]" data-testid="badge-policy-version">v{policy.version}</Badge>
+            <Badge variant="outline" className="text-[10px] capitalize" data-testid="badge-policy-scope">{policy.scopeType}</Badge>
+            <StatusBadge status={policy.status} />
+            <Badge variant="secondary" className="text-[10px] capitalize" data-testid="badge-policy-domain">{policy.domain.replace(/_/g, " ")}</Badge>
+          </div>
+        </DialogHeader>
+
+        <Tabs defaultValue="rules" className="mt-2">
+          <TabsList data-testid="tabs-policy-detail">
+            <TabsTrigger value="rules" data-testid="tab-rules">Rules</TabsTrigger>
+            <TabsTrigger value="tests" data-testid="tab-tests">Unit Tests</TabsTrigger>
+            <TabsTrigger value="simulate" data-testid="tab-simulate">Simulate on Traces</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="rules" className="mt-4 flex flex-col gap-3">
+            {editRules.map((rule, idx) => (
+              <div key={idx} className="flex items-center gap-2 flex-wrap" data-testid={`rule-row-${idx}`}>
+                <Input
+                  value={rule.name}
+                  onChange={(e) => updateRule(idx, "name", e.target.value)}
+                  placeholder="Rule name"
+                  className="flex-1 min-w-[120px]"
+                  data-testid={`input-rule-name-${idx}`}
+                />
+                <Input
+                  value={rule.field}
+                  onChange={(e) => updateRule(idx, "field", e.target.value)}
+                  placeholder="Field"
+                  className="w-[120px]"
+                  data-testid={`input-rule-field-${idx}`}
+                />
+                <Select value={rule.operator} onValueChange={(v) => updateRule(idx, "operator", v)}>
+                  <SelectTrigger className="w-[130px]" data-testid={`select-rule-operator-${idx}`}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="gt">gt</SelectItem>
+                    <SelectItem value="lt">lt</SelectItem>
+                    <SelectItem value="equals">equals</SelectItem>
+                    <SelectItem value="contains">contains</SelectItem>
+                    <SelectItem value="not_contains">not_contains</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Input
+                  value={rule.value}
+                  onChange={(e) => updateRule(idx, "value", e.target.value)}
+                  placeholder="Value"
+                  className="w-[100px]"
+                  data-testid={`input-rule-value-${idx}`}
+                />
+                <Select value={rule.action} onValueChange={(v) => updateRule(idx, "action", v)}>
+                  <SelectTrigger className="w-[120px]" data-testid={`select-rule-action-${idx}`}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="block">block</SelectItem>
+                    <SelectItem value="hard_block">hard_block</SelectItem>
+                    <SelectItem value="warn">warn</SelectItem>
+                    <SelectItem value="log">log</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button size="icon" variant="ghost" onClick={() => removeRule(idx)} data-testid={`button-remove-rule-${idx}`}>
+                  <XCircle className="w-4 h-4" />
+                </Button>
+              </div>
+            ))}
+            <div className="flex items-center gap-2 flex-wrap">
+              <Button variant="outline" onClick={addRule} data-testid="button-add-rule">
+                <Plus className="w-4 h-4 mr-1" /> Add Rule
+              </Button>
+              <Button onClick={() => saveRulesMutation.mutate()} disabled={saveRulesMutation.isPending} data-testid="button-save-rules">
+                {saveRulesMutation.isPending ? "Saving..." : "Save Rules"}
+              </Button>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="tests" className="mt-4 flex flex-col gap-4">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <Button variant="outline" onClick={() => setAddTestOpen(!addTestOpen)} data-testid="button-toggle-add-test">
+                <Plus className="w-4 h-4 mr-1" /> Add Test Case
+              </Button>
+              <Button variant="outline" onClick={runAllTests} disabled={runningAllTests || !testCases?.length} data-testid="button-run-all-tests">
+                <Play className="w-4 h-4 mr-1" /> {runningAllTests ? "Running..." : "Run All"}
+              </Button>
+            </div>
+
+            {addTestOpen && (
+              <Card data-testid="card-add-test-form">
+                <CardContent className="p-4 flex flex-col gap-3">
+                  <div className="flex flex-col gap-2">
+                    <Label>Name</Label>
+                    <Input value={newTestName} onChange={(e) => setNewTestName(e.target.value)} placeholder="Test case name" data-testid="input-test-name" />
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <Label>Description</Label>
+                    <Input value={newTestDescription} onChange={(e) => setNewTestDescription(e.target.value)} placeholder="Description" data-testid="input-test-description" />
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <Label>Expected Outcome</Label>
+                    <Select value={newTestExpected} onValueChange={setNewTestExpected}>
+                      <SelectTrigger data-testid="select-test-expected">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="pass">pass</SelectItem>
+                        <SelectItem value="block">block</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <Label>Input Scenario (JSON)</Label>
+                    <Textarea value={newTestInput} onChange={(e) => setNewTestInput(e.target.value)} placeholder='{"field": "value"}' data-testid="input-test-scenario" />
+                  </div>
+                  <Button onClick={() => addTestMutation.mutate()} disabled={addTestMutation.isPending} data-testid="button-submit-test">
+                    {addTestMutation.isPending ? "Adding..." : "Add Test Case"}
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+
+            <Table data-testid="table-test-cases">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Expected</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Last Run</TableHead>
+                  <TableHead>Result</TableHead>
+                  <TableHead>Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {testCases?.map((tc) => {
+                  const result = testRunResults[tc.id];
+                  return (
+                    <TableRow key={tc.id} data-testid={`row-test-${tc.id}`}>
+                      <TableCell className="text-sm" data-testid={`text-test-name-${tc.id}`}>{tc.name}</TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="text-[10px]" data-testid={`badge-test-expected-${tc.id}`}>{tc.expectedOutcome}</Badge>
+                      </TableCell>
+                      <TableCell>
+                        <StatusBadge status={tc.status} />
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground" data-testid={`text-test-lastrun-${tc.id}`}>
+                        {tc.lastRunAt ? new Date(tc.lastRunAt).toLocaleDateString() : "Never"}
+                      </TableCell>
+                      <TableCell>
+                        {result && (
+                          <div className="flex flex-col gap-1">
+                            <Badge
+                              variant="outline"
+                              className={`text-[10px] ${result.status === "passed" ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" : "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20"}`}
+                              data-testid={`badge-test-result-${tc.id}`}
+                            >
+                              {result.status}
+                            </Badge>
+                            {result.ruleResults?.filter((r: any) => r.triggered).length > 0 && (
+                              <span className="text-[10px] text-muted-foreground" data-testid={`text-triggered-rules-${tc.id}`}>
+                                {result.ruleResults.filter((r: any) => r.triggered).map((r: any) => r.rule).join(", ")}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Button size="sm" variant="outline" onClick={() => runTestCase(tc.id)} data-testid={`button-run-test-${tc.id}`}>
+                          <Play className="w-3.5 h-3.5 mr-1" /> Run
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+            {(!testCases || testCases.length === 0) && (
+              <p className="text-sm text-muted-foreground text-center py-6">No test cases found</p>
+            )}
+          </TabsContent>
+
+          <TabsContent value="simulate" className="mt-4 flex flex-col gap-4">
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex flex-col gap-1">
+                <Label className="text-xs">Agent</Label>
+                <Select value={simAgentId} onValueChange={setSimAgentId}>
+                  <SelectTrigger className="w-[200px]" data-testid="select-sim-agent">
+                    <SelectValue placeholder="All agents" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All agents</SelectItem>
+                    {agents?.map((a) => (
+                      <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label className="text-xs">Trace Limit</Label>
+                <Input
+                  type="number"
+                  value={simLimit}
+                  onChange={(e) => setSimLimit(Number(e.target.value) || 50)}
+                  className="w-[100px]"
+                  data-testid="input-sim-limit"
+                />
+              </div>
+              <div className="flex flex-col gap-1 justify-end">
+                <Label className="text-xs invisible">Run</Label>
+                <Button onClick={runSimulation} disabled={simRunning} data-testid="button-run-simulation">
+                  <Play className="w-4 h-4 mr-1" /> {simRunning ? "Running..." : "Run Simulation"}
+                </Button>
+              </div>
+            </div>
+
+            {simResult && (
+              <>
+                <Card data-testid="card-sim-summary">
+                  <CardContent className="p-4">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-[11px] text-muted-foreground">Total Traces</span>
+                        <span className="text-lg font-semibold" data-testid="text-sim-total">{simResult.totalTraces}</span>
+                      </div>
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-[11px] text-muted-foreground">Blocked</span>
+                        <span className="text-lg font-semibold text-red-600 dark:text-red-400" data-testid="text-sim-blocked">{simResult.blockedCount}</span>
+                      </div>
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-[11px] text-muted-foreground">Passed</span>
+                        <span className="text-lg font-semibold text-emerald-600 dark:text-emerald-400" data-testid="text-sim-passed">{simResult.passCount}</span>
+                      </div>
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-[11px] text-muted-foreground">Block Rate</span>
+                        <span className="text-lg font-semibold" data-testid="text-sim-rate">{simResult.blockRate}%</span>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Table data-testid="table-sim-results">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Trace ID</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Would Block</TableHead>
+                      <TableHead>Triggered Rules</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {simResult.results?.map((r: any) => (
+                      <TableRow key={r.traceId} data-testid={`row-sim-${r.traceId}`}>
+                        <TableCell className="text-xs font-mono" data-testid={`text-sim-trace-${r.traceId}`}>
+                          {r.traceId.length > 12 ? r.traceId.slice(0, 12) + "..." : r.traceId}
+                        </TableCell>
+                        <TableCell>
+                          <StatusBadge status={r.status} />
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant="outline"
+                            className={`text-[10px] ${r.wouldBlock ? "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20" : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"}`}
+                            data-testid={`badge-sim-block-${r.traceId}`}
+                          >
+                            {r.wouldBlock ? "Yes" : "No"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground" data-testid={`text-sim-rules-${r.traceId}`}>
+                          {r.triggeredRules?.length > 0 ? r.triggeredRules.join(", ") : "None"}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </>
+            )}
+
+            {!simResult && (
+              <p className="text-sm text-muted-foreground text-center py-6">Run a simulation to see results</p>
+            )}
+          </TabsContent>
+        </Tabs>
+        </>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
