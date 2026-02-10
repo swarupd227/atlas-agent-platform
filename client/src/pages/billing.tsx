@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   DollarSign,
   Download,
@@ -17,6 +17,13 @@ import {
   XCircle,
   Filter,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
+  Eye,
+  EyeOff,
+  Layers,
+  Activity,
+  X,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -39,13 +46,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { StatCard } from "@/components/stat-card";
 import { StatusBadge } from "@/components/status-badge";
 import { usePermission } from "@/components/role-provider";
 import { useEnvironment } from "@/components/environment-selector";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { Invoice, BillingDispute } from "@shared/schema";
+import type { Invoice, BillingDispute, RunTrace } from "@shared/schema";
 import {
   ResponsiveContainer,
   LineChart,
@@ -59,6 +72,7 @@ import {
   Cell,
   PieChart as RechartsPie,
   Pie,
+  Legend,
 } from "recharts";
 
 interface MeteringDashboard {
@@ -295,44 +309,97 @@ export default function Billing() {
 
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium">Units Delivered vs Billed</CardTitle>
+                  <CardTitle className="text-sm font-medium">Billable vs Excluded Breakdown</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="h-56" data-testid="chart-units-delivered">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={d?.monthlyRevenue || []}>
-                        <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                        <XAxis dataKey="month" tick={{ fontSize: 10 }} className="fill-muted-foreground" />
-                        <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" />
-                        <Tooltip
-                          contentStyle={{ fontSize: 11, borderRadius: 8, border: "1px solid hsl(var(--border))", background: "hsl(var(--card))" }}
-                        />
-                        <Bar dataKey="units" fill="hsl(var(--chart-2))" radius={[4, 4, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
+                  <div className="flex items-center gap-6">
+                    <div className="h-48 w-48 flex-shrink-0" data-testid="chart-billable-excluded-donut">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <RechartsPie>
+                          <Pie
+                            data={[
+                              { name: "Billable", value: d?.summary.billableUnits || 0 },
+                              { name: "Excluded", value: d?.summary.excludedUnits || 0 },
+                            ]}
+                            dataKey="value"
+                            nameKey="name"
+                            cx="50%"
+                            cy="50%"
+                            outerRadius={70}
+                            innerRadius={45}
+                            paddingAngle={3}
+                          >
+                            <Cell fill="hsl(var(--chart-1))" />
+                            <Cell fill="hsl(var(--chart-4))" />
+                          </Pie>
+                          <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8, border: "1px solid hsl(var(--border))", background: "hsl(var(--card))" }} />
+                        </RechartsPie>
+                      </ResponsiveContainer>
+                    </div>
+                    <div className="flex flex-col gap-3 flex-1">
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-2">
+                          <div className="w-2.5 h-2.5 rounded-full" style={{ background: "hsl(var(--chart-1))" }} />
+                          <span className="text-xs text-muted-foreground">Billable Units</span>
+                        </div>
+                        <span className="text-2xl font-bold" data-testid="text-billable-units">{(d?.summary.billableUnits || 0).toLocaleString()}</span>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-2">
+                          <div className="w-2.5 h-2.5 rounded-full" style={{ background: "hsl(var(--chart-4))" }} />
+                          <span className="text-xs text-muted-foreground">Excluded Units</span>
+                        </div>
+                        <span className="text-2xl font-bold text-muted-foreground" data-testid="text-excluded-units">{(d?.summary.excludedUnits || 0).toLocaleString()}</span>
+                      </div>
+                      <Progress value={d?.summary.acceptanceRate || 0} className="h-2" data-testid="progress-acceptance" />
+                      <span className="text-[10px] text-muted-foreground">{d?.summary.acceptanceRate || 0}% acceptance rate</span>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
             </div>
 
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Units Delivered by Outcome</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="h-64" data-testid="chart-units-by-outcome">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={d?.outcomeMetering.map(om => ({
+                      name: om.outcomeName.length > 20 ? om.outcomeName.slice(0, 20) + "..." : om.outcomeName,
+                      billable: om.billableEvents,
+                      excluded: om.excludedEvents,
+                    })) || []}>
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                      <XAxis dataKey="name" tick={{ fontSize: 9 }} className="fill-muted-foreground" interval={0} angle={-15} textAnchor="end" height={50} />
+                      <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" />
+                      <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8, border: "1px solid hsl(var(--border))", background: "hsl(var(--card))" }} />
+                      <Legend wrapperStyle={{ fontSize: 11 }} />
+                      <Bar dataKey="billable" stackId="a" fill="hsl(var(--chart-1))" radius={[0, 0, 0, 0]} name="Billable" />
+                      <Bar dataKey="excluded" stackId="a" fill="hsl(var(--chart-4))" radius={[4, 4, 0, 0]} name="Excluded" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </CardContent>
+            </Card>
+
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium">Acceptance Rate</CardTitle>
+                  <CardTitle className="text-sm font-medium">Monthly Revenue Trend</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="flex flex-col gap-4">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-3xl font-bold" data-testid="text-acceptance-rate">{d?.summary.acceptanceRate || 0}%</span>
-                      <div className="flex flex-col items-end gap-0.5">
-                        <span className="text-[10px] text-muted-foreground">{d?.summary.billableUnits.toLocaleString()} billable</span>
-                        <span className="text-[10px] text-muted-foreground">{d?.summary.excludedUnits.toLocaleString()} excluded</span>
-                      </div>
-                    </div>
-                    <Progress value={d?.summary.acceptanceRate || 0} className="h-2" data-testid="progress-acceptance" />
-                    <div className="text-[10px] text-muted-foreground">
-                      {d?.summary.billableUnits.toLocaleString()} of {d?.summary.totalUnitsDelivered.toLocaleString()} events accepted for billing
-                    </div>
+                  <div className="h-44" data-testid="chart-monthly-revenue-bar">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={d?.monthlyRevenue || []}>
+                        <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                        <XAxis dataKey="month" tick={{ fontSize: 9 }} className="fill-muted-foreground" />
+                        <YAxis tick={{ fontSize: 9 }} className="fill-muted-foreground" tickFormatter={(v) => `$${v}`} />
+                        <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8, border: "1px solid hsl(var(--border))", background: "hsl(var(--card))" }} formatter={(value: number) => [`$${value.toLocaleString()}`, "Revenue"]} />
+                        <Bar dataKey="revenue" fill="hsl(var(--chart-2))" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
                   </div>
                 </CardContent>
               </Card>
@@ -343,7 +410,7 @@ export default function Billing() {
                 </CardHeader>
                 <CardContent>
                   {excludeReasonData.length > 0 ? (
-                    <div className="h-40" data-testid="chart-exclusion-reasons">
+                    <div className="h-44" data-testid="chart-exclusion-reasons">
                       <ResponsiveContainer width="100%" height="100%">
                         <RechartsPie>
                           <Pie
@@ -367,7 +434,7 @@ export default function Billing() {
                       </ResponsiveContainer>
                     </div>
                   ) : (
-                    <div className="flex items-center justify-center h-40 text-sm text-muted-foreground">No exclusions recorded</div>
+                    <div className="flex items-center justify-center h-44 text-sm text-muted-foreground">No exclusions recorded</div>
                   )}
                 </CardContent>
               </Card>
@@ -626,6 +693,189 @@ export default function Billing() {
   );
 }
 
+const PII_PATTERNS = [/email/i, /name/i, /phone/i, /address/i, /ssn/i, /actor/i, /user/i, /vendor/i];
+const FINANCIAL_PATTERNS = [/amount/i, /price/i, /cost/i, /revenue/i, /payment/i, /invoice/i, /balance/i, /fee/i];
+
+function redactValue(key: string, value: unknown, level: "pii" | "financial" | "full"): unknown {
+  if (value === null || value === undefined) return value;
+  const keyStr = String(key);
+  const isPii = PII_PATTERNS.some(p => p.test(keyStr));
+  const isFinancial = FINANCIAL_PATTERNS.some(p => p.test(keyStr));
+
+  if (level === "full" && (isPii || isFinancial)) return "[REDACTED]";
+  if (level === "pii" && isPii) return "[PII REDACTED]";
+  if (level === "financial" && isFinancial) return "[FINANCIAL REDACTED]";
+  return value;
+}
+
+function redactObject(obj: unknown, level: "pii" | "financial" | "full"): unknown {
+  if (obj === null || obj === undefined) return obj;
+  if (Array.isArray(obj)) return obj.map((item, i) => redactObject(item, level));
+  if (typeof obj === "object") {
+    const result: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+      if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+        result[key] = redactObject(value, level);
+      } else {
+        result[key] = redactValue(key, value, level);
+      }
+    }
+    return result;
+  }
+  return obj;
+}
+
+function TraceDrawer({ traceId, open, onOpenChange }: { traceId: string; open: boolean; onOpenChange: (open: boolean) => void }) {
+  const [redactionLevel, setRedactionLevel] = useState<"pii" | "financial" | "full">("pii");
+  const { data: trace, isLoading } = useQuery<RunTrace>({
+    queryKey: ["/api/traces", traceId],
+    enabled: !!traceId && open,
+  });
+
+  const redactedInputSummary = useMemo(() => trace?.inputSummary ? String(redactValue("inputSummary", trace.inputSummary, redactionLevel)) : null, [trace?.inputSummary, redactionLevel]);
+  const redactedOutputSummary = useMemo(() => trace?.outputSummary ? String(redactValue("outputSummary", trace.outputSummary, redactionLevel)) : null, [trace?.outputSummary, redactionLevel]);
+  const redactedPromptInputs = useMemo(() => trace?.promptInputs ? redactObject(trace.promptInputs, redactionLevel) as object : null, [trace?.promptInputs, redactionLevel]);
+  const redactedToolCalls = useMemo(() => trace?.toolCalls ? redactObject(trace.toolCalls, redactionLevel) as object : null, [trace?.toolCalls, redactionLevel]);
+  const redactedDecisions = useMemo(() => trace?.decisions ? redactObject(trace.decisions, redactionLevel) as object : null, [trace?.decisions, redactionLevel]);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto" data-testid="dialog-trace-drilldown">
+        <DialogHeader>
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap">
+              <DialogTitle className="font-mono text-base">Trace {traceId.slice(0, 12)}</DialogTitle>
+              {trace && <StatusBadge status={trace.status} />}
+            </div>
+            <div className="flex items-center gap-2">
+              <EyeOff className="w-3.5 h-3.5 text-muted-foreground" />
+              <Select value={redactionLevel} onValueChange={(v) => setRedactionLevel(v as "pii" | "financial" | "full")}>
+                <SelectTrigger className="w-32" data-testid="select-redaction-level">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="pii" data-testid="option-redact-pii">Redact PII</SelectItem>
+                  <SelectItem value="financial" data-testid="option-redact-financial">Redact Financial</SelectItem>
+                  <SelectItem value="full" data-testid="option-redact-full">Full Redaction</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </DialogHeader>
+
+        {isLoading ? (
+          <div className="flex flex-col gap-4">
+            <Skeleton className="h-6 w-48" />
+            <Skeleton className="h-32 w-full" />
+            <Skeleton className="h-32 w-full" />
+          </div>
+        ) : !trace ? (
+          <div className="flex flex-col items-center justify-center py-12 gap-3">
+            <Activity className="w-10 h-10 text-muted-foreground/50" />
+            <p className="text-sm text-muted-foreground">Trace not found</p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[10px] text-muted-foreground uppercase">Latency</span>
+                <span className="text-sm font-medium" data-testid="text-trace-latency">{trace.latencyMs}ms</span>
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[10px] text-muted-foreground uppercase">Cost</span>
+                <span className="text-sm font-medium" data-testid="text-trace-cost">${trace.costUsd?.toFixed(4)}</span>
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[10px] text-muted-foreground uppercase">Model</span>
+                <span className="text-sm font-medium" data-testid="text-trace-model">{trace.modelId || "\u2014"}</span>
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[10px] text-muted-foreground uppercase">Environment</span>
+                <Badge variant="outline" className="text-[10px] w-fit" data-testid="badge-trace-env">{trace.environment}</Badge>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-medium text-muted-foreground">Input Summary (Redacted)</span>
+              <p className="text-sm bg-muted/40 p-3 rounded-md" data-testid="text-trace-input">{redactedInputSummary || "\u2014"}</p>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-medium text-muted-foreground">Output Summary (Redacted)</span>
+              <p className="text-sm bg-muted/40 p-3 rounded-md" data-testid="text-trace-output">{redactedOutputSummary || "\u2014"}</p>
+            </div>
+
+            {redactedPromptInputs != null && (
+              <CollapsibleSection title="Prompt Inputs (Redacted)" testId="section-prompt-inputs">
+                <pre className="text-[11px] bg-muted/40 p-3 rounded-md overflow-x-auto whitespace-pre-wrap max-h-60 overflow-y-auto">
+                  {JSON.stringify(redactedPromptInputs as object, null, 2)}
+                </pre>
+              </CollapsibleSection>
+            )}
+
+            {redactedToolCalls != null && (
+              <CollapsibleSection title="Tool Calls (Redacted)" testId="section-tool-calls">
+                <pre className="text-[11px] bg-muted/40 p-3 rounded-md overflow-x-auto whitespace-pre-wrap max-h-60 overflow-y-auto">
+                  {JSON.stringify(redactedToolCalls as object, null, 2)}
+                </pre>
+              </CollapsibleSection>
+            )}
+
+            {redactedDecisions != null && (
+              <CollapsibleSection title="Decisions (Redacted)" testId="section-decisions">
+                <pre className="text-[11px] bg-muted/40 p-3 rounded-md overflow-x-auto whitespace-pre-wrap max-h-60 overflow-y-auto">
+                  {JSON.stringify(redactedDecisions as object, null, 2)}
+                </pre>
+              </CollapsibleSection>
+            )}
+
+            {trace.policyChecks != null && (
+              <CollapsibleSection title="Policy Checks" testId="section-policy-checks">
+                <pre className="text-[11px] bg-muted/40 p-3 rounded-md overflow-x-auto whitespace-pre-wrap max-h-60 overflow-y-auto">
+                  {JSON.stringify(trace.policyChecks as object, null, 2)}
+                </pre>
+              </CollapsibleSection>
+            )}
+
+            {trace.tokenUsage != null && (
+              <div className="flex flex-col gap-1">
+                <span className="text-xs font-medium text-muted-foreground">Token Usage</span>
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  {Object.entries(trace.tokenUsage as Record<string, number>).map(([key, val]) => (
+                    <div key={key} className="p-2 rounded-md bg-muted/40">
+                      <span className="text-lg font-semibold">{typeof val === "number" ? val.toLocaleString() : String(val)}</span>
+                      <span className="text-[10px] text-muted-foreground block capitalize">{key.replace(/([A-Z])/g, " $1")}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function CollapsibleSection({ title, testId, children }: { title: string; testId: string; children: React.ReactNode }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="flex flex-col gap-1">
+      <Button
+        variant="ghost"
+        size="sm"
+        className="justify-start text-xs font-medium text-muted-foreground gap-1 px-0"
+        onClick={() => setExpanded(!expanded)}
+        data-testid={`button-toggle-${testId}`}
+      >
+        {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+        {title}
+      </Button>
+      {expanded && children}
+    </div>
+  );
+}
+
 function InvoiceDetailView({
   invoiceId,
   detail,
@@ -637,6 +887,9 @@ function InvoiceDetailView({
   isLoading: boolean;
   onBack: () => void;
 }) {
+  const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
+  const [expandedOutcome, setExpandedOutcome] = useState<string | null>(null);
+
   if (isLoading || !detail) {
     return (
       <div className="flex flex-col gap-6 p-6">
@@ -659,6 +912,24 @@ function InvoiceDetailView({
   const inv = detail.invoice;
   const billableItems = detail.lineItems.filter(li => li.billable);
   const excludedItems = detail.lineItems.filter(li => !li.billable);
+
+  const outcomeSummary = detail.lineItems.reduce<Record<string, { outcomeId: string; type: string; billableUnits: number; excludedUnits: number; totalValue: number; events: typeof detail.lineItems }>>((acc, li) => {
+    const key = li.type || "unknown";
+    if (!acc[key]) {
+      acc[key] = { outcomeId: li.outcomeId || "", type: key, billableUnits: 0, excludedUnits: 0, totalValue: 0, events: [] };
+    }
+    const units = li.unitCount || 1;
+    if (li.billable) {
+      acc[key].billableUnits += units;
+    } else {
+      acc[key].excludedUnits += units;
+    }
+    acc[key].totalValue += (li.unitValue || 0) * units;
+    acc[key].events.push(li);
+    return acc;
+  }, {});
+
+  const summaryRows = Object.values(outcomeSummary);
 
   return (
     <div className="flex flex-col gap-6 p-6" data-testid="invoice-detail-view">
@@ -715,71 +986,125 @@ function InvoiceDetailView({
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-medium">Line Items (Outcome Events)</CardTitle>
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <CardTitle className="text-sm font-medium">Invoice Line Items</CardTitle>
+            <Badge variant="outline" className="text-[10px]">
+              <Layers className="w-3 h-3 mr-1" /> {summaryRows.length} outcome types
+            </Badge>
+          </div>
         </CardHeader>
         <CardContent className="p-0">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Event</TableHead>
-                <TableHead>Agent</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Billable</TableHead>
-                <TableHead>Exclude Reason</TableHead>
-                <TableHead className="text-right">Units</TableHead>
-                <TableHead className="text-right">Value</TableHead>
-                <TableHead>Trace</TableHead>
-                <TableHead>Date</TableHead>
+                <TableHead className="w-8"></TableHead>
+                <TableHead>Outcome / Type</TableHead>
+                <TableHead className="text-right">Billable Units</TableHead>
+                <TableHead className="text-right">Excluded Units</TableHead>
+                <TableHead className="text-right">Unit Price</TableHead>
+                <TableHead className="text-right">Amount</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {detail.lineItems.map((li) => (
-                <TableRow key={li.id} data-testid={`row-line-item-${li.id}`}>
-                  <TableCell>
-                    <span className="text-[11px] font-mono">{li.id.slice(0, 8)}</span>
-                  </TableCell>
-                  <TableCell>
-                    <span className="text-xs">{li.agentName || "\u2014"}</span>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="secondary" className="text-[10px]">{li.type}</Badge>
-                  </TableCell>
-                  <TableCell>
-                    {li.billable ? (
-                      <Badge variant="default" className="text-[10px]">
-                        <CheckCircle className="w-2.5 h-2.5 mr-0.5" /> Yes
-                      </Badge>
-                    ) : (
-                      <Badge variant="destructive" className="text-[10px]">
-                        <XCircle className="w-2.5 h-2.5 mr-0.5" /> No
-                      </Badge>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <span className="text-[11px] text-muted-foreground">{li.excludeReason || "\u2014"}</span>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <span className="text-sm">{li.unitCount || 1}</span>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <span className="text-sm">{li.unitValue != null ? `$${li.unitValue.toFixed(2)}` : "\u2014"}</span>
-                  </TableCell>
-                  <TableCell>
-                    {li.traceId ? (
-                      <Button variant="ghost" size="sm" className="text-[11px] h-auto p-0 font-mono" data-testid={`link-trace-${li.traceId}`}>
-                        {li.traceId.slice(0, 8)} <ExternalLink className="w-2.5 h-2.5 ml-0.5" />
-                      </Button>
-                    ) : (
-                      <span className="text-[11px] text-muted-foreground">\u2014</span>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <span className="text-[11px] text-muted-foreground">
-                      {li.createdAt ? new Date(li.createdAt).toLocaleDateString() : "\u2014"}
-                    </span>
-                  </TableCell>
-                </TableRow>
+              {summaryRows.map((row) => (
+                <>
+                  <TableRow
+                    key={`summary-${row.type}`}
+                    className="cursor-pointer"
+                    onClick={() => setExpandedOutcome(expandedOutcome === row.type ? null : row.type)}
+                    data-testid={`row-outcome-summary-${row.type}`}
+                  >
+                    <TableCell>
+                      {expandedOutcome === row.type ? (
+                        <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" />
+                      ) : (
+                        <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="secondary" className="text-[10px]">{row.type}</Badge>
+                        <span className="text-[10px] text-muted-foreground">{row.events.length} events</span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <span className="text-sm font-medium text-emerald-600 dark:text-emerald-400">{row.billableUnits.toLocaleString()}</span>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <span className="text-sm text-muted-foreground">{row.excludedUnits.toLocaleString()}</span>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <span className="text-sm">${inv.unitPrice?.toFixed(2)}</span>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <span className="text-sm font-semibold">${row.totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    </TableCell>
+                  </TableRow>
+                  {expandedOutcome === row.type && row.events.map((li) => (
+                    <TableRow key={li.id} className="bg-muted/30" data-testid={`row-line-item-${li.id}`}>
+                      <TableCell></TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2 pl-4">
+                          <span className="text-[11px] font-mono text-muted-foreground">{li.id.slice(0, 8)}</span>
+                          <span className="text-[11px]">{li.agentName || "\u2014"}</span>
+                          {li.billable ? (
+                            <Badge variant="default" className="text-[9px]">
+                              <CheckCircle className="w-2 h-2 mr-0.5" /> Billable
+                            </Badge>
+                          ) : (
+                            <Badge variant="destructive" className="text-[9px]">
+                              <XCircle className="w-2 h-2 mr-0.5" /> {li.excludeReason || "Excluded"}
+                            </Badge>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <span className="text-xs">{li.billable ? (li.unitCount || 1) : "\u2014"}</span>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <span className="text-xs">{!li.billable ? (li.unitCount || 1) : "\u2014"}</span>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <span className="text-xs">${inv.unitPrice?.toFixed(2)}</span>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <span className="text-xs">{li.unitValue != null ? `$${((li.unitValue) * (li.unitCount || 1)).toFixed(2)}` : "\u2014"}</span>
+                          {li.traceId && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-[11px]"
+                              onClick={(e) => { e.stopPropagation(); setSelectedTraceId(li.traceId); }}
+                              data-testid={`button-trace-${li.traceId}`}
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                            </Button>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </>
               ))}
+              <TableRow className="font-semibold border-t-2">
+                <TableCell></TableCell>
+                <TableCell>
+                  <span className="text-xs">Total</span>
+                </TableCell>
+                <TableCell className="text-right">
+                  <span className="text-sm text-emerald-600 dark:text-emerald-400">{billableItems.reduce((s, li) => s + (li.unitCount || 1), 0).toLocaleString()}</span>
+                </TableCell>
+                <TableCell className="text-right">
+                  <span className="text-sm text-muted-foreground">{excludedItems.reduce((s, li) => s + (li.unitCount || 1), 0).toLocaleString()}</span>
+                </TableCell>
+                <TableCell className="text-right">
+                  <span className="text-sm">${inv.unitPrice?.toFixed(2)}</span>
+                </TableCell>
+                <TableCell className="text-right">
+                  <span className="text-sm">${inv.amount?.toLocaleString()}</span>
+                </TableCell>
+              </TableRow>
             </TableBody>
           </Table>
           {detail.lineItems.length === 0 && (
@@ -790,6 +1115,14 @@ function InvoiceDetailView({
           )}
         </CardContent>
       </Card>
+
+      {selectedTraceId && (
+        <TraceDrawer
+          traceId={selectedTraceId}
+          open={!!selectedTraceId}
+          onOpenChange={(open) => { if (!open) setSelectedTraceId(null); }}
+        />
+      )}
     </div>
   );
 }
