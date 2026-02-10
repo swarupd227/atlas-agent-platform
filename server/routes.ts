@@ -747,7 +747,69 @@ export async function registerRoutes(
     try {
       const data = insertDeploymentSchema.parse(req.body);
       const deployment = await storage.createDeployment(data);
-      res.status(201).json(deployment);
+
+      const agent = await storage.getAgent(deployment.agentId);
+      const riskTier = agent?.riskTier || "LOW";
+      const env = deployment.environment;
+      const strategy = deployment.rolloutStrategy || "canary";
+
+      const needsApproval =
+        env === "prod" ||
+        riskTier === "HIGH" || riskTier === "CRITICAL" ||
+        (env === "pilot" && (riskTier === "MEDIUM" || riskTier === "HIGH" || riskTier === "CRITICAL"));
+
+      let approval = null;
+      if (needsApproval) {
+        const approvalType = env === "prod" ? "launch_readiness" : "deployment_review";
+        const riskScore = riskTier === "CRITICAL" ? 10 : riskTier === "HIGH" ? 8 : riskTier === "MEDIUM" ? 5 : 3;
+
+        const evalSuites = await storage.getEvalSuites();
+        const agentSuites = evalSuites.filter(s => s.agentId === deployment.agentId);
+        const traces = await storage.getTracesByAgent(deployment.agentId);
+        const recentTraces = traces.slice(0, 30);
+        const totalT = recentTraces.length;
+        const failedT = recentTraces.filter(t => t.status === "failed" || t.status === "error").length;
+        const successRate = totalT > 0 ? ((totalT - failedT) / totalT * 100) : 100;
+
+        approval = await storage.createApproval({
+          type: approvalType,
+          objectType: "deployment",
+          objectId: deployment.id,
+          objectName: `${deployment.agentName || agent?.name || "Agent"} v${deployment.version || "?"} → ${env}`,
+          status: "pending",
+          requestedBy: "System (Release Creation)",
+          agentId: deployment.agentId,
+          environment: env,
+          description: `${approvalType === "launch_readiness" ? "Production launch readiness" : "Deployment"} review required. Risk: ${riskTier}, Strategy: ${strategy}, Environment: ${env}.`,
+          riskScore,
+          evidenceJson: {
+            agentName: deployment.agentName || agent?.name,
+            version: deployment.version,
+            riskTier,
+            strategy,
+            environment: env,
+            evalResults: agentSuites.map(s => ({ name: s.name, passRate: s.passRate, totalCases: s.totalCases })),
+            metrics: {
+              successRate: successRate.toFixed(1) + "%",
+              traceCount: totalT,
+              errorRate: (totalT > 0 ? (failedT / totalT * 100).toFixed(1) : "0") + "%",
+            },
+            canaryConfig: deployment.canaryConfig,
+            rollbackConfig: deployment.rollbackConfig,
+          },
+        });
+
+        await storage.createAuditEvent({
+          actorType: "system",
+          actorId: "release_service",
+          action: "approval_auto_created",
+          objectType: "deployment",
+          objectId: deployment.id,
+          details: `Auto-created ${approvalType} approval for ${deployment.agentName || "agent"} v${deployment.version} → ${env} (risk: ${riskTier})`,
+        });
+      }
+
+      res.status(201).json({ ...deployment, approval });
     } catch (e) {
       handleZodError(res, e);
     }
@@ -962,6 +1024,73 @@ export async function registerRoutes(
       }
 
       res.status(201).json(promoted);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  app.post("/api/deployments/:id/routing", checkPermission("deploy_staging_pilot"), async (req, res) => {
+    try {
+      const deployment = await storage.getDeployment(req.params.id);
+      if (!deployment) return res.status(404).json({ message: "Deployment not found" });
+
+      const { shadowEnabled, canaryPercent, action } = req.body;
+      const updateData: Record<string, unknown> = {};
+
+      if (action === "shadow_on") {
+        updateData.shadowEnabled = true;
+        updateData.status = "shadow";
+      } else if (action === "shadow_off") {
+        updateData.shadowEnabled = false;
+      } else if (action === "canary_start") {
+        const startPercent = canaryPercent || (deployment.canaryConfig as any)?.startPercent || 10;
+        updateData.canaryPercent = startPercent;
+        updateData.status = "canary";
+        updateData.shadowEnabled = false;
+        updateData.deployedAt = new Date();
+      } else if (action === "canary_increase") {
+        const newPercent = Math.min(canaryPercent || (deployment.canaryPercent || 0) + 10, 100);
+        updateData.canaryPercent = newPercent;
+        if (newPercent >= 100) {
+          updateData.status = "active";
+          updateData.completedAt = new Date();
+        }
+      } else if (action === "full_rollout") {
+        updateData.canaryPercent = 100;
+        updateData.status = "active";
+        updateData.shadowEnabled = false;
+        updateData.completedAt = new Date();
+      } else if (action === "rollback") {
+        updateData.status = "rolled_back";
+        updateData.canaryPercent = 0;
+        updateData.shadowEnabled = false;
+      } else {
+        if (shadowEnabled !== undefined) updateData.shadowEnabled = shadowEnabled;
+        if (canaryPercent !== undefined) updateData.canaryPercent = canaryPercent;
+      }
+
+      const updated = await storage.updateDeployment(deployment.id, updateData);
+
+      const allEvents = await storage.getAuditEvents();
+      const maxSeq = allEvents.reduce((max, e) => Math.max(max, e.sequenceNum || 0), 0);
+      const crypto = await import("crypto");
+      const lastHash = allEvents.length > 0 ? allEvents[allEvents.length - 1].eventHash || "" : "";
+      const eventData = `${maxSeq + 1}:routing_change:${deployment.id}:${Date.now()}`;
+      const eventHash = `sha256:${crypto.createHash("sha256").update(eventData + lastHash).digest("hex")}`;
+
+      await storage.createAuditEvent({
+        actorType: "system",
+        actorId: "routing_service",
+        action: `routing_${action || "update"}`,
+        objectType: "deployment",
+        objectId: deployment.id,
+        details: `Routing update for ${deployment.agentName || "agent"}: ${action || "manual"} | shadow=${updateData.shadowEnabled ?? deployment.shadowEnabled} canary=${updateData.canaryPercent ?? deployment.canaryPercent}%`,
+        sequenceNum: maxSeq + 1,
+        previousHash: lastHash,
+        eventHash,
+      });
+
+      res.json(updated);
     } catch (e) {
       handleZodError(res, e);
     }
@@ -1543,6 +1672,57 @@ export async function registerRoutes(
       previousHash: prevHash?.eventHash || null,
       eventHash: `sha256:${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`,
     });
+
+    if (status === "approved" && approval.objectType === "deployment" && approval.objectId) {
+      const deployment = await storage.getDeployment(approval.objectId);
+      if (deployment && (deployment.status === "pending" || deployment.status === "awaiting_approval")) {
+        const strategy = deployment.rolloutStrategy || "canary";
+        const deployUpdate: Record<string, unknown> = {
+          approvedBy: decidedBy || "Expert Validator",
+        };
+
+        if (strategy === "shadow" || deployment.shadowEnabled) {
+          deployUpdate.shadowEnabled = true;
+          deployUpdate.status = "shadow";
+        } else if (strategy === "canary") {
+          const startPercent = (deployment.canaryConfig as any)?.startPercent || 10;
+          deployUpdate.canaryPercent = startPercent;
+          deployUpdate.status = "canary";
+          deployUpdate.deployedAt = new Date();
+        } else {
+          deployUpdate.canaryPercent = 100;
+          deployUpdate.status = "active";
+          deployUpdate.deployedAt = new Date();
+          deployUpdate.completedAt = new Date();
+        }
+
+        if (constraintsJson) {
+          try {
+            const constraints = typeof constraintsJson === "string" ? JSON.parse(constraintsJson) : constraintsJson;
+            if (constraints.maxCanaryPercent) {
+              deployUpdate.canaryPercent = Math.min(deployUpdate.canaryPercent as number || 10, constraints.maxCanaryPercent);
+            }
+            if (constraints.shadowOnly) {
+              deployUpdate.shadowEnabled = true;
+              deployUpdate.status = "shadow";
+              deployUpdate.canaryPercent = 0;
+            }
+          } catch {
+          }
+        }
+
+        await storage.updateDeployment(deployment.id, deployUpdate);
+
+        await storage.createAuditEvent({
+          actorType: "system",
+          actorId: "release_service",
+          action: "deployment_activated",
+          objectType: "deployment",
+          objectId: deployment.id,
+          details: `Deployment ${deployment.agentName || "agent"} activated after approval. Status: ${deployUpdate.status}, canary: ${deployUpdate.canaryPercent || 0}%, shadow: ${deployUpdate.shadowEnabled || false}`,
+        });
+      }
+    }
 
     res.json(updated);
   });
@@ -3862,6 +4042,49 @@ Return a JSON array of 3-5 improvement cycle proposals. Return ONLY valid JSON.`
       });
     } catch (e: any) {
       res.status(500).json({ message: e.message || "Shadow replay failed" });
+    }
+  });
+
+  app.post("/api/deployments/:id/shadow-replay", async (req, res) => {
+    try {
+      const deployment = await storage.getDeployment(req.params.id);
+      if (!deployment) return res.status(404).json({ message: "Deployment not found" });
+
+      const { timeWindow, sampleSize, approvalId } = req.body;
+
+      const job = await storage.createJob({
+        type: "shadow_replay",
+        agentId: deployment.agentId,
+        status: "queued",
+        payload: {
+          agentId: deployment.agentId,
+          deploymentId: deployment.id,
+          approvalId: approvalId || null,
+          timeWindow: timeWindow || "24h",
+          sampleSize: sampleSize || 10,
+          environment: deployment.environment,
+          version: deployment.version,
+        },
+      });
+
+      await storage.createAuditEvent({
+        actorType: "user",
+        actorId: "operator",
+        action: "shadow_replay_queued",
+        objectType: "deployment",
+        objectId: deployment.id,
+        details: `Shadow replay queued for ${deployment.agentName || "agent"} v${deployment.version} (job: ${job.id})`,
+      });
+
+      res.status(201).json({
+        jobId: job.id,
+        deploymentId: deployment.id,
+        approvalId: approvalId || null,
+        status: "queued",
+        message: "Shadow replay job queued. Evidence will be attached to the approval when complete.",
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to queue shadow replay" });
     }
   });
 
