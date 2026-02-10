@@ -167,7 +167,8 @@ export default function AgentDetail() {
   const [exportFramework, setExportFramework] = useState<string>("generic");
   const [exportPreview, setExportPreview] = useState<{ files: Record<string, string>; metadata: any } | null>(null);
   const [exportPreviewFile, setExportPreviewFile] = useState<string>("");
-  const [exportStep, setExportStep] = useState<"select" | "configure" | "preview">("select");
+  const [exportStep, setExportStep] = useState<"select" | "configure" | "tools" | "preview">("select");
+  const [toolAdapterOverrides, setToolAdapterOverrides] = useState<Record<string, "builtin" | "customer" | "stub">>({});
 
   const { data: deprecationSignals, isLoading: deprecationLoading, isError: deprecationError } = useQuery<{
     riskScore: number;
@@ -278,7 +279,7 @@ export default function AgentDetail() {
   });
 
   const exportCodeMutation = useMutation({
-    mutationFn: async (params: { format: string; llmProvider: string; maxIterations: number; completionPromise: string; framework?: string }) => {
+    mutationFn: async (params: { format: string; llmProvider: string; maxIterations: number; completionPromise: string; framework?: string; toolAdapters?: Record<string, string> }) => {
       const res = await apiRequest("POST", `/api/agents/${agentId}/export-code`, params);
       return res.json();
     },
@@ -2715,7 +2716,7 @@ export default function AgentDetail() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={exportDialogOpen} onOpenChange={(open) => { setExportDialogOpen(open); if (!open) { setExportStep("select"); setExportPreview(null); } }}>
+      <Dialog open={exportDialogOpen} onOpenChange={(open) => { setExportDialogOpen(open); if (!open) { setExportStep("select"); setExportPreview(null); setToolAdapterOverrides({}); } }}>
         <DialogContent className="max-w-3xl max-h-[85vh] overflow-hidden flex flex-col">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -2723,6 +2724,8 @@ export default function AgentDetail() {
                 <><Package className="w-4 h-4" /> Export Agent</>
               ) : exportStep === "configure" ? (
                 <><Code className="w-4 h-4" /> Configure Source Export</>
+              ) : exportStep === "tools" ? (
+                <><Wrench className="w-4 h-4" /> Tool Adapter Resolution</>
               ) : (
                 <><FileCode className="w-4 h-4" /> Preview Source Files</>
               )}
@@ -2732,7 +2735,9 @@ export default function AgentDetail() {
                 ? "Choose how this agent should be packaged for deployment."
                 : exportStep === "configure"
                   ? "Configure source files for standalone deployment via your CI/CD pipeline."
-                  : "Review the generated source files before downloading."}
+                  : exportStep === "tools"
+                    ? "Ensure every tool reference has an implementation path in the export package."
+                    : "Review the generated source files before downloading."}
             </DialogDescription>
           </DialogHeader>
 
@@ -2745,6 +2750,8 @@ export default function AgentDetail() {
                 </div>
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                 <span className="text-[11px] text-muted-foreground/40">Configure</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Tool Adapters</span>
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                 <span className="text-[11px] text-muted-foreground/40">Preview</span>
               </div>
@@ -2900,6 +2907,8 @@ export default function AgentDetail() {
                   <span className="font-medium">Configure</span>
                 </div>
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Tool Adapters</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                 <span className="text-[11px] text-muted-foreground/40">Preview</span>
               </div>
 
@@ -3013,6 +3022,177 @@ export default function AgentDetail() {
             );
           })()}
 
+          {exportStep === "tools" && (() => {
+            const agentTools = Array.isArray(agent?.toolsConfig) ? agent.toolsConfig as any[] : [];
+            const connectors = allToolConnectors || [];
+            const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+            const connectorMap = new Map(connectors.map(c => [normalize(c.name), c]));
+
+            type ToolResolution = {
+              name: string;
+              description: string;
+              status: "builtin" | "customer" | "stub";
+              connectorId?: string;
+              connectorVersion?: string;
+            };
+
+            const resolvedTools: ToolResolution[] = agentTools.map((t: any) => {
+              const override = toolAdapterOverrides[t.name];
+              const normalized = normalize(t.name || "");
+              const connector = connectorMap.get(normalized);
+              let status: "builtin" | "customer" | "stub" = override || "stub";
+              if (!override) {
+                if (connector && connector.status === "connected") status = "builtin";
+                else if (connector) status = "customer";
+                else status = "stub";
+              }
+              return {
+                name: t.name || "Unknown Tool",
+                description: t.description || t.type || "No description",
+                status,
+                connectorId: connector?.id,
+                connectorVersion: connector ? `v${connector.id.substring(0, 6)}` : undefined,
+              };
+            });
+
+            const builtinCount = resolvedTools.filter(t => t.status === "builtin").length;
+            const customerCount = resolvedTools.filter(t => t.status === "customer").length;
+            const stubCount = resolvedTools.filter(t => t.status === "stub").length;
+
+            return (
+              <div className="flex flex-col gap-4 py-2 flex-1 min-h-0" data-testid="step-tool-adapters">
+                <div className="flex items-center gap-2 mb-1 flex-wrap">
+                  <span className="text-[11px] text-muted-foreground/40">Export Type</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  <span className="text-[11px] text-muted-foreground/40">Configure</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">3</span>
+                    <span className="font-medium">Tool Adapters</span>
+                  </div>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  <span className="text-[11px] text-muted-foreground/40">Preview</span>
+                </div>
+
+                <div className="flex items-center gap-3 flex-wrap">
+                  <Badge variant="outline" className="text-[10px]" data-testid="badge-adapter-builtin">
+                    <CheckCircle className="w-3 h-3 mr-1 text-emerald-500" /> {builtinCount} Built-in
+                  </Badge>
+                  <Badge variant="outline" className="text-[10px]" data-testid="badge-adapter-customer">
+                    <AlertCircle className="w-3 h-3 mr-1 text-amber-500" /> {customerCount} Customer Required
+                  </Badge>
+                  <Badge variant="outline" className="text-[10px]" data-testid="badge-adapter-stub">
+                    <FileCode className="w-3 h-3 mr-1 text-muted-foreground" /> {stubCount} Stubs
+                  </Badge>
+                </div>
+
+                {resolvedTools.length === 0 ? (
+                  <Card>
+                    <CardContent className="p-6 flex flex-col items-center gap-2 text-center">
+                      <Wrench className="w-6 h-6 text-muted-foreground/40" />
+                      <span className="text-sm text-muted-foreground">No tools referenced</span>
+                      <span className="text-xs text-muted-foreground/60">This agent's blueprint has no tool references. You can proceed directly to generate source files.</span>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <div className="flex flex-col gap-2 overflow-y-auto flex-1 min-h-0 pr-1">
+                    {resolvedTools.map((tool, idx) => {
+                      const statusConfig = {
+                        builtin: { label: "Built-in adapter included", color: "text-emerald-600 dark:text-emerald-400", bg: "bg-emerald-500/10", icon: CheckCircle },
+                        customer: { label: "Customer adapter required", color: "text-amber-600 dark:text-amber-400", bg: "bg-amber-500/10", icon: AlertTriangle },
+                        stub: { label: "Stub will be generated", color: "text-muted-foreground", bg: "bg-muted/50", icon: FileCode },
+                      };
+                      const cfg = statusConfig[tool.status];
+                      const StatusIcon = cfg.icon;
+
+                      return (
+                        <div
+                          key={tool.name}
+                          className="flex items-center gap-3 p-3 rounded-md border"
+                          data-testid={`tool-adapter-row-${idx}`}
+                        >
+                          <div className="flex items-center justify-center w-8 h-8 rounded-md bg-primary/10 shrink-0">
+                            <Wrench className="w-4 h-4 text-primary" />
+                          </div>
+                          <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-medium truncate" data-testid={`tool-name-${idx}`}>{tool.name}</span>
+                              <Badge variant="outline" className={`text-[9px] shrink-0 ${cfg.bg} ${cfg.color}`} data-testid={`tool-status-${idx}`}>
+                                <StatusIcon className="w-2.5 h-2.5 mr-1" />
+                                {cfg.label}
+                              </Badge>
+                            </div>
+                            <span className="text-[11px] text-muted-foreground truncate">{tool.description}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {tool.status === "builtin" && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setToolAdapterOverrides(prev => ({ ...prev, [tool.name]: "stub" }))}
+                                data-testid={`button-switch-to-stub-${idx}`}
+                              >
+                                <FileCode className="w-3 h-3 mr-1" /> Use Stub Instead
+                              </Button>
+                            )}
+                            {tool.status === "customer" && (
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => setToolAdapterOverrides(prev => ({ ...prev, [tool.name]: "stub" }))}
+                                  data-testid={`button-generate-stub-${idx}`}
+                                >
+                                  <FileCode className="w-3 h-3 mr-1" /> Generate Stub
+                                </Button>
+                                {tool.connectorId && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => setToolAdapterOverrides(prev => ({ ...prev, [tool.name]: "builtin" }))}
+                                    data-testid={`button-attach-adapter-${idx}`}
+                                  >
+                                    <Layers className="w-3 h-3 mr-1" /> Attach Adapter
+                                  </Button>
+                                )}
+                              </>
+                            )}
+                            {tool.status === "stub" && (
+                              <>
+                                {tool.connectorId && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => setToolAdapterOverrides(prev => ({ ...prev, [tool.name]: "builtin" }))}
+                                    data-testid={`button-attach-adapter-${idx}`}
+                                  >
+                                    <Layers className="w-3 h-3 mr-1" /> Attach Adapter
+                                  </Button>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {stubCount > 0 && (
+                  <div className="flex items-start gap-2 p-3 rounded-md bg-muted/30 border border-dashed" data-testid="notice-stubs-info">
+                    <AlertCircle className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-xs font-medium">Stub adapters will be generated</span>
+                      <span className="text-[11px] text-muted-foreground">
+                        {stubCount} tool{stubCount !== 1 ? "s" : ""} will have placeholder implementations in the export. You'll need to provide the actual implementation before deployment.
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
           {exportStep === "preview" && (
             <div className="flex flex-col gap-3 flex-1 min-h-0">
               <div className="flex items-center gap-2 mb-1 flex-wrap">
@@ -3020,8 +3200,10 @@ export default function AgentDetail() {
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                 <span className="text-[11px] text-muted-foreground/40">Configure</span>
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Tool Adapters</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                 <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">3</span>
+                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">4</span>
                   <span className="font-medium">Preview</span>
                 </div>
               </div>
@@ -3061,8 +3243,13 @@ export default function AgentDetail() {
                 Back
               </Button>
             )}
+            {exportStep === "tools" && (
+              <Button variant="outline" onClick={() => setExportStep("configure")} data-testid="button-export-back-to-configure">
+                Back
+              </Button>
+            )}
             {exportStep === "preview" && (
-              <Button variant="outline" onClick={() => setExportStep("configure")} data-testid="button-export-back">
+              <Button variant="outline" onClick={() => setExportStep("tools")} data-testid="button-export-back">
                 Back
               </Button>
             )}
@@ -3071,7 +3258,34 @@ export default function AgentDetail() {
             </Button>
             {exportStep === "configure" && (
               <Button
-                onClick={() => exportCodeMutation.mutate({ format: exportFormat, llmProvider: exportLlmProvider, maxIterations: exportMaxIterations, completionPromise: exportCompletionPromise, framework: exportFramework })}
+                onClick={() => {
+                  const agentTools = Array.isArray(agent?.toolsConfig) ? agent.toolsConfig as any[] : [];
+                  const connectors = allToolConnectors || [];
+                  const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+                  const connectorMap = new Map(connectors.map(c => [normalize(c.name), c]));
+                  const initialOverrides: Record<string, "builtin" | "customer" | "stub"> = {};
+                  agentTools.forEach(t => {
+                    const name = normalize(t.name || "");
+                    const connector = connectorMap.get(name);
+                    if (connector && connector.status === "connected") {
+                      initialOverrides[t.name] = "builtin";
+                    } else if (connector) {
+                      initialOverrides[t.name] = "customer";
+                    } else {
+                      initialOverrides[t.name] = "stub";
+                    }
+                  });
+                  setToolAdapterOverrides(initialOverrides);
+                  setExportStep("tools");
+                }}
+                data-testid="button-export-next-tools"
+              >
+                Next: Tool Adapters <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
+              </Button>
+            )}
+            {exportStep === "tools" && (
+              <Button
+                onClick={() => exportCodeMutation.mutate({ format: exportFormat, llmProvider: exportLlmProvider, maxIterations: exportMaxIterations, completionPromise: exportCompletionPromise, framework: exportFramework, toolAdapters: toolAdapterOverrides })}
                 disabled={exportCodeMutation.isPending}
                 data-testid="button-export-generate"
               >

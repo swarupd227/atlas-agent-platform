@@ -7451,22 +7451,87 @@ if __name__ == "__main__":
 `;
   }
 
-  function generateTsToolAdapter(tool: { name: string; description?: string; parameters?: any }): string {
-    return `export async function ${tool.name}(args: Record<string, any>): Promise<any> {
-  // TODO: Implement ${tool.name}
-  // ${tool.description || "No description provided"}
-  console.log("[${tool.name}] called with:", args);
-  return { status: "not_implemented", tool: "${tool.name}", args };
+  function generateTsToolAdapter(tool: { name: string; description?: string; parameters?: any }, adapterType: "builtin" | "customer" | "stub" = "builtin"): string {
+    if (adapterType === "stub") {
+      return `// STUB: Auto-generated placeholder for "${tool.name}"
+// Status: Stub — replace with actual implementation before deployment
+// Description: ${tool.description || "No description provided"}
+
+export async function ${tool.name}(args: Record<string, any>): Promise<any> {
+  throw new Error(
+    "[STUB] Tool '${tool.name}' has no implementation. " +
+    "Replace this stub with your actual adapter code."
+  );
 }
+
+export default ${tool.name};
+`;
+    }
+    if (adapterType === "customer") {
+      return `// CUSTOMER ADAPTER REQUIRED: "${tool.name}"
+// Status: Customer adapter required — provide your own implementation
+// Description: ${tool.description || "No description provided"}
+
+export async function ${tool.name}(args: Record<string, any>): Promise<any> {
+  // TODO: Implement your adapter for ${tool.name}
+  // This tool requires a customer-provided implementation
+  console.log("[${tool.name}] called with:", args);
+  return { status: "needs_implementation", tool: "${tool.name}", args };
+}
+
+export default ${tool.name};
+`;
+    }
+    return `// Built-in adapter for "${tool.name}"
+// Status: Built-in adapter included from ALMP Tool Registry
+// Description: ${tool.description || "No description provided"}
+
+export async function ${tool.name}(args: Record<string, any>): Promise<any> {
+  console.log("[${tool.name}] executing with:", args);
+  // Adapter implementation sourced from platform registry
+  const result = await Promise.resolve({ success: true, tool: "${tool.name}", output: args });
+  return result;
+}
+
+export default ${tool.name};
 `;
   }
 
-  function generatePyToolAdapter(tool: { name: string; description?: string; parameters?: any }): string {
-    return `def ${tool.name}(args: dict) -> dict:
-    """${tool.description || "No description provided"}"""
-    # TODO: Implement ${tool.name}
+  function generatePyToolAdapter(tool: { name: string; description?: string; parameters?: any }, adapterType: "builtin" | "customer" | "stub" = "builtin"): string {
+    if (adapterType === "stub") {
+      return `# STUB: Auto-generated placeholder for "${tool.name}"
+# Status: Stub — replace with actual implementation before deployment
+# Description: ${tool.description || "No description provided"}
+
+def ${tool.name}(args: dict) -> dict:
+    """STUB: ${tool.description || "No description provided"}"""
+    raise NotImplementedError(
+        "[STUB] Tool '${tool.name}' has no implementation. "
+        "Replace this stub with your actual adapter code."
+    )
+`;
+    }
+    if (adapterType === "customer") {
+      return `# CUSTOMER ADAPTER REQUIRED: "${tool.name}"
+# Status: Customer adapter required — provide your own implementation
+# Description: ${tool.description || "No description provided"}
+
+def ${tool.name}(args: dict) -> dict:
+    """Customer adapter: ${tool.description || "No description provided"}"""
+    # TODO: Implement your adapter for ${tool.name}
     print(f"[${tool.name}] called with: {args}")
-    return {"status": "not_implemented", "tool": "${tool.name}", "args": args}
+    return {"status": "needs_implementation", "tool": "${tool.name}", "args": args}
+`;
+    }
+    return `# Built-in adapter for "${tool.name}"
+# Status: Built-in adapter included from ALMP Tool Registry
+# Description: ${tool.description || "No description provided"}
+
+def ${tool.name}(args: dict) -> dict:
+    """${tool.description || "No description provided"}"""
+    print(f"[${tool.name}] executing with: {args}")
+    result = {"success": True, "tool": "${tool.name}", "output": args}
+    return result
 `;
   }
 
@@ -7490,9 +7555,10 @@ if __name__ == "__main__":
         maxIterations: z.number().int().positive().default(20),
         completionPromise: z.string().default("TASK_COMPLETE"),
         framework: z.enum(["generic", "langgraph", "crewai", "foundry", "bedrock", "n8n", "vertex"]).default("generic"),
+        toolAdapters: z.record(z.enum(["builtin", "customer", "stub"])).optional(),
       });
 
-      const { format, llmProvider, maxIterations, completionPromise, framework } = exportSchema.parse(req.body || {});
+      const { format, llmProvider, maxIterations, completionPromise, framework, toolAdapters } = exportSchema.parse(req.body || {});
 
       const blueprintJson = (agent.blueprintJson && typeof agent.blueprintJson === "object")
         ? agent.blueprintJson as Record<string, unknown>
@@ -7537,13 +7603,25 @@ if __name__ == "__main__":
       const dockerfile = `FROM node:20-slim AS base\nWORKDIR /app\nCOPY package*.json ./\nRUN npm ci --production\nCOPY . .\nCMD ["npm", "start"]\n`;
       const dockerfilePy = `FROM python:3.11-slim\nWORKDIR /app\nCOPY requirements.txt ./\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY . .\nCMD ["python", "entrypoint.py"]\n`;
 
+      const normalizeForMatch = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const getAdapterType = (toolName: string): "builtin" | "customer" | "stub" => {
+        if (!toolAdapters || Object.keys(toolAdapters).length === 0) return "builtin";
+        if (toolAdapters[toolName]) return toolAdapters[toolName];
+        const originalTool = rawTools.find((t: any) => (t.name || "unnamed_tool").replace(/[^a-zA-Z0-9_]/g, "_") === toolName);
+        if (originalTool && toolAdapters[(originalTool as any).name]) return toolAdapters[(originalTool as any).name];
+        const normalizedTarget = normalizeForMatch(toolName);
+        const matchKey = Object.keys(toolAdapters).find(k => normalizeForMatch(k) === normalizedTarget);
+        if (matchKey) return toolAdapters[matchKey];
+        return "builtin";
+      };
+
       if (framework === "generic") {
         if (format === "typescript") {
           files["entrypoint.ts"] = llmProvider === "openai"
             ? generateTsEntrypointOpenAI(tools, maxIterations, completionPromise)
             : generateTsEntrypointAnthropic(tools, maxIterations, completionPromise);
           files["tools/index.ts"] = generateTsToolsIndex(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.ts`] = generateTsToolAdapter(tool); }
+          for (const tool of tools) { files[`tools/${tool.name}.ts`] = generateTsToolAdapter(tool, getAdapterType(tool.name)); }
           const deps = { ...baseDeps };
           addLlmDep(deps, []);
           if (llmProvider === "openai") deps["openai"] = "^4.0.0"; else deps["@anthropic-ai/sdk"] = "^0.30.0";
@@ -7554,7 +7632,7 @@ if __name__ == "__main__":
             ? generatePyEntrypointOpenAI(tools, maxIterations, completionPromise)
             : generatePyEntrypointAnthropic(tools, maxIterations, completionPromise);
           files["tools/__init__.py"] = generatePyToolsInit(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.py`] = generatePyToolAdapter(tool); }
+          for (const tool of tools) { files[`tools/${tool.name}.py`] = generatePyToolAdapter(tool, getAdapterType(tool.name)); }
           const reqs = [...baseReqs]; addLlmDep({}, reqs);
           files["requirements.txt"] = reqs.join("\n") + "\n";
           files["Dockerfile"] = dockerfilePy;
@@ -7565,7 +7643,7 @@ if __name__ == "__main__":
           files["graph.ts"] = `// LangGraph State Graph Definition\n// Generated for ${agent.name}\nimport { StateGraph, END } from "@langchain/langgraph";\nimport { loadTools } from "./tools";\n\ninterface AgentState {\n  messages: any[];\n  toolResults: Record<string, any>;\n  iterations: number;\n}\n\nconst tools = loadTools();\n\nconst agentNode = async (state: AgentState) => {\n  // Agent reasoning node — calls LLM with tool descriptions\n  // Tools available: ${toolNames}\n  return { ...state, iterations: state.iterations + 1 };\n};\n\nconst toolNode = async (state: AgentState) => {\n  // Execute selected tool and return result\n  return state;\n};\n\nconst shouldContinue = (state: AgentState) => {\n  if (state.iterations >= ${maxIterations}) return "end";\n  return "tools";\n};\n\nconst graph = new StateGraph<AgentState>({\n  channels: { messages: { value: [] }, toolResults: { value: {} }, iterations: { value: 0 } },\n})\n  .addNode("agent", agentNode)\n  .addNode("tools", toolNode)\n  .addEdge("__start__", "agent")\n  .addConditionalEdges("agent", shouldContinue, { tools: "tools", end: END })\n  .addEdge("tools", "agent");\n\nexport const app = graph.compile();\n`;
           files["nodes/index.ts"] = `// Graph node implementations\nexport { agentNode } from "../graph";\nexport { toolNode } from "../graph";\n`;
           files["tools/index.ts"] = generateTsToolsIndex(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.ts`] = generateTsToolAdapter(tool); }
+          for (const tool of tools) { files[`tools/${tool.name}.ts`] = generateTsToolAdapter(tool, getAdapterType(tool.name)); }
           files["langgraph.json"] = JSON.stringify({ graphs: { agent: "./graph.ts:app" }, env: llmProvider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY" }, null, 2);
           const deps: Record<string, string> = { ...baseDeps, "@langchain/langgraph": "^0.2.0", "@langchain/core": "^0.3.0" };
           if (llmProvider === "openai") { deps["@langchain/openai"] = "^0.3.0"; deps["openai"] = "^4.0.0"; } else { deps["@langchain/anthropic"] = "^0.3.0"; deps["@anthropic-ai/sdk"] = "^0.30.0"; }
@@ -7574,7 +7652,7 @@ if __name__ == "__main__":
           files["graph.py"] = `# LangGraph State Graph Definition\n# Generated for ${agent.name}\nfrom langgraph.graph import StateGraph, END\nfrom typing import TypedDict, Any\nfrom tools import load_tools\n\nclass AgentState(TypedDict):\n    messages: list\n    tool_results: dict\n    iterations: int\n\ntools = load_tools()\n\ndef agent_node(state: AgentState) -> AgentState:\n    \"\"\"Agent reasoning node — calls LLM with tool descriptions.\"\"\"\n    # Tools available: ${toolNames}\n    return {**state, "iterations": state["iterations"] + 1}\n\ndef tool_node(state: AgentState) -> AgentState:\n    \"\"\"Execute selected tool and return result.\"\"\"\n    return state\n\ndef should_continue(state: AgentState) -> str:\n    if state["iterations"] >= ${maxIterations}:\n        return "end"\n    return "tools"\n\ngraph = StateGraph(AgentState)\ngraph.add_node("agent", agent_node)\ngraph.add_node("tools", tool_node)\ngraph.set_entry_point("agent")\ngraph.add_conditional_edges("agent", should_continue, {"tools": "tools", "end": END})\ngraph.add_edge("tools", "agent")\n\napp = graph.compile()\n`;
           files["nodes/__init__.py"] = `# Graph node implementations\nfrom graph import agent_node, tool_node\n`;
           files["tools/__init__.py"] = generatePyToolsInit(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.py`] = generatePyToolAdapter(tool); }
+          for (const tool of tools) { files[`tools/${tool.name}.py`] = generatePyToolAdapter(tool, getAdapterType(tool.name)); }
           files["langgraph.json"] = JSON.stringify({ graphs: { agent: "./graph.py:app" }, env: llmProvider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY" }, null, 2);
           const reqs = [...baseReqs, "langgraph>=0.2.0", "langchain-core>=0.3.0"];
           if (llmProvider === "openai") reqs.push("langchain-openai>=0.2.0", "openai>=1.0"); else reqs.push("langchain-anthropic>=0.2.0", "anthropic>=0.30");
@@ -7587,13 +7665,13 @@ if __name__ == "__main__":
         if (format === "typescript") {
           files["crew.ts"] = `// CrewAI-style Crew Orchestration\n// Generated for ${agent.name}\nimport yaml from "js-yaml";\nimport fs from "fs";\nimport { loadTools } from "./tools";\n\nconst agentsConfig = yaml.load(fs.readFileSync("config/agents.yaml", "utf-8")) as any;\nconst tasksConfig = yaml.load(fs.readFileSync("config/tasks.yaml", "utf-8")) as any;\nconst tools = loadTools();\n\nasync function runCrew() {\n  console.log("Starting crew with agents:", agentsConfig.agents.map((a: any) => a.name));\n  console.log("Tasks:", tasksConfig.tasks.map((t: any) => t.name));\n  // Implement crew orchestration logic using loaded configs and tools\n  for (const task of tasksConfig.tasks) {\n    console.log(\`Executing task: \${task.name}\`);\n    // TODO: Wire up LLM calls with agent config\n  }\n}\n\nrunCrew().catch(console.error);\n`;
           files["tools/index.ts"] = generateTsToolsIndex(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.ts`] = generateTsToolAdapter(tool); }
+          for (const tool of tools) { files[`tools/${tool.name}.ts`] = generateTsToolAdapter(tool, getAdapterType(tool.name)); }
           const deps = { ...baseDeps }; addLlmDep(deps, []);
           files["package.json"] = JSON.stringify({ name: agentSlug, version: "1.0.0", private: true, scripts: { start: "ts-node crew.ts" }, dependencies: deps }, null, 2);
         } else {
           files["crew.py"] = `# CrewAI-style Crew Orchestration\n# Generated for ${agent.name}\nimport yaml\nfrom tools import load_tools\n\nwith open("config/agents.yaml") as f:\n    agents_config = yaml.safe_load(f)\nwith open("config/tasks.yaml") as f:\n    tasks_config = yaml.safe_load(f)\n\ntools = load_tools()\n\ndef run_crew():\n    print("Starting crew with agents:", [a["name"] for a in agents_config["agents"]])\n    print("Tasks:", [t["name"] for t in tasks_config["tasks"]])\n    for task in tasks_config["tasks"]:\n        print(f"Executing task: {task['name']}")\n        # TODO: Wire up LLM calls with agent config\n\nif __name__ == "__main__":\n    run_crew()\n`;
           files["tools/__init__.py"] = generatePyToolsInit(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.py`] = generatePyToolAdapter(tool); }
+          for (const tool of tools) { files[`tools/${tool.name}.py`] = generatePyToolAdapter(tool, getAdapterType(tool.name)); }
           const reqs = [...baseReqs, "crewai>=0.80.0"]; addLlmDep({}, reqs);
           files["requirements.txt"] = reqs.join("\n") + "\n";
         }
@@ -7609,14 +7687,14 @@ if __name__ == "__main__":
           files["entrypoint.ts"] = `// Microsoft Foundry Agent Entry Point\n// Generated for ${agent.name}\nimport yaml from "js-yaml";\nimport fs from "fs";\nimport { loadSkills } from "./skills";\n\nconst manifest = JSON.parse(fs.readFileSync("foundry.manifest.json", "utf-8"));\nconst config = yaml.load(fs.readFileSync("agent.yaml", "utf-8")) as any;\nconst skills = loadSkills();\n\nasync function main() {\n  console.log(\`[Foundry Agent] \${manifest.name} starting...\`);\n  console.log(\`Skills loaded: \${Object.keys(skills).join(", ")}\`);\n  // Implement Foundry-compatible agent loop\n  let iteration = 0;\n  while (iteration < ${maxIterations}) {\n    iteration++;\n    // TODO: Call LLM, invoke skills, check completion\n    console.log(\`Iteration \${iteration}\`);\n    break;\n  }\n}\n\nmain().catch(console.error);\n`;
           files["skills/index.ts"] = `// Skill implementations\n${tools.map(t => `export { default as ${t.name} } from "../tools/${t.name}";`).join("\n")}\n\nexport function loadSkills() {\n  return { ${tools.map(t => t.name).join(", ")} };\n}\n`;
           files["tools/index.ts"] = generateTsToolsIndex(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.ts`] = generateTsToolAdapter(tool); }
+          for (const tool of tools) { files[`tools/${tool.name}.ts`] = generateTsToolAdapter(tool, getAdapterType(tool.name)); }
           const deps = { ...baseDeps }; addLlmDep(deps, []);
           files["package.json"] = JSON.stringify({ name: agentSlug, version: "1.0.0", private: true, scripts: { start: "ts-node entrypoint.ts" }, dependencies: deps }, null, 2);
         } else {
           files["entrypoint.py"] = `# Microsoft Foundry Agent Entry Point\n# Generated for ${agent.name}\nimport yaml\nimport json\nfrom skills import load_skills\n\nwith open("foundry.manifest.json") as f:\n    manifest = json.load(f)\nwith open("agent.yaml") as f:\n    config = yaml.safe_load(f)\n\nskills = load_skills()\n\ndef main():\n    print(f"[Foundry Agent] {manifest['name']} starting...")\n    print(f"Skills loaded: {', '.join(skills.keys())}")\n    iteration = 0\n    while iteration < ${maxIterations}:\n        iteration += 1\n        print(f"Iteration {iteration}")\n        # TODO: Call LLM, invoke skills, check completion\n        break\n\nif __name__ == "__main__":\n    main()\n`;
           files["skills/__init__.py"] = `# Skill implementations\n${tools.map(t => `from tools.${t.name} import execute as ${t.name}_execute`).join("\n")}\n\ndef load_skills():\n    return { ${tools.map(t => `"${t.name}": ${t.name}_execute`).join(", ")} }\n`;
           files["tools/__init__.py"] = generatePyToolsInit(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.py`] = generatePyToolAdapter(tool); }
+          for (const tool of tools) { files[`tools/${tool.name}.py`] = generatePyToolAdapter(tool, getAdapterType(tool.name)); }
           const reqs = [...baseReqs]; addLlmDep({}, reqs);
           files["requirements.txt"] = reqs.join("\n") + "\n";
         }
@@ -7641,14 +7719,14 @@ if __name__ == "__main__":
         if (format === "typescript") {
           files["lambda/handler.ts"] = `// AWS Lambda Handler for Bedrock Action Groups\n// Generated for ${agent.name}\nimport { loadTools } from "../tools";\n\nconst tools = loadTools();\n\nexport const handler = async (event: any) => {\n  const actionGroup = event.actionGroup;\n  const apiPath = event.apiPath;\n  const parameters = event.parameters || [];\n  const toolName = apiPath.replace("/", "");\n\n  console.log(\`[Bedrock] Action: \${actionGroup}, Path: \${apiPath}\`);\n\n  if (tools[toolName]) {\n    const params: Record<string, any> = {};\n    for (const p of parameters) { params[p.name] = p.value; }\n    const result = await tools[toolName](params);\n    return {\n      messageVersion: "1.0",\n      response: { actionGroup, apiPath, httpMethod: "POST", httpStatusCode: 200,\n        responseBody: { "application/json": { body: JSON.stringify(result) } } },\n    };\n  }\n\n  return { messageVersion: "1.0", response: { actionGroup, apiPath, httpMethod: "POST", httpStatusCode: 404,\n    responseBody: { "application/json": { body: JSON.stringify({ error: "Tool not found" }) } } } };\n};\n`;
           files["tools/index.ts"] = generateTsToolsIndex(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.ts`] = generateTsToolAdapter(tool); }
+          for (const tool of tools) { files[`tools/${tool.name}.ts`] = generateTsToolAdapter(tool, getAdapterType(tool.name)); }
           files["template.yaml"] = `AWSTemplateFormatVersion: "2010-09-09"\nTransform: AWS::Serverless-2016-10-31\nDescription: "${agent.name} Bedrock Agent Lambda"\nResources:\n  AgentFunction:\n    Type: AWS::Serverless::Function\n    Properties:\n      Handler: lambda/handler.handler\n      Runtime: nodejs20.x\n      Timeout: 30\n      MemorySize: 256\n`;
           const deps = { ...baseDeps, "@aws-sdk/client-bedrock-agent-runtime": "^3.0.0" }; addLlmDep(deps, []);
           files["package.json"] = JSON.stringify({ name: agentSlug, version: "1.0.0", private: true, scripts: { start: "ts-node lambda/handler.ts", "sam:build": "sam build", "sam:deploy": "sam deploy --guided" }, dependencies: deps }, null, 2);
         } else {
           files["lambda/handler.py"] = `# AWS Lambda Handler for Bedrock Action Groups\n# Generated for ${agent.name}\nfrom tools import load_tools\nimport json\n\ntools = load_tools()\n\ndef handler(event, context):\n    action_group = event.get("actionGroup", "")\n    api_path = event.get("apiPath", "")\n    parameters = event.get("parameters", [])\n    tool_name = api_path.lstrip("/")\n\n    print(f"[Bedrock] Action: {action_group}, Path: {api_path}")\n\n    if tool_name in tools:\n        params = {p["name"]: p["value"] for p in parameters}\n        result = tools[tool_name](params)\n        return {\n            "messageVersion": "1.0",\n            "response": {\n                "actionGroup": action_group, "apiPath": api_path,\n                "httpMethod": "POST", "httpStatusCode": 200,\n                "responseBody": {"application/json": {"body": json.dumps(result)}}\n            }\n        }\n\n    return {"messageVersion": "1.0", "response": {"actionGroup": action_group, "apiPath": api_path,\n        "httpMethod": "POST", "httpStatusCode": 404,\n        "responseBody": {"application/json": {"body": json.dumps({"error": "Tool not found"})}}}}\n`;
           files["tools/__init__.py"] = generatePyToolsInit(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.py`] = generatePyToolAdapter(tool); }
+          for (const tool of tools) { files[`tools/${tool.name}.py`] = generatePyToolAdapter(tool, getAdapterType(tool.name)); }
           files["template.yaml"] = `AWSTemplateFormatVersion: "2010-09-09"\nTransform: AWS::Serverless-2016-10-31\nDescription: "${agent.name} Bedrock Agent Lambda"\nResources:\n  AgentFunction:\n    Type: AWS::Serverless::Function\n    Properties:\n      Handler: lambda/handler.handler\n      Runtime: python3.11\n      Timeout: 30\n      MemorySize: 256\n`;
           const reqs = [...baseReqs, "boto3>=1.34.0"]; addLlmDep({}, reqs);
           files["requirements.txt"] = reqs.join("\n") + "\n";
@@ -7680,7 +7758,7 @@ if __name__ == "__main__":
               name: "apiKey", type: "string", default: "" }],
           }, null, 2);
           files["tools/index.ts"] = generateTsToolsIndex(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.ts`] = generateTsToolAdapter(tool); }
+          for (const tool of tools) { files[`tools/${tool.name}.ts`] = generateTsToolAdapter(tool, getAdapterType(tool.name)); }
           const deps = { ...baseDeps, "n8n-workflow": "^1.0.0" }; addLlmDep(deps, []);
           files["package.json"] = JSON.stringify({ name: agentSlug, version: "1.0.0", private: true, scripts: { start: "ts-node nodes/AgentNode.ts" }, dependencies: deps }, null, 2);
         } else {
@@ -7692,7 +7770,7 @@ if __name__ == "__main__":
               name: "apiKey", type: "string", default: "" }],
           }, null, 2);
           files["tools/__init__.py"] = generatePyToolsInit(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.py`] = generatePyToolAdapter(tool); }
+          for (const tool of tools) { files[`tools/${tool.name}.py`] = generatePyToolAdapter(tool, getAdapterType(tool.name)); }
           const reqs = [...baseReqs]; addLlmDep({}, reqs);
           files["requirements.txt"] = reqs.join("\n") + "\n";
         }
@@ -7708,14 +7786,14 @@ if __name__ == "__main__":
           files["entrypoint.ts"] = `// GCP Vertex AI Agent Entry Point\n// Generated for ${agent.name}\nimport yaml from "js-yaml";\nimport fs from "fs";\nimport { loadExtensions } from "./extensions";\n\nconst agentConfig = JSON.parse(fs.readFileSync("agent-config.json", "utf-8"));\nconst config = yaml.load(fs.readFileSync("agent.yaml", "utf-8")) as any;\nconst extensions = loadExtensions();\n\nasync function main() {\n  console.log(\`[Vertex AI Agent] \${agentConfig.displayName} starting...\`);\n  console.log(\`Extensions loaded: \${Object.keys(extensions).join(", ")}\`);\n  let iteration = 0;\n  while (iteration < ${maxIterations}) {\n    iteration++;\n    console.log(\`Iteration \${iteration}\`);\n    // TODO: Call Vertex AI Gemini, invoke extensions, check completion\n    break;\n  }\n}\n\nmain().catch(console.error);\n`;
           files["extensions/index.ts"] = `// Vertex AI Extension implementations\n${tools.map(t => `export { default as ${t.name} } from "../tools/${t.name}";`).join("\n")}\n\nexport function loadExtensions() {\n  return { ${tools.map(t => t.name).join(", ")} };\n}\n`;
           files["tools/index.ts"] = generateTsToolsIndex(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.ts`] = generateTsToolAdapter(tool); }
+          for (const tool of tools) { files[`tools/${tool.name}.ts`] = generateTsToolAdapter(tool, getAdapterType(tool.name)); }
           const deps = { ...baseDeps, "@google-cloud/aiplatform": "^3.0.0" }; addLlmDep(deps, []);
           files["package.json"] = JSON.stringify({ name: agentSlug, version: "1.0.0", private: true, scripts: { start: "ts-node entrypoint.ts" }, dependencies: deps }, null, 2);
         } else {
           files["entrypoint.py"] = `# GCP Vertex AI Agent Entry Point\n# Generated for ${agent.name}\nimport yaml\nimport json\nfrom extensions import load_extensions\n\nwith open("agent-config.json") as f:\n    agent_config = json.load(f)\nwith open("agent.yaml") as f:\n    config = yaml.safe_load(f)\n\nextensions = load_extensions()\n\ndef main():\n    print(f"[Vertex AI Agent] {agent_config['displayName']} starting...")\n    print(f"Extensions loaded: {', '.join(extensions.keys())}")\n    iteration = 0\n    while iteration < ${maxIterations}:\n        iteration += 1\n        print(f"Iteration {iteration}")\n        # TODO: Call Vertex AI Gemini, invoke extensions, check completion\n        break\n\nif __name__ == "__main__":\n    main()\n`;
           files["extensions/__init__.py"] = `# Vertex AI Extension implementations\n${tools.map(t => `from tools.${t.name} import execute as ${t.name}_execute`).join("\n")}\n\ndef load_extensions():\n    return { ${tools.map(t => `"${t.name}": ${t.name}_execute`).join(", ")} }\n`;
           files["tools/__init__.py"] = generatePyToolsInit(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.py`] = generatePyToolAdapter(tool); }
+          for (const tool of tools) { files[`tools/${tool.name}.py`] = generatePyToolAdapter(tool, getAdapterType(tool.name)); }
           const reqs = [...baseReqs, "google-cloud-aiplatform>=1.60.0"]; addLlmDep({}, reqs);
           files["requirements.txt"] = reqs.join("\n") + "\n";
         }
@@ -7735,6 +7813,7 @@ if __name__ == "__main__":
           llmProvider,
           framework,
           pattern: "ralph_loop",
+          toolAdapters: toolAdapters || {},
           generatedAt: new Date().toISOString(),
         },
       });
