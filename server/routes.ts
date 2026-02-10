@@ -205,6 +205,188 @@ export async function registerRoutes(
     res.json({ auditEvents: outcomeAudits, approvals: outcomeApprovals });
   });
 
+  app.get("/api/outcomes/:id/snapshots", async (req, res) => {
+    try {
+      const outcomeId = req.params.id;
+      const window = (req.query.window as string) || "30d";
+      const days = parseInt(window) || 30;
+      const kpis = await storage.getKpisByOutcome(outcomeId);
+      const outcomeEvents = (await storage.getOutcomeEvents()).filter(e => e.outcomeId === outcomeId);
+      const agents = (await storage.getAgents()).filter(a => a.outcomeId === outcomeId);
+      const now = Date.now();
+      const windowMs = days * 24 * 60 * 60 * 1000;
+
+      const snapshots: Array<{
+        date: string;
+        kpiValues: Array<{ kpiId: string; kpiName: string; value: number; confidence: number }>;
+        topAgents: Array<{ agentId: string; agentName: string; contribution: number }>;
+        eventCount: number;
+        billableCount: number;
+      }> = [];
+
+      for (let d = 0; d < days; d++) {
+        const dayTs = now - (days - 1 - d) * 24 * 60 * 60 * 1000;
+        const dayStr = new Date(dayTs).toISOString().split("T")[0];
+        const dayEvents = outcomeEvents.filter(e => {
+          if (!e.createdAt) return false;
+          const ts = new Date(e.createdAt).toISOString().split("T")[0];
+          return ts === dayStr;
+        });
+
+        snapshots.push({
+          date: dayStr,
+          kpiValues: kpis.map(k => ({
+            kpiId: k.id,
+            kpiName: k.name,
+            value: k.currentValue || 0,
+            confidence: k.confidence || 0,
+          })),
+          topAgents: agents.slice(0, 3).map(a => ({
+            agentId: a.id,
+            agentName: a.name,
+            contribution: a.successRate || 0,
+          })),
+          eventCount: dayEvents.length,
+          billableCount: dayEvents.filter(e => e.billable).length,
+        });
+      }
+
+      res.json({ snapshots, window, days });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to get snapshots" });
+    }
+  });
+
+  app.post("/api/outcomes/:id/versions", async (req, res) => {
+    try {
+      const outcomeId = req.params.id;
+      const outcome = await storage.getOutcome(outcomeId);
+      if (!outcome) return res.status(404).json({ message: "Outcome not found" });
+
+      const newVersion = (outcome.version || 1) + 1;
+      const changes = req.body.changes || {};
+      const reason = req.body.reason || "Version bump";
+
+      const updated = await storage.updateOutcome(outcomeId, {
+        ...changes,
+        version: newVersion,
+      });
+
+      await storage.createAuditEvent({
+        objectType: "outcome",
+        objectId: outcomeId,
+        action: "version_created",
+        actorId: req.body.actorId || "system",
+        details: JSON.stringify({
+          fromVersion: outcome.version,
+          toVersion: newVersion,
+          reason,
+          changes,
+        }),
+      });
+
+      res.status(201).json(updated);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to create version" });
+    }
+  });
+
+  app.get("/api/outcomes/:id/versions", async (req, res) => {
+    try {
+      const outcomeId = req.params.id;
+      const outcome = await storage.getOutcome(outcomeId);
+      if (!outcome) return res.status(404).json({ message: "Outcome not found" });
+
+      const auditEvents = await storage.getAuditEvents();
+      const versionEvents = auditEvents.filter(
+        e => e.objectId === outcomeId && (e.action === "version_created" || e.action === "outcome_updated" || e.action === "create_outcome")
+      ).sort((a, b) => new Date(b.timestamp || b.createdAt || "").getTime() - new Date(a.timestamp || a.createdAt || "").getTime());
+
+      const versions = versionEvents.map((evt) => {
+        let details: any = {};
+        try {
+          details = typeof evt.details === "string" ? JSON.parse(evt.details) : evt.details || {};
+        } catch { details = {}; }
+        return {
+          version: details.toVersion || details.version || outcome.version || 1,
+          changedAt: evt.timestamp || evt.createdAt || new Date().toISOString(),
+          changedBy: evt.actorId || "system",
+          summary: details.reason || evt.action.replace(/_/g, " "),
+          diff: details.changes || {},
+        };
+      });
+
+      if (versions.length === 0) {
+        versions.push({
+          version: outcome.version || 1,
+          changedAt: outcome.createdAt?.toString() || new Date().toISOString(),
+          changedBy: "system",
+          summary: "Initial contract creation",
+          diff: {},
+        });
+      }
+
+      res.json(versions);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to get versions" });
+    }
+  });
+
+  app.post("/api/exports/outcome/:id/audit", async (req, res) => {
+    try {
+      const outcomeId = req.params.id;
+      const outcome = await storage.getOutcome(outcomeId);
+      if (!outcome) return res.status(404).json({ message: "Outcome not found" });
+
+      const auditEvents = await storage.getAuditEvents();
+      const approvals = await storage.getApprovals();
+      const kpis = await storage.getKpisByOutcome(outcomeId);
+
+      const outcomeAudits = auditEvents.filter(e => e.objectId === outcomeId || e.objectType === "outcome");
+      const outcomeApprovals = approvals.filter(a => a.objectId === outcomeId);
+
+      const bundle = {
+        exportedAt: new Date().toISOString(),
+        outcome: {
+          id: outcome.id,
+          name: outcome.name,
+          version: outcome.version,
+          status: outcome.status,
+          riskTier: outcome.riskTier,
+        },
+        kpis: kpis.map(k => ({
+          id: k.id,
+          name: k.name,
+          target: k.target,
+          currentValue: k.currentValue,
+          confidence: k.confidence,
+          slaThreshold: k.slaThreshold,
+        })),
+        auditEvents: outcomeAudits.map(e => ({
+          id: e.id,
+          action: e.action,
+          actorId: e.actorId,
+          timestamp: e.createdAt,
+          details: e.details,
+        })),
+        approvals: outcomeApprovals.map(a => ({
+          id: a.id,
+          type: a.type,
+          status: a.status,
+          decidedBy: a.decidedBy,
+          decidedAt: a.decidedAt,
+          riskScore: a.riskScore,
+        })),
+        totalAuditEvents: outcomeAudits.length,
+        totalApprovals: outcomeApprovals.length,
+      };
+
+      res.json(bundle);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to export audit bundle" });
+    }
+  });
+
   app.post("/api/kpis", async (req, res) => {
     try {
       const data = insertKpiDefinitionSchema.parse(req.body);

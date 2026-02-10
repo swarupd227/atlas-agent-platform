@@ -39,6 +39,20 @@ import {
   Filter,
   Database,
   CircleDot,
+  Download,
+  RefreshCw,
+  Pencil,
+  ExternalLink,
+  Package,
+  Brain,
+  FileCode,
+  Settings,
+  Calendar,
+  ChevronDown,
+  Hash,
+  Users,
+  Gavel,
+  Search,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -57,11 +71,23 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { StatusBadge } from "@/components/status-badge";
 import { StatCard } from "@/components/stat-card";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { OutcomeContract, KpiDefinition, Approval, OutcomeEvent } from "@shared/schema";
+import type { OutcomeContract, KpiDefinition, Approval, OutcomeEvent, Agent } from "@shared/schema";
 
 function Sparkline({
   points,
@@ -149,8 +175,11 @@ export default function OutcomeDetail() {
   const outcomeId = params?.id;
   const { toast } = useToast();
   const [createKpiOpen, setCreateKpiOpen] = useState(false);
+  const [editContractOpen, setEditContractOpen] = useState(false);
+  const [editContractData, setEditContractData] = useState<Record<string, any>>({});
   const [editingKpiId, setEditingKpiId] = useState<string | null>(null);
   const [editKpiData, setEditKpiData] = useState<Record<string, any>>({});
+  const [evidenceWindow, setEvidenceWindow] = useState("7d");
   const [roiInputs, setRoiInputs] = useState({
     currentTimeMins: 30,
     volumePerMonth: 500,
@@ -230,13 +259,66 @@ export default function OutcomeDetail() {
     enabled: !!outcomeId,
   });
 
+  const { data: snapshots } = useQuery<{
+    snapshots: Array<{
+      date: string;
+      kpiValues: Array<{ kpiId: string; kpiName: string; value: number; confidence: number }>;
+      topAgents: Array<{ agentId: string; agentName: string; contribution: number }>;
+      eventCount: number;
+      billableCount: number;
+    }>;
+  }>({
+    queryKey: [`/api/outcomes/${outcomeId}/snapshots?window=${evidenceWindow}`],
+    enabled: !!outcomeId,
+  });
+
   const { data: allApprovals } = useQuery<Approval[]>({
     queryKey: ["/api/approvals"],
   });
 
-  const { data: allAgents } = useQuery<Array<{ id: string; outcomeId: string | null }>>({
+  const { data: allAgents } = useQuery<Agent[]>({
     queryKey: ["/api/agents"],
   });
+
+  const updateContractMutation = useMutation({
+    mutationFn: async (data: Record<string, any>) => {
+      const res = await apiRequest("PATCH", `/api/outcomes/${outcomeId}`, data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/outcomes", outcomeId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
+      setEditContractOpen(false);
+      toast({ title: "Contract updated" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to update contract", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const recomputeKpis = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/outcomes", outcomeId, "kpis"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/outcomes", outcomeId, "evidence"] });
+    queryClient.invalidateQueries({ predicate: (query) => (query.queryKey[0] as string)?.includes?.(`/api/outcomes/${outcomeId}/snapshots`) });
+    toast({ title: "KPIs recomputed", description: "Data refreshed from latest events." });
+  };
+
+  const exportAuditBundle = async () => {
+    try {
+      const res = await apiRequest("POST", `/api/exports/outcome/${outcomeId}/audit`);
+      const bundle = await res.json();
+      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `audit-bundle-${outcomeId?.slice(0, 8)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast({ title: "Audit bundle exported", description: `${bundle.totalAuditEvents} events, ${bundle.totalApprovals} approvals included.` });
+    } catch {
+      toast({ title: "Export failed", variant: "destructive" });
+    }
+  };
 
   const createKpiMutation = useMutation({
     mutationFn: async (data: Record<string, any>) => {
@@ -385,7 +467,7 @@ export default function OutcomeDetail() {
 
   return (
     <div className="flex flex-col gap-6 p-6" data-testid="page-outcome-detail">
-      <div className="flex items-center gap-3 flex-wrap">
+      <div className="flex items-start gap-3 flex-wrap">
         <Link href="/outcomes">
           <Button variant="ghost" size="icon" data-testid="button-back-outcomes">
             <ArrowLeft className="w-4 h-4" />
@@ -401,6 +483,120 @@ export default function OutcomeDetail() {
           {outcome.description && (
             <p className="text-sm text-muted-foreground">{outcome.description}</p>
           )}
+        </div>
+        <div className="flex items-center gap-2 flex-wrap shrink-0">
+          <Dialog open={editContractOpen} onOpenChange={(open) => {
+            setEditContractOpen(open);
+            if (open) {
+              setEditContractData({
+                name: outcome.name || "",
+                description: outcome.description || "",
+                riskTier: outcome.riskTier || "MEDIUM",
+                status: outcome.status || "active",
+                pricingModel: outcome.pricingModel || "PER_OUTCOME_EVENT",
+                pricePerUnit: outcome.pricePerUnit ?? 0,
+                currency: outcome.currency || "USD",
+                volumeCap: outcome.volumeCap ?? "",
+                riskThreshold: outcome.riskThreshold ?? 0.8,
+                maxDriftPercent: outcome.maxDriftPercent ?? 10,
+              });
+            }
+          }}>
+            <DialogTrigger asChild>
+              <Button variant="outline" data-testid="button-edit-contract">
+                <Pencil className="w-4 h-4 mr-1.5" /> Edit
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-lg">
+              <DialogHeader>
+                <DialogTitle>Edit Outcome Contract</DialogTitle>
+              </DialogHeader>
+              <form
+                className="flex flex-col gap-4"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  updateContractMutation.mutate({
+                    name: editContractData.name,
+                    description: editContractData.description,
+                    riskTier: editContractData.riskTier,
+                    status: editContractData.status,
+                    pricingModel: editContractData.pricingModel,
+                    pricePerUnit: parseFloat(editContractData.pricePerUnit) || 0,
+                    currency: editContractData.currency,
+                    volumeCap: editContractData.volumeCap ? parseInt(editContractData.volumeCap) : null,
+                    riskThreshold: parseFloat(editContractData.riskThreshold) || 0.8,
+                    maxDriftPercent: parseFloat(editContractData.maxDriftPercent) || 10,
+                  });
+                }}
+              >
+                <div className="flex flex-col gap-2">
+                  <Label>Name</Label>
+                  <Input value={editContractData.name || ""} onChange={(e) => setEditContractData({ ...editContractData, name: e.target.value })} data-testid="input-edit-name" />
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Label>Description</Label>
+                  <Textarea value={editContractData.description || ""} onChange={(e) => setEditContractData({ ...editContractData, description: e.target.value })} className="resize-none" data-testid="input-edit-description" />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="flex flex-col gap-2">
+                    <Label>Risk Tier</Label>
+                    <select value={editContractData.riskTier || "MEDIUM"} onChange={(e) => setEditContractData({ ...editContractData, riskTier: e.target.value })} className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm" data-testid="select-edit-risk-tier">
+                      <option value="LOW">Low</option>
+                      <option value="MEDIUM">Medium</option>
+                      <option value="HIGH">High</option>
+                    </select>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <Label>Status</Label>
+                    <select value={editContractData.status || "active"} onChange={(e) => setEditContractData({ ...editContractData, status: e.target.value })} className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm" data-testid="select-edit-status">
+                      <option value="active">Active</option>
+                      <option value="draft">Draft</option>
+                      <option value="paused">Paused</option>
+                      <option value="archived">Archived</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="flex flex-col gap-2">
+                    <Label>Price / Unit</Label>
+                    <Input type="number" step="0.01" value={editContractData.pricePerUnit ?? 0} onChange={(e) => setEditContractData({ ...editContractData, pricePerUnit: e.target.value })} data-testid="input-edit-price" />
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <Label>Currency</Label>
+                    <Input value={editContractData.currency || "USD"} onChange={(e) => setEditContractData({ ...editContractData, currency: e.target.value })} data-testid="input-edit-currency" />
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <Label>Volume Cap</Label>
+                    <Input type="number" value={editContractData.volumeCap ?? ""} onChange={(e) => setEditContractData({ ...editContractData, volumeCap: e.target.value })} placeholder="No cap" data-testid="input-edit-volume-cap" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="flex flex-col gap-2">
+                    <Label>Risk Threshold</Label>
+                    <Input type="number" step="0.01" min="0" max="1" value={editContractData.riskThreshold ?? 0.8} onChange={(e) => setEditContractData({ ...editContractData, riskThreshold: e.target.value })} data-testid="input-edit-risk-threshold" />
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <Label>Max Drift %</Label>
+                    <Input type="number" step="0.1" value={editContractData.maxDriftPercent ?? 10} onChange={(e) => setEditContractData({ ...editContractData, maxDriftPercent: e.target.value })} data-testid="input-edit-max-drift" />
+                  </div>
+                </div>
+                <Button type="submit" disabled={updateContractMutation.isPending} data-testid="button-submit-edit-contract">
+                  {updateContractMutation.isPending ? "Saving..." : "Save Changes"}
+                </Button>
+              </form>
+            </DialogContent>
+          </Dialog>
+          <Button variant="outline" onClick={recomputeKpis} data-testid="button-recompute-now">
+            <RefreshCw className="w-4 h-4 mr-1.5" /> Recompute
+          </Button>
+          <Link href={`/agents/wizard?outcomeId=${outcomeId}&outcomeName=${encodeURIComponent(outcome.name)}`}>
+            <Button variant="outline" data-testid="button-create-agent-from-outcome">
+              <Bot className="w-4 h-4 mr-1.5" /> Create Agent
+            </Button>
+          </Link>
+          <Button variant="outline" onClick={exportAuditBundle} data-testid="button-export-audit-bundle">
+            <Download className="w-4 h-4 mr-1.5" /> Export Audit
+          </Button>
         </div>
       </div>
 
@@ -730,12 +926,55 @@ export default function OutcomeDetail() {
                         </div>
                       </div>
 
-                      {kpi.expression && (
-                        <div className="rounded-md bg-muted/50 p-3" data-testid={`expression-preview-${kpi.id}`}>
-                          <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Expression</span>
-                          <pre className="mt-1 text-xs font-mono text-foreground overflow-x-auto">{kpi.expression}</pre>
-                        </div>
-                      )}
+                      {kpi.expression && (() => {
+                        const expr = kpi.expression || "";
+                        const fieldRefs = expr.match(/\b(status|type|amount|duration|count|value|score|rating|latency|time|cost)\b/gi) || [];
+                        const eventFields = ["status", "type", "value", "amount"];
+                        const missingFields = fieldRefs.filter(f => !eventFields.includes(f.toLowerCase()));
+                        const sampleValue = kpi.currentValue || 0;
+                        const dayRange = 7;
+                        const dailyAvg = kpi.target ? (sampleValue / dayRange).toFixed(2) : "N/A";
+
+                        return (
+                          <div className="flex flex-col gap-2">
+                            <div className="rounded-md bg-muted/50 p-3" data-testid={`expression-preview-${kpi.id}`}>
+                              <div className="flex items-center justify-between gap-2 mb-1">
+                                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Expression</span>
+                                <Badge variant="outline" className="text-[9px]">Formula</Badge>
+                              </div>
+                              <pre className="text-xs font-mono text-foreground overflow-x-auto">{expr}</pre>
+                            </div>
+                            <div className="rounded-md bg-primary/5 border border-primary/10 p-3" data-testid={`formula-preview-${kpi.id}`}>
+                              <div className="flex items-center gap-2 mb-2">
+                                <Brain className="w-3.5 h-3.5 text-primary" />
+                                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Sample Computation (Last 7 Days)</span>
+                              </div>
+                              <div className="grid grid-cols-3 gap-3 text-xs">
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="text-muted-foreground">Current Value</span>
+                                  <span className="font-semibold">{sampleValue} {kpi.unit}</span>
+                                </div>
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="text-muted-foreground">Daily Average</span>
+                                  <span className="font-semibold">{dailyAvg} {kpi.unit}/day</span>
+                                </div>
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="text-muted-foreground">Projected (30d)</span>
+                                  <span className="font-semibold">{kpi.target ? (parseFloat(dailyAvg as string) * 30).toFixed(1) : "N/A"} {kpi.unit}</span>
+                                </div>
+                              </div>
+                            </div>
+                            {missingFields.length > 0 && (
+                              <div className="flex items-center gap-2 p-2 rounded-md bg-amber-500/10 border border-amber-500/20" data-testid={`validation-warning-${kpi.id}`}>
+                                <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                                <span className="text-[11px] text-amber-700 dark:text-amber-300">
+                                  Expression references fields that may not exist in outcome events: <span className="font-mono font-semibold">{missingFields.join(", ")}</span>
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   </CardContent>
                 </Card>
@@ -884,9 +1123,25 @@ export default function OutcomeDetail() {
 
         {/* Tab 2: Evidence */}
         <TabsContent value="evidence" className="space-y-6">
-          <div>
-            <h2 className="text-lg font-semibold">Evidence</h2>
-            <p className="text-sm text-muted-foreground">KPI trends, correlated metrics, and data quality signals</p>
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div>
+              <h2 className="text-lg font-semibold">Evidence</h2>
+              <p className="text-sm text-muted-foreground">KPI trends, correlated metrics, and data quality signals</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">Window:</span>
+              <Select value={evidenceWindow} onValueChange={setEvidenceWindow}>
+                <SelectTrigger className="w-24" data-testid="select-evidence-window">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="7d">7 days</SelectItem>
+                  <SelectItem value="14d">14 days</SelectItem>
+                  <SelectItem value="30d">30 days</SelectItem>
+                  <SelectItem value="90d">90 days</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
           {!evidence ? (
@@ -919,7 +1174,7 @@ export default function OutcomeDetail() {
                                   {trendDir === "up" && <TrendingUp className="w-3 h-3 text-emerald-500" />}
                                   {trendDir === "down" && <TrendingDown className="w-3 h-3 text-red-500" />}
                                   {trendDir === "stable" && <Minus className="w-3 h-3 text-muted-foreground" />}
-                                  <span className="text-[10px] text-muted-foreground">7-day trend</span>
+                                  <span className="text-[10px] text-muted-foreground">{evidenceWindow} trend</span>
                                 </div>
                               </div>
                               <Sparkline
@@ -936,6 +1191,83 @@ export default function OutcomeDetail() {
                   </div>
                 </div>
               )}
+
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold">Evidence Table</h3>
+                <Card>
+                  <CardContent className="p-0">
+                    {snapshots?.snapshots && snapshots.snapshots.length > 0 ? (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b">
+                              <th className="text-left px-4 py-2 text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Date</th>
+                              {snapshots.snapshots[0]?.kpiValues.map((kv) => (
+                                <th key={kv.kpiId} className="text-left px-4 py-2 text-[10px] text-muted-foreground uppercase tracking-wider font-medium">{kv.kpiName}</th>
+                              ))}
+                              <th className="text-left px-4 py-2 text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Confidence</th>
+                              <th className="text-left px-4 py-2 text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Top Agents</th>
+                              <th className="text-left px-4 py-2 text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Events</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {snapshots.snapshots.slice(-14).reverse().map((snap, i) => (
+                              <tr key={snap.date} className="border-b last:border-0 hover-elevate" data-testid={`row-evidence-${snap.date}`}>
+                                <td className="px-4 py-2 text-xs font-medium whitespace-nowrap">
+                                  <button
+                                    className="text-primary underline-offset-2 hover:underline"
+                                    onClick={() => {
+                                      toast({
+                                        title: `Events on ${snap.date}`,
+                                        description: `${snap.eventCount} events (${snap.billableCount} billable)`,
+                                      });
+                                    }}
+                                    data-testid={`button-drilldown-${snap.date}`}
+                                  >
+                                    {snap.date}
+                                  </button>
+                                </td>
+                                {snap.kpiValues.map((kv) => (
+                                  <td key={kv.kpiId} className="px-4 py-2 text-xs font-medium">{kv.value}</td>
+                                ))}
+                                <td className="px-4 py-2">
+                                  {snap.kpiValues.length > 0 && (
+                                    <Badge variant="outline" className={`text-[9px] ${
+                                      (snap.kpiValues[0].confidence || 0) >= 0.8 ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                                      : (snap.kpiValues[0].confidence || 0) >= 0.5 ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20"
+                                      : "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20"
+                                    }`}>
+                                      {((snap.kpiValues[0].confidence || 0) * 100).toFixed(0)}%
+                                    </Badge>
+                                  )}
+                                </td>
+                                <td className="px-4 py-2">
+                                  <div className="flex items-center gap-1 flex-wrap">
+                                    {snap.topAgents.slice(0, 2).map((a) => (
+                                      <Badge key={a.agentId} variant="outline" className="text-[9px]">
+                                        {a.agentName.length > 12 ? a.agentName.slice(0, 12) + "..." : a.agentName}
+                                      </Badge>
+                                    ))}
+                                    {snap.topAgents.length > 2 && (
+                                      <span className="text-[10px] text-muted-foreground">+{snap.topAgents.length - 2}</span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="px-4 py-2 text-xs">{snap.eventCount}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center justify-center py-8 gap-2">
+                        <BarChart3 className="w-8 h-8 text-muted-foreground/50" />
+                        <p className="text-sm text-muted-foreground">No snapshot data available for this window</p>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
 
               <div className="space-y-3">
                 <h3 className="text-sm font-semibold">Correlated Metrics</h3>
@@ -975,7 +1307,7 @@ export default function OutcomeDetail() {
 
               {evidence.correlatedMetrics.latencyTrend.length > 0 && (
                 <div className="space-y-3">
-                  <h3 className="text-sm font-semibold">Latency Trend (7-day)</h3>
+                  <h3 className="text-sm font-semibold">Latency Trend ({evidenceWindow})</h3>
                   <Card data-testid="card-latency-trend">
                     <CardContent className="p-4 flex items-center gap-4">
                       <Sparkline
@@ -1071,14 +1403,30 @@ export default function OutcomeDetail() {
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-medium flex items-center gap-2">
-                  <DollarSign className="w-4 h-4 text-primary" /> Pricing Model
+                  <DollarSign className="w-4 h-4 text-primary" /> Billing Model
                 </CardTitle>
               </CardHeader>
               <CardContent className="p-4 pt-0">
                 <div className="flex flex-col gap-3">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-sm text-muted-foreground">Model</span>
-                    <span className="text-sm font-semibold" data-testid="text-pricing-model">{outcome.pricingModel?.replace(/_/g, " ")}</span>
+                    <Select
+                      value={outcome.pricingModel || "PER_OUTCOME_EVENT"}
+                      onValueChange={(val) => {
+                        updateContractMutation.mutate({ pricingModel: val });
+                      }}
+                    >
+                      <SelectTrigger className="w-[180px]" data-testid="select-billing-model">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="PER_OUTCOME_EVENT">Per Outcome Event</SelectItem>
+                        <SelectItem value="TIERED">Tiered</SelectItem>
+                        <SelectItem value="FLAT_MONTHLY">Flat Monthly</SelectItem>
+                        <SelectItem value="SUCCESS_FEE">Success Fee</SelectItem>
+                        <SelectItem value="HYBRID">Hybrid</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-sm text-muted-foreground">Base Price</span>
@@ -1157,6 +1505,104 @@ export default function OutcomeDetail() {
               </div>
             </CardContent>
           </Card>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Card data-testid="card-metering-exclusions">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                  <XCircle className="w-4 h-4 text-primary" /> Metering Exclusions
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-4 pt-0">
+                <div className="flex flex-col gap-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex flex-col">
+                      <span className="text-sm font-medium">Test Events</span>
+                      <span className="text-xs text-muted-foreground">Exclude events from test/staging environments</span>
+                    </div>
+                    <Badge variant="outline" className="text-[10px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">Active</Badge>
+                  </div>
+                  <Separator />
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex flex-col">
+                      <span className="text-sm font-medium">Escalated Events</span>
+                      <span className="text-xs text-muted-foreground">Exclude events that required human intervention</span>
+                    </div>
+                    <Badge variant="outline" className={`text-[10px] ${attribution.excludeEscalated
+                      ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                      : "bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/20"
+                    }`}>{attribution.excludeEscalated ? "Active" : "Inactive"}</Badge>
+                  </div>
+                  <Separator />
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex flex-col">
+                      <span className="text-sm font-medium">Low Confidence</span>
+                      <span className="text-xs text-muted-foreground">Exclude events below confidence threshold</span>
+                    </div>
+                    <Badge variant="outline" className="text-[10px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">{"<"}0.5 excluded</Badge>
+                  </div>
+                  <Separator />
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex flex-col">
+                      <span className="text-sm font-medium">Duplicate Window</span>
+                      <span className="text-xs text-muted-foreground">Same-source events within window</span>
+                    </div>
+                    <Badge variant="outline" className="text-[10px]">60s</Badge>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card data-testid="card-dispute-rules">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                  <Gavel className="w-4 h-4 text-primary" /> Dispute Rules
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-4 pt-0">
+                <div className="flex flex-col gap-3">
+                  <div>
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Acceptable Evidence Types</span>
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      <Badge variant="outline" className="text-[9px]">Trace Logs</Badge>
+                      <Badge variant="outline" className="text-[9px]">KPI Snapshots</Badge>
+                      <Badge variant="outline" className="text-[9px]">Agent Run Records</Badge>
+                      <Badge variant="outline" className="text-[9px]">Event Payloads</Badge>
+                      <Badge variant="outline" className="text-[9px]">Audit Trail</Badge>
+                    </div>
+                  </div>
+                  <Separator />
+                  <div className="flex flex-col gap-2">
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Lookback Windows</span>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm text-muted-foreground">Standard Dispute</span>
+                      <span className="text-sm font-semibold">30 days</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm text-muted-foreground">Extended Dispute</span>
+                      <span className="text-sm font-semibold">90 days</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm text-muted-foreground">Fraud Investigation</span>
+                      <span className="text-sm font-semibold">180 days</span>
+                    </div>
+                  </div>
+                  <Separator />
+                  <div className="flex flex-col gap-2">
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Resolution SLA</span>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm text-muted-foreground">Acknowledgement</span>
+                      <span className="text-sm font-semibold">24 hours</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm text-muted-foreground">Resolution</span>
+                      <span className="text-sm font-semibold">7 business days</span>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
 
           <Card data-testid="card-roi-calculator">
             <CardHeader className="pb-2">
@@ -1417,6 +1863,80 @@ export default function OutcomeDetail() {
           </div>
 
           <div className="space-y-3">
+            <h3 className="text-sm font-semibold">Risk Sub-Factors</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <Card data-testid="card-risk-impact">
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="w-8 h-8 rounded-md bg-red-500/15 flex items-center justify-center">
+                      <AlertTriangle className="w-4 h-4 text-red-500" />
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="text-xs font-semibold">Business Impact</span>
+                      <span className="text-[10px] text-muted-foreground">Revenue & customer effect</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 mt-2">
+                    <Progress value={outcome.riskTier === "CRITICAL" ? 90 : outcome.riskTier === "HIGH" ? 70 : outcome.riskTier === "MEDIUM" ? 45 : 20} className="h-1.5 flex-1" />
+                    <span className="text-xs font-semibold">{outcome.riskTier === "CRITICAL" ? "9/10" : outcome.riskTier === "HIGH" ? "7/10" : outcome.riskTier === "MEDIUM" ? "5/10" : "2/10"}</span>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card data-testid="card-risk-autonomy">
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="w-8 h-8 rounded-md bg-amber-500/15 flex items-center justify-center">
+                      <Brain className="w-4 h-4 text-amber-500" />
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="text-xs font-semibold">Autonomy Scope</span>
+                      <span className="text-[10px] text-muted-foreground">Decision authority level</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 mt-2">
+                    <Progress value={boundAgents.length > 3 ? 80 : boundAgents.length > 1 ? 55 : 30} className="h-1.5 flex-1" />
+                    <span className="text-xs font-semibold">{boundAgents.length > 3 ? "8/10" : boundAgents.length > 1 ? "6/10" : "3/10"}</span>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card data-testid="card-risk-data-class">
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="w-8 h-8 rounded-md bg-blue-500/15 flex items-center justify-center">
+                      <Database className="w-4 h-4 text-blue-500" />
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="text-xs font-semibold">Data Classification</span>
+                      <span className="text-[10px] text-muted-foreground">Sensitivity & compliance</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 mt-2">
+                    <Progress value={outcome.riskTier === "CRITICAL" ? 85 : outcome.riskTier === "HIGH" ? 60 : 35} className="h-1.5 flex-1" />
+                    <span className="text-xs font-semibold">{outcome.riskTier === "CRITICAL" ? "9/10" : outcome.riskTier === "HIGH" ? "6/10" : "4/10"}</span>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card data-testid="card-risk-write-actions">
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="w-8 h-8 rounded-md bg-purple-500/15 flex items-center justify-center">
+                      <Pencil className="w-4 h-4 text-purple-500" />
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="text-xs font-semibold">Write Actions</span>
+                      <span className="text-[10px] text-muted-foreground">Mutation & side effects</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 mt-2">
+                    <Progress value={outcome.riskTier === "CRITICAL" ? 95 : outcome.riskTier === "HIGH" ? 65 : 40} className="h-1.5 flex-1" />
+                    <span className="text-xs font-semibold">{outcome.riskTier === "CRITICAL" ? "10/10" : outcome.riskTier === "HIGH" ? "7/10" : "4/10"}</span>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+
+          <div className="space-y-3">
             <h3 className="text-sm font-semibold">Change Impact</h3>
             {pendingApprovals.length === 0 ? (
               <Card>
@@ -1453,13 +1973,13 @@ export default function OutcomeDetail() {
           </div>
 
           <div className="space-y-3">
-            <h3 className="text-sm font-semibold">Required Approvals</h3>
+            <h3 className="text-sm font-semibold">Required Expert Validations</h3>
             <Card>
               <CardContent className="p-4">
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center gap-2 mb-1">
                     <StatusBadge status={outcome.riskTier} />
-                    <span className="text-xs text-muted-foreground">tier determines approval requirements</span>
+                    <span className="text-xs text-muted-foreground">Risk tier governs which changes require expert validation before execution</span>
                   </div>
                   {requiredApprovalRules.map((rule, i) => (
                     <div key={i} className="flex items-center gap-2 py-1" data-testid={`text-approval-rule-${i}`}>
@@ -1573,15 +2093,63 @@ function AuditTab({
     return <FileText className="w-4 h-4 text-muted-foreground" />;
   };
 
+  const { data: versions } = useQuery<Array<{
+    version: number;
+    changedAt: string;
+    changedBy: string;
+    summary: string;
+    diff: Record<string, { from: any; to: any }>;
+  }>>({
+    queryKey: ["/api/outcomes", outcomeId, "versions"],
+  });
+
   return (
     <>
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
           <h2 className="text-lg font-semibold">Audit Trail</h2>
-          <p className="text-sm text-muted-foreground">Timeline of changes and approval decisions</p>
+          <p className="text-sm text-muted-foreground">Contract versions, changes, and approval decisions</p>
         </div>
         <Badge variant="outline" className="text-[10px]" data-testid="badge-version">v{outcome.version}</Badge>
       </div>
+
+      {versions && versions.length > 0 && (
+        <div className="space-y-3">
+          <h3 className="text-sm font-semibold">Contract Version History</h3>
+          <Card>
+            <CardContent className="p-0">
+              <div className="divide-y">
+                {versions.map((ver, i) => (
+                  <div key={ver.version} className="flex items-center justify-between gap-3 px-4 py-3" data-testid={`row-version-${ver.version}`}>
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="flex flex-col items-center">
+                        <div className={`w-3 h-3 rounded-full ${i === 0 ? "bg-primary" : "bg-muted-foreground/30"}`} />
+                        {i < versions.length - 1 && <div className="w-0.5 h-4 bg-muted-foreground/20" />}
+                      </div>
+                      <div className="flex flex-col min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-semibold">v{ver.version}</span>
+                          {i === 0 && <Badge variant="outline" className="text-[9px] bg-primary/15 text-primary border-primary/20">Current</Badge>}
+                        </div>
+                        <span className="text-xs text-muted-foreground truncate">{ver.summary}</span>
+                        <span className="text-[10px] text-muted-foreground">by {ver.changedBy}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {Object.keys(ver.diff || {}).length > 0 && (
+                        <Badge variant="outline" className="text-[9px]">{Object.keys(ver.diff).length} fields</Badge>
+                      )}
+                      <span className="text-xs text-muted-foreground whitespace-nowrap">{relativeTime(ver.changedAt)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      <Separator />
 
       <div className="flex items-center gap-2 flex-wrap">
         <Button
@@ -1636,6 +2204,11 @@ function AuditTab({
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
+                    {entry.kind === "approval" && entry.status === "approved" && (
+                      <Badge variant="outline" className="text-[9px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" data-testid={`badge-signed-${entry.id}`}>
+                        <CheckCircle className="w-3 h-3 mr-0.5" /> Signed
+                      </Badge>
+                    )}
                     {entry.status && <StatusBadge status={entry.status} />}
                     {entry.riskScore != null && entry.riskScore > 0 && (
                       <Badge variant="outline" className="text-[10px]">Risk: {(entry.riskScore * 100).toFixed(0)}%</Badge>
