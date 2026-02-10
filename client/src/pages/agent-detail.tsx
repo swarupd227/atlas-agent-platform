@@ -60,6 +60,13 @@ import {
   Boxes,
   KeyRound,
   Copy,
+  Radio,
+  Scan,
+  Hammer,
+  FlaskRound,
+  CheckCircle2,
+  Loader2,
+  XOctagon,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -170,9 +177,15 @@ export default function AgentDetail() {
   const [exportFramework, setExportFramework] = useState<string>("generic");
   const [exportPreview, setExportPreview] = useState<{ files: Record<string, string>; metadata: any } | null>(null);
   const [exportPreviewFile, setExportPreviewFile] = useState<string>("");
-  const [exportStep, setExportStep] = useState<"select" | "configure" | "tools" | "dependencies" | "envvars" | "preview">("select");
+  const [exportStep, setExportStep] = useState<"select" | "configure" | "tools" | "dependencies" | "envvars" | "observability" | "buildtest" | "preview">("select");
   const [toolAdapterOverrides, setToolAdapterOverrides] = useState<Record<string, "builtin" | "customer" | "stub">>({});
   const [pinVersions, setPinVersions] = useState(true);
+  const [otelEnabled, setOtelEnabled] = useState(true);
+  const [spanGranularity, setSpanGranularity] = useState<"per-node" | "per-tool-call">("per-node");
+  const [compileStatus, setCompileStatus] = useState<"idle" | "running" | "passed" | "failed">("idle");
+  const [compileOutput, setCompileOutput] = useState<string>("");
+  const [evalStatus, setEvalStatus] = useState<"idle" | "running" | "passed" | "failed">("idle");
+  const [evalOutput, setEvalOutput] = useState<string>("");
 
   const { data: deprecationSignals, isLoading: deprecationLoading, isError: deprecationError } = useQuery<{
     riskScore: number;
@@ -283,7 +296,7 @@ export default function AgentDetail() {
   });
 
   const exportCodeMutation = useMutation({
-    mutationFn: async (params: { format: string; llmProvider: string; maxIterations: number; completionPromise: string; framework?: string; toolAdapters?: Record<string, string>; pinVersions?: boolean }) => {
+    mutationFn: async (params: { format: string; llmProvider: string; maxIterations: number; completionPromise: string; framework?: string; toolAdapters?: Record<string, string>; pinVersions?: boolean; otelEnabled?: boolean; spanGranularity?: string }) => {
       const res = await apiRequest("POST", `/api/agents/${agentId}/export-code`, params);
       return res.json();
     },
@@ -2720,7 +2733,7 @@ export default function AgentDetail() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={exportDialogOpen} onOpenChange={(open) => { setExportDialogOpen(open); if (!open) { setExportStep("select"); setExportPreview(null); setToolAdapterOverrides({}); } }}>
+      <Dialog open={exportDialogOpen} onOpenChange={(open) => { setExportDialogOpen(open); if (!open) { setExportStep("select"); setExportPreview(null); setToolAdapterOverrides({}); setOtelEnabled(true); setSpanGranularity("per-node"); setCompileStatus("idle"); setCompileOutput(""); setEvalStatus("idle"); setEvalOutput(""); } }}>
         <DialogContent className="max-w-3xl max-h-[85vh] overflow-hidden flex flex-col">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -2734,6 +2747,10 @@ export default function AgentDetail() {
                 <><Layers className="w-4 h-4" /> Dependencies &amp; Reproducibility</>
               ) : exportStep === "envvars" ? (
                 <><KeyRound className="w-4 h-4" /> Environment Variables &amp; Secrets</>
+              ) : exportStep === "observability" ? (
+                <><Radio className="w-4 h-4" /> Observability &amp; Trace Settings</>
+              ) : exportStep === "buildtest" ? (
+                <><Hammer className="w-4 h-4" /> Build &amp; Test Gate</>
               ) : (
                 <><FileCode className="w-4 h-4" /> Preview Source Files</>
               )}
@@ -2749,7 +2766,11 @@ export default function AgentDetail() {
                       ? "Review what will be installed and ensure reproducible builds."
                       : exportStep === "envvars"
                         ? "Review the environment variables your deployed agent will need at runtime."
-                        : "Review the generated source files before downloading."}
+                        : exportStep === "observability"
+                          ? "Preserve the ALMP flight recorder by configuring OpenTelemetry trace settings."
+                          : exportStep === "buildtest"
+                            ? "Validate the generated export before finalizing — compile check and eval suite."
+                            : "Review the generated source files before downloading."}
             </DialogDescription>
           </DialogHeader>
 
@@ -2763,11 +2784,15 @@ export default function AgentDetail() {
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                 <span className="text-[11px] text-muted-foreground/40">Configure</span>
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Tool Adapters</span>
+                <span className="text-[11px] text-muted-foreground/40">Tools</span>
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Dependencies</span>
+                <span className="text-[11px] text-muted-foreground/40">Deps</span>
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Env Vars</span>
+                <span className="text-[11px] text-muted-foreground/40">Env</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Traces</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Gate</span>
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                 <span className="text-[11px] text-muted-foreground/40">Preview</span>
               </div>
@@ -2923,11 +2948,15 @@ export default function AgentDetail() {
                   <span className="font-medium">Configure</span>
                 </div>
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Tool Adapters</span>
+                <span className="text-[11px] text-muted-foreground/40">Tools</span>
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Dependencies</span>
+                <span className="text-[11px] text-muted-foreground/40">Deps</span>
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Env Vars</span>
+                <span className="text-[11px] text-muted-foreground/40">Env</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Traces</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Gate</span>
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                 <span className="text-[11px] text-muted-foreground/40">Preview</span>
               </div>
@@ -3088,12 +3117,16 @@ export default function AgentDetail() {
                   <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                   <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                     <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">3</span>
-                    <span className="font-medium">Tool Adapters</span>
+                    <span className="font-medium">Tools</span>
                   </div>
                   <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Dependencies</span>
+                  <span className="text-[11px] text-muted-foreground/40">Deps</span>
                   <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Env Vars</span>
+                  <span className="text-[11px] text-muted-foreground/40">Env</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  <span className="text-[11px] text-muted-foreground/40">Traces</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  <span className="text-[11px] text-muted-foreground/40">Gate</span>
                   <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                   <span className="text-[11px] text-muted-foreground/40">Preview</span>
                 </div>
@@ -3314,14 +3347,18 @@ export default function AgentDetail() {
                   <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                   <span className="text-[11px] text-muted-foreground/40">Configure</span>
                   <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Tool Adapters</span>
+                  <span className="text-[11px] text-muted-foreground/40">Tools</span>
                   <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                   <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                     <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">4</span>
-                    <span className="font-medium">Dependencies</span>
+                    <span className="font-medium">Deps</span>
                   </div>
                   <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Env Vars</span>
+                  <span className="text-[11px] text-muted-foreground/40">Env</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  <span className="text-[11px] text-muted-foreground/40">Traces</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  <span className="text-[11px] text-muted-foreground/40">Gate</span>
                   <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                   <span className="text-[11px] text-muted-foreground/40">Preview</span>
                 </div>
@@ -3446,6 +3483,11 @@ export default function AgentDetail() {
               envVars.push({ key: "DATABASE_URL", description: "Database connection string for persistence", category: "infra", required: false, example: "postgresql://user:pass@host:5432/db" });
             }
 
+            if (otelEnabled) {
+              envVars.push({ key: "OTEL_EXPORTER_OTLP_ENDPOINT", description: "OpenTelemetry collector endpoint for trace export", category: "infra", required: false, example: "http://localhost:4318" });
+              envVars.push({ key: "OTEL_SERVICE_NAME", description: "Service name reported in trace spans", category: "infra", required: false, example: (agent?.name || "agent").toLowerCase().replace(/[^a-z0-9]+/g, "-") });
+            }
+
             const envExampleContent = envVars.map(v => {
               const commentLine = `# ${v.description}${v.required ? " (REQUIRED)" : ""}`;
               return `${commentLine}\n${v.key}=`;
@@ -3467,14 +3509,18 @@ export default function AgentDetail() {
                   <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                   <span className="text-[11px] text-muted-foreground/40">Configure</span>
                   <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Tool Adapters</span>
+                  <span className="text-[11px] text-muted-foreground/40">Tools</span>
                   <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Dependencies</span>
+                  <span className="text-[11px] text-muted-foreground/40">Deps</span>
                   <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                   <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                     <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">5</span>
-                    <span className="font-medium">Env Vars</span>
+                    <span className="font-medium">Env</span>
                   </div>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  <span className="text-[11px] text-muted-foreground/40">Traces</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  <span className="text-[11px] text-muted-foreground/40">Gate</span>
                   <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                   <span className="text-[11px] text-muted-foreground/40">Preview</span>
                 </div>
@@ -3576,6 +3622,318 @@ export default function AgentDetail() {
             );
           })()}
 
+          {exportStep === "observability" && (
+            <div className="flex flex-col gap-4 py-2 flex-1 min-h-0 overflow-auto" data-testid="step-observability">
+              <div className="flex items-center gap-2 mb-1 flex-wrap">
+                <span className="text-[11px] text-muted-foreground/40">Export Type</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Configure</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Tools</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Deps</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Env</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">6</span>
+                  <span className="font-medium">Traces</span>
+                </div>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Gate</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Preview</span>
+              </div>
+
+              <Card>
+                <CardContent className="p-4 flex flex-col gap-4">
+                  <div className="flex items-center justify-between gap-4 flex-wrap">
+                    <div className="flex flex-col gap-0.5">
+                      <div className="flex items-center gap-2">
+                        <Radio className="w-4 h-4 text-primary" />
+                        <span className="text-sm font-medium">OpenTelemetry-Compatible Traces</span>
+                      </div>
+                      <span className="text-[11px] text-muted-foreground ml-6">
+                        Emit trace data using the OpenTelemetry SDK so you can pipe spans to Jaeger, Datadog, Honeycomb, or any OTLP-compatible backend.
+                      </span>
+                    </div>
+                    <Switch
+                      checked={otelEnabled}
+                      onCheckedChange={setOtelEnabled}
+                      data-testid="switch-otel-enabled"
+                    />
+                  </div>
+
+                  {otelEnabled && (
+                    <div className="flex flex-col gap-3 pl-6 border-l-2 border-primary/20">
+                      <div className="flex flex-col gap-1.5">
+                        <Label className="text-xs font-medium">Span Granularity</Label>
+                        <span className="text-[11px] text-muted-foreground">
+                          Controls how much detail each trace captures. Higher granularity means more spans per trace.
+                        </span>
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        <div
+                          className={`flex items-start gap-3 p-3 rounded-md border cursor-pointer hover-elevate ${spanGranularity === "per-node" ? "border-primary bg-primary/5" : ""}`}
+                          onClick={() => setSpanGranularity("per-node")}
+                          data-testid="option-granularity-per-node"
+                        >
+                          <div className={`flex items-center justify-center w-4 h-4 rounded-full border-2 mt-0.5 shrink-0 ${spanGranularity === "per-node" ? "border-primary bg-primary" : "border-muted-foreground/40"}`}>
+                            {spanGranularity === "per-node" && <div className="w-1.5 h-1.5 rounded-full bg-primary-foreground" />}
+                          </div>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-xs font-medium">Per Node</span>
+                            <span className="text-[11px] text-muted-foreground">
+                              One span per workflow node (decision, action, tool-group). Balances visibility with low overhead.
+                            </span>
+                          </div>
+                        </div>
+                        <div
+                          className={`flex items-start gap-3 p-3 rounded-md border cursor-pointer hover-elevate ${spanGranularity === "per-tool-call" ? "border-primary bg-primary/5" : ""}`}
+                          onClick={() => setSpanGranularity("per-tool-call")}
+                          data-testid="option-granularity-per-tool-call"
+                        >
+                          <div className={`flex items-center justify-center w-4 h-4 rounded-full border-2 mt-0.5 shrink-0 ${spanGranularity === "per-tool-call" ? "border-primary bg-primary" : "border-muted-foreground/40"}`}>
+                            {spanGranularity === "per-tool-call" && <div className="w-1.5 h-1.5 rounded-full bg-primary-foreground" />}
+                          </div>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-xs font-medium">Per Tool Call</span>
+                            <span className="text-[11px] text-muted-foreground">
+                              One span per individual tool invocation inside each node. Maximum detail for debugging tool-level latency and errors.
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="p-4 flex flex-col gap-3">
+                  <div className="flex items-center gap-2">
+                    <Scan className="w-4 h-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">Span Mapping Preview</span>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-start gap-3 py-2 border-b">
+                      <Badge variant="outline" className="text-[9px] shrink-0">root</Badge>
+                      <div className="flex flex-col gap-0.5 min-w-0">
+                        <code className="text-[11px] font-mono font-medium">agent.run</code>
+                        <span className="text-[10px] text-muted-foreground">Root span wrapping the entire Ralph Loop execution</span>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3 py-2 border-b">
+                      <Badge variant="outline" className="text-[9px] shrink-0">node</Badge>
+                      <div className="flex flex-col gap-0.5 min-w-0">
+                        <code className="text-[11px] font-mono font-medium">agent.iteration.{"{n}"}</code>
+                        <span className="text-[10px] text-muted-foreground">One child span per loop iteration — covers LLM call + tool execution</span>
+                      </div>
+                    </div>
+                    {otelEnabled && spanGranularity === "per-tool-call" && (
+                      <div className="flex items-start gap-3 py-2 border-b">
+                        <Badge variant="outline" className="text-[9px] shrink-0">tool</Badge>
+                        <div className="flex flex-col gap-0.5 min-w-0">
+                          <code className="text-[11px] font-mono font-medium">tool.invoke.{"{toolName}"}</code>
+                          <span className="text-[10px] text-muted-foreground">Nested span for each tool call with input/output attributes</span>
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex items-start gap-3 py-2">
+                      <Badge variant="outline" className="text-[9px] shrink-0">llm</Badge>
+                      <div className="flex flex-col gap-0.5 min-w-0">
+                        <code className="text-[11px] font-mono font-medium">llm.chat.completion</code>
+                        <span className="text-[10px] text-muted-foreground">LLM inference call with model, token count, and latency attributes</span>
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {otelEnabled && (
+                <div className="flex items-start gap-2 p-3 rounded-md bg-blue-500/5 border border-blue-500/20" data-testid="notice-otel-env">
+                  <Radio className="w-4 h-4 text-blue-500 mt-0.5 shrink-0" />
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-xs font-medium">OTEL Endpoint Required</span>
+                    <span className="text-[11px] text-muted-foreground">
+                      Set <code className="font-mono text-[10px] bg-muted px-1 rounded">OTEL_EXPORTER_OTLP_ENDPOINT</code> at runtime to point at your collector (e.g. <code className="font-mono text-[10px] bg-muted px-1 rounded">http://localhost:4318</code>). This variable was added to your Env Vars step automatically.
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {!otelEnabled && (
+                <div className="flex items-start gap-2 p-3 rounded-md bg-muted/30 border border-dashed" data-testid="notice-otel-disabled">
+                  <AlertCircle className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-xs font-medium">Traces Disabled</span>
+                    <span className="text-[11px] text-muted-foreground">
+                      The exported code will not include OpenTelemetry instrumentation. You can enable it later by adding the SDK manually.
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {exportStep === "buildtest" && (
+            <div className="flex flex-col gap-4 py-2 flex-1 min-h-0 overflow-auto" data-testid="step-buildtest">
+              <div className="flex items-center gap-2 mb-1 flex-wrap">
+                <span className="text-[11px] text-muted-foreground/40">Export Type</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Configure</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Tools</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Deps</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Env</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Traces</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">7</span>
+                  <span className="font-medium">Gate</span>
+                </div>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Preview</span>
+              </div>
+
+              <div className="flex items-center gap-3 flex-wrap">
+                <Badge variant="outline" className="text-[10px]" data-testid="badge-gate-compile">
+                  <Hammer className="w-3 h-3 mr-1" />
+                  Compile: {compileStatus === "idle" ? "Not run" : compileStatus === "running" ? "Running..." : compileStatus === "passed" ? "Passed" : "Failed"}
+                </Badge>
+                <Badge variant="outline" className="text-[10px]" data-testid="badge-gate-eval">
+                  <FlaskRound className="w-3 h-3 mr-1" />
+                  Eval: {evalStatus === "idle" ? "Not run" : evalStatus === "running" ? "Running..." : evalStatus === "passed" ? "Passed" : "Failed"}
+                </Badge>
+              </div>
+
+              <Card>
+                <CardContent className="p-4 flex flex-col gap-3">
+                  <div className="flex items-center justify-between gap-4 flex-wrap">
+                    <div className="flex flex-col gap-0.5">
+                      <div className="flex items-center gap-2">
+                        <Hammer className="w-4 h-4 text-primary" />
+                        <span className="text-sm font-medium">Run Static Compile</span>
+                      </div>
+                      <span className="text-[11px] text-muted-foreground ml-6">
+                        {exportFormat === "typescript"
+                          ? "Runs tsc --noEmit against the generated TypeScript files to check for type errors and syntax issues."
+                          : "Runs a Python AST parse and pyflakes check against the generated source files."}
+                      </span>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant={compileStatus === "passed" ? "outline" : "default"}
+                      disabled={compileStatus === "running"}
+                      onClick={async () => {
+                        setCompileStatus("running");
+                        setCompileOutput("");
+                        try {
+                          const res = await apiRequest("POST", `/api/agents/${agentId}/export-validate`, {
+                            type: "compile",
+                            format: exportFormat,
+                            framework: exportFramework,
+                            llmProvider: exportLlmProvider,
+                          });
+                          const data = await res.json();
+                          setCompileStatus(data.passed ? "passed" : "failed");
+                          setCompileOutput(data.output || (data.passed ? "All checks passed — no errors found." : "Compilation errors detected."));
+                        } catch (err) {
+                          setCompileStatus("failed");
+                          setCompileOutput("Compile check could not complete — verify your export configuration and try again.");
+                        }
+                      }}
+                      data-testid="button-run-compile"
+                    >
+                      {compileStatus === "running" ? (
+                        <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Compiling...</>
+                      ) : compileStatus === "passed" ? (
+                        <><CheckCircle2 className="w-3.5 h-3.5 mr-1.5 text-emerald-500" /> Passed</>
+                      ) : compileStatus === "failed" ? (
+                        <><XOctagon className="w-3.5 h-3.5 mr-1.5" /> Re-run</>
+                      ) : (
+                        <><Terminal className="w-3.5 h-3.5 mr-1.5" /> Run Check</>
+                      )}
+                    </Button>
+                  </div>
+                  {compileOutput && (
+                    <div className={`rounded-md p-3 text-xs font-mono whitespace-pre-wrap ${compileStatus === "passed" ? "bg-emerald-500/5 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400" : compileStatus === "failed" ? "bg-red-500/5 border border-red-500/20 text-red-700 dark:text-red-400" : "bg-muted"}`} data-testid="output-compile">
+                      {compileOutput}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="p-4 flex flex-col gap-3">
+                  <div className="flex items-center justify-between gap-4 flex-wrap">
+                    <div className="flex flex-col gap-0.5">
+                      <div className="flex items-center gap-2">
+                        <FlaskRound className="w-4 h-4 text-primary" />
+                        <span className="text-sm font-medium">Run Eval Suite Locally</span>
+                      </div>
+                      <span className="text-[11px] text-muted-foreground ml-6">
+                        Executes the same evaluation bundles ALMP uses for this agent — scorer thresholds, regression checks, and assertion tests against the generated code.
+                      </span>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant={evalStatus === "passed" ? "outline" : "default"}
+                      disabled={evalStatus === "running"}
+                      onClick={async () => {
+                        setEvalStatus("running");
+                        setEvalOutput("");
+                        try {
+                          const res = await apiRequest("POST", `/api/agents/${agentId}/export-validate`, {
+                            type: "eval",
+                            format: exportFormat,
+                            framework: exportFramework,
+                            llmProvider: exportLlmProvider,
+                          });
+                          const data = await res.json();
+                          setEvalStatus(data.passed ? "passed" : "failed");
+                          setEvalOutput(data.output || (data.passed ? "All eval cases passed." : "Some eval cases failed."));
+                        } catch (err) {
+                          setEvalStatus("failed");
+                          setEvalOutput("Eval suite could not complete — verify your export configuration and try again.");
+                        }
+                      }}
+                      data-testid="button-run-eval"
+                    >
+                      {evalStatus === "running" ? (
+                        <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Evaluating...</>
+                      ) : evalStatus === "passed" ? (
+                        <><CheckCircle2 className="w-3.5 h-3.5 mr-1.5 text-emerald-500" /> Passed</>
+                      ) : evalStatus === "failed" ? (
+                        <><XOctagon className="w-3.5 h-3.5 mr-1.5" /> Re-run</>
+                      ) : (
+                        <><FlaskConical className="w-3.5 h-3.5 mr-1.5" /> Run Eval</>
+                      )}
+                    </Button>
+                  </div>
+                  {evalOutput && (
+                    <div className={`rounded-md p-3 text-xs font-mono whitespace-pre-wrap ${evalStatus === "passed" ? "bg-emerald-500/5 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400" : evalStatus === "failed" ? "bg-red-500/5 border border-red-500/20 text-red-700 dark:text-red-400" : "bg-muted"}`} data-testid="output-eval">
+                      {evalOutput}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <div className="flex items-start gap-2 p-3 rounded-md bg-muted/30 border border-dashed" data-testid="notice-gate-info">
+                <Shield className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-xs font-medium">Pre-export health check</span>
+                  <span className="text-[11px] text-muted-foreground">
+                    These checks run against the export configuration, not the generated files. They verify that the selected framework, dependencies, and tool adapters produce a valid, compilable project that passes the agent's linked eval suite. You can proceed without running them.
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
           {exportStep === "preview" && (
             <div className="flex flex-col gap-3 flex-1 min-h-0">
               <div className="flex items-center gap-2 mb-1 flex-wrap">
@@ -3583,14 +3941,18 @@ export default function AgentDetail() {
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                 <span className="text-[11px] text-muted-foreground/40">Configure</span>
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Tool Adapters</span>
+                <span className="text-[11px] text-muted-foreground/40">Tools</span>
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Dependencies</span>
+                <span className="text-[11px] text-muted-foreground/40">Deps</span>
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Env Vars</span>
+                <span className="text-[11px] text-muted-foreground/40">Env</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Traces</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Gate</span>
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                 <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">6</span>
+                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">8</span>
                   <span className="font-medium">Preview</span>
                 </div>
               </div>
@@ -3645,8 +4007,18 @@ export default function AgentDetail() {
                 Back
               </Button>
             )}
+            {exportStep === "observability" && (
+              <Button variant="outline" onClick={() => setExportStep("envvars")} data-testid="button-export-back-to-envvars">
+                Back
+              </Button>
+            )}
+            {exportStep === "buildtest" && (
+              <Button variant="outline" onClick={() => setExportStep("observability")} data-testid="button-export-back-to-observability">
+                Back
+              </Button>
+            )}
             {exportStep === "preview" && (
-              <Button variant="outline" onClick={() => setExportStep("envvars")} data-testid="button-export-back">
+              <Button variant="outline" onClick={() => setExportStep("buildtest")} data-testid="button-export-back">
                 Back
               </Button>
             )}
@@ -3698,7 +4070,23 @@ export default function AgentDetail() {
             )}
             {exportStep === "envvars" && (
               <Button
-                onClick={() => exportCodeMutation.mutate({ format: exportFormat, llmProvider: exportLlmProvider, maxIterations: exportMaxIterations, completionPromise: exportCompletionPromise, framework: exportFramework, toolAdapters: toolAdapterOverrides, pinVersions })}
+                onClick={() => setExportStep("observability")}
+                data-testid="button-export-next-observability"
+              >
+                Next: Traces <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
+              </Button>
+            )}
+            {exportStep === "observability" && (
+              <Button
+                onClick={() => setExportStep("buildtest")}
+                data-testid="button-export-next-buildtest"
+              >
+                Next: Build &amp; Test <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
+              </Button>
+            )}
+            {exportStep === "buildtest" && (
+              <Button
+                onClick={() => exportCodeMutation.mutate({ format: exportFormat, llmProvider: exportLlmProvider, maxIterations: exportMaxIterations, completionPromise: exportCompletionPromise, framework: exportFramework, toolAdapters: toolAdapterOverrides, pinVersions, otelEnabled, spanGranularity })}
                 disabled={exportCodeMutation.isPending}
                 data-testid="button-export-generate"
               >
