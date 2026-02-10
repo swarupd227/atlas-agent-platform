@@ -5349,5 +5349,94 @@ Eval Suites: ${evalSuites.length} configured`,
     }
   });
 
+  app.get("/api/admin/org-settings", async (_req, res) => {
+    const settings = await storage.getOrgSettings();
+    res.json(settings || {});
+  });
+  app.patch("/api/admin/org-settings", async (req, res) => {
+    const settings = await storage.updateOrgSettings(req.body);
+    res.json(settings);
+  });
+
+  app.get("/api/admin/users", async (_req, res) => {
+    const users = await storage.getAdminUsers();
+    res.json(users);
+  });
+  app.post("/api/admin/users", async (req, res) => {
+    const user = await storage.createAdminUser(req.body);
+    res.json(user);
+  });
+  app.patch("/api/admin/users/:id", async (req, res) => {
+    const updated = await storage.updateAdminUser(req.params.id, req.body);
+    if (!updated) return res.status(404).json({ error: "User not found" });
+    res.json(updated);
+  });
+  app.delete("/api/admin/users/:id", async (req, res) => {
+    const deleted = await storage.deleteAdminUser(req.params.id);
+    if (!deleted) return res.status(404).json({ error: "User not found" });
+    res.json({ success: true });
+  });
+
+  app.get("/api/admin/environments", async (_req, res) => {
+    const configs = await storage.getEnvironmentConfigs();
+    res.json(configs);
+  });
+  app.patch("/api/admin/environments/:id", async (req, res) => {
+    const updated = await storage.updateEnvironmentConfig(req.params.id, req.body);
+    if (!updated) return res.status(404).json({ error: "Environment not found" });
+    res.json(updated);
+  });
+
+  app.get("/api/admin/secret-rotation", async (_req, res) => {
+    const policies = await storage.getSecretRotationPolicies();
+    res.json(policies);
+  });
+  app.post("/api/admin/secret-rotation", async (req, res) => {
+    const policy = await storage.createSecretRotationPolicy(req.body);
+    res.json(policy);
+  });
+  app.patch("/api/admin/secret-rotation/:id", async (req, res) => {
+    const updated = await storage.updateSecretRotationPolicy(req.params.id, req.body);
+    if (!updated) return res.status(404).json({ error: "Policy not found" });
+    res.json(updated);
+  });
+  app.delete("/api/admin/secret-rotation/:id", async (req, res) => {
+    const deleted = await storage.deleteSecretRotationPolicy(req.params.id);
+    if (!deleted) return res.status(404).json({ error: "Policy not found" });
+    res.json({ success: true });
+  });
+
+  app.get("/api/admin/webhooks", async (_req, res) => {
+    const webhooks = await storage.getAdminWebhooks();
+    res.json(webhooks);
+  });
+  app.post("/api/admin/webhooks", async (req, res) => {
+    const webhook = await storage.createAdminWebhook(req.body);
+    res.json(webhook);
+  });
+  app.patch("/api/admin/webhooks/:id", async (req, res) => {
+    const updated = await storage.updateAdminWebhook(req.params.id, req.body);
+    if (!updated) return res.status(404).json({ error: "Webhook not found" });
+    res.json(updated);
+  });
+  app.delete("/api/admin/webhooks/:id", async (req, res) => {
+    const deleted = await storage.deleteAdminWebhook(req.params.id);
+    if (!deleted) return res.status(404).json({ error: "Webhook not found" });
+    res.json({ success: true });
+  });
+  app.post("/api/admin/webhooks/:id/test", async (req, res) => {
+    const webhook = await storage.getAdminWebhook(req.params.id);
+    if (!webhook) return res.status(404).json({ error: "Webhook not found" });
+    await new Promise(r => setTimeout(r, 500 + Math.random() * 1500));
+    const success = Math.random() > 0.15;
+    await storage.updateAdminWebhook(req.params.id, {
+      lastDeliveryAt: new Date(),
+      lastDeliveryStatus: success ? "success" : "failed",
+      deliveredCount: (webhook.deliveredCount ?? 0) + (success ? 1 : 0),
+      failedCount: (webhook.failedCount ?? 0) + (success ? 0 : 1),
+    });
+    res.json({ success, latencyMs: Math.floor(Math.random() * 400 + 100), message: success ? "Webhook delivered successfully" : "Connection timed out" });
+  });
+
   return httpServer;
 }

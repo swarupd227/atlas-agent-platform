@@ -625,4 +625,82 @@ export const insertLoggingIntegrationSchema = createInsertSchema(loggingIntegrat
 export type InsertLoggingIntegration = z.infer<typeof insertLoggingIntegrationSchema>;
 export type LoggingIntegration = typeof loggingIntegrations.$inferSelect;
 
+export const orgSettings = pgTable("org_settings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  defaultPolicies: text("default_policies").array(),
+  defaultRedactionProfile: text("default_redaction_profile").default("pii"),
+  approvalSlaTimers: jsonb("approval_sla_timers"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertOrgSettingsSchema = createInsertSchema(orgSettings).omit({ id: true, updatedAt: true });
+export type InsertOrgSettings = z.infer<typeof insertOrgSettingsSchema>;
+export type OrgSettings = typeof orgSettings.$inferSelect;
+
+export const adminUsers = pgTable("admin_users", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  email: text("email").notNull(),
+  role: text("role").notNull().default("ai_engineer"),
+  status: text("status").notNull().default("active"),
+  lastLoginAt: timestamp("last_login_at"),
+  invitedAt: timestamp("invited_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAdminUserSchema = createInsertSchema(adminUsers).omit({ id: true, createdAt: true, lastLoginAt: true, invitedAt: true });
+export type InsertAdminUser = z.infer<typeof insertAdminUserSchema>;
+export type AdminUser = typeof adminUsers.$inferSelect;
+
+export const environmentConfigs = pgTable("environment_configs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  displayName: text("display_name").notNull(),
+  deploymentFreeze: boolean("deployment_freeze").default(false),
+  autoPromoteRules: jsonb("auto_promote_rules"),
+  requiredApprovals: integer("required_approvals").default(1),
+  maxCanaryPercent: integer("max_canary_percent").default(25),
+  description: text("description"),
+  status: text("status").notNull().default("active"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertEnvironmentConfigSchema = createInsertSchema(environmentConfigs).omit({ id: true, updatedAt: true });
+export type InsertEnvironmentConfig = z.infer<typeof insertEnvironmentConfigSchema>;
+export type EnvironmentConfig = typeof environmentConfigs.$inferSelect;
+
+export const secretRotationPolicies = pgTable("secret_rotation_policies", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  secretName: text("secret_name").notNull(),
+  rotationIntervalDays: integer("rotation_interval_days").notNull().default(90),
+  autoRotate: boolean("auto_rotate").default(false),
+  lastRotatedAt: timestamp("last_rotated_at"),
+  nextRotationAt: timestamp("next_rotation_at"),
+  notificationChannels: text("notification_channels").array(),
+  status: text("status").notNull().default("active"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertSecretRotationPolicySchema = createInsertSchema(secretRotationPolicies).omit({ id: true, createdAt: true, lastRotatedAt: true, nextRotationAt: true });
+export type InsertSecretRotationPolicy = z.infer<typeof insertSecretRotationPolicySchema>;
+export type SecretRotationPolicy = typeof secretRotationPolicies.$inferSelect;
+
+export const adminWebhooks = pgTable("admin_webhooks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  url: text("url").notNull(),
+  subscribedEvents: text("subscribed_events").array().notNull(),
+  status: text("status").notNull().default("active"),
+  secret: text("secret"),
+  deliveredCount: integer("delivered_count").default(0),
+  failedCount: integer("failed_count").default(0),
+  lastDeliveryAt: timestamp("last_delivery_at"),
+  lastDeliveryStatus: text("last_delivery_status"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAdminWebhookSchema = createInsertSchema(adminWebhooks).omit({ id: true, createdAt: true, lastDeliveryAt: true, lastDeliveryStatus: true, deliveredCount: true, failedCount: true });
+export type InsertAdminWebhook = z.infer<typeof insertAdminWebhookSchema>;
+export type AdminWebhook = typeof adminWebhooks.$inferSelect;
+
 export * from "./models/chat";

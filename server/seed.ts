@@ -6,7 +6,9 @@ import {
   agentTemplates, evalTestCases, evalRuns, improvementRecommendations,
   agentVersions, improvementCycles, policyExceptions, complianceReports,
   policyTestCases, outcomeEvents, billingDisputes, toolConnectors,
+  environmentConfigs, secretRotationPolicies, adminWebhooks,
 } from "@shared/schema";
+import { storage } from "./storage";
 import { batch1Templates } from "./templates-batch1";
 import { batch2Templates } from "./templates-batch2";
 
@@ -2477,6 +2479,59 @@ export async function seedDatabase() {
       appliedAt: new Date(Date.now() - 5 * 86400000),
     },
   ]);
+
+  await storage.updateOrgSettings({
+    defaultPolicies: ["content-boundary", "pii-redaction", "tool-access-control"],
+    defaultRedactionProfile: "pii",
+    approvalSlaTimers: {
+      blueprint_review: { hours: 24, escalateAfter: 48 },
+      deployment_approval: { hours: 4, escalateAfter: 8 },
+      policy_exception: { hours: 12, escalateAfter: 24 },
+      patch_review: { hours: 6, escalateAfter: 12 },
+      retirement: { hours: 48, escalateAfter: 72 },
+    },
+  });
+
+  const adminUserData = [
+    { name: "Sarah Chen", email: "sarah.chen@company.com", role: "platform_operator", status: "active", lastLoginAt: new Date(Date.now() - 2 * 3600000) },
+    { name: "Marcus Johnson", email: "marcus.j@company.com", role: "ai_engineer", status: "active", lastLoginAt: new Date(Date.now() - 8 * 3600000) },
+    { name: "Elena Vasquez", email: "elena.v@company.com", role: "compliance_officer", status: "active", lastLoginAt: new Date(Date.now() - 24 * 3600000) },
+    { name: "David Park", email: "david.p@company.com", role: "finance_lead", status: "active", lastLoginAt: new Date(Date.now() - 4 * 3600000) },
+    { name: "Aisha Rahman", email: "aisha.r@company.com", role: "domain_expert", status: "active", lastLoginAt: new Date(Date.now() - 48 * 3600000) },
+    { name: "James Wilson", email: "james.w@company.com", role: "support_engineer", status: "suspended", lastLoginAt: new Date(Date.now() - 168 * 3600000) },
+    { name: "Lisa Thompson", email: "lisa.t@company.com", role: "executive", status: "invited", invitedAt: new Date(Date.now() - 24 * 3600000) },
+  ];
+  for (const u of adminUserData) {
+    await storage.createAdminUser(u as any);
+  }
+
+  await db.insert(environmentConfigs).values([
+    { name: "development", displayName: "Development", deploymentFreeze: false, autoPromoteRules: { enabled: false }, requiredApprovals: 0, maxCanaryPercent: 100, description: "Development and testing environment", status: "active" },
+    { name: "staging", displayName: "Staging", deploymentFreeze: false, autoPromoteRules: { enabled: true, conditions: ["eval_pass_rate > 0.95", "no_policy_violations_2h"] }, requiredApprovals: 1, maxCanaryPercent: 50, description: "Pre-production validation environment", status: "active" },
+    { name: "pilot", displayName: "Pilot", deploymentFreeze: false, autoPromoteRules: { enabled: true, conditions: ["eval_pass_rate > 0.98", "no_incidents_24h", "kpi_on_track"] }, requiredApprovals: 2, maxCanaryPercent: 25, description: "Limited production rollout", status: "active" },
+    { name: "production", displayName: "Production", deploymentFreeze: false, autoPromoteRules: { enabled: false }, requiredApprovals: 2, maxCanaryPercent: 10, description: "Full production environment", status: "active" },
+  ]);
+
+  const secretPolicies = [
+    { secretName: "OPENAI_API_KEY", rotationIntervalDays: 90, autoRotate: true, lastRotatedAt: new Date(Date.now() - 45 * 86400000), nextRotationAt: new Date(Date.now() + 45 * 86400000), notificationChannels: ["email", "slack"], status: "active" },
+    { secretName: "JIRA_API_TOKEN", rotationIntervalDays: 60, autoRotate: true, lastRotatedAt: new Date(Date.now() - 30 * 86400000), nextRotationAt: new Date(Date.now() + 30 * 86400000), notificationChannels: ["email"], status: "active" },
+    { secretName: "SALESFORCE_CLIENT_SECRET", rotationIntervalDays: 90, autoRotate: false, lastRotatedAt: new Date(Date.now() - 120 * 86400000), nextRotationAt: new Date(Date.now() - 30 * 86400000), notificationChannels: ["email", "slack", "pagerduty"], status: "overdue" },
+    { secretName: "DATABASE_CONNECTION_STRING", rotationIntervalDays: 180, autoRotate: false, lastRotatedAt: new Date(Date.now() - 90 * 86400000), nextRotationAt: new Date(Date.now() + 90 * 86400000), notificationChannels: ["email"], status: "active" },
+    { secretName: "SLACK_BOT_TOKEN", rotationIntervalDays: 30, autoRotate: true, lastRotatedAt: new Date(Date.now() - 10 * 86400000), nextRotationAt: new Date(Date.now() + 20 * 86400000), notificationChannels: ["slack"], status: "active" },
+  ];
+  for (const p of secretPolicies) {
+    await storage.createSecretRotationPolicy(p as any);
+  }
+
+  const webhookData = [
+    { name: "Slack Notifications", url: "https://hooks.slack.com/services/T00/B00/xxx", subscribedEvents: ["deployment.created", "deployment.promoted", "alert.triggered", "approval.required"], status: "active", deliveredCount: 1247, failedCount: 3, lastDeliveryAt: new Date(Date.now() - 15 * 60000), lastDeliveryStatus: "success" },
+    { name: "PagerDuty Alerts", url: "https://events.pagerduty.com/v2/enqueue", subscribedEvents: ["alert.triggered", "policy.violation", "sla.breach"], status: "active", deliveredCount: 89, failedCount: 1, lastDeliveryAt: new Date(Date.now() - 3600000), lastDeliveryStatus: "success" },
+    { name: "Jira Issue Sync", url: "https://company.atlassian.net/rest/webhooks/1.0/webhook", subscribedEvents: ["agent.created", "deployment.failed", "eval.regression"], status: "active", deliveredCount: 456, failedCount: 12, lastDeliveryAt: new Date(Date.now() - 7200000), lastDeliveryStatus: "success" },
+    { name: "Analytics Pipeline", url: "https://analytics.internal.company.com/ingest", subscribedEvents: ["outcome.event", "trace.completed", "eval.completed"], status: "inactive", deliveredCount: 0, failedCount: 0 },
+  ];
+  for (const w of webhookData) {
+    await storage.createAdminWebhook(w as any);
+  }
 
   console.log("Database seeded successfully");
 }

@@ -43,6 +43,16 @@ import {
   type LoggingIntegration, type InsertLoggingIntegration,
   toolConnectors,
   type ToolConnector, type InsertToolConnector,
+  orgSettings,
+  type OrgSettings,
+  adminUsers,
+  type AdminUser, type InsertAdminUser,
+  environmentConfigs,
+  type EnvironmentConfig,
+  secretRotationPolicies,
+  type SecretRotationPolicy, type InsertSecretRotationPolicy,
+  adminWebhooks,
+  type AdminWebhook, type InsertAdminWebhook,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -191,6 +201,31 @@ export interface IStorage {
   createToolConnector(connector: InsertToolConnector): Promise<ToolConnector>;
   updateToolConnector(id: string, data: Partial<ToolConnector>): Promise<ToolConnector | undefined>;
   deleteToolConnector(id: string): Promise<boolean>;
+
+  getOrgSettings(): Promise<OrgSettings | undefined>;
+  updateOrgSettings(data: Partial<OrgSettings>): Promise<OrgSettings>;
+
+  getAdminUsers(): Promise<AdminUser[]>;
+  getAdminUser(id: string): Promise<AdminUser | undefined>;
+  createAdminUser(user: InsertAdminUser): Promise<AdminUser>;
+  updateAdminUser(id: string, data: Partial<AdminUser>): Promise<AdminUser | undefined>;
+  deleteAdminUser(id: string): Promise<boolean>;
+
+  getEnvironmentConfigs(): Promise<EnvironmentConfig[]>;
+  getEnvironmentConfig(id: string): Promise<EnvironmentConfig | undefined>;
+  updateEnvironmentConfig(id: string, data: Partial<EnvironmentConfig>): Promise<EnvironmentConfig | undefined>;
+
+  getSecretRotationPolicies(): Promise<SecretRotationPolicy[]>;
+  getSecretRotationPolicy(id: string): Promise<SecretRotationPolicy | undefined>;
+  createSecretRotationPolicy(policy: InsertSecretRotationPolicy): Promise<SecretRotationPolicy>;
+  updateSecretRotationPolicy(id: string, data: Partial<SecretRotationPolicy>): Promise<SecretRotationPolicy | undefined>;
+  deleteSecretRotationPolicy(id: string): Promise<boolean>;
+
+  getAdminWebhooks(): Promise<AdminWebhook[]>;
+  getAdminWebhook(id: string): Promise<AdminWebhook | undefined>;
+  createAdminWebhook(webhook: InsertAdminWebhook): Promise<AdminWebhook>;
+  updateAdminWebhook(id: string, data: Partial<AdminWebhook>): Promise<AdminWebhook | undefined>;
+  deleteAdminWebhook(id: string): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -738,6 +773,92 @@ export class DatabaseStorage implements IStorage {
   async deleteToolConnector(id: string) {
     await db.delete(toolConnectors).where(eq(toolConnectors.id, id));
     return true;
+  }
+
+  async getOrgSettings() {
+    const [settings] = await db.select().from(orgSettings);
+    return settings;
+  }
+  async updateOrgSettings(data: Partial<OrgSettings>) {
+    const existing = await this.getOrgSettings();
+    if (existing) {
+      const [updated] = await db.update(orgSettings).set({ ...data, updatedAt: new Date() }).where(eq(orgSettings.id, existing.id)).returning();
+      return updated;
+    }
+    const [created] = await db.insert(orgSettings).values({ ...data as any }).returning();
+    return created;
+  }
+
+  async getAdminUsers() {
+    return db.select().from(adminUsers);
+  }
+  async getAdminUser(id: string) {
+    const [user] = await db.select().from(adminUsers).where(eq(adminUsers.id, id));
+    return user;
+  }
+  async createAdminUser(user: InsertAdminUser) {
+    const [created] = await db.insert(adminUsers).values(user).returning();
+    return created;
+  }
+  async updateAdminUser(id: string, data: Partial<AdminUser>) {
+    const [updated] = await db.update(adminUsers).set(data).where(eq(adminUsers.id, id)).returning();
+    return updated;
+  }
+  async deleteAdminUser(id: string) {
+    const result = await db.delete(adminUsers).where(eq(adminUsers.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async getEnvironmentConfigs() {
+    return db.select().from(environmentConfigs);
+  }
+  async getEnvironmentConfig(id: string) {
+    const [config] = await db.select().from(environmentConfigs).where(eq(environmentConfigs.id, id));
+    return config;
+  }
+  async updateEnvironmentConfig(id: string, data: Partial<EnvironmentConfig>) {
+    const [updated] = await db.update(environmentConfigs).set({ ...data, updatedAt: new Date() }).where(eq(environmentConfigs.id, id)).returning();
+    return updated;
+  }
+
+  async getSecretRotationPolicies() {
+    return db.select().from(secretRotationPolicies);
+  }
+  async getSecretRotationPolicy(id: string) {
+    const [policy] = await db.select().from(secretRotationPolicies).where(eq(secretRotationPolicies.id, id));
+    return policy;
+  }
+  async createSecretRotationPolicy(policy: InsertSecretRotationPolicy) {
+    const [created] = await db.insert(secretRotationPolicies).values(policy).returning();
+    return created;
+  }
+  async updateSecretRotationPolicy(id: string, data: Partial<SecretRotationPolicy>) {
+    const [updated] = await db.update(secretRotationPolicies).set(data).where(eq(secretRotationPolicies.id, id)).returning();
+    return updated;
+  }
+  async deleteSecretRotationPolicy(id: string) {
+    const result = await db.delete(secretRotationPolicies).where(eq(secretRotationPolicies.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async getAdminWebhooks() {
+    return db.select().from(adminWebhooks);
+  }
+  async getAdminWebhook(id: string) {
+    const [webhook] = await db.select().from(adminWebhooks).where(eq(adminWebhooks.id, id));
+    return webhook;
+  }
+  async createAdminWebhook(webhook: InsertAdminWebhook) {
+    const [created] = await db.insert(adminWebhooks).values(webhook).returning();
+    return created;
+  }
+  async updateAdminWebhook(id: string, data: Partial<AdminWebhook>) {
+    const [updated] = await db.update(adminWebhooks).set(data).where(eq(adminWebhooks.id, id)).returning();
+    return updated;
+  }
+  async deleteAdminWebhook(id: string) {
+    const result = await db.delete(adminWebhooks).where(eq(adminWebhooks.id, id));
+    return (result.rowCount ?? 0) > 0;
   }
 }
 
