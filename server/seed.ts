@@ -5,7 +5,7 @@ import {
   runTraces, evalSuites, policies, approvals, auditEvents, invoices,
   agentTemplates, evalTestCases, evalRuns, improvementRecommendations,
   agentVersions, improvementCycles, policyExceptions, complianceReports,
-  policyTestCases,
+  policyTestCases, outcomeEvents, billingDisputes,
 } from "@shared/schema";
 import { batch1Templates } from "./templates-batch1";
 import { batch2Templates } from "./templates-batch2";
@@ -1785,7 +1785,7 @@ export async function seedDatabase() {
     {
       type: "deployment", objectType: "agent", objectName: "KB Sync Agent - Production Promotion", riskScore: 9.0, status: "pending", requestedBy: "System (Auto-Promotion)", requesterType: "system",
       description: "Auto-promotion to production after staging readiness checks passed",
-      agentId: agent6.id, environment: "production", changeType: "deployment_promotion", toolPermissionClass: "RESTRICTED",
+      agentId: agent5.id, environment: "production", changeType: "deployment_promotion", toolPermissionClass: "RESTRICTED",
       dueDate: new Date(Date.now() - 2 * 60 * 60 * 1000), escalationLevel: 2,
       diffSummary: "Promoting KB Sync Agent v2.1.0 from staging to production after 72h canary period",
       recommendedAction: "approve_with_conditions",
@@ -1910,16 +1910,83 @@ export async function seedDatabase() {
     { agentId: agent5.id, semver: "1.0.0", blueprintHash: "sha256:kb0001", status: "active", createdBy: "agent-engineer" },
   ]);
 
-  // Invoices
+  // Invoices (with enhanced billing fields)
   const now = new Date();
-  await db.insert(invoices).values([
-    { outcomeId: outcome1.id, outcomeName: "Reduce Support Load", periodStart: new Date(now.getFullYear(), now.getMonth() - 1, 1), periodEnd: new Date(now.getFullYear(), now.getMonth(), 0), totalUnits: 423, unitPrice: 2.50, amount: 1057.50, status: "paid" },
-    { outcomeId: outcome2.id, outcomeName: "Invoice Processing Automation", periodStart: new Date(now.getFullYear(), now.getMonth() - 1, 1), periodEnd: new Date(now.getFullYear(), now.getMonth(), 0), totalUnits: 1087, unitPrice: 1.75, amount: 1902.25, status: "paid" },
-    { outcomeId: outcome3.id, outcomeName: "Lead Qualification Pipeline", periodStart: new Date(now.getFullYear(), now.getMonth() - 1, 1), periodEnd: new Date(now.getFullYear(), now.getMonth(), 0), totalUnits: 267, unitPrice: 3.00, amount: 801.00, status: "paid" },
-    { outcomeId: outcome4.id, outcomeName: "Content Moderation", periodStart: new Date(now.getFullYear(), now.getMonth() - 1, 1), periodEnd: new Date(now.getFullYear(), now.getMonth(), 0), totalUnits: 47823, unitPrice: 0.50, amount: 23911.50, status: "paid" },
-    { outcomeId: outcome1.id, outcomeName: "Reduce Support Load", periodStart: new Date(now.getFullYear(), now.getMonth(), 1), periodEnd: new Date(now.getFullYear(), now.getMonth() + 1, 0), totalUnits: 198, unitPrice: 2.50, amount: 495.00, status: "pending" },
-    { outcomeId: outcome2.id, outcomeName: "Invoice Processing Automation", periodStart: new Date(now.getFullYear(), now.getMonth(), 1), periodEnd: new Date(now.getFullYear(), now.getMonth() + 1, 0), totalUnits: 534, unitPrice: 1.75, amount: 934.50, status: "pending" },
-  ]);
+  const invoiceRows = await db.insert(invoices).values([
+    { outcomeId: outcome1.id, outcomeName: "Reduce Support Load", periodStart: new Date(now.getFullYear(), now.getMonth() - 3, 1), periodEnd: new Date(now.getFullYear(), now.getMonth() - 2, 0), totalUnits: 312, billableUnits: 298, excludedUnits: 14, unitPrice: 2.50, amount: 745.00, status: "paid", paidAt: new Date(now.getFullYear(), now.getMonth() - 2, 5) },
+    { outcomeId: outcome2.id, outcomeName: "Invoice Processing Automation", periodStart: new Date(now.getFullYear(), now.getMonth() - 3, 1), periodEnd: new Date(now.getFullYear(), now.getMonth() - 2, 0), totalUnits: 891, billableUnits: 856, excludedUnits: 35, unitPrice: 1.75, amount: 1498.00, status: "paid", paidAt: new Date(now.getFullYear(), now.getMonth() - 2, 6) },
+    { outcomeId: outcome1.id, outcomeName: "Reduce Support Load", periodStart: new Date(now.getFullYear(), now.getMonth() - 2, 1), periodEnd: new Date(now.getFullYear(), now.getMonth() - 1, 0), totalUnits: 423, billableUnits: 401, excludedUnits: 22, unitPrice: 2.50, amount: 1002.50, status: "paid", paidAt: new Date(now.getFullYear(), now.getMonth() - 1, 4) },
+    { outcomeId: outcome2.id, outcomeName: "Invoice Processing Automation", periodStart: new Date(now.getFullYear(), now.getMonth() - 2, 1), periodEnd: new Date(now.getFullYear(), now.getMonth() - 1, 0), totalUnits: 1087, billableUnits: 1043, excludedUnits: 44, unitPrice: 1.75, amount: 1825.25, status: "paid", paidAt: new Date(now.getFullYear(), now.getMonth() - 1, 5) },
+    { outcomeId: outcome3.id, outcomeName: "Lead Qualification Pipeline", periodStart: new Date(now.getFullYear(), now.getMonth() - 2, 1), periodEnd: new Date(now.getFullYear(), now.getMonth() - 1, 0), totalUnits: 267, billableUnits: 252, excludedUnits: 15, unitPrice: 3.00, amount: 756.00, status: "paid", paidAt: new Date(now.getFullYear(), now.getMonth() - 1, 3) },
+    { outcomeId: outcome4.id, outcomeName: "Content Moderation", periodStart: new Date(now.getFullYear(), now.getMonth() - 1, 1), periodEnd: new Date(now.getFullYear(), now.getMonth(), 0), totalUnits: 47823, billableUnits: 46190, excludedUnits: 1633, unitPrice: 0.50, amount: 23095.00, status: "paid", paidAt: new Date(now.getFullYear(), now.getMonth(), 2) },
+    { outcomeId: outcome1.id, outcomeName: "Reduce Support Load", periodStart: new Date(now.getFullYear(), now.getMonth() - 1, 1), periodEnd: new Date(now.getFullYear(), now.getMonth(), 0), totalUnits: 456, billableUnits: 432, excludedUnits: 24, unitPrice: 2.50, amount: 1080.00, status: "paid", paidAt: new Date(now.getFullYear(), now.getMonth(), 3) },
+    { outcomeId: outcome1.id, outcomeName: "Reduce Support Load", periodStart: new Date(now.getFullYear(), now.getMonth(), 1), periodEnd: new Date(now.getFullYear(), now.getMonth() + 1, 0), totalUnits: 198, billableUnits: 189, excludedUnits: 9, unitPrice: 2.50, amount: 472.50, status: "pending" },
+    { outcomeId: outcome2.id, outcomeName: "Invoice Processing Automation", periodStart: new Date(now.getFullYear(), now.getMonth(), 1), periodEnd: new Date(now.getFullYear(), now.getMonth() + 1, 0), totalUnits: 534, billableUnits: 512, excludedUnits: 22, unitPrice: 1.75, amount: 896.00, status: "pending" },
+    { outcomeId: outcome3.id, outcomeName: "Lead Qualification Pipeline", periodStart: new Date(now.getFullYear(), now.getMonth(), 1), periodEnd: new Date(now.getFullYear(), now.getMonth() + 1, 0), totalUnits: 145, billableUnits: 138, excludedUnits: 7, unitPrice: 3.00, amount: 414.00, status: "pending" },
+  ]).returning();
+
+  // Outcome Events (metering events linked to invoices, agents, and traces)
+  const existingTraces = await db.select().from(runTraces);
+  const eventTypes = ["ticket_resolved", "invoice_processed", "lead_qualified", "content_moderated", "escalation_handled", "document_classified"];
+  const excludeReasons = ["duplicate_event", "test_data", "below_quality_threshold", "manual_override", "incomplete_resolution"];
+  const outcomeEventData: any[] = [];
+
+  for (const inv of invoiceRows) {
+    const numEvents = Math.min(inv.totalUnits || 10, 30);
+    const outcomeAgents = [agent1, agent2, agent3, agent4, agent5];
+    const matchingAgent = outcomeAgents.find(a => a.outcomeId === inv.outcomeId) || agent1;
+
+    for (let e = 0; e < numEvents; e++) {
+      const isBillable = e < (inv.billableUnits || numEvents);
+      const randomTrace = existingTraces.length > 0 ? existingTraces[Math.floor(Math.random() * existingTraces.length)] : null;
+      const eventHash = crypto.createHash("sha256").update(`${inv.id}-${e}-${Date.now()}`).digest("hex");
+      outcomeEventData.push({
+        outcomeId: inv.outcomeId!,
+        agentId: matchingAgent.id,
+        invoiceId: inv.id,
+        traceId: randomTrace?.id || null,
+        type: eventTypes[Math.floor(Math.random() * eventTypes.length)],
+        billable: isBillable,
+        excludeReason: isBillable ? null : excludeReasons[Math.floor(Math.random() * excludeReasons.length)],
+        unitCount: 1,
+        unitValue: inv.unitPrice || 0,
+        signedHash: eventHash.slice(0, 16),
+        payload: { source: "metering-service", version: "1.0", confidence: Math.round((0.7 + Math.random() * 0.3) * 100) / 100 },
+      });
+    }
+  }
+  for (let i = 0; i < outcomeEventData.length; i += 50) {
+    await db.insert(outcomeEvents).values(outcomeEventData.slice(i, i + 50));
+  }
+
+  // Billing Disputes
+  const disputeCategories = ["quality", "duplicate", "attribution", "sla_breach", "pricing"];
+  const disputeReasons = [
+    "Ticket was not fully resolved - customer called back within 24h",
+    "Duplicate event detected for same customer interaction",
+    "Agent attribution incorrect - manual resolution by human agent",
+    "Response time exceeded SLA threshold of 8 seconds",
+    "Pricing tier applied incorrectly - should be volume discount rate",
+    "Content moderation flagged legitimate content as violation",
+    "Invoice processing extracted incorrect total amount",
+    "Lead qualification score below acceptable threshold",
+  ];
+  const disputeData = [];
+  for (let d = 0; d < 8; d++) {
+    const inv = invoiceRows[Math.floor(Math.random() * invoiceRows.length)];
+    disputeData.push({
+      invoiceId: inv.id,
+      outcomeId: inv.outcomeId!,
+      reason: disputeReasons[d % disputeReasons.length],
+      category: disputeCategories[d % disputeCategories.length],
+      amount: Math.round((Math.random() * 150 + 10) * 100) / 100,
+      status: d < 3 ? "open" : d < 6 ? "resolved" : "rejected",
+      resolution: d >= 3 && d < 6 ? "Credit applied to next invoice" : d >= 6 ? "Event validated as billable" : null,
+      resolvedAt: d >= 3 ? new Date(now.getTime() - Math.random() * 7 * 24 * 60 * 60 * 1000) : null,
+      submittedBy: d % 2 === 0 ? "outcome-owner" : "finance",
+    });
+  }
+  await db.insert(billingDisputes).values(disputeData);
 
   // Agent Templates (80 templates across 8 industries)
   const allTemplates = [...batch1Templates, ...batch2Templates];

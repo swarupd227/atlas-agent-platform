@@ -26,6 +26,7 @@ import {
   insertEvalCaseResultSchema,
   insertPatchSchema,
   insertExperimentSchema,
+  insertBillingDisputeSchema,
 } from "@shared/schema";
 
 const openai = new OpenAI({
@@ -1270,6 +1271,195 @@ export async function registerRoutes(
       res.status(201).json(invoice);
     } catch (e) {
       handleZodError(res, e);
+    }
+  });
+
+  app.get("/api/invoices/:id", async (req, res) => {
+    const invoice = await storage.getInvoice(req.params.id);
+    if (!invoice) return res.status(404).json({ error: "Invoice not found" });
+    res.json(invoice);
+  });
+
+  app.get("/api/invoices/:id/line-items", async (req, res) => {
+    const invoice = await storage.getInvoice(req.params.id);
+    if (!invoice) return res.status(404).json({ error: "Invoice not found" });
+    const events = await storage.getOutcomeEventsByInvoice(req.params.id);
+    const traces = await storage.getTraces();
+    const agents = await storage.getAgents();
+    const lineItems = events.map(event => {
+      const trace = event.traceId ? traces.find(t => t.id === event.traceId) : null;
+      const agent = event.agentId ? agents.find(a => a.id === event.agentId) : null;
+      return {
+        ...event,
+        agentName: agent?.name || null,
+        traceStatus: trace?.status || null,
+        traceLatencyMs: trace?.latencyMs || null,
+      };
+    });
+    res.json({ invoice, lineItems });
+  });
+
+  app.get("/api/billing/metering-dashboard", async (_req, res) => {
+    try {
+      const allInvoices = await storage.getInvoices();
+      const allEvents = await storage.getOutcomeEvents();
+      const allDisputes = await storage.getBillingDisputes();
+      const outcomes = await storage.getOutcomes();
+
+      const totalEvents = allEvents.length;
+      const billableEvents = allEvents.filter(e => e.billable);
+      const excludedEvents = allEvents.filter(e => !e.billable);
+      const acceptanceRate = totalEvents > 0 ? billableEvents.length / totalEvents : 0;
+
+      const totalUnitsDelivered = allEvents.reduce((sum, e) => sum + (e.unitCount || 1), 0);
+      const billableUnits = billableEvents.reduce((sum, e) => sum + (e.unitCount || 1), 0);
+      const excludedUnits = excludedEvents.reduce((sum, e) => sum + (e.unitCount || 1), 0);
+
+      const paidInvoices = allInvoices.filter(inv => inv.status === "paid");
+      const pendingInvoices = allInvoices.filter(inv => inv.status === "pending");
+      const totalRevenue = paidInvoices.reduce((sum, inv) => sum + (inv.amount || 0), 0);
+      const pendingRevenue = pendingInvoices.reduce((sum, inv) => sum + (inv.amount || 0), 0);
+
+      const now = new Date();
+      const monthlyRevenue: Array<{ month: string; revenue: number; units: number }> = [];
+      for (let m = 5; m >= 0; m--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - m, 1);
+        const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+        const monthInvoices = allInvoices.filter(inv => {
+          if (!inv.periodStart) return false;
+          const ps = new Date(inv.periodStart);
+          return ps.getFullYear() === d.getFullYear() && ps.getMonth() === d.getMonth();
+        });
+        monthlyRevenue.push({
+          month: monthKey,
+          revenue: monthInvoices.reduce((s, inv) => s + (inv.amount || 0), 0),
+          units: monthInvoices.reduce((s, inv) => s + (inv.totalUnits || 0), 0),
+        });
+      }
+
+      const revenueGrowth = monthlyRevenue.length >= 2 && monthlyRevenue[monthlyRevenue.length - 2].revenue > 0
+        ? ((monthlyRevenue[monthlyRevenue.length - 1].revenue - monthlyRevenue[monthlyRevenue.length - 2].revenue) / monthlyRevenue[monthlyRevenue.length - 2].revenue * 100)
+        : 0;
+
+      const avgMonthlyRevenue = monthlyRevenue.reduce((s, m) => s + m.revenue, 0) / Math.max(monthlyRevenue.filter(m => m.revenue > 0).length, 1);
+      const projectedAnnualRevenue = avgMonthlyRevenue * 12;
+
+      const excludeReasons: Record<string, number> = {};
+      excludedEvents.forEach(e => {
+        const reason = e.excludeReason || "unspecified";
+        excludeReasons[reason] = (excludeReasons[reason] || 0) + 1;
+      });
+
+      const outcomeMetering = outcomes.map(o => {
+        const oEvents = allEvents.filter(e => e.outcomeId === o.id);
+        const oInvoices = allInvoices.filter(inv => inv.outcomeId === o.id);
+        const oDisputes = allDisputes.filter(d => d.outcomeId === o.id);
+        const oBillable = oEvents.filter(e => e.billable);
+        return {
+          outcomeId: o.id,
+          outcomeName: o.name,
+          totalEvents: oEvents.length,
+          billableEvents: oBillable.length,
+          excludedEvents: oEvents.length - oBillable.length,
+          acceptanceRate: oEvents.length > 0 ? oBillable.length / oEvents.length : 0,
+          totalRevenue: oInvoices.reduce((s, inv) => s + (inv.amount || 0), 0),
+          totalUnits: oEvents.reduce((s, e) => s + (e.unitCount || 1), 0),
+          invoiceCount: oInvoices.length,
+          disputeCount: oDisputes.length,
+          disputeAmount: oDisputes.reduce((s, d) => s + (d.amount || 0), 0),
+        };
+      });
+
+      const openDisputes = allDisputes.filter(d => d.status === "open");
+      const resolvedDisputes = allDisputes.filter(d => d.status === "resolved");
+      const rejectedDisputes = allDisputes.filter(d => d.status === "rejected");
+      const disputeCategories: Record<string, number> = {};
+      allDisputes.forEach(d => {
+        disputeCategories[d.category] = (disputeCategories[d.category] || 0) + 1;
+      });
+
+      res.json({
+        summary: {
+          totalRevenue,
+          pendingRevenue,
+          projectedAnnualRevenue,
+          revenueGrowth: Math.round(revenueGrowth * 10) / 10,
+          totalUnitsDelivered,
+          billableUnits,
+          excludedUnits,
+          acceptanceRate: Math.round(acceptanceRate * 1000) / 10,
+          totalInvoices: allInvoices.length,
+          paidInvoices: paidInvoices.length,
+          pendingInvoices: pendingInvoices.length,
+        },
+        monthlyRevenue,
+        excludeReasons,
+        outcomeMetering,
+        disputes: {
+          total: allDisputes.length,
+          open: openDisputes.length,
+          resolved: resolvedDisputes.length,
+          rejected: rejectedDisputes.length,
+          totalAmount: allDisputes.reduce((s, d) => s + (d.amount || 0), 0),
+          categories: disputeCategories,
+        },
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message || "Failed to compute metering dashboard" });
+    }
+  });
+
+  app.get("/api/billing/disputes", async (_req, res) => {
+    const disputes = await storage.getBillingDisputes();
+    res.json(disputes);
+  });
+
+  app.post("/api/billing/disputes", checkPermission("billing_invoices"), async (req, res) => {
+    try {
+      const data = insertBillingDisputeSchema.parse(req.body);
+      const dispute = await storage.createBillingDispute(data);
+      res.status(201).json(dispute);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  app.patch("/api/billing/disputes/:id", checkPermission("billing_invoices"), async (req, res) => {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const updated = await storage.updateBillingDispute(id, req.body);
+    if (!updated) return res.status(404).json({ error: "Dispute not found" });
+    res.json(updated);
+  });
+
+  app.get("/api/billing/usage-export", async (_req, res) => {
+    try {
+      const allEvents = await storage.getOutcomeEvents();
+      const agents = await storage.getAgents();
+      const outcomes = await storage.getOutcomes();
+
+      const csvHeader = "Event ID,Outcome,Agent,Type,Billable,Exclude Reason,Unit Count,Unit Value,Trace ID,Created At\n";
+      const csvRows = allEvents.map(e => {
+        const outcome = outcomes.find(o => o.id === e.outcomeId);
+        const agent = e.agentId ? agents.find(a => a.id === e.agentId) : null;
+        return [
+          e.id,
+          `"${outcome?.name || e.outcomeId}"`,
+          `"${agent?.name || e.agentId || ""}"`,
+          e.type,
+          e.billable ? "Yes" : "No",
+          `"${e.excludeReason || ""}"`,
+          e.unitCount || 1,
+          e.unitValue || "",
+          e.traceId || "",
+          e.createdAt ? new Date(e.createdAt).toISOString() : "",
+        ].join(",");
+      }).join("\n");
+
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", `attachment; filename=usage-export-${new Date().toISOString().split("T")[0]}.csv`);
+      res.send(csvHeader + csvRows);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message || "Export failed" });
     }
   });
 

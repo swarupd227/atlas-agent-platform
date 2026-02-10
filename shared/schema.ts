@@ -309,9 +309,14 @@ export const invoices = pgTable("invoices", {
   periodStart: timestamp("period_start"),
   periodEnd: timestamp("period_end"),
   totalUnits: integer("total_units").default(0),
+  billableUnits: integer("billable_units").default(0),
+  excludedUnits: integer("excluded_units").default(0),
   unitPrice: real("unit_price").default(0),
   amount: real("amount").default(0),
   status: text("status").notNull().default("pending"),
+  stripeInvoiceId: text("stripe_invoice_id"),
+  stripePaymentIntentId: text("stripe_payment_intent_id"),
+  paidAt: timestamp("paid_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -323,8 +328,14 @@ export const outcomeEvents = pgTable("outcome_events", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   outcomeId: varchar("outcome_id").notNull(),
   agentId: varchar("agent_id"),
+  invoiceId: varchar("invoice_id"),
+  traceId: varchar("trace_id"),
   type: text("type").notNull(),
   billable: boolean("billable").default(true),
+  excludeReason: text("exclude_reason"),
+  unitCount: integer("unit_count").default(1),
+  unitValue: real("unit_value"),
+  signedHash: text("signed_hash"),
   payload: jsonb("payload"),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -332,6 +343,25 @@ export const outcomeEvents = pgTable("outcome_events", {
 export const insertOutcomeEventSchema = createInsertSchema(outcomeEvents).omit({ id: true, createdAt: true });
 export type InsertOutcomeEvent = z.infer<typeof insertOutcomeEventSchema>;
 export type OutcomeEvent = typeof outcomeEvents.$inferSelect;
+
+export const billingDisputes = pgTable("billing_disputes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  invoiceId: varchar("invoice_id").notNull(),
+  outcomeEventId: varchar("outcome_event_id"),
+  outcomeId: varchar("outcome_id"),
+  reason: text("reason").notNull(),
+  category: text("category").notNull().default("quality"),
+  amount: real("amount").default(0),
+  status: text("status").notNull().default("open"),
+  resolution: text("resolution"),
+  resolvedAt: timestamp("resolved_at"),
+  submittedBy: text("submitted_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertBillingDisputeSchema = createInsertSchema(billingDisputes).omit({ id: true, createdAt: true });
+export type InsertBillingDispute = z.infer<typeof insertBillingDisputeSchema>;
+export type BillingDispute = typeof billingDisputes.$inferSelect;
 
 export const agentTemplates = pgTable("agent_templates", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

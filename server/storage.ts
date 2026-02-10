@@ -7,6 +7,7 @@ import {
   improvementRecommendations, autonomousActionLogs, agentVersions,
   policyExceptions, complianceReports,
   policyTestCases,
+  billingDisputes,
   type User, type InsertUser,
   type Agent, type InsertAgent,
   type OutcomeContract, type InsertOutcomeContract,
@@ -35,6 +36,7 @@ import {
   type Patch, type InsertPatch,
   experiments,
   type Experiment, type InsertExperiment,
+  type BillingDispute, type InsertBillingDispute,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -85,10 +87,19 @@ export interface IStorage {
   createAuditEvent(event: InsertAuditEvent): Promise<AuditEvent>;
 
   getInvoices(): Promise<Invoice[]>;
+  getInvoice(id: string): Promise<Invoice | undefined>;
   createInvoice(invoice: InsertInvoice): Promise<Invoice>;
+  updateInvoice(id: string, data: Partial<Invoice>): Promise<Invoice | undefined>;
 
   getOutcomeEvents(): Promise<OutcomeEvent[]>;
+  getOutcomeEventsByInvoice(invoiceId: string): Promise<OutcomeEvent[]>;
+  getOutcomeEventsByOutcome(outcomeId: string): Promise<OutcomeEvent[]>;
   createOutcomeEvent(event: InsertOutcomeEvent): Promise<OutcomeEvent>;
+
+  getBillingDisputes(): Promise<BillingDispute[]>;
+  getBillingDisputesByInvoice(invoiceId: string): Promise<BillingDispute[]>;
+  createBillingDispute(dispute: InsertBillingDispute): Promise<BillingDispute>;
+  updateBillingDispute(id: string, data: Partial<BillingDispute>): Promise<BillingDispute | undefined>;
 
   getAgentTemplates(): Promise<AgentTemplate[]>;
   getAgentTemplate(id: string): Promise<AgentTemplate | undefined>;
@@ -322,18 +333,54 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(invoices);
   }
 
+  async getInvoice(id: string) {
+    const [invoice] = await db.select().from(invoices).where(eq(invoices.id, id));
+    return invoice;
+  }
+
   async createInvoice(invoice: InsertInvoice) {
     const [created] = await db.insert(invoices).values(invoice).returning();
     return created;
+  }
+
+  async updateInvoice(id: string, data: Partial<Invoice>) {
+    const [updated] = await db.update(invoices).set(data).where(eq(invoices.id, id)).returning();
+    return updated;
   }
 
   async getOutcomeEvents() {
     return db.select().from(outcomeEvents);
   }
 
+  async getOutcomeEventsByInvoice(invoiceId: string) {
+    return db.select().from(outcomeEvents).where(eq(outcomeEvents.invoiceId, invoiceId));
+  }
+
+  async getOutcomeEventsByOutcome(outcomeId: string) {
+    return db.select().from(outcomeEvents).where(eq(outcomeEvents.outcomeId, outcomeId));
+  }
+
   async createOutcomeEvent(event: InsertOutcomeEvent) {
     const [created] = await db.insert(outcomeEvents).values(event).returning();
     return created;
+  }
+
+  async getBillingDisputes() {
+    return db.select().from(billingDisputes);
+  }
+
+  async getBillingDisputesByInvoice(invoiceId: string) {
+    return db.select().from(billingDisputes).where(eq(billingDisputes.invoiceId, invoiceId));
+  }
+
+  async createBillingDispute(dispute: InsertBillingDispute) {
+    const [created] = await db.insert(billingDisputes).values(dispute).returning();
+    return created;
+  }
+
+  async updateBillingDispute(id: string, data: Partial<BillingDispute>) {
+    const [updated] = await db.update(billingDisputes).set(data).where(eq(billingDisputes.id, id)).returning();
+    return updated;
   }
 
   async getAgentTemplates() {
