@@ -13,6 +13,7 @@ import { CommandPalette } from "@/components/command-palette";
 import { GlobalSearch } from "@/components/global-search";
 import { EnvironmentSelector, EnvironmentProvider } from "@/components/environment-selector";
 import { NotificationCenter } from "@/components/notification-center";
+import { EvidenceDrawerProvider } from "@/components/evidence-drawer";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import NotFound from "@/pages/not-found";
 import Overview from "@/pages/overview";
@@ -84,6 +85,7 @@ function App() {
         <TooltipProvider>
           <RoleProvider>
             <EnvironmentProvider>
+            <EvidenceDrawerProvider>
             <SidebarProvider style={style as React.CSSProperties}>
               <div className="flex h-screen w-full">
                 <AppSidebar />
@@ -108,6 +110,7 @@ function App() {
             </SidebarProvider>
             <CommandPalette />
             <Toaster />
+            </EvidenceDrawerProvider>
             </EnvironmentProvider>
           </RoleProvider>
         </TooltipProvider>

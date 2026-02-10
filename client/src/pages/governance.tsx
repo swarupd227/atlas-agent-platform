@@ -68,6 +68,7 @@ import {
 } from "@/components/ui/table";
 import { StatCard } from "@/components/stat-card";
 import { StatusBadge } from "@/components/status-badge";
+import { useEvidenceDrawer } from "@/components/evidence-drawer";
 import { usePermission, PermissionGate } from "@/components/role-provider";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -198,6 +199,7 @@ export default function Governance() {
   const [exportEndDate, setExportEndDate] = useState("");
   const [exportIncludeHashes, setExportIncludeHashes] = useState(false);
   const { toast } = useToast();
+  const evidenceDrawer = useEvidenceDrawer();
   const policyPerm = usePermission("create_modify_policies");
 
   const { data: policies, isLoading } = useQuery<Policy[]>({
@@ -1001,9 +1003,37 @@ export default function Governance() {
                             </p>
                           )}
                           {event.details && isExpanded && (
-                            <p className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap break-words">
-                              {event.details}
-                            </p>
+                            <div className="flex flex-col gap-2 mt-1">
+                              <p className="text-xs text-muted-foreground whitespace-pre-wrap break-words">
+                                {event.details}
+                              </p>
+                              <div>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    evidenceDrawer.open({
+                                      type: "audit",
+                                      title: event.action,
+                                      subtitle: `${event.objectType}:${event.objectId}`,
+                                      audit: {
+                                        eventId: event.id,
+                                        eventType: event.action,
+                                        actor: `${event.actorType}:${event.actorId}`,
+                                        timestamp: event.createdAt ? new Date(event.createdAt).toISOString() : "",
+                                        description: event.details || undefined,
+                                        hashChain: event.eventHash || undefined,
+                                      },
+                                    });
+                                  }}
+                                  data-testid={`button-view-audit-${event.id}`}
+                                >
+                                  <Eye className="w-3.5 h-3.5 mr-1" />
+                                  View Details
+                                </Button>
+                              </div>
+                            </div>
                           )}
                         </div>
                       </div>

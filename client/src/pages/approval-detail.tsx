@@ -16,11 +16,8 @@ import {
   ScrollText,
   Lightbulb,
   Link2,
-  Minus,
-  Plus,
   Hash,
   CheckCircle2,
-  CircleDot,
   Tag,
   ShieldCheck,
   Users,
@@ -47,6 +44,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { StatusBadge } from "@/components/status-badge";
+import { DiffViewer } from "@/components/diff-viewer";
 import { PermissionGate, usePermission } from "@/components/role-provider";
 import type { Approval, Agent, EvalSuite, Policy, AuditEvent } from "@shared/schema";
 
@@ -462,44 +460,28 @@ export default function ApprovalDetail() {
                 </div>
               )}
               {evidence.configDiff && (
-                <div className="flex flex-col gap-1.5" data-testid="config-diff">
-                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Config Changes</span>
-                  <div className="rounded-md bg-muted/30 p-3 font-mono text-xs flex flex-col gap-0.5 overflow-x-auto">
-                    {(Array.isArray(evidence.configDiff) ? evidence.configDiff : [evidence.configDiff]).map((line: any, i: number) => {
-                      const text = typeof line === "string" ? line : JSON.stringify(line);
-                      const isAdded = text.startsWith("+");
-                      const isRemoved = text.startsWith("-");
-                      return (
-                        <div
-                          key={i}
-                          className={`flex items-start gap-2 ${isAdded ? "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10" : isRemoved ? "text-red-600 dark:text-red-400 bg-red-500/10" : ""} px-1 rounded-md`}
-                          data-testid={`diff-line-${i}`}
-                        >
-                          {isAdded && <Plus className="w-3 h-3 shrink-0 mt-0.5" />}
-                          {isRemoved && <Minus className="w-3 h-3 shrink-0 mt-0.5" />}
-                          {!isAdded && !isRemoved && <span className="w-3 shrink-0" />}
-                          <span>{text}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
+                <DiffViewer
+                  mode="generic"
+                  configDiff={
+                    Array.isArray(evidence.configDiff)
+                      ? evidence.configDiff.map((l: any) => typeof l === "string" ? l : JSON.stringify(l))
+                      : [typeof evidence.configDiff === "string" ? evidence.configDiff : JSON.stringify(evidence.configDiff)]
+                  }
+                />
               )}
               {evidence.blueprintSummary && (
-                <div className="flex flex-col gap-1.5" data-testid="blueprint-summary">
-                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Blueprint Changes</span>
-                  <div className="flex flex-col gap-1">
-                    {(Array.isArray(evidence.blueprintSummary) ? evidence.blueprintSummary : [evidence.blueprintSummary]).map((node: any, i: number) => (
-                      <div key={i} className="flex items-center gap-2 text-sm" data-testid={`blueprint-node-${i}`}>
-                        <CircleDot className="w-3 h-3 text-muted-foreground shrink-0" />
-                        <span>{typeof node === "string" ? node : node.name || JSON.stringify(node)}</span>
-                        {node.change && (
-                          <Badge variant="outline" className="text-[10px]">{node.change}</Badge>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                <DiffViewer
+                  mode="blueprint"
+                  title="Blueprint Changes"
+                  blueprintNodes={
+                    (Array.isArray(evidence.blueprintSummary) ? evidence.blueprintSummary : [evidence.blueprintSummary]).map((node: any, i: number) => ({
+                      nodeId: `node-${i}`,
+                      name: typeof node === "string" ? node : node.name || JSON.stringify(node),
+                      status: (node.change === "added" ? "added" : node.change === "removed" ? "removed" : node.change ? "modified" : "unchanged") as "added" | "removed" | "modified" | "unchanged",
+                      changes: node.change ? [node.change] : undefined,
+                    }))
+                  }
+                />
               )}
               {!approval.diffSummary && !evidence.configDiff && !evidence.blueprintSummary && (
                 <p className="text-xs text-muted-foreground">No diff data available</p>

@@ -12,7 +12,6 @@ import {
   CheckCircle,
   X,
   Plus,
-  ArrowRight,
   Shield,
   AlertTriangle,
   Clock,
@@ -46,6 +45,7 @@ import { Slider } from "@/components/ui/slider";
 import { Checkbox } from "@/components/ui/checkbox";
 import { StatCard } from "@/components/stat-card";
 import { StatusBadge } from "@/components/status-badge";
+import { WhyBadge } from "@/components/why-badge";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { formatDate } from "@/components/shared-utils";
@@ -690,15 +690,14 @@ export default function Optimization() {
                         </div>
 
                         {evidence && (
-                          <div className="text-xs">
-                            <span className="text-muted-foreground font-medium">
-                              Why proposed:{" "}
-                            </span>
-                            <span className="text-muted-foreground">
-                              {(evidence.source as string) ||
-                                (evidence.reason as string) ||
-                                "Evidence-based recommendation"}
-                            </span>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <WhyBadge
+                              compact
+                              trigger={(evidence.source as string) || (evidence.trigger as string) || "Signal detected"}
+                              decision={patch.title || "Apply patch"}
+                              evidence={(evidence.reason as string) || (evidence.metric as string) || "Evidence-based recommendation"}
+                              rollback={patch.riskLevel === "high" || patch.riskLevel === "critical" ? "Requires approval" : undefined}
+                            />
                           </div>
                         )}
 
@@ -1422,23 +1421,18 @@ export default function Optimization() {
                               </div>
                             </div>
 
-                            <div className="flex items-center gap-2 text-xs flex-wrap">
-                              <span className="font-medium">
-                                {entry.trigger}
-                              </span>
-                              <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0" />
-                              <span className="font-medium">
-                                {entry.change}
-                              </span>
-                              <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0" />
-                              <span className="text-muted-foreground">
-                                {typeof entry.proof === "object" && entry.proof
+                            <WhyBadge
+                              trigger={entry.trigger}
+                              decision={entry.change}
+                              evidence={
+                                typeof entry.proof === "object" && entry.proof
                                   ? Object.entries(entry.proof)
                                       .map(([k, v]) => `${k}: ${v}`)
                                       .join(", ")
-                                  : String(entry.proof || "Evidence available")}
-                              </span>
-                            </div>
+                                  : String(entry.proof || "Evidence available")
+                              }
+                              rollback={entry.canRollback ? "Available" : undefined}
+                            />
 
                             {entry.canRollback && (
                               <div className="flex items-center pt-1">
