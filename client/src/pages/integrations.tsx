@@ -11,11 +11,12 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
+import { Separator } from "@/components/ui/separator";
 import {
   Plug, Plus, Pencil, Trash2, Send, AlertTriangle, CheckCircle2, Clock, XCircle,
   Ticket, Users, Database, MessageSquare, Target, HardDrive, LifeBuoy, MessagesSquare,
   Shield, Eye, EyeOff, Zap, RefreshCw, Activity, AlertCircle,
-  Tag, Lock, Unlock, Timer, FileText,
+  Tag, Lock, Unlock, Timer, FileText, Download, FileCode, Terminal,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -128,6 +129,9 @@ function ConnectorCard({ connector, onSelect }: { connector: ToolConnector; onSe
 function ConnectorDetailDialog({ connector, open, onOpenChange }: { connector: ToolConnector | null; open: boolean; onOpenChange: (open: boolean) => void }) {
   const { toast } = useToast();
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
+  const [adapterFormat, setAdapterFormat] = useState<"typescript" | "python">("typescript");
+  const [adapterCode, setAdapterCode] = useState<string | null>(null);
+  const [adapterVisible, setAdapterVisible] = useState(false);
 
   const testMutation = useMutation({
     mutationFn: (id: string) => apiRequest("POST", `/api/tool-connectors/${id}/test`),
@@ -142,6 +146,20 @@ function ConnectorDetailDialog({ connector, open, onOpenChange }: { connector: T
     },
     onError: (err: Error) => {
       toast({ title: "Test failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const adapterMutation = useMutation({
+    mutationFn: async ({ id, format }: { id: string; format: string }) => {
+      const res = await apiRequest("POST", `/api/tool-connectors/${id}/generate-adapter`, { format });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setAdapterCode(data.code);
+      setAdapterVisible(true);
+    },
+    onError: () => {
+      toast({ title: "Generation failed", description: "Could not generate adapter code", variant: "destructive" });
     },
   });
 
@@ -313,6 +331,87 @@ function ConnectorDetailDialog({ connector, open, onOpenChange }: { connector: T
                 ))
               )}
             </div>
+          </div>
+
+          <Separator />
+
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <h3 className="text-sm font-medium flex items-center gap-1.5">
+                <FileCode className="w-4 h-4" />
+                Generate Adapter Code
+              </h3>
+              <div className="flex items-center gap-2">
+                <Select value={adapterFormat} onValueChange={(v) => setAdapterFormat(v as "typescript" | "python")}>
+                  <SelectTrigger className="w-[130px]" data-testid="select-adapter-format">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="typescript">TypeScript</SelectItem>
+                    <SelectItem value="python">Python</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button
+                  size="sm"
+                  onClick={() => adapterMutation.mutate({ id: connector.id, format: adapterFormat })}
+                  disabled={adapterMutation.isPending}
+                  data-testid="button-generate-adapter"
+                >
+                  {adapterMutation.isPending ? (
+                    <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                  ) : (
+                    <Terminal className="w-3.5 h-3.5 mr-1.5" />
+                  )}
+                  {adapterMutation.isPending ? "Generating..." : "Generate"}
+                </Button>
+              </div>
+            </div>
+            <span className="text-[11px] text-muted-foreground">
+              Generate a standalone adapter stub for this tool, ready to integrate into exported agent code packages.
+            </span>
+            {adapterVisible && adapterCode && (
+              <div className="flex flex-col gap-2" data-testid="adapter-code-preview">
+                <div className="overflow-auto max-h-[300px] rounded-md bg-muted/30 border">
+                  <pre className="text-xs font-mono p-3 whitespace-pre-wrap">
+                    <code>{adapterCode}</code>
+                  </pre>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      navigator.clipboard.writeText(adapterCode);
+                      toast({ title: "Copied to clipboard" });
+                    }}
+                    data-testid="button-copy-adapter"
+                  >
+                    Copy Code
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      const ext = adapterFormat === "typescript" ? "ts" : "py";
+                      const blob = new Blob([adapterCode], { type: "text/plain" });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.download = `${(connector.name || "tool").replace(/[^a-zA-Z0-9_]/g, "_")}_adapter.${ext}`;
+                      document.body.appendChild(a);
+                      a.click();
+                      document.body.removeChild(a);
+                      URL.revokeObjectURL(url);
+                      toast({ title: "Adapter downloaded" });
+                    }}
+                    data-testid="button-download-adapter"
+                  >
+                    <Download className="w-3 h-3 mr-1" />
+                    Download
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </DialogContent>

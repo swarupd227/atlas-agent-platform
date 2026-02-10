@@ -20,6 +20,8 @@ import {
   ShieldAlert,
   Ban,
   ChevronLeft,
+  FileCode,
+  Download,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -298,6 +300,7 @@ function CreateReleaseWizard({
     kpiDropEnabled: true,
     kpiDropThreshold: 0.7,
     autoRollbackEnabled: true,
+    deployAsSourcePackage: false,
   });
   const [autopromoteRules, setAutopromoteRules] = useState<AutopromoteRule[]>([]);
 
@@ -369,12 +372,13 @@ function CreateReleaseWizard({
       agentName: selectedAgent?.name,
       environment: formData.environment,
       version: formData.version,
-      rolloutStrategy: formData.rolloutStrategy,
+      rolloutStrategy: formData.deployAsSourcePackage ? "source_package" : formData.rolloutStrategy,
       canaryPercent: formData.canaryPercent,
       shadowEnabled: formData.shadowEnabled,
-      rollbackConfig,
-      canaryConfig,
-      autopromoteConfig,
+      deployAsSourcePackage: formData.deployAsSourcePackage,
+      rollbackConfig: formData.deployAsSourcePackage ? undefined : rollbackConfig,
+      canaryConfig: formData.deployAsSourcePackage ? undefined : canaryConfig,
+      autopromoteConfig: formData.deployAsSourcePackage ? undefined : autopromoteConfig,
     });
   };
 
@@ -493,6 +497,28 @@ function CreateReleaseWizard({
                 <Shield className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
                 <span className="text-[11px] text-muted-foreground">
                   Shadow mode runs the candidate version in parallel with no side effects. Traffic is mirrored via a dry-run tool proxy.
+                </span>
+              </div>
+            )}
+            <div className="flex items-center justify-between gap-3 p-3 rounded-md bg-muted/30">
+              <div className="flex items-center gap-2">
+                <FileCode className="w-4 h-4 text-muted-foreground" />
+                <div className="flex flex-col">
+                  <span className="text-xs font-medium">Deploy as Source Package</span>
+                  <span className="text-[10px] text-muted-foreground">Generate exportable code instead of managed runtime</span>
+                </div>
+              </div>
+              <Switch
+                checked={formData.deployAsSourcePackage}
+                onCheckedChange={(val: boolean) => setFormData({ ...formData, deployAsSourcePackage: val })}
+                data-testid="switch-source-package"
+              />
+            </div>
+            {formData.deployAsSourcePackage && (
+              <div className="flex items-center gap-2 p-2.5 rounded-md bg-emerald-500/5 border border-emerald-500/10">
+                <Download className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                <span className="text-[11px] text-muted-foreground">
+                  Source package mode generates a deployable code repository with Ralph Loop entrypoint, tool adapters, and dependency files for CI/CD pipelines. Managed runtime safeguards (canary, rollback) are not applicable in this mode.
                 </span>
               </div>
             )}
@@ -749,9 +775,11 @@ function CreateReleaseWizard({
                 </div>
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs text-muted-foreground">Strategy</span>
-                  <span className="text-xs font-medium" data-testid="review-strategy">{formData.rolloutStrategy}</span>
+                  <span className="text-xs font-medium" data-testid="review-strategy">
+                    {formData.deployAsSourcePackage ? "Source Package" : formData.rolloutStrategy}
+                  </span>
                 </div>
-                {formData.rolloutStrategy === "canary" && (
+                {formData.rolloutStrategy === "canary" && !formData.deployAsSourcePackage && (
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-xs text-muted-foreground">Initial Canary</span>
                     <span className="text-xs font-medium">{formData.canaryPercent}%</span>
@@ -763,53 +791,72 @@ function CreateReleaseWizard({
                     {formData.shadowEnabled ? "Enabled" : "Disabled"}
                   </Badge>
                 </div>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <span className="text-xs font-medium text-muted-foreground">Rollback Safeguards</span>
-              <div className="flex flex-col gap-1.5">
-                {formData.evalRegressionEnabled && (
-                  <div className="flex items-center gap-2 p-2 rounded-md bg-muted/20" data-testid="review-trigger-eval">
-                    <ShieldAlert className="w-3 h-3 text-amber-500 shrink-0" />
-                    <span className="text-[11px]">Eval regression {">"} {formData.evalRegressionThreshold}%</span>
-                  </div>
-                )}
-                {formData.policyViolationEnabled && (
-                  <div className="flex items-center gap-2 p-2 rounded-md bg-muted/20" data-testid="review-trigger-policy">
-                    <ShieldAlert className="w-3 h-3 text-amber-500 shrink-0" />
-                    <span className="text-[11px]">Policy violations {">"} {formData.policyViolationThreshold}/hr</span>
-                  </div>
-                )}
-                {formData.kpiDropEnabled && (
-                  <div className="flex items-center gap-2 p-2 rounded-md bg-muted/20" data-testid="review-trigger-kpi">
-                    <ShieldAlert className="w-3 h-3 text-amber-500 shrink-0" />
-                    <span className="text-[11px]">KPI confidence {"<"} {formData.kpiDropThreshold}</span>
-                  </div>
-                )}
-                {!formData.evalRegressionEnabled && !formData.policyViolationEnabled && !formData.kpiDropEnabled && (
-                  <div className="flex items-center gap-2 p-2 rounded-md bg-amber-500/5 border border-amber-500/10">
-                    <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />
-                    <span className="text-[11px] text-amber-700 dark:text-amber-300">No rollback triggers configured</span>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {autopromoteRules.filter(r => r.enabled).length > 0 && (
-              <div className="flex flex-col gap-2">
-                <span className="text-xs font-medium text-muted-foreground">Autopromote Rules</span>
-                <div className="flex flex-col gap-1.5">
-                  {autopromoteRules.filter(r => r.enabled).map((rule, idx) => (
-                    <div key={rule.id} className="flex items-center gap-2 p-2 rounded-md bg-emerald-500/5 border border-emerald-500/10" data-testid={`review-autopromote-${idx}`}>
-                      <Zap className="w-3 h-3 text-emerald-500 shrink-0" />
-                      <span className="text-[11px]">
-                        If <span className="font-medium">{rule.evalSuiteName || "suite"}</span> passes and no violations in {rule.noViolationsWindowHours}h, raise canary to {rule.targetCanaryPercent}%
-                      </span>
-                    </div>
-                  ))}
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-muted-foreground">Deploy Mode</span>
+                  <Badge variant="outline" className={`text-[10px] ${formData.deployAsSourcePackage ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : ""}`} data-testid="review-deploy-mode">
+                    {formData.deployAsSourcePackage ? "Source Package" : "Managed Runtime"}
+                  </Badge>
                 </div>
               </div>
+            </div>
+
+            {formData.deployAsSourcePackage && (
+              <div className="flex items-center gap-2 p-2.5 rounded-md bg-emerald-500/5 border border-emerald-500/10" data-testid="review-source-package-info">
+                <FileCode className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                <span className="text-[11px] text-muted-foreground">
+                  This release will generate a source code package for CI/CD deployment. Rollback safeguards and autopromote rules are managed externally.
+                </span>
+              </div>
+            )}
+
+            {!formData.deployAsSourcePackage && (
+              <>
+                <div className="flex flex-col gap-2">
+                  <span className="text-xs font-medium text-muted-foreground">Rollback Safeguards</span>
+                  <div className="flex flex-col gap-1.5">
+                    {formData.evalRegressionEnabled && (
+                      <div className="flex items-center gap-2 p-2 rounded-md bg-muted/20" data-testid="review-trigger-eval">
+                        <ShieldAlert className="w-3 h-3 text-amber-500 shrink-0" />
+                        <span className="text-[11px]">Eval regression {">"} {formData.evalRegressionThreshold}%</span>
+                      </div>
+                    )}
+                    {formData.policyViolationEnabled && (
+                      <div className="flex items-center gap-2 p-2 rounded-md bg-muted/20" data-testid="review-trigger-policy">
+                        <ShieldAlert className="w-3 h-3 text-amber-500 shrink-0" />
+                        <span className="text-[11px]">Policy violations {">"} {formData.policyViolationThreshold}/hr</span>
+                      </div>
+                    )}
+                    {formData.kpiDropEnabled && (
+                      <div className="flex items-center gap-2 p-2 rounded-md bg-muted/20" data-testid="review-trigger-kpi">
+                        <ShieldAlert className="w-3 h-3 text-amber-500 shrink-0" />
+                        <span className="text-[11px]">KPI confidence {"<"} {formData.kpiDropThreshold}</span>
+                      </div>
+                    )}
+                    {!formData.evalRegressionEnabled && !formData.policyViolationEnabled && !formData.kpiDropEnabled && (
+                      <div className="flex items-center gap-2 p-2 rounded-md bg-amber-500/5 border border-amber-500/10">
+                        <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />
+                        <span className="text-[11px] text-amber-700 dark:text-amber-300">No rollback triggers configured</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {autopromoteRules.filter(r => r.enabled).length > 0 && (
+                  <div className="flex flex-col gap-2">
+                    <span className="text-xs font-medium text-muted-foreground">Autopromote Rules</span>
+                    <div className="flex flex-col gap-1.5">
+                      {autopromoteRules.filter(r => r.enabled).map((rule, idx) => (
+                        <div key={rule.id} className="flex items-center gap-2 p-2 rounded-md bg-emerald-500/5 border border-emerald-500/10" data-testid={`review-autopromote-${idx}`}>
+                          <Zap className="w-3 h-3 text-emerald-500 shrink-0" />
+                          <span className="text-[11px]">
+                            If <span className="font-medium">{rule.evalSuiteName || "suite"}</span> passes and no violations in {rule.noViolationsWindowHours}h, raise canary to {rule.targetCanaryPercent}%
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
             )}
 
             {requiresApproval && (

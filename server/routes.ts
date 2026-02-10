@@ -7056,6 +7056,676 @@ Eval Suites: ${evalSuites.length} configured`,
     });
   });
 
+  // --- Export Code Package helpers ---
+
+  function generateAgentYaml(
+    agent: { name: string; description: string | null; modelProvider: string | null; modelName: string | null },
+    tools: Array<{ name: string }>,
+    systemPrompt: string,
+    maxIterations: number,
+    completionPromise: string
+  ): string {
+    const toolsList = tools.map(t => `  - ${t.name}`).join("\n");
+    return [
+      `name: "${agent.name}"`,
+      `description: "${(agent.description || "").replace(/"/g, '\\"')}"`,
+      `model:`,
+      `  provider: "${agent.modelProvider || "openai"}"`,
+      `  name: "${agent.modelName || "gpt-4.1"}"`,
+      `system_prompt: |`,
+      ...systemPrompt.split("\n").map(line => `  ${line}`),
+      `tools:`,
+      toolsList || "  []",
+      `max_iterations: ${maxIterations}`,
+      `completion_promise: "${completionPromise}"`,
+    ].join("\n");
+  }
+
+  function generateTsEntrypointOpenAI(
+    tools: Array<{ name: string }>,
+    maxIterations: number,
+    completionPromise: string
+  ): string {
+    const toolImports = tools.map(t => `import { ${t.name} } from "./tools/${t.name}";`).join("\n");
+    const toolMap = tools.map(t => `  "${t.name}": ${t.name},`).join("\n");
+    return `import OpenAI from "openai";
+import * as fs from "fs";
+import * as yaml from "js-yaml";
+${toolImports}
+
+const config = yaml.load(fs.readFileSync("agent.yaml", "utf8")) as any;
+const client = new OpenAI();
+
+const toolAdapters: Record<string, (args: any) => Promise<any>> = {
+${toolMap}
+};
+
+const toolDefinitions: OpenAI.Chat.Completions.ChatCompletionTool[] = config.tools.map((name: string) => ({
+  type: "function" as const,
+  function: {
+    name,
+    description: \`Execute the \${name} tool\`,
+    parameters: { type: "object", properties: {}, additionalProperties: true },
+  },
+}));
+
+async function main() {
+  const task = process.argv[2] || "Hello, agent!";
+  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+    { role: "system", content: config.system_prompt },
+    { role: "user", content: task },
+  ];
+
+  const maxIter = config.max_iterations || ${maxIterations};
+  const promise = config.completion_promise || "${completionPromise}";
+
+  for (let i = 0; i < maxIter; i++) {
+    console.log(\`[iteration \${i + 1}/\${maxIter}]\`);
+
+    const response = await client.chat.completions.create({
+      model: config.model.name,
+      messages,
+      tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
+      tool_choice: toolDefinitions.length > 0 ? "auto" : undefined,
+    });
+
+    const choice = response.choices[0];
+    const msg = choice.message;
+    messages.push(msg);
+
+    if (msg.content && msg.content.includes(promise)) {
+      console.log("[completed] Agent returned completion promise.");
+      console.log(msg.content);
+      return;
+    }
+
+    if (!msg.tool_calls || msg.tool_calls.length === 0) {
+      console.log("[done] No tool calls, final output:");
+      console.log(msg.content || "");
+      return;
+    }
+
+    for (const tc of msg.tool_calls) {
+      const fn = tc.function;
+      console.log(\`  [tool] \${fn.name}(\${fn.arguments})\`);
+      const adapter = toolAdapters[fn.name];
+      let result: any;
+      try {
+        const args = JSON.parse(fn.arguments);
+        result = adapter ? await adapter(args) : { error: \`Unknown tool: \${fn.name}\` };
+      } catch (err: any) {
+        result = { error: err.message };
+      }
+      messages.push({
+        role: "tool",
+        tool_call_id: tc.id,
+        content: JSON.stringify(result),
+      });
+    }
+  }
+
+  console.log("[max iterations reached]");
+}
+
+main().catch(console.error);
+`;
+  }
+
+  function generateTsEntrypointAnthropic(
+    tools: Array<{ name: string }>,
+    maxIterations: number,
+    completionPromise: string
+  ): string {
+    const toolImports = tools.map(t => `import { ${t.name} } from "./tools/${t.name}";`).join("\n");
+    const toolMap = tools.map(t => `  "${t.name}": ${t.name},`).join("\n");
+    return `import Anthropic from "@anthropic-ai/sdk";
+import * as fs from "fs";
+import * as yaml from "js-yaml";
+${toolImports}
+
+const config = yaml.load(fs.readFileSync("agent.yaml", "utf8")) as any;
+const client = new Anthropic();
+
+const toolAdapters: Record<string, (args: any) => Promise<any>> = {
+${toolMap}
+};
+
+const toolDefinitions: Anthropic.Tool[] = config.tools.map((name: string) => ({
+  name,
+  description: \`Execute the \${name} tool\`,
+  input_schema: { type: "object" as const, properties: {} },
+}));
+
+async function main() {
+  const task = process.argv[2] || "Hello, agent!";
+  const messages: Anthropic.MessageParam[] = [
+    { role: "user", content: task },
+  ];
+
+  const maxIter = config.max_iterations || ${maxIterations};
+  const promise = config.completion_promise || "${completionPromise}";
+
+  for (let i = 0; i < maxIter; i++) {
+    console.log(\`[iteration \${i + 1}/\${maxIter}]\`);
+
+    const response = await client.messages.create({
+      model: config.model.name,
+      max_tokens: 4096,
+      system: config.system_prompt,
+      messages,
+      tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
+    });
+
+    const textBlocks = response.content.filter((b): b is Anthropic.TextBlock => b.type === "text");
+    const toolUseBlocks = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+
+    const textContent = textBlocks.map(b => b.text).join("\\n");
+
+    if (textContent.includes(promise)) {
+      console.log("[completed] Agent returned completion promise.");
+      console.log(textContent);
+      return;
+    }
+
+    if (toolUseBlocks.length === 0) {
+      console.log("[done] No tool calls, final output:");
+      console.log(textContent);
+      return;
+    }
+
+    messages.push({ role: "assistant", content: response.content });
+
+    const toolResults: Anthropic.ToolResultBlockParam[] = [];
+    for (const tu of toolUseBlocks) {
+      console.log(\`  [tool] \${tu.name}(\${JSON.stringify(tu.input)})\`);
+      const adapter = toolAdapters[tu.name];
+      let result: any;
+      try {
+        result = adapter ? await adapter(tu.input) : { error: \`Unknown tool: \${tu.name}\` };
+      } catch (err: any) {
+        result = { error: err.message };
+      }
+      toolResults.push({
+        type: "tool_result",
+        tool_use_id: tu.id,
+        content: JSON.stringify(result),
+      });
+    }
+
+    messages.push({ role: "user", content: toolResults });
+  }
+
+  console.log("[max iterations reached]");
+}
+
+main().catch(console.error);
+`;
+  }
+
+  function generatePyEntrypointOpenAI(
+    tools: Array<{ name: string }>,
+    maxIterations: number,
+    completionPromise: string
+  ): string {
+    const toolImports = tools.map(t => `from tools.${t.name} import ${t.name}`).join("\n");
+    const toolMap = tools.map(t => `    "${t.name}": ${t.name},`).join("\n");
+    return `import json
+import sys
+import yaml
+from openai import OpenAI
+${toolImports}
+
+with open("agent.yaml", "r") as f:
+    config = yaml.safe_load(f)
+
+client = OpenAI()
+
+tool_adapters = {
+${toolMap}
+}
+
+tool_definitions = [
+    {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": f"Execute the {name} tool",
+            "parameters": {"type": "object", "properties": {}, "additionalProperties": True},
+        },
+    }
+    for name in config.get("tools", [])
+]
+
+
+def main():
+    task = sys.argv[1] if len(sys.argv) > 1 else "Hello, agent!"
+    messages = [
+        {"role": "system", "content": config["system_prompt"]},
+        {"role": "user", "content": task},
+    ]
+
+    max_iter = config.get("max_iterations", ${maxIterations})
+    promise = config.get("completion_promise", "${completionPromise}")
+
+    for i in range(max_iter):
+        print(f"[iteration {i + 1}/{max_iter}]")
+
+        kwargs = {
+            "model": config["model"]["name"],
+            "messages": messages,
+        }
+        if tool_definitions:
+            kwargs["tools"] = tool_definitions
+            kwargs["tool_choice"] = "auto"
+
+        response = client.chat.completions.create(**kwargs)
+        choice = response.choices[0]
+        msg = choice.message
+        messages.append(msg)
+
+        if msg.content and promise in msg.content:
+            print("[completed] Agent returned completion promise.")
+            print(msg.content)
+            return
+
+        if not msg.tool_calls:
+            print("[done] No tool calls, final output:")
+            print(msg.content or "")
+            return
+
+        for tc in msg.tool_calls:
+            fn = tc.function
+            print(f"  [tool] {fn.name}({fn.arguments})")
+            adapter = tool_adapters.get(fn.name)
+            try:
+                args = json.loads(fn.arguments)
+                result = adapter(args) if adapter else {"error": f"Unknown tool: {fn.name}"}
+            except Exception as e:
+                result = {"error": str(e)}
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": json.dumps(result),
+            })
+
+    print("[max iterations reached]")
+
+
+if __name__ == "__main__":
+    main()
+`;
+  }
+
+  function generatePyEntrypointAnthropic(
+    tools: Array<{ name: string }>,
+    maxIterations: number,
+    completionPromise: string
+  ): string {
+    const toolImports = tools.map(t => `from tools.${t.name} import ${t.name}`).join("\n");
+    const toolMap = tools.map(t => `    "${t.name}": ${t.name},`).join("\n");
+    return `import json
+import sys
+import yaml
+import anthropic
+${toolImports}
+
+with open("agent.yaml", "r") as f:
+    config = yaml.safe_load(f)
+
+client = anthropic.Anthropic()
+
+tool_adapters = {
+${toolMap}
+}
+
+tool_definitions = [
+    {
+        "name": name,
+        "description": f"Execute the {name} tool",
+        "input_schema": {"type": "object", "properties": {}},
+    }
+    for name in config.get("tools", [])
+]
+
+
+def main():
+    task = sys.argv[1] if len(sys.argv) > 1 else "Hello, agent!"
+    messages = [
+        {"role": "user", "content": task},
+    ]
+
+    max_iter = config.get("max_iterations", ${maxIterations})
+    promise = config.get("completion_promise", "${completionPromise}")
+
+    for i in range(max_iter):
+        print(f"[iteration {i + 1}/{max_iter}]")
+
+        kwargs = {
+            "model": config["model"]["name"],
+            "max_tokens": 4096,
+            "system": config["system_prompt"],
+            "messages": messages,
+        }
+        if tool_definitions:
+            kwargs["tools"] = tool_definitions
+
+        response = client.messages.create(**kwargs)
+
+        text_blocks = [b for b in response.content if b.type == "text"]
+        tool_blocks = [b for b in response.content if b.type == "tool_use"]
+        text_content = "\\n".join(b.text for b in text_blocks)
+
+        if promise in text_content:
+            print("[completed] Agent returned completion promise.")
+            print(text_content)
+            return
+
+        if not tool_blocks:
+            print("[done] No tool calls, final output:")
+            print(text_content)
+            return
+
+        messages.append({"role": "assistant", "content": response.content})
+
+        tool_results = []
+        for tu in tool_blocks:
+            print(f"  [tool] {tu.name}({json.dumps(tu.input)})")
+            adapter = tool_adapters.get(tu.name)
+            try:
+                result = adapter(tu.input) if adapter else {"error": f"Unknown tool: {tu.name}"}
+            except Exception as e:
+                result = {"error": str(e)}
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": tu.id,
+                "content": json.dumps(result),
+            })
+
+        messages.append({"role": "user", "content": tool_results})
+
+    print("[max iterations reached]")
+
+
+if __name__ == "__main__":
+    main()
+`;
+  }
+
+  function generateTsToolAdapter(tool: { name: string; description?: string; parameters?: any }): string {
+    return `export async function ${tool.name}(args: Record<string, any>): Promise<any> {
+  // TODO: Implement ${tool.name}
+  // ${tool.description || "No description provided"}
+  console.log("[${tool.name}] called with:", args);
+  return { status: "not_implemented", tool: "${tool.name}", args };
+}
+`;
+  }
+
+  function generatePyToolAdapter(tool: { name: string; description?: string; parameters?: any }): string {
+    return `def ${tool.name}(args: dict) -> dict:
+    """${tool.description || "No description provided"}"""
+    # TODO: Implement ${tool.name}
+    print(f"[${tool.name}] called with: {args}")
+    return {"status": "not_implemented", "tool": "${tool.name}", "args": args}
+`;
+  }
+
+  function generateTsToolsIndex(tools: Array<{ name: string }>): string {
+    return tools.map(t => `export { ${t.name} } from "./${t.name}";`).join("\n") + "\n";
+  }
+
+  function generatePyToolsInit(tools: Array<{ name: string }>): string {
+    return tools.map(t => `from .${t.name} import ${t.name}`).join("\n") + "\n";
+  }
+
+  // POST /api/agents/:id/export-code
+  app.post("/api/agents/:id/export-code", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+
+      const exportSchema = z.object({
+        format: z.enum(["typescript", "python"]).default("typescript"),
+        llmProvider: z.enum(["openai", "anthropic"]).default("openai"),
+        maxIterations: z.number().int().positive().default(20),
+        completionPromise: z.string().default("TASK_COMPLETE"),
+      });
+
+      const { format, llmProvider, maxIterations, completionPromise } = exportSchema.parse(req.body || {});
+
+      const blueprintJson = (agent.blueprintJson && typeof agent.blueprintJson === "object")
+        ? agent.blueprintJson as Record<string, unknown>
+        : {};
+      const systemPrompt = (blueprintJson.systemPrompt as string)
+        || (blueprintJson.system_prompt as string)
+        || (blueprintJson.prompt as string)
+        || `You are ${agent.name}. ${agent.description || ""}`;
+
+      const rawTools = Array.isArray(agent.toolsConfig) ? agent.toolsConfig : [];
+      const tools: Array<{ name: string; description?: string; parameters?: any }> = rawTools.map((t: any) => ({
+        name: (t.name || "unnamed_tool").replace(/[^a-zA-Z0-9_]/g, "_"),
+        description: t.description || "",
+        parameters: t.parameters || {},
+      }));
+
+      const agentYaml = generateAgentYaml(agent, tools, systemPrompt, maxIterations, completionPromise);
+
+      const files: Record<string, string> = {
+        "agent.yaml": agentYaml,
+      };
+
+      if (format === "typescript") {
+        const entrypoint = llmProvider === "openai"
+          ? generateTsEntrypointOpenAI(tools, maxIterations, completionPromise)
+          : generateTsEntrypointAnthropic(tools, maxIterations, completionPromise);
+        files["entrypoint.ts"] = entrypoint;
+        files["tools/index.ts"] = generateTsToolsIndex(tools);
+        for (const tool of tools) {
+          files[`tools/${tool.name}.ts`] = generateTsToolAdapter(tool);
+        }
+        const deps: Record<string, string> = {
+          "typescript": "^5.0.0",
+          "ts-node": "^10.9.0",
+          "js-yaml": "^4.1.0",
+          "@types/js-yaml": "^4.0.9",
+          "@types/node": "^20.0.0",
+        };
+        if (llmProvider === "openai") {
+          deps["openai"] = "^4.0.0";
+        } else {
+          deps["@anthropic-ai/sdk"] = "^0.30.0";
+        }
+        files["package.json"] = JSON.stringify({
+          name: agent.name.toLowerCase().replace(/[^a-z0-9-]/g, "-"),
+          version: "1.0.0",
+          private: true,
+          scripts: {
+            start: "ts-node entrypoint.ts",
+          },
+          dependencies: deps,
+        }, null, 2);
+      } else {
+        const entrypoint = llmProvider === "openai"
+          ? generatePyEntrypointOpenAI(tools, maxIterations, completionPromise)
+          : generatePyEntrypointAnthropic(tools, maxIterations, completionPromise);
+        files["entrypoint.py"] = entrypoint;
+        files["tools/__init__.py"] = generatePyToolsInit(tools);
+        for (const tool of tools) {
+          files[`tools/${tool.name}.py`] = generatePyToolAdapter(tool);
+        }
+        const reqs = ["pyyaml>=6.0"];
+        if (llmProvider === "openai") {
+          reqs.push("openai>=1.0");
+        } else {
+          reqs.push("anthropic>=0.30");
+        }
+        files["requirements.txt"] = reqs.join("\n") + "\n";
+      }
+
+      if (llmProvider === "openai") {
+        files[".env.example"] = "OPENAI_API_KEY=sk-your-api-key-here\n";
+      } else {
+        files[".env.example"] = "ANTHROPIC_API_KEY=sk-ant-your-api-key-here\n";
+      }
+
+      res.json({
+        files,
+        metadata: {
+          agentName: agent.name,
+          agentId: agent.id,
+          format,
+          llmProvider,
+          pattern: "ralph_loop",
+          generatedAt: new Date().toISOString(),
+        },
+      });
+    } catch (e) {
+      if (e instanceof ZodError) return res.status(400).json({ message: "Validation error", errors: e.errors });
+      console.error("[export-code] Error:", e);
+      res.status(500).json({ message: "Failed to generate code package" });
+    }
+  });
+
+  // POST /api/tool-connectors/:id/generate-adapter
+  app.post("/api/tool-connectors/:id/generate-adapter", async (req, res) => {
+    try {
+      const connectors = await storage.getToolConnectors();
+      const connector = connectors.find(c => c.id === req.params.id);
+      if (!connector) return res.status(404).json({ message: "Tool connector not found" });
+
+      const schema = z.object({
+        format: z.enum(["typescript", "python"]).default("typescript"),
+      });
+      const { format } = schema.parse(req.body);
+      const safeName = (connector.name || "tool").replace(/[^a-zA-Z0-9_]/g, "_");
+      const desc = connector.description || "No description";
+      const perms = (connector.permissions || []) as string[];
+      const secrets = (connector.requiredSecrets || []) as string[];
+      const endpoint = (connector as any).baseUrl || (connector as any).endpoint || "https://api.example.com";
+
+      let code: string;
+      if (format === "typescript") {
+        code = `/**
+ * Tool Adapter: ${connector.name}
+ * Category: ${connector.category}
+ * Description: ${desc}
+ * Generated by ALMP Export
+ */
+
+interface ${safeName}Input {
+  // Define your input parameters here
+  query: string;
+}
+
+interface ${safeName}Output {
+  // Define your output structure here
+  result: string;
+  metadata?: Record<string, unknown>;
+}
+
+${secrets.length > 0 ? `// Required environment variables:\n${secrets.map(s => `// - ${s}`).join("\n")}\n` : ""}
+export async function ${safeName}(input: ${safeName}Input): Promise<${safeName}Output> {
+  const endpoint = process.env.TOOL_ENDPOINT || "${endpoint}";
+${secrets.map(s => `  const ${s.toLowerCase()} = process.env.${s};\n  if (!${s.toLowerCase()}) throw new Error("Missing required secret: ${s}");`).join("\n")}
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+${secrets.length > 0 ? `      "Authorization": \`Bearer \${${secrets[0].toLowerCase()}}\`,` : ""}
+    },
+    body: JSON.stringify(input),
+  });
+
+  if (!response.ok) {
+    throw new Error(\`${connector.name} tool call failed: \${response.status} \${response.statusText}\`);
+  }
+
+  const data = await response.json();
+  return { result: JSON.stringify(data), metadata: { status: response.status } };
+}
+
+// Tool definition for LLM function calling
+export const ${safeName}Definition = {
+  name: "${safeName}",
+  description: "${desc.replace(/"/g, '\\"')}",
+  parameters: {
+    type: "object" as const,
+    properties: {
+      query: { type: "string", description: "Input query for the tool" },
+    },
+    required: ["query"],
+  },
+};
+${perms.length > 0 ? `\n// Required permissions: ${perms.join(", ")}` : ""}
+`;
+      } else {
+        code = `"""
+Tool Adapter: ${connector.name}
+Category: ${connector.category}
+Description: ${desc}
+Generated by ALMP Export
+"""
+
+import os
+import json
+import httpx
+from typing import Any
+
+${secrets.length > 0 ? `# Required environment variables:\n${secrets.map(s => `# - ${s}`).join("\n")}\n` : ""}
+
+async def ${safeName.toLowerCase()}(query: str) -> dict[str, Any]:
+    """${desc}"""
+    endpoint = os.environ.get("TOOL_ENDPOINT", "${endpoint}")
+${secrets.map(s => `    ${s.toLowerCase()} = os.environ.get("${s}")\n    if not ${s.toLowerCase()}:\n        raise ValueError("Missing required secret: ${s}")`).join("\n")}
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            endpoint,
+            headers={
+                "Content-Type": "application/json",
+${secrets.length > 0 ? `                "Authorization": f"Bearer {${secrets[0].toLowerCase()}}",` : ""}
+            },
+            json={"query": query},
+        )
+        response.raise_for_status()
+        data = response.json()
+        return {"result": json.dumps(data), "metadata": {"status": response.status_code}}
+
+
+# Tool definition for LLM function calling
+${safeName.toLowerCase()}_definition = {
+    "name": "${safeName.toLowerCase()}",
+    "description": "${desc.replace(/"/g, '\\"')}",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Input query for the tool"},
+        },
+        "required": ["query"],
+    },
+}
+${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
+`;
+      }
+
+      res.json({
+        code,
+        metadata: {
+          toolName: connector.name,
+          connectorId: connector.id,
+          format,
+          category: connector.category,
+          generatedAt: new Date().toISOString(),
+        },
+      });
+    } catch (e: any) {
+      if (e instanceof z.ZodError) return res.status(400).json({ message: "Invalid parameters", errors: e.errors });
+      console.error("[generate-adapter] Error:", e);
+      res.status(500).json({ message: "Failed to generate tool adapter" });
+    }
+  });
+
   // Start the job worker
   startWorker();
 

@@ -144,6 +144,14 @@ export default function AgentDetail() {
   const [diffVersionA, setDiffVersionA] = useState("");
   const [diffVersionB, setDiffVersionB] = useState("");
   const [showDiff, setShowDiff] = useState(false);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [exportFormat, setExportFormat] = useState<"typescript" | "python">("typescript");
+  const [exportLlmProvider, setExportLlmProvider] = useState<"openai" | "anthropic">("openai");
+  const [exportMaxIterations, setExportMaxIterations] = useState(20);
+  const [exportCompletionPromise, setExportCompletionPromise] = useState("TASK_COMPLETE");
+  const [exportPreview, setExportPreview] = useState<{ files: Record<string, string>; metadata: any } | null>(null);
+  const [exportPreviewFile, setExportPreviewFile] = useState<string>("");
+  const [exportStep, setExportStep] = useState<"configure" | "preview">("configure");
 
   const { data: deprecationSignals, isLoading: deprecationLoading, isError: deprecationError } = useQuery<{
     riskScore: number;
@@ -252,6 +260,40 @@ export default function AgentDetail() {
       toast({ title: "Recommendation dismissed" });
     },
   });
+
+  const exportCodeMutation = useMutation({
+    mutationFn: async (params: { format: string; llmProvider: string; maxIterations: number; completionPromise: string }) => {
+      const res = await apiRequest("POST", `/api/agents/${agentId}/export-code`, params);
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setExportPreview(data);
+      const fileNames = Object.keys(data.files || {});
+      if (fileNames.length > 0) setExportPreviewFile(fileNames.find((f: string) => f.includes("entrypoint")) || fileNames[0]);
+      setExportStep("preview");
+    },
+    onError: () => {
+      toast({ title: "Export failed", description: "Could not generate code package", variant: "destructive" });
+    },
+  });
+
+  function downloadExportPackage() {
+    if (!exportPreview) return;
+    const files = exportPreview.files;
+    const blob = new Blob(
+      [JSON.stringify({ files, metadata: exportPreview.metadata }, null, 2)],
+      { type: "application/json" }
+    );
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${agent?.name?.replace(/\s+/g, "-").toLowerCase() || "agent"}-export.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast({ title: "Package downloaded" });
+  }
 
   if (isLoading) {
     return (
@@ -1104,6 +1146,9 @@ export default function AgentDetail() {
             </Button>
             <Button variant="outline" size="sm" onClick={() => toast({ title: "Version comparison opened" })} data-testid="button-compare-version">
               <Layers className="w-3.5 h-3.5 mr-1.5" /> Compare vs Version...
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => { setExportStep("configure"); setExportPreview(null); setExportDialogOpen(true); }} data-testid="button-export-code">
+              <Download className="w-3.5 h-3.5 mr-1.5" /> Export as Code
             </Button>
             <div className="flex-1" />
             <div className="flex items-center gap-1" data-testid="blueprint-view-toggle">
@@ -2554,6 +2599,164 @@ export default function AgentDetail() {
             >
               {initiateRetirementMutation.isPending ? "Processing..." : "Begin Retirement"}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={exportDialogOpen} onOpenChange={(open) => { setExportDialogOpen(open); if (!open) { setExportStep("configure"); setExportPreview(null); } }}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Download className="w-4 h-4" />
+              Export as Code
+            </DialogTitle>
+            <DialogDescription>
+              Generate a deployable code package from this agent's blueprint using the Ralph Loop pattern.
+            </DialogDescription>
+          </DialogHeader>
+
+          {exportStep === "configure" ? (
+            <div className="flex flex-col gap-5 py-2">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex flex-col gap-2">
+                  <Label>Language</Label>
+                  <Select value={exportFormat} onValueChange={(v) => setExportFormat(v as "typescript" | "python")}>
+                    <SelectTrigger data-testid="select-export-format">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="typescript">TypeScript</SelectItem>
+                      <SelectItem value="python">Python</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Label>LLM Provider</Label>
+                  <Select value={exportLlmProvider} onValueChange={(v) => setExportLlmProvider(v as "openai" | "anthropic")}>
+                    <SelectTrigger data-testid="select-export-llm">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="openai">OpenAI GPT-4</SelectItem>
+                      <SelectItem value="anthropic">Anthropic Claude</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <Card>
+                <CardContent className="p-4 flex flex-col gap-3">
+                  <div className="flex items-center gap-2">
+                    <RefreshCw className="w-3.5 h-3.5 text-muted-foreground" />
+                    <span className="text-sm font-medium">Ralph Loop Configuration</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="flex flex-col gap-1.5">
+                      <Label className="text-xs">Max Iterations</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={exportMaxIterations}
+                        onChange={(e) => setExportMaxIterations(Number(e.target.value) || 20)}
+                        data-testid="input-max-iterations"
+                      />
+                      <span className="text-[10px] text-muted-foreground">Safety limit to prevent infinite loops</span>
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Label className="text-xs">Completion Promise</Label>
+                      <Input
+                        value={exportCompletionPromise}
+                        onChange={(e) => setExportCompletionPromise(e.target.value)}
+                        placeholder="TASK_COMPLETE"
+                        data-testid="input-completion-promise"
+                      />
+                      <span className="text-[10px] text-muted-foreground">Agent outputs this string when done</span>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Terminal className="w-3.5 h-3.5 text-muted-foreground" />
+                    <span className="text-sm font-medium">What Gets Generated</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {[
+                      { label: "agent.yaml", desc: "Agent manifest with config" },
+                      { label: exportFormat === "typescript" ? "entrypoint.ts" : "entrypoint.py", desc: "Ralph Loop orchestration" },
+                      { label: exportFormat === "typescript" ? "tools/index.ts" : "tools/__init__.py", desc: "Tool adapter registry" },
+                      { label: exportFormat === "typescript" ? "package.json" : "requirements.txt", desc: "Dependencies" },
+                      { label: ".env.example", desc: "Environment variables" },
+                    ].map(f => (
+                      <div key={f.label} className="flex items-center gap-2 p-2 rounded-md bg-muted/30">
+                        <FileCode className="w-3 h-3 text-muted-foreground shrink-0" />
+                        <div className="flex flex-col min-w-0">
+                          <span className="text-xs font-mono truncate">{f.label}</span>
+                          <span className="text-[10px] text-muted-foreground">{f.desc}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3 flex-1 min-h-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                {exportPreview && Object.keys(exportPreview.files).map(fname => (
+                  <Button
+                    key={fname}
+                    size="sm"
+                    variant={exportPreviewFile === fname ? "default" : "outline"}
+                    onClick={() => setExportPreviewFile(fname)}
+                    data-testid={`button-preview-file-${fname.replace(/[/.]/g, "-")}`}
+                  >
+                    <FileCode className="w-3 h-3 mr-1" />
+                    {fname}
+                  </Button>
+                ))}
+              </div>
+              <div className="flex-1 min-h-0 overflow-auto rounded-md bg-muted/30 border">
+                <pre className="text-xs font-mono p-4 whitespace-pre-wrap" data-testid="preview-code-content">
+                  <code>{exportPreview?.files[exportPreviewFile] || ""}</code>
+                </pre>
+              </div>
+              {exportPreview?.metadata && (
+                <div className="flex items-center gap-3 flex-wrap text-[10px] text-muted-foreground">
+                  <Badge variant="outline" className="text-[10px]">{exportPreview.metadata.pattern}</Badge>
+                  <Badge variant="outline" className="text-[10px]">{exportPreview.metadata.format}</Badge>
+                  <Badge variant="outline" className="text-[10px]">{exportPreview.metadata.llmProvider}</Badge>
+                  <span>Generated {new Date(exportPreview.metadata.generatedAt).toLocaleString()}</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          <DialogFooter className="gap-2">
+            {exportStep === "preview" && (
+              <Button variant="outline" onClick={() => setExportStep("configure")} data-testid="button-export-back">
+                Back
+              </Button>
+            )}
+            <Button variant="outline" onClick={() => setExportDialogOpen(false)} data-testid="button-export-cancel">
+              Cancel
+            </Button>
+            {exportStep === "configure" ? (
+              <Button
+                onClick={() => exportCodeMutation.mutate({ format: exportFormat, llmProvider: exportLlmProvider, maxIterations: exportMaxIterations, completionPromise: exportCompletionPromise })}
+                disabled={exportCodeMutation.isPending}
+                data-testid="button-export-generate"
+              >
+                {exportCodeMutation.isPending ? "Generating..." : "Generate Code"}
+              </Button>
+            ) : (
+              <Button onClick={downloadExportPackage} data-testid="button-export-download">
+                <Download className="w-3.5 h-3.5 mr-1.5" /> Download Package
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
