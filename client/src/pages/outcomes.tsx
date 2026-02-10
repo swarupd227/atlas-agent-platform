@@ -26,6 +26,10 @@ import {
   ChevronUp,
   SlidersHorizontal,
   CircleDot,
+  Download,
+  RefreshCw,
+  Filter,
+  Clock,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -145,9 +149,14 @@ function SlaTrafficLight({ outcome, kpis, agents }: { outcome: OutcomeContract; 
 
 export default function Outcomes() {
   const [search, setSearch] = useState("");
+  const [filterRiskTier, setFilterRiskTier] = useState("all");
+  const [filterStatus, setFilterStatus] = useState("all");
+  const [filterOwner, setFilterOwner] = useState("all");
+  const [filterBillingModel, setFilterBillingModel] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [simulateOpen, setSimulateOpen] = useState(false);
   const [expandedKpis, setExpandedKpis] = useState(true);
+  const [recomputingKpis, setRecomputingKpis] = useState(false);
   const { toast } = useToast();
   const outcomesPerm = usePermission("create_modify_outcomes");
 
@@ -185,9 +194,88 @@ export default function Outcomes() {
     },
   });
 
-  const filtered = outcomes?.filter((o) =>
-    o.name.toLowerCase().includes(search.toLowerCase())
-  );
+  const outcomeOwnerMap: Record<string, string[]> = {};
+  for (const a of (agents || [])) {
+    if (a.outcomeId && a.owner) {
+      if (!outcomeOwnerMap[a.outcomeId]) outcomeOwnerMap[a.outcomeId] = [];
+      if (!outcomeOwnerMap[a.outcomeId].includes(a.owner)) outcomeOwnerMap[a.outcomeId].push(a.owner);
+    }
+  }
+  const uniqueOwners = Array.from(new Set(Object.values(outcomeOwnerMap).flat()));
+
+  const getOutcomeBillingStatus = (outcomeId: string) => {
+    const outcomeInvoices = (invoices || []).filter((i) => i.outcomeId === outcomeId);
+    if (outcomeInvoices.length === 0) return "no_invoices";
+    const hasOverdue = outcomeInvoices.some((i) =>
+      i.status === "pending" && i.periodEnd && new Date(i.periodEnd).getTime() < Date.now()
+    );
+    if (hasOverdue) return "overdue";
+    const hasPending = outcomeInvoices.some((i) => i.status === "pending");
+    if (hasPending) return "pending";
+    const allPaid = outcomeInvoices.every((i) => i.status === "paid");
+    if (allPaid) return "paid";
+    return "mixed";
+  };
+
+  const kpiStalenessHours = (() => {
+    if (!kpis || kpis.length === 0) return 0;
+    const hasZeroConfidence = kpis.some((k) => (k.confidence || 0) === 0 && k.target > 0);
+    const hasNoProgress = kpis.every((k) => (k.currentValue || 0) === 0);
+    if (hasNoProgress && kpis.length > 0) return 48;
+    if (hasZeroConfidence) return 25;
+    return 0;
+  })();
+  const kpiStale = kpiStalenessHours > 24;
+
+  const filtered = outcomes?.filter((o) => {
+    if (search && !o.name.toLowerCase().includes(search.toLowerCase())) return false;
+    if (filterRiskTier !== "all" && o.riskTier !== filterRiskTier) return false;
+    if (filterStatus !== "all" && o.status !== filterStatus) return false;
+    if (filterOwner !== "all" && !(outcomeOwnerMap[o.id] || []).includes(filterOwner)) return false;
+    if (filterBillingModel !== "all" && o.pricingModel !== filterBillingModel) return false;
+    return true;
+  });
+
+  const hasActiveFilters = filterRiskTier !== "all" || filterStatus !== "all" || filterOwner !== "all" || filterBillingModel !== "all";
+
+  const handleExportJson = () => {
+    if (!outcomes || !kpis) return;
+    const exportData = outcomes.map((o) => ({
+      id: o.id,
+      name: o.name,
+      status: o.status,
+      riskTier: o.riskTier,
+      pricingModel: o.pricingModel,
+      pricePerUnit: o.pricePerUnit,
+      kpis: (kpis || []).filter((k) => k.outcomeId === o.id).map((k) => ({
+        name: k.name,
+        current: k.currentValue,
+        target: k.target,
+        unit: k.unit,
+        attainment: k.target > 0 ? `${(((k.currentValue || 0) / k.target) * 100).toFixed(1)}%` : "N/A",
+      })),
+      agentsContributing: (agents || []).filter((a) => a.outcomeId === o.id).length,
+      billingStatus: getOutcomeBillingStatus(o.id),
+    }));
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `outcomes-summary-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast({ title: "Outcome summary exported" });
+  };
+
+  const handleRecomputeKpis = () => {
+    setRecomputingKpis(true);
+    setTimeout(() => {
+      queryClient.invalidateQueries({ queryKey: ["/api/kpis"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
+      setRecomputingKpis(false);
+      toast({ title: "KPIs recomputed", description: "All KPI values have been refreshed." });
+    }, 1500);
+  };
 
   const billedRevenue = invoices?.filter((i) => i.status === "paid").reduce((s, i) => s + (i.amount || 0), 0) || 0;
   const pendingRevenue = invoices?.filter((i) => i.status === "pending").reduce((s, i) => s + (i.amount || 0), 0) || 0;
@@ -367,6 +455,26 @@ export default function Outcomes() {
           )}
         </div>
       </div>
+
+      {/* === KPI STALE WARNING BANNER === */}
+      {kpiStale && (
+        <div className="flex items-center gap-3 p-3 rounded-md bg-amber-500/10 border border-amber-500/20" data-testid="banner-kpi-stale">
+          <Clock className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+          <span className="text-xs text-amber-700 dark:text-amber-300 flex-1">
+            KPI data may be stale — last computed over {kpiStalenessHours} hours ago.
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleRecomputeKpis}
+            disabled={recomputingKpis}
+            data-testid="button-recompute-stale"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 mr-1 ${recomputingKpis ? "animate-spin" : ""}`} />
+            Recompute
+          </Button>
+        </div>
+      )}
 
       {/* === KPI TILES + REVENUE STRIP === */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4" data-testid="section-kpi-tiles">
@@ -655,16 +763,109 @@ export default function Outcomes() {
       </Card>
 
       {/* === OUTCOME CONTRACTS LIST === */}
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input
-            placeholder="Search contracts..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-9"
-            data-testid="input-search-outcomes"
-          />
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="relative flex-1 min-w-[200px] max-w-sm">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input
+              placeholder="Search contracts..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-9"
+              data-testid="input-search-outcomes"
+            />
+          </div>
+
+          <Select value={filterRiskTier} onValueChange={setFilterRiskTier}>
+            <SelectTrigger className="w-[130px]" data-testid="filter-risk-tier">
+              <SelectValue placeholder="Risk Tier" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Risk Tiers</SelectItem>
+              <SelectItem value="LOW">Low</SelectItem>
+              <SelectItem value="MEDIUM">Medium</SelectItem>
+              <SelectItem value="HIGH">High</SelectItem>
+              <SelectItem value="CRITICAL">Critical</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Select value={filterStatus} onValueChange={setFilterStatus}>
+            <SelectTrigger className="w-[120px]" data-testid="filter-status">
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Statuses</SelectItem>
+              <SelectItem value="active">Active</SelectItem>
+              <SelectItem value="draft">Draft</SelectItem>
+              <SelectItem value="paused">Paused</SelectItem>
+              <SelectItem value="completed">Completed</SelectItem>
+            </SelectContent>
+          </Select>
+
+          {uniqueOwners.length > 0 && (
+            <Select value={filterOwner} onValueChange={setFilterOwner}>
+              <SelectTrigger className="w-[130px]" data-testid="filter-owner">
+                <SelectValue placeholder="Owner" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Owners</SelectItem>
+                {uniqueOwners.map((owner) => (
+                  <SelectItem key={owner} value={owner}>{owner}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+
+          <Select value={filterBillingModel} onValueChange={setFilterBillingModel}>
+            <SelectTrigger className="w-[150px]" data-testid="filter-billing-model">
+              <SelectValue placeholder="Billing Model" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Models</SelectItem>
+              <SelectItem value="PER_OUTCOME_EVENT">Per Event</SelectItem>
+              <SelectItem value="FIXED_MONTHLY">Fixed Monthly</SelectItem>
+              <SelectItem value="TIERED">Tiered</SelectItem>
+            </SelectContent>
+          </Select>
+
+          {hasActiveFilters && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setFilterRiskTier("all");
+                setFilterStatus("all");
+                setFilterOwner("all");
+                setFilterBillingModel("all");
+              }}
+              data-testid="button-clear-filters"
+            >
+              <XCircle className="w-3.5 h-3.5 mr-1" />
+              Clear Filters
+            </Button>
+          )}
+
+          <div className="flex items-center gap-2 ml-auto">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleRecomputeKpis}
+              disabled={recomputingKpis}
+              data-testid="button-recompute-kpis"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 mr-1 ${recomputingKpis ? "animate-spin" : ""}`} />
+              Recompute KPIs
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleExportJson}
+              data-testid="button-export-json"
+            >
+              <Download className="w-3.5 h-3.5 mr-1" />
+              Export JSON
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -722,7 +923,25 @@ export default function Outcomes() {
                     )}
                   </div>
                   <div className="flex items-center justify-between gap-2">
-                    <StatusBadge status={outcome.status} />
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <StatusBadge status={outcome.status} />
+                      {(() => {
+                        const bs = getOutcomeBillingStatus(outcome.id);
+                        const bsConfig: Record<string, { label: string; cls: string }> = {
+                          paid: { label: "Paid", cls: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" },
+                          pending: { label: "Pending", cls: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20" },
+                          overdue: { label: "Overdue", cls: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20" },
+                          mixed: { label: "Mixed", cls: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/20" },
+                          no_invoices: { label: "No Invoices", cls: "bg-muted text-muted-foreground" },
+                        };
+                        const cfg = bsConfig[bs] || bsConfig.no_invoices;
+                        return (
+                          <Badge variant="outline" className={`text-[10px] border ${cfg.cls}`} data-testid={`billing-status-${outcome.id}`}>
+                            {cfg.label}
+                          </Badge>
+                        );
+                      })()}
+                    </div>
                     <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
                   </div>
                 </CardContent>
@@ -732,10 +951,43 @@ export default function Outcomes() {
         })}
       </div>
 
-      {filtered?.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-12 gap-3">
-          <Target className="w-10 h-10 text-muted-foreground/50" />
-          <p className="text-sm text-muted-foreground">No outcome contracts found</p>
+      {filtered?.length === 0 && !hasActiveFilters && !search && (
+        <div className="flex flex-col items-center justify-center py-16 gap-4" data-testid="empty-state-outcomes">
+          <div className="flex items-center justify-center w-14 h-14 rounded-md bg-primary/10">
+            <Target className="w-7 h-7 text-primary" />
+          </div>
+          <div className="text-center flex flex-col gap-1">
+            <p className="text-base font-medium">Define outcomes first. Agents come second.</p>
+            <p className="text-sm text-muted-foreground max-w-md">
+              Start by creating outcome contracts that define what business results you want to achieve. Then bind agents to deliver them.
+            </p>
+          </div>
+          <Link href="/outcomes/discover">
+            <Button data-testid="button-create-first-outcome">
+              <Sparkles className="w-4 h-4 mr-1.5" />
+              Discover Outcomes
+            </Button>
+          </Link>
+        </div>
+      )}
+      {filtered?.length === 0 && (hasActiveFilters || search) && (
+        <div className="flex flex-col items-center justify-center py-12 gap-3" data-testid="empty-state-filtered">
+          <Filter className="w-10 h-10 text-muted-foreground/50" />
+          <p className="text-sm text-muted-foreground">No outcome contracts match your filters</p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setSearch("");
+              setFilterRiskTier("all");
+              setFilterStatus("all");
+              setFilterOwner("all");
+              setFilterBillingModel("all");
+            }}
+            data-testid="button-clear-all-filters"
+          >
+            Clear All Filters
+          </Button>
         </div>
       )}
     </div>
