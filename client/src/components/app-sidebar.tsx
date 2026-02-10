@@ -44,6 +44,7 @@ const platformNav = [
 ];
 
 const opsNav = [
+  { title: "Optimization", url: "/optimization", icon: Zap },
   { title: "Ops", url: "/improvements", icon: Wrench },
   { title: "Self-Heal", url: "/improvement-loop", icon: RotateCcw },
   { title: "Governance", url: "/governance", icon: Shield },

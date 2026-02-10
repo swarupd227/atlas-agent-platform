@@ -24,12 +24,34 @@ import {
   insertPolicyExceptionSchema,
   insertComplianceReportSchema,
   insertEvalCaseResultSchema,
+  insertPatchSchema,
+  insertExperimentSchema,
 } from "@shared/schema";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
 });
+
+function checkPatchSafety(patchData: any): string | null {
+  const changeType = patchData.changeType || "";
+  const desc = (patchData.description || "").toLowerCase();
+  const diff = patchData.diff || {};
+
+  if (desc.includes("expand tool permissions") || desc.includes("add tool access") ||
+      (diff.after && diff.after.toolPermissions && !diff.before?.toolPermissions)) {
+    return "SAFETY: Cannot expand tool permissions without explicit approval. Patch requires CRITICAL tier review.";
+  }
+  if (desc.includes("write-action") || desc.includes("write action") ||
+      (diff.after && diff.after.writeActions !== diff.before?.writeActions)) {
+    return "SAFETY: Cannot change write-action behavior without high-tier approval.";
+  }
+  if (desc.includes("redaction") || desc.includes("audit polic") ||
+      changeType === "audit_policy_change") {
+    return "SAFETY: Cannot alter redaction/audit policies autonomously.";
+  }
+  return null;
+}
 
 function handleZodError(res: any, error: unknown) {
   if (error instanceof ZodError) {
@@ -2908,6 +2930,406 @@ Active agents: ${JSON.stringify(activeAgents.map(a => ({ id: a.id, name: a.name,
       }
     } catch (e: any) {
       res.status(500).json({ message: e.message || "Failed to complete retirement" });
+    }
+  });
+
+  // ==================== Patches (Patch Center) ====================
+  app.get("/api/patches", async (_req, res) => {
+    const allPatches = await storage.getPatches();
+    res.json(allPatches);
+  });
+
+  app.get("/api/patches/agent/:agentId", async (req, res) => {
+    const agentPatches = await storage.getPatchesByAgent(req.params.agentId);
+    res.json(agentPatches);
+  });
+
+  app.post("/api/patches", checkPermission("create_modify_blueprints"), async (req, res) => {
+    try {
+      const data = insertPatchSchema.parse(req.body);
+      const safetyViolation = checkPatchSafety(data);
+      if (safetyViolation) {
+        return res.status(403).json({ error: safetyViolation });
+      }
+      const patch = await storage.createPatch(data);
+      res.status(201).json(patch);
+    } catch (e: any) {
+      if (e instanceof ZodError) return res.status(400).json({ message: e.errors });
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.patch("/api/patches/:id", checkPermission("create_modify_blueprints"), async (req, res) => {
+    try {
+      const allowedFields = ["status", "simulationResult", "evalBundle", "sandboxId"];
+      const updateData: any = {};
+      for (const key of allowedFields) {
+        if (req.body[key] !== undefined) updateData[key] = req.body[key];
+      }
+      if (updateData.status && !["proposed", "simulating", "eval_running", "pending_approval", "approved", "applied", "rejected", "rolled_back"].includes(updateData.status)) {
+        return res.status(400).json({ message: "Invalid patch status" });
+      }
+      const safetyViolation = checkPatchSafety({ ...updateData, description: req.body.description });
+      if (safetyViolation) {
+        return res.status(403).json({ error: safetyViolation });
+      }
+      const updated = await storage.updatePatch(req.params.id as string, updateData);
+      if (!updated) return res.status(404).json({ message: "Patch not found" });
+      res.json(updated);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.post("/api/patches/:id/simulate", checkPermission("create_modify_blueprints"), async (req, res) => {
+    try {
+      const allPatches = await storage.getPatches();
+      const patch = allPatches.find(p => p.id === (req.params.id as string));
+      if (!patch) return res.status(404).json({ message: "Patch not found" });
+
+      const simulationResult = {
+        sandboxId: `sandbox-${crypto.randomUUID().slice(0, 8)}`,
+        status: "completed",
+        kpiProjections: {
+          successRate: { current: 0.89, projected: patch.changeType === "prompt_tweak" ? 0.94 : 0.92, confidence: 0.85 },
+          latency: { current: 2400, projected: patch.changeType === "model_upgrade_downgrade" ? 1800 : 2200, confidence: 0.78 },
+          costPerRun: { current: 0.045, projected: patch.changeType === "cost_cap_tuning" ? 0.032 : 0.042, confidence: 0.90 },
+        },
+        policyViolations: 0,
+        regressionDetected: false,
+        simulatedAt: new Date().toISOString(),
+      };
+
+      const patchId = req.params.id as string;
+      await storage.updatePatch(patchId, {
+        status: "simulating",
+        simulationResult,
+        sandboxId: simulationResult.sandboxId,
+      });
+
+      setTimeout(async () => {
+        await storage.updatePatch(patchId, { status: "proposed" });
+      }, 2000);
+
+      res.json(simulationResult);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.post("/api/patches/:id/run-evals", checkPermission("create_modify_blueprints"), async (req, res) => {
+    try {
+      const allPatches = await storage.getPatches();
+      const evalPatchId = req.params.id as string;
+      const patch = allPatches.find(p => p.id === evalPatchId);
+      if (!patch) return res.status(404).json({ message: "Patch not found" });
+
+      const evalResult = {
+        suiteId: `eval-${crypto.randomUUID().slice(0, 8)}`,
+        totalCases: 48,
+        passed: 44,
+        failed: 4,
+        passRate: 0.917,
+        regressions: patch.riskLevel === "high" ? 2 : 0,
+        improvements: patch.changeType === "prompt_tweak" ? 6 : 3,
+        evaluatedAt: new Date().toISOString(),
+      };
+
+      await storage.updatePatch(evalPatchId, {
+        status: "eval_running",
+        evalBundle: evalResult,
+      });
+
+      setTimeout(async () => {
+        const finalStatus = evalResult.regressions > 0 ? "proposed" : "proposed";
+        await storage.updatePatch(evalPatchId, { status: finalStatus });
+      }, 2000);
+
+      res.json(evalResult);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.post("/api/patches/:id/request-approval", checkPermission("create_modify_blueprints"), async (req, res) => {
+    try {
+      const allPatches = await storage.getPatches();
+      const approvalPatchId = req.params.id as string;
+      const patch = allPatches.find(p => p.id === approvalPatchId);
+      if (!patch) return res.status(404).json({ message: "Patch not found" });
+
+      const approval = await storage.createApproval({
+        type: "patch_approval",
+        objectType: "patch",
+        objectId: patch.id,
+        requestedBy: "autopatch-service",
+        status: "pending",
+        evidenceJson: {
+          patchId: patch.id,
+          changeType: patch.changeType,
+          riskLevel: patch.riskLevel,
+          evalBundle: patch.evalBundle,
+          simulationResult: patch.simulationResult,
+          expectedKpiImpact: patch.expectedKpiImpact,
+          expectedCostImpact: patch.expectedCostImpact,
+        },
+      });
+
+      await storage.updatePatch(approvalPatchId, { status: "pending_approval" });
+
+      res.json({ approvalId: approval.id, status: "pending_approval" });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.post("/api/ai/generate-patches", checkPermission("create_modify_blueprints"), async (req, res) => {
+    try {
+      const { agentId } = req.body;
+      if (!agentId) return res.status(400).json({ message: "agentId required" });
+
+      const agent = await storage.getAgent(agentId);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+
+      const recommendations = await storage.getImprovementRecommendationsByAgent(agentId);
+      const driftSignals = recommendations.filter(r => r.source === "drift" || r.severity === "high" || r.severity === "critical");
+      const evalSuites = await storage.getEvalsByAgent(agentId);
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        messages: [
+          {
+            role: "system",
+            content: `You are an autonomous agent optimization engine. Based on agent performance data, drift signals, and evaluation results, generate candidate patches that could improve the agent. Each patch is a self-contained change proposal.
+
+Return a JSON array of 2-4 patch proposals. Each patch must have:
+- changeType: one of "prompt_tweak", "retrieval_change", "tool_retry_fallback", "model_upgrade_downgrade", "cost_cap_tuning"
+- title: short descriptive title
+- description: what the patch does and why
+- diff: JSON object describing the change (before/after config)
+- expectedKpiImpact: expected improvement description
+- expectedCostImpact: cost change description (e.g. "-12% cost/run" or "+$0.01/run for better quality")
+- riskLevel: "low", "medium", "high", or "critical"
+- requiredApprovals: number (0 for low risk, 1 for medium, 2+ for high/critical)
+- rolloutPlan: JSON with strategy ("canary"/"shadow"/"direct"), trafficPercent, duration
+
+SAFETY CONSTRAINTS:
+- Cannot propose expanding tool permissions (requires explicit approval)
+- Cannot change write-action behavior without high-tier approval
+- Cannot alter redaction/audit policies autonomously
+- Cost increases must be flagged with higher risk
+
+Return ONLY valid JSON array.`,
+          },
+          {
+            role: "user",
+            content: `Agent: ${agent.name} (${agent.modelProvider || "general"})
+Success Rate: ${((agent.successRate || 0) * 100).toFixed(1)}%
+Avg Latency: ${agent.avgLatencyMs || 0}ms
+Cost/Run: $${agent.costPerRun || 0}
+Health Score: ${agent.healthScore || 0}
+Drift Signals: ${JSON.stringify(driftSignals.slice(0, 5))}
+Recent Recommendations: ${JSON.stringify(recommendations.slice(0, 3).map(r => ({ type: r.type, title: r.title, severity: r.severity })))}
+Eval Suites: ${evalSuites.length} configured`,
+          },
+        ],
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content || "[]";
+      let parsedPatches: any[];
+      try {
+        const parsed = JSON.parse(content);
+        parsedPatches = Array.isArray(parsed) ? parsed : parsed.patches || [parsed];
+      } catch {
+        parsedPatches = [];
+      }
+
+      const createdPatches = [];
+      for (const p of parsedPatches) {
+        const safetyCheck = checkPatchSafety(p);
+        if (safetyCheck) {
+          p.riskLevel = "critical";
+          p.requiredApprovals = 3;
+          p.description = `[SAFETY FLAG: ${safetyCheck}] ${p.description || ""}`;
+        }
+        const patch = await storage.createPatch({
+          agentId,
+          changeType: p.changeType || "prompt_tweak",
+          title: p.title || "AI-generated patch",
+          description: p.description,
+          diff: p.diff,
+          expectedKpiImpact: p.expectedKpiImpact,
+          expectedCostImpact: p.expectedCostImpact,
+          riskLevel: p.riskLevel || "medium",
+          requiredApprovals: p.requiredApprovals || 0,
+          rolloutPlan: p.rolloutPlan,
+          evidenceBundle: {
+            source: "ai_generated",
+            driftSignalCount: driftSignals.length,
+            recommendationCount: recommendations.length,
+            generatedAt: new Date().toISOString(),
+          },
+          status: "proposed",
+        });
+        createdPatches.push(patch);
+      }
+
+      res.json({ patches: createdPatches, generated: createdPatches.length });
+    } catch (e: any) {
+      console.error("AI patch generation error:", e);
+      res.status(500).json({ message: e.message || "Failed to generate patches" });
+    }
+  });
+
+  // ==================== Experiments ====================
+  app.get("/api/experiments", async (_req, res) => {
+    const allExperiments = await storage.getExperiments();
+    res.json(allExperiments);
+  });
+
+  app.post("/api/experiments", checkPermission("create_modify_blueprints"), async (req, res) => {
+    try {
+      const data = insertExperimentSchema.parse(req.body);
+      const experiment = await storage.createExperiment(data);
+      res.status(201).json(experiment);
+    } catch (e: any) {
+      if (e instanceof ZodError) return res.status(400).json({ message: e.errors });
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.patch("/api/experiments/:id", checkPermission("create_modify_blueprints"), async (req, res) => {
+    try {
+      const updated = await storage.updateExperiment(req.params.id as string, req.body);
+      if (!updated) return res.status(404).json({ message: "Experiment not found" });
+      res.json(updated);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // ==================== Remediation Timeline ====================
+  app.get("/api/remediation-timeline", async (_req, res) => {
+    try {
+      const cycles = await storage.getImprovementCycles();
+      const actionLogs = await storage.getAutonomousActionLogs();
+      const agents = await storage.getAgents();
+      const agentMap = new Map(agents.map(a => [a.id, a.name]));
+
+      const timeline = [
+        ...cycles.map(c => ({
+          id: c.id,
+          type: "improvement_cycle" as const,
+          agentId: c.agentId,
+          agentName: agentMap.get(c.agentId) || c.agentId,
+          trigger: c.triggerType,
+          change: c.proposedAction,
+          changeType: c.actionType,
+          proof: c.evaluationResult,
+          status: c.status,
+          riskLevel: c.riskLevel,
+          autoApplied: c.autoApplied,
+          canRollback: c.status === "applied" || c.autoApplied,
+          createdAt: c.createdAt,
+        })),
+        ...actionLogs.map(a => ({
+          id: a.id,
+          type: "autonomous_action" as const,
+          agentId: a.agentId,
+          agentName: agentMap.get(a.agentId) || a.agentId,
+          trigger: a.trigger,
+          change: a.description || a.actionType,
+          changeType: a.actionType,
+          proof: a.details,
+          status: a.status,
+          riskLevel: "low",
+          autoApplied: true,
+          canRollback: a.status === "completed",
+          createdAt: a.createdAt,
+        })),
+      ].sort((a, b) => {
+        const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return dateB - dateA;
+      });
+
+      res.json(timeline);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // ==================== Seed Patches & Experiments ====================
+  app.post("/api/seed/optimization", async (_req, res) => {
+    try {
+      const agents = await storage.getAgents();
+      if (agents.length === 0) return res.json({ message: "No agents to seed patches for" });
+
+      const existingPatches = await storage.getPatches();
+      if (existingPatches.length > 0) return res.json({ message: "Patches already seeded", count: existingPatches.length });
+
+      const changeTypes = ["prompt_tweak", "retrieval_change", "tool_retry_fallback", "model_upgrade_downgrade", "cost_cap_tuning"];
+      const samplePatches = [
+        { title: "Optimize system prompt for conciseness", changeType: "prompt_tweak", desc: "Reduce token count by 30% while maintaining instruction clarity. Analysis shows verbose prompts increase latency without improving accuracy.", kpi: "+2.1% success rate, -180ms latency", cost: "-18% cost/run ($0.008 savings)", risk: "low", approvals: 0 },
+        { title: "Switch to RAG v2 retrieval pipeline", changeType: "retrieval_change", desc: "Upgrade retrieval from keyword-based to hybrid semantic+keyword search. Drift analysis detected declining faithfulness scores correlated with knowledge base updates.", kpi: "+4.5% faithfulness, -12% hallucination rate", cost: "+$0.003/run for embedding compute", risk: "medium", approvals: 1 },
+        { title: "Add exponential backoff for API tool calls", changeType: "tool_retry_fallback", desc: "Tool call failures spiked 3x in last 24h. Adding retry with exponential backoff (max 3 attempts) and fallback to cached responses.", kpi: "+8% tool reliability, -5% failure rate", cost: "+$0.001/run (retry overhead)", risk: "low", approvals: 0 },
+        { title: "Downgrade to GPT-4.1-mini for classification tasks", changeType: "model_upgrade_downgrade", desc: "Classification sub-tasks show 99.2% accuracy with mini model vs 99.5% with full model. Cost savings outweigh marginal accuracy loss.", kpi: "-0.3% accuracy (within SLA)", cost: "-42% cost/run ($0.019 savings)", risk: "medium", approvals: 1 },
+        { title: "Adjust cost cap from $0.05 to $0.04/run", changeType: "cost_cap_tuning", desc: "Current cost cap allows expensive completions that don't improve outcomes. Tightening cap will enforce more efficient token usage.", kpi: "Neutral (within error margin)", cost: "-20% max cost/run", risk: "low", approvals: 0 },
+        { title: "Expand context window for complex queries", changeType: "prompt_tweak", desc: "Complex multi-step queries failing at 15% rate due to truncated context. Expanding context window from 4K to 8K tokens for qualifying queries.", kpi: "+6% success rate on complex queries", cost: "+35% cost/run for affected queries (~8% of traffic)", risk: "high", approvals: 2 },
+      ];
+
+      const createdPatches = [];
+      for (let i = 0; i < samplePatches.length; i++) {
+        const sp = samplePatches[i];
+        const agent = agents[i % agents.length];
+        const patch = await storage.createPatch({
+          agentId: agent.id,
+          changeType: sp.changeType,
+          title: sp.title,
+          description: sp.desc,
+          diff: { before: { config: "original" }, after: { config: "modified", changeType: sp.changeType } },
+          expectedKpiImpact: sp.kpi,
+          expectedCostImpact: sp.cost,
+          riskLevel: sp.risk,
+          requiredApprovals: sp.approvals,
+          status: i === 2 ? "pending_approval" : i === 4 ? "applied" : "proposed",
+          evidenceBundle: { source: i < 3 ? "drift_detection" : "eval_analysis", signalCount: Math.floor(Math.random() * 5) + 1, detectedAt: new Date(Date.now() - Math.random() * 7 * 86400000).toISOString() },
+          rolloutPlan: { strategy: sp.risk === "high" ? "canary" : sp.risk === "medium" ? "shadow" : "direct", trafficPercent: sp.risk === "high" ? 5 : sp.risk === "medium" ? 20 : 100, duration: sp.risk === "high" ? "48h" : sp.risk === "medium" ? "24h" : "immediate" },
+        });
+        createdPatches.push(patch);
+      }
+
+      const sampleExperiments = [
+        { name: "Prompt Conciseness A/B Test", desc: "Testing optimized prompt vs baseline for success rate impact", traffic: 20, metric: "success_rate", gate: "pass_rate >= 90%", status: "running", results: { variantA: { successRate: 0.891, avgLatency: 2340, costPerRun: 0.045, sampleSize: 1240 }, variantB: { successRate: 0.912, avgLatency: 2160, costPerRun: 0.037, sampleSize: 1180 }, confidence: 0.87, pValue: 0.032, statisticallySignificant: true, runningFor: "3d 14h" } },
+        { name: "RAG v2 Canary Deployment", desc: "Canary test of hybrid retrieval pipeline with 10% traffic", traffic: 10, metric: "faithfulness_score", gate: "faithfulness >= 0.85", status: "running", results: { variantA: { faithfulness: 0.82, hallucRate: 0.08, avgLatency: 1890, sampleSize: 620 }, variantB: { faithfulness: 0.91, hallucRate: 0.03, avgLatency: 2100, sampleSize: 580 }, confidence: 0.92, pValue: 0.008, statisticallySignificant: true, runningFor: "1d 8h" } },
+        { name: "Model Downgrade Validation", desc: "Shadow comparison of GPT-4.1 vs GPT-4.1-mini for classification", traffic: 50, metric: "classification_accuracy", gate: "accuracy >= 99%", status: "completed", results: { variantA: { accuracy: 0.995, avgLatency: 890, costPerRun: 0.045, sampleSize: 5000 }, variantB: { accuracy: 0.992, avgLatency: 340, costPerRun: 0.012, sampleSize: 5000 }, confidence: 0.96, pValue: 0.041, statisticallySignificant: true, winner: "variantB", runningFor: "7d 0h" } },
+      ];
+
+      const createdExps = [];
+      for (let i = 0; i < sampleExperiments.length; i++) {
+        const se = sampleExperiments[i];
+        const agent = agents[i % agents.length];
+        const exp = await storage.createExperiment({
+          agentId: agent.id,
+          patchId: createdPatches[i]?.id,
+          name: se.name,
+          description: se.desc,
+          trafficPercent: se.traffic,
+          successMetric: se.metric,
+          evalGate: se.gate,
+          guardrails: { maxPolicyViolationIncrease: 0, maxLatencyIncrease: "20%", minSuccessRate: 0.85 },
+          status: se.status,
+          results: se.results,
+          startedAt: new Date(Date.now() - Math.random() * 7 * 86400000),
+          completedAt: se.status === "completed" ? new Date() : null,
+        });
+        createdExps.push(exp);
+      }
+
+      res.json({ patches: createdPatches.length, experiments: createdExps.length });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
     }
   });
 
