@@ -58,6 +58,8 @@ import {
   Cloud,
   Box,
   Boxes,
+  KeyRound,
+  Copy,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -168,7 +170,7 @@ export default function AgentDetail() {
   const [exportFramework, setExportFramework] = useState<string>("generic");
   const [exportPreview, setExportPreview] = useState<{ files: Record<string, string>; metadata: any } | null>(null);
   const [exportPreviewFile, setExportPreviewFile] = useState<string>("");
-  const [exportStep, setExportStep] = useState<"select" | "configure" | "tools" | "dependencies" | "preview">("select");
+  const [exportStep, setExportStep] = useState<"select" | "configure" | "tools" | "dependencies" | "envvars" | "preview">("select");
   const [toolAdapterOverrides, setToolAdapterOverrides] = useState<Record<string, "builtin" | "customer" | "stub">>({});
   const [pinVersions, setPinVersions] = useState(true);
 
@@ -2730,6 +2732,8 @@ export default function AgentDetail() {
                 <><Wrench className="w-4 h-4" /> Tool Adapter Resolution</>
               ) : exportStep === "dependencies" ? (
                 <><Layers className="w-4 h-4" /> Dependencies &amp; Reproducibility</>
+              ) : exportStep === "envvars" ? (
+                <><KeyRound className="w-4 h-4" /> Environment Variables &amp; Secrets</>
               ) : (
                 <><FileCode className="w-4 h-4" /> Preview Source Files</>
               )}
@@ -2743,7 +2747,9 @@ export default function AgentDetail() {
                     ? "Ensure every tool reference has an implementation path in the export package."
                     : exportStep === "dependencies"
                       ? "Review what will be installed and ensure reproducible builds."
-                      : "Review the generated source files before downloading."}
+                      : exportStep === "envvars"
+                        ? "Review the environment variables your deployed agent will need at runtime."
+                        : "Review the generated source files before downloading."}
             </DialogDescription>
           </DialogHeader>
 
@@ -2760,6 +2766,8 @@ export default function AgentDetail() {
                 <span className="text-[11px] text-muted-foreground/40">Tool Adapters</span>
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                 <span className="text-[11px] text-muted-foreground/40">Dependencies</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Env Vars</span>
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                 <span className="text-[11px] text-muted-foreground/40">Preview</span>
               </div>
@@ -2918,6 +2926,8 @@ export default function AgentDetail() {
                 <span className="text-[11px] text-muted-foreground/40">Tool Adapters</span>
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                 <span className="text-[11px] text-muted-foreground/40">Dependencies</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Env Vars</span>
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                 <span className="text-[11px] text-muted-foreground/40">Preview</span>
               </div>
@@ -3082,6 +3092,8 @@ export default function AgentDetail() {
                   </div>
                   <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                   <span className="text-[11px] text-muted-foreground/40">Dependencies</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  <span className="text-[11px] text-muted-foreground/40">Env Vars</span>
                   <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                   <span className="text-[11px] text-muted-foreground/40">Preview</span>
                 </div>
@@ -3309,6 +3321,8 @@ export default function AgentDetail() {
                     <span className="font-medium">Dependencies</span>
                   </div>
                   <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  <span className="text-[11px] text-muted-foreground/40">Env Vars</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                   <span className="text-[11px] text-muted-foreground/40">Preview</span>
                 </div>
 
@@ -3396,6 +3410,172 @@ export default function AgentDetail() {
             );
           })()}
 
+          {exportStep === "envvars" && (() => {
+            const envVars: Array<{ key: string; description: string; category: "llm" | "tool" | "infra" | "agent"; required: boolean; example: string }> = [];
+
+            if (exportLlmProvider === "openai") {
+              envVars.push({ key: "OPENAI_API_KEY", description: "OpenAI API key for LLM inference", category: "llm", required: true, example: "sk-proj-..." });
+            } else {
+              envVars.push({ key: "ANTHROPIC_API_KEY", description: "Anthropic API key for Claude inference", category: "llm", required: true, example: "sk-ant-..." });
+            }
+
+            if (exportFramework === "bedrock") {
+              envVars.push({ key: "AWS_ACCESS_KEY_ID", description: "AWS access key for Bedrock API", category: "infra", required: true, example: "AKIA..." });
+              envVars.push({ key: "AWS_SECRET_ACCESS_KEY", description: "AWS secret key for Bedrock API", category: "infra", required: true, example: "wJal..." });
+              envVars.push({ key: "AWS_REGION", description: "AWS region for Bedrock service", category: "infra", required: true, example: "us-east-1" });
+            }
+            if (exportFramework === "vertex") {
+              envVars.push({ key: "GOOGLE_APPLICATION_CREDENTIALS", description: "Path to GCP service account JSON", category: "infra", required: true, example: "/path/to/credentials.json" });
+              envVars.push({ key: "GCP_PROJECT_ID", description: "Google Cloud project identifier", category: "infra", required: true, example: "my-project-123" });
+            }
+
+            const agentTools = Array.isArray(agent?.toolsConfig) ? agent.toolsConfig as any[] : [];
+            const toolsWithTokens = agentTools.filter(t => {
+              const override = toolAdapterOverrides[t.name];
+              return override === "builtin" || override === "customer";
+            });
+            toolsWithTokens.forEach(t => {
+              const envKey = `${(t.name || "TOOL").toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_API_KEY`;
+              envVars.push({ key: envKey, description: `API key / token for ${t.name} tool`, category: "tool", required: false, example: "tok-..." });
+            });
+
+            envVars.push({ key: "AGENT_LOG_LEVEL", description: "Logging verbosity (debug, info, warn, error)", category: "agent", required: false, example: "info" });
+            envVars.push({ key: "AGENT_MAX_ITERATIONS", description: "Max Ralph Loop iterations before halting", category: "agent", required: false, example: String(exportMaxIterations) });
+
+            if (exportFramework === "foundry") {
+              envVars.push({ key: "DATABASE_URL", description: "Database connection string for persistence", category: "infra", required: false, example: "postgresql://user:pass@host:5432/db" });
+            }
+
+            const envExampleContent = envVars.map(v => {
+              const commentLine = `# ${v.description}${v.required ? " (REQUIRED)" : ""}`;
+              return `${commentLine}\n${v.key}=`;
+            }).join("\n\n") + "\n";
+
+            const requiredCount = envVars.filter(v => v.required).length;
+            const optionalCount = envVars.filter(v => !v.required).length;
+            const categoryLabels: Record<string, string> = { llm: "LLM Provider", tool: "Tool Credentials", infra: "Infrastructure", agent: "Agent Config" };
+            const grouped = envVars.reduce<Record<string, typeof envVars>>((acc, v) => {
+              if (!acc[v.category]) acc[v.category] = [];
+              acc[v.category].push(v);
+              return acc;
+            }, {});
+
+            return (
+              <div className="flex flex-col gap-4 py-2 flex-1 min-h-0 overflow-auto" data-testid="step-envvars">
+                <div className="flex items-center gap-2 mb-1 flex-wrap">
+                  <span className="text-[11px] text-muted-foreground/40">Export Type</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  <span className="text-[11px] text-muted-foreground/40">Configure</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  <span className="text-[11px] text-muted-foreground/40">Tool Adapters</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  <span className="text-[11px] text-muted-foreground/40">Dependencies</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">5</span>
+                    <span className="font-medium">Env Vars</span>
+                  </div>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                  <span className="text-[11px] text-muted-foreground/40">Preview</span>
+                </div>
+
+                <div className="flex items-center gap-3 flex-wrap">
+                  <Badge variant="outline" className="text-[10px]" data-testid="badge-env-total">
+                    <KeyRound className="w-3 h-3 mr-1" /> {envVars.length} variable{envVars.length !== 1 ? "s" : ""}
+                  </Badge>
+                  {requiredCount > 0 && (
+                    <Badge variant="outline" className="text-[10px] bg-red-500/10 text-red-600 dark:text-red-400" data-testid="badge-env-required">
+                      <Lock className="w-3 h-3 mr-1" /> {requiredCount} required
+                    </Badge>
+                  )}
+                  {optionalCount > 0 && (
+                    <Badge variant="outline" className="text-[10px]" data-testid="badge-env-optional">
+                      {optionalCount} optional
+                    </Badge>
+                  )}
+                </div>
+
+                <div className="flex flex-col gap-3">
+                  {(["llm", "tool", "infra", "agent"] as const).filter(cat => grouped[cat]?.length).map(cat => (
+                    <Card key={cat}>
+                      <CardContent className="p-4 flex flex-col gap-2">
+                        <div className="flex items-center gap-2">
+                          {cat === "llm" && <Cpu className="w-3.5 h-3.5 text-muted-foreground" />}
+                          {cat === "tool" && <Wrench className="w-3.5 h-3.5 text-muted-foreground" />}
+                          {cat === "infra" && <Database className="w-3.5 h-3.5 text-muted-foreground" />}
+                          {cat === "agent" && <Settings className="w-3.5 h-3.5 text-muted-foreground" />}
+                          <span className="text-xs font-medium">{categoryLabels[cat]}</span>
+                          <Badge variant="secondary" className="text-[9px]">{grouped[cat].length}</Badge>
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                          {grouped[cat].map(v => (
+                            <div key={v.key} className="flex items-start gap-3 py-1.5 border-b last:border-0" data-testid={`env-var-${v.key}`}>
+                              <code className="text-[11px] font-mono font-medium shrink-0 mt-0.5">{v.key}</code>
+                              <span className="text-[11px] text-muted-foreground flex-1">{v.description}</span>
+                              {v.required && (
+                                <Badge variant="outline" className="text-[9px] bg-red-500/10 text-red-600 dark:text-red-400 shrink-0">required</Badge>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+
+                <Card>
+                  <CardContent className="p-0">
+                    <div className="flex items-center gap-2 px-4 py-2.5 border-b">
+                      <FileText className="w-3.5 h-3.5 text-muted-foreground" />
+                      <span className="text-xs font-medium font-mono">.env.example</span>
+                      <Badge variant="secondary" className="text-[9px] ml-auto">
+                        <Shield className="w-2.5 h-2.5 mr-1" /> No real values
+                      </Badge>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => {
+                          navigator.clipboard.writeText(envExampleContent);
+                          toast({ title: "Copied", description: ".env.example content copied to clipboard." });
+                        }}
+                        data-testid="button-copy-env-example"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                    <div className="overflow-auto max-h-[180px]">
+                      <pre className="text-xs font-mono p-4 whitespace-pre-wrap" data-testid="env-example-preview">
+                        <code>{envExampleContent}</code>
+                      </pre>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <div className="flex items-start gap-2 p-3 rounded-md bg-blue-500/5 border border-blue-500/20" data-testid="notice-replit-secrets">
+                  <Lock className="w-4 h-4 text-blue-500 mt-0.5 shrink-0" />
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-xs font-medium">Deploying on Replit?</span>
+                    <span className="text-[11px] text-muted-foreground">
+                      Store these as encrypted Secrets in your Repl's "Secrets" tab instead of committing a .env file.
+                      Secrets are injected as environment variables at runtime and never exposed in your source code.
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-2 p-3 rounded-md bg-muted/30 border border-dashed" data-testid="notice-env-security">
+                  <Shield className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-xs font-medium">Never commit real secrets</span>
+                    <span className="text-[11px] text-muted-foreground">
+                      The .env.example file is safe to commit — it contains only variable names with empty values as documentation.
+                      Add .env to your .gitignore and use your platform's secrets manager for actual values.
+                    </span>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
           {exportStep === "preview" && (
             <div className="flex flex-col gap-3 flex-1 min-h-0">
               <div className="flex items-center gap-2 mb-1 flex-wrap">
@@ -3407,8 +3587,10 @@ export default function AgentDetail() {
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                 <span className="text-[11px] text-muted-foreground/40">Dependencies</span>
                 <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] text-muted-foreground/40">Env Vars</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
                 <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">5</span>
+                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">6</span>
                   <span className="font-medium">Preview</span>
                 </div>
               </div>
@@ -3458,8 +3640,13 @@ export default function AgentDetail() {
                 Back
               </Button>
             )}
+            {exportStep === "envvars" && (
+              <Button variant="outline" onClick={() => setExportStep("dependencies")} data-testid="button-export-back-to-deps">
+                Back
+              </Button>
+            )}
             {exportStep === "preview" && (
-              <Button variant="outline" onClick={() => setExportStep("dependencies")} data-testid="button-export-back">
+              <Button variant="outline" onClick={() => setExportStep("envvars")} data-testid="button-export-back">
                 Back
               </Button>
             )}
@@ -3502,6 +3689,14 @@ export default function AgentDetail() {
               </Button>
             )}
             {exportStep === "dependencies" && (
+              <Button
+                onClick={() => setExportStep("envvars")}
+                data-testid="button-export-next-envvars"
+              >
+                Next: Env Vars <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
+              </Button>
+            )}
+            {exportStep === "envvars" && (
               <Button
                 onClick={() => exportCodeMutation.mutate({ format: exportFormat, llmProvider: exportLlmProvider, maxIterations: exportMaxIterations, completionPromise: exportCompletionPromise, framework: exportFramework, toolAdapters: toolAdapterOverrides, pinVersions })}
                 disabled={exportCodeMutation.isPending}
