@@ -53,6 +53,8 @@ import {
   type SecretRotationPolicy, type InsertSecretRotationPolicy,
   adminWebhooks,
   type AdminWebhook, type InsertAdminWebhook,
+  jobs,
+  type Job, type InsertJob,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -226,6 +228,14 @@ export interface IStorage {
   createAdminWebhook(webhook: InsertAdminWebhook): Promise<AdminWebhook>;
   updateAdminWebhook(id: string, data: Partial<AdminWebhook>): Promise<AdminWebhook | undefined>;
   deleteAdminWebhook(id: string): Promise<boolean>;
+
+  getJob(id: string): Promise<Job | undefined>;
+  getJobsByAgent(agentId: string): Promise<Job[]>;
+  createJob(job: InsertJob): Promise<Job>;
+  updateJob(id: string, data: Partial<Job>): Promise<Job | undefined>;
+  dequeueNextJob(): Promise<Job | undefined>;
+  completeJob(id: string, result: Record<string, unknown>): Promise<Job | undefined>;
+  failJob(id: string, error: string): Promise<Job | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -859,6 +869,54 @@ export class DatabaseStorage implements IStorage {
   async deleteAdminWebhook(id: string) {
     const result = await db.delete(adminWebhooks).where(eq(adminWebhooks.id, id));
     return (result.rowCount ?? 0) > 0;
+  }
+
+  async getJob(id: string) {
+    const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+    return job;
+  }
+
+  async getJobsByAgent(agentId: string) {
+    return db.select().from(jobs).where(eq(jobs.agentId, agentId));
+  }
+
+  async createJob(job: InsertJob) {
+    const [created] = await db.insert(jobs).values(job).returning();
+    return created;
+  }
+
+  async updateJob(id: string, data: Partial<Job>) {
+    const [updated] = await db.update(jobs).set(data).where(eq(jobs.id, id)).returning();
+    return updated;
+  }
+
+  async dequeueNextJob() {
+    const [job] = await db.select().from(jobs).where(eq(jobs.status, "queued")).limit(1);
+    if (!job) return undefined;
+    const [claimed] = await db
+      .update(jobs)
+      .set({ status: "processing", startedAt: new Date() })
+      .where(eq(jobs.id, job.id))
+      .returning();
+    return claimed;
+  }
+
+  async completeJob(id: string, result: Record<string, unknown>) {
+    const [updated] = await db
+      .update(jobs)
+      .set({ status: "completed", result, progress: 100, completedAt: new Date() })
+      .where(eq(jobs.id, id))
+      .returning();
+    return updated;
+  }
+
+  async failJob(id: string, error: string) {
+    const [updated] = await db
+      .update(jobs)
+      .set({ status: "failed", error, completedAt: new Date() })
+      .where(eq(jobs.id, id))
+      .returning();
+    return updated;
   }
 }
 

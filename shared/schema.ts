@@ -703,4 +703,22 @@ export const insertAdminWebhookSchema = createInsertSchema(adminWebhooks).omit({
 export type InsertAdminWebhook = z.infer<typeof insertAdminWebhookSchema>;
 export type AdminWebhook = typeof adminWebhooks.$inferSelect;
 
+export const jobs = pgTable("jobs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  type: text("type").notNull(),
+  status: text("status").notNull().default("queued"),
+  agentId: varchar("agent_id"),
+  payload: jsonb("payload"),
+  result: jsonb("result"),
+  progress: integer("progress").default(0),
+  error: text("error"),
+  createdAt: timestamp("created_at").defaultNow(),
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+});
+
+export const insertJobSchema = createInsertSchema(jobs).omit({ id: true, createdAt: true, startedAt: true, completedAt: true });
+export type InsertJob = z.infer<typeof insertJobSchema>;
+export type Job = typeof jobs.$inferSelect;
+
 export * from "./models/chat";
