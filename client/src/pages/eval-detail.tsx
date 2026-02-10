@@ -1130,9 +1130,9 @@ export default function EvalDetail() {
                               ) : (
                                 <span className="text-xs text-muted-foreground">{"\u2014"}</span>
                               )}
-                              {isExpanded && cr.scorerOutputs && (
+                              {isExpanded && !!cr.scorerOutputs && (
                                 <pre className="text-[10px] font-mono text-muted-foreground mt-1 max-w-[300px] overflow-auto whitespace-pre-wrap">
-                                  {JSON.stringify(cr.scorerOutputs, null, 2)}
+                                  {String(JSON.stringify(cr.scorerOutputs, null, 2))}
                                 </pre>
                               )}
                             </TableCell>
@@ -1315,7 +1315,7 @@ export default function EvalDetail() {
                       <SelectContent>
                         {sortedRuns.map((run) => (
                           <SelectItem key={run.id} value={run.id}>
-                            {formatDate(run.startedAt)} {run.version ? `(v${run.version})` : ""}
+                            {formatDate(run.startedAt)} {run.versionId ? `(${run.versionId})` : ""}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -1330,7 +1330,7 @@ export default function EvalDetail() {
                       <SelectContent>
                         {sortedRuns.map((run) => (
                           <SelectItem key={run.id} value={run.id}>
-                            {formatDate(run.startedAt)} {run.version ? `(v${run.version})` : ""}
+                            {formatDate(run.startedAt)} {run.versionId ? `(${run.versionId})` : ""}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -1356,7 +1356,7 @@ export default function EvalDetail() {
                   if (hasResults) {
                     const mapA = new Map(diffResultsA.map((r) => [r.caseId, r]));
                     const mapB = new Map(diffResultsB.map((r) => [r.caseId, r]));
-                    const allCaseIds = new Set([...mapA.keys(), ...mapB.keys()]);
+                    const allCaseIds = new Set([...Array.from(mapA.keys()), ...Array.from(mapB.keys())]);
                     allCaseIds.forEach((caseId) => {
                       const a = mapA.get(caseId);
                       const b = mapB.get(caseId);

@@ -42,6 +42,7 @@ import Optimization from "@/pages/optimization";
 import ApprovalDetail from "@/pages/approval-detail";
 import Blueprints from "@/pages/blueprints";
 import BlueprintDetail from "@/pages/blueprint-detail";
+import ShadowReplay from "@/pages/shadow-replay";
 
 function Router() {
   return (
@@ -58,6 +59,7 @@ function Router() {
       <Route path="/blueprints" component={Blueprints} />
       <Route path="/blueprints/:id" component={BlueprintDetail} />
       <Route path="/evals" component={Evals} />
+      <Route path="/evals/replay" component={ShadowReplay} />
       <Route path="/evals/:id" component={EvalDetail} />
       <Route path="/deployments" component={Deployments} />
       <Route path="/deployments/:id" component={ReleaseDetail} />

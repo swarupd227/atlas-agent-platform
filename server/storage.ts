@@ -117,6 +117,7 @@ export interface IStorage {
 
   getEvalRuns(suiteId: string): Promise<EvalRun[]>;
   getEvalRunsBySuite(suiteId: string): Promise<EvalRun[]>;
+  getAllEvalRuns(): Promise<EvalRun[]>;
   createEvalRun(run: InsertEvalRun): Promise<EvalRun>;
 
   getEvalCaseResults(runId: string): Promise<EvalCaseResult[]>;
@@ -440,6 +441,10 @@ export class DatabaseStorage implements IStorage {
 
   async getEvalRunsBySuite(suiteId: string) {
     return db.select().from(evalRuns).where(eq(evalRuns.suiteId, suiteId));
+  }
+
+  async getAllEvalRuns() {
+    return db.select().from(evalRuns);
   }
 
   async createEvalRun(run: InsertEvalRun) {

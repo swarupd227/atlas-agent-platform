@@ -1,61 +1,52 @@
 # ALMP - Agent Lifecycle Management Platform
 
 ## Overview
-ALMP is an Agent Lifecycle Management Platform designed for managing AI agents with an 80% autonomous execution and 20% expert validation model. The platform aims to provide outcome-driven billing, where customers pay for measurable results. It offers comprehensive tools for agent creation, deployment, monitoring, and governance, focusing on delivering business value and enabling efficient AI operations.
+ALMP is an Agent Lifecycle Management Platform designed for managing AI agents with an 80% autonomous execution and 20% expert validation model. The platform aims to provide outcome-driven billing, where customers pay for measurable results. It offers comprehensive tools for agent creation, deployment, monitoring, and governance, focusing on delivering business value and enabling efficient AI operations. Its core ambition is to automate and optimize the lifecycle of AI agents, ensuring measurable outcomes and robust oversight.
 
 ## User Preferences
 I prefer that you ask me before making any major changes to the codebase. When suggesting code, please provide clear explanations for the choices made. I value an iterative development approach, where we can discuss and refine solutions progressively.
 
 ## System Architecture
-The platform is built with a modern web stack:
-- **Frontend**: React, Vite, Tailwind CSS, shadcn/ui, and wouter for routing.
-- **Backend**: Express.js REST API.
-- **Database**: PostgreSQL with Drizzle ORM.
-- **State Management**: TanStack React Query.
+The platform is built with a modern web stack: React, Vite, Tailwind CSS, shadcn/ui, and wouter for the frontend; Express.js for the backend REST API; and PostgreSQL with Drizzle ORM for the database.
 
 **UI/UX Design Principles**:
-- **Outcome-first navigation**: Every screen prioritizes showing KPI delivery status via an `OutcomeKpiStrip` component.
-- **Evidence-by-default**: Approvals show configuration differences, blast radius analysis, and evaluation proof.
-- **Autonomy with guardrails**: Policies are checked before actions, with options to request expert approval for violations.
-- **Time travel**: An agent timeline aggregates version changes, audit events, and recommendations with diff visualization.
+- **Outcome-first navigation**: Prioritizes KPI delivery status.
+- **Evidence-by-default**: Approvals include configuration differences, blast radius analysis, and evaluation proof.
+- **Autonomy with guardrails**: Policies are checked before actions, with expert approval for violations.
+- **Time travel**: Agent timeline aggregates version changes, audit events, and recommendations with diff visualization.
 
-**Key Modules & Features**:
-- **Overview Dashboard**: Provides platform health, KPI progress, and agent status.
-- **Outcomes**: Manages outcome contracts, KPIs, SLAs, and pricing with detailed artifact pages covering definition, evidence, commercials, risk, audit, and agent proposals.
-- **Agents**: Agent Registry (System of Record) with enhanced table columns (agent name+owner, linked outcome, prod version, health score with sub-metric popover breakdown, autonomy mode, last incident/approval gate, monthly cost+billed outcome value). Multi-faceted filter bar (outcome, environment, risk tier, tool access class, compliance tags, model provider). Bulk actions (run regression eval, freeze deployments, rotate secrets, export audit bundle) with row selection and confirmation dialogs. Agent cockpit (10-tab detail page) with: Summary (outcome contribution, run activity, health/success stats), Runs & Traces (searchable trace explorer), Evals (suite results with pass rates), Releases (version timeline with env promotion flow: staging/pilot/prod, promote/rollback, canary settings), Blueprint (workflow graph, tools/permissions, memory/RAG, policy/eval bindings, rollback plan), Lifecycle (enhanced retirement & replacement management — see below), Monitor (SLO cards with thresholds, anomaly detection, business impact/ROI), Autonomous (action rules, action log, A/B experiments, cost tuning), Governance (effective policies, exceptions, approval history), Timeline (filterable event log with diff visualization, JSON/CSV export). Header includes interactive version/environment selectors, Run Shadow Replay, Request Approval buttons, compliance tags. Agent Design Wizard (manual, template, or conversational AI design).
-- **Retirement & Replacement Management** (Lifecycle tab): Deprecation signal dashboard (GET /api/agents/:id/deprecation-signals) computing risk score from success rate, cost/revenue, staleness, eval pass rates, and health score. AI-powered replacement proposals (POST /api/ai/propose-replacement) using GPT-4.1 to suggest template/agent matches with capability gaps and migration estimates. Multi-phase retirement workflow (active → retiring → archived) via POST /api/agents/:id/initiate-retirement and complete-retirement endpoints. Expert validation gates: HIGH/CRITICAL risk agents require approval before retirement proceeds; handover completeness reviewed before archival. Knowledge transfer checklist with 6 steps. Approval gate status display in UI blocks actions while approvals are pending. Audit trail events for retirement initiation and archival.
-- **Blueprint Studio** (/blueprints, /blueprints/:id): First-class blueprint editing and versioning. List page with search, status/agent filters, stat cards (total/signed/draft/compiled). Detail/Editor page with: 3-panel layout (node palette sidebar with 7 node types: llm_call, tool_call, rag, classifier, router, human_review, schema_validate; graph canvas with visual node/edge editing, colored type indicators, inline label editing, click-to-add edges; properties panel with type-specific fields + validation warnings). "Compile Blueprint" runs static checks (schema completeness, duplicate IDs, edge validation, disconnected nodes, tool permission checks against policy library, policy compatibility for risk tiers, budget sanity). "Sign & Create Version" creates immutable versioned snapshot, triggers approval flow for HIGH/CRITICAL risk agents, creates audit trail event. Integrates with Agent Detail Blueprint tab via "Edit in Blueprint Studio" button. Version history tracking with per-version snapshots. Database: blueprints table with status lifecycle (draft → compiled → signed), versioning, validation results storage.
-- **Templates**: A library of industry-wide agent templates with browsing, filtering, search, and "Use This Template" functionality.
-- **Deployments**: Release Orchestrator with environment overview (staging/pilot/prod panels showing active version, canary %, health metrics, pending approvals, freeze status). 3-step Create Release Wizard (source version + target env, rollout strategy: shadow/canary/direct with safeguards, auto-rollback triggers: eval regression threshold, policy violation spike, KPI drop confidence, required approvals preview). Freeze Center (freeze/unfreeze at agent or org-wide scope with reason tracking, active freeze indicators on env panels). Auto-incident generation on rollback (creates hash-chain audit event with severity, agent context, environment). Auto-promote for staging (low-risk agents auto-promoted to pilot when readiness checks pass: success rate >=95%, latest eval pass rate >=80%). Detailed release artifact page with shadow mode comparison, canary rules with step progression, rollback triggers, safe fallback routing, promotion history chain, and pre-promotion regression gate with blast radius analysis.
-- **Monitor**: Outcome SLA Dashboard (outcome-centric with KPI breach status, SLA threshold markers, bound agent health), Live Runs stream, Drift Detection (pass rate + latency + hallucination/faithfulness drift, customer impact analysis, expert escalation flow), Agent Health cards. 5 stat cards including Customer Impact. GET /api/monitor/impact endpoint aggregates outcome health data.
-- **Governance**: Certified Agent Compliance Layer with 7 tabs: Policy Library (policy-as-code with create/search), Enforcement (per-policy enforcement statistics), Audit Trail (immutable hash-chain verified events with integrity verification, export CSV), Compliance Reports (SOC2/EU AI Act/GDPR framework assessments with findings, evidence packages, scores), Policy Exceptions (full lifecycle: request/approve/reject/expire with time-bound expiry), Tool Access (4-tier access class management: OPEN/STANDARD/RESTRICTED/CRITICAL with agent matrix), Ethical Boundaries (content boundaries, bias detection, transparency requirements, fairness constraints with toggleable rules and coverage scoring). Enhanced with: domain-based policy grouping/filtering (5 domains: data_handling, tool_permissions, logging, allowed_actions, content_boundaries), policy version history tracking (versionHistory jsonb column with expandable UI), policy test cases (policyTestCases table with inputScenario/expectedOutcome/status), enhanced exception management (justification, compensatingControls, requiresExpertValidation fields), structured audit export bundles (GET /api/audit-events/export-bundle with 4 preset types: all_events/runs/approvals/policy_changes, date range, cryptographic hash chain integrity option).
-- **Optimization (Patch Center)**: Autonomous Optimization & Self-Healing with 3 tabs: Patch Inbox (AI-proposed changes with change types: prompt tweak, retrieval change, tool retry/fallback, model upgrade/downgrade, cost cap tuning; each card shows evidence, KPI/cost impact, risk level, required approvals, and action buttons: Simulate, Run Evals, Request Approval, Reject; AI patch generation via POST /api/ai/generate-patches), Experiment Manager (A/B + canary experiments with traffic %, success metrics, eval gates, guardrails, confidence interval results), Auto-Remediation Timeline (self-healing actions with trigger→change→proof→rollback flow). Safety constraints enforce: no tool permission expansion without approval, no write-action changes without high-tier approval, no audit policy changes autonomously. Patch sandbox environment always active.
-- **Approvals**: Manages an expert validation queue for various approval types (e.g., blueprint review, outcome review, outcome certification, patch approval) with structured evidence.
-- **Billing**: Handles outcome-based metering and invoicing.
-- **Evaluation Evidence System**: Incorporates drift detection, red-team coverage, regression detection, and outcome correlation to provide robust evidence for agent performance and risks.
-- **Business Outcome Discovery**: A conversational AI-driven process for business users to define goals, identify automation opportunities, and draft outcome contracts.
-- **Role-based Access**: Six switchable personas (Outcome Owner, Agent Engineer, Ops/SRE, Compliance/Security, Expert Validator, Finance) filter navigation and available actions.
-- **Global App Shell**: Left navigation sidebar + top bar with: **Environment Selector** (staging/pilot/prod toggle via EnvironmentProvider context; pages can lock env e.g. billing locks to prod-only; agent pages can pin env; disabled state with Lock icon and tooltip), **Global Search** (Cmd/Ctrl+K; searches 7 entity types: agents, outcomes, policies, traces, approvals, deployments, invoices; entity cards with type icons, names, status badges, quick actions), **Command Palette** (Cmd/Ctrl+Shift+K; permission-aware quick actions: Create Agent, Create Outcome, Run Eval, Start Shadow Replay, Rollback, Export Audit Bundle, Open Incident, Discover Outcome, Generate Patches; navigation filtered by role-allowed routes), **Notification Center** (5 categories: Approvals Needed, Drift Detected, Incidents Triggered, Invoices Ready, Policy Exceptions Expiring; badge count on bell icon), **Role Switcher** (7 personas), **Theme Toggle**.
+**Core Features**:
+- **Overview Dashboard**: Platform health, KPI progress, agent status.
+- **Outcomes**: Manages outcome contracts, KPIs, SLAs, and pricing.
+- **Agents**: Agent Registry for managing and monitoring agents, including detailed cockpit views, lifecycle management (retirement and replacement), and a design wizard.
+- **Blueprint Studio**: Visual editor for creating, versioning, and compiling agent blueprints with static checks and approval flows.
+- **Templates**: Library of agent templates.
+- **Deployments**: Release Orchestrator with environment management (staging/pilot/prod), rollout strategies (shadow/canary/direct), and auto-incident generation.
+- **Monitor**: Outcome SLA Dashboard, live runs, drift detection, and agent health monitoring.
+- **Governance**: Certified Agent Compliance Layer with policy management, enforcement, audit trails, compliance reports, policy exceptions, and tool access controls.
+- **Optimization (Patch Center)**: Autonomous optimization and self-healing with AI-proposed changes, experiment management (A/B testing), and auto-remediation.
+- **Approvals**: Expert validation queue for various approval types.
+- **Billing**: Outcome-based metering and invoicing.
+- **Evaluation Evidence System**: Robust evidence for agent performance and risks.
+- **Business Outcome Discovery**: Conversational AI for defining goals and drafting outcome contracts.
+- **Role-based Access**: Six switchable personas for tailored access and actions.
+- **Global App Shell**: Provides environment selection, global search, command palette, notification center, role switcher, and theme toggle.
 
 **Technical Implementations**:
-- **Eval Studio**: Full-featured evaluation management with 9-tab detail page (test-cases, run-history, scorers, env-thresholds, failure-triage, agent-bindings, red-team, regression-diff, outcome-correlation). Features include: AI-powered auto-generate test cases (POST /api/ai/generate-eval-cases using GPT-4.1), 4 scorer types (Structured Correctness, Semantic Match, Policy Compliance, Tool Assertions), per-environment thresholds (staging/pilot/prod), failure triage with per-case results and trace viewer links, regression diff with version A vs B comparison, coverage tag badges (safety/compliance/edge-cases/adversarial).
-- **Shadow Replay**: POST /api/agents/:id/shadow-replay endpoint that replays historical traces against current agent version to detect behavioral divergences. UI dialog with time window selector (1h/6h/24h/7d/30d), target environment, sample size controls, and divergence visualization.
-- **Autonomy Hooks**: Auto-expand eval suites on drift (auto-generates test cases targeting drift patterns when pass rate degradation > 10%), auto-quarantine on confidence drop (quarantine agent from production when confidence < 0.6). POST /api/agents/:id/autonomy-hooks endpoint.
-- **AI Endpoints**: `POST /api/ai/agent-assist` for conversational design, `POST /api/ai/match-templates` for template matching, `POST /api/ai/outcome-discover` for outcome discovery, `POST /api/ai/propose-agents` for generating agent proposals, `POST /api/ai/propose-replacement` for AI-powered replacement proposals during retirement, and `POST /api/ai/generate-eval-cases` for AI-generated test case synthesis.
-- **Data Model**: Comprehensive schema covering outcome contracts, agents, deployments, evaluations, policies, approvals, billing, and templates.
+- **Eval Studio**: Comprehensive evaluation management, including test case creation, run history, scorers, thresholds, and regression analysis.
+- **Shadow Replay**: Replaying production traces against candidate versions for comparison and validation.
+- **Autonomy Hooks**: Automated actions like expanding eval suites on drift or quarantining agents on confidence drops.
+- **AI Endpoints**: Dedicated API endpoints for conversational design, template matching, outcome discovery, agent/replacement proposals, and AI-generated test cases.
+- **Data Model**: Comprehensive schema for all platform entities.
 
 ## External Dependencies
-- **LLM Providers**: Integrated for AI capabilities (e.g., GPT-4.1 for conversational AI and template matching).
-- **PostgreSQL**: Primary database for persistent storage.
-- **Express.js**: Used for building the backend REST API.
-- **React**: Frontend library for user interface development.
+- **LLM Providers**: For AI capabilities (e.g., GPT-4.1).
+- **PostgreSQL**: Primary database.
+- **Express.js**: Backend framework.
+- **React**: Frontend library.
 - **Vite**: Frontend build tool.
-- **Tailwind CSS**: Utility-first CSS framework for styling.
+- **Tailwind CSS**: Styling framework.
 - **shadcn/ui**: UI component library.
-- **wouter**: Small routing library for React.
-- **TanStack React Query**: For data fetching, caching, and state management in the frontend.
-- **Drizzle ORM**: Object-relational mapper for interacting with PostgreSQL.
-- **Vector DBs**: Potential future or current integration for RAG functionalities.
-- **Monitoring Tools**: External services for deeper monitoring capabilities.
-- **CI/CD Tools**: Integration for continuous integration and deployment workflows.
-- **Ticketing/Communication Systems**: For escalating issues and notifications.
+- **wouter**: Routing library.
+- **TanStack React Query**: Frontend data management.
+- **Drizzle ORM**: Database ORM.

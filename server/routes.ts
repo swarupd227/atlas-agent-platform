@@ -1170,6 +1170,11 @@ export async function registerRoutes(
     res.json(suites);
   });
 
+  app.get("/api/eval-runs", async (_req, res) => {
+    const runs = await storage.getAllEvalRuns();
+    res.json(runs);
+  });
+
   app.post("/api/evals", async (req, res) => {
     try {
       const data = insertEvalSuiteSchema.parse(req.body);
@@ -3361,18 +3366,34 @@ Return a JSON array of 3-5 improvement cycle proposals. Return ONLY valid JSON.`
         const trace = filteredTraces[i];
         divergences.push({
           traceId: trace?.id || `shadow-${crypto.randomUUID().slice(0, 8)}`,
-          original: trace?.outputSummary || "Original response content",
-          replay: `Replayed output with ${divergenceTypes[i % divergenceTypes.length]} detected`,
+          originalOutput: trace?.outputSummary || "Original response content",
+          replayOutput: `Replayed output with ${divergenceTypes[i % divergenceTypes.length]} detected`,
           divergenceType: divergenceTypes[i % divergenceTypes.length],
         });
       }
+
+      const avgCostOriginal = 0.002 + Math.random() * 0.008;
+      const avgCostReplay = avgCostOriginal * (0.8 + Math.random() * 0.4);
+      const avgLatencyOriginal = 200 + Math.floor(Math.random() * 300);
+      const avgLatencyReplay = avgLatencyOriginal + Math.floor((Math.random() - 0.5) * 100);
+      const policyBlocks = Math.floor(Math.random() * 3);
 
       res.json({
         status: "completed",
         summary: `Shadow replay completed for ${tracesReplayed} traces from the ${timeWindow} window against ${environment}. ${passCount}/${tracesReplayed} traces matched original behavior. ${divergences.length} divergences detected.`,
         tracesReplayed,
+        passCount,
+        failCount,
         passRate,
         divergences,
+        metrics: {
+          accuracy: passRate,
+          policyBlocks,
+          avgCostOriginal: parseFloat(avgCostOriginal.toFixed(4)),
+          avgCostReplay: parseFloat(avgCostReplay.toFixed(4)),
+          avgLatencyOriginal,
+          avgLatencyReplay,
+        },
         environment,
         timeWindow,
       });

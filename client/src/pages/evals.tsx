@@ -1,14 +1,18 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
-import type { EvalSuite, Agent } from "@shared/schema";
+import type { EvalSuite, EvalRun, Agent } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   FlaskConical, Search, TrendingUp, TrendingDown, Bot,
   ArrowRight, Calendar, Tag, BarChart3, AlertTriangle, CheckCircle,
+  Clock, Loader2, Shield, ShieldAlert, Bug, Play,
 } from "lucide-react";
 
 function hashCode(s: string): number {
@@ -69,22 +73,52 @@ const typeColors: Record<string, string> = {
   adversarial: "bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/20",
 };
 
+const coverageCategories = [
+  { key: "safety", label: "Safety", icon: ShieldAlert, color: "text-red-600 dark:text-red-400", bg: "bg-red-500/10", border: "border-red-500/20", tags: ["safety", "prompt-injection", "jailbreak", "pii-extraction", "pii_extraction"] },
+  { key: "compliance", label: "Compliance", icon: Shield, color: "text-blue-600 dark:text-blue-400", bg: "bg-blue-500/10", border: "border-blue-500/20", tags: ["compliance", "policy", "regulatory", "gdpr", "soc2"] },
+  { key: "edge-cases", label: "Edge Cases", icon: Bug, color: "text-amber-600 dark:text-amber-400", bg: "bg-amber-500/10", border: "border-amber-500/20", tags: ["edge-cases", "edge_cases", "boundary", "corner-case", "error-handling"] },
+  { key: "adversarial", label: "Adversarial", icon: AlertTriangle, color: "text-purple-600 dark:text-purple-400", bg: "bg-purple-500/10", border: "border-purple-500/20", tags: ["adversarial", "red-team", "red_team", "attack", "security"] },
+];
+
 function formatDate(date: string | Date | null) {
   if (!date) return null;
   return new Date(date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
+function formatTimeAgo(date: string | Date | null) {
+  if (!date) return "Unknown";
+  const d = new Date(date);
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
+}
+
 export default function Evals() {
   const [searchQuery, setSearchQuery] = useState("");
   const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState("overview");
   const { data: suites, isLoading: suitesLoading } = useQuery<EvalSuite[]>({ queryKey: ["/api/eval-suites"] });
   const { data: agents, isLoading: agentsLoading } = useQuery<Agent[]>({ queryKey: ["/api/agents"] });
+  const { data: allRuns } = useQuery<EvalRun[]>({ queryKey: ["/api/eval-runs"] });
   const isLoading = suitesLoading || agentsLoading;
+
   const agentMap = useMemo(() => {
     const m = new Map<string, string>();
     agents?.forEach((a) => m.set(a.id, a.name));
     return m;
   }, [agents]);
+
+  const suiteMap = useMemo(() => {
+    const m = new Map<string, EvalSuite>();
+    suites?.forEach((s) => m.set(s.id, s));
+    return m;
+  }, [suites]);
 
   const allTags = useMemo(() => {
     const s = new Set<string>();
@@ -120,6 +154,63 @@ export default function Evals() {
     return { total: suites.length, agentCount: agentIds.size, avgPass: avg, needsAttention: attention };
   }, [suites]);
 
+  const pendingRuns = useMemo(() => {
+    if (!allRuns) return [];
+    return allRuns
+      .filter((r) => r.status === "running" || r.status === "pending" || r.status === "queued")
+      .sort((a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime());
+  }, [allRuns]);
+
+  const recentRegressions = useMemo(() => {
+    if (!allRuns || !suites) return [];
+    const suiteRunMap = new Map<string, EvalRun[]>();
+    allRuns.forEach((r) => {
+      if (!suiteRunMap.has(r.suiteId)) suiteRunMap.set(r.suiteId, []);
+      suiteRunMap.get(r.suiteId)!.push(r);
+    });
+
+    const regressions: Array<{
+      suite: EvalSuite;
+      prevRate: number;
+      currentRate: number;
+      delta: number;
+      latestRun: EvalRun;
+    }> = [];
+
+    suiteRunMap.forEach((runs, suiteId) => {
+      const suite = suiteMap.get(suiteId);
+      if (!suite) return;
+      const sorted = [...runs]
+        .filter((r) => r.status === "completed" && r.passRate !== null)
+        .sort((a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime());
+      if (sorted.length < 2) return;
+      const current = sorted[0].passRate || 0;
+      const prev = sorted[1].passRate || 0;
+      const delta = current - prev;
+      if (delta < -0.02) {
+        regressions.push({ suite, prevRate: prev, currentRate: current, delta, latestRun: sorted[0] });
+      }
+    });
+
+    return regressions.sort((a, b) => a.delta - b.delta).slice(0, 10);
+  }, [allRuns, suites, suiteMap]);
+
+  const coverageData = useMemo(() => {
+    if (!suites) return coverageCategories.map((c) => ({ ...c, count: 0, total: 0, percentage: 0, suiteNames: [] as string[] }));
+    return coverageCategories.map((cat) => {
+      const matchingSuites = suites.filter((s) =>
+        (s.coverageTags || []).some((tag) => cat.tags.some((ct) => tag.toLowerCase().includes(ct)))
+      );
+      return {
+        ...cat,
+        count: matchingSuites.length,
+        total: suites.length,
+        percentage: suites.length > 0 ? Math.round((matchingSuites.length / suites.length) * 100) : 0,
+        suiteNames: matchingSuites.map((s) => s.name),
+      };
+    });
+  }, [suites]);
+
   if (isLoading) return (
     <div className="flex flex-col gap-6 p-6" data-testid="page-evals-loading">
       <Skeleton className="h-8 w-48" />
@@ -136,14 +227,22 @@ export default function Evals() {
 
   return (
     <div className="flex flex-col gap-6 p-6" data-testid="page-evals">
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex items-center justify-center w-9 h-9 rounded-md bg-primary/10 shrink-0">
-          <FlaskConical className="w-4 h-4 text-primary" />
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center justify-center w-9 h-9 rounded-md bg-primary/10 shrink-0">
+            <FlaskConical className="w-4 h-4 text-primary" />
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-page-title">Eval Studio</h1>
+            <p className="text-sm text-muted-foreground" data-testid="text-page-subtitle">Evaluation suites, coverage & regression tracking</p>
+          </div>
         </div>
-        <div className="flex flex-col gap-0.5">
-          <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-page-title">Eval Studio</h1>
-          <p className="text-sm text-muted-foreground" data-testid="text-page-subtitle">Evaluation suites grouped by agent</p>
-        </div>
+        <Link href="/evals/replay">
+          <Button variant="outline" size="sm" data-testid="button-shadow-replay">
+            <Play className="w-3.5 h-3.5 mr-1.5" />
+            Shadow Replay
+          </Button>
+        </Link>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4" data-testid="stats-bar">
@@ -168,129 +267,414 @@ export default function Evals() {
         </CardContent></Card>
       </div>
 
-      <div className="flex items-center gap-3 flex-wrap" data-testid="filter-bar">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input
-            placeholder="Search suites..."
-            className="pl-9"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            data-testid="input-search"
-          />
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <Badge
-            variant={tagFilter === null ? "default" : "outline"}
-            className="cursor-pointer"
-            onClick={() => setTagFilter(null)}
-            data-testid="filter-tag-all"
-          >
-            All
-          </Badge>
-          {allTags.map((tag) => (
-            <Badge
-              key={tag}
-              variant="outline"
-              className={`cursor-pointer ${tagFilter === tag ? "ring-1 ring-ring" : ""} ${coverageTagColors[tag] || ""}`}
-              onClick={() => setTagFilter(tagFilter === tag ? null : tag)}
-              data-testid={`filter-tag-${tag}`}
-            >
-              {tag}
-            </Badge>
-          ))}
-        </div>
-      </div>
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col gap-4">
+        <TabsList className="h-auto gap-1 flex-wrap" data-testid="evals-tabs">
+          <TabsTrigger value="overview" data-testid="tab-overview" className="gap-1.5">
+            <FlaskConical className="w-3.5 h-3.5" />
+            Suites
+          </TabsTrigger>
+          <TabsTrigger value="backlog" data-testid="tab-backlog" className="gap-1.5">
+            <Clock className="w-3.5 h-3.5" />
+            Backlog
+            {pendingRuns.length > 0 && (
+              <Badge variant="outline" className="text-[10px] ml-1">{pendingRuns.length}</Badge>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="regressions" data-testid="tab-regressions" className="gap-1.5">
+            <TrendingDown className="w-3.5 h-3.5" />
+            Regressions
+            {recentRegressions.length > 0 && (
+              <Badge variant="outline" className="text-[10px] ml-1 bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20">{recentRegressions.length}</Badge>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="coverage" data-testid="tab-coverage" className="gap-1.5">
+            <Shield className="w-3.5 h-3.5" />
+            Coverage Map
+          </TabsTrigger>
+        </TabsList>
 
-      {filtered.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
-            <FlaskConical className="w-10 h-10 text-muted-foreground/50" />
-            <p className="text-sm text-muted-foreground" data-testid="text-empty-state">No eval suites found</p>
-          </CardContent>
-        </Card>
-      ) : (
-        Array.from(grouped.entries()).map(([agentId, groupSuites]) => (
-          <div key={agentId} className="flex flex-col gap-3" data-testid={`agent-group-${agentId}`}>
-            <div className="flex items-center gap-2 flex-wrap">
-              <Bot className="w-4 h-4 text-muted-foreground" />
-              <h2 className="text-sm font-medium" data-testid={`text-agent-name-${agentId}`}>
-                {agentId === "__unassigned__" ? "Unassigned" : agentMap.get(agentId) || agentId}
-              </h2>
-              <Badge variant="outline" className="text-[10px]">{groupSuites.length}</Badge>
+        <TabsContent value="overview" className="mt-0">
+          <div className="flex flex-col gap-6">
+            <div className="flex items-center gap-3 flex-wrap" data-testid="filter-bar">
+              <div className="relative flex-1 min-w-[200px]">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search suites..."
+                  className="pl-9"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  data-testid="input-search"
+                />
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <Badge
+                  variant={tagFilter === null ? "default" : "outline"}
+                  className="cursor-pointer"
+                  onClick={() => setTagFilter(null)}
+                  data-testid="filter-tag-all"
+                >
+                  All
+                </Badge>
+                {allTags.map((tag) => (
+                  <Badge
+                    key={tag}
+                    variant="outline"
+                    className={`cursor-pointer ${tagFilter === tag ? "ring-1 ring-ring" : ""} ${coverageTagColors[tag] || ""}`}
+                    onClick={() => setTagFilter(tagFilter === tag ? null : tag)}
+                    data-testid={`filter-tag-${tag}`}
+                  >
+                    {tag}
+                  </Badge>
+                ))}
+              </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {groupSuites.map((suite) => {
-                const sparkData = generateSparklineData(suite.passRate, suite.id);
-                const delta = sparkData.length >= 2
-                  ? ((sparkData[sparkData.length - 1] - sparkData[sparkData.length - 2]) * 100)
-                  : null;
-                return (
-                  <Link key={suite.id} href={`/evals/${suite.id}`}>
-                    <Card className="hover-elevate cursor-pointer" data-testid={`card-eval-suite-${suite.id}`}>
-                      <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium truncate" data-testid={`text-suite-name-${suite.id}`}>
-                          {suite.name}
-                        </CardTitle>
-                        {suite.type && (
-                          <Badge variant="outline" className={`text-[10px] shrink-0 ${typeColors[suite.type] || ""}`} data-testid={`badge-suite-type-${suite.id}`}>
-                            {suite.type}
-                          </Badge>
-                        )}
-                      </CardHeader>
-                      <CardContent className="flex flex-col gap-3">
-                        <div className="flex items-center justify-between gap-2 flex-wrap">
-                          <div className="flex items-center gap-2">
-                            <Sparkline data={sparkData} />
-                            {suite.passRate !== null && (
-                              <span className="text-sm font-medium" data-testid={`text-pass-rate-${suite.id}`}>
-                                {(suite.passRate * 100).toFixed(1)}%
-                              </span>
-                            )}
-                          </div>
-                          {delta !== null && (
-                            <div className={`flex items-center gap-0.5 text-xs font-medium ${delta >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`} data-testid={`text-delta-${suite.id}`}>
-                              {delta >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                              {delta >= 0 ? "+" : ""}{delta.toFixed(1)}%
-                            </div>
+
+            {filtered.length === 0 ? (
+              <Card>
+                <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
+                  <FlaskConical className="w-10 h-10 text-muted-foreground/50" />
+                  <p className="text-sm text-muted-foreground" data-testid="text-empty-state">No eval suites found</p>
+                </CardContent>
+              </Card>
+            ) : (
+              Array.from(grouped.entries()).map(([agentId, groupSuites]) => (
+                <div key={agentId} className="flex flex-col gap-3" data-testid={`agent-group-${agentId}`}>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Bot className="w-4 h-4 text-muted-foreground" />
+                    <h2 className="text-sm font-medium" data-testid={`text-agent-name-${agentId}`}>
+                      {agentId === "__unassigned__" ? "Unassigned" : agentMap.get(agentId) || agentId}
+                    </h2>
+                    <Badge variant="outline" className="text-[10px]">{groupSuites.length}</Badge>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {groupSuites.map((suite) => {
+                      const sparkData = generateSparklineData(suite.passRate, suite.id);
+                      const delta = sparkData.length >= 2
+                        ? ((sparkData[sparkData.length - 1] - sparkData[sparkData.length - 2]) * 100)
+                        : null;
+                      return (
+                        <Link key={suite.id} href={`/evals/${suite.id}`}>
+                          <Card className="hover-elevate cursor-pointer" data-testid={`card-eval-suite-${suite.id}`}>
+                            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+                              <CardTitle className="text-sm font-medium truncate" data-testid={`text-suite-name-${suite.id}`}>
+                                {suite.name}
+                              </CardTitle>
+                              {suite.type && (
+                                <Badge variant="outline" className={`text-[10px] shrink-0 ${typeColors[suite.type] || ""}`} data-testid={`badge-suite-type-${suite.id}`}>
+                                  {suite.type}
+                                </Badge>
+                              )}
+                            </CardHeader>
+                            <CardContent className="flex flex-col gap-3">
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                <div className="flex items-center gap-2">
+                                  <Sparkline data={sparkData} />
+                                  {suite.passRate !== null && (
+                                    <span className="text-sm font-medium" data-testid={`text-pass-rate-${suite.id}`}>
+                                      {(suite.passRate * 100).toFixed(1)}%
+                                    </span>
+                                  )}
+                                </div>
+                                {delta !== null && (
+                                  <div className={`flex items-center gap-0.5 text-xs font-medium ${delta >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`} data-testid={`text-delta-${suite.id}`}>
+                                    {delta >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                                    {delta >= 0 ? "+" : ""}{delta.toFixed(1)}%
+                                  </div>
+                                )}
+                              </div>
+                              {suite.coverageTags && suite.coverageTags.length > 0 && (
+                                <div className="flex items-center gap-1.5 flex-wrap" data-testid={`coverage-tags-${suite.id}`}>
+                                  <Tag className="w-3 h-3 text-muted-foreground shrink-0" />
+                                  {suite.coverageTags.map((tag) => (
+                                    <Badge key={tag} variant="outline" className={`text-[10px] ${coverageTagColors[tag] || ""}`} data-testid={`badge-tag-${tag}-${suite.id}`}>
+                                      {tag}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              )}
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                <div className="flex flex-col gap-1">
+                                  {suite.totalCases !== null && (
+                                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                      <BarChart3 className="w-3 h-3" />
+                                      <span data-testid={`text-total-cases-${suite.id}`}>{suite.totalCases} cases</span>
+                                    </div>
+                                  )}
+                                  <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                    <Calendar className="w-3 h-3" />
+                                    <span data-testid={`text-last-run-${suite.id}`}>
+                                      {suite.lastRunAt ? formatDate(suite.lastRunAt) : "No runs yet"}
+                                    </span>
+                                  </div>
+                                </div>
+                                <ArrowRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                              </div>
+                            </CardContent>
+                          </Card>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="backlog" className="mt-0">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-3">
+              <div className="flex items-center gap-2">
+                <Clock className="w-4 h-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Pending Eval Runs</CardTitle>
+              </div>
+              <Badge variant="outline" className="text-[10px]">{pendingRuns.length} active</Badge>
+            </CardHeader>
+            <CardContent>
+              {pendingRuns.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 gap-3">
+                  <CheckCircle className="w-10 h-10 text-emerald-500/50" />
+                  <p className="text-sm text-muted-foreground" data-testid="text-backlog-empty">All eval runs complete. No pending work.</p>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  {pendingRuns.map((run) => {
+                    const suite = suiteMap.get(run.suiteId);
+                    const agentName = run.agentId ? agentMap.get(run.agentId) : null;
+                    const statusColor = run.status === "running"
+                      ? "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/20"
+                      : "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20";
+                    return (
+                      <div key={run.id} className="flex items-center gap-3 p-3 rounded-md border border-border" data-testid={`backlog-run-${run.id}`}>
+                        <div className="w-8 h-8 rounded-md flex items-center justify-center shrink-0 bg-primary/10">
+                          {run.status === "running" ? (
+                            <Loader2 className="w-4 h-4 text-primary animate-spin" />
+                          ) : (
+                            <Clock className="w-4 h-4 text-muted-foreground" />
                           )}
                         </div>
-                        {suite.coverageTags && suite.coverageTags.length > 0 && (
-                          <div className="flex items-center gap-1.5 flex-wrap" data-testid={`coverage-tags-${suite.id}`}>
-                            <Tag className="w-3 h-3 text-muted-foreground shrink-0" />
-                            {suite.coverageTags.map((tag) => (
-                              <Badge key={tag} variant="outline" className={`text-[10px] ${coverageTagColors[tag] || ""}`} data-testid={`badge-tag-${tag}-${suite.id}`}>
-                                {tag}
-                              </Badge>
-                            ))}
+                        <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <Link href={`/evals/${run.suiteId}`}>
+                              <span className="text-sm font-medium hover:underline cursor-pointer" data-testid={`text-backlog-suite-${run.id}`}>
+                                {suite?.name || run.suiteId}
+                              </span>
+                            </Link>
+                            <Badge variant="outline" className={`text-[10px] ${statusColor}`}>{run.status}</Badge>
+                          </div>
+                          <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
+                            {agentName && (
+                              <span className="flex items-center gap-1">
+                                <Bot className="w-3 h-3" /> {agentName}
+                              </span>
+                            )}
+                            {run.environment && (
+                              <Badge variant="outline" className="text-[9px]">{run.environment}</Badge>
+                            )}
+                            <span>{run.totalCases || 0} cases</span>
+                            <span>{formatTimeAgo(run.startedAt)}</span>
+                          </div>
+                        </div>
+                        {run.status === "running" && run.passedCases !== null && run.totalCases !== null && run.totalCases > 0 && (
+                          <div className="flex flex-col items-end gap-1 shrink-0">
+                            <span className="text-xs text-muted-foreground">{run.passedCases}/{run.totalCases}</span>
+                            <Progress value={(run.passedCases / run.totalCases) * 100} className="w-24 h-1.5" />
                           </div>
                         )}
-                        <div className="flex items-center justify-between gap-2 flex-wrap">
-                          <div className="flex flex-col gap-1">
-                            {suite.totalCases !== null && (
-                              <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                                <BarChart3 className="w-3 h-3" />
-                                <span data-testid={`text-total-cases-${suite.id}`}>{suite.totalCases} cases</span>
-                              </div>
-                            )}
-                            <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                              <Calendar className="w-3 h-3" />
-                              <span data-testid={`text-last-run-${suite.id}`}>
-                                {suite.lastRunAt ? formatDate(suite.lastRunAt) : "No runs yet"}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="regressions" className="mt-0">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-3">
+              <div className="flex items-center gap-2">
+                <TrendingDown className="w-4 h-4 text-red-500" />
+                <CardTitle className="text-sm font-medium">Recent Regressions</CardTitle>
+              </div>
+              <Badge variant="outline" className="text-[10px] bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20">
+                {recentRegressions.length} detected
+              </Badge>
+            </CardHeader>
+            <CardContent>
+              {recentRegressions.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 gap-3">
+                  <CheckCircle className="w-10 h-10 text-emerald-500/50" />
+                  <p className="text-sm text-muted-foreground" data-testid="text-no-regressions">No regressions detected. All suites are stable or improving.</p>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  {recentRegressions.map((reg) => {
+                    const agentName = reg.suite.agentId ? agentMap.get(reg.suite.agentId) : null;
+                    return (
+                      <Link key={reg.suite.id} href={`/evals/${reg.suite.id}`}>
+                        <div className="flex items-center gap-3 p-3 rounded-md border border-red-500/20 bg-red-500/5 hover-elevate cursor-pointer" data-testid={`regression-${reg.suite.id}`}>
+                          <div className="w-8 h-8 rounded-md flex items-center justify-center shrink-0 bg-red-500/10">
+                            <TrendingDown className="w-4 h-4 text-red-500" />
+                          </div>
+                          <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-medium" data-testid={`text-regression-suite-${reg.suite.id}`}>
+                                {reg.suite.name}
                               </span>
+                              {reg.suite.type && (
+                                <Badge variant="outline" className={`text-[10px] ${typeColors[reg.suite.type] || ""}`}>{reg.suite.type}</Badge>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
+                              {agentName && (
+                                <span className="flex items-center gap-1">
+                                  <Bot className="w-3 h-3" /> {agentName}
+                                </span>
+                              )}
+                              <span>{formatTimeAgo(reg.latestRun.startedAt)}</span>
                             </div>
                           </div>
-                          <ArrowRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                          <div className="flex flex-col items-end gap-0.5 shrink-0">
+                            <span className="text-sm font-bold text-red-600 dark:text-red-400" data-testid={`text-regression-delta-${reg.suite.id}`}>
+                              {(reg.delta * 100).toFixed(1)}%
+                            </span>
+                            <span className="text-[10px] text-muted-foreground">
+                              {(reg.prevRate * 100).toFixed(1)}% → {(reg.currentRate * 100).toFixed(1)}%
+                            </span>
+                          </div>
                         </div>
-                      </CardContent>
-                    </Card>
-                  </Link>
-                );
-              })}
-            </div>
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="coverage" className="mt-0">
+          <div className="flex flex-col gap-4">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-3">
+                <div className="flex items-center gap-2">
+                  <Shield className="w-4 h-4 text-muted-foreground" />
+                  <CardTitle className="text-sm font-medium">Coverage Map</CardTitle>
+                </div>
+                <Badge variant="outline" className="text-[10px]">
+                  {coverageData.filter((c) => c.count > 0).length}/{coverageData.length} categories covered
+                </Badge>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {coverageData.map((cat) => {
+                    const Icon = cat.icon;
+                    return (
+                      <div key={cat.key} className={`flex flex-col gap-3 p-4 rounded-md border ${cat.count > 0 ? cat.border : "border-border"}`} data-testid={`coverage-card-${cat.key}`}>
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <div className={`w-8 h-8 rounded-md flex items-center justify-center shrink-0 ${cat.count > 0 ? cat.bg : "bg-muted"}`}>
+                              <Icon className={`w-4 h-4 ${cat.count > 0 ? cat.color : "text-muted-foreground"}`} />
+                            </div>
+                            <div className="flex flex-col gap-0">
+                              <span className="text-sm font-medium">{cat.label}</span>
+                              <span className="text-[10px] text-muted-foreground">{cat.count} of {cat.total} suites</span>
+                            </div>
+                          </div>
+                          <span className={`text-lg font-bold ${cat.count > 0 ? cat.color : "text-muted-foreground"}`} data-testid={`text-coverage-pct-${cat.key}`}>
+                            {cat.percentage}%
+                          </span>
+                        </div>
+                        <Progress
+                          value={cat.percentage}
+                          className={`h-2 ${cat.count > 0 ? `[&>div]:${cat.bg.replace("/10", "")}` : ""}`}
+                        />
+                        {cat.suiteNames.length > 0 && (
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {cat.suiteNames.slice(0, 4).map((name) => (
+                              <Badge key={name} variant="outline" className="text-[9px]">{name}</Badge>
+                            ))}
+                            {cat.suiteNames.length > 4 && (
+                              <Badge variant="outline" className="text-[9px]">+{cat.suiteNames.length - 4} more</Badge>
+                            )}
+                          </div>
+                        )}
+                        {cat.count === 0 && (
+                          <p className="text-[10px] text-muted-foreground">
+                            No suites tagged with {cat.tags.slice(0, 3).join(", ")}. Add coverage tags to your eval suites.
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex items-center gap-2">
+                  <BarChart3 className="w-4 h-4 text-muted-foreground" />
+                  <CardTitle className="text-sm font-medium">Coverage by Agent</CardTitle>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {(() => {
+                  const agentCoverage = new Map<string, Set<string>>();
+                  suites?.forEach((s) => {
+                    if (!s.agentId) return;
+                    if (!agentCoverage.has(s.agentId)) agentCoverage.set(s.agentId, new Set());
+                    (s.coverageTags || []).forEach((tag) => {
+                      coverageCategories.forEach((cat) => {
+                        if (cat.tags.some((ct) => tag.toLowerCase().includes(ct))) {
+                          agentCoverage.get(s.agentId!)!.add(cat.key);
+                        }
+                      });
+                    });
+                  });
+                  const entries = Array.from(agentCoverage.entries());
+                  if (entries.length === 0) {
+                    return (
+                      <div className="py-8 text-center">
+                        <Bot className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
+                        <p className="text-sm text-muted-foreground">No agent coverage data available</p>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div className="flex flex-col gap-2">
+                      <div className="grid grid-cols-[1fr_repeat(4,60px)] gap-2 items-center text-[10px] text-muted-foreground font-medium px-2">
+                        <span>Agent</span>
+                        {coverageCategories.map((cat) => (
+                          <span key={cat.key} className="text-center">{cat.label}</span>
+                        ))}
+                      </div>
+                      {entries.map(([agentId, coveredKeys]) => (
+                        <div key={agentId} className="grid grid-cols-[1fr_repeat(4,60px)] gap-2 items-center p-2 rounded-md border border-border" data-testid={`coverage-agent-${agentId}`}>
+                          <Link href={`/agents/${agentId}`}>
+                            <span className="text-sm font-medium hover:underline cursor-pointer truncate" data-testid={`text-coverage-agent-name-${agentId}`}>
+                              {agentMap.get(agentId) || agentId}
+                            </span>
+                          </Link>
+                          {coverageCategories.map((cat) => (
+                            <div key={cat.key} className="flex justify-center">
+                              {coveredKeys.has(cat.key) ? (
+                                <CheckCircle className={`w-4 h-4 ${cat.color}`} />
+                              ) : (
+                                <div className="w-4 h-4 rounded-full border border-muted-foreground/20" />
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </CardContent>
+            </Card>
           </div>
-        ))
-      )}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
