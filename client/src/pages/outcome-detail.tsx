@@ -2494,7 +2494,7 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
                     )}
                     Create Agent
                   </Button>
-                  <Link href={`/agents/wizard?name=${encodeURIComponent(agent.name)}&description=${encodeURIComponent(agent.description)}&riskTier=${agent.riskTier}&autonomyMode=${agent.autonomyMode}`}>
+                  <Link href={`/agents/wizard?outcomeId=${outcome.id}&outcomeName=${encodeURIComponent(outcome.name)}&name=${encodeURIComponent(agent.name)}&description=${encodeURIComponent(agent.description)}&riskTier=${agent.riskTier}&autonomyMode=${agent.autonomyMode}`}>
                     <Button variant="outline" data-testid={`button-customize-agent-${i}`}>
                       <Edit3 className="w-4 h-4 mr-1.5" />
                       Customize

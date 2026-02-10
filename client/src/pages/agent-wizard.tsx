@@ -292,6 +292,38 @@ export default function AgentWizard() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages]);
 
+  const [outcomeLockedFromUrl, setOutcomeLockedFromUrl] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(searchParams);
+    const outcomeIdParam = params.get("outcomeId");
+    const outcomeNameParam = params.get("outcomeName");
+    const nameParam = params.get("name");
+    const descParam = params.get("description");
+    const riskParam = params.get("riskTier");
+    const autonomyParam = params.get("autonomyMode");
+    if (outcomeIdParam) {
+      updateState({ outcomeId: outcomeIdParam });
+      setOutcomeLockedFromUrl(true);
+    }
+    if (nameParam) updateState({ name: nameParam });
+    else if (outcomeNameParam && !wizardState.name) {
+      updateState({ name: `${outcomeNameParam} Agent` });
+    }
+    if (descParam) updateState({ description: descParam });
+    if (riskParam) updateState({ riskTier: riskParam });
+    if (autonomyParam) updateState({ autonomyMode: autonomyParam });
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (outcomeLockedFromUrl && outcomes && wizardState.outcomeId && !wizardState.owner) {
+      const linkedOutcome = outcomes.find((o) => o.id === wizardState.outcomeId);
+      if (linkedOutcome) {
+        updateState({ owner: `${linkedOutcome.name} Team` });
+      }
+    }
+  }, [outcomes, outcomeLockedFromUrl, wizardState.outcomeId]);
+
   useEffect(() => {
     const params = new URLSearchParams(searchParams);
     const templateId = params.get("templateId");
@@ -538,7 +570,7 @@ export default function AgentWizard() {
 
       <div className="min-h-[400px]">
         {currentStep === 1 && (
-          <Step1BasicInfo state={wizardState} updateState={updateState} outcomes={outcomes} />
+          <Step1BasicInfo state={wizardState} updateState={updateState} outcomes={outcomes} outcomeLockedFromUrl={outcomeLockedFromUrl} />
         )}
         {currentStep === 2 && (
           <Step2ChoosePath
@@ -689,11 +721,14 @@ function Step1BasicInfo({
   state,
   updateState,
   outcomes,
+  outcomeLockedFromUrl,
 }: {
   state: WizardState;
   updateState: (u: Partial<WizardState>) => void;
   outcomes: OutcomeContract[] | undefined;
+  outcomeLockedFromUrl?: boolean;
 }) {
+  const linkedOutcome = outcomeLockedFromUrl && outcomes ? outcomes.find((o) => o.id === state.outcomeId) : null;
   return (
     <div className="flex flex-col gap-6 max-w-2xl">
       <h2 className="text-lg font-medium">Basic Information</h2>
@@ -759,7 +794,17 @@ function Step1BasicInfo({
             </Select>
           </div>
         </div>
-        {outcomes && outcomes.length > 0 && (
+        {outcomeLockedFromUrl && linkedOutcome ? (
+          <div className="flex flex-col gap-2">
+            <Label>Linked Outcome</Label>
+            <div className="flex items-center gap-2 p-2 rounded-md bg-muted/40 border" data-testid="locked-outcome">
+              <Target className="w-4 h-4 text-muted-foreground shrink-0" />
+              <span className="text-sm font-medium">{linkedOutcome.name}</span>
+              <Badge variant="secondary" className="ml-auto">Pre-linked</Badge>
+            </div>
+            <span className="text-xs text-muted-foreground">This agent is being created for a specific outcome contract.</span>
+          </div>
+        ) : outcomes && outcomes.length > 0 ? (
           <div className="flex flex-col gap-2">
             <Label>Link to Outcome</Label>
             <Select value={state.outcomeId || "_none"} onValueChange={(v) => updateState({ outcomeId: v === "_none" ? "" : v })}>
@@ -774,7 +819,7 @@ function Step1BasicInfo({
               </SelectContent>
             </Select>
           </div>
-        )}
+        ) : null}
       </div>
     </div>
   );
