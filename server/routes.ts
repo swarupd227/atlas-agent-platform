@@ -3894,5 +3894,196 @@ Eval Suites: ${evalSuites.length} configured`,
     }
   });
 
+  // ── Aggregated Overview endpoint ──────────────────────────────────
+  app.get("/api/overview", async (_req, res) => {
+    try {
+      const [agents, outcomes, kpis, allApprovals, allInvoices, allEvents, allDisputes, evalSuites, traces, deployments] = await Promise.all([
+        storage.getAgents(),
+        storage.getOutcomes(),
+        storage.getKpis(),
+        storage.getApprovals(),
+        storage.getInvoices(),
+        storage.getOutcomeEvents(),
+        storage.getBillingDisputes(),
+        storage.getEvalSuites(),
+        storage.getTraces(),
+        storage.getDeployments(),
+      ]);
+
+      // --- Outcome Health Grid ---
+      const outcomeHealth = outcomes.map((o) => {
+        const outcomeKpis = kpis.filter((k) => k.outcomeId === o.id);
+        const avgConfidence = outcomeKpis.length > 0
+          ? outcomeKpis.reduce((s, k) => s + (k.confidence || 0), 0) / outcomeKpis.length
+          : 0;
+        const kpiSummaries = outcomeKpis.map((k) => ({
+          id: k.id,
+          name: k.name,
+          unit: k.unit,
+          current: k.currentValue || 0,
+          target: k.target,
+          progress: k.target ? Math.min(((k.currentValue || 0) / k.target) * 100, 100) : 0,
+          slaThreshold: k.slaThreshold,
+          breachLevel: k.breachLevel,
+          trend: k.trend,
+        }));
+        const slaConfig = o.slaConfig as any;
+        const slaBreach = kpiSummaries.some((k) => k.slaThreshold && k.current < k.slaThreshold);
+        return {
+          id: o.id,
+          name: o.name,
+          status: o.status,
+          riskTier: o.riskTier,
+          confidence: Math.round(avgConfidence * 100) / 100,
+          slaStatus: slaBreach ? "breach" : "healthy",
+          kpis: kpiSummaries,
+          slaConfig,
+        };
+      });
+
+      // --- Agents At Risk ---
+      const driftMap: Record<string, { driftPercent: number; detectedAt: string }> = {};
+      for (const suite of evalSuites) {
+        const runs = await storage.getEvalRunsBySuite(suite.id);
+        if (runs.length < 2) continue;
+        const sorted = [...runs].sort((a, b) =>
+          new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime()
+        );
+        const latest = sorted[0];
+        const prev = sorted[1];
+        const latestPass = latest.passRate ?? (latest.passedCases && latest.totalCases ? latest.passedCases / latest.totalCases : null);
+        const prevPass = prev.passRate ?? (prev.passedCases && prev.totalCases ? prev.passedCases / prev.totalCases : null);
+        if (latestPass !== null && prevPass !== null && prevPass > 0) {
+          const drift = ((latestPass - prevPass) / prevPass) * 100;
+          if (suite.agentId && (Math.abs(drift) > (Math.abs(driftMap[suite.agentId]?.driftPercent || 0)))) {
+            driftMap[suite.agentId] = {
+              driftPercent: Math.round(drift * 10) / 10,
+              detectedAt: (latest.startedAt || new Date()).toString(),
+            };
+          }
+        }
+      }
+
+      const openIncidents = traces.filter((t) => t.status === "failed" || t.status === "error");
+      const incidentsByAgent: Record<string, number> = {};
+      for (const t of openIncidents) {
+        if (t.agentId) incidentsByAgent[t.agentId] = (incidentsByAgent[t.agentId] || 0) + 1;
+      }
+
+      const agentTraceMap: Record<string, number[]> = {};
+      for (const t of traces) {
+        if (t.agentId && t.latencyMs) {
+          if (!agentTraceMap[t.agentId]) agentTraceMap[t.agentId] = [];
+          agentTraceMap[t.agentId].push(t.latencyMs);
+        }
+      }
+
+      const riskOrder: Record<string, number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+      const agentsAtRisk = agents
+        .filter((a) => a.status === "active" || a.status === "retiring")
+        .map((a) => {
+          const latencies = agentTraceMap[a.id] || [];
+          latencies.sort((x, y) => x - y);
+          const p95 = latencies.length > 0 ? latencies[Math.floor(latencies.length * 0.95)] : a.avgLatencyMs || 0;
+          return {
+            id: a.id,
+            name: a.name,
+            environment: a.environment,
+            riskTier: a.riskTier,
+            healthScore: a.healthScore,
+            lastDrift: driftMap[a.id] || null,
+            openIncidents: incidentsByAgent[a.id] || 0,
+            p95Latency: p95,
+            costPerRun: a.costPerRun || 0,
+          };
+        })
+        .sort((a, b) => (riskOrder[a.riskTier] ?? 99) - (riskOrder[b.riskTier] ?? 99))
+        .slice(0, 10);
+
+      // --- Approval Queue (top 5 pending) ---
+      const pendingApprovals = allApprovals
+        .filter((a) => a.status === "pending")
+        .sort((a, b) => {
+          if (a.dueDate && b.dueDate) return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
+          if (a.dueDate) return -1;
+          if (b.dueDate) return 1;
+          return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+        })
+        .slice(0, 5)
+        .map((a) => ({
+          id: a.id,
+          type: a.type,
+          objectName: a.objectName,
+          objectType: a.objectType,
+          riskScore: a.riskScore,
+          requestedBy: a.requestedBy,
+          dueDate: a.dueDate,
+          createdAt: a.createdAt,
+          agentId: a.agentId,
+          outcomeId: a.outcomeId,
+          environment: a.environment,
+        }));
+      const totalPendingApprovals = allApprovals.filter((a) => a.status === "pending").length;
+
+      // --- Financial Snapshot (last 30 days) ---
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      const recentInvoices = allInvoices.filter((i) => new Date(i.createdAt || 0) >= thirtyDaysAgo);
+      const billedAmount = recentInvoices
+        .filter((i) => i.status === "paid" || i.status === "finalized")
+        .reduce((s, i) => s + (i.amount || 0), 0);
+      const pendingAmount = recentInvoices
+        .filter((i) => i.status === "pending" || i.status === "draft")
+        .reduce((s, i) => s + (i.amount || 0), 0);
+      const recentDisputes = allDisputes.filter((d) => new Date(d.createdAt || 0) >= thirtyDaysAgo);
+      const disputedAmount = recentDisputes
+        .filter((d) => d.status === "open" || d.status === "under_review")
+        .reduce((s, d) => s + (d.amount || 0), 0);
+      const totalRevenue30d = recentInvoices.reduce((s, i) => s + (i.amount || 0), 0);
+
+      // --- System Status ---
+      const recentTraces = traces.filter((t) => new Date(t.startedAt || 0) >= thirtyDaysAgo);
+      const failedTraces = recentTraces.filter((t) => t.status === "failed" || t.status === "error");
+      const toolErrorRate = recentTraces.length > 0 ? (failedTraces.length / recentTraces.length) * 100 : 0;
+
+      const pendingEvalRuns: number[] = [];
+      for (const suite of evalSuites.slice(0, 20)) {
+        const runs = await storage.getEvalRunsBySuite(suite.id);
+        const pending = runs.filter((r) => r.status === "running" || r.status === "pending");
+        pendingEvalRuns.push(pending.length);
+      }
+      const evalBacklog = pendingEvalRuns.reduce((s, n) => s + n, 0);
+
+      const activeDeployments = deployments.filter((d) => d.status === "deployed" || d.status === "active");
+      const connectorHealth = activeDeployments.length > 0
+        ? Math.round((activeDeployments.length / Math.max(deployments.length, 1)) * 100)
+        : 100;
+
+      res.json({
+        outcomeHealth,
+        agentsAtRisk,
+        approvalQueue: {
+          items: pendingApprovals,
+          totalPending: totalPendingApprovals,
+        },
+        financialSnapshot: {
+          billed: Math.round(billedAmount * 100) / 100,
+          pending: Math.round(pendingAmount * 100) / 100,
+          disputed: Math.round(disputedAmount * 100) / 100,
+          totalRevenue30d: Math.round(totalRevenue30d * 100) / 100,
+        },
+        systemStatus: {
+          toolErrorRate: Math.round(toolErrorRate * 10) / 10,
+          queueDepth: totalPendingApprovals,
+          evalBacklog,
+          connectorHealth,
+          activeAgents: agents.filter((a) => a.status === "active").length,
+          totalAgents: agents.length,
+        },
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
   return httpServer;
 }
