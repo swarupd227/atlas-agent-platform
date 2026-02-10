@@ -41,6 +41,8 @@ import {
   type Blueprint, type InsertBlueprint,
   loggingIntegrations,
   type LoggingIntegration, type InsertLoggingIntegration,
+  toolConnectors,
+  type ToolConnector, type InsertToolConnector,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -183,6 +185,12 @@ export interface IStorage {
   createLoggingIntegration(integration: InsertLoggingIntegration): Promise<LoggingIntegration>;
   updateLoggingIntegration(id: string, data: Partial<LoggingIntegration>): Promise<LoggingIntegration | undefined>;
   deleteLoggingIntegration(id: string): Promise<boolean>;
+
+  getToolConnectors(): Promise<ToolConnector[]>;
+  getToolConnector(id: string): Promise<ToolConnector | undefined>;
+  createToolConnector(connector: InsertToolConnector): Promise<ToolConnector>;
+  updateToolConnector(id: string, data: Partial<ToolConnector>): Promise<ToolConnector | undefined>;
+  deleteToolConnector(id: string): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -705,6 +713,30 @@ export class DatabaseStorage implements IStorage {
 
   async deleteLoggingIntegration(id: string) {
     await db.delete(loggingIntegrations).where(eq(loggingIntegrations.id, id));
+    return true;
+  }
+
+  async getToolConnectors() {
+    return db.select().from(toolConnectors);
+  }
+
+  async getToolConnector(id: string) {
+    const [connector] = await db.select().from(toolConnectors).where(eq(toolConnectors.id, id));
+    return connector;
+  }
+
+  async createToolConnector(connector: InsertToolConnector) {
+    const [created] = await db.insert(toolConnectors).values(connector).returning();
+    return created;
+  }
+
+  async updateToolConnector(id: string, data: Partial<ToolConnector>) {
+    const [updated] = await db.update(toolConnectors).set(data).where(eq(toolConnectors.id, id)).returning();
+    return updated;
+  }
+
+  async deleteToolConnector(id: string) {
+    await db.delete(toolConnectors).where(eq(toolConnectors.id, id));
     return true;
   }
 }

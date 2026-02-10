@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,64 +10,562 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Brain, Database, BarChart3, GitBranch, Ticket, MessageSquare, Plug, Plus, Pencil, Trash2, Send, AlertTriangle, CheckCircle2, Clock, XCircle } from "lucide-react";
+import { Progress } from "@/components/ui/progress";
+import {
+  Plug, Plus, Pencil, Trash2, Send, AlertTriangle, CheckCircle2, Clock, XCircle,
+  Ticket, Users, Database, MessageSquare, Target, HardDrive, LifeBuoy, MessagesSquare,
+  Shield, Eye, EyeOff, Zap, RefreshCw, Activity, AlertCircle,
+  Tag, Lock, Unlock, Timer, FileText,
+} from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { LoggingIntegration } from "@shared/schema";
+import type { LoggingIntegration, ToolConnector } from "@shared/schema";
 
-interface IntegrationCategory {
-  id: string;
-  name: string;
-  description: string;
-  icon: LucideIcon;
-  count: number;
+const ICON_MAP: Record<string, LucideIcon> = {
+  Ticket, Users, Database, MessageSquare, Target, HardDrive, LifeBuoy, MessagesSquare,
+};
+
+const CATEGORY_META: Record<string, { label: string; icon: LucideIcon; color: string }> = {
+  ticketing: { label: "Ticketing", icon: Ticket, color: "text-blue-500" },
+  crm: { label: "CRM", icon: Users, color: "text-violet-500" },
+  db: { label: "Database", icon: Database, color: "text-emerald-500" },
+  messaging: { label: "Messaging", icon: MessageSquare, color: "text-orange-500" },
+};
+
+const STATUS_CONFIG: Record<string, { variant: "default" | "secondary" | "destructive" | "outline"; icon: LucideIcon }> = {
+  connected: { variant: "default", icon: CheckCircle2 },
+  disconnected: { variant: "outline", icon: XCircle },
+  error: { variant: "destructive", icon: AlertCircle },
+  degraded: { variant: "secondary", icon: AlertTriangle },
+};
+
+function getStatusConfig(status: string) {
+  return STATUS_CONFIG[status] || STATUS_CONFIG.disconnected;
 }
 
-const integrationCategories: IntegrationCategory[] = [
-  {
-    id: "llm-providers",
-    name: "LLM Providers",
-    description: "Connect large language model providers for agent reasoning and generation capabilities",
-    icon: Brain,
-    count: 4,
-  },
-  {
-    id: "vector-databases",
-    name: "Vector Databases",
-    description: "Integrate vector storage solutions for semantic search and retrieval-augmented generation",
-    icon: Database,
-    count: 3,
-  },
-  {
-    id: "monitoring",
-    name: "Monitoring",
-    description: "Set up observability and monitoring tools to track agent performance and health",
-    icon: BarChart3,
-    count: 5,
-  },
-  {
-    id: "ci-cd",
-    name: "CI/CD",
-    description: "Configure continuous integration and deployment pipelines for agent releases",
-    icon: GitBranch,
-    count: 3,
-  },
-  {
-    id: "ticketing",
-    name: "Ticketing",
-    description: "Connect ticketing systems for issue tracking and workflow automation",
-    icon: Ticket,
-    count: 4,
-  },
-  {
-    id: "communication",
-    name: "Communication",
-    description: "Integrate messaging and communication platforms for agent interactions",
-    icon: MessageSquare,
-    count: 6,
-  },
-];
+function ConnectorCard({ connector, onSelect }: { connector: ToolConnector; onSelect: () => void }) {
+  const IconComp = (connector.icon && ICON_MAP[connector.icon]) || Plug;
+  const catMeta = CATEGORY_META[connector.category] || { label: connector.category, icon: Plug, color: "text-muted-foreground" };
+  const statusCfg = getStatusConfig(connector.status);
+  const StatusIcon = statusCfg.icon;
+  const configuredCount = connector.configuredSecrets
+    ? Object.values(connector.configuredSecrets as Record<string, boolean>).filter(Boolean).length
+    : 0;
+  const totalSecrets = connector.requiredSecrets?.length || 0;
+  const allConfigured = configuredCount === totalSecrets && totalSecrets > 0;
+
+  return (
+    <Card className="hover-elevate cursor-pointer" onClick={onSelect} data-testid={`card-connector-${connector.id}`}>
+      <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0 pb-2">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center justify-center w-9 h-9 rounded-md bg-muted shrink-0">
+            <IconComp className={`w-4 h-4 ${catMeta.color}`} />
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <CardTitle className="text-sm font-medium" data-testid={`text-connector-name-${connector.id}`}>
+              {connector.name}
+            </CardTitle>
+            <span className="text-[11px] text-muted-foreground">{connector.description}</span>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Badge variant="secondary" className="text-[10px]" data-testid={`badge-category-${connector.id}`}>
+            {catMeta.label}
+          </Badge>
+          <Badge variant={statusCfg.variant} className="text-[10px]" data-testid={`badge-status-${connector.id}`}>
+            <StatusIcon className="w-3 h-3 mr-1" />
+            {connector.status}
+          </Badge>
+          {allConfigured ? (
+            <Badge variant="outline" className="text-[10px]" data-testid={`badge-secrets-${connector.id}`}>
+              <Lock className="w-3 h-3 mr-1" />
+              {configuredCount}/{totalSecrets} secrets
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="text-[10px]" data-testid={`badge-secrets-${connector.id}`}>
+              <Unlock className="w-3 h-3 mr-1" />
+              {configuredCount}/{totalSecrets} secrets
+            </Badge>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          {(connector.permissions || []).slice(0, 3).map((p) => (
+            <Badge key={p} variant="outline" className="text-[10px] font-mono" data-testid={`badge-permission-${connector.id}-${p}`}>
+              {p}
+            </Badge>
+          ))}
+          {(connector.permissions || []).length > 3 && (
+            <Badge variant="outline" className="text-[10px]">
+              +{(connector.permissions || []).length - 3} more
+            </Badge>
+          )}
+        </div>
+
+        {(connector.dataClassificationTags || []).length > 0 && (
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <Tag className="w-3 h-3 text-muted-foreground shrink-0" />
+            {(connector.dataClassificationTags || []).map((tag) => (
+              <Badge
+                key={tag}
+                variant="outline"
+                className={`text-[10px] ${tag === "PII" ? "border-amber-500/40 text-amber-600 dark:text-amber-400" : tag === "Financial" ? "border-emerald-500/40 text-emerald-600 dark:text-emerald-400" : tag === "PHI" ? "border-red-500/40 text-red-600 dark:text-red-400" : ""}`}
+                data-testid={`badge-tag-${connector.id}-${tag}`}
+              >
+                {tag}
+              </Badge>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ConnectorDetailDialog({ connector, open, onOpenChange }: { connector: ToolConnector | null; open: boolean; onOpenChange: (open: boolean) => void }) {
+  const { toast } = useToast();
+  const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
+
+  const testMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("POST", `/api/tool-connectors/${id}/test`),
+    onSuccess: async (res) => {
+      const result = await res.json();
+      queryClient.invalidateQueries({ queryKey: ["/api/tool-connectors"] });
+      if (result.success) {
+        toast({ title: "Connection test passed", description: `Latency: ${result.latencyMs}ms` });
+      } else {
+        toast({ title: "Connection test failed", description: result.message, variant: "destructive" });
+      }
+    },
+    onError: (err: Error) => {
+      toast({ title: "Test failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  if (!connector) return null;
+
+  const IconComp = (connector.icon && ICON_MAP[connector.icon]) || Plug;
+  const catMeta = CATEGORY_META[connector.category] || { label: connector.category, icon: Plug, color: "text-muted-foreground" };
+  const statusCfg = getStatusConfig(connector.status);
+  const StatusIcon = statusCfg.icon;
+  const retryPolicy = connector.retryPolicy as { maxRetries?: number; backoffMs?: number; backoffMultiplier?: number } | null;
+  const configuredSecrets = (connector.configuredSecrets || {}) as Record<string, boolean>;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto" data-testid="dialog-connector-detail">
+        <DialogHeader>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center justify-center w-10 h-10 rounded-md bg-muted shrink-0">
+              <IconComp className={`w-5 h-5 ${catMeta.color}`} />
+            </div>
+            <div>
+              <DialogTitle data-testid="text-detail-name">{connector.name}</DialogTitle>
+              <DialogDescription>{connector.description}</DialogDescription>
+            </div>
+          </div>
+        </DialogHeader>
+
+        <div className="flex flex-col gap-5 mt-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Badge variant="secondary" className="text-[10px]">{catMeta.label}</Badge>
+            <Badge variant={statusCfg.variant} className="text-[10px]" data-testid="badge-detail-status">
+              <StatusIcon className="w-3 h-3 mr-1" />
+              {connector.status}
+            </Badge>
+            {connector.lastTestedAt && (
+              <span className="text-[11px] text-muted-foreground" data-testid="text-last-tested">
+                Last tested: {new Date(connector.lastTestedAt).toLocaleString()}
+              </span>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <h3 className="text-sm font-medium flex items-center gap-1.5">
+                <Shield className="w-4 h-4" />
+                Secrets Configuration
+              </h3>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => testMutation.mutate(connector.id)}
+                disabled={testMutation.isPending}
+                data-testid="button-test-connection"
+              >
+                {testMutation.isPending ? (
+                  <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                ) : (
+                  <Zap className="w-3.5 h-3.5 mr-1.5" />
+                )}
+                {testMutation.isPending ? "Testing..." : "Test Connection"}
+              </Button>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              {(connector.requiredSecrets || []).map((secretKey) => {
+                const isConfigured = configuredSecrets[secretKey] === true;
+                const isVisible = showSecrets[secretKey];
+                return (
+                  <div key={secretKey} className="flex items-center gap-3 flex-wrap" data-testid={`row-secret-${secretKey}`}>
+                    <div className="flex items-center gap-2 min-w-[200px]">
+                      {isConfigured ? (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-green-500 shrink-0" />
+                      ) : (
+                        <AlertCircle className="w-3.5 h-3.5 text-destructive shrink-0" />
+                      )}
+                      <span className="text-xs font-mono">{secretKey}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-1">
+                      <Input
+                        readOnly
+                        value={isConfigured ? (isVisible ? "sk-abc123...xyz789" : "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022") : ""}
+                        placeholder={isConfigured ? "" : "Not configured"}
+                        className="text-xs font-mono"
+                        data-testid={`input-secret-${secretKey}`}
+                      />
+                      {isConfigured && (
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => setShowSecrets((prev) => ({ ...prev, [secretKey]: !prev[secretKey] }))}
+                          data-testid={`button-toggle-secret-${secretKey}`}
+                        >
+                          {isVisible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-3">
+            <h3 className="text-sm font-medium flex items-center gap-1.5">
+              <Timer className="w-4 h-4" />
+              Rate Limits & Retry Policy
+            </h3>
+            <div className="grid grid-cols-2 gap-3">
+              <Card>
+                <CardContent className="p-3 flex flex-col gap-1">
+                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Rate Limit</span>
+                  <span className="text-sm font-medium" data-testid="text-rate-limit">
+                    {connector.rateLimitRequests ?? "N/A"} requests / {connector.rateLimitWindow ?? "N/A"}
+                  </span>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-3 flex flex-col gap-1">
+                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Retry Policy</span>
+                  {retryPolicy ? (
+                    <div className="flex flex-col gap-0.5" data-testid="text-retry-policy">
+                      <span className="text-sm font-medium">
+                        {retryPolicy.maxRetries ?? 0} retries
+                      </span>
+                      <span className="text-[11px] text-muted-foreground">
+                        {retryPolicy.backoffMs ?? 0}ms backoff, {retryPolicy.backoffMultiplier ?? 1}x multiplier
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="text-sm text-muted-foreground">None configured</span>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-3">
+            <h3 className="text-sm font-medium flex items-center gap-1.5">
+              <Lock className="w-4 h-4" />
+              Permissions
+            </h3>
+            <div className="flex flex-wrap gap-1.5">
+              {(connector.permissions || []).map((perm) => (
+                <Badge key={perm} variant="outline" className="text-[10px] font-mono" data-testid={`badge-detail-permission-${perm}`}>
+                  {perm}
+                </Badge>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-3">
+            <h3 className="text-sm font-medium flex items-center gap-1.5">
+              <Tag className="w-4 h-4" />
+              Data Classification
+            </h3>
+            <div className="flex flex-wrap gap-1.5">
+              {(connector.dataClassificationTags || []).length === 0 ? (
+                <span className="text-xs text-muted-foreground">No classification tags</span>
+              ) : (
+                (connector.dataClassificationTags || []).map((tag) => (
+                  <Badge
+                    key={tag}
+                    variant="outline"
+                    className={`text-[10px] ${tag === "PII" ? "border-amber-500/40 text-amber-600 dark:text-amber-400" : tag === "Financial" ? "border-emerald-500/40 text-emerald-600 dark:text-emerald-400" : tag === "PHI" ? "border-red-500/40 text-red-600 dark:text-red-400" : ""}`}
+                    data-testid={`badge-detail-tag-${tag}`}
+                  >
+                    {tag}
+                  </Badge>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ToolCatalogSection() {
+  const [selectedCategory, setSelectedCategory] = useState<string>("all");
+  const [selectedConnector, setSelectedConnector] = useState<ToolConnector | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
+
+  const { data: connectors, isLoading } = useQuery<ToolConnector[]>({
+    queryKey: ["/api/tool-connectors"],
+  });
+
+  const filteredConnectors = useMemo(() => {
+    if (!connectors) return [];
+    if (selectedCategory === "all") return connectors;
+    return connectors.filter((c) => c.category === selectedCategory);
+  }, [connectors, selectedCategory]);
+
+  const categoryCounts = useMemo(() => {
+    if (!connectors) return {};
+    const counts: Record<string, number> = {};
+    for (const c of connectors) {
+      counts[c.category] = (counts[c.category] || 0) + 1;
+    }
+    return counts;
+  }, [connectors]);
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col gap-4">
+        <div className="flex gap-2 flex-wrap">
+          {[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-8 w-24" />)}
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {[1, 2, 3, 4, 5, 6].map((i) => (
+            <Card key={i}><CardContent className="p-4"><Skeleton className="h-24 w-full" /></CardContent></Card>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            size="sm"
+            variant={selectedCategory === "all" ? "default" : "outline"}
+            onClick={() => setSelectedCategory("all")}
+            data-testid="filter-all"
+          >
+            All ({connectors?.length || 0})
+          </Button>
+          {Object.entries(CATEGORY_META).map(([key, meta]) => {
+            const CatIcon = meta.icon;
+            return (
+              <Button
+                key={key}
+                size="sm"
+                variant={selectedCategory === key ? "default" : "outline"}
+                onClick={() => setSelectedCategory(key)}
+                data-testid={`filter-${key}`}
+              >
+                <CatIcon className="w-3.5 h-3.5 mr-1.5" />
+                {meta.label} ({categoryCounts[key] || 0})
+              </Button>
+            );
+          })}
+        </div>
+        <Badge variant="outline" className="text-xs" data-testid="badge-total-connectors">
+          {filteredConnectors.length} connector{filteredConnectors.length !== 1 ? "s" : ""}
+        </Badge>
+      </div>
+
+      {filteredConnectors.length === 0 ? (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
+            <Plug className="w-8 h-8 text-muted-foreground" />
+            <p className="text-sm text-muted-foreground" data-testid="text-no-connectors">
+              No connectors found in this category
+            </p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {filteredConnectors.map((c) => (
+            <ConnectorCard
+              key={c.id}
+              connector={c}
+              onSelect={() => { setSelectedConnector(c); setDetailOpen(true); }}
+            />
+          ))}
+        </div>
+      )}
+
+      <ConnectorDetailDialog
+        connector={selectedConnector}
+        open={detailOpen}
+        onOpenChange={(open) => { setDetailOpen(open); if (!open) setSelectedConnector(null); }}
+      />
+    </div>
+  );
+}
+
+interface SchemaChange { date: string; description: string; breaking: boolean }
+
+function ConnectorHealthSection() {
+  const { data: connectors, isLoading } = useQuery<ToolConnector[]>({
+    queryKey: ["/api/tool-connectors"],
+  });
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col gap-4">
+        {[1, 2, 3].map((i) => (
+          <Card key={i}><CardContent className="p-4"><Skeleton className="h-32 w-full" /></CardContent></Card>
+        ))}
+      </div>
+    );
+  }
+
+  const healthConnectors = (connectors || []).filter((c) => c.status !== "disconnected" || c.uptimePercent != null);
+
+  if (healthConnectors.length === 0) {
+    return (
+      <Card>
+        <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
+          <Activity className="w-8 h-8 text-muted-foreground" />
+          <p className="text-sm text-muted-foreground" data-testid="text-no-health-data">
+            No connector health data available. Connect a tool to start monitoring.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <p className="text-sm text-muted-foreground" data-testid="text-health-description">
+        Real-time health metrics for connected tool integrations
+      </p>
+
+      <div className="grid grid-cols-1 gap-4">
+        {healthConnectors.map((c) => {
+          const IconComp = (c.icon && ICON_MAP[c.icon]) || Plug;
+          const catMeta = CATEGORY_META[c.category] || { label: c.category, icon: Plug, color: "text-muted-foreground" };
+          const statusCfg = getStatusConfig(c.status);
+          const StatusIcon = statusCfg.icon;
+          const uptimePct = c.uptimePercent ?? 0;
+          const errorPct = c.errorRate ?? 0;
+          const schemaChanges = (c.recentSchemaChanges || []) as SchemaChange[];
+
+          return (
+            <Card key={c.id} data-testid={`card-health-${c.id}`}>
+              <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center justify-center w-9 h-9 rounded-md bg-muted shrink-0">
+                    <IconComp className={`w-4 h-4 ${catMeta.color}`} />
+                  </div>
+                  <div className="flex flex-col gap-0.5">
+                    <CardTitle className="text-sm font-medium" data-testid={`text-health-name-${c.id}`}>
+                      {c.name}
+                    </CardTitle>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Badge variant="secondary" className="text-[10px]">{catMeta.label}</Badge>
+                      <Badge variant={statusCfg.variant} className="text-[10px]" data-testid={`badge-health-status-${c.id}`}>
+                        <StatusIcon className="w-3 h-3 mr-1" />
+                        {c.status}
+                      </Badge>
+                    </div>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-4">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Uptime</span>
+                    <div className="flex flex-col gap-1">
+                      <span
+                        className={`text-lg font-semibold ${uptimePct >= 99.5 ? "text-green-600 dark:text-green-400" : uptimePct >= 95 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"}`}
+                        data-testid={`text-uptime-${c.id}`}
+                      >
+                        {uptimePct != null ? `${uptimePct.toFixed(1)}%` : "N/A"}
+                      </span>
+                      {uptimePct != null && (
+                        <Progress
+                          value={uptimePct}
+                          className="h-1.5"
+                        />
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Error Rate</span>
+                    <span
+                      className={`text-lg font-semibold ${errorPct <= 1 ? "text-green-600 dark:text-green-400" : errorPct <= 5 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"}`}
+                      data-testid={`text-error-rate-${c.id}`}
+                    >
+                      {errorPct != null ? `${errorPct.toFixed(1)}%` : "N/A"}
+                    </span>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">P50 Latency</span>
+                    <span className="text-lg font-semibold" data-testid={`text-p50-${c.id}`}>
+                      {c.latencyP50 != null ? `${c.latencyP50}ms` : "N/A"}
+                    </span>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">P95 Latency</span>
+                    <span className="text-lg font-semibold" data-testid={`text-p95-${c.id}`}>
+                      {c.latencyP95 != null ? `${c.latencyP95}ms` : "N/A"}
+                    </span>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">P99 Latency</span>
+                    <span className="text-lg font-semibold" data-testid={`text-p99-${c.id}`}>
+                      {c.latencyP99 != null ? `${c.latencyP99}ms` : "N/A"}
+                    </span>
+                  </div>
+                </div>
+
+                {schemaChanges.length > 0 && (
+                  <div className="flex flex-col gap-2">
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+                      <FileText className="w-3 h-3" />
+                      Recent Schema Changes
+                    </span>
+                    <div className="flex flex-col gap-1.5">
+                      {schemaChanges.map((change, idx) => (
+                        <div key={idx} className="flex items-start gap-2 text-xs" data-testid={`row-schema-change-${c.id}-${idx}`}>
+                          <span className="text-muted-foreground whitespace-nowrap shrink-0">{change.date}</span>
+                          {change.breaking && (
+                            <Badge variant="destructive" className="text-[9px] shrink-0">BREAKING</Badge>
+                          )}
+                          <span className="text-muted-foreground">{change.description}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 const PROVIDERS = ["datadog", "splunk", "elastic", "webhook", "syslog"] as const;
 const EVENT_TYPES = ["audit_events", "traces", "agent_actions", "policy_violations", "deployments", "eval_results"] as const;
@@ -87,7 +585,7 @@ const emptyForm: LoggingFormData = {
 };
 
 function maskUrl(url: string | null): string {
-  if (!url) return "—";
+  if (!url) return "\u2014";
   try {
     const u = new URL(url);
     const masked = u.hostname.length > 20 ? u.hostname.slice(0, 20) + "..." : u.hostname;
@@ -207,12 +705,8 @@ function LoggingSection() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {[1, 2, 3].map((i) => (
           <Card key={i}>
-            <CardHeader>
-              <Skeleton className="h-5 w-40" />
-            </CardHeader>
-            <CardContent>
-              <Skeleton className="h-20 w-full" />
-            </CardContent>
+            <CardHeader><Skeleton className="h-5 w-40" /></CardHeader>
+            <CardContent><Skeleton className="h-20 w-full" /></CardContent>
           </Card>
         ))}
       </div>
@@ -260,7 +754,7 @@ function LoggingSection() {
                     <Badge
                       variant={integration.status === "active" ? "default" : "outline"}
                       className="text-[10px]"
-                      data-testid={`badge-status-${integration.id}`}
+                      data-testid={`badge-logging-status-${integration.id}`}
                     >
                       {integration.status === "active" ? (
                         <CheckCircle2 className="w-3 h-3 mr-1" />
@@ -470,54 +964,20 @@ export default function Integrations() {
 
       <Tabs defaultValue="catalog" data-testid="tabs-integrations">
         <TabsList data-testid="tabs-list-integrations">
-          <TabsTrigger value="catalog" data-testid="tab-catalog">Catalog</TabsTrigger>
+          <TabsTrigger value="catalog" data-testid="tab-catalog">Tool Catalog</TabsTrigger>
+          <TabsTrigger value="health" data-testid="tab-health">Connector Health</TabsTrigger>
           <TabsTrigger value="logging" data-testid="tab-logging">Logging</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="catalog">
-          <div className="flex items-center justify-end mb-4">
-            <Badge variant="outline" className="text-xs" data-testid="badge-category-count">
-              {integrationCategories.length} categories
-            </Badge>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {integrationCategories.map((category) => {
-              const IconComponent = category.icon;
-              return (
-                <Card key={category.id} data-testid={`card-integration-${category.id}`}>
-                  <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0 pb-2">
-                    <div className="flex items-center gap-3">
-                      <div className="flex items-center justify-center w-9 h-9 rounded-md bg-muted shrink-0">
-                        <IconComponent className="w-4 h-4 text-muted-foreground" />
-                      </div>
-                      <CardTitle className="text-sm font-medium" data-testid={`text-integration-name-${category.id}`}>
-                        {category.name}
-                      </CardTitle>
-                    </div>
-                    <Badge variant="secondary" className="text-[10px]" data-testid={`badge-integration-count-${category.id}`}>
-                      {category.count} available
-                    </Badge>
-                  </CardHeader>
-                  <CardContent className="flex flex-col gap-4">
-                    <p className="text-xs text-muted-foreground" data-testid={`text-integration-description-${category.id}`}>
-                      {category.description}
-                    </p>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="w-fit"
-                      data-testid={`button-configure-${category.id}`}
-                    >
-                      Configure
-                    </Button>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
+        <TabsContent value="catalog" className="mt-4">
+          <ToolCatalogSection />
         </TabsContent>
 
-        <TabsContent value="logging">
+        <TabsContent value="health" className="mt-4">
+          <ConnectorHealthSection />
+        </TabsContent>
+
+        <TabsContent value="logging" className="mt-4">
           <LoggingSection />
         </TabsContent>
       </Tabs>

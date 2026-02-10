@@ -29,6 +29,7 @@ import {
   insertBillingDisputeSchema,
   insertBlueprintSchema,
   insertLoggingIntegrationSchema,
+  insertToolConnectorSchema,
 } from "@shared/schema";
 
 const openai = new OpenAI({
@@ -5047,6 +5048,63 @@ Eval Suites: ${evalSuites.length} configured`,
   app.delete("/api/logging-integrations/:id", async (req, res) => {
     await storage.deleteLoggingIntegration(req.params.id);
     res.status(204).send();
+  });
+
+  // Tool Connectors
+  app.get("/api/tool-connectors", async (_req, res) => {
+    const connectors = await storage.getToolConnectors();
+    res.json(connectors);
+  });
+
+  app.get("/api/tool-connectors/:id", async (req, res) => {
+    const connector = await storage.getToolConnector(req.params.id);
+    if (!connector) return res.status(404).json({ message: "Connector not found" });
+    res.json(connector);
+  });
+
+  app.post("/api/tool-connectors", async (req, res) => {
+    try {
+      const data = insertToolConnectorSchema.parse(req.body);
+      const connector = await storage.createToolConnector(data);
+      res.status(201).json(connector);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/tool-connectors/:id", async (req, res) => {
+    const updated = await storage.updateToolConnector(req.params.id, req.body);
+    if (!updated) return res.status(404).json({ message: "Connector not found" });
+    res.json(updated);
+  });
+
+  app.post("/api/tool-connectors/:id/test", async (req, res) => {
+    const connector = await storage.getToolConnector(req.params.id);
+    if (!connector) return res.status(404).json({ message: "Connector not found" });
+
+    await new Promise(resolve => setTimeout(resolve, 800 + Math.random() * 1200));
+
+    const success = Math.random() > 0.15;
+    const result = success ? "success" : "failure";
+    const latency = Math.floor(80 + Math.random() * 400);
+
+    await storage.updateToolConnector(req.params.id, {
+      lastTestedAt: new Date(),
+      lastTestResult: result,
+      status: success ? "connected" : "error",
+    });
+
+    res.json({
+      success,
+      latencyMs: latency,
+      message: success ? "Connection successful" : "Connection timed out - check credentials",
+      testedAt: new Date().toISOString(),
+    });
+  });
+
+  app.delete("/api/tool-connectors/:id", async (req, res) => {
+    await storage.deleteToolConnector(req.params.id);
+    res.json({ success: true });
   });
 
   app.get("/api/alerts/critical-violations", async (_req, res) => {

@@ -577,6 +577,35 @@ export const insertBlueprintSchema = createInsertSchema(blueprints).omit({ id: t
 export type InsertBlueprint = z.infer<typeof insertBlueprintSchema>;
 export type Blueprint = typeof blueprints.$inferSelect;
 
+export const toolConnectors = pgTable("tool_connectors", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  description: text("description"),
+  category: text("category").notNull(),
+  icon: text("icon"),
+  permissions: text("permissions").array().notNull(),
+  requiredSecrets: text("required_secrets").array().notNull(),
+  configuredSecrets: jsonb("configured_secrets"),
+  status: text("status").notNull().default("disconnected"),
+  rateLimitRequests: integer("rate_limit_requests"),
+  rateLimitWindow: text("rate_limit_window"),
+  retryPolicy: jsonb("retry_policy"),
+  dataClassificationTags: text("data_classification_tags").array(),
+  uptimePercent: real("uptime_percent"),
+  errorRate: real("error_rate"),
+  latencyP50: integer("latency_p50"),
+  latencyP95: integer("latency_p95"),
+  latencyP99: integer("latency_p99"),
+  recentSchemaChanges: jsonb("recent_schema_changes"),
+  lastTestedAt: timestamp("last_tested_at"),
+  lastTestResult: text("last_test_result"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertToolConnectorSchema = createInsertSchema(toolConnectors).omit({ id: true, createdAt: true, lastTestedAt: true, lastTestResult: true });
+export type InsertToolConnector = z.infer<typeof insertToolConnectorSchema>;
+export type ToolConnector = typeof toolConnectors.$inferSelect;
+
 export const loggingIntegrations = pgTable("logging_integrations", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
