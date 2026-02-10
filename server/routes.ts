@@ -300,7 +300,7 @@ export async function registerRoutes(
       const auditEvents = await storage.getAuditEvents();
       const versionEvents = auditEvents.filter(
         e => e.objectId === outcomeId && (e.action === "version_created" || e.action === "outcome_updated" || e.action === "create_outcome")
-      ).sort((a, b) => new Date(b.timestamp || b.createdAt || "").getTime() - new Date(a.timestamp || a.createdAt || "").getTime());
+      ).sort((a, b) => new Date(b.createdAt || "").getTime() - new Date(a.createdAt || "").getTime());
 
       const versions = versionEvents.map((evt) => {
         let details: any = {};
@@ -309,7 +309,7 @@ export async function registerRoutes(
         } catch { details = {}; }
         return {
           version: details.toVersion || details.version || outcome.version || 1,
-          changedAt: evt.timestamp || evt.createdAt || new Date().toISOString(),
+          changedAt: evt.createdAt?.toISOString() || new Date().toISOString(),
           changedBy: evt.actorId || "system",
           summary: details.reason || evt.action.replace(/_/g, " "),
           diff: details.changes || {},

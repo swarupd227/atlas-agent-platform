@@ -60,7 +60,7 @@ import { StatCard } from "@/components/stat-card";
 import { OutcomeKpiStrip } from "@/components/outcome-kpi-strip";
 import { StatusBadge } from "@/components/status-badge";
 import { ErrorState } from "@/components/error-state";
-import { usePermission, PermissionGate } from "@/components/role-provider";
+import { usePermission, PermissionGate, useRole } from "@/components/role-provider";
 import { Link } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -83,13 +83,20 @@ export default function Agents() {
   const [filterOutcome, setFilterOutcome] = useState<string>("all");
   const [filterEnv, setFilterEnv] = useState<string>("all");
   const [filterRisk, setFilterRisk] = useState<string>("all");
+  const [filterAutonomy, setFilterAutonomy] = useState<string>("all");
   const [filterToolAccess, setFilterToolAccess] = useState<string>("all");
   const [filterCompliance, setFilterCompliance] = useState<string>("all");
   const [filterProvider, setFilterProvider] = useState<string>("all");
 
   const { toast } = useToast();
+  const { role } = useRole();
   const blueprintPerm = usePermission("create_modify_blueprints");
   const auditPerm = usePermission("export_audit_bundle");
+  const billingPerm = usePermission("billing_invoices");
+
+  const canSeeHealth = role.id === "admin" || role.id === "ops_sre" || role.id === "agent_engineer" || role.id === "expert_validator" || role.id === "compliance_security";
+  const canSeeCostRevenue = role.id === "admin" || role.id === "finance" || role.id === "outcome_owner";
+  const canSeeIncidents = role.id === "admin" || role.id === "ops_sre" || role.id === "agent_engineer" || role.id === "expert_validator";
 
   const { data: agents, isLoading, error, refetch } = useQuery<Agent[]>({
     queryKey: ["/api/agents"],
@@ -116,7 +123,7 @@ export default function Agents() {
     },
   });
 
-  const hasActiveFilters = filterOutcome !== "all" || filterEnv !== "all" || filterRisk !== "all" || filterToolAccess !== "all" || filterCompliance !== "all" || filterProvider !== "all";
+  const hasActiveFilters = filterOutcome !== "all" || filterEnv !== "all" || filterRisk !== "all" || filterAutonomy !== "all" || filterToolAccess !== "all" || filterCompliance !== "all" || filterProvider !== "all";
 
   const allComplianceTags = agents
     ? Array.from(new Set(agents.flatMap(a => (a.complianceTags as string[]) || []))).sort()
@@ -130,6 +137,7 @@ export default function Agents() {
     if (filterOutcome !== "all" && a.outcomeId !== filterOutcome) return false;
     if (filterEnv !== "all" && a.environment !== filterEnv) return false;
     if (filterRisk !== "all" && a.riskTier !== filterRisk) return false;
+    if (filterAutonomy !== "all" && a.autonomyMode !== filterAutonomy) return false;
     if (filterToolAccess !== "all" && a.toolAccessClass !== filterToolAccess) return false;
     if (filterCompliance !== "all") {
       const tags = (a.complianceTags as string[]) || [];
@@ -151,6 +159,7 @@ export default function Agents() {
     setFilterOutcome("all");
     setFilterEnv("all");
     setFilterRisk("all");
+    setFilterAutonomy("all");
     setFilterToolAccess("all");
     setFilterCompliance("all");
     setFilterProvider("all");
@@ -288,6 +297,19 @@ export default function Agents() {
           </SelectContent>
         </Select>
 
+        <Select value={filterAutonomy} onValueChange={setFilterAutonomy}>
+          <SelectTrigger className="w-[150px]" data-testid="filter-autonomy">
+            <SelectValue placeholder="Autonomy" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Modes</SelectItem>
+            <SelectItem value="autonomous">Autonomous</SelectItem>
+            <SelectItem value="supervised">Supervised</SelectItem>
+            <SelectItem value="manual">Manual</SelectItem>
+            <SelectItem value="shadow">Shadow</SelectItem>
+          </SelectContent>
+        </Select>
+
         <Select value={filterToolAccess} onValueChange={setFilterToolAccess}>
           <SelectTrigger className="w-[150px]" data-testid="filter-tool-access">
             <SelectValue placeholder="Tool Access" />
@@ -378,10 +400,10 @@ export default function Agents() {
                 <TableHead>Agent</TableHead>
                 <TableHead>Outcome</TableHead>
                 <TableHead>Version</TableHead>
-                <TableHead>Health</TableHead>
+                {canSeeHealth && <TableHead>Health</TableHead>}
                 <TableHead>Mode</TableHead>
-                <TableHead>Last Incident / Approval</TableHead>
-                <TableHead className="text-right">Monthly Cost / Revenue</TableHead>
+                {canSeeIncidents && <TableHead>Last Incident / Approval</TableHead>}
+                {canSeeCostRevenue && <TableHead className="text-right">Monthly Cost / Revenue</TableHead>}
                 <TableHead></TableHead>
               </TableRow>
             </TableHeader>
@@ -419,78 +441,84 @@ export default function Agents() {
                     <TableCell>
                       <Badge variant="outline" className="text-[11px]">v{agent.currentVersion}</Badge>
                     </TableCell>
-                    <TableCell>
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <button className="flex items-center gap-2 cursor-pointer" data-testid={`health-detail-${agent.id}`}>
-                            <Progress value={agent.healthScore || 0} className="h-1.5 w-16" />
-                            <span className={`text-xs font-medium ${healthColor}`}>{agent.healthScore}%</span>
-                          </button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-56 p-3" align="start">
-                          <div className="flex flex-col gap-2">
-                            <span className="text-xs font-medium">Health Breakdown</span>
-                            <div className="flex flex-col gap-1.5">
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="text-[11px] text-muted-foreground flex items-center gap-1"><CheckCircle className="w-3 h-3" /> Success</span>
-                                <span className="text-[11px] font-medium">{((agent.successRate || 0) * 100).toFixed(1)}%</span>
-                              </div>
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="text-[11px] text-muted-foreground flex items-center gap-1"><Clock className="w-3 h-3" /> Latency</span>
-                                <span className="text-[11px] font-medium">{agent.avgLatencyMs}ms</span>
-                              </div>
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="text-[11px] text-muted-foreground flex items-center gap-1"><DollarSign className="w-3 h-3" /> Cost/Run</span>
-                                <span className="text-[11px] font-medium">${agent.costPerRun?.toFixed(3)}</span>
-                              </div>
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="text-[11px] text-muted-foreground flex items-center gap-1"><Shield className="w-3 h-3" /> Policy</span>
-                                <span className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">Compliant</span>
+                    {canSeeHealth && (
+                      <TableCell>
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <button className="flex items-center gap-2 cursor-pointer" data-testid={`health-detail-${agent.id}`}>
+                              <Progress value={agent.healthScore || 0} className="h-1.5 w-16" />
+                              <span className={`text-xs font-medium ${healthColor}`}>{agent.healthScore}%</span>
+                            </button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-56 p-3" align="start">
+                            <div className="flex flex-col gap-2">
+                              <span className="text-xs font-medium">Health Breakdown</span>
+                              <div className="flex flex-col gap-1.5">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[11px] text-muted-foreground flex items-center gap-1"><CheckCircle className="w-3 h-3" /> Success</span>
+                                  <span className="text-[11px] font-medium">{((agent.successRate || 0) * 100).toFixed(1)}%</span>
+                                </div>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[11px] text-muted-foreground flex items-center gap-1"><Clock className="w-3 h-3" /> Latency</span>
+                                  <span className="text-[11px] font-medium">{agent.avgLatencyMs}ms</span>
+                                </div>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[11px] text-muted-foreground flex items-center gap-1"><DollarSign className="w-3 h-3" /> Cost/Run</span>
+                                  <span className="text-[11px] font-medium">${agent.costPerRun?.toFixed(3)}</span>
+                                </div>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[11px] text-muted-foreground flex items-center gap-1"><Shield className="w-3 h-3" /> Policy</span>
+                                  <span className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">Compliant</span>
+                                </div>
                               </div>
                             </div>
-                          </div>
-                        </PopoverContent>
-                      </Popover>
-                    </TableCell>
+                          </PopoverContent>
+                        </Popover>
+                      </TableCell>
+                    )}
                     <TableCell>
                       <StatusBadge status={agent.autonomyMode} />
                     </TableCell>
-                    <TableCell>
-                      <div className="flex flex-col gap-0.5">
-                        <div className="flex items-center gap-1.5">
-                          {agent.lastIncidentAt ? (
-                            <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />
-                          ) : (
-                            <CheckCircle className="w-3 h-3 text-emerald-500 shrink-0" />
-                          )}
-                          <span className="text-[11px] text-muted-foreground">
-                            {agent.lastIncidentAt ? formatTimeAgo(agent.lastIncidentAt) : "No incidents"}
-                          </span>
-                        </div>
-                        {lastApproval && (
+                    {canSeeIncidents && (
+                      <TableCell>
+                        <div className="flex flex-col gap-0.5">
                           <div className="flex items-center gap-1.5">
-                            <Shield className="w-3 h-3 text-muted-foreground shrink-0" />
+                            {agent.lastIncidentAt ? (
+                              <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />
+                            ) : (
+                              <CheckCircle className="w-3 h-3 text-emerald-500 shrink-0" />
+                            )}
                             <span className="text-[11px] text-muted-foreground">
-                              {lastApproval.type.replace(/_/g, " ")} ({lastApproval.status})
+                              {agent.lastIncidentAt ? formatTimeAgo(agent.lastIncidentAt) : "No incidents"}
                             </span>
                           </div>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex flex-col items-end gap-0.5">
-                        <span className="text-sm font-medium">${(agent.monthlyCost || 0).toLocaleString()}</span>
-                        <span className="text-[11px] text-muted-foreground">
-                          {(agent.monthlyRevenue || 0) > 0 ? (
-                            <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-0.5">
-                              <TrendingUp className="w-3 h-3" />${(agent.monthlyRevenue || 0).toLocaleString()}
-                            </span>
-                          ) : (
-                            "\u2014"
+                          {lastApproval && (
+                            <div className="flex items-center gap-1.5">
+                              <Shield className="w-3 h-3 text-muted-foreground shrink-0" />
+                              <span className="text-[11px] text-muted-foreground">
+                                {lastApproval.type.replace(/_/g, " ")} ({lastApproval.status})
+                              </span>
+                            </div>
                           )}
-                        </span>
-                      </div>
-                    </TableCell>
+                        </div>
+                      </TableCell>
+                    )}
+                    {canSeeCostRevenue && (
+                      <TableCell className="text-right">
+                        <div className="flex flex-col items-end gap-0.5">
+                          <span className="text-sm font-medium">${(agent.monthlyCost || 0).toLocaleString()}</span>
+                          <span className="text-[11px] text-muted-foreground">
+                            {(agent.monthlyRevenue || 0) > 0 ? (
+                              <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-0.5">
+                                <TrendingUp className="w-3 h-3" />${(agent.monthlyRevenue || 0).toLocaleString()}
+                              </span>
+                            ) : (
+                              "\u2014"
+                            )}
+                          </span>
+                        </div>
+                      </TableCell>
+                    )}
                     <TableCell>
                       <Link href={`/agents/${agent.id}`}>
                         <Button variant="ghost" size="icon" data-testid={`button-view-agent-${agent.id}`}>
