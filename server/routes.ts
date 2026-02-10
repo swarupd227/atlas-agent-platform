@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { z, ZodError } from "zod";
+import { startWorker, jobEvents } from "./worker";
 import OpenAI, { toFile } from "openai";
 import multer from "multer";
 import { checkPermission, getRequestRole, getTraceRedactionLevel } from "./permissions";
@@ -30,6 +31,7 @@ import {
   insertBlueprintSchema,
   insertLoggingIntegrationSchema,
   insertToolConnectorSchema,
+  insertJobSchema,
 } from "@shared/schema";
 
 const openai = new OpenAI({
@@ -609,7 +611,28 @@ export async function registerRoutes(
         details: `Agent "${agent.name}" created with auto-scaffolded eval suite (${testCases.length} test cases) and blueprint review approval`,
       });
 
-      res.status(201).json(agent);
+      const evalJob = await storage.createJob({
+        type: "eval_baseline",
+        status: "queued",
+        agentId: agent.id,
+        payload: { agentId: agent.id, suiteId: suite.id, blueprintId: null },
+        progress: 0,
+      });
+
+      await storage.createAuditEvent({
+        actorType: "system",
+        actorId: agent.owner || "system",
+        action: "eval_baseline_enqueued",
+        objectType: "agent",
+        objectId: agent.id,
+        details: `Baseline eval job ${evalJob.id} auto-enqueued for agent "${agent.name}"`,
+      });
+
+      res.status(201).json({
+        ...agent,
+        suiteId: suite.id,
+        jobId: evalJob.id,
+      });
     } catch (e) {
       handleZodError(res, e);
     }
@@ -5437,6 +5460,104 @@ Eval Suites: ${evalSuites.length} configured`,
     });
     res.json({ success, latencyMs: Math.floor(Math.random() * 400 + 100), message: success ? "Webhook delivered successfully" : "Connection timed out" });
   });
+
+  // ─── Job Queue Routes ───
+
+  app.post("/api/jobs/eval_baseline", async (req, res) => {
+    try {
+      const schema = z.object({
+        agentId: z.string(),
+        suiteId: z.string(),
+        blueprintId: z.string().optional(),
+      });
+      const { agentId, suiteId, blueprintId } = schema.parse(req.body);
+
+      const agent = await storage.getAgent(agentId);
+      if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+      const suite = await storage.getEvalSuite(suiteId);
+      if (!suite) return res.status(404).json({ error: "Eval suite not found" });
+
+      const job = await storage.createJob({
+        type: "eval_baseline",
+        status: "queued",
+        agentId,
+        payload: { agentId, suiteId, blueprintId: blueprintId || null },
+        progress: 0,
+      });
+
+      await storage.createAuditEvent({
+        actorType: "system",
+        actorId: agent.owner || "system",
+        action: "eval_baseline_enqueued",
+        objectType: "agent",
+        objectId: agentId,
+        details: `Baseline eval job ${job.id} enqueued for agent "${agent.name}" (suite: ${suite.name})`,
+      });
+
+      res.status(201).json(job);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  app.get("/api/jobs/:id", async (req, res) => {
+    const job = await storage.getJob(req.params.id);
+    if (!job) return res.status(404).json({ error: "Job not found" });
+    res.json(job);
+  });
+
+  app.get("/api/jobs/agent/:agentId", async (req, res) => {
+    const jobs = await storage.getJobsByAgent(req.params.agentId);
+    res.json(jobs);
+  });
+
+  // ─── Server-Sent Events for real-time job notifications ───
+
+  app.get("/api/events/stream", (req, res) => {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    res.write("data: {\"type\":\"connected\"}\n\n");
+
+    const agentId = req.query.agentId as string | undefined;
+
+    const onProgress = (data: { jobId: string; agentId: string; progress: number; step: string }) => {
+      if (agentId && data.agentId !== agentId) return;
+      res.write(`data: ${JSON.stringify({ type: "progress", ...data })}\n\n`);
+    };
+
+    const onCompleted = (data: { jobId: string; agentId: string; result: unknown }) => {
+      if (agentId && data.agentId !== agentId) return;
+      res.write(`data: ${JSON.stringify({ type: "completed", jobId: data.jobId, agentId: data.agentId, result: data.result })}\n\n`);
+    };
+
+    const onFailed = (data: { jobId: string; agentId: string; error: string }) => {
+      if (agentId && data.agentId !== agentId) return;
+      res.write(`data: ${JSON.stringify({ type: "failed", jobId: data.jobId, agentId: data.agentId, error: data.error })}\n\n`);
+    };
+
+    jobEvents.on("progress", onProgress);
+    jobEvents.on("completed", onCompleted);
+    jobEvents.on("failed", onFailed);
+
+    const keepAlive = setInterval(() => {
+      res.write(": keepalive\n\n");
+    }, 15000);
+
+    req.on("close", () => {
+      clearInterval(keepAlive);
+      jobEvents.off("progress", onProgress);
+      jobEvents.off("completed", onCompleted);
+      jobEvents.off("failed", onFailed);
+    });
+  });
+
+  // Start the job worker
+  startWorker();
 
   return httpServer;
 }
