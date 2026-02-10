@@ -18,6 +18,11 @@ import {
   Target,
   Database,
   GitCompareArrows,
+  Plug,
+  CircleDot,
+  Eye,
+  Ban,
+  X,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -35,6 +40,29 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import type { Agent, RunTrace, Approval } from "@shared/schema";
+
+interface ToolConnector {
+  name: string;
+  status: string;
+  totalCalls: number;
+  errorCount: number;
+  errorRate: number;
+  avgLatencyMs: number;
+  lastSeen: string;
+}
+
+interface PolicyViolation {
+  id: string;
+  traceId: string;
+  agentId: string;
+  agentName: string;
+  policyName: string;
+  rule: string;
+  severity: string;
+  timestamp: string;
+  action: string;
+  blocked: boolean;
+}
 
 interface DriftSignal {
   id: string;
@@ -115,6 +143,7 @@ export default function Monitor() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [toolFilter, setToolFilter] = useState("all");
   const [expandedTraceId, setExpandedTraceId] = useState<string | null>(null);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
 
   const { data: agents, isLoading } = useQuery<Agent[]>({
     queryKey: ["/api/agents"],
@@ -130,6 +159,12 @@ export default function Monitor() {
   });
   const { data: approvals } = useQuery<Approval[]>({
     queryKey: ["/api/approvals"],
+  });
+  const { data: toolConnectors } = useQuery<ToolConnector[]>({
+    queryKey: ["/api/monitor/tool-health"],
+  });
+  const { data: policyViolations } = useQuery<PolicyViolation[]>({
+    queryKey: ["/api/monitor/policy-violations"],
   });
 
   const { toast } = useToast();
@@ -371,7 +406,7 @@ export default function Monitor() {
     ? Math.round(allTraces.reduce((sum, t) => sum + (t.latencyMs || 0), 0) / totalRuns)
     : 0;
   const totalCost = allTraces.reduce((sum, t) => sum + (t.costUsd || 0), 0);
-  const policyViolations = allTraces.filter((t) => t.status === "blocked").length;
+  const policyViolationCount = allTraces.filter((t) => t.status === "blocked").length;
 
   const customerImpactCount = impactData
     ? impactData.filter(o => o.breachedKpis > 0).length
@@ -403,7 +438,7 @@ export default function Monitor() {
     { id: "success-rate", title: "Success Rate", currentValue: `${successRate}%`, color: "#10b981", type: "area" as const, data: generateTimeSeriesData(7, 95, 3, "stable") },
     { id: "p95-latency", title: "P95 Latency", currentValue: `${avgLatency || 800}ms`, color: "#3b82f6", type: "line" as const, data: generateTimeSeriesData(7, 800, 200, "stable") },
     { id: "cost-per-run", title: "Cost per Run", currentValue: `$0.12`, color: "#8b5cf6", type: "bar" as const, data: generateTimeSeriesData(7, 0.12, 0.05) },
-    { id: "policy-violations", title: "Policy Violations", currentValue: `${policyViolations}`, color: "#ef4444", type: "area" as const, data: generateTimeSeriesData(7, 3, 2) },
+    { id: "policy-violations", title: "Policy Violations", currentValue: `${policyViolationCount}`, color: "#ef4444", type: "area" as const, data: generateTimeSeriesData(7, 3, 2) },
     { id: "drift-score", title: "Hallucination/Drift Score", currentValue: "92%", color: "#f59e0b", type: "line" as const, data: generateTimeSeriesData(7, 92, 5, "down") },
     { id: "kpi-confidence", title: "KPI Confidence", currentValue: "87%", color: "#10b981", type: "area" as const, data: generateTimeSeriesData(7, 87, 8, "up") },
   ];
@@ -529,7 +564,7 @@ export default function Monitor() {
         <StatCard title="Success Rate" value={`${successRate}%`} icon={CheckCircle} variant="success" trend="up" trendValue="0.3%" testId="stat-success-rate" />
         <StatCard title="Avg Latency" value={`${avgLatency}ms`} icon={Clock} variant="default" trend="down" trendValue="12ms" testId="stat-avg-latency" />
         <StatCard title="Total Cost" value={`$${totalCost.toFixed(2)}`} icon={BarChart3} variant="default" testId="stat-total-cost" />
-        <StatCard title="Policy Violations" value={policyViolations} icon={Shield} variant={policyViolations > 0 ? "danger" : "success"} testId="stat-policy-violations" />
+        <StatCard title="Policy Violations" value={policyViolationCount} icon={Shield} variant={policyViolationCount > 0 ? "danger" : "success"} testId="stat-policy-violations" />
         <StatCard title="Customer Impact" value={customerImpactCount} icon={Users} variant={customerImpactCount > 0 ? "warning" : "success"} subtitle="outcomes with breached KPIs" testId="stat-customer-impact" />
       </div>
 
@@ -538,6 +573,9 @@ export default function Monitor() {
       <Tabs defaultValue="outcome-sla" className="flex flex-col gap-4">
         <TabsList className="w-fit flex-wrap">
           <TabsTrigger value="outcome-sla" data-testid="tab-outcome-sla">Outcome SLA Dashboard</TabsTrigger>
+          <TabsTrigger value="slo-heatmap" data-testid="tab-slo-heatmap">SLO Heatmap</TabsTrigger>
+          <TabsTrigger value="violations" data-testid="tab-violations">Policy Violations</TabsTrigger>
+          <TabsTrigger value="tool-health" data-testid="tab-tool-health">Tool Health</TabsTrigger>
           <TabsTrigger value="live" data-testid="tab-live">Live Runs</TabsTrigger>
           <TabsTrigger value="drift" data-testid="tab-drift">Drift Detection</TabsTrigger>
           <TabsTrigger value="agent-health" data-testid="tab-agent-health">Agent Health</TabsTrigger>
@@ -671,6 +709,264 @@ export default function Monitor() {
               )}
             </div>
           </div>
+        </TabsContent>
+
+        <TabsContent value="slo-heatmap" className="mt-0">
+          <Card data-testid="slo-heatmap-card">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <CardTitle className="text-sm font-medium">SLO Heatmap by Agent</CardTitle>
+                <span className="text-[10px] text-muted-foreground">Click any agent row for deep view</span>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs" data-testid="slo-heatmap-table">
+                  <thead>
+                    <tr className="border-b">
+                      <th className="text-left py-2 px-3 text-muted-foreground font-medium">Agent</th>
+                      <th className="text-center py-2 px-3 text-muted-foreground font-medium">Status</th>
+                      <th className="text-center py-2 px-3 text-muted-foreground font-medium">Success Rate</th>
+                      <th className="text-center py-2 px-3 text-muted-foreground font-medium">P95 Latency</th>
+                      <th className="text-center py-2 px-3 text-muted-foreground font-medium">Health Score</th>
+                      <th className="text-center py-2 px-3 text-muted-foreground font-medium">Cost / Run</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {agents?.map((agent) => {
+                      const sr = (agent.successRate || 0) * 100;
+                      const lat = agent.avgLatencyMs || 0;
+                      const hs = agent.healthScore || 0;
+                      const cpr = agent.costPerRun || 0;
+
+                      const srColor = sr >= 95 ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300" : sr >= 85 ? "bg-amber-500/20 text-amber-700 dark:text-amber-300" : "bg-red-500/20 text-red-700 dark:text-red-300";
+                      const latColor = lat <= 500 ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300" : lat <= 1500 ? "bg-amber-500/20 text-amber-700 dark:text-amber-300" : "bg-red-500/20 text-red-700 dark:text-red-300";
+                      const hsColor = hs >= 80 ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300" : hs >= 60 ? "bg-amber-500/20 text-amber-700 dark:text-amber-300" : "bg-red-500/20 text-red-700 dark:text-red-300";
+                      const cprColor = cpr <= 0.10 ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300" : cpr <= 0.30 ? "bg-amber-500/20 text-amber-700 dark:text-amber-300" : "bg-red-500/20 text-red-700 dark:text-red-300";
+
+                      return (
+                        <tr
+                          key={agent.id}
+                          className="border-b last:border-b-0 cursor-pointer hover-elevate"
+                          onClick={() => setSelectedAgentId(agent.id)}
+                          data-testid={`heatmap-row-${agent.id}`}
+                        >
+                          <td className="py-2.5 px-3">
+                            <div className="flex items-center gap-2">
+                              <div className="w-6 h-6 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
+                                <Activity className="w-3 h-3 text-primary" />
+                              </div>
+                              <span className="font-medium">{agent.name}</span>
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <StatusBadge status={agent.status} />
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <span className={`inline-block px-2 py-1 rounded-md text-[11px] font-semibold ${srColor}`}>
+                              {sr.toFixed(1)}%
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <span className={`inline-block px-2 py-1 rounded-md text-[11px] font-semibold ${latColor}`}>
+                              {lat}ms
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <span className={`inline-block px-2 py-1 rounded-md text-[11px] font-semibold ${hsColor}`}>
+                              {hs}%
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <span className={`inline-block px-2 py-1 rounded-md text-[11px] font-semibold ${cprColor}`}>
+                              ${cpr.toFixed(3)}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                {(!agents || agents.length === 0) && (
+                  <p className="text-sm text-muted-foreground py-8 text-center">No agents available</p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="violations" className="mt-0">
+          <Card data-testid="policy-violation-stream">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <Shield className="w-4 h-4 text-muted-foreground" />
+                  <CardTitle className="text-sm font-medium">Policy Violation Stream</CardTitle>
+                </div>
+                <Badge variant="outline" className="text-[10px]">
+                  {policyViolations?.length || 0} violations
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-2">
+              {policyViolations && policyViolations.length > 0 ? (
+                policyViolations.map((v) => {
+                  const severityColors: Record<string, string> = {
+                    critical: "bg-red-500/10 border-red-500/20",
+                    high: "bg-amber-500/10 border-amber-500/20",
+                    medium: "bg-blue-500/10 border-blue-500/20",
+                    low: "bg-muted/30 border-transparent",
+                  };
+                  const severityIconColors: Record<string, string> = {
+                    critical: "text-red-500",
+                    high: "text-amber-500",
+                    medium: "text-blue-500",
+                    low: "text-muted-foreground",
+                  };
+                  const timeAgo = (() => {
+                    const diff = Date.now() - new Date(v.timestamp).getTime();
+                    const mins = Math.floor(diff / 60000);
+                    if (mins < 60) return `${mins}m ago`;
+                    const hours = Math.floor(mins / 60);
+                    if (hours < 24) return `${hours}h ago`;
+                    return `${Math.floor(hours / 24)}d ago`;
+                  })();
+
+                  return (
+                    <div
+                      key={v.id}
+                      className={`flex items-start gap-3 p-3 rounded-md border ${severityColors[v.severity] || "bg-muted/30"}`}
+                      data-testid={`violation-${v.id}`}
+                    >
+                      {v.blocked ? (
+                        <Ban className={`w-4 h-4 shrink-0 mt-0.5 ${severityIconColors[v.severity] || "text-muted-foreground"}`} />
+                      ) : (
+                        <AlertTriangle className={`w-4 h-4 shrink-0 mt-0.5 ${severityIconColors[v.severity] || "text-muted-foreground"}`} />
+                      )}
+                      <div className="flex flex-col gap-1 flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-medium">{v.agentName}</span>
+                          <Badge variant="outline" className="text-[9px]">{v.policyName}</Badge>
+                          <Badge variant={v.severity === "critical" ? "destructive" : "outline"} className="text-[9px]">{v.severity}</Badge>
+                          {v.blocked && <Badge variant="destructive" className="text-[9px]">Blocked</Badge>}
+                        </div>
+                        <span className="text-[11px] text-muted-foreground">{v.rule}</span>
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[10px] text-muted-foreground">{timeAgo}</span>
+                            <Badge variant="outline" className="text-[9px]">{v.action}</Badge>
+                          </div>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="text-[10px]"
+                            onClick={() => {
+                              setExpandedTraceId(v.traceId);
+                              const tabEl = document.querySelector('[value="live"]') as HTMLElement;
+                              tabEl?.click();
+                            }}
+                            data-testid={`button-view-trace-${v.id}`}
+                          >
+                            <Eye className="w-3 h-3 mr-1" />
+                            View Trace {v.traceId.slice(0, 8)}
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="flex items-center gap-3 p-3 rounded-md bg-emerald-500/5 border border-emerald-500/20">
+                  <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />
+                  <span className="text-xs text-muted-foreground">No policy violations detected</span>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="tool-health" className="mt-0">
+          <Card data-testid="tool-connector-health">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <Plug className="w-4 h-4 text-muted-foreground" />
+                  <CardTitle className="text-sm font-medium">Tool Connector Health</CardTitle>
+                </div>
+                <Badge variant="outline" className="text-[10px]">
+                  {toolConnectors?.filter(c => c.status === "healthy").length || 0}/{toolConnectors?.length || 0} healthy
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {toolConnectors?.map((connector) => {
+                  const statusColor = connector.status === "healthy"
+                    ? "bg-emerald-500"
+                    : connector.status === "degraded"
+                      ? "bg-amber-500"
+                      : "bg-red-500";
+                  const statusBgColor = connector.status === "healthy"
+                    ? "bg-emerald-500/5 border-emerald-500/20"
+                    : connector.status === "degraded"
+                      ? "bg-amber-500/5 border-amber-500/20"
+                      : "bg-red-500/5 border-red-500/20";
+                  const toolLabel = connector.name.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase());
+                  const toolIcon = connector.name === "llm_call" ? Brain
+                    : connector.name === "retrieval" ? Database
+                    : connector.name === "api_call" ? Plug
+                    : connector.name === "code_exec" ? Zap
+                    : connector.name === "database" ? Database
+                    : Wrench;
+                  const ToolIcon = toolIcon;
+
+                  return (
+                    <div
+                      key={connector.name}
+                      className={`flex flex-col gap-3 p-4 rounded-md border ${statusBgColor}`}
+                      data-testid={`tool-connector-${connector.name}`}
+                    >
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-2">
+                          <ToolIcon className="w-4 h-4 text-muted-foreground" />
+                          <span className="text-xs font-medium">{toolLabel}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <div className={`w-2 h-2 rounded-full ${statusColor}`} />
+                          <span className="text-[10px] text-muted-foreground capitalize">{connector.status}</span>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-[9px] text-muted-foreground uppercase tracking-wider">Calls</span>
+                          <span className="text-sm font-semibold">{connector.totalCalls}</span>
+                        </div>
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-[9px] text-muted-foreground uppercase tracking-wider">Error Rate</span>
+                          <span className={`text-sm font-semibold ${connector.errorRate > 10 ? "text-red-600 dark:text-red-400" : connector.errorRate > 5 ? "text-amber-600 dark:text-amber-400" : ""}`}>
+                            {connector.errorRate}%
+                          </span>
+                        </div>
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-[9px] text-muted-foreground uppercase tracking-wider">Avg Latency</span>
+                          <span className="text-sm font-semibold">{connector.avgLatencyMs}ms</span>
+                        </div>
+                      </div>
+                      {connector.errorCount > 0 && (
+                        <div className="flex items-center gap-1.5 pt-1 border-t border-dashed">
+                          <AlertTriangle className="w-3 h-3 text-amber-500" />
+                          <span className="text-[10px] text-muted-foreground">{connector.errorCount} errors in last 7 days</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {(!toolConnectors || toolConnectors.length === 0) && (
+                  <p className="text-sm text-muted-foreground py-8 text-center col-span-3">No tool connector data available</p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="live" className="mt-0">
@@ -975,7 +1271,7 @@ export default function Monitor() {
         <TabsContent value="agent-health" className="mt-0">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {agents?.map((agent) => (
-              <Card key={agent.id} data-testid={`sla-card-${agent.id}`}>
+              <Card key={agent.id} className="cursor-pointer hover-elevate" onClick={() => setSelectedAgentId(agent.id)} data-testid={`sla-card-${agent.id}`}>
                 <CardContent className="p-4 flex flex-col gap-3">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -1027,6 +1323,196 @@ export default function Monitor() {
         requestApprovalPending={requestApprovalFromDriftMutation.isPending}
         testIdPrefix="monitor-policy"
       />
+
+      <Dialog open={selectedAgentId !== null} onOpenChange={() => setSelectedAgentId(null)}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto" data-testid="agent-deep-view-dialog">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Eye className="w-4 h-4" />
+              Agent Monitor Deep View
+            </DialogTitle>
+          </DialogHeader>
+          {(() => {
+            const agent = agents?.find(a => a.id === selectedAgentId);
+            if (!agent) return <p className="text-sm text-muted-foreground">Agent not found</p>;
+
+            const agentTraces = allTraces.filter(t => t.agentId === agent.id).slice(0, 10);
+            const agentDrift = driftSignals?.filter(s => s.agentId === agent.id) || [];
+            const agentViolations = policyViolations?.filter(v => v.agentId === agent.id) || [];
+            const agentOutcomes = getAffectedOutcomes(agent.id);
+            const sr = (agent.successRate || 0) * 100;
+            const hs = agent.healthScore || 0;
+
+            const rootCauses: Array<{ category: string; icon: any; iconColor: string; description: string; confidence: number }> = [];
+            const passDrift = agentDrift.filter(s => s.metric === "pass_rate" && s.status === "degraded");
+            const latDrift = agentDrift.filter(s => s.metric === "avg_latency" && s.status === "degraded");
+            const hallDrift = agentDrift.filter(s => s.metric === "hallucination" && s.status === "degraded");
+
+            if (passDrift.length > 0) {
+              rootCauses.push({
+                category: "Model Drift",
+                icon: Brain,
+                iconColor: "text-red-500",
+                description: `Pass rate degraded by ${passDrift.map(s => Math.abs(s.driftPercent).toFixed(1) + "%").join(", ")} across ${passDrift.length} suite(s). Likely cause: model version change or training data shift.`,
+                confidence: passDrift.some(s => s.severity === "critical") ? 92 : 75,
+              });
+            }
+            if (latDrift.length > 0) {
+              rootCauses.push({
+                category: "Tool Errors",
+                icon: Wrench,
+                iconColor: "text-amber-500",
+                description: `Latency spiked by ${latDrift.map(s => Math.abs(s.driftPercent).toFixed(1) + "%").join(", ")}. Likely cause: upstream API degradation or tool schema changes.`,
+                confidence: latDrift.some(s => Math.abs(s.driftPercent) > 30) ? 85 : 65,
+              });
+            }
+            if (hallDrift.length > 0) {
+              rootCauses.push({
+                category: "Knowledge Staleness",
+                icon: Database,
+                iconColor: "text-violet-500",
+                description: `Faithfulness scores dropped by ${hallDrift.map(s => Math.abs(s.driftPercent).toFixed(1) + "%").join(", ")}. Likely cause: knowledge base is stale or missing recent data.`,
+                confidence: hallDrift.some(s => s.severity === "critical") ? 88 : 70,
+              });
+            }
+            if (rootCauses.length === 0) {
+              rootCauses.push({
+                category: "No Issues",
+                icon: CheckCircle,
+                iconColor: "text-emerald-500",
+                description: "No significant degradation detected. All metrics within acceptable thresholds.",
+                confidence: 95,
+              });
+            }
+
+            return (
+              <div className="flex flex-col gap-4">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <div className="w-8 h-8 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
+                    <Activity className="w-4 h-4 text-primary" />
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-sm font-semibold">{agent.name}</span>
+                    <span className="text-[11px] text-muted-foreground">v{agent.currentVersion} | {agent.environment} | {agent.modelName}</span>
+                  </div>
+                  <StatusBadge status={agent.status} />
+                </div>
+
+                <div className="grid grid-cols-4 gap-3">
+                  <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/30">
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Success Rate</span>
+                    <span className={`text-lg font-bold ${sr >= 95 ? "text-emerald-600 dark:text-emerald-400" : sr >= 85 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"}`}>{sr.toFixed(1)}%</span>
+                  </div>
+                  <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/30">
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Health Score</span>
+                    <span className={`text-lg font-bold ${hs >= 80 ? "text-emerald-600 dark:text-emerald-400" : hs >= 60 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"}`}>{hs}%</span>
+                  </div>
+                  <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/30">
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Avg Latency</span>
+                    <span className="text-lg font-bold">{agent.avgLatencyMs}ms</span>
+                  </div>
+                  <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/30">
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Cost / Run</span>
+                    <span className="text-lg font-bold">${(agent.costPerRun || 0).toFixed(3)}</span>
+                  </div>
+                </div>
+
+                {agentOutcomes.length > 0 && (
+                  <div className="flex flex-col gap-2">
+                    <span className="text-xs font-medium flex items-center gap-1.5"><Target className="w-3.5 h-3.5" /> KPI Impact Estimate</span>
+                    {agentOutcomes.map(outcome => (
+                      <div key={outcome.id} className="p-2.5 rounded-md bg-muted/30 flex flex-col gap-1.5" data-testid={`deep-view-outcome-${outcome.id}`}>
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <span className="text-xs font-medium">{outcome.name}</span>
+                          <Badge variant="outline" className={`text-[9px] ${outcome.overallStatus === "at_risk" ? "text-red-600 dark:text-red-400" : outcome.overallStatus === "on_track" ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
+                            {outcome.overallStatus === "at_risk" ? "At Risk" : outcome.overallStatus === "on_track" ? "On Track" : "Needs Attention"}
+                          </Badge>
+                        </div>
+                        {outcome.kpis.slice(0, 3).map(kpi => (
+                          <div key={kpi.id} className="flex items-center justify-between gap-2 px-1 flex-wrap">
+                            <span className="text-[10px] text-muted-foreground">{kpi.name}</span>
+                            <span className="text-[10px]">{kpi.current}/{kpi.target} {kpi.unit}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="flex flex-col gap-2">
+                  <span className="text-xs font-medium flex items-center gap-1.5"><Brain className="w-3.5 h-3.5" /> Root Cause Suggestions</span>
+                  {rootCauses.map((rc, idx) => {
+                    const RcIcon = rc.icon;
+                    return (
+                      <div key={idx} className="flex items-start gap-3 p-2.5 rounded-md bg-muted/30" data-testid={`root-cause-${idx}`}>
+                        <RcIcon className={`w-4 h-4 shrink-0 mt-0.5 ${rc.iconColor}`} />
+                        <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-medium">{rc.category}</span>
+                            <Badge variant="outline" className="text-[9px]">{rc.confidence}% confidence</Badge>
+                          </div>
+                          <span className="text-[11px] text-muted-foreground">{rc.description}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {agentDrift.length > 0 && (
+                  <div className="flex flex-col gap-2">
+                    <span className="text-xs font-medium flex items-center gap-1.5"><Activity className="w-3.5 h-3.5" /> Active Drift Signals ({agentDrift.length})</span>
+                    {agentDrift.map(signal => (
+                      <div key={signal.id} className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/30 flex-wrap" data-testid={`deep-view-drift-${signal.id}`}>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Badge variant={signal.severity === "critical" ? "destructive" : "outline"} className="text-[9px]">{signal.severity}</Badge>
+                          <span className="text-[11px]">{signal.suiteName}</span>
+                          <span className="text-[10px] text-muted-foreground">{getMetricLabel(signal.metric)} {signal.status === "improved" ? "+" : "-"}{Math.abs(signal.driftPercent).toFixed(1)}%</span>
+                        </div>
+                        <span className="text-[10px] text-muted-foreground">{new Date(signal.detectedAt).toLocaleDateString()}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {agentViolations.length > 0 && (
+                  <div className="flex flex-col gap-2">
+                    <span className="text-xs font-medium flex items-center gap-1.5"><Shield className="w-3.5 h-3.5" /> Recent Policy Violations ({agentViolations.length})</span>
+                    {agentViolations.slice(0, 5).map(v => (
+                      <div key={v.id} className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/30 flex-wrap" data-testid={`deep-view-violation-${v.id}`}>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Badge variant={v.severity === "critical" ? "destructive" : "outline"} className="text-[9px]">{v.severity}</Badge>
+                          <span className="text-[11px]">{v.policyName}</span>
+                        </div>
+                        <span className="text-[10px] text-muted-foreground">{v.rule.slice(0, 50)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="flex flex-col gap-2">
+                  <span className="text-xs font-medium flex items-center gap-1.5"><CircleDot className="w-3.5 h-3.5" /> Recent Traces ({agentTraces.length})</span>
+                  {agentTraces.map(trace => (
+                    <div key={trace.id} className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/30 flex-wrap" data-testid={`deep-view-trace-${trace.id}`}>
+                      <div className="flex items-center gap-2 min-w-0 flex-wrap">
+                        <div className={`w-2 h-2 rounded-full shrink-0 ${trace.status === "completed" ? "bg-emerald-500" : trace.status === "failed" ? "bg-red-500" : "bg-amber-500"}`} />
+                        <span className="text-[11px] truncate">{trace.inputSummary || "Run"}</span>
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[10px] text-muted-foreground">{trace.latencyMs}ms</span>
+                        <span className="text-[10px] text-muted-foreground">${(trace.costUsd || 0).toFixed(4)}</span>
+                        <StatusBadge status={trace.status} />
+                      </div>
+                    </div>
+                  ))}
+                  {agentTraces.length === 0 && (
+                    <p className="text-[11px] text-muted-foreground py-2 text-center">No traces recorded</p>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
