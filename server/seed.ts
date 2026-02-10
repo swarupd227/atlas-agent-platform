@@ -5,6 +5,7 @@ import {
   runTraces, evalSuites, policies, approvals, auditEvents, invoices,
   agentTemplates, evalTestCases, evalRuns, improvementRecommendations,
   agentVersions, improvementCycles, policyExceptions, complianceReports,
+  policyTestCases,
 } from "@shared/schema";
 import { batch1Templates } from "./templates-batch1";
 import { batch2Templates } from "./templates-batch2";
@@ -1568,13 +1569,34 @@ export async function seedDatabase() {
 
   // Policies
   await db.insert(policies).values([
-    { name: "No PII in Response", domain: "data_handling", scopeType: "org", version: 3, status: "active", description: "Blocks any agent response that contains personally identifiable information", policyJson: { rules: [{ id: "no_pii_in_response", when: "output.contains_pii == true", action: "block", escalation: "human_required" }] } },
-    { name: "Restricted Tool Write Access", domain: "tool_permissions", scopeType: "org", version: 2, status: "active", description: "Requires expert approval for write actions to external systems in production", policyJson: { rules: [{ id: "restricted_tool_write", when: "tool.action_type == 'write' and env == 'prod'", action: "require_approval", approvers: ["EXPERT_VALIDATOR"] }] } },
-    { name: "Mandatory Citation", domain: "content_boundaries", scopeType: "outcome", version: 1, status: "active", description: "All agent responses must include citations from the knowledge base" },
-    { name: "Cost Budget Enforcement", domain: "allowed_actions", scopeType: "agent", version: 1, status: "active", description: "Prevents agent runs from exceeding per-run cost budget" },
-    { name: "Audit Log Redaction Rules", domain: "logging", scopeType: "org", version: 4, status: "active", description: "Defines which fields are redacted in audit logs for compliance" },
-    { name: "Model Downgrade Fallback", domain: "allowed_actions", scopeType: "agent", version: 1, status: "active", description: "Allows automatic fallback to cheaper models when primary model is unavailable" },
+    { name: "No PII in Response", domain: "data_handling", scopeType: "org", version: 3, status: "active", description: "Blocks any agent response that contains personally identifiable information", policyJson: { rules: [{ id: "no_pii_in_response", when: "output.contains_pii == true", action: "block", escalation: "human_required" }] }, versionHistory: [
+      { version: 1, changedAt: "2025-09-15T10:00:00Z", changedBy: "Admin", summary: "Initial policy creation" },
+      { version: 2, changedAt: "2025-11-20T14:30:00Z", changedBy: "Compliance Team", summary: "Added escalation to human for edge cases" },
+    ] },
+    { name: "Restricted Tool Write Access", domain: "tool_permissions", scopeType: "org", version: 2, status: "active", description: "Requires expert approval for write actions to external systems in production", policyJson: { rules: [{ id: "restricted_tool_write", when: "tool.action_type == 'write' and env == 'prod'", action: "require_approval", approvers: ["EXPERT_VALIDATOR"] }] }, versionHistory: [
+      { version: 1, changedAt: "2025-10-01T09:00:00Z", changedBy: "Security Team", summary: "Initial write restriction policy" },
+    ] },
+    { name: "Mandatory Citation", domain: "content_boundaries", scopeType: "outcome", version: 1, status: "active", description: "All agent responses must include citations from the knowledge base", versionHistory: [] },
+    { name: "Cost Budget Enforcement", domain: "allowed_actions", scopeType: "agent", version: 1, status: "active", description: "Prevents agent runs from exceeding per-run cost budget", versionHistory: [] },
+    { name: "Audit Log Redaction Rules", domain: "logging", scopeType: "org", version: 4, status: "active", description: "Defines which fields are redacted in audit logs for compliance", versionHistory: [
+      { version: 1, changedAt: "2025-06-01T08:00:00Z", changedBy: "Admin", summary: "Initial redaction rules" },
+      { version: 2, changedAt: "2025-08-15T11:00:00Z", changedBy: "Privacy Officer", summary: "Added email redaction" },
+      { version: 3, changedAt: "2025-10-10T16:00:00Z", changedBy: "Compliance Team", summary: "Extended to cover financial data" },
+    ] },
+    { name: "Model Downgrade Fallback", domain: "allowed_actions", scopeType: "agent", version: 1, status: "active", description: "Allows automatic fallback to cheaper models when primary model is unavailable", versionHistory: [] },
   ]);
+
+  const seededPolicies = await db.select().from(policies).limit(6);
+  if (seededPolicies.length > 0) {
+    await db.insert(policyTestCases).values([
+      { policyId: seededPolicies[0].id, name: "Block PII in output", description: "Test that SSN patterns are blocked", inputScenario: { agentOutput: "Your SSN is 123-45-6789", context: "customer_support" }, expectedOutcome: "block", status: "passed" },
+      { policyId: seededPolicies[0].id, name: "Allow safe response", description: "Test that non-PII response passes", inputScenario: { agentOutput: "Your order is confirmed", context: "customer_support" }, expectedOutcome: "pass", status: "passed" },
+      { policyId: seededPolicies[0].id, name: "Block email address", description: "Test that email patterns are caught", inputScenario: { agentOutput: "Contact john@example.com", context: "general" }, expectedOutcome: "block", status: "passed" },
+      { policyId: seededPolicies[1].id, name: "Block write without approval", description: "Test that prod writes require approval", inputScenario: { tool: "database_write", environment: "prod", hasApproval: false }, expectedOutcome: "require_approval", status: "passed" },
+      { policyId: seededPolicies[1].id, name: "Allow read in prod", description: "Test that reads are allowed", inputScenario: { tool: "database_read", environment: "prod" }, expectedOutcome: "pass", status: "passed" },
+      { policyId: seededPolicies[2].id, name: "Require citation for facts", description: "Test citation requirement", inputScenario: { agentOutput: "The product costs $99", hasCitation: false }, expectedOutcome: "flag", status: "failed" },
+    ]);
+  }
 
   // Approvals
   await db.insert(approvals).values([

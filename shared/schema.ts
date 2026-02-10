@@ -192,6 +192,7 @@ export const policies = pgTable("policies", {
   status: text("status").notNull().default("active"),
   policyJson: jsonb("policy_json"),
   description: text("description"),
+  versionHistory: jsonb("version_history"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -258,6 +259,9 @@ export const policyExceptions = pgTable("policy_exceptions", {
   scope: text("scope").notNull().default("agent"),
   status: text("status").notNull().default("pending"),
   approvedBy: text("approved_by"),
+  justification: text("justification"),
+  compensatingControls: text("compensating_controls"),
+  requiresExpertValidation: boolean("requires_expert_validation").default(false),
   expiresAt: timestamp("expires_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -265,6 +269,22 @@ export const policyExceptions = pgTable("policy_exceptions", {
 export const insertPolicyExceptionSchema = createInsertSchema(policyExceptions).omit({ id: true, createdAt: true });
 export type InsertPolicyException = z.infer<typeof insertPolicyExceptionSchema>;
 export type PolicyException = typeof policyExceptions.$inferSelect;
+
+export const policyTestCases = pgTable("policy_test_cases", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  policyId: varchar("policy_id").notNull(),
+  name: text("name").notNull(),
+  description: text("description"),
+  inputScenario: jsonb("input_scenario").notNull(),
+  expectedOutcome: text("expected_outcome").notNull().default("pass"),
+  status: text("status").notNull().default("untested"),
+  lastRunAt: timestamp("last_run_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertPolicyTestCaseSchema = createInsertSchema(policyTestCases).omit({ id: true, createdAt: true, lastRunAt: true });
+export type InsertPolicyTestCase = z.infer<typeof insertPolicyTestCaseSchema>;
+export type PolicyTestCase = typeof policyTestCases.$inferSelect;
 
 export const complianceReports = pgTable("compliance_reports", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

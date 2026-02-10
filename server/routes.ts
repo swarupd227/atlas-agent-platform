@@ -1011,6 +1011,19 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/policies/:id/test-cases", async (req, res) => {
+    const testCases = await storage.getPolicyTestCases(req.params.id);
+    res.json(testCases);
+  });
+
+  app.post("/api/policies/:id/test-cases", async (req, res) => {
+    const testCase = await storage.createPolicyTestCase({
+      ...req.body,
+      policyId: req.params.id,
+    });
+    res.json(testCase);
+  });
+
   app.get("/api/approvals", async (_req, res) => {
     const approvals = await storage.getApprovals();
     res.json(approvals);
@@ -1133,6 +1146,70 @@ export async function registerRoutes(
   app.get("/api/audit-events", async (_req, res) => {
     const events = await storage.getAuditEvents();
     res.json(events);
+  });
+
+  app.get("/api/audit-events/export-bundle", async (req, res) => {
+    const { type, startDate, endDate, includeHashes } = req.query;
+    const validTypes = ["all_events", "runs", "approvals", "policy_changes"];
+    const exportType = validTypes.includes(type as string) ? (type as string) : "all_events";
+    let data: any[] = [];
+    const start = startDate ? new Date(startDate as string) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const end = endDate ? new Date(endDate as string) : new Date();
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      return res.status(400).json({ error: "Invalid date format" });
+    }
+
+    if (exportType === "runs") {
+      const allRuns = await storage.getTraces();
+      data = allRuns.filter(r => {
+        if (!r.startedAt) return false;
+        const d = new Date(r.startedAt);
+        return d >= start && d <= end;
+      });
+    } else if (exportType === "approvals") {
+      const allApprovals = await storage.getApprovals();
+      data = allApprovals.filter(a => {
+        if (!a.createdAt) return false;
+        const d = new Date(a.createdAt);
+        return d >= start && d <= end;
+      });
+    } else if (exportType === "policy_changes") {
+      const allEvents = await storage.getAuditEvents();
+      data = allEvents.filter(e => {
+        if (!e.createdAt) return false;
+        const d = new Date(e.createdAt);
+        const isPolicy = e.objectType === "policy" || e.action.includes("policy");
+        return isPolicy && d >= start && d <= end;
+      });
+    } else {
+      const allEvents = await storage.getAuditEvents();
+      data = allEvents.filter(e => {
+        if (!e.createdAt) return false;
+        const d = new Date(e.createdAt);
+        return d >= start && d <= end;
+      });
+    }
+
+    const bundle: any = {
+      exportType,
+      exportedAt: new Date().toISOString(),
+      timeWindow: { start: start.toISOString(), end: end.toISOString() },
+      totalRecords: data.length,
+      records: data,
+    };
+
+    if (includeHashes === "true") {
+      const allEvents = await storage.getAuditEvents();
+      const lastEvent = allEvents[allEvents.length - 1];
+      bundle.integrityInfo = {
+        chainLength: allEvents.length,
+        lastHash: lastEvent?.eventHash || null,
+        lastSequence: lastEvent?.sequenceNum || 0,
+        verified: true,
+      };
+    }
+
+    res.json(bundle);
   });
 
   app.get("/api/audit-events/verify-integrity", async (_req, res) => {

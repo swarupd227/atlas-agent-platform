@@ -181,6 +181,7 @@ const initialEthicalBoundaries: EthicalCategory[] = [
 
 export default function Governance() {
   const [search, setSearch] = useState("");
+  const [domainFilter, setDomainFilter] = useState<string>("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [auditObjectFilter, setAuditObjectFilter] = useState("");
   const [auditActionFilter, setAuditActionFilter] = useState<string | null>(null);
@@ -190,6 +191,12 @@ export default function Governance() {
   const [expandedFindings, setExpandedFindings] = useState<Record<string, boolean>>({});
   const [expandedEvidence, setExpandedEvidence] = useState<Record<string, boolean>>({});
   const [ethicalBoundaries, setEthicalBoundaries] = useState(initialEthicalBoundaries);
+  const [expandedVersions, setExpandedVersions] = useState<Record<string, boolean>>({});
+  const [exportBundleOpen, setExportBundleOpen] = useState(false);
+  const [exportType, setExportType] = useState("all_events");
+  const [exportStartDate, setExportStartDate] = useState("");
+  const [exportEndDate, setExportEndDate] = useState("");
+  const [exportIncludeHashes, setExportIncludeHashes] = useState(false);
   const { toast } = useToast();
   const policyPerm = usePermission("create_modify_policies");
 
@@ -264,9 +271,36 @@ export default function Governance() {
     },
   });
 
-  const filtered = policies?.filter((p) =>
-    p.name.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = useMemo(() => {
+    let result = policies || [];
+    if (search) {
+      result = result.filter((p) => p.name.toLowerCase().includes(search.toLowerCase()));
+    }
+    if (domainFilter !== "all") {
+      result = result.filter((p) => p.domain === domainFilter);
+    }
+    return result;
+  }, [policies, search, domainFilter]);
+
+  const domainGroups = useMemo(() => {
+    const groups: Record<string, Policy[]> = {};
+    const domainOrder = ["data_handling", "tool_permissions", "logging", "allowed_actions", "content_boundaries"];
+    domainOrder.forEach(d => { groups[d] = []; });
+    filtered?.forEach((p) => {
+      const domain = p.domain || "data_handling";
+      if (!groups[domain]) groups[domain] = [];
+      groups[domain].push(p);
+    });
+    return Object.entries(groups).filter(([_, policies]) => policies.length > 0);
+  }, [filtered]);
+
+  const domainLabels: Record<string, string> = {
+    data_handling: "Data Handling",
+    tool_permissions: "Tool Permissions",
+    logging: "Logging & Redaction",
+    allowed_actions: "Allowed Actions",
+    content_boundaries: "Regulated Content Boundaries",
+  };
 
   const violationCount = useMemo(() => {
     if (!auditEvents) return 0;
@@ -587,47 +621,97 @@ export default function Governance() {
         </TabsList>
 
         <TabsContent value="policies" className="mt-0 flex flex-col gap-4">
-          <div className="relative max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input
-              placeholder="Search policies..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-9"
-              data-testid="input-search-policies"
-            />
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="relative max-w-sm flex-1 min-w-[200px]">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder="Search policies..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-9"
+                data-testid="input-search-policies"
+              />
+            </div>
+            <Select value={domainFilter} onValueChange={setDomainFilter}>
+              <SelectTrigger className="w-[220px]" data-testid="select-domain-filter">
+                <SelectValue placeholder="All Domains" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Domains</SelectItem>
+                <SelectItem value="data_handling">Data Handling</SelectItem>
+                <SelectItem value="tool_permissions">Tool Permissions</SelectItem>
+                <SelectItem value="logging">Logging & Redaction</SelectItem>
+                <SelectItem value="allowed_actions">Allowed Actions</SelectItem>
+                <SelectItem value="content_boundaries">Content Boundaries</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {filtered?.map((policy) => {
-              const DomainIcon = domainIcons[policy.domain] || Shield;
-              return (
-                <Card key={policy.id} className="hover-elevate" data-testid={`card-policy-${policy.id}`}>
-                  <CardContent className="p-4 flex flex-col gap-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
-                          <DomainIcon className="w-4 h-4 text-primary" />
-                        </div>
-                        <div className="flex flex-col min-w-0">
-                          <span className="text-sm font-semibold truncate">{policy.name}</span>
-                          <span className="text-[11px] text-muted-foreground capitalize">{policy.domain.replace(/_/g, " ")} | v{policy.version}</span>
-                        </div>
-                      </div>
-                      <StatusBadge status={policy.status} />
-                    </div>
-                    {policy.description && (
-                      <p className="text-xs text-muted-foreground line-clamp-2">{policy.description}</p>
-                    )}
-                    <div className="flex items-center gap-2 pt-1 border-t flex-wrap">
-                      <Badge variant="outline" className="text-[10px] capitalize">{policy.scopeType}</Badge>
-                      <Badge variant="outline" className="text-[10px] capitalize">{policy.domain.replace(/_/g, " ")}</Badge>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
+          {domainGroups.map(([domain, domainPolicies]) => {
+            const DomainIcon = domainIcons[domain] || Shield;
+            return (
+              <div key={domain} className="flex flex-col gap-3">
+                <div className="flex items-center gap-2 pt-2">
+                  <DomainIcon className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-sm font-semibold">{domainLabels[domain] || domain.replace(/_/g, " ")}</span>
+                  <Badge variant="secondary" className="text-[10px]">{(domainPolicies as Policy[]).length}</Badge>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {(domainPolicies as Policy[]).map((policy) => {
+                    const DIcon = domainIcons[policy.domain] || Shield;
+                    return (
+                      <Card key={policy.id} className="hover-elevate" data-testid={`card-policy-${policy.id}`}>
+                        <CardContent className="p-4 flex flex-col gap-3">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <div className="w-8 h-8 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
+                                <DIcon className="w-4 h-4 text-primary" />
+                              </div>
+                              <div className="flex flex-col min-w-0">
+                                <span className="text-sm font-semibold truncate">{policy.name}</span>
+                                <span className="text-[11px] text-muted-foreground capitalize">{policy.domain.replace(/_/g, " ")} | v{policy.version}</span>
+                              </div>
+                            </div>
+                            <StatusBadge status={policy.status} />
+                          </div>
+                          {policy.description && (
+                            <p className="text-xs text-muted-foreground line-clamp-2">{policy.description}</p>
+                          )}
+                          <div className="flex items-center gap-2 pt-1 border-t flex-wrap">
+                            <Badge variant="outline" className="text-[10px] capitalize">{policy.scopeType}</Badge>
+                            {(policy as any).versionHistory && Array.isArray((policy as any).versionHistory) && (
+                              <Badge variant="secondary" className="text-[10px]">{((policy as any).versionHistory as any[]).length} prior versions</Badge>
+                            )}
+                          </div>
+                          {(policy as any).versionHistory && Array.isArray((policy as any).versionHistory) && ((policy as any).versionHistory as any[]).length > 0 && (
+                            <div className="flex flex-col gap-1">
+                              <button
+                                className="text-[11px] text-muted-foreground underline cursor-pointer text-left"
+                                onClick={() => setExpandedVersions(prev => ({...prev, [policy.id]: !prev[policy.id]}))}
+                                data-testid={`button-version-history-${policy.id}`}
+                              >
+                                {expandedVersions[policy.id] ? "Hide version history" : `Show ${((policy as any).versionHistory as any[]).length} prior versions`}
+                              </button>
+                              {expandedVersions[policy.id] && (
+                                <div className="flex flex-col gap-1 pl-2 border-l-2 border-muted mt-1">
+                                  {((policy as any).versionHistory as any[]).map((vh: any, i: number) => (
+                                    <div key={i} className="text-[11px] text-muted-foreground">
+                                      <span className="font-medium">v{vh.version}</span> - {vh.changedBy || "system"} - {vh.changedAt ? new Date(vh.changedAt).toLocaleDateString() : "N/A"}
+                                      {vh.summary && <span className="ml-1">({vh.summary})</span>}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
 
           {filtered?.length === 0 && (
             <div className="flex flex-col items-center justify-center py-12 gap-3">
@@ -752,9 +836,82 @@ export default function Governance() {
                 </Badge>
               )}
             </div>
-            <Button variant="outline" size="sm" onClick={handleExportCsv} data-testid="button-export-csv">
-              <Download className="w-4 h-4 mr-1.5" /> Export CSV
-            </Button>
+            <div className="flex items-center gap-2 flex-wrap">
+              <Button variant="outline" size="sm" onClick={handleExportCsv} data-testid="button-export-csv">
+                <Download className="w-4 h-4 mr-1.5" /> Export CSV
+              </Button>
+              <Dialog open={exportBundleOpen} onOpenChange={setExportBundleOpen}>
+                <DialogTrigger asChild>
+                  <Button variant="outline" size="sm" data-testid="button-export-bundle">
+                    <Layers className="w-4 h-4 mr-1.5" /> Export Bundle
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Export Audit Bundle</DialogTitle>
+                  </DialogHeader>
+                  <div className="flex flex-col gap-4">
+                    <div className="flex flex-col gap-2">
+                      <Label>Export Type</Label>
+                      <Select value={exportType} onValueChange={setExportType}>
+                        <SelectTrigger data-testid="select-export-type">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all_events">All Events</SelectItem>
+                          <SelectItem value="runs">All Runs for Time Window</SelectItem>
+                          <SelectItem value="approvals">All Approvals</SelectItem>
+                          <SelectItem value="policy_changes">All Policy Changes</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="flex flex-col gap-2">
+                        <Label>Start Date</Label>
+                        <Input type="date" value={exportStartDate} onChange={(e) => setExportStartDate(e.target.value)} data-testid="input-export-start" />
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        <Label>End Date</Label>
+                        <Input type="date" value={exportEndDate} onChange={(e) => setExportEndDate(e.target.value)} data-testid="input-export-end" />
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Switch checked={exportIncludeHashes} onCheckedChange={setExportIncludeHashes} data-testid="switch-include-hashes" />
+                      <Label className="text-sm">Include cryptographic integrity (hash chain)</Label>
+                    </div>
+                    <Button
+                      onClick={async () => {
+                        const params = new URLSearchParams();
+                        params.set("type", exportType);
+                        if (exportStartDate) params.set("startDate", exportStartDate);
+                        if (exportEndDate) params.set("endDate", exportEndDate);
+                        if (exportIncludeHashes) params.set("includeHashes", "true");
+                        try {
+                          const res = await fetch(`/api/audit-events/export-bundle?${params.toString()}`);
+                          const bundle = await res.json();
+                          const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement("a");
+                          a.href = url;
+                          a.download = `audit-bundle-${exportType}-${new Date().toISOString().split("T")[0]}.json`;
+                          document.body.appendChild(a);
+                          a.click();
+                          document.body.removeChild(a);
+                          URL.revokeObjectURL(url);
+                          setExportBundleOpen(false);
+                          toast({ title: "Bundle exported", description: `${bundle.totalRecords} records exported` });
+                        } catch (err) {
+                          toast({ title: "Export failed", variant: "destructive" });
+                        }
+                      }}
+                      data-testid="button-download-bundle"
+                    >
+                      <Download className="w-4 h-4 mr-1.5" /> Download Bundle
+                    </Button>
+                  </div>
+                </DialogContent>
+              </Dialog>
+            </div>
           </div>
 
           <div className="flex items-end gap-3 flex-wrap">
@@ -1027,6 +1184,8 @@ export default function Governance() {
                       agentId: (fd.get("agentId") as string) || undefined,
                       requestedBy: "current-user",
                       reason: fd.get("reason") as string,
+                      justification: (fd.get("justification") as string) || undefined,
+                      compensatingControls: (fd.get("compensatingControls") as string) || undefined,
                       scope: fd.get("scope") as string,
                       expiresAt: fd.get("expiresAt") ? new Date(fd.get("expiresAt") as string).toISOString() : undefined,
                     });
@@ -1053,6 +1212,14 @@ export default function Governance() {
                   <div className="flex flex-col gap-2">
                     <Label>Reason</Label>
                     <Textarea name="reason" required placeholder="Why is this exception needed?" data-testid="input-exception-reason" />
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <Label>Justification</Label>
+                    <Textarea name="justification" placeholder="Business justification for this exception" data-testid="input-exception-justification" />
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <Label>Compensating Controls</Label>
+                    <Textarea name="compensatingControls" placeholder="What compensating controls will be in place?" data-testid="input-exception-compensating" />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="flex flex-col gap-2">

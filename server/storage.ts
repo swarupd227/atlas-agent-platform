@@ -6,6 +6,7 @@ import {
   agentTemplates, evalTestCases, evalRuns, evalCaseResults,
   improvementRecommendations, autonomousActionLogs, agentVersions,
   policyExceptions, complianceReports,
+  policyTestCases,
   type User, type InsertUser,
   type Agent, type InsertAgent,
   type OutcomeContract, type InsertOutcomeContract,
@@ -29,6 +30,7 @@ import {
   type ImprovementCycle, type InsertImprovementCycle,
   type PolicyException, type InsertPolicyException,
   type ComplianceReport, type InsertComplianceReport,
+  type PolicyTestCase, type InsertPolicyTestCase,
   patches,
   type Patch, type InsertPatch,
   experiments,
@@ -133,6 +135,9 @@ export interface IStorage {
   getPolicyExceptionsByAgent(agentId: string): Promise<PolicyException[]>;
   createPolicyException(exception: InsertPolicyException): Promise<PolicyException>;
   updatePolicyException(id: string, data: Partial<PolicyException>): Promise<PolicyException | undefined>;
+
+  getPolicyTestCases(policyId: string): Promise<PolicyTestCase[]>;
+  createPolicyTestCase(testCase: InsertPolicyTestCase): Promise<PolicyTestCase>;
 
   getComplianceReports(): Promise<ComplianceReport[]>;
   createComplianceReport(report: InsertComplianceReport): Promise<ComplianceReport>;
@@ -496,6 +501,15 @@ export class DatabaseStorage implements IStorage {
   async updatePolicyException(id: string, data: Partial<PolicyException>) {
     const [updated] = await db.update(policyExceptions).set(data).where(eq(policyExceptions.id, id)).returning();
     return updated;
+  }
+
+  async getPolicyTestCases(policyId: string) {
+    return db.select().from(policyTestCases).where(eq(policyTestCases.policyId, policyId));
+  }
+
+  async createPolicyTestCase(testCase: InsertPolicyTestCase) {
+    const [result] = await db.insert(policyTestCases).values(testCase).returning();
+    return result;
   }
 
   async getComplianceReports() {
