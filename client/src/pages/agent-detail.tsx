@@ -47,6 +47,13 @@ import {
   FileText,
   PenTool,
   Package,
+  Code,
+  Settings,
+  MessageSquare,
+  Network,
+  BookOpenCheck,
+  Blocks,
+  ArrowRight,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -1299,6 +1306,12 @@ export default function AgentDetail() {
               </CardContent>
             </Card>
           )}
+
+          <ImplementationGraph
+            agent={agent}
+            toolConnectors={allToolConnectors || []}
+            onGenerateExport={() => { setExportStep("configure"); setExportPreview(null); setExportDialogOpen(true); }}
+          />
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4" data-testid="blueprint-config-grid">
             <BlueprintModelConfig agent={agent} />
@@ -2902,6 +2915,204 @@ function BlueprintModelConfig({ agent }: { agent: Agent }) {
             <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Autonomy Mode</span>
             <span className="text-sm font-medium capitalize">{agent.autonomyMode}</span>
           </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ImplementationGraph({ agent, toolConnectors, onGenerateExport }: { agent: Agent; toolConnectors: ToolConnector[]; onGenerateExport: () => void }) {
+  const blueprint = agent.blueprintJson as any;
+  const tools = (Array.isArray(agent.toolsConfig) ? agent.toolsConfig : []) as Array<{ name: string; type?: string; description?: string }>;
+  const memoryRag = agent.memoryRagConfig as any;
+  const policyBindings = agent.policyBindings as any;
+
+  const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const connectorMap = new Map(toolConnectors.map(c => [normalize(c.name), c]));
+
+  const nodes = (blueprint?.nodes || []) as Array<{ id: string; type: string; label?: string }>;
+  const codeNodeTypes = new Set(["tool_call", "api_call", "webhook", "queue_consumer", "event_listener"]);
+  const customNodes = nodes.filter(n => codeNodeTypes.has(n.type));
+  const declarativeNodes = nodes.filter(n => !codeNodeTypes.has(n.type));
+
+  type GraphItem = {
+    id: string;
+    label: string;
+    category: "declarative" | "code";
+    icon: typeof Settings;
+    status: "present" | "missing" | "partial";
+    detail: string;
+  };
+
+  const items: GraphItem[] = [];
+
+  const hasInstructions = !!(blueprint?.instructions || blueprint?.systemPrompt || (agent as any).systemPrompt);
+  items.push({
+    id: "instructions",
+    label: "Instructions / System Prompt",
+    category: "declarative",
+    icon: MessageSquare,
+    status: hasInstructions ? "present" : "missing",
+    detail: hasInstructions ? "Embedded in export config" : "Not configured",
+  });
+
+  const modelConfig = (agent as any).modelConfig || blueprint?.model;
+  items.push({
+    id: "orchestration",
+    label: "Orchestration Config",
+    category: "declarative",
+    icon: Settings,
+    status: modelConfig ? "present" : "missing",
+    detail: modelConfig ? `${(modelConfig as any)?.provider || "LLM"} / ${(modelConfig as any)?.model || "default"}` : "No model configured",
+  });
+
+  if (declarativeNodes.length > 0) {
+    items.push({
+      id: "workflow-nodes",
+      label: "Workflow Nodes",
+      category: "declarative",
+      icon: Network,
+      status: "present",
+      detail: `${declarativeNodes.length} declarative node${declarativeNodes.length !== 1 ? "s" : ""}`,
+    });
+  }
+
+  const hasKnowledge = !!(memoryRag?.knowledgeSources?.length || memoryRag?.ragEndpoint || memoryRag?.vectorStore);
+  items.push({
+    id: "knowledge",
+    label: "Knowledge / RAG Config",
+    category: "declarative",
+    icon: BookOpenCheck,
+    status: hasKnowledge ? "present" : "missing",
+    detail: hasKnowledge
+      ? `${memoryRag?.knowledgeSources?.length || 0} source${(memoryRag?.knowledgeSources?.length || 0) !== 1 ? "s" : ""}`
+      : "No knowledge sources",
+  });
+
+  const hasPolicies = Array.isArray(policyBindings) && policyBindings.length > 0;
+  items.push({
+    id: "policy-bindings",
+    label: "Policy Bindings",
+    category: "declarative",
+    icon: Shield,
+    status: hasPolicies ? "present" : "missing",
+    detail: hasPolicies ? `${policyBindings.length} bound` : "No policies bound",
+  });
+
+  tools.forEach(tool => {
+    const normalized = normalize(tool.name || "");
+    const connector = connectorMap.get(normalized);
+    const connected = connector && connector.status === "connected";
+    items.push({
+      id: `tool-${normalized}`,
+      label: tool.name,
+      category: "code",
+      icon: Code,
+      status: connected ? "present" : "missing",
+      detail: connected ? "Adapter connected" : "Adapter needed",
+    });
+  });
+
+  customNodes.forEach(node => {
+    items.push({
+      id: `custom-node-${node.id}`,
+      label: node.label || node.id,
+      category: "code",
+      icon: Blocks,
+      status: "partial",
+      detail: `${node.type.replace(/_/g, " ")} — code stub generated`,
+    });
+  });
+
+  const declarativeItems = items.filter(i => i.category === "declarative");
+  const codeItems = items.filter(i => i.category === "code");
+
+  const statusColor = (s: GraphItem["status"]) =>
+    s === "present" ? "text-emerald-500" : s === "partial" ? "text-amber-500" : "text-muted-foreground";
+  const statusIcon = (s: GraphItem["status"]) =>
+    s === "present" ? CheckCircle : s === "partial" ? AlertCircle : XCircle;
+
+  return (
+    <Card data-testid="card-implementation-graph">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center justify-center w-7 h-7 rounded-md bg-primary/10 shrink-0">
+              <Network className="w-3.5 h-3.5 text-primary" />
+            </div>
+            <CardTitle className="text-sm font-medium" data-testid="title-implementation-graph">Implementation Graph</CardTitle>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Badge variant="outline" className="text-[10px]" data-testid="badge-impl-declarative-count">
+              {declarativeItems.length} declarative
+            </Badge>
+            <Badge variant="outline" className="text-[10px]" data-testid="badge-impl-code-count">
+              {codeItems.length} code
+            </Badge>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="flex flex-col gap-2" data-testid="impl-graph-declarative">
+            <div className="flex items-center gap-2 mb-1">
+              <Badge variant="outline" className="text-[10px] bg-primary/10 text-primary" data-testid="badge-category-declarative">Declarative</Badge>
+              <span className="text-[11px] text-muted-foreground" data-testid="text-declarative-desc">Embedded in export configuration</span>
+            </div>
+            {declarativeItems.map(item => {
+              const SIcon = statusIcon(item.status);
+              return (
+                <div key={item.id} className="flex items-center gap-3 p-2.5 rounded-md border bg-background" data-testid={`impl-node-${item.id}`}>
+                  <item.icon className="w-4 h-4 text-muted-foreground shrink-0" />
+                  <div className="flex flex-col min-w-0 flex-1">
+                    <span className="text-xs font-medium truncate">{item.label}</span>
+                    <span className="text-[11px] text-muted-foreground truncate" data-testid={`impl-detail-${item.id}`}>{item.detail}</span>
+                  </div>
+                  <SIcon className={`w-3.5 h-3.5 shrink-0 ${statusColor(item.status)}`} data-testid={`impl-status-${item.id}`} />
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="flex flex-col gap-2" data-testid="impl-graph-code">
+            <div className="flex items-center gap-2 mb-1">
+              <Badge variant="outline" className="text-[10px] bg-destructive/10 text-destructive" data-testid="badge-category-code">Code Required</Badge>
+              <span className="text-[11px] text-muted-foreground" data-testid="text-code-desc">Generated as application code</span>
+            </div>
+            {codeItems.length > 0 ? codeItems.map(item => {
+              const SIcon = statusIcon(item.status);
+              return (
+                <div key={item.id} className="flex items-center gap-3 p-2.5 rounded-md border bg-background" data-testid={`impl-node-${item.id}`}>
+                  <item.icon className="w-4 h-4 text-muted-foreground shrink-0" />
+                  <div className="flex flex-col min-w-0 flex-1">
+                    <span className="text-xs font-medium truncate">{item.label}</span>
+                    <span className="text-[11px] text-muted-foreground truncate" data-testid={`impl-detail-${item.id}`}>{item.detail}</span>
+                  </div>
+                  <SIcon className={`w-3.5 h-3.5 shrink-0 ${statusColor(item.status)}`} data-testid={`impl-status-${item.id}`} />
+                </div>
+              );
+            }) : (
+              <p className="text-[11px] text-muted-foreground text-center py-4" data-testid="text-no-code-items">No tool adapters or custom nodes configured</p>
+            )}
+          </div>
+        </div>
+
+        <Separator />
+
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex flex-col gap-0.5">
+            <span className="text-xs font-medium" data-testid="text-impl-summary">
+              {items.filter(i => i.status === "present").length}/{items.length} components ready
+            </span>
+            <span className="text-[11px] text-muted-foreground" data-testid="text-impl-subtitle">
+              {codeItems.filter(i => i.status === "missing").length > 0
+                ? `${codeItems.filter(i => i.status === "missing").length} adapter${codeItems.filter(i => i.status === "missing").length !== 1 ? "s" : ""} will be generated`
+                : "All components accounted for"}
+            </span>
+          </div>
+          <Button size="sm" onClick={onGenerateExport} data-testid="button-generate-export-package">
+            <Package className="w-3.5 h-3.5 mr-1.5" /> Generate Export Package
+          </Button>
         </div>
       </CardContent>
     </Card>
