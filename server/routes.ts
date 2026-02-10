@@ -1885,30 +1885,33 @@ User's Agent Requirements:
 Available Templates:
 ${JSON.stringify(templatesContext, null, 2)}
 
-Return a JSON array of template recommendations, ranked by relevance. For each, include:
+Return a JSON array of the TOP 5 most relevant template recommendations, ranked by relevance. For each, include:
 - id: the template id
 - matchScore: percentage match (0-100)
 - reasoning: 1-2 sentences explaining WHY this template is a good fit based on the user's specific requirements
 
-Respond ONLY with a valid JSON array, no markdown, no explanation outside the JSON. Example format:
-[{"id": "abc", "matchScore": 92, "reasoning": "This template's ticket classification and KB search align with your support-focused agent description."}]
-
-Always include ALL templates, ranked from best to worst match.`;
+Only include templates with matchScore >= 30. Respond ONLY with a valid JSON array, no markdown, no explanation outside the JSON. Example format:
+[{"id": "abc", "matchScore": 92, "reasoning": "This template's ticket classification and KB search align with your support-focused agent description."}]`;
 
       const completion = await openai.chat.completions.create({
         model: "gpt-4.1",
         messages: [{ role: "user", content: prompt }],
-        max_completion_tokens: 1024,
+        max_completion_tokens: 2048,
         temperature: 0.3,
       });
 
       const content = completion.choices[0]?.message?.content || "[]";
+      let parsed: any[] = [];
       try {
-        const matches = JSON.parse(content);
-        res.json({ matches });
+        const cleaned = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+        parsed = JSON.parse(cleaned);
       } catch {
-        res.json({ matches: [] });
+        const arrayMatch = content.match(/\[[\s\S]*\]/);
+        if (arrayMatch) {
+          try { parsed = JSON.parse(arrayMatch[0]); } catch { /* fallback empty */ }
+        }
       }
+      res.json({ matches: Array.isArray(parsed) ? parsed : [] });
     } catch (error) {
       console.error("AI match error:", error);
       res.status(500).json({ error: "Template matching failed" });
