@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
+import { useRole } from "@/components/role-provider";
+import type { PermissionAction } from "@/components/role-provider";
 import {
   CommandDialog,
   CommandInput,
@@ -27,18 +29,31 @@ import {
   Library,
   Wrench,
   Plus,
-  Search,
   Sparkles,
   RefreshCw,
+  Play,
+  Download,
+  Zap,
+  FileText,
 } from "lucide-react";
+
+interface CommandAction {
+  label: string;
+  icon: typeof Bot;
+  action: () => void;
+  permission?: PermissionAction;
+  route?: string;
+  shortcut?: string;
+}
 
 export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [, navigate] = useLocation();
+  const { canPerform, isRouteAllowed } = useRole();
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
-      if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
+      if (e.key === "k" && (e.metaKey || e.ctrlKey) && e.shiftKey) {
         e.preventDefault();
         setOpen((o) => !o);
       }
@@ -55,110 +70,129 @@ export function CommandPalette() {
     []
   );
 
+  const quickActions: CommandAction[] = [
+    {
+      label: "Create Agent",
+      icon: Plus,
+      action: () => navigate("/agents/wizard"),
+      permission: "create_modify_blueprints",
+      route: "/agents",
+    },
+    {
+      label: "Create Outcome",
+      icon: Target,
+      action: () => navigate("/outcomes/discover"),
+      permission: "create_modify_outcomes",
+      route: "/outcomes",
+    },
+    {
+      label: "Run Eval",
+      icon: FlaskConical,
+      action: () => navigate("/evals"),
+      permission: "view_traces",
+      route: "/evals",
+    },
+    {
+      label: "Start Shadow Replay",
+      icon: Play,
+      action: () => navigate("/agents"),
+      permission: "deploy_staging_pilot",
+      route: "/agents",
+    },
+    {
+      label: "Rollback",
+      icon: RotateCcw,
+      action: () => navigate("/deployments"),
+      permission: "deploy_staging_pilot",
+      route: "/deployments",
+    },
+    {
+      label: "Export Audit Bundle",
+      icon: Download,
+      action: () => navigate("/governance"),
+      permission: "export_audit_bundle",
+      route: "/governance",
+    },
+    {
+      label: "Open Incident",
+      icon: AlertTriangle,
+      action: () => navigate("/monitor"),
+      route: "/monitor",
+    },
+    {
+      label: "Discover Outcome",
+      icon: Sparkles,
+      action: () => navigate("/outcomes/discover"),
+      permission: "create_modify_outcomes",
+      route: "/outcomes/discover",
+    },
+    {
+      label: "Generate Patches",
+      icon: Zap,
+      action: () => navigate("/improvements"),
+      permission: "create_modify_blueprints",
+      route: "/improvements",
+    },
+  ];
+
+  const navigationItems = [
+    { label: "Overview", icon: LayoutDashboard, route: "/" },
+    { label: "Discover", icon: Sparkles, route: "/outcomes/discover" },
+    { label: "Outcomes", icon: Target, route: "/outcomes" },
+    { label: "Agents", icon: Bot, route: "/agents" },
+    { label: "Templates", icon: Library, route: "/templates" },
+    { label: "Evals", icon: FlaskConical, route: "/evals" },
+    { label: "Deployments", icon: Rocket, route: "/deployments" },
+    { label: "Monitor", icon: Activity, route: "/monitor" },
+    { label: "Optimization", icon: Wrench, route: "/improvements" },
+    { label: "Self-Heal Loop", icon: RefreshCw, route: "/improvement-loop" },
+    { label: "Governance", icon: Shield, route: "/governance" },
+    { label: "Approvals", icon: CheckCircle, route: "/approvals" },
+    { label: "Billing", icon: CreditCard, route: "/billing" },
+    { label: "Integrations", icon: Plug, route: "/integrations" },
+    { label: "Admin", icon: ShieldCheck, route: "/admin" },
+  ];
+
+  const filteredActions = quickActions.filter((a) => {
+    if (a.permission && !canPerform(a.permission)) return false;
+    if (a.route && !isRouteAllowed(a.route)) return false;
+    return true;
+  });
+
+  const filteredNav = navigationItems.filter((n) => isRouteAllowed(n.route));
+
   return (
     <CommandDialog open={open} onOpenChange={setOpen}>
-      <CommandInput placeholder="Type a command or search..." data-testid="input-command-search" />
+      <CommandInput placeholder="Type a command or search..." data-testid="input-command-palette" />
       <CommandList>
-        <CommandEmpty>No results found.</CommandEmpty>
-        <CommandGroup heading="Quick Actions">
-          <CommandItem
-            onSelect={() => runCommand(() => navigate("/agents/wizard"))}
-            data-testid="command-create-agent"
-          >
-            <Plus className="mr-2 h-4 w-4" />
-            <span>Create Agent</span>
-          </CommandItem>
-          <CommandItem
-            onSelect={() => runCommand(() => navigate("/evals"))}
-            data-testid="command-run-eval"
-          >
-            <FlaskConical className="mr-2 h-4 w-4" />
-            <span>Run Eval</span>
-          </CommandItem>
-          <CommandItem
-            onSelect={() => runCommand(() => navigate("/deployments"))}
-            data-testid="command-rollback"
-          >
-            <RotateCcw className="mr-2 h-4 w-4" />
-            <span>Rollback</span>
-          </CommandItem>
-          <CommandItem
-            onSelect={() => runCommand(() => navigate("/monitor"))}
-            data-testid="command-open-incident"
-          >
-            <AlertTriangle className="mr-2 h-4 w-4" />
-            <span>Open Incident</span>
-          </CommandItem>
-          <CommandItem
-            onSelect={() => runCommand(() => navigate("/outcomes/discover"))}
-            data-testid="command-discover-outcome"
-          >
-            <Sparkles className="mr-2 h-4 w-4" />
-            <span>Discover Outcome</span>
-          </CommandItem>
-        </CommandGroup>
+        <CommandEmpty>No matching commands.</CommandEmpty>
+        {filteredActions.length > 0 && (
+          <CommandGroup heading="Quick Actions">
+            {filteredActions.map((a) => (
+              <CommandItem
+                key={a.label}
+                onSelect={() => runCommand(a.action)}
+                data-testid={`command-${a.label.toLowerCase().replace(/\s+/g, "-")}`}
+              >
+                <a.icon className="mr-2 h-4 w-4" />
+                <span>{a.label}</span>
+                {a.shortcut && <CommandShortcut>{a.shortcut}</CommandShortcut>}
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
         <CommandSeparator />
         <CommandGroup heading="Navigate">
-          <CommandItem onSelect={() => runCommand(() => navigate("/"))} data-testid="command-nav-overview">
-            <LayoutDashboard className="mr-2 h-4 w-4" />
-            <span>Overview</span>
-          </CommandItem>
-          <CommandItem onSelect={() => runCommand(() => navigate("/outcomes/discover"))} data-testid="command-nav-discover">
-            <Sparkles className="mr-2 h-4 w-4" />
-            <span>Discover</span>
-          </CommandItem>
-          <CommandItem onSelect={() => runCommand(() => navigate("/outcomes"))} data-testid="command-nav-outcomes">
-            <Target className="mr-2 h-4 w-4" />
-            <span>Outcomes</span>
-          </CommandItem>
-          <CommandItem onSelect={() => runCommand(() => navigate("/agents"))} data-testid="command-nav-agents">
-            <Bot className="mr-2 h-4 w-4" />
-            <span>Agents</span>
-          </CommandItem>
-          <CommandItem onSelect={() => runCommand(() => navigate("/templates"))} data-testid="command-nav-templates">
-            <Library className="mr-2 h-4 w-4" />
-            <span>Templates</span>
-          </CommandItem>
-          <CommandItem onSelect={() => runCommand(() => navigate("/evals"))} data-testid="command-nav-evals">
-            <FlaskConical className="mr-2 h-4 w-4" />
-            <span>Evals</span>
-          </CommandItem>
-          <CommandItem onSelect={() => runCommand(() => navigate("/deployments"))} data-testid="command-nav-deployments">
-            <Rocket className="mr-2 h-4 w-4" />
-            <span>Deployments</span>
-          </CommandItem>
-          <CommandItem onSelect={() => runCommand(() => navigate("/monitor"))} data-testid="command-nav-monitor">
-            <Activity className="mr-2 h-4 w-4" />
-            <span>Monitor</span>
-          </CommandItem>
-          <CommandItem onSelect={() => runCommand(() => navigate("/improvements"))} data-testid="command-nav-ops">
-            <Wrench className="mr-2 h-4 w-4" />
-            <span>Ops</span>
-          </CommandItem>
-          <CommandItem onSelect={() => runCommand(() => navigate("/improvement-loop"))} data-testid="command-nav-self-heal">
-            <RefreshCw className="mr-2 h-4 w-4" />
-            <span>Self-Heal Loop</span>
-          </CommandItem>
-          <CommandItem onSelect={() => runCommand(() => navigate("/governance"))} data-testid="command-nav-governance">
-            <Shield className="mr-2 h-4 w-4" />
-            <span>Governance</span>
-          </CommandItem>
-          <CommandItem onSelect={() => runCommand(() => navigate("/approvals"))} data-testid="command-nav-approvals">
-            <CheckCircle className="mr-2 h-4 w-4" />
-            <span>Approvals</span>
-          </CommandItem>
-          <CommandItem onSelect={() => runCommand(() => navigate("/billing"))} data-testid="command-nav-billing">
-            <CreditCard className="mr-2 h-4 w-4" />
-            <span>Billing</span>
-          </CommandItem>
-          <CommandItem onSelect={() => runCommand(() => navigate("/integrations"))} data-testid="command-nav-integrations">
-            <Plug className="mr-2 h-4 w-4" />
-            <span>Integrations</span>
-          </CommandItem>
-          <CommandItem onSelect={() => runCommand(() => navigate("/admin"))} data-testid="command-nav-admin">
-            <ShieldCheck className="mr-2 h-4 w-4" />
-            <span>Admin</span>
-          </CommandItem>
+          {filteredNav.map((n) => (
+            <CommandItem
+              key={n.route}
+              onSelect={() => runCommand(() => navigate(n.route))}
+              data-testid={`command-nav-${n.label.toLowerCase().replace(/\s+/g, "-")}`}
+            >
+              <n.icon className="mr-2 h-4 w-4" />
+              <span>{n.label}</span>
+            </CommandItem>
+          ))}
         </CommandGroup>
       </CommandList>
     </CommandDialog>

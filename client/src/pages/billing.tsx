@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   DollarSign,
   Download,
@@ -42,6 +42,7 @@ import {
 import { StatCard } from "@/components/stat-card";
 import { StatusBadge } from "@/components/status-badge";
 import { usePermission } from "@/components/role-provider";
+import { useEnvironment } from "@/components/environment-selector";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Invoice, BillingDispute } from "@shared/schema";
@@ -127,6 +128,13 @@ export default function Billing() {
   const [disputeFilter, setDisputeFilter] = useState("all");
   const { toast } = useToast();
   const billingPerm = usePermission("billing_invoices");
+  const { setLockedEnv } = useEnvironment();
+
+  useEffect(() => {
+    setLockedEnv("production");
+    return () => setLockedEnv(null);
+  }, [setLockedEnv]);
+
 
   const { data: dashboard, isLoading: dashboardLoading } = useQuery<MeteringDashboard>({
     queryKey: ["/api/billing/metering-dashboard"],

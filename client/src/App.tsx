@@ -11,7 +11,7 @@ import { RoleProvider } from "@/components/role-provider";
 import { RoleSwitcher } from "@/components/role-switcher";
 import { CommandPalette } from "@/components/command-palette";
 import { GlobalSearch } from "@/components/global-search";
-import { EnvironmentSelector } from "@/components/environment-selector";
+import { EnvironmentSelector, EnvironmentProvider } from "@/components/environment-selector";
 import { NotificationCenter } from "@/components/notification-center";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import NotFound from "@/pages/not-found";
@@ -83,6 +83,7 @@ function App() {
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <RoleProvider>
+            <EnvironmentProvider>
             <SidebarProvider style={style as React.CSSProperties}>
               <div className="flex h-screen w-full">
                 <AppSidebar />
@@ -107,6 +108,7 @@ function App() {
             </SidebarProvider>
             <CommandPalette />
             <Toaster />
+            </EnvironmentProvider>
           </RoleProvider>
         </TooltipProvider>
       </QueryClientProvider>

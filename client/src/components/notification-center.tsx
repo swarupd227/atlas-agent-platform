@@ -1,6 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { Bell, CheckCircle, AlertTriangle, TrendingDown, ArrowRight } from "lucide-react";
+import {
+  Bell, CheckCircle, AlertTriangle, TrendingDown, ArrowRight,
+  CreditCard, Clock, ShieldAlert, Zap,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -32,6 +35,32 @@ interface DriftSignal {
   status: string;
 }
 
+interface Invoice {
+  id: string;
+  outcomeName: string;
+  status: string;
+  amount: number;
+  periodEnd: string;
+}
+
+interface PolicyException {
+  id: string;
+  policyId: number;
+  agentId: string;
+  reason: string;
+  status: string;
+  expiresAt: string | null;
+}
+
+interface AuditEvent {
+  id: string;
+  eventType: string;
+  objectType: string;
+  objectName: string;
+  severity: string;
+  timestamp: string;
+}
+
 export function NotificationCenter() {
   const [, navigate] = useLocation();
 
@@ -43,9 +72,39 @@ export function NotificationCenter() {
     queryKey: ["/api/drift-signals"],
   });
 
+  const { data: invoices } = useQuery<Invoice[]>({
+    queryKey: ["/api/invoices"],
+  });
+
+  const { data: exceptions } = useQuery<PolicyException[]>({
+    queryKey: ["/api/policy-exceptions"],
+  });
+
+  const { data: auditEvents } = useQuery<AuditEvent[]>({
+    queryKey: ["/api/audit-events"],
+  });
+
   const pendingApprovals = approvals?.filter((a) => a.status === "pending") || [];
   const criticalDrift = driftSignals?.filter((d) => d.severity === "critical" || d.severity === "high") || [];
-  const totalCount = pendingApprovals.length + criticalDrift.length;
+
+  const readyInvoices = invoices?.filter((i) => i.status === "sent") || [];
+
+  const now = new Date();
+  const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+  const expiringExceptions = (exceptions || []).filter((e) => {
+    if (e.status !== "approved" || !e.expiresAt) return false;
+    const exp = new Date(e.expiresAt);
+    return exp > now && exp < sevenDaysFromNow;
+  });
+
+  const recentIncidents = (auditEvents || []).filter((e) => {
+    if (e.eventType !== "incident_created" || e.severity !== "critical") return false;
+    const ts = new Date(e.timestamp);
+    const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    return ts > oneDayAgo;
+  }).slice(0, 3);
+
+  const totalCount = pendingApprovals.length + criticalDrift.length + readyInvoices.length + expiringExceptions.length + recentIncidents.length;
 
   return (
     <Popover>
@@ -66,7 +125,7 @@ export function NotificationCenter() {
             <Badge variant="secondary" className="text-[10px]" data-testid="text-notification-total">{totalCount} active</Badge>
           )}
         </div>
-        <ScrollArea className="max-h-72">
+        <ScrollArea className="max-h-80">
           {totalCount === 0 ? (
             <div className="p-6 text-center">
               <Bell className="w-8 h-8 mx-auto text-muted-foreground/30 mb-2" />
@@ -75,48 +134,81 @@ export function NotificationCenter() {
           ) : (
             <div className="flex flex-col">
               {pendingApprovals.length > 0 && (
-                <div className="p-2">
-                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider px-2">Approvals Needed</span>
-                  {pendingApprovals.slice(0, 5).map((a) => (
-                    <button
+                <NotificationSection title="Approvals Needed">
+                  {pendingApprovals.slice(0, 4).map((a) => (
+                    <NotificationItem
                       key={a.id}
-                      className="w-full flex items-center gap-2 p-2 rounded-md text-left hover-elevate"
+                      icon={<CheckCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
+                      title={a.objectName || a.type.replace(/_/g, " ")}
+                      subtitle={`${a.type.replace(/_/g, " ")} \u00b7 ${a.requestedBy}`}
                       onClick={() => navigate("/approvals")}
-                      data-testid={`notification-approval-${a.id}`}
-                    >
-                      <CheckCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-medium truncate">{a.objectName || a.type.replace(/_/g, " ")}</p>
-                        <p className="text-[10px] text-muted-foreground">{a.type.replace(/_/g, " ")} &middot; {a.requestedBy}</p>
-                      </div>
-                      <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0" />
-                    </button>
+                      testId={`notification-approval-${a.id}`}
+                    />
                   ))}
-                </div>
+                </NotificationSection>
               )}
+
               {criticalDrift.length > 0 && (
-                <div className="p-2 border-t">
-                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider px-2">Drift Alerts</span>
-                  {criticalDrift.slice(0, 5).map((d, i) => (
-                    <button
+                <NotificationSection title="Drift Detected" bordered>
+                  {criticalDrift.slice(0, 4).map((d, i) => (
+                    <NotificationItem
                       key={i}
-                      className="w-full flex items-center gap-2 p-2 rounded-md text-left hover-elevate"
+                      icon={d.severity === "critical"
+                        ? <AlertTriangle className="w-3.5 h-3.5 text-red-500 shrink-0" />
+                        : <TrendingDown className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                      }
+                      title={d.agentName}
+                      subtitle={`${d.metric} drift (${d.severity})`}
                       onClick={() => navigate("/monitor")}
-                      data-testid={`notification-drift-${i}`}
-                    >
-                      {d.severity === "critical" ? (
-                        <AlertTriangle className="w-3.5 h-3.5 text-red-500 shrink-0" />
-                      ) : (
-                        <TrendingDown className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-medium truncate">{d.agentName}</p>
-                        <p className="text-[10px] text-muted-foreground">{d.metric} drift ({d.severity})</p>
-                      </div>
-                      <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0" />
-                    </button>
+                      testId={`notification-drift-${i}`}
+                    />
                   ))}
-                </div>
+                </NotificationSection>
+              )}
+
+              {recentIncidents.length > 0 && (
+                <NotificationSection title="Incidents Triggered" bordered>
+                  {recentIncidents.map((e, i) => (
+                    <NotificationItem
+                      key={e.id}
+                      icon={<Zap className="w-3.5 h-3.5 text-red-500 shrink-0" />}
+                      title={e.objectName}
+                      subtitle={`${e.eventType.replace(/_/g, " ")} \u00b7 ${e.severity}`}
+                      onClick={() => navigate("/monitor")}
+                      testId={`notification-incident-${i}`}
+                    />
+                  ))}
+                </NotificationSection>
+              )}
+
+              {readyInvoices.length > 0 && (
+                <NotificationSection title="Invoices Ready" bordered>
+                  {readyInvoices.slice(0, 3).map((inv) => (
+                    <NotificationItem
+                      key={inv.id}
+                      icon={<CreditCard className="w-3.5 h-3.5 text-blue-500 shrink-0" />}
+                      title={inv.outcomeName}
+                      subtitle={`$${inv.amount?.toLocaleString()} \u00b7 Ready for review`}
+                      onClick={() => navigate("/billing")}
+                      testId={`notification-invoice-${inv.id}`}
+                    />
+                  ))}
+                </NotificationSection>
+              )}
+
+              {expiringExceptions.length > 0 && (
+                <NotificationSection title="Exceptions Expiring" bordered>
+                  {expiringExceptions.slice(0, 3).map((ex) => (
+                    <NotificationItem
+                      key={ex.id}
+                      icon={<Clock className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
+                      title={ex.reason?.slice(0, 50) || "Policy exception"}
+                      subtitle={`Expires ${new Date(ex.expiresAt!).toLocaleDateString()}`}
+                      onClick={() => navigate("/governance")}
+                      testId={`notification-exception-${ex.id}`}
+                    />
+                  ))}
+                </NotificationSection>
               )}
             </div>
           )}
@@ -135,5 +227,37 @@ export function NotificationCenter() {
         )}
       </PopoverContent>
     </Popover>
+  );
+}
+
+function NotificationSection({ title, children, bordered }: { title: string; children: React.ReactNode; bordered?: boolean }) {
+  return (
+    <div className={`p-2 ${bordered ? "border-t" : ""}`}>
+      <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider px-2">{title}</span>
+      {children}
+    </div>
+  );
+}
+
+function NotificationItem({ icon, title, subtitle, onClick, testId }: {
+  icon: React.ReactNode;
+  title: string;
+  subtitle: string;
+  onClick: () => void;
+  testId: string;
+}) {
+  return (
+    <button
+      className="w-full flex items-center gap-2 p-2 rounded-md text-left hover-elevate"
+      onClick={onClick}
+      data-testid={testId}
+    >
+      {icon}
+      <div className="flex-1 min-w-0">
+        <p className="text-xs font-medium truncate">{title}</p>
+        <p className="text-[10px] text-muted-foreground">{subtitle}</p>
+      </div>
+      <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0" />
+    </button>
   );
 }
