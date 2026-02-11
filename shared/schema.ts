@@ -1032,4 +1032,99 @@ export const insertMcpTranscriptSchema = createInsertSchema(mcpTranscripts).omit
 export type InsertMcpTranscript = z.infer<typeof insertMcpTranscriptSchema>;
 export type McpTranscript = typeof mcpTranscripts.$inferSelect;
 
+export const registrySources = pgTable("registry_sources", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  description: text("description"),
+  apiUrl: text("api_url").notNull(),
+  apiType: text("api_type").notNull().default("openapi"),
+  authType: text("auth_type").default("none"),
+  authConfig: jsonb("auth_config"),
+  syncIntervalMinutes: integer("sync_interval_minutes").default(60),
+  lastSyncAt: timestamp("last_sync_at"),
+  lastSyncStatus: text("last_sync_status").default("never"),
+  serverCount: integer("server_count").default(0),
+  enabled: boolean("enabled").default(true),
+  addedBy: text("added_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertRegistrySourceSchema = createInsertSchema(registrySources).omit({ id: true, createdAt: true });
+export type InsertRegistrySource = z.infer<typeof insertRegistrySourceSchema>;
+export type RegistrySource = typeof registrySources.$inferSelect;
+
+export const marketplaceServers = pgTable("marketplace_servers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  registrySourceId: varchar("registry_source_id").notNull(),
+  namespace: text("namespace").notNull(),
+  name: text("name").notNull(),
+  displayName: text("display_name"),
+  description: text("description"),
+  version: text("version").default("1.0.0"),
+  category: text("category").default("general"),
+  publisher: text("publisher"),
+  publisherVerified: boolean("publisher_verified").default(false),
+  iconUrl: text("icon_url"),
+  transportType: text("transport_type").default("streamable-http"),
+  url: text("url"),
+  capabilities: jsonb("capabilities"),
+  toolCount: integer("tool_count").default(0),
+  resourceCount: integer("resource_count").default(0),
+  promptCount: integer("prompt_count").default(0),
+  downloads: integer("downloads").default(0),
+  rating: real("rating"),
+  tags: text("tags").array().default(sql`'{}'::text[]`),
+  serverJson: jsonb("server_json"),
+  riskTier: text("risk_tier").default("MEDIUM"),
+  installStatus: text("install_status").default("available"),
+  installedServerId: varchar("installed_server_id"),
+  lastSyncedAt: timestamp("last_synced_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertMarketplaceServerSchema = createInsertSchema(marketplaceServers).omit({ id: true, createdAt: true });
+export type InsertMarketplaceServer = z.infer<typeof insertMarketplaceServerSchema>;
+export type MarketplaceServer = typeof marketplaceServers.$inferSelect;
+
+export const trustedPublishers = pgTable("trusted_publishers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  namespace: text("namespace").notNull(),
+  displayName: text("display_name").notNull(),
+  description: text("description"),
+  trustLevel: text("trust_level").notNull().default("verified"),
+  isInternal: boolean("is_internal").default(false),
+  autoApprove: boolean("auto_approve").default(false),
+  verifiedAt: timestamp("verified_at"),
+  verifiedBy: text("verified_by"),
+  serverCount: integer("server_count").default(0),
+  status: text("status").notNull().default("active"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertTrustedPublisherSchema = createInsertSchema(trustedPublishers).omit({ id: true, createdAt: true });
+export type InsertTrustedPublisher = z.infer<typeof insertTrustedPublisherSchema>;
+export type TrustedPublisher = typeof trustedPublishers.$inferSelect;
+
+export const marketplaceInstallRequests = pgTable("marketplace_install_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  marketplaceServerId: varchar("marketplace_server_id").notNull(),
+  serverName: text("server_name").notNull(),
+  namespace: text("namespace").notNull(),
+  publisher: text("publisher"),
+  requestedBy: text("requested_by"),
+  status: text("status").notNull().default("pending"),
+  approvalRequired: boolean("approval_required").default(true),
+  approvedBy: text("approved_by"),
+  approvedAt: timestamp("approved_at"),
+  rejectedReason: text("rejected_reason"),
+  handshakeStatus: text("handshake_status").default("pending"),
+  handshakeResult: jsonb("handshake_result"),
+  installedServerId: varchar("installed_server_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertMarketplaceInstallRequestSchema = createInsertSchema(marketplaceInstallRequests).omit({ id: true, createdAt: true });
+export type InsertMarketplaceInstallRequest = z.infer<typeof insertMarketplaceInstallRequestSchema>;
+export type MarketplaceInstallRequest = typeof marketplaceInstallRequests.$inferSelect;
+
 export * from "./models/chat";
