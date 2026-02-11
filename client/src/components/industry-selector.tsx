@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Check, ChevronDown } from "lucide-react";
 
 export function IndustrySelector() {
-  const { industry, setIndustry, isSelected } = useIndustry();
+  const { industry, clearIndustry, isSelected } = useIndustry();
 
   if (!isSelected) return null;
 
@@ -38,7 +38,7 @@ export function IndustrySelector() {
           return (
             <DropdownMenuItem
               key={ind.id}
-              onClick={() => setIndustry(ind.id)}
+              onClick={() => clearIndustry()}
               className="flex items-center gap-2 cursor-pointer"
               data-testid={`menu-item-industry-${ind.id}`}
             >
