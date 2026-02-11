@@ -53,6 +53,19 @@ import {
   Users,
   Gavel,
   Search,
+  Flame,
+  Wrench,
+  Play,
+  Archive,
+  FileCheck,
+  LayoutGrid,
+  Network,
+  Receipt,
+  Banknote,
+  AlertOctagon,
+  Lightbulb,
+  FlaskConical,
+  IterationCw,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -85,6 +98,7 @@ import {
 } from "@/components/ui/tooltip";
 import { StatusBadge } from "@/components/status-badge";
 import { StatCard } from "@/components/stat-card";
+import { ProgressRing } from "@/components/outcome-cockpit";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { OutcomeContract, KpiDefinition, Approval, OutcomeEvent, Agent } from "@shared/schema";
@@ -92,20 +106,25 @@ import type { OutcomeContract, KpiDefinition, Approval, OutcomeEvent, Agent } fr
 function Sparkline({
   points,
   target,
+  slaThreshold,
   width = 120,
   height = 32,
   className,
 }: {
   points: Array<{ date: string; value: number }>;
   target?: number;
+  slaThreshold?: number | null;
   width?: number;
   height?: number;
   className?: string;
 }) {
   if (!points || points.length < 2) return null;
   const values = points.map((p) => p.value);
-  const min = Math.min(...values, target ?? Infinity);
-  const max = Math.max(...values, target ?? -Infinity);
+  const allVals = [...values];
+  if (target != null) allVals.push(target);
+  if (slaThreshold != null) allVals.push(slaThreshold);
+  const min = Math.min(...allVals);
+  const max = Math.max(...allVals);
   const range = max - min || 1;
   const pad = 2;
   const w = width - pad * 2;
@@ -120,6 +139,8 @@ function Sparkline({
 
   const targetY =
     target != null ? pad + h - ((target - min) / range) * h : null;
+  const slaY =
+    slaThreshold != null ? pad + h - ((slaThreshold - min) / range) * h : null;
 
   return (
     <svg
@@ -138,6 +159,17 @@ function Sparkline({
           strokeWidth="1"
           strokeDasharray="3,3"
           className="text-muted-foreground/40"
+        />
+      )}
+      {slaY != null && (
+        <line
+          x1={pad}
+          y1={slaY}
+          x2={width - pad}
+          y2={slaY}
+          stroke="#ef4444"
+          strokeWidth="1.5"
+          strokeDasharray="4,2"
         />
       )}
       <path
@@ -170,6 +202,62 @@ function relativeTime(dateStr: string | null | undefined): string {
   return `${diffMonth} month${diffMonth === 1 ? "" : "s"} ago`;
 }
 
+function KpiGaugeRing({
+  value,
+  target,
+  size = 64,
+  strokeWidth = 5,
+}: {
+  value: number;
+  target: number;
+  size?: number;
+  strokeWidth?: number;
+}) {
+  const pct = target > 0 ? Math.min((value / target) * 100, 100) : 0;
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (pct / 100) * circumference;
+  const color = pct >= 90 ? "#10b981" : pct >= 60 ? "#f59e0b" : "#ef4444";
+
+  return (
+    <div className="inline-flex items-center justify-center" data-testid="kpi-gauge-ring">
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={strokeWidth}
+          className="text-muted-foreground/20"
+        />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke={color}
+          strokeWidth={strokeWidth}
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          strokeLinecap="round"
+          transform={`rotate(-90 ${size / 2} ${size / 2})`}
+        />
+        <text
+          x="50%"
+          y="50%"
+          dominantBaseline="central"
+          textAnchor="middle"
+          className="fill-current text-xs font-semibold"
+          style={{ fill: color }}
+        >
+          {Math.round(pct)}%
+        </text>
+      </svg>
+    </div>
+  );
+}
+
 export default function OutcomeDetail() {
   const [, params] = useRoute("/outcomes/:id");
   const outcomeId = params?.id;
@@ -180,14 +268,6 @@ export default function OutcomeDetail() {
   const [editingKpiId, setEditingKpiId] = useState<string | null>(null);
   const [editKpiData, setEditKpiData] = useState<Record<string, any>>({});
   const [evidenceWindow, setEvidenceWindow] = useState("7d");
-  const [roiInputs, setRoiInputs] = useState({
-    currentTimeMins: 30,
-    volumePerMonth: 500,
-    hourlyRate: 75,
-    automationPercent: 70,
-    implementationCost: 25000,
-    ongoingMonthlyCost: 500,
-  });
 
   const { data: outcome, isLoading } = useQuery<OutcomeContract>({
     queryKey: ["/api/outcomes", outcomeId],
@@ -282,6 +362,117 @@ export default function OutcomeDetail() {
 
   const { data: allAgents } = useQuery<Agent[]>({
     queryKey: ["/api/agents"],
+  });
+
+  const { data: agentContributions } = useQuery<{
+    contributions: Array<{
+      agentId: string;
+      agentName: string;
+      agentType: string;
+      status: string;
+      valueShare: number;
+      deliveredValue: number;
+      costToServe: number;
+      healthScore: number;
+      successRate: number;
+      avgLatency: number;
+      totalRuns: number;
+      failedRuns: number;
+      capabilities: Array<{ name: string; contribution: number }>;
+      isUnderperforming: boolean;
+    }>;
+    summary: {
+      totalAgents: number;
+      totalRevenue: number;
+      underperformingCount: number;
+      avgHealthScore: number;
+    };
+  }>({
+    queryKey: ["/api/outcomes", outcomeId, "agent-contributions"],
+    enabled: !!outcomeId,
+  });
+
+  const { data: remediation } = useQuery<{
+    risks: Array<{
+      id: string;
+      severity: string;
+      category: string;
+      title: string;
+      description: string;
+      affectedAgents: string[];
+      affectedKpis: string[];
+      detectedAt: string;
+      recommendation: {
+        type: string;
+        title: string;
+        description: string;
+        linkedPatchId: string | null;
+        linkedExperimentId: string | null;
+        estimatedImpact: string;
+        effort: string;
+      };
+    }>;
+    activeIncidents: Array<{
+      id: string;
+      title: string;
+      severity: string;
+      status: string;
+      agentId: string;
+      agentName: string;
+      detectedAt: string;
+      resolvedAt: string | null;
+      description: string;
+    }>;
+    recentPatches: Array<{
+      id: string;
+      description: string;
+      status: string;
+      agentId: string;
+      agentName: string;
+      changeType: string;
+      createdAt: string;
+      riskScore: number;
+    }>;
+  }>({
+    queryKey: ["/api/outcomes", outcomeId, "remediation"],
+    enabled: !!outcomeId,
+  });
+
+  const { data: financialLedger } = useQuery<{
+    pipeline: Array<{
+      stage: string;
+      label: string;
+      count: number;
+      amount: number;
+    }>;
+    invoices: Array<{
+      id: string;
+      status: string;
+      totalAmount: number;
+      periodStart: string;
+      periodEnd: string;
+      lineItemCount: number;
+    }>;
+    recentEvents: Array<{
+      id: string;
+      type: string;
+      amount: number;
+      agentId: string;
+      agentName: string;
+      createdAt: string;
+      billable: boolean;
+    }>;
+    summary: {
+      totalCaptured: number;
+      totalMetered: number;
+      totalInvoiced: number;
+      totalCollected: number;
+      totalDisputed: number;
+      collectionRate: number;
+    };
+  }>({
+    queryKey: ["/api/outcomes", outcomeId, "financial-ledger"],
+    enabled: !!outcomeId,
   });
 
   const updateContractMutation = useMutation({
@@ -447,27 +638,9 @@ export default function OutcomeDetail() {
   const outcomeApprovals = allApprovals?.filter(a => a.objectId === outcomeId) || [];
   const pendingApprovals = outcomeApprovals.filter(a => a.status === "pending");
 
-  const recentEvents = outcomeEvents
-    ? [...outcomeEvents]
-        .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
-        .slice(0, 10)
-    : [];
   const totalEventsCount = outcomeEvents?.length || 0;
   const billableEventsCount = outcomeEvents?.filter(e => e.billable).length || 0;
-  const exclusionRate = totalEventsCount > 0 ? ((totalEventsCount - billableEventsCount) / totalEventsCount) * 100 : 0;
   const estimatedRevenue = billableEventsCount * (outcome.pricePerUnit || 0);
-
-  const impactScore = Math.min(((outcome.pricePerUnit || 0) * 10 + (outcome.volumeCap || 100) / 100), 40);
-  const complianceScore = Math.min(gates.length * 10, 30);
-  const autonomyScore = Math.min(boundAgents.length * 10, 30);
-  const riskScore = Math.round(Math.min(impactScore + complianceScore + autonomyScore, 100));
-
-  const requiredApprovalRules =
-    outcome.riskTier === "HIGH"
-      ? ["All configuration changes", "KPI threshold modifications", "Billing & pricing changes", "Agent binding changes", "Risk parameter updates"]
-      : outcome.riskTier === "MEDIUM"
-        ? ["Billing & pricing changes", "KPI threshold modifications"]
-        : ["Billing & pricing changes"];
 
   return (
     <div className="flex flex-col gap-6 p-6" data-testid="page-outcome-detail">
@@ -604,7 +777,7 @@ export default function OutcomeDetail() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         <StatCard
           title="Weighted Progress"
           value={`${Math.round(weightedProgress)}%`}
@@ -621,12 +794,20 @@ export default function OutcomeDetail() {
           testId="stat-kpis-count"
         />
         <StatCard
-          title="Price per Unit"
-          value={`${outcome.currency || "USD"} ${outcome.pricePerUnit?.toFixed(2)}`}
+          title="Bound Agents"
+          value={boundAgents.length}
+          icon={Bot}
+          subtitle={agentContributions?.summary?.underperformingCount ? `${agentContributions.summary.underperformingCount} underperforming` : "All healthy"}
+          variant={agentContributions?.summary?.underperformingCount ? "warning" : "success"}
+          testId="stat-bound-agents"
+        />
+        <StatCard
+          title="Est. Revenue"
+          value={`${outcome.currency || "USD"} ${estimatedRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
           icon={DollarSign}
-          subtitle={outcome.pricingModel?.replace(/_/g, " ")}
+          subtitle={`${billableEventsCount} billable events`}
           variant="default"
-          testId="stat-price"
+          testId="stat-estimated-revenue"
         />
         <StatCard
           title="Risk Threshold"
@@ -638,22 +819,21 @@ export default function OutcomeDetail() {
         />
       </div>
 
-      <Tabs defaultValue="definition" className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="definition" data-testid="tab-definition">Definition</TabsTrigger>
-          <TabsTrigger value="evidence" data-testid="tab-evidence">Evidence</TabsTrigger>
-          <TabsTrigger value="commercials" data-testid="tab-commercials">Commercials</TabsTrigger>
-          <TabsTrigger value="risk" data-testid="tab-risk">Risk</TabsTrigger>
-          <TabsTrigger value="audit" data-testid="tab-audit">Audit</TabsTrigger>
-          <TabsTrigger value="agents" data-testid="tab-agents">Agent Proposals</TabsTrigger>
+      <Tabs defaultValue="kpi-delivery" className="space-y-4">
+        <TabsList className="flex-wrap">
+          <TabsTrigger value="kpi-delivery" data-testid="tab-kpi-delivery">KPI Delivery</TabsTrigger>
+          <TabsTrigger value="agent-map" data-testid="tab-agent-map">Agent Contribution Map</TabsTrigger>
+          <TabsTrigger value="financial-ledger" data-testid="tab-financial-ledger">Financial Ledger</TabsTrigger>
+          <TabsTrigger value="evidence-vault" data-testid="tab-evidence-vault">Evidence Vault</TabsTrigger>
+          <TabsTrigger value="risk-remediation" data-testid="tab-risk-remediation">Risk & Remediation</TabsTrigger>
         </TabsList>
 
-        {/* Tab 1: Definition */}
-        <TabsContent value="definition" className="space-y-6">
+        {/* Tab 1: KPI Delivery */}
+        <TabsContent value="kpi-delivery" className="space-y-6" data-testid="tabcontent-kpi-delivery">
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <div>
-              <h2 className="text-lg font-semibold">KPI Definitions</h2>
-              <p className="text-sm text-muted-foreground">Baselines, targets, weights, and SLA thresholds</p>
+              <h2 className="text-lg font-semibold">KPI Delivery</h2>
+              <p className="text-sm text-muted-foreground">Live gauges, trend lines with SLA thresholds, and predicted trajectory</p>
             </div>
             <Dialog open={createKpiOpen} onOpenChange={setCreateKpiOpen}>
               <DialogTrigger asChild>
@@ -748,24 +928,31 @@ export default function OutcomeDetail() {
             </Card>
           )}
 
-          <div className="space-y-3">
+          <div className="space-y-4">
             {kpis?.map((kpi) => {
               const progress = kpi.target ? ((kpi.currentValue || 0) / kpi.target) * 100 : 0;
-              const baselineProgress = kpi.target && kpi.baseline ? ((kpi.baseline || 0) / kpi.target) * 100 : 0;
               const isInverse = kpi.name.includes("Time") || kpi.name.includes("Latency");
               const isBreaching = kpi.slaThreshold != null && kpi.currentValue != null && (
                 isInverse ? kpi.currentValue > kpi.slaThreshold : kpi.currentValue < kpi.slaThreshold
               );
+              const kpiTs = evidence?.kpiTimeSeries?.find(ts => ts.kpiId === kpi.id);
+              const contributingAgents = agentContributions?.contributions?.slice(0, 3) || [];
+
+              const lastPt = kpiTs?.points?.[kpiTs.points.length - 1];
+              const firstPt = kpiTs?.points?.[0];
+              const currentVal = kpi.currentValue || 0;
+              const projectedDailyRate = kpiTs && kpiTs.points.length >= 2
+                ? (lastPt!.value - firstPt!.value) / (kpiTs.points.length - 1)
+                : 0;
+              const projected30d = currentVal + projectedDailyRate * 30;
 
               return (
                 <Card key={kpi.id} data-testid={`card-kpi-${kpi.id}`}>
                   <CardContent className="p-4">
-                    <div className="flex flex-col gap-3">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <div className="flex items-center justify-center w-8 h-8 rounded-md bg-primary/10 shrink-0">
-                            <Gauge className="w-4 h-4 text-primary" />
-                          </div>
+                    <div className="flex flex-col gap-4">
+                      <div className="flex items-start justify-between gap-4 flex-wrap">
+                        <div className="flex items-center gap-4 min-w-0">
+                          <KpiGaugeRing value={kpi.currentValue || 0} target={kpi.target} size={64} strokeWidth={5} />
                           <div className="flex flex-col min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="text-sm font-semibold">{kpi.name}</span>
@@ -779,45 +966,45 @@ export default function OutcomeDetail() {
                             <span className="text-[11px] text-muted-foreground">
                               Weight: {((kpi.weight || 1) * 100).toFixed(0)}% | Unit: {kpi.unit}
                             </span>
+                            <div className="flex items-center gap-4 mt-1 flex-wrap">
+                              <div className="flex flex-col gap-0.5">
+                                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Current</span>
+                                <span className="text-sm font-semibold" data-testid={`text-current-${kpi.id}`}>{kpi.currentValue ?? 0} {kpi.unit}</span>
+                              </div>
+                              <div className="flex flex-col gap-0.5">
+                                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Target</span>
+                                <span className="text-sm font-medium" data-testid={`text-target-${kpi.id}`}>{kpi.target} {kpi.unit}</span>
+                              </div>
+                              <div className="flex flex-col gap-0.5">
+                                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">SLA</span>
+                                <span className="text-sm font-medium" data-testid={`text-sla-${kpi.id}`}>{kpi.slaThreshold ?? "N/A"}</span>
+                              </div>
+                              <div className="flex flex-col gap-0.5">
+                                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">30d Projected</span>
+                                <span className={`text-sm font-medium ${projected30d >= (kpi.target || 0) ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`} data-testid={`text-projected-${kpi.id}`}>
+                                  {projected30d.toFixed(1)} {kpi.unit}
+                                </span>
+                              </div>
+                            </div>
                           </div>
                         </div>
-                        <div className="flex items-center gap-1">
+
+                        <div className="flex items-center gap-2 shrink-0">
                           {editingKpiId === kpi.id ? (
                             <>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => saveEditKpi(kpi.id)}
-                                disabled={updateKpiMutation.isPending}
-                                data-testid={`button-save-kpi-${kpi.id}`}
-                              >
+                              <Button variant="ghost" size="icon" onClick={() => saveEditKpi(kpi.id)} disabled={updateKpiMutation.isPending} data-testid={`button-save-kpi-${kpi.id}`}>
                                 <Save className="w-3.5 h-3.5 text-emerald-500" />
                               </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => setEditingKpiId(null)}
-                                data-testid={`button-cancel-kpi-${kpi.id}`}
-                              >
+                              <Button variant="ghost" size="icon" onClick={() => setEditingKpiId(null)} data-testid={`button-cancel-kpi-${kpi.id}`}>
                                 <X className="w-3.5 h-3.5 text-muted-foreground" />
                               </Button>
                             </>
                           ) : (
                             <>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => startEditKpi(kpi)}
-                                data-testid={`button-edit-kpi-${kpi.id}`}
-                              >
+                              <Button variant="ghost" size="icon" onClick={() => startEditKpi(kpi)} data-testid={`button-edit-kpi-${kpi.id}`}>
                                 <Edit3 className="w-3.5 h-3.5 text-muted-foreground" />
                               </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => deleteKpiMutation.mutate(kpi.id)}
-                                data-testid={`button-delete-kpi-${kpi.id}`}
-                              >
+                              <Button variant="ghost" size="icon" onClick={() => deleteKpiMutation.mutate(kpi.id)} data-testid={`button-delete-kpi-${kpi.id}`}>
                                 <Trash2 className="w-3.5 h-3.5 text-muted-foreground" />
                               </Button>
                             </>
@@ -825,353 +1012,396 @@ export default function OutcomeDetail() {
                         </div>
                       </div>
 
-                      {editingKpiId === kpi.id ? (
+                      {editingKpiId === kpi.id && (
                         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                           <div className="flex flex-col gap-1">
                             <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Baseline</span>
-                            <Input
-                              type="number"
-                              step="any"
-                              value={editKpiData.baseline}
-                              onChange={(e) => setEditKpiData({ ...editKpiData, baseline: e.target.value })}
-                              className="h-8 text-sm"
-                              data-testid={`input-edit-baseline-${kpi.id}`}
-                            />
+                            <Input type="number" step="any" value={editKpiData.baseline} onChange={(e) => setEditKpiData({ ...editKpiData, baseline: e.target.value })} data-testid={`input-edit-baseline-${kpi.id}`} />
                           </div>
                           <div className="flex flex-col gap-1">
                             <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Target</span>
-                            <Input
-                              type="number"
-                              step="any"
-                              value={editKpiData.target}
-                              onChange={(e) => setEditKpiData({ ...editKpiData, target: e.target.value })}
-                              className="h-8 text-sm"
-                              data-testid={`input-edit-target-${kpi.id}`}
-                            />
+                            <Input type="number" step="any" value={editKpiData.target} onChange={(e) => setEditKpiData({ ...editKpiData, target: e.target.value })} data-testid={`input-edit-target-${kpi.id}`} />
                           </div>
                           <div className="flex flex-col gap-1">
                             <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Weight</span>
-                            <Input
-                              type="number"
-                              step="0.01"
-                              value={editKpiData.weight}
-                              onChange={(e) => setEditKpiData({ ...editKpiData, weight: e.target.value })}
-                              className="h-8 text-sm"
-                              data-testid={`input-edit-weight-${kpi.id}`}
-                            />
+                            <Input type="number" step="0.01" value={editKpiData.weight} onChange={(e) => setEditKpiData({ ...editKpiData, weight: e.target.value })} data-testid={`input-edit-weight-${kpi.id}`} />
                           </div>
                           <div className="flex flex-col gap-1">
                             <span className="text-[10px] text-muted-foreground uppercase tracking-wider">SLA Threshold</span>
-                            <Input
-                              type="number"
-                              step="any"
-                              value={editKpiData.slaThreshold}
-                              onChange={(e) => setEditKpiData({ ...editKpiData, slaThreshold: e.target.value })}
-                              className="h-8 text-sm"
-                              data-testid={`input-edit-sla-${kpi.id}`}
-                            />
+                            <Input type="number" step="any" value={editKpiData.slaThreshold} onChange={(e) => setEditKpiData({ ...editKpiData, slaThreshold: e.target.value })} data-testid={`input-edit-sla-${kpi.id}`} />
                           </div>
                           <div className="flex flex-col gap-1">
                             <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Breach Level</span>
-                            <select
-                              value={editKpiData.breachLevel}
-                              onChange={(e) => setEditKpiData({ ...editKpiData, breachLevel: e.target.value })}
-                              className="flex h-8 w-full rounded-md border border-input bg-background px-2 py-1 text-sm"
-                              data-testid={`select-edit-breach-${kpi.id}`}
-                            >
+                            <select value={editKpiData.breachLevel} onChange={(e) => setEditKpiData({ ...editKpiData, breachLevel: e.target.value })} className="flex h-9 w-full rounded-md border border-input bg-background px-2 py-1 text-sm" data-testid={`select-edit-breach-${kpi.id}`}>
                               <option value="warning">Warning</option>
                               <option value="critical">Critical</option>
                             </select>
                           </div>
                         </div>
-                      ) : (
-                        <div className="flex flex-col gap-3">
-                          <div className="flex items-center gap-4 flex-wrap">
-                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 flex-1 min-w-0">
-                              <div className="flex flex-col gap-0.5">
-                                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Baseline</span>
-                                {(() => {
-                                  const aboveBaseline = kpi.baseline != null && kpi.target && (kpi.currentValue || 0) >= kpi.baseline;
-                                  const colorClass = kpi.baseline != null && kpi.target
-                                    ? (aboveBaseline ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")
-                                    : "";
-                                  return <span className={`text-sm font-medium ${colorClass}`} data-testid={`text-baseline-${kpi.id}`}>{kpi.baseline ?? "N/A"} {kpi.unit}</span>;
-                                })()}
-                              </div>
-                              <div className="flex flex-col gap-0.5">
-                                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Current</span>
-                                {(() => {
-                                  const meetsTarget = kpi.target
-                                    ? (isInverse ? (kpi.currentValue || 0) <= kpi.target : (kpi.currentValue || 0) >= kpi.target)
-                                    : null;
-                                  const colorClass = meetsTarget != null
-                                    ? (meetsTarget ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")
-                                    : "";
-                                  return <span className={`text-sm font-semibold ${colorClass}`} data-testid={`text-current-${kpi.id}`}>{kpi.currentValue ?? 0} {kpi.unit}</span>;
-                                })()}
-                              </div>
-                              <div className="flex flex-col gap-0.5">
-                                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Target</span>
-                                <span className="text-sm font-medium" data-testid={`text-target-${kpi.id}`}>{kpi.target} {kpi.unit}</span>
-                              </div>
-                              <div className="flex flex-col gap-0.5">
-                                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">SLA Threshold</span>
-                                <span className="text-sm font-medium" data-testid={`text-sla-${kpi.id}`}>{kpi.slaThreshold ?? "N/A"} {kpi.unit}</span>
-                              </div>
-                            </div>
-                            {(() => {
-                              const kpiTs = evidence?.kpiTimeSeries?.find(ts => ts.kpiId === kpi.id);
-                              if (!kpiTs || !kpiTs.points || kpiTs.points.length < 2) return null;
-                              const lastPt = kpiTs.points[kpiTs.points.length - 1];
-                              const firstPt = kpiTs.points[0];
-                              const trendDir = lastPt.value > firstPt.value ? "up" : lastPt.value < firstPt.value ? "down" : "stable";
-                              return (
-                                <div className="flex flex-col items-center gap-1 shrink-0" data-testid={`kpi-sparkline-${kpi.id}`}>
-                                  <Sparkline points={kpiTs.points} target={kpiTs.target} width={120} height={32} />
-                                  <div className="flex items-center gap-1">
-                                    {trendDir === "up" && <TrendingUp className="w-3 h-3 text-emerald-500" />}
-                                    {trendDir === "down" && <TrendingDown className="w-3 h-3 text-red-500" />}
-                                    {trendDir === "stable" && <Minus className="w-3 h-3 text-muted-foreground" />}
-                                    <span className="text-[10px] text-muted-foreground">
-                                      {trendDir === "up" ? "Trending up" : trendDir === "down" ? "Trending down" : "Stable"}
-                                    </span>
-                                  </div>
-                                </div>
-                              );
-                            })()}
-                          </div>
-                        </div>
                       )}
 
-                      <div className="flex flex-col gap-1.5">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs text-muted-foreground">Progress to Target</span>
-                          <span className="text-xs font-medium">{Math.min(Math.round(progress), 100)}%</span>
-                        </div>
-                        <div className="relative">
-                          <Progress value={Math.min(progress, 100)} className="h-2" />
-                          {baselineProgress > 0 && (
-                            <div
-                              className="absolute top-0 h-2 w-0.5 bg-muted-foreground/50"
-                              style={{ left: `${Math.min(baselineProgress, 100)}%` }}
-                              title={`Baseline: ${kpi.baseline}`}
+                      <div className="flex items-center gap-6 flex-wrap">
+                        {kpiTs && kpiTs.points && kpiTs.points.length >= 2 && (
+                          <div className="flex flex-col items-center gap-1" data-testid={`kpi-sparkline-${kpi.id}`}>
+                            <Sparkline
+                              points={kpiTs.points}
+                              target={kpiTs.target}
+                              slaThreshold={kpi.slaThreshold}
+                              width={180}
+                              height={48}
                             />
-                          )}
-                        </div>
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-[10px] text-muted-foreground">Confidence: {((kpi.confidence || 0) * 100).toFixed(0)}%</span>
-                          {kpi.expression && (
-                            <span className="text-[10px] text-muted-foreground font-mono truncate max-w-[50%]" title={kpi.expression}>
-                              {kpi.expression}
+                            <span className="text-[10px] text-muted-foreground">
+                              {(() => {
+                                const last = kpiTs.points[kpiTs.points.length - 1];
+                                const first = kpiTs.points[0];
+                                return last.value > first.value ? "Trending up" : last.value < first.value ? "Trending down" : "Stable";
+                              })()}
                             </span>
-                          )}
+                          </div>
+                        )}
+
+                        <div className="flex flex-col gap-1.5 flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs text-muted-foreground">Progress to Target</span>
+                            <span className="text-xs font-medium">{Math.min(Math.round(progress), 100)}%</span>
+                          </div>
+                          <Progress value={Math.min(progress, 100)} className="h-2" />
+                          <span className="text-[10px] text-muted-foreground">Confidence: {((kpi.confidence || 0) * 100).toFixed(0)}%</span>
                         </div>
                       </div>
 
-                      {kpi.expression && (() => {
-                        const expr = kpi.expression || "";
-                        const fieldRefs = expr.match(/\b(status|type|amount|duration|count|value|score|rating|latency|time|cost)\b/gi) || [];
-                        const eventFields = ["status", "type", "value", "amount"];
-                        const missingFields = fieldRefs.filter(f => !eventFields.includes(f.toLowerCase()));
-                        const sampleValue = kpi.currentValue || 0;
-                        const dayRange = 7;
-                        const dailyAvg = kpi.target ? (sampleValue / dayRange).toFixed(2) : "N/A";
-
-                        return (
-                          <div className="flex flex-col gap-2">
-                            <div className="rounded-md bg-muted/50 p-3" data-testid={`expression-preview-${kpi.id}`}>
-                              <div className="flex items-center justify-between gap-2 mb-1">
-                                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Expression</span>
-                                <Badge variant="outline" className="text-[9px]">Formula</Badge>
-                              </div>
-                              <pre className="text-xs font-mono text-foreground overflow-x-auto">{expr}</pre>
-                            </div>
-                            <div className="rounded-md bg-primary/5 border border-primary/10 p-3" data-testid={`formula-preview-${kpi.id}`}>
-                              <div className="flex items-center gap-2 mb-2">
-                                <Brain className="w-3.5 h-3.5 text-primary" />
-                                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Sample Computation (Last 7 Days)</span>
-                              </div>
-                              <div className="grid grid-cols-3 gap-3 text-xs">
-                                <div className="flex flex-col gap-0.5">
-                                  <span className="text-muted-foreground">Current Value</span>
-                                  <span className="font-semibold">{sampleValue} {kpi.unit}</span>
-                                </div>
-                                <div className="flex flex-col gap-0.5">
-                                  <span className="text-muted-foreground">Daily Average</span>
-                                  <span className="font-semibold">{dailyAvg} {kpi.unit}/day</span>
-                                </div>
-                                <div className="flex flex-col gap-0.5">
-                                  <span className="text-muted-foreground">Projected (30d)</span>
-                                  <span className="font-semibold">{kpi.target ? (parseFloat(dailyAvg as string) * 30).toFixed(1) : "N/A"} {kpi.unit}</span>
-                                </div>
-                              </div>
-                            </div>
-                            {missingFields.length > 0 && (
-                              <div className="flex items-center gap-2 p-2 rounded-md bg-amber-500/10 border border-amber-500/20" data-testid={`validation-warning-${kpi.id}`}>
-                                <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                                <span className="text-[11px] text-amber-700 dark:text-amber-300">
-                                  Expression references fields that may not exist in outcome events: <span className="font-mono font-semibold">{missingFields.join(", ")}</span>
-                                </span>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })()}
+                      {contributingAgents.length > 0 && (
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Contributing agents:</span>
+                          {contributingAgents.map((agent) => (
+                            <Link key={agent.agentId} href={`/agents/${agent.agentId}`}>
+                              <Badge variant="outline" className="text-[10px] cursor-pointer" data-testid={`badge-contributing-agent-${agent.agentId}`}>
+                                <Bot className="w-3 h-3 mr-1" />
+                                {agent.agentName} ({agent.valueShare}%)
+                              </Badge>
+                            </Link>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
               );
             })}
           </div>
+        </TabsContent>
 
-          <Separator />
-
+        {/* Tab 2: Agent Contribution Map */}
+        <TabsContent value="agent-map" className="space-y-6" data-testid="tabcontent-agent-map">
           <div>
-            <h2 className="text-lg font-semibold">SLA Terms</h2>
-            <p className="text-sm text-muted-foreground">Service level agreement thresholds and breach penalties</p>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium flex items-center gap-2">
-                  <Activity className="w-4 h-4 text-primary" /> Success Rate SLA
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-4 pt-0">
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm text-muted-foreground">Minimum Success Rate</span>
-                    <span className="text-sm font-semibold" data-testid="text-sla-success-rate">{sla.minSuccessRate ? `${(sla.minSuccessRate * 100).toFixed(1)}%` : "N/A"}</span>
-                  </div>
-                  {sla.minSuccessRate && (
-                    <Progress value={sla.minSuccessRate * 100} className="h-1.5" />
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium flex items-center gap-2">
-                  <Zap className="w-4 h-4 text-primary" /> Latency SLA
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-4 pt-0">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm text-muted-foreground">Max P95 Latency</span>
-                  <span className="text-sm font-semibold" data-testid="text-sla-latency">{sla.maxP95LatencyMs ? `${(sla.maxP95LatencyMs / 1000).toFixed(1)}s` : "N/A"}</span>
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium flex items-center gap-2">
-                  <Shield className="w-4 h-4 text-primary" /> Uptime SLA
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-4 pt-0">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm text-muted-foreground">Minimum Uptime</span>
-                  <span className="text-sm font-semibold" data-testid="text-sla-uptime">{sla.uptimePercent ? `${sla.uptimePercent}%` : "N/A"}</span>
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 text-primary" /> Breach Penalty
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-4 pt-0">
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm text-muted-foreground">Penalty Rate</span>
-                    <span className="text-sm font-semibold" data-testid="text-sla-penalty">{sla.breachPenaltyPercent ? `${sla.breachPenaltyPercent}%` : "N/A"}</span>
-                  </div>
-                  {sla.maxPolicyViolationRate != null && (
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm text-muted-foreground">Max Policy Violation Rate</span>
-                      <span className="text-sm font-semibold">{(sla.maxPolicyViolationRate * 100).toFixed(2)}%</span>
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
+            <h2 className="text-lg font-semibold">Agent Contribution Map</h2>
+            <p className="text-sm text-muted-foreground">Value allocation, health scores, cost-to-serve, and capability breakdown</p>
           </div>
 
-          <Separator />
-
-          <div>
-            <h2 className="text-lg font-semibold">Attribution Rules</h2>
-            <p className="text-sm text-muted-foreground">How outcome events get attributed to agent runs</p>
-          </div>
-          {attribution.model ? (
+          {!agentContributions ? (
+            <div className="space-y-3">
+              <Skeleton className="h-24 w-full" />
+              <Skeleton className="h-24 w-full" />
+            </div>
+          ) : agentContributions.contributions.length === 0 ? (
             <Card>
-              <CardContent className="p-4">
-                <div className="flex flex-col gap-4">
-                  <div className="flex items-center gap-3">
-                    <div className="flex items-center justify-center w-10 h-10 rounded-md bg-primary/10 shrink-0">
-                      <GitBranch className="w-5 h-5 text-primary" />
-                    </div>
-                    <div className="flex flex-col">
-                      <span className="text-sm font-semibold capitalize">{attribution.model.replace(/_/g, " ")} Attribution</span>
-                      <span className="text-xs text-muted-foreground">{attribution.description}</span>
-                    </div>
-                  </div>
-
-                  <Separator />
-
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                    <div className="flex flex-col gap-1">
-                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Model</span>
-                      <span className="text-sm font-medium capitalize" data-testid="text-attribution-model">{attribution.model?.replace(/_/g, " ")}</span>
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Window</span>
-                      <span className="text-sm font-medium" data-testid="text-attribution-window">{attribution.windowHours}h</span>
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Trace Link</span>
-                      <span className="text-sm font-medium flex items-center gap-1" data-testid="text-attribution-trace">
-                        {attribution.requireTraceLink ? (
-                          <><CheckCircle className="w-3.5 h-3.5 text-emerald-500" /> Required</>
-                        ) : (
-                          <><XCircle className="w-3.5 h-3.5 text-muted-foreground" /> Optional</>
-                        )}
-                      </span>
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Escalated</span>
-                      <span className="text-sm font-medium flex items-center gap-1" data-testid="text-attribution-escalated">
-                        {attribution.excludeEscalated ? (
-                          <><XCircle className="w-3.5 h-3.5 text-red-500" /> Excluded</>
-                        ) : (
-                          <><CheckCircle className="w-3.5 h-3.5 text-emerald-500" /> Included</>
-                        )}
-                      </span>
-                    </div>
-                  </div>
-                </div>
+              <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
+                <Bot className="w-10 h-10 text-muted-foreground/50" />
+                <p className="text-sm text-muted-foreground">No agents bound to this outcome</p>
               </CardContent>
             </Card>
           ) : (
-            <Card>
-              <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
-                <GitBranch className="w-10 h-10 text-muted-foreground/50" />
-                <p className="text-sm text-muted-foreground">No attribution rules configured</p>
-              </CardContent>
-            </Card>
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <StatCard
+                  title="Total Agents"
+                  value={agentContributions.summary.totalAgents}
+                  icon={Bot}
+                  testId="stat-contribution-total-agents"
+                />
+                <StatCard
+                  title="Total Revenue"
+                  value={`$${agentContributions.summary.totalRevenue.toLocaleString()}`}
+                  icon={DollarSign}
+                  testId="stat-contribution-total-revenue"
+                />
+                <StatCard
+                  title="Avg Health Score"
+                  value={agentContributions.summary.avgHealthScore}
+                  icon={Activity}
+                  variant={agentContributions.summary.avgHealthScore >= 80 ? "success" : agentContributions.summary.avgHealthScore >= 60 ? "warning" : "danger"}
+                  testId="stat-contribution-avg-health"
+                />
+                <StatCard
+                  title="Underperforming"
+                  value={agentContributions.summary.underperformingCount}
+                  icon={AlertTriangle}
+                  variant={agentContributions.summary.underperformingCount > 0 ? "danger" : "success"}
+                  testId="stat-contribution-underperforming"
+                />
+              </div>
+
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold">Value Share Distribution</h3>
+                <div className="flex items-center gap-1 h-6 rounded-md overflow-hidden" data-testid="bar-value-share-distribution">
+                  {agentContributions.contributions.map((agent, i) => {
+                    const colors = [
+                      "bg-blue-500 dark:bg-blue-400",
+                      "bg-emerald-500 dark:bg-emerald-400",
+                      "bg-purple-500 dark:bg-purple-400",
+                      "bg-amber-500 dark:bg-amber-400",
+                      "bg-pink-500 dark:bg-pink-400",
+                      "bg-cyan-500 dark:bg-cyan-400",
+                    ];
+                    return (
+                      <Tooltip key={agent.agentId}>
+                        <TooltipTrigger asChild>
+                          <div
+                            className={`h-full ${colors[i % colors.length]} transition-all`}
+                            style={{ width: `${agent.valueShare}%` }}
+                            data-testid={`bar-segment-${agent.agentId}`}
+                          />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p className="text-xs">{agent.agentName}: {agent.valueShare}% (${agent.deliveredValue.toLocaleString()})</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    );
+                  })}
+                </div>
+                <div className="flex items-center gap-4 flex-wrap">
+                  {agentContributions.contributions.map((agent, i) => {
+                    const dotColors = [
+                      "bg-blue-500",
+                      "bg-emerald-500",
+                      "bg-purple-500",
+                      "bg-amber-500",
+                      "bg-pink-500",
+                      "bg-cyan-500",
+                    ];
+                    return (
+                      <div key={agent.agentId} className="flex items-center gap-1.5">
+                        <div className={`w-2.5 h-2.5 rounded-full ${dotColors[i % dotColors.length]}`} />
+                        <span className="text-xs text-muted-foreground">{agent.agentName} ({agent.valueShare}%)</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                {agentContributions.contributions.map((agent) => (
+                  <Card
+                    key={agent.agentId}
+                    className={agent.isUnderperforming ? "border-red-500/30" : ""}
+                    data-testid={`card-agent-contribution-${agent.agentId}`}
+                  >
+                    <CardContent className="p-4">
+                      <div className="flex flex-col gap-4">
+                        <div className="flex items-start justify-between gap-4 flex-wrap">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <ProgressRing value={agent.healthScore} size={44} strokeWidth={3.5} />
+                            <div className="flex flex-col min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <Link href={`/agents/${agent.agentId}`}>
+                                  <span className="text-sm font-semibold cursor-pointer" data-testid={`text-agent-name-${agent.agentId}`}>{agent.agentName}</span>
+                                </Link>
+                                <StatusBadge status={agent.status} />
+                                {agent.isUnderperforming && (
+                                  <Badge variant="outline" className="text-[10px] bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20">
+                                    Underperforming
+                                  </Badge>
+                                )}
+                              </div>
+                              <span className="text-[11px] text-muted-foreground">{agent.agentType} | {agent.totalRuns} runs | {agent.successRate}% success</span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-4 shrink-0 flex-wrap">
+                            <div className="flex flex-col items-end gap-0.5">
+                              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Value Share</span>
+                              <span className="text-sm font-semibold" data-testid={`text-value-share-${agent.agentId}`}>{agent.valueShare}%</span>
+                            </div>
+                            <div className="flex flex-col items-end gap-0.5">
+                              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Delivered</span>
+                              <span className="text-sm font-semibold" data-testid={`text-delivered-value-${agent.agentId}`}>${agent.deliveredValue.toLocaleString()}</span>
+                            </div>
+                            <div className="flex flex-col items-end gap-0.5">
+                              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Cost-to-Serve</span>
+                              <span className="text-sm font-semibold" data-testid={`text-cost-${agent.agentId}`}>${agent.costToServe.toFixed(2)}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col gap-2">
+                          <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Capability Breakdown</span>
+                          <div className="flex flex-col gap-1.5">
+                            {agent.capabilities.map((cap, ci) => (
+                              <div key={ci} className="flex items-center gap-3" data-testid={`capability-${agent.agentId}-${ci}`}>
+                                <span className="text-xs text-muted-foreground w-40 shrink-0 truncate">{cap.name}</span>
+                                <div className="flex-1 h-2 rounded-sm bg-muted/50">
+                                  <div
+                                    className="h-full rounded-sm bg-primary/60"
+                                    style={{ width: `${cap.contribution}%` }}
+                                  />
+                                </div>
+                                <span className="text-[10px] text-muted-foreground w-8 text-right shrink-0">{cap.contribution}%</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-3 flex-wrap">
+                          <div className="flex items-center gap-1.5">
+                            <Activity className="w-3 h-3 text-muted-foreground" />
+                            <span className="text-[10px] text-muted-foreground">Avg Latency: {agent.avgLatency}ms</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <XCircle className="w-3 h-3 text-muted-foreground" />
+                            <span className="text-[10px] text-muted-foreground">Failed: {agent.failedRuns}/{agent.totalRuns}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+
+              <Separator />
+              <AgentProposalsTab outcome={outcome} kpis={kpis || []} />
+            </>
           )}
         </TabsContent>
 
-        {/* Tab 2: Evidence */}
-        <TabsContent value="evidence" className="space-y-6">
+        {/* Tab 3: Financial Ledger */}
+        <TabsContent value="financial-ledger" className="space-y-6" data-testid="tabcontent-financial-ledger">
+          <div>
+            <h2 className="text-lg font-semibold">Financial Ledger</h2>
+            <p className="text-sm text-muted-foreground">Revenue lifecycle pipeline with drill-down to agent runs</p>
+          </div>
+
+          {!financialLedger || !financialLedger.summary ? (
+            <div className="space-y-3">
+              <Skeleton className="h-32 w-full" />
+              <Skeleton className="h-48 w-full" />
+            </div>
+          ) : (
+            <>
+              <Card data-testid="card-pipeline-visualization">
+                <CardContent className="p-4">
+                  <div className="flex flex-col gap-3">
+                    <span className="text-sm font-semibold">Revenue Pipeline</span>
+                    <div className="flex items-center gap-2 flex-wrap justify-center" data-testid="pipeline-flow">
+                      {financialLedger.pipeline.map((stage, i) => (
+                        <div key={stage.stage} className="flex items-center gap-2">
+                          <div className="flex flex-col items-center gap-1 p-3 rounded-md bg-muted/50 min-w-[100px]" data-testid={`pipeline-stage-${stage.stage}`}>
+                            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">{stage.label}</span>
+                            <span className="text-lg font-semibold">${stage.amount.toLocaleString()}</span>
+                            <span className="text-[10px] text-muted-foreground">{stage.count} items</span>
+                          </div>
+                          {i < financialLedger.pipeline.length - 1 && (
+                            <ArrowRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+                <StatCard title="Captured" value={`$${financialLedger.summary.totalCaptured.toLocaleString()}`} icon={Receipt} testId="stat-captured" />
+                <StatCard title="Metered" value={`$${financialLedger.summary.totalMetered.toLocaleString()}`} icon={Gauge} testId="stat-metered" />
+                <StatCard title="Invoiced" value={`$${financialLedger.summary.totalInvoiced.toLocaleString()}`} icon={FileText} testId="stat-invoiced" />
+                <StatCard title="Collected" value={`$${financialLedger.summary.totalCollected.toLocaleString()}`} icon={Banknote} testId="stat-collected" variant="success" />
+                <StatCard title="Disputed" value={`$${financialLedger.summary.totalDisputed.toLocaleString()}`} icon={Gavel} testId="stat-disputed" variant={financialLedger.summary.totalDisputed > 0 ? "danger" : "default"} />
+                <StatCard title="Collection Rate" value={`${financialLedger.summary.collectionRate.toFixed(1)}%`} icon={TrendingUp} testId="stat-collection-rate" variant={financialLedger.summary.collectionRate >= 90 ? "success" : "warning"} />
+              </div>
+
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold">Invoices</h3>
+                {financialLedger.invoices.length === 0 ? (
+                  <Card>
+                    <CardContent className="flex flex-col items-center justify-center py-8 gap-2">
+                      <FileText className="w-8 h-8 text-muted-foreground/50" />
+                      <p className="text-sm text-muted-foreground" data-testid="text-no-invoices">No invoices generated</p>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <Card>
+                    <CardContent className="p-0">
+                      <div className="divide-y">
+                        {financialLedger.invoices.map((inv) => (
+                          <div key={inv.id} className="flex items-center justify-between gap-3 px-4 py-3 flex-wrap" data-testid={`row-invoice-${inv.id}`}>
+                            <div className="flex items-center gap-3 min-w-0">
+                              <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
+                              <div className="flex flex-col min-w-0">
+                                <span className="text-sm font-medium truncate">Invoice {inv.id.slice(0, 8)}</span>
+                                <span className="text-xs text-muted-foreground">{inv.periodStart} - {inv.periodEnd}</span>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-3 shrink-0 flex-wrap">
+                              <StatusBadge status={inv.status} />
+                              <span className="text-sm font-semibold">${inv.totalAmount.toFixed(2)}</span>
+                              <Badge variant="outline" className="text-[10px]">{inv.lineItemCount} line items</Badge>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold">Recent Revenue Events</h3>
+                {financialLedger.recentEvents.length === 0 ? (
+                  <Card>
+                    <CardContent className="flex flex-col items-center justify-center py-8 gap-2">
+                      <Database className="w-8 h-8 text-muted-foreground/50" />
+                      <p className="text-sm text-muted-foreground">No recent revenue events</p>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <Card>
+                    <CardContent className="p-0">
+                      <div className="divide-y">
+                        {financialLedger.recentEvents.map((evt) => (
+                          <div key={evt.id} className="flex items-center justify-between gap-3 px-4 py-3 flex-wrap" data-testid={`row-revenue-event-${evt.id}`}>
+                            <div className="flex items-center gap-3 min-w-0">
+                              <CircleDot className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                              <div className="flex flex-col min-w-0">
+                                <span className="text-sm font-medium truncate">{evt.type}</span>
+                                <span className="text-xs text-muted-foreground truncate">Agent: {evt.agentName || (evt.agentId ? evt.agentId.slice(0, 8) + "..." : "N/A")}</span>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                              <span className="text-sm font-medium">${evt.amount.toFixed(2)}</span>
+                              {evt.billable ? (
+                                <Badge variant="outline" className="text-[10px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">Billable</Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-[10px] bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/20">Excluded</Badge>
+                              )}
+                              <span className="text-xs text-muted-foreground whitespace-nowrap">{relativeTime(evt.createdAt)}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+            </>
+          )}
+        </TabsContent>
+
+        {/* Tab 4: Evidence Vault */}
+        <TabsContent value="evidence-vault" className="space-y-6" data-testid="tabcontent-evidence-vault">
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <div>
-              <h2 className="text-lg font-semibold">Evidence</h2>
-              <p className="text-sm text-muted-foreground">KPI trends, correlated metrics, and data quality signals</p>
+              <h2 className="text-lg font-semibold">Evidence Vault</h2>
+              <p className="text-sm text-muted-foreground">KPI snapshots, audit events, compliance attestations, version history</p>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-muted-foreground">Window:</span>
+            <div className="flex items-center gap-2 flex-wrap">
               <Select value={evidenceWindow} onValueChange={setEvidenceWindow}>
                 <SelectTrigger className="w-24" data-testid="select-evidence-window">
                   <SelectValue />
@@ -1183,6 +1413,9 @@ export default function OutcomeDetail() {
                   <SelectItem value="90d">90 days</SelectItem>
                 </SelectContent>
               </Select>
+              <Button variant="outline" onClick={exportAuditBundle} data-testid="button-export-evidence-bundle">
+                <Download className="w-4 h-4 mr-1.5" /> Export Bundle
+              </Button>
             </div>
           </div>
 
@@ -1193,9 +1426,9 @@ export default function OutcomeDetail() {
             </div>
           ) : (
             <>
-              {evidence.kpiTimeSeries.length > 0 && (
-                <div className="space-y-3">
-                  <h3 className="text-sm font-semibold">KPI Time Series</h3>
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold">KPI Snapshots</h3>
+                {evidence.kpiTimeSeries.length > 0 ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {evidence.kpiTimeSeries.map((kpiTs) => {
                       const lastPoint = kpiTs.points[kpiTs.points.length - 1];
@@ -1203,10 +1436,11 @@ export default function OutcomeDetail() {
                       const trendDir = lastPoint && firstPoint
                         ? lastPoint.value > firstPoint.value ? "up" : lastPoint.value < firstPoint.value ? "down" : "stable"
                         : "stable";
+                      const matchingKpi = kpis?.find(k => k.id === kpiTs.kpiId);
                       return (
-                        <Card key={kpiTs.kpiId} data-testid={`card-kpi-timeseries-${kpiTs.kpiId}`}>
+                        <Card key={kpiTs.kpiId} data-testid={`card-evidence-kpi-${kpiTs.kpiId}`}>
                           <CardContent className="p-4">
-                            <div className="flex items-center justify-between gap-3">
+                            <div className="flex items-center justify-between gap-3 flex-wrap">
                               <div className="flex flex-col gap-0.5 min-w-0">
                                 <span className="text-sm font-semibold truncate">{kpiTs.kpiName}</span>
                                 <span className="text-xs text-muted-foreground">
@@ -1222,6 +1456,7 @@ export default function OutcomeDetail() {
                               <Sparkline
                                 points={kpiTs.points}
                                 target={kpiTs.target}
+                                slaThreshold={matchingKpi?.slaThreshold}
                                 width={140}
                                 height={40}
                               />
@@ -1231,154 +1466,18 @@ export default function OutcomeDetail() {
                       );
                     })}
                   </div>
-                </div>
-              )}
-
-              <div className="space-y-3" data-testid="snapshot-timeline">
-                <div className="flex items-center justify-between gap-4 flex-wrap">
-                  <h3 className="text-sm font-semibold">Snapshot Timeline</h3>
-                  <div className="flex items-center gap-1">
-                    {["7d", "30d", "90d"].map((w) => (
-                      <Button
-                        key={w}
-                        variant={evidenceWindow === w ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => setEvidenceWindow(w)}
-                        data-testid={`button-window-${w}`}
-                      >
-                        {w}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-                {snapshots?.snapshots && snapshots.snapshots.length > 0 ? (
-                  <div className="space-y-0">
-                    {[...snapshots.snapshots].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map((snap, i, arr) => (
-                      <div key={snap.date} className="flex gap-3" data-testid={`timeline-entry-${snap.date}`}>
-                        <div className="flex flex-col items-center shrink-0">
-                          <div className={`w-3 h-3 rounded-full border-2 ${i === 0 ? "bg-primary border-primary" : "bg-background border-muted-foreground/30"}`} />
-                          {i < arr.length - 1 && <div className="w-0.5 flex-1 bg-muted-foreground/20 min-h-[2rem]" />}
-                        </div>
-                        <Card className="flex-1 mb-3">
-                          <CardContent className="p-4">
-                            <div className="flex flex-col gap-2">
-                              <div className="flex items-center justify-between gap-2 flex-wrap">
-                                <div className="flex items-center gap-2">
-                                  <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
-                                  <span className="text-sm font-semibold">{snap.date}</span>
-                                  {i === 0 && <Badge variant="outline" className="text-[9px] bg-primary/15 text-primary border-primary/20">Latest</Badge>}
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <Badge variant="outline" className="text-[9px]">{snap.eventCount} events</Badge>
-                                  <Badge variant="outline" className="text-[9px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">{snap.billableCount} billable</Badge>
-                                </div>
-                              </div>
-                              {snap.kpiValues.length > 0 && (
-                                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
-                                  {snap.kpiValues.map((kv) => (
-                                    <div key={kv.kpiId} className="flex flex-col gap-0.5 p-2 rounded-md bg-muted/50">
-                                      <span className="text-[10px] text-muted-foreground truncate">{kv.kpiName}</span>
-                                      <span className="text-sm font-semibold">{kv.value}</span>
-                                      <Badge variant="outline" className={`text-[8px] w-fit ${
-                                        (kv.confidence || 0) >= 0.8 ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
-                                        : (kv.confidence || 0) >= 0.5 ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20"
-                                        : "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20"
-                                      }`}>
-                                        {((kv.confidence || 0) * 100).toFixed(0)}% conf
-                                      </Badge>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                              {snap.topAgents.length > 0 && (
-                                <div className="flex items-center gap-1.5 flex-wrap">
-                                  <span className="text-[10px] text-muted-foreground">Top agents:</span>
-                                  {snap.topAgents.map((a) => (
-                                    <div key={a.agentId} className="flex items-center gap-1" data-testid={`badge-agent-${a.agentId}`}>
-                                      <div className="w-5 h-5 rounded-full bg-primary/15 flex items-center justify-center shrink-0">
-                                        <Bot className="w-3 h-3 text-primary" />
-                                      </div>
-                                      <span className="text-[10px] font-medium">{a.agentName.length > 15 ? a.agentName.slice(0, 15) + "..." : a.agentName}</span>
-                                      <Badge variant="outline" className="text-[8px]">{(a.contribution * 100).toFixed(0)}%</Badge>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          </CardContent>
-                        </Card>
-                      </div>
-                    ))}
-                  </div>
                 ) : (
                   <Card>
                     <CardContent className="flex flex-col items-center justify-center py-8 gap-2">
                       <BarChart3 className="w-8 h-8 text-muted-foreground/50" />
-                      <p className="text-sm text-muted-foreground">No snapshot data available for this window</p>
+                      <p className="text-sm text-muted-foreground">No KPI snapshot data available</p>
                     </CardContent>
                   </Card>
                 )}
               </div>
 
               <div className="space-y-3">
-                <h3 className="text-sm font-semibold">Correlated Metrics</h3>
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
-                  <Card data-testid="card-metric-success-rate">
-                    <CardContent className="p-4">
-                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Success Rate</span>
-                      <p className="text-lg font-semibold mt-1">{evidence.correlatedMetrics.successRate}%</p>
-                    </CardContent>
-                  </Card>
-                  <Card data-testid="card-metric-avg-latency">
-                    <CardContent className="p-4">
-                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Avg Latency</span>
-                      <p className="text-lg font-semibold mt-1">{evidence.correlatedMetrics.avgLatency}ms</p>
-                    </CardContent>
-                  </Card>
-                  <Card data-testid="card-metric-total-runs">
-                    <CardContent className="p-4">
-                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Total Runs</span>
-                      <p className="text-lg font-semibold mt-1">{evidence.correlatedMetrics.totalRuns}</p>
-                    </CardContent>
-                  </Card>
-                  <Card data-testid="card-metric-failed-runs">
-                    <CardContent className="p-4">
-                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Failed Runs</span>
-                      <p className="text-lg font-semibold mt-1">{evidence.correlatedMetrics.failedRuns}</p>
-                    </CardContent>
-                  </Card>
-                  <Card data-testid="card-metric-agent-count">
-                    <CardContent className="p-4">
-                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Agent Count</span>
-                      <p className="text-lg font-semibold mt-1">{evidence.correlatedMetrics.agentCount}</p>
-                    </CardContent>
-                  </Card>
-                </div>
-              </div>
-
-              {evidence.correlatedMetrics.latencyTrend.length > 0 && (
-                <div className="space-y-3">
-                  <h3 className="text-sm font-semibold">Latency Trend ({evidenceWindow})</h3>
-                  <Card data-testid="card-latency-trend">
-                    <CardContent className="p-4 flex items-center gap-4">
-                      <Sparkline
-                        points={evidence.correlatedMetrics.latencyTrend}
-                        width={240}
-                        height={48}
-                      />
-                      <div className="flex flex-col gap-0.5">
-                        <span className="text-xs text-muted-foreground">Latest</span>
-                        <span className="text-sm font-semibold">
-                          {evidence.correlatedMetrics.latencyTrend[evidence.correlatedMetrics.latencyTrend.length - 1]?.value ?? 0}ms
-                        </span>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-              )}
-
-              <div className="space-y-3">
-                <h3 className="text-sm font-semibold">Data Quality Signals</h3>
+                <h3 className="text-sm font-semibold">Data Quality</h3>
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
                   <Card data-testid="card-dq-total-events">
                     <CardContent className="p-4">
@@ -1412,768 +1511,396 @@ export default function OutcomeDetail() {
                   </Card>
                 </div>
               </div>
+
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold">Correlated Agent Metrics</h3>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                  <Card data-testid="card-metric-success-rate">
+                    <CardContent className="p-4">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Success Rate</span>
+                      <p className="text-lg font-semibold mt-1">{evidence.correlatedMetrics.successRate}%</p>
+                    </CardContent>
+                  </Card>
+                  <Card data-testid="card-metric-avg-latency">
+                    <CardContent className="p-4">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Avg Latency</span>
+                      <p className="text-lg font-semibold mt-1">{evidence.correlatedMetrics.avgLatency}ms</p>
+                    </CardContent>
+                  </Card>
+                  <Card data-testid="card-metric-total-runs">
+                    <CardContent className="p-4">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Total Runs</span>
+                      <p className="text-lg font-semibold mt-1">{evidence.correlatedMetrics.totalRuns}</p>
+                    </CardContent>
+                  </Card>
+                  <Card data-testid="card-metric-failed-runs">
+                    <CardContent className="p-4">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Failed Runs</span>
+                      <p className="text-lg font-semibold mt-1">{evidence.correlatedMetrics.failedRuns}</p>
+                    </CardContent>
+                  </Card>
+                </div>
+              </div>
             </>
+          )}
+
+          <Separator />
+
+          <AuditTab outcomeId={outcomeId!} outcome={outcome} auditData={auditData} gates={gates} />
+
+          {snapshots?.snapshots && snapshots.snapshots.length > 0 && (
+            <div className="space-y-3" data-testid="snapshot-timeline">
+              <div className="flex items-center justify-between gap-4 flex-wrap">
+                <h3 className="text-sm font-semibold">Snapshot Timeline</h3>
+                <div className="flex items-center gap-1 flex-wrap">
+                  {["7d", "30d", "90d"].map((w) => (
+                    <Button
+                      key={w}
+                      variant={evidenceWindow === w ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setEvidenceWindow(w)}
+                      data-testid={`button-window-${w}`}
+                    >
+                      {w}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+              <div className="space-y-0">
+                {[...snapshots.snapshots].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 7).map((snap, i, arr) => (
+                  <div key={snap.date} className="flex gap-3" data-testid={`timeline-entry-${snap.date}`}>
+                    <div className="flex flex-col items-center shrink-0">
+                      <div className={`w-3 h-3 rounded-full border-2 ${i === 0 ? "bg-primary border-primary" : "bg-background border-muted-foreground/30"}`} />
+                      {i < arr.length - 1 && <div className="w-0.5 flex-1 bg-muted-foreground/20 min-h-[2rem]" />}
+                    </div>
+                    <div className="flex-1 mb-3 p-3 rounded-md bg-muted/30">
+                      <div className="flex flex-col gap-2">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <div className="flex items-center gap-2">
+                            <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
+                            <span className="text-sm font-semibold">{snap.date}</span>
+                            {i === 0 && <Badge variant="outline" className="text-[9px] bg-primary/15 text-primary border-primary/20">Latest</Badge>}
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <Badge variant="outline" className="text-[9px]">{snap.eventCount} events</Badge>
+                            <Badge variant="outline" className="text-[9px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">{snap.billableCount} billable</Badge>
+                          </div>
+                        </div>
+                        {snap.kpiValues.length > 0 && (
+                          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                            {snap.kpiValues.map((kv) => (
+                              <div key={kv.kpiId} className="flex flex-col gap-0.5 p-2 rounded-md bg-muted/50">
+                                <span className="text-[10px] text-muted-foreground truncate">{kv.kpiName}</span>
+                                <span className="text-sm font-semibold">{kv.value}</span>
+                                <Badge variant="outline" className={`text-[8px] w-fit ${
+                                  (kv.confidence || 0) >= 0.8 ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                                  : (kv.confidence || 0) >= 0.5 ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20"
+                                  : "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20"
+                                }`}>
+                                  {((kv.confidence || 0) * 100).toFixed(0)}% conf
+                                </Badge>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
         </TabsContent>
 
-        {/* Tab 3: Commercials */}
-        <TabsContent value="commercials" className="space-y-6">
+        {/* Tab 5: Risk & Remediation */}
+        <TabsContent value="risk-remediation" className="space-y-6" data-testid="tabcontent-risk-remediation">
           <div>
-            <h2 className="text-lg font-semibold">Commercials</h2>
-            <p className="text-sm text-muted-foreground">Pricing, metering rules, and outcome event activity</p>
+            <h2 className="text-lg font-semibold">Risk & Remediation</h2>
+            <p className="text-sm text-muted-foreground">Active risks, AI-generated recommendations, incidents, and risk sub-factors</p>
           </div>
 
-          <Card data-testid="metering-summary">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
-                <Activity className="w-4 h-4 text-primary" /> Metering Summary
-                <Badge variant="outline" className="text-[9px]">{outcome.pricingModel?.replace(/_/g, " ")}</Badge>
-                <span className="text-xs text-muted-foreground ml-auto">{outcome.currency || "USD"} {outcome.pricePerUnit?.toFixed(2)} / unit</span>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-4">
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                <StatCard
-                  title="Total Events"
-                  value={totalEventsCount}
-                  icon={Database}
-                  variant="default"
-                  testId="stat-metering-total"
-                />
-                <StatCard
-                  title="Billable Events"
-                  value={billableEventsCount}
-                  icon={CheckCircle}
-                  variant="success"
-                  testId="stat-metering-billable"
-                />
-                <StatCard
-                  title="Exclusion Rate"
-                  value={`${exclusionRate.toFixed(1)}%`}
-                  icon={XCircle}
-                  variant={exclusionRate > 20 ? "warning" : "default"}
-                  testId="stat-metering-exclusion"
-                />
-                <StatCard
-                  title="Est. Revenue"
-                  value={`${outcome.currency || "USD"} ${estimatedRevenue.toFixed(2)}`}
-                  icon={DollarSign}
-                  variant="success"
-                  testId="stat-metering-revenue"
-                />
+          {!remediation ? (
+            <div className="space-y-3">
+              <Skeleton className="h-24 w-full" />
+              <Skeleton className="h-24 w-full" />
+            </div>
+          ) : (
+            <>
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold">Active Risks ({remediation.risks.length})</h3>
+                {remediation.risks.length === 0 ? (
+                  <Card>
+                    <CardContent className="flex flex-col items-center justify-center py-8 gap-2">
+                      <CheckCircle className="w-8 h-8 text-emerald-500/50" />
+                      <p className="text-sm text-muted-foreground">No active risks detected</p>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <div className="space-y-3">
+                    {remediation.risks.map((risk) => {
+                      const severityColors: Record<string, string> = {
+                        critical: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20",
+                        high: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20",
+                        medium: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20",
+                        low: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+                      };
+                      return (
+                        <Card key={risk.id} data-testid={`card-risk-${risk.id}`}>
+                          <CardContent className="p-4">
+                            <div className="flex flex-col gap-4">
+                              <div className="flex items-start justify-between gap-3 flex-wrap">
+                                <div className="flex items-start gap-3 min-w-0">
+                                  <div className="flex items-center justify-center w-8 h-8 rounded-md bg-red-500/10 shrink-0 mt-0.5">
+                                    <AlertTriangle className="w-4 h-4 text-red-500" />
+                                  </div>
+                                  <div className="flex flex-col min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="text-sm font-semibold">{risk.title}</span>
+                                      <Badge variant="outline" className={`text-[10px] ${severityColors[risk.severity] || severityColors.medium}`}>
+                                        {risk.severity.charAt(0).toUpperCase() + risk.severity.slice(1)}
+                                      </Badge>
+                                      <Badge variant="outline" className="text-[10px]">{risk.category}</Badge>
+                                    </div>
+                                    <p className="text-xs text-muted-foreground mt-1">{risk.description}</p>
+                                  </div>
+                                </div>
+                                <span className="text-[10px] text-muted-foreground whitespace-nowrap shrink-0">{relativeTime(risk.detectedAt)}</span>
+                              </div>
+
+                              {risk.affectedAgents.length > 0 && (
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-[10px] text-muted-foreground">Affected agents:</span>
+                                  {risk.affectedAgents.map((a, i) => (
+                                    <Badge key={i} variant="outline" className="text-[10px]">{a}</Badge>
+                                  ))}
+                                </div>
+                              )}
+
+                              {risk.affectedKpis.length > 0 && (
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-[10px] text-muted-foreground">Affected KPIs:</span>
+                                  {risk.affectedKpis.map((k, i) => (
+                                    <Badge key={i} variant="outline" className="text-[10px]">{k}</Badge>
+                                  ))}
+                                </div>
+                              )}
+
+                              <div className="rounded-md bg-primary/5 border border-primary/10 p-3" data-testid={`remediation-${risk.id}`}>
+                                <div className="flex items-center gap-2 mb-2">
+                                  <Lightbulb className="w-3.5 h-3.5 text-primary" />
+                                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider">AI Recommendation</span>
+                                </div>
+                                <div className="flex flex-col gap-2">
+                                  <span className="text-sm font-medium">{risk.recommendation.title}</span>
+                                  <p className="text-xs text-muted-foreground">{risk.recommendation.description}</p>
+                                  <div className="flex items-center gap-4 flex-wrap">
+                                    <div className="flex items-center gap-1.5">
+                                      <TrendingUp className="w-3 h-3 text-emerald-500" />
+                                      <span className="text-[10px] text-muted-foreground">{risk.recommendation.estimatedImpact}</span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                      <Clock className="w-3 h-3 text-muted-foreground" />
+                                      <span className="text-[10px] text-muted-foreground">Effort: {risk.recommendation.effort}</span>
+                                    </div>
+                                    <Badge variant="outline" className="text-[10px]">{risk.recommendation.type}</Badge>
+                                  </div>
+                                  <div className="flex items-center gap-2 flex-wrap mt-1">
+                                    {risk.recommendation.linkedPatchId && (
+                                      <Link href={`/agents`}>
+                                        <Button variant="outline" size="sm" data-testid={`button-view-patch-${risk.id}`}>
+                                          <Wrench className="w-3.5 h-3.5 mr-1" /> View Patch
+                                        </Button>
+                                      </Link>
+                                    )}
+                                    {risk.recommendation.linkedExperimentId && (
+                                      <Link href={`/improvements`}>
+                                        <Button variant="outline" size="sm" data-testid={`button-view-experiment-${risk.id}`}>
+                                          <FlaskConical className="w-3.5 h-3.5 mr-1" /> View Experiment
+                                        </Button>
+                                      </Link>
+                                    )}
+                                    <Button variant="outline" size="sm" data-testid={`button-approve-remediation-${risk.id}`}>
+                                      <CheckCircle className="w-3.5 h-3.5 mr-1" /> Approve
+                                    </Button>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
-              <div className="flex flex-col gap-1.5" data-testid="bar-billable-excluded">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs text-muted-foreground">Billable vs Excluded</span>
-                  <span className="text-xs font-medium">{billableEventsCount} / {totalEventsCount}</span>
-                </div>
-                <div className="flex h-2.5 rounded-full overflow-hidden bg-muted/50">
-                  {totalEventsCount > 0 && (
-                    <>
-                      <div
-                        className="bg-emerald-500 rounded-l-full transition-all"
-                        style={{ width: `${(billableEventsCount / totalEventsCount) * 100}%` }}
-                      />
-                      <div
-                        className="bg-muted-foreground/20 rounded-r-full transition-all"
-                        style={{ width: `${((totalEventsCount - billableEventsCount) / totalEventsCount) * 100}%` }}
-                      />
-                    </>
-                  )}
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-1">
-                    <div className="w-2 h-2 rounded-full bg-emerald-500" />
-                    <span className="text-[10px] text-muted-foreground">Billable ({totalEventsCount > 0 ? ((billableEventsCount / totalEventsCount) * 100).toFixed(1) : 0}%)</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <div className="w-2 h-2 rounded-full bg-muted-foreground/20" />
-                    <span className="text-[10px] text-muted-foreground">Excluded ({totalEventsCount > 0 ? (((totalEventsCount - billableEventsCount) / totalEventsCount) * 100).toFixed(1) : 0}%)</span>
-                  </div>
-                </div>
-              </div>
-
-              {recentEvents.length > 0 && (
-                <div className="flex flex-col gap-2">
-                  <span className="text-xs font-semibold">Recent Events</span>
-                  <div className="divide-y rounded-md border">
-                    {recentEvents.slice(0, 5).map((evt) => (
-                      <div key={evt.id} className="flex items-center justify-between gap-3 px-3 py-2" data-testid={`metering-event-${evt.id}`}>
-                        <div className="flex items-center gap-2 min-w-0">
-                          <CircleDot className="w-3 h-3 text-muted-foreground shrink-0" />
-                          <span className="text-xs font-medium truncate">{evt.type}</span>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          {evt.billable ? (
-                            <Badge variant="outline" className="text-[9px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">Billable</Badge>
-                          ) : (
-                            <Badge variant="outline" className="text-[9px] bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/20">Excluded</Badge>
-                          )}
-                          <span className="text-[10px] text-muted-foreground whitespace-nowrap">{relativeTime(evt.createdAt as string | null)}</span>
-                        </div>
-                      </div>
+              {remediation.activeIncidents.length > 0 && (
+                <div className="space-y-3">
+                  <h3 className="text-sm font-semibold">Active Incidents ({remediation.activeIncidents.length})</h3>
+                  <div className="space-y-2">
+                    {remediation.activeIncidents.map((incident) => (
+                      <Card key={incident.id} data-testid={`card-incident-${incident.id}`}>
+                        <CardContent className="p-4">
+                          <div className="flex items-center justify-between gap-3 flex-wrap">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <Flame className="w-4 h-4 text-red-500 shrink-0" />
+                              <div className="flex flex-col min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-sm font-medium truncate">{incident.title}</span>
+                                  <Badge variant="outline" className={`text-[10px] ${
+                                    incident.severity === "critical" ? "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20"
+                                    : "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20"
+                                  }`}>{incident.severity}</Badge>
+                                  <StatusBadge status={incident.status} />
+                                </div>
+                                <span className="text-xs text-muted-foreground">Agent: {incident.agentName}</span>
+                              </div>
+                            </div>
+                            <span className="text-xs text-muted-foreground whitespace-nowrap shrink-0">{relativeTime(incident.detectedAt)}</span>
+                          </div>
+                        </CardContent>
+                      </Card>
                     ))}
                   </div>
                 </div>
               )}
-            </CardContent>
-          </Card>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium flex items-center gap-2">
-                  <DollarSign className="w-4 h-4 text-primary" /> Billing Model
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-4 pt-0">
-                <div className="flex flex-col gap-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm text-muted-foreground">Model</span>
-                    <Select
-                      value={outcome.pricingModel || "PER_OUTCOME_EVENT"}
-                      onValueChange={(val) => {
-                        updateContractMutation.mutate({ pricingModel: val });
-                      }}
-                    >
-                      <SelectTrigger className="w-[180px]" data-testid="select-billing-model">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="PER_OUTCOME_EVENT">Per Outcome Event</SelectItem>
-                        <SelectItem value="TIERED">Tiered</SelectItem>
-                        <SelectItem value="FLAT_MONTHLY">Flat Monthly</SelectItem>
-                        <SelectItem value="SUCCESS_FEE">Success Fee</SelectItem>
-                        <SelectItem value="HYBRID">Hybrid</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm text-muted-foreground">Base Price</span>
-                    <span className="text-sm font-semibold">{outcome.currency} {outcome.pricePerUnit?.toFixed(2)} / unit</span>
-                  </div>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm text-muted-foreground">Currency</span>
-                    <span className="text-sm font-semibold">{outcome.currency || "USD"}</span>
-                  </div>
-                  {outcome.volumeCap && (
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm text-muted-foreground">Volume Cap</span>
-                      <span className="text-sm font-semibold">{outcome.volumeCap.toLocaleString()} units/period</span>
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium flex items-center gap-2">
-                  <Layers className="w-4 h-4 text-primary" /> Pricing Tiers
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-4 pt-0">
-                {tiers.length > 0 ? (
-                  <div className="flex flex-col gap-2">
-                    {tiers.map((tier, i) => (
-                      <div key={i} className="flex items-center justify-between gap-2 py-1.5 border-b last:border-0" data-testid={`text-tier-${i}`}>
-                        <span className="text-sm text-muted-foreground">
-                          {tier.minVolume.toLocaleString()} - {tier.maxVolume ? tier.maxVolume.toLocaleString() : "Unlimited"}
-                        </span>
-                        <span className="text-sm font-semibold">{outcome.currency} {tier.pricePerUnit.toFixed(2)}</span>
-                      </div>
+              {remediation.recentPatches.length > 0 && (
+                <div className="space-y-3">
+                  <h3 className="text-sm font-semibold">Linked Patches ({remediation.recentPatches.length})</h3>
+                  <div className="space-y-2">
+                    {remediation.recentPatches.map((patch) => (
+                      <Card key={patch.id} data-testid={`card-patch-${patch.id}`}>
+                        <CardContent className="p-4">
+                          <div className="flex items-center justify-between gap-3 flex-wrap">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <Wrench className="w-4 h-4 text-muted-foreground shrink-0" />
+                              <div className="flex flex-col min-w-0">
+                                <span className="text-sm font-medium truncate">{patch.description}</span>
+                                <span className="text-xs text-muted-foreground">Agent: {patch.agentName} | Type: {patch.changeType}</span>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                              <StatusBadge status={patch.status} />
+                              {patch.riskScore > 0 && (
+                                <Badge variant="outline" className="text-[10px]">Risk: {(patch.riskScore * 100).toFixed(0)}%</Badge>
+                              )}
+                              <span className="text-xs text-muted-foreground whitespace-nowrap">{relativeTime(patch.createdAt)}</span>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
                     ))}
                   </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">Flat pricing (no tiers)</p>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium flex items-center gap-2">
-                <Filter className="w-4 h-4 text-primary" /> Metering Rules
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="p-4 pt-0">
-              <div className="flex flex-col gap-3">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-medium">Fraud Prevention</span>
-                    <span className="text-xs text-muted-foreground">Duplicate detection window</span>
-                  </div>
-                  <Badge variant="outline" className="text-[10px]">60s window</Badge>
                 </div>
-                <Separator />
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-medium">Retry Deduplication</span>
-                    <span className="text-xs text-muted-foreground">Configurable dedup window</span>
-                  </div>
-                  <Badge variant="outline" className="text-[10px]">300s window</Badge>
-                </div>
-                <Separator />
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-medium">Minimum Quality Threshold</span>
-                    <span className="text-xs text-muted-foreground">Events below threshold are excluded</span>
-                  </div>
-                  <Badge variant="outline" className="text-[10px]">0.7 score</Badge>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Card data-testid="card-metering-exclusions">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium flex items-center gap-2">
-                  <XCircle className="w-4 h-4 text-primary" /> Metering Exclusions
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-4 pt-0">
-                <div className="flex flex-col gap-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex flex-col">
-                      <span className="text-sm font-medium">Test Events</span>
-                      <span className="text-xs text-muted-foreground">Exclude events from test/staging environments</span>
-                    </div>
-                    <Badge variant="outline" className="text-[10px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">Active</Badge>
-                  </div>
-                  <Separator />
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex flex-col">
-                      <span className="text-sm font-medium">Escalated Events</span>
-                      <span className="text-xs text-muted-foreground">Exclude events that required human intervention</span>
-                    </div>
-                    <Badge variant="outline" className={`text-[10px] ${attribution.excludeEscalated
-                      ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
-                      : "bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/20"
-                    }`}>{attribution.excludeEscalated ? "Active" : "Inactive"}</Badge>
-                  </div>
-                  <Separator />
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex flex-col">
-                      <span className="text-sm font-medium">Low Confidence</span>
-                      <span className="text-xs text-muted-foreground">Exclude events below confidence threshold</span>
-                    </div>
-                    <Badge variant="outline" className="text-[10px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">{"<"}0.5 excluded</Badge>
-                  </div>
-                  <Separator />
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex flex-col">
-                      <span className="text-sm font-medium">Duplicate Window</span>
-                      <span className="text-xs text-muted-foreground">Same-source events within window</span>
-                    </div>
-                    <Badge variant="outline" className="text-[10px]">60s</Badge>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card data-testid="card-dispute-rules">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium flex items-center gap-2">
-                  <Gavel className="w-4 h-4 text-primary" /> Dispute Rules
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-4 pt-0">
-                <div className="flex flex-col gap-3">
-                  <div>
-                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Acceptable Evidence Types</span>
-                    <div className="flex flex-wrap gap-1 mt-1.5">
-                      <Badge variant="outline" className="text-[9px]">Trace Logs</Badge>
-                      <Badge variant="outline" className="text-[9px]">KPI Snapshots</Badge>
-                      <Badge variant="outline" className="text-[9px]">Agent Run Records</Badge>
-                      <Badge variant="outline" className="text-[9px]">Event Payloads</Badge>
-                      <Badge variant="outline" className="text-[9px]">Audit Trail</Badge>
-                    </div>
-                  </div>
-                  <Separator />
-                  <div className="flex flex-col gap-2">
-                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Lookback Windows</span>
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm text-muted-foreground">Standard Dispute</span>
-                      <span className="text-sm font-semibold">30 days</span>
-                    </div>
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm text-muted-foreground">Extended Dispute</span>
-                      <span className="text-sm font-semibold">90 days</span>
-                    </div>
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm text-muted-foreground">Fraud Investigation</span>
-                      <span className="text-sm font-semibold">180 days</span>
-                    </div>
-                  </div>
-                  <Separator />
-                  <div className="flex flex-col gap-2">
-                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Resolution SLA</span>
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm text-muted-foreground">Acknowledgement</span>
-                      <span className="text-sm font-semibold">24 hours</span>
-                    </div>
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm text-muted-foreground">Resolution</span>
-                      <span className="text-sm font-semibold">7 business days</span>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          <Card data-testid="card-roi-calculator">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
-                <TrendingUp className="w-4 h-4 text-primary" /> ROI Projection Calculator
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-4">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <Label className="text-xs">Current Time / Task (mins)</Label>
-                  <Input
-                    type="number"
-                    value={roiInputs.currentTimeMins}
-                    onChange={(e) => setRoiInputs(prev => ({ ...prev, currentTimeMins: Math.max(0, parseInt(e.target.value) || 0) }))}
-                    data-testid="input-roi-time"
-                  />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <Label className="text-xs">Volume / Month</Label>
-                  <Input
-                    type="number"
-                    value={roiInputs.volumePerMonth}
-                    onChange={(e) => setRoiInputs(prev => ({ ...prev, volumePerMonth: Math.max(0, parseInt(e.target.value) || 0) }))}
-                    data-testid="input-roi-volume"
-                  />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <Label className="text-xs">Fully Loaded Hourly Rate ($)</Label>
-                  <Input
-                    type="number"
-                    value={roiInputs.hourlyRate}
-                    onChange={(e) => setRoiInputs(prev => ({ ...prev, hourlyRate: Math.max(0, parseFloat(e.target.value) || 0) }))}
-                    data-testid="input-roi-rate"
-                  />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <Label className="text-xs">Automation Savings (%)</Label>
-                  <Input
-                    type="number"
-                    value={roiInputs.automationPercent}
-                    onChange={(e) => setRoiInputs(prev => ({ ...prev, automationPercent: Math.min(100, Math.max(0, parseInt(e.target.value) || 0)) }))}
-                    data-testid="input-roi-automation"
-                  />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <Label className="text-xs">Implementation Cost ($)</Label>
-                  <Input
-                    type="number"
-                    value={roiInputs.implementationCost}
-                    onChange={(e) => setRoiInputs(prev => ({ ...prev, implementationCost: Math.max(0, parseFloat(e.target.value) || 0) }))}
-                    data-testid="input-roi-impl-cost"
-                  />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <Label className="text-xs">Ongoing Monthly Cost ($)</Label>
-                  <Input
-                    type="number"
-                    value={roiInputs.ongoingMonthlyCost}
-                    onChange={(e) => setRoiInputs(prev => ({ ...prev, ongoingMonthlyCost: Math.max(0, parseFloat(e.target.value) || 0) }))}
-                    data-testid="input-roi-ongoing-cost"
-                  />
-                </div>
-              </div>
+              )}
 
               <Separator />
 
-              {(() => {
-                const totalHoursMonth = (roiInputs.currentTimeMins * roiInputs.volumePerMonth) / 60;
-                const currentMonthlyCost = totalHoursMonth * roiInputs.hourlyRate;
-                const savedHours = totalHoursMonth * (roiInputs.automationPercent / 100);
-                const monthlySavings = (currentMonthlyCost * (roiInputs.automationPercent / 100)) - roiInputs.ongoingMonthlyCost;
-                const annualSavings = monthlySavings * 12;
-                const paybackMonths = monthlySavings > 0 ? roiInputs.implementationCost / monthlySavings : Infinity;
-                const roiPercent = roiInputs.implementationCost > 0 ? ((annualSavings - roiInputs.implementationCost) / roiInputs.implementationCost) * 100 : 0;
-
-                return (
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    <div className="flex flex-col gap-0.5 p-3 rounded-md bg-muted/50">
-                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Monthly Savings</span>
-                      <span className="text-lg font-semibold text-green-600 dark:text-green-400" data-testid="text-roi-monthly-savings">
-                        ${monthlySavings > 0 ? monthlySavings.toLocaleString(undefined, { maximumFractionDigits: 0 }) : "0"}
-                      </span>
-                      <span className="text-[10px] text-muted-foreground">{savedHours.toFixed(0)} hrs saved/mo</span>
-                    </div>
-                    <div className="flex flex-col gap-0.5 p-3 rounded-md bg-muted/50">
-                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Annual Savings</span>
-                      <span className="text-lg font-semibold text-green-600 dark:text-green-400" data-testid="text-roi-annual-savings">
-                        ${annualSavings > 0 ? annualSavings.toLocaleString(undefined, { maximumFractionDigits: 0 }) : "0"}
-                      </span>
-                    </div>
-                    <div className="flex flex-col gap-0.5 p-3 rounded-md bg-muted/50">
-                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Payback Period</span>
-                      <span className="text-lg font-semibold" data-testid="text-roi-payback">
-                        {paybackMonths === Infinity ? "N/A" : paybackMonths < 1 ? "< 1 mo" : `${paybackMonths.toFixed(1)} mo`}
-                      </span>
-                    </div>
-                    <div className="flex flex-col gap-0.5 p-3 rounded-md bg-muted/50">
-                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">First-Year ROI</span>
-                      <span className={`text-lg font-semibold ${roiPercent >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`} data-testid="text-roi-percent">
-                        {roiPercent.toFixed(0)}%
-                      </span>
-                    </div>
-                  </div>
-                );
-              })()}
-            </CardContent>
-          </Card>
-
-          {(() => {
-            const relevantInvoices = invoices?.filter(inv =>
-              inv.lineItems?.some((li: any) => li.outcomeId === outcomeId) || true
-            ) || [];
-            const latestInvoice = relevantInvoices.length > 0
-              ? relevantInvoices.sort((a, b) => new Date(b.periodEnd).getTime() - new Date(a.periodEnd).getTime())[0]
-              : null;
-
-            return (
-              <Card data-testid="invoice-status">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
-                    <FileText className="w-4 h-4 text-primary" /> Invoice Status
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="p-4 pt-0">
-                  {latestInvoice ? (
-                    <div className="flex flex-col gap-3">
-                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium">Latest Invoice</span>
-                          <Badge variant="outline" className={`text-[9px] ${
-                            latestInvoice.status === "paid" ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
-                            : latestInvoice.status === "sent" ? "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/20"
-                            : "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20"
-                          }`} data-testid="badge-invoice-status">
-                            {latestInvoice.status.charAt(0).toUpperCase() + latestInvoice.status.slice(1)}
-                          </Badge>
-                        </div>
-                        <span className="text-lg font-semibold" data-testid="text-invoice-amount">
-                          {outcome.currency || "USD"} {latestInvoice.totalAmount.toFixed(2)}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground" data-testid="text-invoice-period">
-                        <Calendar className="w-3.5 h-3.5" />
-                        <span>{latestInvoice.periodStart} - {latestInvoice.periodEnd}</span>
-                      </div>
-                      {relevantInvoices.length > 1 && (
-                        <span className="text-[10px] text-muted-foreground">{relevantInvoices.length} total invoices on file</span>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="flex flex-col items-center justify-center py-6 gap-2">
-                      <FileText className="w-8 h-8 text-muted-foreground/50" />
-                      <p className="text-sm text-muted-foreground" data-testid="text-no-invoices">No invoices generated</p>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            );
-          })()}
-
-          <div className="space-y-3">
-            <h3 className="text-sm font-semibold">Recent Outcome Events</h3>
-            {recentEvents.length === 0 ? (
-              <Card>
-                <CardContent className="flex flex-col items-center justify-center py-8 gap-2">
-                  <Database className="w-8 h-8 text-muted-foreground/50" />
-                  <p className="text-sm text-muted-foreground">No outcome events recorded yet</p>
-                </CardContent>
-              </Card>
-            ) : (
-              <Card>
-                <CardContent className="p-0">
-                  <div className="divide-y">
-                    {recentEvents.map((evt) => (
-                      <div key={evt.id} className="flex items-center justify-between gap-3 px-4 py-3" data-testid={`row-event-${evt.id}`}>
-                        <div className="flex items-center gap-3 min-w-0">
-                          <CircleDot className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                          <div className="flex flex-col min-w-0">
-                            <span className="text-sm font-medium truncate">{evt.type}</span>
-                            <span className="text-xs text-muted-foreground truncate">
-                              Agent: {evt.agentId ? evt.agentId.slice(0, 8) + "..." : "N/A"}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          {evt.billable ? (
-                            <Badge variant="outline" className="text-[10px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" data-testid={`badge-billable-${evt.id}`}>
-                              Billable
-                            </Badge>
-                          ) : (
-                            <Badge variant="outline" className="text-[10px] bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/20" data-testid={`badge-excluded-${evt.id}`}>
-                              Excluded
-                            </Badge>
-                          )}
-                          <span className="text-xs text-muted-foreground whitespace-nowrap">{relativeTime(evt.createdAt as string | null)}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-          </div>
-        </TabsContent>
-
-        {/* Tab 4: Risk */}
-        <TabsContent value="risk" className="space-y-6">
-          <div>
-            <h2 className="text-lg font-semibold">Risk</h2>
-            <p className="text-sm text-muted-foreground">Risk assessment, thresholds, and change impact analysis</p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium flex items-center gap-2">
-                  <Shield className="w-4 h-4 text-primary" /> Risk Tier
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-4 pt-0">
-                <div className="flex flex-col gap-3">
-                  <StatusBadge status={outcome.riskTier} />
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm text-muted-foreground">Risk Threshold</span>
-                    <span className="text-sm font-semibold" data-testid="text-risk-threshold">{((outcome.riskThreshold || 0) * 100).toFixed(0)}%</span>
-                  </div>
-                  <Progress value={(outcome.riskThreshold || 0) * 100} className="h-1.5" />
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium flex items-center gap-2">
-                  <TrendingDown className="w-4 h-4 text-primary" /> Max Drift
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-4 pt-0">
-                <div className="flex flex-col gap-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm text-muted-foreground">Max Drift Allowed</span>
-                    <span className="text-sm font-semibold" data-testid="text-max-drift">{outcome.maxDriftPercent || 0}%</span>
-                  </div>
-                  <Progress value={outcome.maxDriftPercent || 0} className="h-1.5" />
-                  <span className="text-xs text-muted-foreground">Performance drift beyond this triggers alert</span>
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 text-primary" /> Auto-Pause
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-4 pt-0">
-                <div className="flex flex-col gap-3">
-                  <div className="flex items-center gap-2">
-                    {outcome.autoPauseTrigger ? (
-                      <Badge variant="outline" className="bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20">
-                        Enabled
-                      </Badge>
-                    ) : (
-                      <Badge variant="outline" className="bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/20">
-                        Disabled
-                      </Badge>
-                    )}
-                  </div>
-                  <span className="text-xs text-muted-foreground">
-                    {outcome.autoPauseTrigger
-                      ? "Agent will be automatically paused if risk threshold is exceeded"
-                      : "Manual intervention required when risk threshold exceeded"}
-                  </span>
-                </div>
-              </CardContent>
-            </Card>
-            <Card data-testid="card-risk-score">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium flex items-center gap-2">
-                  <Gauge className="w-4 h-4 text-primary" /> Risk Score
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-4 pt-0">
-                <div className="flex flex-col items-center gap-3">
-                  <div className="relative w-20 h-20">
-                    <svg viewBox="0 0 36 36" className="w-20 h-20 -rotate-90">
-                      <path
-                        d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="3"
-                        className="text-muted/30"
-                      />
-                      <path
-                        d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="3"
-                        strokeDasharray={`${riskScore}, 100`}
-                        className={riskScore >= 70 ? "text-red-500" : riskScore >= 40 ? "text-amber-500" : "text-emerald-500"}
-                      />
-                    </svg>
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <span className="text-lg font-semibold" data-testid="text-risk-score">{riskScore}</span>
-                    </div>
-                  </div>
-                  <span className="text-xs text-muted-foreground text-center">Composite score out of 100</span>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          <div className="space-y-3">
-            <h3 className="text-sm font-semibold">Risk Sub-Factors</h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <Card data-testid="card-risk-impact">
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="w-8 h-8 rounded-md bg-red-500/15 flex items-center justify-center">
-                      <AlertTriangle className="w-4 h-4 text-red-500" />
-                    </div>
-                    <div className="flex flex-col">
-                      <span className="text-xs font-semibold">Business Impact</span>
-                      <span className="text-[10px] text-muted-foreground">Revenue & customer effect</span>
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between gap-2 mt-2">
-                    <Progress value={outcome.riskTier === "CRITICAL" ? 90 : outcome.riskTier === "HIGH" ? 70 : outcome.riskTier === "MEDIUM" ? 45 : 20} className="h-1.5 flex-1" />
-                    <span className="text-xs font-semibold">{outcome.riskTier === "CRITICAL" ? "9/10" : outcome.riskTier === "HIGH" ? "7/10" : outcome.riskTier === "MEDIUM" ? "5/10" : "2/10"}</span>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card data-testid="card-risk-autonomy">
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="w-8 h-8 rounded-md bg-amber-500/15 flex items-center justify-center">
-                      <Brain className="w-4 h-4 text-amber-500" />
-                    </div>
-                    <div className="flex flex-col">
-                      <span className="text-xs font-semibold">Autonomy Scope</span>
-                      <span className="text-[10px] text-muted-foreground">Decision authority level</span>
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between gap-2 mt-2">
-                    <Progress value={boundAgents.length > 3 ? 80 : boundAgents.length > 1 ? 55 : 30} className="h-1.5 flex-1" />
-                    <span className="text-xs font-semibold">{boundAgents.length > 3 ? "8/10" : boundAgents.length > 1 ? "6/10" : "3/10"}</span>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card data-testid="card-risk-data-class">
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="w-8 h-8 rounded-md bg-blue-500/15 flex items-center justify-center">
-                      <Database className="w-4 h-4 text-blue-500" />
-                    </div>
-                    <div className="flex flex-col">
-                      <span className="text-xs font-semibold">Data Classification</span>
-                      <span className="text-[10px] text-muted-foreground">Sensitivity & compliance</span>
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between gap-2 mt-2">
-                    <Progress value={outcome.riskTier === "CRITICAL" ? 85 : outcome.riskTier === "HIGH" ? 60 : 35} className="h-1.5 flex-1" />
-                    <span className="text-xs font-semibold">{outcome.riskTier === "CRITICAL" ? "9/10" : outcome.riskTier === "HIGH" ? "6/10" : "4/10"}</span>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card data-testid="card-risk-write-actions">
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="w-8 h-8 rounded-md bg-purple-500/15 flex items-center justify-center">
-                      <Pencil className="w-4 h-4 text-purple-500" />
-                    </div>
-                    <div className="flex flex-col">
-                      <span className="text-xs font-semibold">Write Actions</span>
-                      <span className="text-[10px] text-muted-foreground">Mutation & side effects</span>
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between gap-2 mt-2">
-                    <Progress value={outcome.riskTier === "CRITICAL" ? 95 : outcome.riskTier === "HIGH" ? 65 : 40} className="h-1.5 flex-1" />
-                    <span className="text-xs font-semibold">{outcome.riskTier === "CRITICAL" ? "10/10" : outcome.riskTier === "HIGH" ? "7/10" : "4/10"}</span>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          </div>
-
-          <div className="space-y-3">
-            <h3 className="text-sm font-semibold">Change Impact</h3>
-            {pendingApprovals.length === 0 ? (
-              <Card>
-                <CardContent className="flex flex-col items-center justify-center py-8 gap-2">
-                  <CheckCircle className="w-8 h-8 text-muted-foreground/50" />
-                  <p className="text-sm text-muted-foreground">No pending approvals for this outcome</p>
-                </CardContent>
-              </Card>
-            ) : (
-              <div className="space-y-2">
-                {pendingApprovals.map((approval) => (
-                  <Card key={approval.id} data-testid={`card-pending-approval-${approval.id}`}>
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold">Risk Sub-Factors</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <Card data-testid="card-risk-impact">
                     <CardContent className="p-4">
-                      <div className="flex items-center justify-between gap-3 flex-wrap">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <Clock className="w-4 h-4 text-amber-500 shrink-0" />
-                          <div className="flex flex-col min-w-0">
-                            <span className="text-sm font-medium truncate">{approval.objectName || approval.type}</span>
-                            <span className="text-xs text-muted-foreground">{approval.description || approval.type.replace(/_/g, " ")}</span>
-                          </div>
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="w-8 h-8 rounded-md bg-red-500/15 flex items-center justify-center">
+                          <AlertTriangle className="w-4 h-4 text-red-500" />
                         </div>
-                        <div className="flex items-center gap-2">
-                          <StatusBadge status={approval.status} />
-                          {approval.riskScore != null && (
-                            <Badge variant="outline" className="text-[10px]">Risk: {((approval.riskScore || 0) * 100).toFixed(0)}%</Badge>
-                          )}
+                        <div className="flex flex-col">
+                          <span className="text-xs font-semibold">Business Impact</span>
+                          <span className="text-[10px] text-muted-foreground">Revenue & customer effect</span>
                         </div>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 mt-2">
+                        <Progress value={outcome.riskTier === "CRITICAL" ? 90 : outcome.riskTier === "HIGH" ? 70 : outcome.riskTier === "MEDIUM" ? 45 : 20} className="h-1.5 flex-1" />
+                        <span className="text-xs font-semibold">{outcome.riskTier === "CRITICAL" ? "9/10" : outcome.riskTier === "HIGH" ? "7/10" : outcome.riskTier === "MEDIUM" ? "5/10" : "2/10"}</span>
                       </div>
                     </CardContent>
                   </Card>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="space-y-3">
-            <h3 className="text-sm font-semibold">Required Expert Validations</h3>
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-center gap-2 mb-1">
-                    <StatusBadge status={outcome.riskTier} />
-                    <span className="text-xs text-muted-foreground">Risk tier governs which changes require expert validation before execution</span>
-                  </div>
-                  {requiredApprovalRules.map((rule, i) => (
-                    <div key={i} className="flex items-center gap-2 py-1" data-testid={`text-approval-rule-${i}`}>
-                      <ShieldCheck className="w-3.5 h-3.5 text-primary shrink-0" />
-                      <span className="text-sm">{rule}</span>
-                    </div>
-                  ))}
+                  <Card data-testid="card-risk-autonomy">
+                    <CardContent className="p-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="w-8 h-8 rounded-md bg-amber-500/15 flex items-center justify-center">
+                          <Brain className="w-4 h-4 text-amber-500" />
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-xs font-semibold">Autonomy Scope</span>
+                          <span className="text-[10px] text-muted-foreground">Decision authority level</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 mt-2">
+                        <Progress value={boundAgents.length > 3 ? 80 : boundAgents.length > 1 ? 55 : 30} className="h-1.5 flex-1" />
+                        <span className="text-xs font-semibold">{boundAgents.length > 3 ? "8/10" : boundAgents.length > 1 ? "6/10" : "3/10"}</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                  <Card data-testid="card-risk-data-class">
+                    <CardContent className="p-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="w-8 h-8 rounded-md bg-blue-500/15 flex items-center justify-center">
+                          <Database className="w-4 h-4 text-blue-500" />
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-xs font-semibold">Data Classification</span>
+                          <span className="text-[10px] text-muted-foreground">Sensitivity & compliance</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 mt-2">
+                        <Progress value={outcome.riskTier === "CRITICAL" ? 85 : outcome.riskTier === "HIGH" ? 60 : 35} className="h-1.5 flex-1" />
+                        <span className="text-xs font-semibold">{outcome.riskTier === "CRITICAL" ? "9/10" : outcome.riskTier === "HIGH" ? "6/10" : "4/10"}</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                  <Card data-testid="card-risk-write-actions">
+                    <CardContent className="p-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="w-8 h-8 rounded-md bg-purple-500/15 flex items-center justify-center">
+                          <Pencil className="w-4 h-4 text-purple-500" />
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-xs font-semibold">Write Actions</span>
+                          <span className="text-[10px] text-muted-foreground">Mutation & side effects</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 mt-2">
+                        <Progress value={outcome.riskTier === "CRITICAL" ? 95 : outcome.riskTier === "HIGH" ? 65 : 40} className="h-1.5 flex-1" />
+                        <span className="text-xs font-semibold">{outcome.riskTier === "CRITICAL" ? "10/10" : outcome.riskTier === "HIGH" ? "7/10" : "4/10"}</span>
+                      </div>
+                    </CardContent>
+                  </Card>
                 </div>
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
+              </div>
 
-        {/* Tab 5: Audit */}
-        <TabsContent value="audit" className="space-y-6">
-          <AuditTab outcomeId={outcomeId!} outcome={outcome} auditData={auditData} gates={gates} />
-        </TabsContent>
-
-        {/* Tab 6: Agent Proposals */}
-        <TabsContent value="agents" className="space-y-4">
-          <AgentProposalsTab outcome={outcome} kpis={kpis || []} />
+              {pendingApprovals.length > 0 && (
+                <div className="space-y-3">
+                  <h3 className="text-sm font-semibold">Pending Approvals</h3>
+                  <div className="space-y-2">
+                    {pendingApprovals.map((approval) => (
+                      <Card key={approval.id} data-testid={`card-pending-approval-${approval.id}`}>
+                        <CardContent className="p-4">
+                          <div className="flex items-center justify-between gap-3 flex-wrap">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <Clock className="w-4 h-4 text-amber-500 shrink-0" />
+                              <div className="flex flex-col min-w-0">
+                                <span className="text-sm font-medium truncate">{approval.objectName || approval.type}</span>
+                                <span className="text-xs text-muted-foreground">{approval.description || approval.type.replace(/_/g, " ")}</span>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <StatusBadge status={approval.status} />
+                              {approval.riskScore != null && (
+                                <Badge variant="outline" className="text-[10px]">Risk: {((approval.riskScore || 0) * 100).toFixed(0)}%</Badge>
+                              )}
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
         </TabsContent>
       </Tabs>
     </div>
@@ -2280,15 +2007,15 @@ function AuditTab({
     <>
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
-          <h2 className="text-lg font-semibold">Audit Trail</h2>
-          <p className="text-sm text-muted-foreground">Contract versions, changes, and approval decisions</p>
+          <h3 className="text-sm font-semibold">Audit Trail</h3>
+          <p className="text-xs text-muted-foreground">Contract versions, changes, and approval decisions</p>
         </div>
         <Badge variant="outline" className="text-[10px]" data-testid="badge-version">v{outcome.version}</Badge>
       </div>
 
       {versions && versions.length > 0 && (
         <div className="space-y-3">
-          <h3 className="text-sm font-semibold">Contract Version History</h3>
+          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Contract Version History</span>
           <Card>
             <CardContent className="p-0">
               <div className="divide-y">
@@ -2321,8 +2048,6 @@ function AuditTab({
           </Card>
         </div>
       )}
-
-      <Separator />
 
       <div className="flex items-center gap-2 flex-wrap">
         <Button
@@ -2376,7 +2101,7 @@ function AuditTab({
                       <span className="text-xs text-muted-foreground">by {entry.actor}</span>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex items-center gap-2 shrink-0 flex-wrap">
                     {entry.kind === "approval" && entry.status === "approved" && (
                       <Badge variant="outline" className="text-[9px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" data-testid={`badge-signed-${entry.id}`}>
                         <CheckCircle className="w-3 h-3 mr-0.5" /> Signed
@@ -2401,8 +2126,8 @@ function AuditTab({
         <>
           <Separator />
           <div>
-            <h3 className="text-sm font-semibold">Configured Gates</h3>
-            <p className="text-xs text-muted-foreground">Lifecycle stages requiring expert validation</p>
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Configured Gates</span>
+            <p className="text-[10px] text-muted-foreground">Lifecycle stages requiring expert validation</p>
           </div>
           <div className="space-y-2">
             {gates.map((gate, i) => (
@@ -2559,8 +2284,8 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
-          <h2 className="text-lg font-semibold">Proposed Agents</h2>
-          <p className="text-sm text-muted-foreground">AI-generated agents to deliver this outcome. Review and create the ones you need.</p>
+          <h3 className="text-sm font-semibold">Proposed Agents</h3>
+          <p className="text-xs text-muted-foreground">AI-generated agents to deliver this outcome. Review and create the ones you need.</p>
         </div>
         <Button variant="outline" onClick={generateProposals} disabled={generating} data-testid="button-regenerate-proposals">
           {generating ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1.5" />}
