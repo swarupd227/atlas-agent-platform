@@ -2016,6 +2016,9 @@ function PolicyDetailDialog({ policyId, open, onOpenChange }: { policyId: string
 
   const [editRules, setEditRules] = useState<Array<{ name: string; field: string; operator: string; value: string; action: string }>>([]);
   const [rulesInitialized, setRulesInitialized] = useState(false);
+  const [isStructuredFormat, setIsStructuredFormat] = useState(false);
+  const [structuredJsonEdit, setStructuredJsonEdit] = useState("");
+  const [isEditingStructured, setIsEditingStructured] = useState(false);
   const [testRunResults, setTestRunResults] = useState<Record<string, any>>({});
   const [addTestOpen, setAddTestOpen] = useState(false);
   const [newTestName, setNewTestName] = useState("");
@@ -2031,35 +2034,51 @@ function PolicyDetailDialog({ policyId, open, onOpenChange }: { policyId: string
   if (policy && !rulesInitialized) {
     const pj = policy.policyJson as any;
     const rules = pj?.rules || [];
-    setEditRules(rules.map((r: any) => ({
-      name: r.name || "",
-      field: r.field || r.check || "",
-      operator: r.operator || r.op || "equals",
-      value: String(r.value ?? r.threshold ?? ""),
-      action: r.action || "warn",
-    })));
+    const hasStructuredRules = rules.length > 0 && rules.some((r: any) => r.type && !r.name);
+    setIsStructuredFormat(hasStructuredRules);
+    if (hasStructuredRules) {
+      setStructuredJsonEdit(JSON.stringify(pj, null, 2));
+    } else {
+      setEditRules(rules.map((r: any) => ({
+        name: r.name || "",
+        field: r.field || r.check || "",
+        operator: r.operator || r.op || "equals",
+        value: String(r.value ?? r.threshold ?? ""),
+        action: r.action || "warn",
+      })));
+    }
     setRulesInitialized(true);
   }
 
   const saveRulesMutation = useMutation({
     mutationFn: async () => {
-      const pj = (policy?.policyJson as any) || {};
-      const updatedJson = {
-        ...pj,
-        rules: editRules.map((r) => ({
-          name: r.name,
-          field: r.field,
-          operator: r.operator,
-          value: r.value,
-          action: r.action,
-        })),
-      };
+      let updatedJson;
+      if (isStructuredFormat) {
+        try {
+          updatedJson = JSON.parse(structuredJsonEdit);
+        } catch {
+          throw new Error("Invalid JSON syntax");
+        }
+      } else {
+        const pj = (policy?.policyJson as any) || {};
+        updatedJson = {
+          ...pj,
+          rules: editRules.map((r) => ({
+            name: r.name,
+            field: r.field,
+            operator: r.operator,
+            value: r.value,
+            action: r.action,
+          })),
+        };
+      }
       const res = await apiRequest("PATCH", `/api/policies/${policyId}`, { policyJson: updatedJson });
       return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/policies', policyId] });
       queryClient.invalidateQueries({ queryKey: ['/api/policies'] });
+      setIsEditingStructured(false);
       toast({ title: "Rules saved" });
     },
     onError: (err: Error) => {
@@ -2173,65 +2192,105 @@ function PolicyDetailDialog({ policyId, open, onOpenChange }: { policyId: string
           </TabsList>
 
           <TabsContent value="rules" className="mt-4 flex flex-col gap-3">
-            {editRules.map((rule, idx) => (
-              <div key={idx} className="flex items-center gap-2 flex-wrap" data-testid={`rule-row-${idx}`}>
-                <Input
-                  value={rule.name}
-                  onChange={(e) => updateRule(idx, "name", e.target.value)}
-                  placeholder="Rule name"
-                  className="flex-1 min-w-[120px]"
-                  data-testid={`input-rule-name-${idx}`}
-                />
-                <Input
-                  value={rule.field}
-                  onChange={(e) => updateRule(idx, "field", e.target.value)}
-                  placeholder="Field"
-                  className="w-[120px]"
-                  data-testid={`input-rule-field-${idx}`}
-                />
-                <Select value={rule.operator} onValueChange={(v) => updateRule(idx, "operator", v)}>
-                  <SelectTrigger className="w-[130px]" data-testid={`select-rule-operator-${idx}`}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="gt">gt</SelectItem>
-                    <SelectItem value="lt">lt</SelectItem>
-                    <SelectItem value="equals">equals</SelectItem>
-                    <SelectItem value="contains">contains</SelectItem>
-                    <SelectItem value="not_contains">not_contains</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Input
-                  value={rule.value}
-                  onChange={(e) => updateRule(idx, "value", e.target.value)}
-                  placeholder="Value"
-                  className="w-[100px]"
-                  data-testid={`input-rule-value-${idx}`}
-                />
-                <Select value={rule.action} onValueChange={(v) => updateRule(idx, "action", v)}>
-                  <SelectTrigger className="w-[120px]" data-testid={`select-rule-action-${idx}`}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="block">block</SelectItem>
-                    <SelectItem value="hard_block">hard_block</SelectItem>
-                    <SelectItem value="warn">warn</SelectItem>
-                    <SelectItem value="log">log</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Button size="icon" variant="ghost" onClick={() => removeRule(idx)} data-testid={`button-remove-rule-${idx}`}>
-                  <XCircle className="w-4 h-4" />
-                </Button>
+            {isStructuredFormat ? (
+              <div className="space-y-3">
+                {isEditingStructured ? (
+                  <div className="space-y-2">
+                    <Label className="text-xs text-muted-foreground">Advanced Rule Editor (JSON)</Label>
+                    <Textarea
+                      value={structuredJsonEdit}
+                      onChange={(e) => setStructuredJsonEdit(e.target.value)}
+                      className="font-mono text-[11px] min-h-[300px]"
+                      data-testid="textarea-structured-rules"
+                    />
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Button onClick={() => saveRulesMutation.mutate()} disabled={saveRulesMutation.isPending} data-testid="button-save-rules">
+                        {saveRulesMutation.isPending ? <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> Saving...</> : <><Save className="h-3.5 w-3.5 mr-1.5" /> Save Rules</>}
+                      </Button>
+                      <Button variant="outline" onClick={() => {
+                        setStructuredJsonEdit(JSON.stringify(policy?.policyJson, null, 2));
+                        setIsEditingStructured(false);
+                      }} data-testid="button-cancel-structured-edit">
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <PolicyRuleViewer rules={(policy?.policyJson as Record<string, unknown>) || {}} />
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <PermissionGate action="create_modify_policies">
+                        <Button variant="outline" onClick={() => setIsEditingStructured(true)} data-testid="button-edit-structured-rules">
+                          <Pencil className="h-3.5 w-3.5 mr-1.5" /> Edit Rules
+                        </Button>
+                      </PermissionGate>
+                    </div>
+                  </div>
+                )}
               </div>
-            ))}
-            <div className="flex items-center gap-2 flex-wrap">
-              <Button variant="outline" onClick={addRule} data-testid="button-add-rule">
-                <Plus className="w-4 h-4 mr-1" /> Add Rule
-              </Button>
-              <Button onClick={() => saveRulesMutation.mutate()} disabled={saveRulesMutation.isPending} data-testid="button-save-rules">
-                {saveRulesMutation.isPending ? "Saving..." : "Save Rules"}
-              </Button>
-            </div>
+            ) : (
+              <>
+                {editRules.map((rule, idx) => (
+                  <div key={idx} className="flex items-center gap-2 flex-wrap" data-testid={`rule-row-${idx}`}>
+                    <Input
+                      value={rule.name}
+                      onChange={(e) => updateRule(idx, "name", e.target.value)}
+                      placeholder="Rule name"
+                      className="flex-1 min-w-[120px]"
+                      data-testid={`input-rule-name-${idx}`}
+                    />
+                    <Input
+                      value={rule.field}
+                      onChange={(e) => updateRule(idx, "field", e.target.value)}
+                      placeholder="Field"
+                      className="w-[120px]"
+                      data-testid={`input-rule-field-${idx}`}
+                    />
+                    <Select value={rule.operator} onValueChange={(v) => updateRule(idx, "operator", v)}>
+                      <SelectTrigger className="w-[130px]" data-testid={`select-rule-operator-${idx}`}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="gt">gt</SelectItem>
+                        <SelectItem value="lt">lt</SelectItem>
+                        <SelectItem value="equals">equals</SelectItem>
+                        <SelectItem value="contains">contains</SelectItem>
+                        <SelectItem value="not_contains">not_contains</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Input
+                      value={rule.value}
+                      onChange={(e) => updateRule(idx, "value", e.target.value)}
+                      placeholder="Value"
+                      className="w-[100px]"
+                      data-testid={`input-rule-value-${idx}`}
+                    />
+                    <Select value={rule.action} onValueChange={(v) => updateRule(idx, "action", v)}>
+                      <SelectTrigger className="w-[120px]" data-testid={`select-rule-action-${idx}`}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="block">block</SelectItem>
+                        <SelectItem value="hard_block">hard_block</SelectItem>
+                        <SelectItem value="warn">warn</SelectItem>
+                        <SelectItem value="log">log</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button size="icon" variant="ghost" onClick={() => removeRule(idx)} data-testid={`button-remove-rule-${idx}`}>
+                      <XCircle className="w-4 h-4" />
+                    </Button>
+                  </div>
+                ))}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Button variant="outline" onClick={addRule} data-testid="button-add-rule">
+                    <Plus className="w-4 h-4 mr-1" /> Add Rule
+                  </Button>
+                  <Button onClick={() => saveRulesMutation.mutate()} disabled={saveRulesMutation.isPending} data-testid="button-save-rules">
+                    {saveRulesMutation.isPending ? "Saving..." : "Save Rules"}
+                  </Button>
+                </div>
+              </>
+            )}
           </TabsContent>
 
           <TabsContent value="tests" className="mt-4 flex flex-col gap-4">
