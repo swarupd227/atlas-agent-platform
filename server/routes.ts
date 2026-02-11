@@ -8349,15 +8349,182 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
       const server = await storage.getMcpServer(req.params.id);
       if (!server) return res.status(404).json({ message: "MCP server not found" });
 
-      const tools = await storage.getMcpServerTools(req.params.id);
-      const resources = await storage.getMcpServerResources(req.params.id);
-      const prompts = await storage.getMcpServerPrompts(req.params.id);
+      const tools = await storage.getMcpServerTools(req.params.id as string);
+      const resources = await storage.getMcpServerResources(req.params.id as string);
+      const prompts = await storage.getMcpServerPrompts(req.params.id as string);
 
-      await storage.updateMcpServer(req.params.id, { lastHealthCheck: new Date(), healthStatus: "healthy" });
+      const crypto = await import("crypto");
+      const driftEvents: string[] = [];
+      for (const tool of tools) {
+        const fingerprint = crypto.createHash("sha256")
+          .update(JSON.stringify({ name: tool.name, inputSchema: tool.inputSchema, outputSchema: tool.outputSchema, annotations: tool.annotations }))
+          .digest("hex");
+        if (tool.fingerprintHash && tool.fingerprintHash !== fingerprint) {
+          driftEvents.push(tool.name);
+          await storage.createAuditEvent({
+            action: "tool_catalog.connector_drift",
+            objectType: "mcp_server_tool",
+            objectId: tool.id,
+            actorId: "system",
+            details: JSON.stringify({ serverId: server.id, serverName: server.name, previousHash: tool.fingerprintHash, newHash: fingerprint }),
+          });
+          await storage.updateMcpServerTool(tool.id, { fingerprintHash: fingerprint, driftStatus: "drifted", lastDriftAt: new Date() });
+        } else {
+          await storage.updateMcpServerTool(tool.id, { fingerprintHash: fingerprint, driftStatus: "stable" });
+        }
+      }
 
-      res.json({ synced: true, catalogs: { tools: tools.length, resources: resources.length, prompts: prompts.length } });
+      await storage.updateMcpServer(req.params.id as string, { lastHealthCheck: new Date(), healthStatus: "healthy" });
+
+      res.json({
+        synced: true,
+        catalogs: { tools: tools.length, resources: resources.length, prompts: prompts.length },
+        driftDetected: driftEvents.length > 0,
+        driftTools: driftEvents,
+      });
     } catch (e) {
       res.status(500).json({ message: "Failed to sync catalogs" });
+    }
+  });
+
+  // ── Tool Catalog (governed inventory across all MCP servers) ──
+
+  app.get("/api/tool-catalog", async (_req, res) => {
+    try {
+      const tools = await storage.getAllMcpServerTools();
+      const servers = await storage.getMcpServers();
+      const serverMap = new Map(servers.map(s => [s.id, s]));
+      const enriched = tools.map(t => ({
+        ...t,
+        serverName: serverMap.get(t.serverId)?.name || "Unknown",
+        serverStatus: serverMap.get(t.serverId)?.status || "unknown",
+      }));
+      res.json(enriched);
+    } catch (e) {
+      res.status(500).json({ message: "Failed to fetch tool catalog" });
+    }
+  });
+
+  app.get("/api/tool-catalog/:id", async (req, res) => {
+    try {
+      const tool = await storage.getMcpServerToolById(req.params.id as string);
+      if (!tool) return res.status(404).json({ message: "Tool not found" });
+      const server = await storage.getMcpServer(tool.serverId);
+      res.json({ ...tool, serverName: server?.name || "Unknown", serverStatus: server?.status || "unknown" });
+    } catch (e) {
+      res.status(500).json({ message: "Failed to fetch tool" });
+    }
+  });
+
+  const toolCatalogPatchSchema = z.object({
+    riskClassification: z.enum(["low", "medium", "high", "critical"]).optional(),
+    owner: z.string().max(255).optional(),
+    enabled: z.boolean().optional(),
+    description: z.string().optional(),
+  });
+
+  app.patch("/api/tool-catalog/:id", checkPermission("manage_mcp_servers"), async (req, res) => {
+    try {
+      const parsed = toolCatalogPatchSchema.parse(req.body);
+      const tool = await storage.getMcpServerToolById(req.params.id as string);
+      if (!tool) return res.status(404).json({ message: "Tool not found" });
+
+      if (parsed.enabled === true && !tool.enabled) {
+        const annotations = (tool.annotations || {}) as Record<string, unknown>;
+        const isWrite = annotations.readOnlyHint === false || annotations.destructiveHint === true;
+        const effectiveRisk = parsed.riskClassification || tool.riskClassification;
+        const isHighRisk = effectiveRisk === "high" || effectiveRisk === "critical";
+        if (isWrite || isHighRisk) {
+          const role = getRequestRole(req);
+          if (role !== "compliance_security" && role !== "admin") {
+            return res.status(403).json({ message: "Security Admin approval required to enable write or high-risk tools. Use the enablement request flow instead." });
+          }
+        }
+      }
+
+      const updated = await storage.updateMcpServerTool(tool.id, parsed);
+      if (!updated) return res.status(500).json({ message: "Failed to update tool" });
+      await storage.createAuditEvent({
+        action: "tool_catalog.tool_updated",
+        objectType: "mcp_server_tool",
+        objectId: tool.id,
+        actorId: "platform_admin",
+        details: JSON.stringify(parsed),
+      });
+      res.json(updated);
+    } catch (e) {
+      if (e instanceof ZodError) return res.status(400).json({ message: "Invalid request", errors: e.errors });
+      res.status(500).json({ message: "Failed to update tool" });
+    }
+  });
+
+  app.post("/api/tool-catalog/:id/request-enablement", checkPermission("manage_mcp_servers"), async (req, res) => {
+    try {
+      const tool = await storage.getMcpServerToolById(req.params.id as string);
+      if (!tool) return res.status(404).json({ message: "Tool not found" });
+
+      const annotations = (tool.annotations || {}) as Record<string, unknown>;
+      const isWrite = annotations.readOnlyHint === false || annotations.destructiveHint === true;
+      const isHighRisk = tool.riskClassification === "high" || tool.riskClassification === "critical";
+      const needsApproval = isWrite || isHighRisk;
+
+      if (!needsApproval) {
+        const updated = await storage.updateMcpServerTool(tool.id, { enabled: true });
+        await storage.createAuditEvent({
+          action: "tool_catalog.tool_enabled",
+          objectType: "mcp_server_tool",
+          objectId: tool.id,
+          actorId: (req.body && req.body.requestedBy) || "agent_engineer",
+          details: JSON.stringify({ autoApproved: true, reason: "read-only and low/medium risk" }),
+        });
+        return res.json({ approved: true, tool: updated });
+      }
+
+      const requestedBy = (req.body && req.body.requestedBy) || "agent_engineer";
+      const blueprintId = req.body?.blueprintId || null;
+      const approval = await storage.createApproval({
+        type: "tool_enablement",
+        objectType: "tool_enablement",
+        objectId: tool.id,
+        status: "pending",
+        requestedBy,
+        description: `Enable tool "${tool.name}" for use${blueprintId ? ` in blueprint ${blueprintId}` : ""}. Requires Security Admin approval (${isWrite ? "write/destructive tool" : "high risk classification"}).`,
+        evidenceJson: {
+          toolName: tool.name,
+          serverId: tool.serverId,
+          riskClassification: tool.riskClassification,
+          annotations: tool.annotations,
+          isWrite,
+          isHighRisk,
+          blueprintId,
+        },
+      });
+
+      await storage.createAuditEvent({
+        action: "tool_catalog.enablement_requested",
+        objectType: "mcp_server_tool",
+        objectId: tool.id,
+        actorId: requestedBy,
+        details: JSON.stringify({ approvalId: approval.id, blueprintId }),
+      });
+
+      res.json({ approved: false, approvalRequired: true, approvalId: approval.id });
+    } catch (e) {
+      res.status(500).json({ message: "Failed to request tool enablement" });
+    }
+  });
+
+  app.post("/api/tool-catalog/:id/record-usage", async (req, res) => {
+    try {
+      const tool = await storage.getMcpServerToolById(req.params.id as string);
+      if (!tool) return res.status(404).json({ message: "Tool not found" });
+      const updated = await storage.updateMcpServerTool(tool.id, {
+        usageCount: (tool.usageCount || 0) + 1,
+        lastUsedAt: new Date(),
+      });
+      res.json(updated);
+    } catch (e) {
+      res.status(500).json({ message: "Failed to record usage" });
     }
   });
 

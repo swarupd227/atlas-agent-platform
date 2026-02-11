@@ -274,7 +274,10 @@ export interface IStorage {
   deleteMcpServer(id: string): Promise<boolean>;
 
   getMcpServerTools(serverId: string): Promise<McpServerTool[]>;
+  getAllMcpServerTools(): Promise<McpServerTool[]>;
+  getMcpServerToolById(id: string): Promise<McpServerTool | undefined>;
   createMcpServerTool(tool: InsertMcpServerTool): Promise<McpServerTool>;
+  updateMcpServerTool(id: string, data: Partial<McpServerTool>): Promise<McpServerTool | undefined>;
   deleteMcpServerToolsByServer(serverId: string): Promise<void>;
 
   getMcpServerResources(serverId: string): Promise<McpServerResource[]>;
@@ -1084,9 +1087,23 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(mcpServerTools).where(eq(mcpServerTools.serverId, serverId));
   }
 
+  async getAllMcpServerTools() {
+    return db.select().from(mcpServerTools);
+  }
+
+  async getMcpServerToolById(id: string) {
+    const [tool] = await db.select().from(mcpServerTools).where(eq(mcpServerTools.id, id));
+    return tool;
+  }
+
   async createMcpServerTool(tool: InsertMcpServerTool) {
     const [created] = await db.insert(mcpServerTools).values(tool).returning();
     return created;
+  }
+
+  async updateMcpServerTool(id: string, data: Partial<McpServerTool>) {
+    const [updated] = await db.update(mcpServerTools).set(data).where(eq(mcpServerTools.id, id)).returning();
+    return updated;
   }
 
   async deleteMcpServerToolsByServer(serverId: string) {

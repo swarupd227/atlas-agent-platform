@@ -798,11 +798,20 @@ export const mcpServerTools = pgTable("mcp_server_tools", {
   name: text("name").notNull(),
   description: text("description"),
   inputSchema: jsonb("input_schema"),
+  outputSchema: jsonb("output_schema"),
   annotations: jsonb("annotations"),
+  fingerprintHash: varchar("fingerprint_hash", { length: 64 }),
+  riskClassification: varchar("risk_classification", { length: 20 }).default("low"),
+  owner: varchar("owner", { length: 255 }),
+  enabled: boolean("enabled").default(false),
+  usageCount: integer("usage_count").default(0),
+  lastUsedAt: timestamp("last_used_at"),
+  lastDriftAt: timestamp("last_drift_at"),
+  driftStatus: varchar("drift_status", { length: 20 }).default("stable"),
   syncedAt: timestamp("synced_at").defaultNow(),
 });
 
-export const insertMcpServerToolSchema = createInsertSchema(mcpServerTools).omit({ id: true, syncedAt: true });
+export const insertMcpServerToolSchema = createInsertSchema(mcpServerTools).omit({ id: true, syncedAt: true, fingerprintHash: true, usageCount: true, lastUsedAt: true, lastDriftAt: true, driftStatus: true });
 export type InsertMcpServerTool = z.infer<typeof insertMcpServerToolSchema>;
 export type McpServerTool = typeof mcpServerTools.$inferSelect;
 
