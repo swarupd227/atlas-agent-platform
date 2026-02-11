@@ -381,7 +381,7 @@ export default function Outcomes() {
           </Dialog>
           <Link href="/outcomes/discover">
             <Button variant="outline" data-testid="button-discover-outcomes">
-              <Sparkles className="w-4 h-4 mr-1.5" /> Discover with AI
+              <Sparkles className="w-4 h-4 mr-1.5" /> Build with AI
             </Button>
           </Link>
           {!outcomesPerm.allowed ? (
@@ -965,7 +965,7 @@ export default function Outcomes() {
           <Link href="/outcomes/discover">
             <Button data-testid="button-create-first-outcome">
               <Sparkles className="w-4 h-4 mr-1.5" />
-              Discover Outcomes
+              Outcome Builder
             </Button>
           </Link>
         </div>

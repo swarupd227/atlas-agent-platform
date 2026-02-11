@@ -755,7 +755,7 @@ export default function OutcomeDiscover() {
           <div className="flex-1 flex flex-col min-h-0 min-w-0">
             <div className="flex items-center gap-2 p-4 border-b shrink-0 flex-wrap">
               <Sparkles className="w-4 h-4 text-primary" />
-              <h2 className="text-sm font-medium">Outcome Discovery</h2>
+              <h2 className="text-sm font-medium">Outcome Builder</h2>
               {proposal && <Badge variant="outline" className="text-[10px] text-green-600 dark:text-green-400">Proposal Ready</Badge>}
             </div>
 

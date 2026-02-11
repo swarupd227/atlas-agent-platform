@@ -29,7 +29,7 @@ The platform is built with a modern web stack: React, Vite, Tailwind CSS, shadcn
 - **Approval Gates**: Unified MCP elicitation and ALMP supervision experience combining expert validation gates (20% human oversight) with MCP elicitation flows. Features tool-call gate checking (write tools, data export, scope escalation), form and URL mode elicitations, server identity tracking, risk flag analysis, and approve/decline/cancel actions. URL-mode supports OAuth and sensitive data entry via external panels. Permission-gated for Expert Validator and Security Admin personas.
 - **Billing**: Outcome-based metering and invoicing.
 - **Evaluation Evidence System**: Robust evidence for agent performance and risks.
-- **Business Outcome Discovery**: Conversational AI for defining goals and drafting outcome contracts.
+- **Outcome Builder**: Conversational AI for defining goals and drafting outcome contracts.
 - **Role-based Access**: Six switchable personas for tailored access and actions.
 - **Global App Shell**: Provides environment selection, global search, command palette, notification center, role switcher, and theme toggle.
 

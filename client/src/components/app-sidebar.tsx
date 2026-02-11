@@ -39,7 +39,7 @@ import { useRole } from "./role-provider";
 
 const platformNav = [
   { title: "Overview", url: "/", icon: LayoutDashboard },
-  { title: "Discover", url: "/outcomes/discover", icon: Sparkles },
+  { title: "Outcome Builder", url: "/outcomes/discover", icon: Sparkles },
   { title: "Outcomes", url: "/outcomes", icon: Target },
   { title: "Agents", url: "/agents", icon: Bot },
   { title: "Templates", url: "/templates", icon: Library },
