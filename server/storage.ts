@@ -287,8 +287,11 @@ export interface IStorage {
   updateMcpServerResource(id: string, data: Partial<McpServerResource>): Promise<McpServerResource | undefined>;
   deleteMcpServerResourcesByServer(serverId: string): Promise<void>;
 
+  getAllMcpServerPrompts(): Promise<McpServerPrompt[]>;
   getMcpServerPrompts(serverId: string): Promise<McpServerPrompt[]>;
+  getMcpServerPromptById(id: string): Promise<McpServerPrompt | undefined>;
   createMcpServerPrompt(prompt: InsertMcpServerPrompt): Promise<McpServerPrompt>;
+  updateMcpServerPrompt(id: string, data: Partial<McpServerPrompt>): Promise<McpServerPrompt | undefined>;
   deleteMcpServerPromptsByServer(serverId: string): Promise<void>;
 
   getMcpServerAuth(serverId: string): Promise<McpServerAuth | undefined>;
@@ -1140,13 +1143,27 @@ export class DatabaseStorage implements IStorage {
     await db.delete(mcpServerResources).where(eq(mcpServerResources.serverId, serverId));
   }
 
+  async getAllMcpServerPrompts() {
+    return db.select().from(mcpServerPrompts);
+  }
+
   async getMcpServerPrompts(serverId: string) {
     return db.select().from(mcpServerPrompts).where(eq(mcpServerPrompts.serverId, serverId));
+  }
+
+  async getMcpServerPromptById(id: string) {
+    const [prompt] = await db.select().from(mcpServerPrompts).where(eq(mcpServerPrompts.id, id));
+    return prompt;
   }
 
   async createMcpServerPrompt(prompt: InsertMcpServerPrompt) {
     const [created] = await db.insert(mcpServerPrompts).values(prompt).returning();
     return created;
+  }
+
+  async updateMcpServerPrompt(id: string, data: Partial<McpServerPrompt>) {
+    const [updated] = await db.update(mcpServerPrompts).set(data).where(eq(mcpServerPrompts.id, id)).returning();
+    return updated;
   }
 
   async deleteMcpServerPromptsByServer(serverId: string) {

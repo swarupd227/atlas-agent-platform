@@ -846,10 +846,18 @@ export const mcpServerPrompts = pgTable("mcp_server_prompts", {
   name: text("name").notNull(),
   description: text("description"),
   arguments: jsonb("arguments"),
+  messages: jsonb("messages"),
+  publishedStatus: varchar("published_status", { length: 20 }).default("draft"),
+  publishedBy: varchar("published_by", { length: 255 }),
+  approvalStatus: varchar("approval_status", { length: 20 }).default("not_required"),
+  approvedBy: varchar("approved_by", { length: 255 }),
+  approvedAt: timestamp("approved_at"),
+  embeddedResourceRefs: jsonb("embedded_resource_refs"),
+  owner: varchar("owner", { length: 255 }),
   syncedAt: timestamp("synced_at").defaultNow(),
 });
 
-export const insertMcpServerPromptSchema = createInsertSchema(mcpServerPrompts).omit({ id: true, syncedAt: true });
+export const insertMcpServerPromptSchema = createInsertSchema(mcpServerPrompts).omit({ id: true, syncedAt: true, approvedBy: true, approvedAt: true });
 export type InsertMcpServerPrompt = z.infer<typeof insertMcpServerPromptSchema>;
 export type McpServerPrompt = typeof mcpServerPrompts.$inferSelect;
 
