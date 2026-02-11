@@ -10094,11 +10094,23 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
   });
 
   app.get("/api/mcp-apps/:id", async (req, res) => {
-    const app = await storage.getMcpApp(req.params.id);
-    if (!app) return res.status(404).json({ message: "MCP App not found" });
-    const server = await storage.getMcpServer(app.serverId);
-    const consents = await storage.getMcpAppConsents(app.id);
-    res.json({ ...app, server, consents });
+    const appRecord = await storage.getMcpApp(req.params.id);
+    if (!appRecord) return res.status(404).json({ message: "MCP App not found" });
+    const server = await storage.getMcpServer(appRecord.serverId);
+    const consents = await storage.getMcpAppConsents(appRecord.id);
+    const activeConsent = consents.find((c: any) => c.status === "active");
+    const trustLevel = server?.allowlisted
+      ? (server.riskTier === "LOW" ? "verified" : server.riskTier === "MEDIUM" ? "verified" : "community")
+      : "unknown";
+    res.json({
+      ...appRecord,
+      server,
+      serverName: server?.name || "Unknown Server",
+      consents,
+      consented: !!activeConsent,
+      trustLevel,
+      capabilities: appRecord.requiredCapabilities || [],
+    });
   });
 
   app.post("/api/mcp-apps", checkPermission("manage_mcp_servers"), async (req, res) => {
