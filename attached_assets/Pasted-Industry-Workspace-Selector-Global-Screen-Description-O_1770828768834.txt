@@ -1,0 +1,14 @@
+Industry Workspace Selector (Global)
+Screen Description
+On first login (and switchable anytime from the header bar), users select their Industry Workspace. This is a global context switch that cascades through every screen in the platform.
+What’s on Screen
+•	Industry Tiles: Financial Services, Healthcare & Life Sciences, Manufacturing & Supply Chain, Retail & E-Commerce, and Custom. Each tile shows: pre-loaded ontology (e.g., FIBO, SNOMED CT, ISA-95, GS1), number of pre-built agent skills, regulatory frameworks included, and golden templates available.
+•	Workspace Configuration: After selecting an industry, a configuration wizard lets users specify their sub-vertical (e.g., Retail Banking vs. Capital Markets vs. Insurance within Financial Services), applicable jurisdictions (US, EU, UK, APAC — determines which regulatory frameworks are active), integration landscape (core systems they use, like Epic/Cerner for healthcare, FIS/Temenos for banking), and data classification defaults.
+•	Regulatory Profile Auto-Configuration: Based on industry + jurisdiction, the platform auto-activates the relevant regulatory policy packs. For example: Financial Services + EU activates EU AI Act (high-risk classification for credit scoring), MiFID II suitability rules, PSD2 data access controls, and GDPR with financial-data-specific DPIAs. Healthcare + US activates HIPAA with the 2025 proposed rule changes, FDA AI/ML device guidance, 21 CFR Part 11 electronic records, and HITRUST CSF controls.
+•	Ontology Loader: The selected industry’s domain ontology loads into the platform’s Knowledge Graph layer. This ontology becomes the semantic backbone for agent reasoning — agents understand that a “claim” in insurance is a different concept from a “claim” in manufacturing warranties.
+
+How It Transforms Downstream Screens
+•	Every screen’s terminology adapts: “Outcomes” become “Claim Resolution SLAs” in insurance or “Patient Throughput Targets” in healthcare.
+•	Default governance policies, approval thresholds, and autonomy profiles are pre-configured per industry.
+•	The agent design wizard offers industry-specific model recommendations, tool suggestions, and guardrail presets.
+•	Evaluation datasets include industry-specific test cases (e.g., adverse action notice compliance for lending, PHI handling for healthcare).
