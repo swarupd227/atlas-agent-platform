@@ -15,6 +15,22 @@ export type IndustryId =
   | "retail"
   | "custom";
 
+export type DataClassification = "public" | "internal" | "confidential" | "restricted";
+
+export interface IntegrationSystem {
+  id: string;
+  name: string;
+  category: string;
+  description: string;
+}
+
+export interface WorkspaceConfig {
+  subVerticals: string[];
+  jurisdictions: string[];
+  integrations: string[];
+  dataClassificationDefault: DataClassification;
+}
+
 export interface IndustryProfile {
   id: IndustryId;
   label: string;
@@ -28,6 +44,7 @@ export interface IndustryProfile {
   goldenTemplates: number;
   subVerticals: string[];
   jurisdictions: string[];
+  integrationSystems: IntegrationSystem[];
 }
 
 export const INDUSTRIES: IndustryProfile[] = [
@@ -44,6 +61,16 @@ export const INDUSTRIES: IndustryProfile[] = [
     goldenTemplates: 28,
     subVerticals: ["Retail Banking", "Capital Markets", "Insurance", "Wealth Management", "Payments"],
     jurisdictions: ["US", "EU", "UK", "APAC", "Global"],
+    integrationSystems: [
+      { id: "fis", name: "FIS", category: "Core Banking", description: "Core banking and payment processing platform" },
+      { id: "temenos", name: "Temenos", category: "Core Banking", description: "Banking software for wealth and retail banking" },
+      { id: "bloomberg", name: "Bloomberg Terminal", category: "Market Data", description: "Financial data, analytics, and trading platform" },
+      { id: "refinitiv", name: "Refinitiv Eikon", category: "Market Data", description: "Financial analysis and market data platform" },
+      { id: "murex", name: "Murex", category: "Trading", description: "Capital markets trading and risk management" },
+      { id: "calypso", name: "Calypso", category: "Trading", description: "Cross-asset treasury and capital markets platform" },
+      { id: "guidewire", name: "Guidewire", category: "Insurance", description: "Insurance core system platform" },
+      { id: "duck_creek", name: "Duck Creek", category: "Insurance", description: "SaaS insurance platform" },
+    ],
   },
   {
     id: "healthcare",
@@ -58,6 +85,16 @@ export const INDUSTRIES: IndustryProfile[] = [
     goldenTemplates: 22,
     subVerticals: ["Hospital Systems", "Pharmaceuticals", "Medical Devices", "Clinical Research", "Payer/Insurance"],
     jurisdictions: ["US", "EU", "UK", "APAC", "Global"],
+    integrationSystems: [
+      { id: "epic", name: "Epic", category: "EHR", description: "Electronic health records and clinical workflow" },
+      { id: "cerner", name: "Cerner (Oracle Health)", category: "EHR", description: "Health information technology solutions" },
+      { id: "meditech", name: "MEDITECH", category: "EHR", description: "Healthcare information system" },
+      { id: "veeva", name: "Veeva Systems", category: "Life Sciences", description: "Cloud solutions for life sciences" },
+      { id: "iqvia", name: "IQVIA", category: "Clinical Research", description: "Clinical research and analytics platform" },
+      { id: "medidata", name: "Medidata Solutions", category: "Clinical Research", description: "Clinical trial management platform" },
+      { id: "labcorp", name: "LabCorp/Covance", category: "Diagnostics", description: "Laboratory diagnostics and drug development" },
+      { id: "allscripts", name: "Allscripts", category: "EHR", description: "Healthcare IT solutions" },
+    ],
   },
   {
     id: "manufacturing",
@@ -72,6 +109,16 @@ export const INDUSTRIES: IndustryProfile[] = [
     goldenTemplates: 18,
     subVerticals: ["Discrete Manufacturing", "Process Manufacturing", "Automotive", "Aerospace & Defense", "Electronics"],
     jurisdictions: ["US", "EU", "UK", "APAC", "Global"],
+    integrationSystems: [
+      { id: "sap_erp", name: "SAP S/4HANA", category: "ERP", description: "Enterprise resource planning and manufacturing" },
+      { id: "oracle_mfg", name: "Oracle Manufacturing Cloud", category: "ERP", description: "Cloud manufacturing management" },
+      { id: "siemens_plm", name: "Siemens Teamcenter", category: "PLM", description: "Product lifecycle management platform" },
+      { id: "ptc_windchill", name: "PTC Windchill", category: "PLM", description: "Product data and lifecycle management" },
+      { id: "rockwell", name: "Rockwell FactoryTalk", category: "MES/SCADA", description: "Industrial automation and control" },
+      { id: "aveva", name: "AVEVA", category: "MES/SCADA", description: "Industrial software for operations" },
+      { id: "sap_ibp", name: "SAP IBP", category: "Supply Chain", description: "Integrated business planning for supply chain" },
+      { id: "kinaxis", name: "Kinaxis RapidResponse", category: "Supply Chain", description: "Supply chain planning and analytics" },
+    ],
   },
   {
     id: "retail",
@@ -86,6 +133,16 @@ export const INDUSTRIES: IndustryProfile[] = [
     goldenTemplates: 24,
     subVerticals: ["Omnichannel Retail", "D2C E-Commerce", "Grocery & FMCG", "Luxury & Fashion", "Marketplace"],
     jurisdictions: ["US", "EU", "UK", "APAC", "Global"],
+    integrationSystems: [
+      { id: "shopify", name: "Shopify", category: "E-Commerce", description: "E-commerce platform and POS" },
+      { id: "salesforce_commerce", name: "Salesforce Commerce Cloud", category: "E-Commerce", description: "Enterprise e-commerce platform" },
+      { id: "sap_cx", name: "SAP Commerce Cloud", category: "E-Commerce", description: "Enterprise commerce and CX platform" },
+      { id: "oracle_retail", name: "Oracle Retail", category: "Retail Ops", description: "Retail management and merchandising" },
+      { id: "manhattan", name: "Manhattan Associates", category: "Supply Chain", description: "Supply chain and omnichannel solutions" },
+      { id: "blue_yonder", name: "Blue Yonder", category: "Supply Chain", description: "AI-driven supply chain management" },
+      { id: "algolia", name: "Algolia", category: "Search", description: "AI-powered search and discovery" },
+      { id: "stripe", name: "Stripe", category: "Payments", description: "Payment processing infrastructure" },
+    ],
   },
   {
     id: "custom",
@@ -100,6 +157,7 @@ export const INDUSTRIES: IndustryProfile[] = [
     goldenTemplates: 0,
     subVerticals: [],
     jurisdictions: ["US", "EU", "UK", "APAC", "Global"],
+    integrationSystems: [],
   },
 ];
 
@@ -218,6 +276,13 @@ const INDUSTRY_TERMS: Record<IndustryId, Partial<TerminologyMap>> = {
   custom: {},
 };
 
+const DEFAULT_WORKSPACE_CONFIG: WorkspaceConfig = {
+  subVerticals: [],
+  jurisdictions: [],
+  integrations: [],
+  dataClassificationDefault: "internal",
+};
+
 interface IndustryContextType {
   industry: IndustryProfile | null;
   setIndustry: (id: IndustryId) => void;
@@ -225,7 +290,42 @@ interface IndustryContextType {
   isSelected: boolean;
   term: (key: TermKey) => string;
   allIndustries: IndustryProfile[];
+  workspaceConfig: WorkspaceConfig;
+  setWorkspaceConfig: (config: WorkspaceConfig) => void;
+  activeFrameworks: string[];
 }
+
+const JURISDICTION_FRAMEWORKS: Record<string, Record<string, string[]>> = {
+  financial_services: {
+    US: ["SOX", "Basel III"],
+    EU: ["EU AI Act", "MiFID II", "PSD2", "GDPR"],
+    UK: ["FCA Regulations"],
+    APAC: ["MAS Guidelines"],
+    Global: [],
+  },
+  healthcare: {
+    US: ["HIPAA", "HITECH", "FDA AI/ML Guidance"],
+    EU: ["EU MDR", "GDPR", "EMA Guidelines"],
+    UK: ["NHS Data Security"],
+    APAC: ["PMDA Guidelines"],
+    Global: ["21 CFR Part 11", "GxP"],
+  },
+  manufacturing: {
+    US: ["ITAR", "OSHA"],
+    EU: ["REACH", "RoHS", "EU Machinery Regulation"],
+    UK: ["UK REACH"],
+    APAC: ["CCC Certification"],
+    Global: ["ISO 9001", "ISO 27001"],
+  },
+  retail: {
+    US: ["CCPA/CPRA", "FTC Guidelines", "ADA Compliance"],
+    EU: ["GDPR", "Digital Services Act"],
+    UK: ["UK GDPR"],
+    APAC: ["PDPA"],
+    Global: ["PCI DSS"],
+  },
+  custom: {},
+};
 
 const IndustryContext = createContext<IndustryContextType | null>(null);
 
@@ -235,6 +335,16 @@ export function IndustryProvider({ children }: { children: ReactNode }) {
       return (localStorage.getItem("almp-industry") as IndustryId) || null;
     }
     return null;
+  });
+
+  const [workspaceConfig, setWorkspaceConfigState] = useState<WorkspaceConfig>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("almp-workspace-config");
+      if (saved) {
+        try { return JSON.parse(saved); } catch { /* ignore */ }
+      }
+    }
+    return DEFAULT_WORKSPACE_CONFIG;
   });
 
   const industry = useMemo(
@@ -250,7 +360,26 @@ export function IndustryProvider({ children }: { children: ReactNode }) {
   const clearIndustry = useCallback(() => {
     setIndustryId(null);
     localStorage.removeItem("almp-industry");
+    localStorage.removeItem("almp-workspace-config");
+    setWorkspaceConfigState(DEFAULT_WORKSPACE_CONFIG);
   }, []);
+
+  const setWorkspaceConfig = useCallback((config: WorkspaceConfig) => {
+    setWorkspaceConfigState(config);
+    localStorage.setItem("almp-workspace-config", JSON.stringify(config));
+  }, []);
+
+  const activeFrameworks = useMemo(() => {
+    if (!industryId || industryId === "custom") return [];
+    const frameworkMap = JURISDICTION_FRAMEWORKS[industryId] || {};
+    const frameworks = new Set<string>();
+    for (const j of workspaceConfig.jurisdictions) {
+      for (const fw of (frameworkMap[j] || [])) {
+        frameworks.add(fw);
+      }
+    }
+    return Array.from(frameworks);
+  }, [industryId, workspaceConfig.jurisdictions]);
 
   const term = useCallback(
     (key: TermKey): string => {
@@ -269,6 +398,9 @@ export function IndustryProvider({ children }: { children: ReactNode }) {
         isSelected: industryId !== null,
         term,
         allIndustries: INDUSTRIES,
+        workspaceConfig,
+        setWorkspaceConfig,
+        activeFrameworks,
       }}
     >
       {children}

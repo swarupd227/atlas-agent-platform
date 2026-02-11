@@ -26,6 +26,7 @@ import {
   Ban,
   Scale,
   Sparkles,
+  Check,
   BookOpen,
   Layers,
   Play,
@@ -75,6 +76,7 @@ import { usePermission, PermissionGate } from "@/components/role-provider";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Policy, AuditEvent, Approval, Agent, PolicyException, ComplianceReport, PolicyTestCase } from "@shared/schema";
+import { useIndustry, type IndustryId } from "@/components/industry-provider";
 
 const domainIcons: Record<string, typeof Shield> = {
   data_handling: Lock,
@@ -83,6 +85,139 @@ const domainIcons: Record<string, typeof Shield> = {
   allowed_actions: CheckCircle,
   content_boundaries: AlertTriangle,
 };
+
+interface PolicyPackPolicy {
+  name: string;
+  domain: string;
+  description: string;
+  policyJson: Record<string, unknown>;
+}
+
+interface PolicyPack {
+  id: string;
+  name: string;
+  description: string;
+  industry: IndustryId;
+  framework: string;
+  riskLevel: "low" | "medium" | "high" | "critical";
+  policies: PolicyPackPolicy[];
+}
+
+const POLICY_PACKS: PolicyPack[] = [
+  {
+    id: "hipaa-pack",
+    name: "HIPAA Compliance Pack",
+    description: "Essential policies for HIPAA compliance including PHI handling, access controls, and audit requirements",
+    industry: "healthcare",
+    framework: "HIPAA",
+    riskLevel: "critical",
+    policies: [
+      { name: "PHI Data Handling", domain: "data_handling", description: "Restrict processing of Protected Health Information (PHI) to authorized agents only", policyJson: { rules: [{ type: "data_class_restriction", classes: ["PHI", "ePHI"], action: "require_encryption" }] } },
+      { name: "Clinical Access Controls", domain: "tool_permissions", description: "Enforce role-based access to clinical data systems (EHR, lab results)", policyJson: { rules: [{ type: "tool_scope", scope: "clinical_data", requires: "clinical_lead_approval" }] } },
+      { name: "HIPAA Audit Logging", domain: "logging", description: "Mandatory logging of all PHI access events with full attribution", policyJson: { rules: [{ type: "audit_requirement", level: "comprehensive", retention_days: 2190 }] } },
+      { name: "Minimum Necessary Rule", domain: "allowed_actions", description: "Agents must only access the minimum necessary PHI for their task", policyJson: { rules: [{ type: "data_minimization", principle: "minimum_necessary" }] } },
+    ],
+  },
+  {
+    id: "clinical-safety-pack",
+    name: "Clinical Safety Pack",
+    description: "Safety policies for agents operating in clinical decision support and patient care workflows",
+    industry: "healthcare",
+    framework: "FDA AI/ML Guidance",
+    riskLevel: "critical",
+    policies: [
+      { name: "Clinical Decision Guardrails", domain: "content_boundaries", description: "Prevent agents from making autonomous clinical decisions without human validation", policyJson: { rules: [{ type: "human_in_loop", triggers: ["diagnosis", "treatment_recommendation", "medication_change"] }] } },
+      { name: "Patient Safety Escalation", domain: "allowed_actions", description: "Auto-escalate to clinical staff when patient safety signals are detected", policyJson: { rules: [{ type: "escalation", triggers: ["adverse_event_signal", "contraindication_detected"] }] } },
+    ],
+  },
+  {
+    id: "mifid2-pack",
+    name: "MiFID II Compliance Pack",
+    description: "Policies for Markets in Financial Instruments Directive II compliance",
+    industry: "financial_services",
+    framework: "MiFID II",
+    riskLevel: "critical",
+    policies: [
+      { name: "Best Execution Logging", domain: "logging", description: "Record all execution decisions with rationale for best execution obligation", policyJson: { rules: [{ type: "audit_requirement", level: "comprehensive", includes: ["execution_venue", "price_rationale", "timing"] }] } },
+      { name: "Client Suitability Checks", domain: "allowed_actions", description: "Enforce suitability assessment before any investment recommendation", policyJson: { rules: [{ type: "pre_action_check", action: "investment_recommendation", requires: "suitability_assessment" }] } },
+      { name: "Transaction Reporting", domain: "logging", description: "Mandatory transaction reporting within T+1 for regulatory compliance", policyJson: { rules: [{ type: "reporting_requirement", deadline: "T+1", regulator: "NCA" }] } },
+    ],
+  },
+  {
+    id: "sox-pack",
+    name: "SOX Compliance Pack",
+    description: "Sarbanes-Oxley policies for financial reporting and internal controls",
+    industry: "financial_services",
+    framework: "SOX",
+    riskLevel: "high",
+    policies: [
+      { name: "Financial Data Integrity", domain: "data_handling", description: "Ensure integrity and non-tampering of financial data processed by agents", policyJson: { rules: [{ type: "data_integrity", requires: ["hash_verification", "immutable_audit_trail"] }] } },
+      { name: "Segregation of Duties", domain: "tool_permissions", description: "Enforce separation between agent roles that create, approve, and execute financial transactions", policyJson: { rules: [{ type: "role_separation", actions: ["create_transaction", "approve_transaction", "execute_transaction"] }] } },
+    ],
+  },
+  {
+    id: "anti-fraud-pack",
+    name: "Anti-Fraud Detection Pack",
+    description: "Policies for detecting and preventing fraudulent activities by agents",
+    industry: "financial_services",
+    framework: "FCA Regulations",
+    riskLevel: "high",
+    policies: [
+      { name: "Anomaly Detection Triggers", domain: "allowed_actions", description: "Flag unusual transaction patterns or data access for human review", policyJson: { rules: [{ type: "anomaly_detection", thresholds: { transaction_volume: "3x_baseline", access_frequency: "5x_baseline" } }] } },
+      { name: "Anti-Money Laundering Checks", domain: "allowed_actions", description: "Enforce AML screening for all financial transactions above threshold", policyJson: { rules: [{ type: "pre_action_check", action: "financial_transaction", requires: "aml_screening", threshold: 10000 }] } },
+    ],
+  },
+  {
+    id: "isa95-pack",
+    name: "ISA-95 Safety Pack",
+    description: "Policies for industrial control system safety and operational technology governance",
+    industry: "manufacturing",
+    framework: "ISA-95",
+    riskLevel: "critical",
+    policies: [
+      { name: "OT Network Isolation", domain: "tool_permissions", description: "Restrict agent access to operational technology networks with strict boundaries", policyJson: { rules: [{ type: "network_boundary", zones: ["enterprise", "dmz", "control", "field"], default_access: "enterprise_only" }] } },
+      { name: "Safety Interlock Override Prevention", domain: "allowed_actions", description: "Prevent agents from overriding safety interlocks in manufacturing systems", policyJson: { rules: [{ type: "action_blocklist", actions: ["override_safety_interlock", "bypass_emergency_stop", "disable_alarm"] }] } },
+      { name: "Production Change Control", domain: "allowed_actions", description: "Require approval for any production parameter changes beyond normal operating ranges", policyJson: { rules: [{ type: "change_control", scope: "production_parameters", requires: "plant_manager_approval" }] } },
+    ],
+  },
+  {
+    id: "quality-pack",
+    name: "Quality Management Pack",
+    description: "ISO 9001 aligned policies for quality assurance in manufacturing operations",
+    industry: "manufacturing",
+    framework: "ISO 9001",
+    riskLevel: "medium",
+    policies: [
+      { name: "Quality Record Retention", domain: "logging", description: "Maintain comprehensive quality records for all agent-assisted inspections", policyJson: { rules: [{ type: "audit_requirement", level: "comprehensive", retention_days: 1825 }] } },
+      { name: "Non-Conformance Escalation", domain: "allowed_actions", description: "Auto-escalate quality non-conformances detected by agents", policyJson: { rules: [{ type: "escalation", triggers: ["quality_defect", "out_of_spec", "calibration_due"] }] } },
+    ],
+  },
+  {
+    id: "pci-dss-pack",
+    name: "PCI DSS Compliance Pack",
+    description: "Payment Card Industry Data Security Standard policies for retail operations",
+    industry: "retail",
+    framework: "PCI DSS",
+    riskLevel: "critical",
+    policies: [
+      { name: "Cardholder Data Protection", domain: "data_handling", description: "Restrict storage and processing of cardholder data with encryption requirements", policyJson: { rules: [{ type: "data_class_restriction", classes: ["PAN", "CVV", "cardholder_data"], action: "require_encryption_and_masking" }] } },
+      { name: "Payment Tool Access Control", domain: "tool_permissions", description: "Limit agent access to payment processing systems with strict authentication", policyJson: { rules: [{ type: "tool_scope", scope: "payment_processing", requires: "mfa_and_approval" }] } },
+    ],
+  },
+  {
+    id: "gdpr-retail-pack",
+    name: "GDPR Consumer Data Pack",
+    description: "GDPR compliance policies for customer data handling in retail and e-commerce",
+    industry: "retail",
+    framework: "GDPR",
+    riskLevel: "high",
+    policies: [
+      { name: "Consent-Based Processing", domain: "data_handling", description: "Ensure agents only process customer data with valid consent basis", policyJson: { rules: [{ type: "consent_check", requires: ["explicit_consent", "legitimate_interest_assessment"] }] } },
+      { name: "Right to Erasure Enforcement", domain: "allowed_actions", description: "Agents must honor data deletion requests within regulatory timeframes", policyJson: { rules: [{ type: "data_subject_rights", rights: ["erasure", "rectification", "portability"], sla_hours: 720 }] } },
+      { name: "Cross-Border Data Transfer Controls", domain: "data_handling", description: "Enforce data residency and transfer mechanisms for international operations", policyJson: { rules: [{ type: "data_residency", requires: ["adequacy_decision", "standard_contractual_clauses"] }] } },
+    ],
+  },
+];
 
 function getEventDotColor(action: string): string {
   const a = action.toLowerCase();
@@ -183,6 +318,7 @@ const initialEthicalBoundaries: EthicalCategory[] = [
 ];
 
 export default function Governance() {
+  const { industry } = useIndustry();
   const [search, setSearch] = useState("");
   const [domainFilter, setDomainFilter] = useState<string>("all");
   const [createOpen, setCreateOpen] = useState(false);
@@ -246,6 +382,31 @@ export default function Governance() {
     },
     onError: (err: Error) => {
       toast({ title: "Failed to create policy", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const [activatedPacks, setActivatedPacks] = useState<Set<string>>(new Set());
+
+  const activatePackMutation = useMutation({
+    mutationFn: async (pack: PolicyPack) => {
+      const policyList = pack.policies.map((p) => ({
+        name: `[${pack.framework}] ${p.name}`,
+        domain: p.domain,
+        description: p.description,
+        policyJson: p.policyJson,
+        scopeType: "org",
+        status: "active",
+      }));
+      const res = await apiRequest("POST", "/api/policies/bulk-create", { policies: policyList });
+      return res.json();
+    },
+    onSuccess: (_data, pack) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/policies"] });
+      setActivatedPacks((prev) => new Set(prev).add(pack.id));
+      toast({ title: `${pack.name} activated`, description: `${pack.policies.length} policies created` });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to activate policy pack", description: err.message, variant: "destructive" });
     },
   });
 
@@ -625,6 +786,7 @@ export default function Governance() {
           <TabsTrigger value="exceptions" data-testid="tab-exceptions">Policy Exceptions</TabsTrigger>
           <TabsTrigger value="tool-access" data-testid="tab-tool-access">Tool Access</TabsTrigger>
           <TabsTrigger value="ethics" data-testid="tab-ethics">Ethical Boundaries</TabsTrigger>
+          <TabsTrigger value="policy-packs" data-testid="tab-policy-packs">Policy Packs</TabsTrigger>
           <TabsTrigger value="what-if" data-testid="tab-what-if">What-If Analysis</TabsTrigger>
         </TabsList>
 
@@ -1624,6 +1786,136 @@ export default function Governance() {
               </div>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="policy-packs" className="mt-0 flex flex-col gap-4" data-testid="content-policy-packs">
+          <div className="flex flex-col gap-1">
+            <h2 className="text-lg font-semibold">Industry Policy Packs</h2>
+            <p className="text-sm text-muted-foreground">
+              Pre-configured policy bundles aligned to regulatory frameworks. Activate a pack to create all included policies at once.
+            </p>
+          </div>
+
+          {industry && industry.id !== "custom" && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <industry.icon className="h-4 w-4" style={{ color: industry.color }} />
+                <h3 className="text-sm font-medium">Recommended for {industry.label}</h3>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {POLICY_PACKS.filter((p) => p.industry === industry.id).map((pack) => {
+                  const isActivated = activatedPacks.has(pack.id);
+                  const riskColors: Record<string, string> = {
+                    critical: "text-red-600 dark:text-red-400",
+                    high: "text-amber-600 dark:text-amber-400",
+                    medium: "text-blue-600 dark:text-blue-400",
+                    low: "text-green-600 dark:text-green-400",
+                  };
+                  return (
+                    <Card key={pack.id} data-testid={`card-policy-pack-${pack.id}`}>
+                      <CardContent className="p-5 space-y-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="space-y-1">
+                            <h4 className="font-semibold text-sm">{pack.name}</h4>
+                            <p className="text-xs text-muted-foreground">{pack.description}</p>
+                          </div>
+                          <Badge variant="outline" className={`text-[10px] shrink-0 ${riskColors[pack.riskLevel]}`}>
+                            {pack.riskLevel.toUpperCase()}
+                          </Badge>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="secondary" className="text-[10px]">
+                            <ShieldCheck className="h-3 w-3 mr-1" />
+                            {pack.framework}
+                          </Badge>
+                          <span className="text-xs text-muted-foreground">{pack.policies.length} policies</span>
+                        </div>
+                        <div className="space-y-1.5">
+                          {pack.policies.map((p, idx) => (
+                            <div key={idx} className="flex items-center gap-2 text-xs">
+                              {domainIcons[p.domain] ? (() => { const DIcon = domainIcons[p.domain]; return <DIcon className="h-3 w-3 text-muted-foreground shrink-0" />; })() : <Shield className="h-3 w-3 text-muted-foreground shrink-0" />}
+                              <span>{p.name}</span>
+                            </div>
+                          ))}
+                        </div>
+                        <PermissionGate permission="create_modify_policies">
+                          <Button
+                            size="sm"
+                            className="w-full"
+                            disabled={isActivated || activatePackMutation.isPending}
+                            onClick={() => activatePackMutation.mutate(pack)}
+                            data-testid={`button-activate-pack-${pack.id}`}
+                          >
+                            {isActivated ? (
+                              <><Check className="h-3.5 w-3.5 mr-1.5" /> Activated</>
+                            ) : activatePackMutation.isPending ? (
+                              "Activating..."
+                            ) : (
+                              <><Sparkles className="h-3.5 w-3.5 mr-1.5" /> Activate Pack</>
+                            )}
+                          </Button>
+                        </PermissionGate>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {(!industry || industry.id === "custom") && (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Select an industry workspace from the header to see recommended policy packs, or browse all available packs below.
+              </p>
+            </div>
+          )}
+
+          <div className="space-y-3 mt-2">
+            <h3 className="text-sm font-medium">All Available Packs</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {POLICY_PACKS.filter((p) => !industry || industry.id === "custom" || p.industry !== industry.id).map((pack) => {
+                const isActivated = activatedPacks.has(pack.id);
+                const industryLabel: Record<string, string> = {
+                  financial_services: "Financial Services",
+                  healthcare: "Healthcare",
+                  manufacturing: "Manufacturing",
+                  retail: "Retail",
+                };
+                return (
+                  <Card key={pack.id} data-testid={`card-policy-pack-${pack.id}`}>
+                    <CardContent className="p-4 space-y-2">
+                      <div className="space-y-1">
+                        <h4 className="font-medium text-sm">{pack.name}</h4>
+                        <p className="text-[11px] text-muted-foreground line-clamp-2">{pack.description}</p>
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <Badge variant="outline" className="text-[10px]">{pack.framework}</Badge>
+                        <Badge variant="secondary" className="text-[10px]">{industryLabel[pack.industry] || pack.industry}</Badge>
+                        <span className="text-[10px] text-muted-foreground ml-auto">{pack.policies.length} policies</span>
+                      </div>
+                      <PermissionGate permission="create_modify_policies">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="w-full"
+                          disabled={isActivated || activatePackMutation.isPending}
+                          onClick={() => activatePackMutation.mutate(pack)}
+                          data-testid={`button-activate-pack-${pack.id}`}
+                        >
+                          {isActivated ? (
+                            <><Check className="h-3.5 w-3.5 mr-1.5" /> Activated</>
+                          ) : (
+                            "Activate"
+                          )}
+                        </Button>
+                      </PermissionGate>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          </div>
         </TabsContent>
 
         <TabsContent value="what-if" className="mt-0 flex flex-col gap-4">

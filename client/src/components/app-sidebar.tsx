@@ -41,29 +41,29 @@ import { useIndustry } from "./industry-provider";
 export function AppSidebar() {
   const [location] = useLocation();
   const { role, isRouteAllowed } = useRole();
-  const { term, industry } = useIndustry();
+  const { industry } = useIndustry();
 
   const platformNav = [
     { title: "Overview", url: "/dashboard", icon: LayoutDashboard },
     { title: "Outcome Builder", url: "/outcomes/discover", icon: Sparkles },
-    { title: term("outcomes"), url: "/outcomes", icon: Target },
-    { title: term("agents"), url: "/agents", icon: Bot },
-    { title: term("templates"), url: "/templates", icon: Library },
-    { title: term("blueprints"), url: "/blueprints", icon: PenTool },
-    { title: term("evaluations"), url: "/evals", icon: FlaskConical },
-    { title: term("deployments"), url: "/deployments", icon: Rocket },
-    { title: term("monitor"), url: "/monitor", icon: Activity },
+    { title: "Outcomes", url: "/outcomes", icon: Target },
+    { title: "Agents", url: "/agents", icon: Bot },
+    { title: "Templates", url: "/templates", icon: Library },
+    { title: "Blueprints", url: "/blueprints", icon: PenTool },
+    { title: "Evaluations", url: "/evals", icon: FlaskConical },
+    { title: "Deployments", url: "/deployments", icon: Rocket },
+    { title: "Monitor", url: "/monitor", icon: Activity },
   ];
 
   const opsNav = [
     { title: "Optimization", url: "/optimization", icon: Zap },
     { title: "Ops", url: "/improvements", icon: Wrench },
     { title: "Self-Heal", url: "/improvement-loop", icon: RotateCcw },
-    { title: term("governance"), url: "/governance", icon: Shield },
+    { title: "Governance", url: "/governance", icon: Shield },
     { title: "Audit Trail", url: "/audit-trail", icon: ScrollText },
-    { title: term("approvals"), url: "/approvals", icon: CheckCircle },
+    { title: "Approvals", url: "/approvals", icon: CheckCircle },
     { title: "Approval Gates", url: "/approvals/gates", icon: ShieldQuestion },
-    { title: term("billing"), url: "/billing", icon: CreditCard },
+    { title: "Billing", url: "/billing", icon: CreditCard },
     { title: "MCP Apps", url: "/integrations/mcp-apps", icon: AppWindow },
     { title: "Marketplace", url: "/integrations/marketplace", icon: Store },
     { title: "Integrations", url: "/integrations", icon: Plug },

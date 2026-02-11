@@ -890,7 +890,7 @@ function SystemStatusSection({ systemStatus, prominent }: { systemStatus: Overvi
 
 export default function Overview() {
   const { role } = useRole();
-  const { term, industry } = useIndustry();
+  const { industry } = useIndustry();
   const config = ROLE_WIDGETS[role.id];
 
   const { data, isLoading, error, refetch } = useQuery<OverviewData>({
@@ -952,7 +952,7 @@ export default function Overview() {
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-dashboard-title">
-              {config.title.includes("Outcome Portfolio") ? `${term("outcome")} Portfolio` : config.title}
+              {config.title}
             </h1>
             <Badge variant="outline" className="text-[10px]" data-testid="badge-role-label">{role.label}</Badge>
               {industry && (

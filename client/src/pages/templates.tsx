@@ -2,6 +2,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 import { useLocation, Link } from "wouter";
 import type { AgentTemplate } from "@shared/schema";
+import { useIndustry } from "@/components/industry-provider";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -189,9 +190,13 @@ const complexityColors: Record<string, string> = {
 };
 
 export default function Templates() {
+  const { industry } = useIndustry();
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
-  const [industryFilter, setIndustryFilter] = useState("all");
+  const [industryFilter, setIndustryFilter] = useState(() => {
+    if (industry && industry.id !== "custom") return industry.id;
+    return "all";
+  });
   const [selectedTemplate, setSelectedTemplate] = useState<AgentTemplate | null>(null);
   const [, navigate] = useLocation();
 
@@ -228,6 +233,13 @@ export default function Templates() {
     return matchesSearch && matchesCategory && matchesIndustry;
   });
 
+  const recommendedTemplates = templates?.filter((t) => {
+    if (!industry || industry.id === "custom") return false;
+    return t.industry === industry.id || t.industry === "cross_industry";
+  }) || [];
+
+  const showRecommended = industry && industry.id !== "custom" && recommendedTemplates.length > 0 && industryFilter === "all" && !searchQuery;
+
   const categories = Array.from(new Set(templates?.map((t) => t.category) || []));
   const industries = Array.from(new Set(templates?.map((t) => t.industry || "cross_industry") || []));
 
@@ -237,7 +249,7 @@ export default function Templates() {
         <div className="flex flex-col gap-1">
           <h1 className="text-2xl font-semibold tracking-tight">Agent Templates</h1>
           <p className="text-sm text-muted-foreground">
-            Industry-wide pre-built agent configurations ready to deploy
+            {industry && industry.id !== "custom" ? `Templates for ${industry.label} and cross-industry use` : "Industry-wide pre-built agent configurations ready to deploy"}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -288,7 +300,63 @@ export default function Templates() {
             ))}
           </SelectContent>
         </Select>
+        {industry && industry.id !== "custom" && industryFilter !== industry.id && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIndustryFilter(industry.id)}
+            data-testid="button-filter-my-industry"
+          >
+            <Sparkles className="w-3.5 h-3.5 mr-1.5" />
+            Show {industry.shortLabel} only
+          </Button>
+        )}
       </div>
+
+      {showRecommended && (
+        <div className="space-y-3" data-testid="section-recommended-templates">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-primary" />
+            <h2 className="text-sm font-semibold">Recommended for {industry?.label}</h2>
+            <Badge variant="secondary" className="text-[10px]">{recommendedTemplates.length}</Badge>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+            {recommendedTemplates.slice(0, 4).map((template) => {
+              const IconComponent = iconMap[template.icon || "bot"] || Bot;
+              return (
+                <Card
+                  key={template.id}
+                  className="hover-elevate cursor-pointer ring-1 ring-primary/20"
+                  onClick={() => setSelectedTemplate(template)}
+                  data-testid={`recommended-template-${template.id}`}
+                >
+                  <CardContent className="p-4 flex flex-col gap-2">
+                    <div className="flex items-start gap-2">
+                      <div className="w-8 h-8 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
+                        <IconComponent className="w-4 h-4 text-primary" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <h3 className="font-medium text-xs leading-tight">{template.name}</h3>
+                        <p className="text-[10px] text-muted-foreground line-clamp-1 mt-0.5">
+                          {template.description}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <Badge variant="outline" className="text-[10px]">
+                        {categoryLabels[template.category] || template.category}
+                      </Badge>
+                      <Badge variant="default" className="text-[10px]">
+                        {template.industry === industry?.id ? industry.shortLabel : "Cross-Industry"}
+                      </Badge>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className={`${selectedTemplate ? "lg:col-span-2" : "lg:col-span-3"}`}>

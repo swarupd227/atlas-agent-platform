@@ -188,7 +188,7 @@ export default function Outcomes() {
   const [recomputingKpis, setRecomputingKpis] = useState(false);
   const { toast } = useToast();
   const outcomesPerm = usePermission("create_modify_outcomes");
-  const { term } = useIndustry();
+  const { industry } = useIndustry();
 
   const { data: outcomes, isLoading } = useQuery<OutcomeContract[]>({
     queryKey: ["/api/outcomes"],
@@ -409,7 +409,7 @@ export default function Outcomes() {
     <div className="flex flex-col gap-6 p-6" data-testid="page-outcomes">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-page-title">{term("outcomes")} Dashboard</h1>
+          <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-page-title">Outcomes Dashboard</h1>
           <p className="text-sm text-muted-foreground">
             Are promised outcomes being delivered?
           </p>

@@ -1782,6 +1782,24 @@ export async function registerRoutes(
     res.json(policies);
   });
 
+  app.post("/api/policies/bulk-create", checkPermission("create_modify_policies"), async (req, res) => {
+    try {
+      const { policies: policyList } = req.body;
+      if (!Array.isArray(policyList) || policyList.length === 0) {
+        return res.status(400).json({ error: "policies array is required" });
+      }
+      const created = [];
+      for (const p of policyList) {
+        const data = insertPolicySchema.parse(p);
+        const policy = await storage.createPolicy(data);
+        created.push(policy);
+      }
+      res.status(201).json({ created: created.length, policies: created });
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
   app.post("/api/policies", checkPermission("create_modify_policies"), async (req, res) => {
     try {
       const data = insertPolicySchema.parse(req.body);
