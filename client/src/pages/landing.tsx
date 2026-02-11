@@ -1,3 +1,4 @@
+import { useState, lazy, Suspense } from "react";
 import { Link } from "wouter";
 import { ThemeToggle } from "@/components/theme-toggle";
 import {
@@ -16,6 +17,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+
+const DemoPlayer = lazy(() => import("@/components/demo-player"));
 
 const features = [
   {
@@ -74,8 +77,19 @@ const capabilities = [
 ];
 
 export default function Landing() {
+  const [showDemo, setShowDemo] = useState(false);
+
   return (
     <div className="min-h-screen bg-background">
+      {showDemo && (
+        <Suspense fallback={
+          <div className="fixed inset-0 z-[9999] bg-black flex items-center justify-center">
+            <div className="w-8 h-8 border-2 border-white/20 border-t-white/80 rounded-full animate-spin" />
+          </div>
+        }>
+          <DemoPlayer onClose={() => setShowDemo(false)} />
+        </Suspense>
+      )}
       <header className="flex items-center justify-between gap-2 px-6 py-4 border-b">
         <div className="flex items-center gap-3">
           <div className="flex items-center justify-center w-9 h-9 rounded-md bg-primary">
@@ -117,7 +131,13 @@ export default function Landing() {
                   Get Started <ArrowRight className="w-4 h-4" />
                 </Button>
               </Link>
-              <Button variant="outline" size="lg" className="gap-2 text-base px-8" data-testid="button-watch-demo">
+              <Button
+                variant="outline"
+                size="lg"
+                className="gap-2 text-base px-8"
+                onClick={() => setShowDemo(true)}
+                data-testid="button-watch-demo"
+              >
                 <Play className="w-4 h-4" /> Watch Demo
               </Button>
             </div>

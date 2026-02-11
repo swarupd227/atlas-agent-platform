@@ -10329,6 +10329,53 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
     res.json(consents);
   });
 
+  // Demo TTS narration endpoint — restricted to known narration texts only
+  const ALLOWED_DEMO_NARRATIONS = new Set([
+    "Welcome to ALMP — the future of AI agent operations. Your command center gives you instant visibility into platform health, KPI progress, and agent status. Everything your team needs, in one intelligent dashboard.",
+    "Define what success looks like with outcome contracts. Set KPIs, SLAs, and pricing models tied to measurable business results. You pay for outcomes, not compute cycles. This is billing, reimagined.",
+    "Your entire agent fleet at your fingertips. The Agent Registry lets you deploy, monitor, and manage hundreds of AI agents across your organization. Each agent operates eighty percent autonomously, with twenty percent expert validation for critical decisions.",
+    "Deploy with confidence using shadow testing, canary rollouts, and automated promotion. Our Release Orchestrator eliminates deployment anxiety with built-in safeguards and rollback at every stage.",
+    "Real-time monitoring powered by OpenTelemetry. Track every agent run, detect drift instantly, and drill into MCP trace waterfalls. Full observability from the first token to the final outcome.",
+    "Enterprise-grade compliance built into every layer. Policy enforcement, SOC 2 and EU AI Act frameworks, immutable audit trails, and automated compliance scoring. Governance that enables, not blocks.",
+    "The twenty percent that makes the eighty work. Unified approval gates combine expert validation with MCP elicitation flows. Risk analysis, blast radius evidence, and one-click decisions keep your agents moving safely.",
+    "Transparent, outcome-based billing with tamper-evident metering. Drill from invoice to event to trace. Every charge is backed by cryptographic proof. Welcome to the new standard in AI billing.",
+  ]);
+
+  const demoTtsCache = new Map<string, Buffer>();
+
+  app.post("/api/demo/tts", async (req, res) => {
+    try {
+      const { text, voice } = req.body;
+      if (!text || typeof text !== "string") {
+        return res.status(400).json({ message: "Text is required" });
+      }
+      if (!ALLOWED_DEMO_NARRATIONS.has(text)) {
+        return res.status(403).json({ message: "Only demo narrations are allowed" });
+      }
+
+      if (demoTtsCache.has(text)) {
+        const cached = demoTtsCache.get(text)!;
+        res.set("Content-Type", "audio/mpeg");
+        res.set("Content-Length", String(cached.length));
+        return res.send(cached);
+      }
+
+      const { textToSpeech } = await import("./replit_integrations/audio/client");
+      const audioBuffer = await textToSpeech(
+        text,
+        voice || "nova",
+        "mp3"
+      );
+      demoTtsCache.set(text, audioBuffer);
+      res.set("Content-Type", "audio/mpeg");
+      res.set("Content-Length", String(audioBuffer.length));
+      res.send(audioBuffer);
+    } catch (e: any) {
+      console.error("TTS error:", e.message);
+      res.status(500).json({ message: e.message || "TTS generation failed" });
+    }
+  });
+
   // Start the job worker
   startWorker();
 
