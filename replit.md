@@ -26,6 +26,7 @@ The platform is built with a modern web stack: React, Vite, Tailwind CSS, shadcn
 - **Governance**: Certified Agent Compliance Layer with policy management, enforcement, audit trails, and tool access controls.
 - **Optimization (Patch Center)**: Autonomous optimization and self-healing with AI-proposed changes, experiment management (A/B testing), and auto-remediation.
 - **Approvals**: Expert validation queue for various approval types.
+- **Approval Gates**: Unified MCP elicitation and ALMP supervision experience combining expert validation gates (20% human oversight) with MCP elicitation flows. Features tool-call gate checking (write tools, data export, scope escalation), form and URL mode elicitations, server identity tracking, risk flag analysis, and approve/decline/cancel actions. URL-mode supports OAuth and sensitive data entry via external panels. Permission-gated for Expert Validator and Security Admin personas.
 - **Billing**: Outcome-based metering and invoicing.
 - **Evaluation Evidence System**: Robust evidence for agent performance and risks.
 - **Business Outcome Discovery**: Conversational AI for defining goals and drafting outcome contracts.

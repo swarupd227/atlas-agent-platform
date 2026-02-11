@@ -908,4 +908,31 @@ export const insertAgentTeamSchema = createInsertSchema(agentTeams).omit({ id: t
 export type InsertAgentTeam = z.infer<typeof insertAgentTeamSchema>;
 export type AgentTeam = typeof agentTeams.$inferSelect;
 
+export const mcpElicitations = pgTable("mcp_elicitations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  mode: text("mode").notNull().default("form"),
+  serverId: varchar("server_id"),
+  serverName: text("server_name"),
+  toolName: text("tool_name"),
+  proposedArgs: jsonb("proposed_args"),
+  riskFlags: text("risk_flags").array(),
+  gateType: text("gate_type").notNull().default("tool_approval"),
+  status: text("status").notNull().default("pending"),
+  urlTarget: text("url_target"),
+  formSchema: jsonb("form_schema"),
+  responseData: jsonb("response_data"),
+  linkedApprovalId: varchar("linked_approval_id"),
+  reason: text("reason"),
+  requestedBy: text("requested_by"),
+  decidedBy: text("decided_by"),
+  decidedAt: timestamp("decided_at"),
+  agentId: varchar("agent_id"),
+  runTraceId: varchar("run_trace_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertMcpElicitationSchema = createInsertSchema(mcpElicitations).omit({ id: true, createdAt: true });
+export type InsertMcpElicitation = z.infer<typeof insertMcpElicitationSchema>;
+export type McpElicitation = typeof mcpElicitations.$inferSelect;
+
 export * from "./models/chat";

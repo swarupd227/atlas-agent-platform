@@ -55,6 +55,7 @@ import McpPrompts from "@/pages/mcp-prompts";
 import McpPromptDetail from "@/pages/mcp-prompt-detail";
 import RemoteAgents from "@/pages/remote-agents";
 import AgentTeams from "@/pages/agent-teams";
+import ApprovalGates from "@/pages/approval-gates";
 
 function Router() {
   return (
@@ -82,6 +83,7 @@ function Router() {
       <Route path="/monitor" component={Monitor} />
       <Route path="/governance" component={Governance} />
       <Route path="/audit-trail" component={AuditTrail} />
+      <Route path="/approvals/gates" component={ApprovalGates} />
       <Route path="/approvals" component={Approvals} />
       <Route path="/approvals/:id" component={ApprovalDetail} />
       <Route path="/improvements" component={Improvements} />

@@ -41,6 +41,7 @@ import {
   insertMcpServerAuthSchema,
   insertRemoteAgentSchema,
   insertAgentTeamSchema,
+  insertMcpElicitationSchema,
 } from "@shared/schema";
 
 const openai = new OpenAI({
@@ -9072,6 +9073,222 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
   app.get("/api/agent-teams/by-member/:memberAgentId", async (req, res) => {
     const teams = await storage.getAgentTeamsByMember(req.params.memberAgentId);
     res.json(teams);
+  });
+
+  // ── MCP Elicitations & Approval Gates ──
+  app.get("/api/mcp-elicitations", async (_req, res) => {
+    const elicitations = await storage.getMcpElicitations();
+    res.json(elicitations);
+  });
+
+  app.get("/api/mcp-elicitations/pending", async (_req, res) => {
+    const elicitations = await storage.getMcpElicitationsByStatus("pending");
+    res.json(elicitations);
+  });
+
+  app.get("/api/mcp-elicitations/:id", async (req, res) => {
+    const elicitation = await storage.getMcpElicitation(req.params.id);
+    if (!elicitation) return res.status(404).json({ error: "Elicitation not found" });
+    res.json(elicitation);
+  });
+
+  app.post("/api/mcp-elicitations", async (req, res) => {
+    try {
+      const data = insertMcpElicitationSchema.parse(req.body);
+      if (data.mode === "url" && !data.urlTarget) {
+        return res.status(400).json({ error: "urlTarget is required for URL mode elicitations" });
+      }
+      const elicitation = await storage.createMcpElicitation(data);
+      if (data.gateType === "tool_approval" || data.gateType === "scope_escalation" || data.gateType === "data_export") {
+        const approval = await storage.createApproval({
+          type: "mcp_elicitation",
+          objectType: "mcp_elicitation",
+          objectId: elicitation.id,
+          objectName: data.toolName || "MCP Elicitation",
+          riskScore: (data.riskFlags?.length || 0) * 25,
+          status: "pending",
+          requestedBy: data.requestedBy || "system",
+          requesterType: "mcp_server",
+          description: data.reason || `${data.gateType} approval required for ${data.toolName || "tool call"}`,
+          agentId: data.agentId,
+          toolPermissionClass: data.gateType,
+        });
+        await storage.updateMcpElicitation(elicitation.id, { linkedApprovalId: approval.id });
+        elicitation.linkedApprovalId = approval.id;
+      }
+      res.status(201).json(elicitation);
+    } catch (e) {
+      if (e instanceof ZodError) return res.status(400).json({ error: e.errors });
+      throw e;
+    }
+  });
+
+  app.patch("/api/mcp-elicitations/:id/respond", async (req, res) => {
+    const role = getRequestRole(req);
+    if (!checkPermission(role, "approve_changes")) {
+      return res.status(403).json({ error: "Insufficient permissions to respond to elicitations" });
+    }
+    try {
+      const schema = z.object({
+        action: z.enum(["approve", "decline", "cancel"]),
+        decidedBy: z.string().optional(),
+        responseData: z.any().optional(),
+      });
+      const { action, decidedBy, responseData } = schema.parse(req.body);
+      const elicitation = await storage.getMcpElicitation(req.params.id);
+      if (!elicitation) return res.status(404).json({ error: "Elicitation not found" });
+      if (elicitation.status !== "pending") return res.status(400).json({ error: "Elicitation already resolved" });
+      const statusMap = { approve: "approved", decline: "declined", cancel: "cancelled" } as const;
+      const newStatus = statusMap[action];
+      const updated = await storage.updateMcpElicitation(req.params.id, {
+        status: newStatus,
+        decidedBy: decidedBy || "expert_validator",
+        decidedAt: new Date(),
+        responseData: responseData || null,
+      });
+      if (elicitation.linkedApprovalId) {
+        await storage.updateApproval(elicitation.linkedApprovalId, {
+          status: newStatus,
+          decidedBy: decidedBy || "expert_validator",
+          decidedAt: new Date(),
+        });
+      }
+      await storage.createAuditEvent({
+        actorType: "user",
+        actorId: decidedBy || "expert_validator",
+        action: `elicitation_${action}`,
+        objectType: "mcp_elicitation",
+        objectId: req.params.id,
+        details: `Elicitation ${action}d for ${elicitation.toolName || "unknown tool"} from server ${elicitation.serverName || "unknown"}`,
+      });
+      res.json(updated);
+    } catch (e) {
+      if (e instanceof ZodError) return res.status(400).json({ error: e.errors });
+      throw e;
+    }
+  });
+
+  app.post("/api/mcp-elicitations/:id/url-complete", async (req, res) => {
+    const role = getRequestRole(req);
+    if (!checkPermission(role, "approve_changes")) {
+      return res.status(403).json({ error: "Insufficient permissions" });
+    }
+    const elicitation = await storage.getMcpElicitation(req.params.id);
+    if (!elicitation) return res.status(404).json({ error: "Elicitation not found" });
+    if (elicitation.mode !== "url") return res.status(400).json({ error: "Not a URL mode elicitation" });
+    const updated = await storage.updateMcpElicitation(req.params.id, {
+      status: "approved",
+      responseData: req.body.responseData || null,
+      decidedAt: new Date(),
+    });
+    if (elicitation.linkedApprovalId) {
+      await storage.updateApproval(elicitation.linkedApprovalId, {
+        status: "approved",
+        decidedAt: new Date(),
+      });
+    }
+    res.json(updated);
+  });
+
+  app.post("/api/tool-call-gate-check", async (req, res) => {
+    try {
+      const schema = z.object({
+        toolName: z.string(),
+        serverId: z.string().optional(),
+        serverName: z.string().optional(),
+        proposedArgs: z.any().optional(),
+        agentId: z.string().optional(),
+        runTraceId: z.string().optional(),
+      });
+      const { toolName, serverId, serverName, proposedArgs, agentId, runTraceId } = schema.parse(req.body);
+      const riskFlags: string[] = [];
+      let gateType = "tool_approval";
+      const writePatterns = /^(write|create|update|delete|insert|modify|remove|drop|execute|run)/i;
+      const exportPatterns = /^(export|download|extract|dump|backup)/i;
+      const escalationPatterns = /^(admin|sudo|escalate|grant|revoke|permission)/i;
+      if (writePatterns.test(toolName)) {
+        riskFlags.push("write_operation");
+        gateType = "tool_approval";
+      }
+      if (exportPatterns.test(toolName)) {
+        riskFlags.push("data_export");
+        gateType = "data_export";
+      }
+      if (escalationPatterns.test(toolName)) {
+        riskFlags.push("scope_escalation");
+        gateType = "scope_escalation";
+      }
+      const policies = await storage.getPolicies();
+      const matchingPolicies = policies.filter(p =>
+        p.status === "active" && p.rules &&
+        JSON.stringify(p.rules).toLowerCase().includes(toolName.toLowerCase())
+      );
+      if (matchingPolicies.length > 0) {
+        riskFlags.push("policy_match");
+      }
+      const requiresApproval = riskFlags.length > 0;
+      if (requiresApproval) {
+        const elicitation = await storage.createMcpElicitation({
+          mode: "form",
+          serverId,
+          serverName,
+          toolName,
+          proposedArgs,
+          riskFlags,
+          gateType,
+          status: "pending",
+          reason: `Approval required: ${riskFlags.join(", ")}`,
+          agentId,
+          runTraceId,
+        });
+        const approval = await storage.createApproval({
+          type: "mcp_elicitation",
+          objectType: "mcp_elicitation",
+          objectId: elicitation.id,
+          objectName: toolName,
+          riskScore: riskFlags.length * 25,
+          status: "pending",
+          requestedBy: "policy_engine",
+          requesterType: "system",
+          description: `Policy gate: ${riskFlags.join(", ")} for tool "${toolName}"`,
+          agentId,
+          toolPermissionClass: gateType,
+        });
+        await storage.updateMcpElicitation(elicitation.id, { linkedApprovalId: approval.id });
+        res.json({
+          allowed: false,
+          requiresApproval: true,
+          elicitationId: elicitation.id,
+          approvalId: approval.id,
+          riskFlags,
+          gateType,
+        });
+      } else {
+        res.json({ allowed: true, requiresApproval: false, riskFlags: [], gateType: null });
+      }
+    } catch (e) {
+      if (e instanceof ZodError) return res.status(400).json({ error: e.errors });
+      throw e;
+    }
+  });
+
+  app.get("/api/approval-queue", async (req, res) => {
+    const role = getRequestRole(req);
+    if (!checkPermission(role, "approve_changes")) {
+      return res.status(403).json({ error: "Insufficient permissions to view approval queue" });
+    }
+    const [allApprovals, pendingElicitations] = await Promise.all([
+      storage.getApprovals(),
+      storage.getMcpElicitationsByStatus("pending"),
+    ]);
+    const gateApprovals = allApprovals.filter(a =>
+      a.status === "pending" && (a.type === "mcp_elicitation" || a.objectType === "mcp_elicitation")
+    );
+    res.json({
+      approvals: gateApprovals,
+      elicitations: pendingElicitations,
+      totalPending: gateApprovals.length + pendingElicitations.length,
+    });
   });
 
   // Start the job worker

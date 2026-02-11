@@ -18,6 +18,7 @@ import {
   RotateCcw,
   PenTool,
   ScrollText,
+  ShieldQuestion,
 } from "lucide-react";
 import {
   Sidebar,
@@ -53,6 +54,7 @@ const opsNav = [
   { title: "Governance", url: "/governance", icon: Shield },
   { title: "Audit Trail", url: "/audit-trail", icon: ScrollText },
   { title: "Approvals", url: "/approvals", icon: CheckCircle },
+  { title: "Approval Gates", url: "/approvals/gates", icon: ShieldQuestion },
   { title: "Billing", url: "/billing", icon: CreditCard },
   { title: "Integrations", url: "/integrations", icon: Plug },
   { title: "Admin", url: "/admin", icon: ShieldCheck },

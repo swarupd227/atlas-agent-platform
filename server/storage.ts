@@ -74,6 +74,8 @@ import {
   type RemoteAgent, type InsertRemoteAgent,
   agentTeams,
   type AgentTeam, type InsertAgentTeam,
+  mcpElicitations,
+  type McpElicitation, type InsertMcpElicitation,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -312,6 +314,12 @@ export interface IStorage {
   createAgentTeamMember(member: InsertAgentTeam): Promise<AgentTeam>;
   deleteAgentTeamMember(id: string): Promise<boolean>;
   getAgentTeamsByMember(memberAgentId: string): Promise<AgentTeam[]>;
+
+  getMcpElicitations(): Promise<McpElicitation[]>;
+  getMcpElicitation(id: string): Promise<McpElicitation | undefined>;
+  getMcpElicitationsByStatus(status: string): Promise<McpElicitation[]>;
+  createMcpElicitation(elicitation: InsertMcpElicitation): Promise<McpElicitation>;
+  updateMcpElicitation(id: string, data: Partial<McpElicitation>): Promise<McpElicitation | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1237,6 +1245,25 @@ export class DatabaseStorage implements IStorage {
   }
   async getAgentTeamsByMember(memberAgentId: string) {
     return db.select().from(agentTeams).where(eq(agentTeams.memberAgentId, memberAgentId));
+  }
+
+  async getMcpElicitations() {
+    return db.select().from(mcpElicitations).orderBy(desc(mcpElicitations.createdAt));
+  }
+  async getMcpElicitation(id: string) {
+    const [r] = await db.select().from(mcpElicitations).where(eq(mcpElicitations.id, id));
+    return r;
+  }
+  async getMcpElicitationsByStatus(status: string) {
+    return db.select().from(mcpElicitations).where(eq(mcpElicitations.status, status)).orderBy(desc(mcpElicitations.createdAt));
+  }
+  async createMcpElicitation(elicitation: InsertMcpElicitation) {
+    const [created] = await db.insert(mcpElicitations).values(elicitation).returning();
+    return created;
+  }
+  async updateMcpElicitation(id: string, data: Partial<McpElicitation>) {
+    const [updated] = await db.update(mcpElicitations).set(data).where(eq(mcpElicitations.id, id)).returning();
+    return updated;
   }
 }
 
