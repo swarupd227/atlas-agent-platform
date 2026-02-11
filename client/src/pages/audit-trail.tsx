@@ -78,6 +78,7 @@ function getActionBadgeClass(action: string): string {
   if (a === "updated") return "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20";
   if (a === "rollback") return "bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/20";
   if (a.startsWith("mcp_")) return "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border-cyan-500/20";
+  if (a.startsWith("a2a_")) return "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/20";
   return "bg-muted text-muted-foreground";
 }
 
@@ -229,6 +230,10 @@ export default function AuditTrail() {
                 <SelectItem value="mcp_prompt_get">MCP Prompt Get</SelectItem>
                 <SelectItem value="mcp_confirmation">MCP Confirmation</SelectItem>
                 <SelectItem value="mcp_list_sync">MCP List Sync</SelectItem>
+                <SelectItem value="a2a_delegation_call">A2A Delegation</SelectItem>
+                <SelectItem value="a2a_delegation_blocked">A2A Blocked</SelectItem>
+                <SelectItem value="a2a_interruption_input_required">A2A Input Required</SelectItem>
+                <SelectItem value="a2a_interruption_auth_required">A2A Auth Required</SelectItem>
               </SelectContent>
             </Select>
 
@@ -250,6 +255,7 @@ export default function AuditTrail() {
                 <SelectItem value="mcp_tool">MCP Tool</SelectItem>
                 <SelectItem value="mcp_resource">MCP Resource</SelectItem>
                 <SelectItem value="mcp_prompt">MCP Prompt</SelectItem>
+                <SelectItem value="remote_agent">Remote Agent</SelectItem>
               </SelectContent>
             </Select>
 

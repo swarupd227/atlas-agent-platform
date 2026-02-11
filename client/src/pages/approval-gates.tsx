@@ -22,6 +22,10 @@ import {
   Lock,
   Unlock,
   Ban,
+  Radio,
+  KeyRound,
+  MessageSquare,
+  Network,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -81,6 +85,8 @@ export default function ApprovalGates() {
       case "data_export": return FileText;
       case "scope_escalation": return ShieldAlert;
       case "url_elicitation": return Globe;
+      case "a2a_input_required": return MessageSquare;
+      case "a2a_auth_required": return KeyRound;
       default: return Shield;
     }
   };
@@ -91,9 +97,13 @@ export default function ApprovalGates() {
       case "data_export": return "Data Export";
       case "scope_escalation": return "Scope Escalation";
       case "url_elicitation": return "URL Elicitation";
+      case "a2a_input_required": return "A2A Input Required";
+      case "a2a_auth_required": return "A2A Auth Required";
       default: return gt;
     }
   };
+
+  const isA2aGate = (gt: string) => gt === "a2a_input_required" || gt === "a2a_auth_required";
 
   const statusColor = (status: string) => {
     switch (status) {
@@ -127,7 +137,10 @@ export default function ApprovalGates() {
     data_export: allElicitations?.filter(e => e.gateType === "data_export").length || 0,
     scope_escalation: allElicitations?.filter(e => e.gateType === "scope_escalation").length || 0,
     url_elicitation: allElicitations?.filter(e => e.mode === "url").length || 0,
+    a2a_input_required: allElicitations?.filter(e => e.gateType === "a2a_input_required").length || 0,
+    a2a_auth_required: allElicitations?.filter(e => e.gateType === "a2a_auth_required").length || 0,
   };
+  const a2aTotal = totalByGate.a2a_input_required + totalByGate.a2a_auth_required;
 
   if (isLoading) {
     return (
@@ -158,7 +171,7 @@ export default function ApprovalGates() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         <StatCard
           title="Pending Gates"
           value={String(pendingElicitations.length)}
@@ -184,6 +197,13 @@ export default function ApprovalGates() {
           icon={ShieldAlert}
           testId="stat-scope-escalations"
         />
+        <StatCard
+          title="A2A Interruptions"
+          value={String(a2aTotal)}
+          icon={Network}
+          variant={a2aTotal > 0 ? "warning" : "default"}
+          testId="stat-a2a-interruptions"
+        />
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
@@ -207,6 +227,8 @@ export default function ApprovalGates() {
             <SelectItem value="tool_approval">Tool Approval</SelectItem>
             <SelectItem value="data_export">Data Export</SelectItem>
             <SelectItem value="scope_escalation">Scope Escalation</SelectItem>
+            <SelectItem value="a2a_input_required">A2A Input Required</SelectItem>
+            <SelectItem value="a2a_auth_required">A2A Auth Required</SelectItem>
           </SelectContent>
         </Select>
         <Select value={modeFilter} onValueChange={setModeFilter}>
@@ -301,6 +323,8 @@ function ElicitationCard({
   const GateIcon = gateTypeIcon(elicitation.gateType);
   const riskFlags = elicitation.riskFlags || [];
   const args = elicitation.proposedArgs as Record<string, unknown> | null;
+  const isA2a = elicitation.gateType === "a2a_input_required" || elicitation.gateType === "a2a_auth_required";
+  const a2aCtx = elicitation.a2aInterruptionContext as Record<string, unknown> | null;
 
   return (
     <Card data-testid={`card-elicitation-${elicitation.id}`}>
@@ -321,6 +345,12 @@ function ElicitationCard({
                 <><FileText className="w-3 h-3 mr-1" />Form</>
               )}
             </Badge>
+            {elicitation.invocationType === "a2a_delegation" && (
+              <Badge variant="outline" className="text-[10px] border-blue-300 dark:border-blue-600 text-blue-600 dark:text-blue-400" data-testid={`badge-invocation-${elicitation.id}`}>
+                <Network className="w-3 h-3 mr-1" />
+                A2A
+              </Badge>
+            )}
           </div>
           <StatusBadge status={elicitation.status} />
         </div>
@@ -363,6 +393,50 @@ function ElicitationCard({
             </div>
           )}
         </div>
+
+        {isA2a && (
+          <div className="p-3 rounded-md border border-dashed border-blue-300 dark:border-blue-700 bg-blue-50/50 dark:bg-blue-950/20 flex flex-col gap-2" data-testid={`section-a2a-context-${elicitation.id}`}>
+            <div className="flex items-center gap-2 flex-wrap">
+              <Network className="w-4 h-4 text-blue-500" />
+              <span className="text-xs font-semibold text-blue-700 dark:text-blue-300 uppercase tracking-wider">A2A Delegation</span>
+              {elicitation.a2aInterruptionState && (
+                <Badge variant="outline" className="text-[10px] border-blue-300 dark:border-blue-600 text-blue-700 dark:text-blue-300" data-testid={`badge-a2a-state-${elicitation.id}`}>
+                  <Radio className="w-3 h-3 mr-1" />
+                  {elicitation.a2aInterruptionState === "input_required" ? "TASK_STATE_INPUT_REQUIRED" : "TASK_STATE_AUTH_REQUIRED"}
+                </Badge>
+              )}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {elicitation.remoteAgentId && (
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Remote Agent</span>
+                  <span className="text-xs" data-testid={`text-remote-agent-${elicitation.id}`}>{elicitation.remoteAgentId}</span>
+                </div>
+              )}
+              {elicitation.a2aTaskId && (
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">A2A Task ID</span>
+                  <span className="text-xs font-mono" data-testid={`text-a2a-task-${elicitation.id}`}>{elicitation.a2aTaskId}</span>
+                </div>
+              )}
+            </div>
+            {a2aCtx && (
+              <div className="flex flex-col gap-1">
+                {typeof a2aCtx.message === "string" && (
+                  <p className="text-xs text-muted-foreground" data-testid={`text-a2a-message-${elicitation.id}`}>{a2aCtx.message}</p>
+                )}
+                {Array.isArray(a2aCtx.requiredFields) && (
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-[10px] text-muted-foreground">Required fields:</span>
+                    {(a2aCtx.requiredFields as string[]).map((f: string, i: number) => (
+                      <Badge key={i} variant="secondary" className="text-[10px]">{String(f)}</Badge>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {riskFlags.length > 0 && (
           <div className="flex flex-col gap-1.5" data-testid={`section-risks-${elicitation.id}`}>

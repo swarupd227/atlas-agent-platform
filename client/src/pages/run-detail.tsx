@@ -31,6 +31,7 @@ import {
   Globe,
   Plug,
   ScrollText,
+  Network,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -214,17 +215,37 @@ function SpanCard({ span, children, isLast }: { span: TraceSpan; children?: Reac
           >
             <div className="flex items-center gap-2 min-w-0 flex-wrap">
               <span className="text-sm font-medium">{config.label}</span>
+              {span.invocationType === "a2a_delegation" && (
+                <Badge variant="outline" className="text-[10px] border-blue-300 dark:border-blue-600 text-blue-600 dark:text-blue-400">
+                  <Network className="w-3 h-3 mr-0.5" />
+                  A2A
+                </Badge>
+              )}
               {span.mcpServerName && (
                 <Badge variant="outline" className="text-[10px] font-mono">
                   <Server className="w-3 h-3 mr-0.5" />
                   {span.mcpServerName}
                 </Badge>
               )}
+              {span.a2aRemoteAgentName && (
+                <Badge variant="outline" className="text-[10px] font-mono border-blue-200 dark:border-blue-700">
+                  <Network className="w-3 h-3 mr-0.5" />
+                  {span.a2aRemoteAgentName}
+                </Badge>
+              )}
               {span.mcpToolName && (
                 <Badge variant="outline" className="text-[10px] font-mono">{span.mcpToolName}</Badge>
               )}
+              {span.a2aSkillName && !span.mcpToolName && (
+                <Badge variant="outline" className="text-[10px] font-mono">{span.a2aSkillName}</Badge>
+              )}
               {span.mcpResourceUri && (
                 <Badge variant="outline" className="text-[10px] font-mono">{span.mcpResourceUri}</Badge>
+              )}
+              {span.a2aTaskState && (
+                <Badge variant={span.a2aTaskState.includes("COMPLETED") ? "secondary" : "destructive"} className="text-[10px]">
+                  {span.a2aTaskState}
+                </Badge>
               )}
               {span.spanKind !== "internal" && (
                 <Badge variant="secondary" className="text-[10px]">{span.spanKind}</Badge>
@@ -264,6 +285,12 @@ function SpanCard({ span, children, isLast }: { span: TraceSpan; children?: Reac
                   <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Status</span>
                   <span className="text-xs">{span.status}</span>
                 </div>
+                {span.invocationType && (
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Invocation Type</span>
+                    <span className="text-xs font-mono">{span.invocationType === "a2a_delegation" ? "A2A Delegation" : "MCP Tool"}</span>
+                  </div>
+                )}
                 {span.mcpMethod && (
                   <div className="flex flex-col gap-1">
                     <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">MCP Method</span>
@@ -274,6 +301,24 @@ function SpanCard({ span, children, isLast }: { span: TraceSpan; children?: Reac
                   <div className="flex flex-col gap-1">
                     <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Server ID</span>
                     <span className="text-xs font-mono">{span.mcpServerId}</span>
+                  </div>
+                )}
+                {span.a2aRemoteAgentId && (
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Remote Agent ID</span>
+                    <span className="text-xs font-mono">{span.a2aRemoteAgentId}</span>
+                  </div>
+                )}
+                {span.a2aTaskState && (
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">A2A Task State</span>
+                    <span className="text-xs font-mono">{span.a2aTaskState}</span>
+                  </div>
+                )}
+                {span.a2aSkillName && (
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">A2A Skill</span>
+                    <span className="text-xs font-mono">{span.a2aSkillName}</span>
                   </div>
                 )}
               </div>
@@ -476,29 +521,29 @@ function McpTranscriptView({ runId }: { runId: string }) {
                 </div>
               </div>
 
-              {t.params && (
+              {t.params != null && (
                 <div className="flex flex-col gap-1">
                   <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Params</span>
                   <div className="p-2.5 rounded-md bg-muted/40 text-[11px] font-mono whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
-                    {JSON.stringify(t.params as Record<string, unknown>, null, 2)}
+                    {JSON.stringify(t.params, null, 2)}
                   </div>
                 </div>
               )}
 
-              {t.result && (
+              {t.result != null && (
                 <div className="flex flex-col gap-1">
                   <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Result</span>
                   <div className="p-2.5 rounded-md bg-emerald-500/5 text-[11px] font-mono whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
-                    {JSON.stringify(t.result as Record<string, unknown>, null, 2)}
+                    {JSON.stringify(t.result, null, 2)}
                   </div>
                 </div>
               )}
 
-              {t.error && (
+              {t.error != null && (
                 <div className="flex flex-col gap-1">
                   <span className="text-[10px] text-red-500 uppercase tracking-wider font-medium">Error</span>
                   <div className="p-2.5 rounded-md bg-red-500/10 text-[11px] text-red-600 dark:text-red-400 font-mono whitespace-pre-wrap break-all">
-                    {JSON.stringify(t.error as Record<string, unknown>, null, 2)}
+                    {JSON.stringify(t.error, null, 2)}
                   </div>
                 </div>
               )}
