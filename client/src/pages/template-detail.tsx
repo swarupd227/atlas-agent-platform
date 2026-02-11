@@ -32,6 +32,8 @@ import {
   X,
   Save,
   Sparkles,
+  Wand2,
+  Loader2,
   Shield,
   Layers,
   Wrench,
@@ -231,6 +233,8 @@ export default function TemplateDetail() {
 
   const [editing, setEditing] = useState(isNew || startInEditMode);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [enhancePreview, setEnhancePreview] = useState<Record<string, any> | null>(null);
+  const [enhanceDialogOpen, setEnhanceDialogOpen] = useState(false);
   const [editData, setEditData] = useState<Record<string, any>>(isNew ? {
     name: "",
     description: "",
@@ -309,6 +313,92 @@ export default function TemplateDetail() {
       toast({ title: "Failed to delete template", description: err.message, variant: "destructive" });
     },
   });
+
+  const enhanceMutation = useMutation({
+    mutationFn: async (templateData: Record<string, any>) => {
+      const res = await apiRequest("POST", "/api/ai/enhance-template", { template: templateData });
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      const enhanced = data.enhanced || {};
+      setEnhancePreview(enhanced);
+      setEnhanceDialogOpen(true);
+    },
+    onError: (err: Error) => {
+      toast({ title: "Enhancement failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const applyEnhancement = () => {
+    if (!enhancePreview) return;
+    const enhanced = enhancePreview;
+    setEditData((prev: Record<string, any>) => {
+      const merged = { ...prev };
+      if (enhanced.description) merged.description = enhanced.description;
+      if (enhanced.tools && Array.isArray(enhanced.tools)) {
+        merged.tools = enhanced.tools.map((t: any) => ({
+          name: t.name || "",
+          description: t.description || "",
+          permissions: Array.isArray(t.permissions) ? t.permissions : [],
+        }));
+      }
+      if (enhanced.workflowNodes && Array.isArray(enhanced.workflowNodes)) {
+        merged.workflowNodes = enhanced.workflowNodes.map((n: any, i: number) => ({
+          id: n.id || `step_${i + 1}`,
+          type: n.type || "llm_call",
+          label: n.label || "",
+        }));
+      }
+      if (enhanced.dataAccess) merged.dataAccess = Array.isArray(enhanced.dataAccess) ? enhanced.dataAccess.join(", ") : enhanced.dataAccess;
+      if (enhanced.apiAccess) merged.apiAccess = Array.isArray(enhanced.apiAccess) ? enhanced.apiAccess.join(", ") : enhanced.apiAccess;
+      if (enhanced.writeAccess) merged.writeAccess = Array.isArray(enhanced.writeAccess) ? enhanced.writeAccess.join(", ") : enhanced.writeAccess;
+      if (enhanced.permissions) {
+        if (enhanced.permissions.dataAccess) merged.dataAccess = Array.isArray(enhanced.permissions.dataAccess) ? enhanced.permissions.dataAccess.join(", ") : enhanced.permissions.dataAccess;
+        if (enhanced.permissions.apiAccess) merged.apiAccess = Array.isArray(enhanced.permissions.apiAccess) ? enhanced.permissions.apiAccess.join(", ") : enhanced.permissions.apiAccess;
+        if (enhanced.permissions.writeAccess) merged.writeAccess = Array.isArray(enhanced.permissions.writeAccess) ? enhanced.permissions.writeAccess.join(", ") : enhanced.permissions.writeAccess;
+      }
+      if (enhanced.memoryRagConfig || enhanced.memoryRag) {
+        const rag = enhanced.memoryRagConfig || enhanced.memoryRag;
+        merged.memoryRagConfig = {
+          vectorStore: rag.vectorStore || "",
+          retrievalStrategy: rag.retrievalStrategy || "semantic",
+          chunkSize: rag.chunkSize || 512,
+          embeddingModel: rag.embeddingModel || "text-embedding-3-small",
+          topK: rag.topK || 5,
+        };
+      }
+      if (enhanced.policyBindings && Array.isArray(enhanced.policyBindings)) {
+        merged.policyBindings = enhanced.policyBindings.map((p: any) => ({
+          policyName: p.policyName || p.name || "",
+          enforcement: p.enforcement || "soft",
+        }));
+      }
+      if (enhanced.evalBindings && Array.isArray(enhanced.evalBindings)) {
+        merged.evalBindings = enhanced.evalBindings.map((e: any) => ({
+          suiteName: e.suiteName || e.name || "",
+          schedule: e.schedule || "on_deploy",
+        }));
+      }
+      if (enhanced.rollbackPlan) {
+        merged.rollbackPlan = {
+          triggerConditions: Array.isArray(enhanced.rollbackPlan.triggerConditions) ? enhanced.rollbackPlan.triggerConditions : [""],
+          rollbackTargetVersion: enhanced.rollbackPlan.rollbackTargetVersion || "previous_stable",
+        };
+      }
+      if (enhanced.tags && Array.isArray(enhanced.tags)) merged.tags = enhanced.tags;
+      if (enhanced.complexity) merged.complexity = enhanced.complexity;
+      if (enhanced.defaultRiskTier) merged.defaultRiskTier = enhanced.defaultRiskTier;
+      if (enhanced.defaultAutonomyMode) merged.defaultAutonomyMode = enhanced.defaultAutonomyMode;
+      return merged;
+    });
+    setEnhanceDialogOpen(false);
+    setEnhancePreview(null);
+    toast({ title: "Enhancement applied", description: "AI suggestions have been applied to the form. Review and save when ready." });
+  };
+
+  const handleEnhance = () => {
+    enhanceMutation.mutate(editData);
+  };
 
   const startEditing = () => {
     if (!template) return;
@@ -529,6 +619,19 @@ export default function TemplateDetail() {
         <div className="flex-1" />
         {editing ? (
           <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={handleEnhance}
+              disabled={enhanceMutation.isPending || !editData.name}
+              data-testid="button-ai-enhance"
+            >
+              {enhanceMutation.isPending ? (
+                <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+              ) : (
+                <Wand2 className="w-4 h-4 mr-1.5" />
+              )}
+              {enhanceMutation.isPending ? "Enhancing..." : "AI Enhance"}
+            </Button>
             {!isNew && (
               <Button variant="outline" onClick={cancelEditing} data-testid="button-cancel-edit">
                 <X className="w-4 h-4 mr-1.5" /> Cancel
@@ -1221,6 +1324,155 @@ export default function TemplateDetail() {
               data-testid="button-confirm-delete"
             >
               {deleteMutation.isPending ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={enhanceDialogOpen} onOpenChange={(open) => { setEnhanceDialogOpen(open); if (!open) setEnhancePreview(null); }}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto" data-testid="dialog-ai-enhance">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Wand2 className="w-5 h-5 text-primary" /> AI Enhancement Preview
+            </DialogTitle>
+            <DialogDescription>
+              Review the AI-suggested improvements below. Click "Apply Changes" to update your template or "Cancel" to discard.
+            </DialogDescription>
+          </DialogHeader>
+          {enhancePreview && (
+            <div className="flex flex-col gap-4 py-2" data-testid="enhance-preview-content">
+              {enhancePreview.description && (
+                <div>
+                  <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Description</h4>
+                  <p className="text-sm" data-testid="preview-description">{enhancePreview.description}</p>
+                </div>
+              )}
+              {enhancePreview.tools && Array.isArray(enhancePreview.tools) && enhancePreview.tools.length > 0 && (
+                <div>
+                  <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Tools ({enhancePreview.tools.length})</h4>
+                  <div className="flex flex-col gap-1.5">
+                    {enhancePreview.tools.map((t: any, i: number) => (
+                      <div key={i} className="flex items-start gap-2 text-sm">
+                        <Wrench className="w-3.5 h-3.5 mt-0.5 text-muted-foreground shrink-0" />
+                        <div>
+                          <span className="font-medium" data-testid={`preview-tool-name-${i}`}>{t.name}</span>
+                          {t.description && <span className="text-muted-foreground"> — {t.description}</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {enhancePreview.workflowNodes && Array.isArray(enhancePreview.workflowNodes) && enhancePreview.workflowNodes.length > 0 && (
+                <div>
+                  <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Workflow ({enhancePreview.workflowNodes.length} nodes)</h4>
+                  <div className="flex flex-col gap-1">
+                    {enhancePreview.workflowNodes.map((n: any, i: number) => (
+                      <div key={i} className="flex items-center gap-2 text-sm">
+                        <GitBranch className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                        <Badge variant="outline" className="text-[9px]">{n.type}</Badge>
+                        <span data-testid={`preview-workflow-label-${i}`}>{n.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {(enhancePreview.dataAccess || enhancePreview.apiAccess || enhancePreview.writeAccess || enhancePreview.permissions) && (
+                <div>
+                  <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Permissions</h4>
+                  <div className="text-sm flex flex-col gap-0.5">
+                    {(enhancePreview.permissions?.dataAccess || enhancePreview.dataAccess) && (
+                      <p><span className="text-muted-foreground">Data: </span>{Array.isArray(enhancePreview.permissions?.dataAccess || enhancePreview.dataAccess) ? (enhancePreview.permissions?.dataAccess || enhancePreview.dataAccess).join(", ") : (enhancePreview.permissions?.dataAccess || enhancePreview.dataAccess)}</p>
+                    )}
+                    {(enhancePreview.permissions?.apiAccess || enhancePreview.apiAccess) && (
+                      <p><span className="text-muted-foreground">API: </span>{Array.isArray(enhancePreview.permissions?.apiAccess || enhancePreview.apiAccess) ? (enhancePreview.permissions?.apiAccess || enhancePreview.apiAccess).join(", ") : (enhancePreview.permissions?.apiAccess || enhancePreview.apiAccess)}</p>
+                    )}
+                    {(enhancePreview.permissions?.writeAccess || enhancePreview.writeAccess) && (
+                      <p><span className="text-muted-foreground">Write: </span>{Array.isArray(enhancePreview.permissions?.writeAccess || enhancePreview.writeAccess) ? (enhancePreview.permissions?.writeAccess || enhancePreview.writeAccess).join(", ") : (enhancePreview.permissions?.writeAccess || enhancePreview.writeAccess)}</p>
+                    )}
+                  </div>
+                </div>
+              )}
+              {(enhancePreview.memoryRagConfig || enhancePreview.memoryRag) && (
+                <div>
+                  <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Memory / RAG</h4>
+                  {(() => { const rag = enhancePreview.memoryRagConfig || enhancePreview.memoryRag; return (
+                    <div className="text-sm flex flex-col gap-0.5">
+                      <p><span className="text-muted-foreground">Vector Store: </span>{rag.vectorStore}</p>
+                      <p><span className="text-muted-foreground">Strategy: </span>{rag.retrievalStrategy}</p>
+                      <p><span className="text-muted-foreground">Chunk Size: </span>{rag.chunkSize}</p>
+                      <p><span className="text-muted-foreground">Embedding: </span>{rag.embeddingModel}</p>
+                      <p><span className="text-muted-foreground">Top-K: </span>{rag.topK}</p>
+                    </div>
+                  ); })()}
+                </div>
+              )}
+              {enhancePreview.policyBindings && Array.isArray(enhancePreview.policyBindings) && enhancePreview.policyBindings.length > 0 && (
+                <div>
+                  <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Policy Bindings</h4>
+                  <div className="flex flex-wrap gap-1.5">
+                    {enhancePreview.policyBindings.map((p: any, i: number) => (
+                      <Badge key={i} variant="outline" className="text-[10px]">
+                        {p.policyName || p.name} <span className="text-muted-foreground ml-1">({p.enforcement})</span>
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {enhancePreview.evalBindings && Array.isArray(enhancePreview.evalBindings) && enhancePreview.evalBindings.length > 0 && (
+                <div>
+                  <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Eval Bindings</h4>
+                  <div className="flex flex-wrap gap-1.5">
+                    {enhancePreview.evalBindings.map((e: any, i: number) => (
+                      <Badge key={i} variant="outline" className="text-[10px]">
+                        {e.suiteName || e.name} <span className="text-muted-foreground ml-1">({e.schedule})</span>
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {enhancePreview.rollbackPlan && (
+                <div>
+                  <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Rollback Plan</h4>
+                  <div className="text-sm flex flex-col gap-0.5">
+                    <p><span className="text-muted-foreground">Target: </span>{enhancePreview.rollbackPlan.rollbackTargetVersion}</p>
+                    {Array.isArray(enhancePreview.rollbackPlan.triggerConditions) && enhancePreview.rollbackPlan.triggerConditions.map((c: string, i: number) => (
+                      <p key={i} className="flex items-center gap-1.5">
+                        <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />
+                        <span>{c}</span>
+                      </p>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {enhancePreview.tags && Array.isArray(enhancePreview.tags) && enhancePreview.tags.length > 0 && (
+                <div>
+                  <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Tags</h4>
+                  <div className="flex flex-wrap gap-1.5">
+                    {enhancePreview.tags.map((t: string, i: number) => (
+                      <Badge key={i} variant="secondary" className="text-[10px]">{t}</Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {(enhancePreview.complexity || enhancePreview.defaultRiskTier || enhancePreview.defaultAutonomyMode) && (
+                <div>
+                  <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Risk & Configuration</h4>
+                  <div className="flex flex-wrap gap-1.5">
+                    {enhancePreview.complexity && <Badge variant="outline" className="text-[10px]">Complexity: {enhancePreview.complexity}</Badge>}
+                    {enhancePreview.defaultRiskTier && <Badge variant="outline" className="text-[10px]">Risk: {enhancePreview.defaultRiskTier}</Badge>}
+                    {enhancePreview.defaultAutonomyMode && <Badge variant="outline" className="text-[10px]">Autonomy: {enhancePreview.defaultAutonomyMode}</Badge>}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setEnhanceDialogOpen(false); setEnhancePreview(null); }} data-testid="button-cancel-enhance">
+              Cancel
+            </Button>
+            <Button onClick={applyEnhancement} data-testid="button-apply-enhance">
+              <Wand2 className="w-4 h-4 mr-1.5" /> Apply Changes
             </Button>
           </DialogFooter>
         </DialogContent>

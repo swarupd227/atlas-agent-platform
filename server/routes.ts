@@ -5334,6 +5334,86 @@ Active agents: ${JSON.stringify(activeAgents.map(a => ({ id: a.id, name: a.name,
     }
   });
 
+  app.post("/api/ai/enhance-template", checkPermission("create_modify_blueprints"), async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI enhancement is not configured" });
+      }
+      const { template } = req.body;
+      if (!template) {
+        return res.status(400).json({ error: "Template data is required" });
+      }
+
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert AI agent architect for the ALMP (Agent Lifecycle Management Platform). Your task is to enhance and enrich an existing agent template to make it more robust, production-ready, and comprehensive.
+
+Enhancement guidelines:
+1. DESCRIPTION: Expand the description to be more detailed and specific about the agent's capabilities, use cases, and expected outcomes. Keep it concise but informative (2-4 sentences).
+2. TOOLS: Add or improve tools - give each tool a clear, specific name and description. Suggest realistic tool permissions. Aim for 3-6 well-defined tools.
+3. WORKFLOW: Suggest a more complete workflow with proper node types. Available types: schema_validate, rag, llm_call, classifier, router, tool_call, human_review, transform, output_format. Aim for 4-8 meaningful nodes.
+4. PERMISSIONS: Suggest appropriate data access scopes, API access endpoints, and write access permissions based on the agent's purpose.
+5. MEMORY/RAG: If the agent could benefit from retrieval-augmented generation, suggest a complete memory/RAG configuration with vector store, retrieval strategy, chunk size, embedding model, and topK.
+6. POLICY BINDINGS: Suggest 2-4 relevant governance policies with appropriate enforcement levels (hard/soft/advisory).
+7. EVAL BINDINGS: Suggest 1-3 evaluation suites with appropriate schedules (on_deploy/daily/weekly/on_change/manual).
+8. ROLLBACK PLAN: Suggest trigger conditions and a rollback target version for safety.
+9. TAGS: Suggest 3-6 relevant tags for discoverability.
+10. RISK & AUTONOMY: Assess whether the current risk tier and autonomy mode are appropriate for the agent's purpose and adjust if needed.
+
+IMPORTANT: Preserve the agent's core identity (name, category, industry) but significantly enrich all other fields. If a field already has good content, improve it rather than replacing it entirely.
+
+Return a JSON object with the enhanced template fields. Only include fields you are enhancing. The response must be valid JSON with no markdown wrapping.`
+          },
+          {
+            role: "user",
+            content: `Please enhance this agent template:
+
+Name: ${template.name || "Unnamed Agent"}
+Description: ${template.description || "No description"}
+Category: ${template.category || "general"}
+Industry: ${template.industry || "cross_industry"}
+Complexity: ${template.complexity || "medium"}
+Risk Tier: ${template.defaultRiskTier || "MEDIUM"}
+Autonomy Mode: ${template.defaultAutonomyMode || "assisted"}
+Model: ${template.modelProvider || "openai"} / ${template.modelName || "gpt-4.1"}
+Current Tools: ${JSON.stringify(template.tools || [])}
+Current Workflow Nodes: ${JSON.stringify(template.workflowNodes || [])}
+Data Access: ${template.dataAccess || "none"}
+API Access: ${template.apiAccess || "none"}
+Write Access: ${template.writeAccess || "none"}
+Memory/RAG Config: ${JSON.stringify(template.memoryRagConfig || null)}
+Policy Bindings: ${JSON.stringify(template.policyBindings || [])}
+Eval Bindings: ${JSON.stringify(template.evalBindings || [])}
+Rollback Plan: ${JSON.stringify(template.rollbackPlan || null)}
+Tags: ${JSON.stringify(template.tags || [])}
+
+Enhance this template to be production-ready and comprehensive. Return valid JSON only.`
+          }
+        ],
+        response_format: { type: "json_object" },
+        max_completion_tokens: 4096,
+        temperature: 0.7,
+      });
+
+      const content = completion.choices[0]?.message?.content || "{}";
+      let enhanced: Record<string, any>;
+      try {
+        enhanced = JSON.parse(content);
+      } catch {
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        enhanced = jsonMatch ? JSON.parse(jsonMatch[0]) : {};
+      }
+
+      res.json({ enhanced, model: "gpt-4.1" });
+    } catch (e: any) {
+      console.error("AI enhance template error:", e);
+      res.status(500).json({ error: e.message || "Failed to enhance template" });
+    }
+  });
+
   app.get("/api/agents/:id/export-archive", async (req, res) => {
     try {
       const agent = await storage.getAgent(req.params.id);
