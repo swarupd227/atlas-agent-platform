@@ -1862,6 +1862,229 @@ Return ONLY a valid JSON object with an enriched "rules" array. Do not include m
     }
   });
 
+  app.post("/api/ai/enhance-ontology-concept", checkPermission("create_modify_policies"), async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI service not configured" });
+      }
+      const { conceptId, label, category, description, industry, ontologyName, properties, relationships } = req.body;
+      if (!label || !category || !description) {
+        return res.status(400).json({ error: "label, category, and description are required" });
+      }
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        max_tokens: 2048,
+        messages: [
+          {
+            role: "system",
+            content: `You are a domain expert in ${ontologyName || "industry"} ontology and ${industry || "enterprise"} operations. You specialize in explaining how ontology concepts relate to AI agent lifecycle management.
+
+When given an ontology concept, produce a comprehensive JSON enrichment with these fields:
+- "enrichedDescription": A detailed 3-5 sentence explanation of the concept in the context of ${industry || "enterprise"} operations
+- "regulatoryRelevance": How this concept relates to regulatory compliance requirements
+- "agentUseCases": Array of 3-5 specific use cases where AI agents would leverage this concept
+- "dataHandlingConsiderations": Privacy, security, and data classification considerations
+- "relatedStandards": Array of relevant industry standards or frameworks
+- "implementationGuidance": Brief guidance on implementing AI agents that work with this concept
+- "riskFactors": Array of 2-3 risk factors to consider`
+          },
+          {
+            role: "user",
+            content: `Enrich the following ${ontologyName || "ontology"} concept for ${industry || "enterprise"} AI agent operations:
+
+Concept: ${label}
+Category: ${category}
+Description: ${description}
+Properties: ${JSON.stringify(properties || [])}
+Relationships: ${JSON.stringify(relationships || [])}
+
+Return ONLY a valid JSON object. Do not include markdown formatting or code blocks.`
+          }
+        ],
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) {
+        return res.status(500).json({ error: "No response from AI" });
+      }
+
+      const enriched = JSON.parse(content);
+      res.json({ enriched });
+    } catch (e: any) {
+      console.error("AI enhance ontology concept error:", e);
+      res.status(500).json({ error: e.message || "Failed to enhance concept" });
+    }
+  });
+
+  app.post("/api/ai/enhance-regulation", checkPermission("create_modify_policies"), async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI service not configured" });
+      }
+      const { regulationName, industry, jurisdictions, requirements } = req.body;
+      if (!regulationName || !industry) {
+        return res.status(400).json({ error: "regulationName and industry are required" });
+      }
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        max_tokens: 3000,
+        messages: [
+          {
+            role: "system",
+            content: `You are a regulatory compliance expert specializing in ${industry} industry regulations. You help organizations understand and implement regulatory requirements for AI agent operations.
+
+When given a regulation, produce a comprehensive JSON enrichment with these fields:
+- "overview": A detailed 3-5 sentence overview of the regulation and its purpose
+- "keyRequirements": Array of objects with { "id", "title", "description", "severity": "critical"|"high"|"medium"|"low", "implementationSteps": string[] }
+- "aiAgentImplications": Array of specific implications for AI agent deployment and operations
+- "complianceChecklist": Array of { "item", "category", "priority": "must"|"should"|"may" }
+- "penaltiesAndRisks": Brief description of non-compliance risks
+- "relatedRegulations": Array of related regulatory frameworks
+- "automationOpportunities": Array of compliance tasks that can be automated by AI agents`
+          },
+          {
+            role: "user",
+            content: `Provide detailed regulatory enrichment for:
+
+Regulation: ${regulationName}
+Industry: ${industry}
+Jurisdictions: ${JSON.stringify(jurisdictions || [])}
+Known Requirements: ${JSON.stringify(requirements || [])}
+
+Return ONLY a valid JSON object. Do not include markdown formatting or code blocks.`
+          }
+        ],
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) {
+        return res.status(500).json({ error: "No response from AI" });
+      }
+
+      const enriched = JSON.parse(content);
+      res.json({ enriched });
+    } catch (e: any) {
+      console.error("AI enhance regulation error:", e);
+      res.status(500).json({ error: e.message || "Failed to enhance regulation" });
+    }
+  });
+
+  app.post("/api/ai/generate-regulation-policies", checkPermission("create_modify_policies"), async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI service not configured" });
+      }
+      const { regulationName, industry, requirements, jurisdictions } = req.body;
+      if (!regulationName || !industry) {
+        return res.status(400).json({ error: "regulationName and industry are required" });
+      }
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        max_tokens: 4000,
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert in AI governance policy design for ${industry} organizations. You create production-grade policy configurations that implement regulatory requirements.
+
+When given a regulation, generate a JSON object with a "policies" array. Each policy should have:
+- "name": descriptive policy name
+- "domain": one of "data_handling", "tool_access", "audit_compliance", "model_governance", "deployment_safety", "access_control"
+- "description": what this policy enforces
+- "policyJson": a detailed rules object with a "rules" array, each rule having:
+  - "type": rule type identifier
+  - "description": what this rule enforces
+  - "severity": "critical"|"high"|"medium"|"low"
+  - "enforcement": "block"|"warn"|"audit"|"require_approval"
+  - Relevant configuration fields (thresholds, lists, conditions)
+
+Generate 3-5 comprehensive policies per regulation. Use realistic regulatory identifiers and terminology.`
+          },
+          {
+            role: "user",
+            content: `Generate compliance policies for:
+
+Regulation: ${regulationName}
+Industry: ${industry}
+Jurisdictions: ${JSON.stringify(jurisdictions || [])}
+Key Requirements: ${JSON.stringify(requirements || [])}
+
+Return ONLY a valid JSON object with a "policies" array. Do not include markdown formatting or code blocks.`
+          }
+        ],
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) {
+        return res.status(500).json({ error: "No response from AI" });
+      }
+
+      const result = JSON.parse(content);
+      res.json(result);
+    } catch (e: any) {
+      console.error("AI generate regulation policies error:", e);
+      res.status(500).json({ error: e.message || "Failed to generate policies" });
+    }
+  });
+
+  app.post("/api/ai/suggest-ontology-tags", checkPermission("create_modify_policies"), async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI service not configured" });
+      }
+      const { agentName, agentDescription, agentSkills, industry, ontologyName } = req.body;
+      if (!agentName || !agentDescription || !industry) {
+        return res.status(400).json({ error: "agentName, agentDescription, and industry are required" });
+      }
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        max_tokens: 1500,
+        messages: [
+          {
+            role: "system",
+            content: `You are a domain expert in ${ontologyName || "industry"} ontology for ${industry} operations. Given an AI agent's description and skills, suggest relevant ontology concepts to tag it with.
+
+Return a JSON object with:
+- "suggestedTags": Array of objects with { "conceptId": string, "conceptLabel": string, "relevanceScore": number (0-1), "reasoning": string }
+- "enrichedSkills": Array of objects with { "originalSkill": string, "enrichedDescription": string, "ontologyConcepts": string[] }
+
+Suggest 5-8 relevant ontology tags and enrich 3-5 skills with domain terminology.`
+          },
+          {
+            role: "user",
+            content: `Suggest ontology tags for this AI agent:
+
+Agent Name: ${agentName}
+Description: ${agentDescription}
+Skills: ${JSON.stringify(agentSkills || [])}
+Industry: ${industry}
+Ontology: ${ontologyName || "industry standard"}
+
+Return ONLY a valid JSON object. Do not include markdown formatting or code blocks.`
+          }
+        ],
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) {
+        return res.status(500).json({ error: "No response from AI" });
+      }
+
+      const result = JSON.parse(content);
+      res.json(result);
+    } catch (e: any) {
+      console.error("AI suggest ontology tags error:", e);
+      res.status(500).json({ error: e.message || "Failed to suggest ontology tags" });
+    }
+  });
+
   app.post("/api/policies", checkPermission("create_modify_policies"), async (req, res) => {
     try {
       const data = insertPolicySchema.parse(req.body);

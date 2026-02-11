@@ -90,6 +90,7 @@ export const agents = pgTable("agents", {
   rollbackPlan: jsonb("rollback_plan"),
   toolAccessClass: text("tool_access_class").default("standard"),
   complianceTags: text("compliance_tags").array().default(sql`'{}'::text[]`),
+  ontologyTags: jsonb("ontology_tags"),
   lastIncidentAt: timestamp("last_incident_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });

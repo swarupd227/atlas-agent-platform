@@ -21,6 +21,7 @@ import {
   ShieldQuestion,
   Store,
   AppWindow,
+  BookOpen,
 } from "lucide-react";
 import {
   Sidebar,
@@ -53,6 +54,7 @@ export function AppSidebar() {
     { title: "Evaluations", url: "/evals", icon: FlaskConical },
     { title: "Deployments", url: "/deployments", icon: Rocket },
     { title: "Monitor", url: "/monitor", icon: Activity },
+    { title: "Ontology", url: "/ontology", icon: BookOpen },
   ];
 
   const opsNav = [

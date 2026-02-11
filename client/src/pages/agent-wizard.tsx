@@ -143,6 +143,13 @@ interface WorkflowConnection {
   condition?: string;
 }
 
+interface OntologyTag {
+  conceptId: string;
+  conceptLabel: string;
+  relevanceScore?: number;
+  reasoning?: string;
+}
+
 interface WizardState {
   name: string;
   description: string;
@@ -150,6 +157,7 @@ interface WizardState {
   riskTier: string;
   autonomyMode: string;
   outcomeId: string;
+  ontologyTags: OntologyTag[];
   modelProvider: string;
   modelName: string;
   toolsConfig: ToolConfig[];
@@ -212,6 +220,7 @@ const defaultWizardState: WizardState = {
   riskTier: "MEDIUM",
   autonomyMode: "assisted",
   outcomeId: "",
+  ontologyTags: [],
   modelProvider: "openai",
   modelName: "gpt-4.1",
   toolsConfig: [],
@@ -601,6 +610,7 @@ export default function AgentWizard() {
       evalBindings: wizardState.evalBindings,
       guardrailsConfig: wizardState.guardrailsConfig,
       evalSuiteConfig: wizardState.evalSuiteConfig,
+      ontologyTags: wizardState.ontologyTags.length > 0 ? wizardState.ontologyTags : undefined,
       rolloutConfig: wizardState.rolloutConfig,
       rollbackPlan: wizardState.rolloutConfig ? {
         rollbackStrategy: wizardState.rolloutConfig.rollbackStrategy,
@@ -978,6 +988,150 @@ export default function AgentWizard() {
   );
 }
 
+function OntologyTagSection({
+  state,
+  updateState,
+}: {
+  state: WizardState;
+  updateState: (partial: Partial<WizardState>) => void;
+}) {
+  const { industry } = useIndustry();
+  const { toast } = useToast();
+  const [suggestedTags, setSuggestedTags] = useState<OntologyTag[]>([]);
+  const [enrichedSkills, setEnrichedSkills] = useState<Array<{ originalSkill: string; enrichedDescription: string; ontologyConcepts: string[] }>>([]);
+
+  const suggestMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/ai/suggest-ontology-tags", {
+        agentName: state.name,
+        agentDescription: state.description,
+        agentSkills: state.toolsConfig.map((t) => t.name),
+        industry: industry?.label || "General",
+        ontologyName: industry?.ontology || "industry standard",
+      });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setSuggestedTags(data.suggestedTags || []);
+      setEnrichedSkills(data.enrichedSkills || []);
+      toast({ title: "Ontology tags suggested", description: `${(data.suggestedTags || []).length} concepts identified` });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to suggest tags", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const addTag = (tag: OntologyTag) => {
+    if (!state.ontologyTags.some((t) => t.conceptId === tag.conceptId)) {
+      updateState({ ontologyTags: [...state.ontologyTags, tag] });
+    }
+  };
+
+  const removeTag = (conceptId: string) => {
+    updateState({ ontologyTags: state.ontologyTags.filter((t) => t.conceptId !== conceptId) });
+  };
+
+  if (!industry || industry.id === "custom") return null;
+
+  return (
+    <Card data-testid="card-ontology-tags">
+      <CardContent className="p-4 space-y-3">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2 min-w-0">
+            <BookOpen className="h-4 w-4 text-muted-foreground shrink-0" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium">Domain Ontology Tags</p>
+              <p className="text-xs text-muted-foreground">
+                Map this agent to {industry.ontology} concepts for domain-aware governance
+              </p>
+            </div>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={suggestMutation.isPending || !state.name || !state.description}
+            onClick={() => suggestMutation.mutate()}
+            data-testid="button-suggest-ontology-tags"
+          >
+            {suggestMutation.isPending ? (
+              <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> Analyzing...</>
+            ) : (
+              <><Sparkles className="h-3.5 w-3.5 mr-1.5" /> AI Suggest Tags</>
+            )}
+          </Button>
+        </div>
+
+        {state.ontologyTags.length > 0 && (
+          <div className="flex items-center gap-1.5 flex-wrap" data-testid="selected-ontology-tags">
+            {state.ontologyTags.map((tag) => (
+              <Badge
+                key={tag.conceptId}
+                variant="secondary"
+                className="gap-1 cursor-pointer"
+                onClick={() => removeTag(tag.conceptId)}
+                data-testid={`badge-ontology-tag-${tag.conceptId}`}
+              >
+                {tag.conceptLabel}
+                <Trash2 className="h-2.5 w-2.5" />
+              </Badge>
+            ))}
+          </div>
+        )}
+
+        {suggestedTags.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground font-medium">Suggested Concepts</p>
+            <div className="space-y-1.5">
+              {suggestedTags
+                .filter((st) => !state.ontologyTags.some((t) => t.conceptId === st.conceptId))
+                .map((tag) => (
+                  <div
+                    key={tag.conceptId}
+                    className="flex items-center gap-2 p-2 rounded-md bg-muted/30 cursor-pointer hover-elevate"
+                    onClick={() => addTag(tag)}
+                    data-testid={`suggested-tag-${tag.conceptId}`}
+                  >
+                    <Plus className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <span className="text-xs font-medium">{tag.conceptLabel}</span>
+                      {tag.reasoning && (
+                        <p className="text-[10px] text-muted-foreground truncate">{tag.reasoning}</p>
+                      )}
+                    </div>
+                    {tag.relevanceScore != null && (
+                      <Badge variant="outline" className="text-[10px] shrink-0">
+                        {Math.round(tag.relevanceScore * 100)}%
+                      </Badge>
+                    )}
+                  </div>
+                ))}
+            </div>
+          </div>
+        )}
+
+        {enrichedSkills.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground font-medium">Enriched Skill Descriptions</p>
+            {enrichedSkills.map((skill, idx) => (
+              <div key={idx} className="p-2 rounded-md bg-muted/30 space-y-1" data-testid={`enriched-skill-${idx}`}>
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline" className="text-[10px]">{skill.originalSkill}</Badge>
+                </div>
+                <p className="text-xs text-muted-foreground">{skill.enrichedDescription}</p>
+                <div className="flex items-center gap-1 flex-wrap">
+                  {skill.ontologyConcepts.map((c, i) => (
+                    <Badge key={i} variant="secondary" className="text-[10px]">{c}</Badge>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function Step1BasicInfo({
   state,
   updateState,
@@ -1095,6 +1249,7 @@ function Step1BasicInfo({
             </CardContent>
           </Card>
         )}
+        <OntologyTagSection state={state} updateState={updateState} />
         {outcomeLockedFromUrl && linkedOutcome ? (
           <div className="flex flex-col gap-2">
             <Label>Linked Outcome</Label>
@@ -3015,6 +3170,18 @@ function Step5Review({
             <div className="flex justify-between gap-4">
               <span className="text-muted-foreground">Linked Outcome</span>
               <span className="font-medium">{linkedOutcome.name}</span>
+            </div>
+          )}
+          {state.ontologyTags.length > 0 && (
+            <div className="flex justify-between gap-4">
+              <span className="text-muted-foreground">Ontology Tags</span>
+              <div className="flex items-center gap-1 flex-wrap justify-end" data-testid="review-ontology-tags">
+                {state.ontologyTags.map((tag) => (
+                  <Badge key={tag.conceptId} variant="secondary" className="text-[10px]">
+                    {tag.conceptLabel}
+                  </Badge>
+                ))}
+              </div>
             </div>
           )}
         </CardContent>

@@ -35,6 +35,8 @@ import {
   Pencil,
   Save,
   Wand2,
+  Globe,
+  ExternalLink,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -321,8 +323,359 @@ const initialEthicalBoundaries: EthicalCategory[] = [
   },
 ];
 
+interface RegulationDetail {
+  id: string;
+  name: string;
+  fullName: string;
+  description: string;
+  category: "privacy" | "financial" | "safety" | "quality" | "security" | "industry_specific";
+  jurisdictions: string[];
+  requirements: Array<{
+    id: string;
+    title: string;
+    description: string;
+    severity: "critical" | "high" | "medium" | "low";
+    category: string;
+  }>;
+  policyDomains: string[];
+}
+
+const REGULATION_DATABASE: Record<string, RegulationDetail> = {
+  "HIPAA": {
+    id: "hipaa",
+    name: "HIPAA",
+    fullName: "Health Insurance Portability and Accountability Act",
+    description: "Federal law establishing national standards for the protection of individually identifiable health information (PHI) in electronic, paper, and oral forms.",
+    category: "privacy",
+    jurisdictions: ["US"],
+    requirements: [
+      { id: "hipaa-1", title: "PHI Access Controls", description: "Implement technical safeguards to control access to electronic protected health information (ePHI) including unique user identification and automatic logoff", severity: "critical", category: "Access Control" },
+      { id: "hipaa-2", title: "Audit Controls", description: "Implement hardware, software, and procedural mechanisms that record and examine activity in information systems containing ePHI", severity: "critical", category: "Audit" },
+      { id: "hipaa-3", title: "Transmission Security", description: "Implement technical security measures to guard against unauthorized access to ePHI being transmitted over electronic communications networks", severity: "high", category: "Encryption" },
+      { id: "hipaa-4", title: "Breach Notification", description: "Provide notification following a breach of unsecured PHI to affected individuals, HHS, and in certain cases, the media", severity: "critical", category: "Incident Response" },
+      { id: "hipaa-5", title: "Minimum Necessary Standard", description: "Limit PHI disclosures to the minimum amount necessary to accomplish the intended purpose of the use or disclosure", severity: "high", category: "Data Minimization" },
+    ],
+    policyDomains: ["data_handling", "logging", "tool_permissions"],
+  },
+  "HITECH": {
+    id: "hitech",
+    name: "HITECH",
+    fullName: "Health Information Technology for Economic and Clinical Health Act",
+    description: "Strengthens HIPAA enforcement, extends breach notification requirements, and promotes adoption of health information technology.",
+    category: "privacy",
+    jurisdictions: ["US"],
+    requirements: [
+      { id: "hitech-1", title: "Enhanced Penalty Structure", description: "Ensure compliance with tiered civil penalty structure for HIPAA violations based on level of negligence", severity: "critical", category: "Compliance" },
+      { id: "hitech-2", title: "Business Associate Requirements", description: "Apply HIPAA security and privacy requirements directly to business associates handling PHI", severity: "high", category: "Third Party" },
+      { id: "hitech-3", title: "Breach Notification Timelines", description: "Notify individuals of breaches within 60 days and report to HHS annually or immediately for breaches affecting 500+ individuals", severity: "critical", category: "Incident Response" },
+      { id: "hitech-4", title: "Accounting of Disclosures", description: "Provide individuals with an accounting of disclosures of their PHI made through electronic health records", severity: "medium", category: "Transparency" },
+    ],
+    policyDomains: ["data_handling", "logging"],
+  },
+  "GDPR": {
+    id: "gdpr",
+    name: "GDPR",
+    fullName: "General Data Protection Regulation",
+    description: "EU regulation on data protection and privacy establishing comprehensive rights for data subjects and obligations for data controllers and processors.",
+    category: "privacy",
+    jurisdictions: ["EU"],
+    requirements: [
+      { id: "gdpr-1", title: "Lawful Basis for Processing", description: "Establish and document a lawful basis (consent, contract, legal obligation, vital interests, public task, or legitimate interests) for all personal data processing", severity: "critical", category: "Legal Basis" },
+      { id: "gdpr-2", title: "Data Subject Rights", description: "Implement mechanisms for data subjects to exercise rights including access, rectification, erasure, portability, and objection to processing", severity: "critical", category: "Rights Management" },
+      { id: "gdpr-3", title: "Data Protection Impact Assessment", description: "Conduct DPIAs for processing operations likely to result in high risk to the rights and freedoms of natural persons", severity: "high", category: "Risk Assessment" },
+      { id: "gdpr-4", title: "Data Breach Notification", description: "Notify the supervisory authority within 72 hours of becoming aware of a personal data breach and affected data subjects without undue delay", severity: "critical", category: "Incident Response" },
+      { id: "gdpr-5", title: "Cross-Border Transfer Safeguards", description: "Ensure appropriate safeguards for international transfers of personal data including adequacy decisions, SCCs, or BCRs", severity: "high", category: "Data Transfer" },
+      { id: "gdpr-6", title: "Privacy by Design", description: "Implement appropriate technical and organizational measures to integrate data protection into processing activities from the design stage", severity: "high", category: "Architecture" },
+    ],
+    policyDomains: ["data_handling", "allowed_actions", "logging"],
+  },
+  "SOX": {
+    id: "sox",
+    name: "SOX",
+    fullName: "Sarbanes-Oxley Act",
+    description: "Federal law mandating financial reporting accuracy, internal controls, and corporate accountability for publicly traded companies.",
+    category: "financial",
+    jurisdictions: ["US"],
+    requirements: [
+      { id: "sox-1", title: "Internal Controls over Financial Reporting", description: "Establish and maintain adequate internal controls over financial reporting and assess their effectiveness annually", severity: "critical", category: "Internal Controls" },
+      { id: "sox-2", title: "Segregation of Duties", description: "Enforce separation of duties for financial transaction creation, approval, and execution to prevent fraud", severity: "critical", category: "Access Control" },
+      { id: "sox-3", title: "Audit Trail Integrity", description: "Maintain immutable audit trails for all financial data modifications with complete attribution and timestamp verification", severity: "high", category: "Audit" },
+      { id: "sox-4", title: "Management Assessment", description: "Management must assess and report on the effectiveness of internal controls over financial reporting", severity: "high", category: "Governance" },
+      { id: "sox-5", title: "Record Retention", description: "Retain all audit and review workpapers, financial records, and communications for a minimum of 7 years", severity: "high", category: "Records Management" },
+    ],
+    policyDomains: ["data_handling", "tool_permissions", "logging"],
+  },
+  "Basel III": {
+    id: "basel-iii",
+    name: "Basel III",
+    fullName: "Basel III: International Regulatory Framework for Banks",
+    description: "International regulatory framework strengthening bank capital requirements, stress testing, and market liquidity risk management.",
+    category: "financial",
+    jurisdictions: ["US"],
+    requirements: [
+      { id: "basel-1", title: "Capital Adequacy Monitoring", description: "Continuously monitor and report Common Equity Tier 1 (CET1), Tier 1, and Total Capital ratios against minimum thresholds", severity: "critical", category: "Capital" },
+      { id: "basel-2", title: "Liquidity Coverage Ratio", description: "Maintain sufficient high-quality liquid assets to cover total net cash outflows over a 30-day stress scenario", severity: "critical", category: "Liquidity" },
+      { id: "basel-3", title: "Risk-Weighted Asset Calculation", description: "Accurately calculate risk-weighted assets for credit, market, and operational risk using standardized or internal models", severity: "high", category: "Risk Management" },
+      { id: "basel-4", title: "Leverage Ratio Compliance", description: "Maintain a minimum leverage ratio of 3% as a non-risk-based backstop to the risk-based capital framework", severity: "high", category: "Capital" },
+      { id: "basel-5", title: "Stress Testing Framework", description: "Conduct regular stress tests to evaluate capital adequacy under adverse economic scenarios", severity: "high", category: "Stress Testing" },
+    ],
+    policyDomains: ["data_handling", "logging", "allowed_actions"],
+  },
+  "PCI DSS": {
+    id: "pci-dss",
+    name: "PCI DSS",
+    fullName: "Payment Card Industry Data Security Standard",
+    description: "Information security standard for organizations handling branded credit cards to reduce fraud through enhanced controls around cardholder data.",
+    category: "security",
+    jurisdictions: ["US", "EU", "UK", "APAC", "Global"],
+    requirements: [
+      { id: "pci-1", title: "Cardholder Data Encryption", description: "Encrypt transmission of cardholder data across open public networks and protect stored cardholder data using strong cryptography", severity: "critical", category: "Encryption" },
+      { id: "pci-2", title: "Access Control Measures", description: "Restrict access to cardholder data to authorized personnel only with unique IDs assigned to each person with computer access", severity: "critical", category: "Access Control" },
+      { id: "pci-3", title: "Network Security", description: "Install and maintain a firewall configuration and do not use vendor-supplied defaults for system passwords and security parameters", severity: "high", category: "Network" },
+      { id: "pci-4", title: "Vulnerability Management", description: "Maintain a vulnerability management program including regular system updates and anti-virus software deployment", severity: "high", category: "Security" },
+      { id: "pci-5", title: "Monitoring and Testing", description: "Track and monitor all access to network resources and cardholder data and regularly test security systems and processes", severity: "high", category: "Monitoring" },
+    ],
+    policyDomains: ["data_handling", "tool_permissions", "logging"],
+  },
+  "FDA AI/ML Guidance": {
+    id: "fda-aiml",
+    name: "FDA AI/ML Guidance",
+    fullName: "FDA Artificial Intelligence/Machine Learning Action Plan",
+    description: "Regulatory framework for AI/ML-based Software as a Medical Device (SaMD) ensuring safety, effectiveness, and continuous learning.",
+    category: "safety",
+    jurisdictions: ["US"],
+    requirements: [
+      { id: "fda-1", title: "Good Machine Learning Practice", description: "Follow GMLP principles including multi-disciplinary expertise, representative data, independent datasets, and reference standards", severity: "critical", category: "Development" },
+      { id: "fda-2", title: "Predetermined Change Control Plan", description: "Establish a plan describing types of anticipated modifications and methodology for implementing changes in a controlled manner", severity: "critical", category: "Change Management" },
+      { id: "fda-3", title: "Real-World Performance Monitoring", description: "Continuously monitor AI/ML device performance in real-world conditions and report any adverse events or malfunctions", severity: "high", category: "Monitoring" },
+      { id: "fda-4", title: "Algorithm Transparency", description: "Provide clear documentation of algorithm design, training data characteristics, and performance metrics for regulatory review", severity: "high", category: "Transparency" },
+      { id: "fda-5", title: "Clinical Validation", description: "Demonstrate clinical validity through appropriate clinical studies or real-world evidence before and after deployment", severity: "critical", category: "Validation" },
+    ],
+    policyDomains: ["allowed_actions", "content_boundaries", "logging"],
+  },
+  "21 CFR Part 11": {
+    id: "21cfr11",
+    name: "21 CFR Part 11",
+    fullName: "21 CFR Part 11 - Electronic Records; Electronic Signatures",
+    description: "FDA regulation establishing criteria for acceptance of electronic records and electronic signatures as equivalent to paper records and handwritten signatures.",
+    category: "quality",
+    jurisdictions: ["US", "Global"],
+    requirements: [
+      { id: "cfr-1", title: "Electronic Signature Validation", description: "Ensure electronic signatures are unique to one individual, verified before use, and cannot be reused or reassigned", severity: "critical", category: "Authentication" },
+      { id: "cfr-2", title: "Audit Trail Requirements", description: "Generate secure, computer-generated, time-stamped audit trails that record the date, time, and operator identity for all record changes", severity: "critical", category: "Audit" },
+      { id: "cfr-3", title: "System Validation", description: "Validate computerized systems to ensure accuracy, reliability, consistent intended performance, and ability to discern invalid records", severity: "high", category: "Validation" },
+      { id: "cfr-4", title: "Record Protection", description: "Protect electronic records to enable accurate and ready retrieval throughout the record retention period", severity: "high", category: "Records Management" },
+    ],
+    policyDomains: ["logging", "data_handling", "tool_permissions"],
+  },
+  "GxP": {
+    id: "gxp",
+    name: "GxP",
+    fullName: "Good Practice Regulations (GMP, GLP, GCP, GDP)",
+    description: "Collection of quality guidelines and regulations covering manufacturing, laboratory, clinical, and distribution practices in regulated industries.",
+    category: "quality",
+    jurisdictions: ["US", "EU", "Global"],
+    requirements: [
+      { id: "gxp-1", title: "Documentation and Record Keeping", description: "Maintain comprehensive documentation for all processes including batch records, SOPs, and change control documentation", severity: "critical", category: "Documentation" },
+      { id: "gxp-2", title: "Qualification and Validation", description: "Qualify equipment and validate processes, methods, and computer systems before use in regulated activities", severity: "critical", category: "Validation" },
+      { id: "gxp-3", title: "Training and Competency", description: "Ensure all personnel are adequately trained and qualified for their assigned responsibilities", severity: "high", category: "Personnel" },
+      { id: "gxp-4", title: "Change Control Procedures", description: "Implement formal change control procedures for all changes that may affect product quality or data integrity", severity: "high", category: "Change Management" },
+      { id: "gxp-5", title: "Deviation and CAPA Management", description: "Investigate all deviations from approved procedures and implement corrective and preventive actions", severity: "high", category: "Quality" },
+    ],
+    policyDomains: ["logging", "allowed_actions", "data_handling"],
+  },
+  "EU AI Act": {
+    id: "eu-ai-act",
+    name: "EU AI Act",
+    fullName: "European Union Artificial Intelligence Act",
+    description: "Comprehensive EU regulation establishing a risk-based framework for AI systems with requirements for transparency, human oversight, and safety.",
+    category: "safety",
+    jurisdictions: ["EU"],
+    requirements: [
+      { id: "euai-1", title: "Risk Classification", description: "Classify AI systems according to risk levels (unacceptable, high, limited, minimal) and apply corresponding requirements", severity: "critical", category: "Risk Assessment" },
+      { id: "euai-2", title: "High-Risk System Requirements", description: "Implement risk management, data governance, technical documentation, transparency, human oversight, and accuracy requirements for high-risk AI", severity: "critical", category: "Compliance" },
+      { id: "euai-3", title: "Transparency Obligations", description: "Ensure AI systems interacting with persons disclose their artificial nature and provide meaningful information about decision-making", severity: "high", category: "Transparency" },
+      { id: "euai-4", title: "Human Oversight Mechanisms", description: "Design high-risk AI systems with appropriate human-machine interface tools enabling effective oversight by natural persons", severity: "critical", category: "Governance" },
+      { id: "euai-5", title: "Conformity Assessment", description: "Conduct conformity assessments before placing high-risk AI systems on the market or putting them into service", severity: "high", category: "Certification" },
+      { id: "euai-6", title: "Post-Market Monitoring", description: "Establish a post-market monitoring system proportionate to the nature and risks of the AI system", severity: "high", category: "Monitoring" },
+    ],
+    policyDomains: ["content_boundaries", "allowed_actions", "logging", "tool_permissions"],
+  },
+  "MiFID II": {
+    id: "mifid-ii",
+    name: "MiFID II",
+    fullName: "Markets in Financial Instruments Directive II",
+    description: "EU legislative framework regulating financial markets and improving investor protection through enhanced transparency and conduct requirements.",
+    category: "financial",
+    jurisdictions: ["EU"],
+    requirements: [
+      { id: "mifid-1", title: "Best Execution Obligation", description: "Take all sufficient steps to obtain the best possible result for clients when executing orders considering price, costs, speed, and likelihood of execution", severity: "critical", category: "Trading" },
+      { id: "mifid-2", title: "Client Suitability Assessment", description: "Assess suitability of investment services and financial instruments for clients based on their knowledge, experience, financial situation, and objectives", severity: "critical", category: "Client Protection" },
+      { id: "mifid-3", title: "Transaction Reporting", description: "Report complete and accurate details of transactions to competent authorities as quickly as possible and no later than the close of the following working day", severity: "high", category: "Reporting" },
+      { id: "mifid-4", title: "Pre- and Post-Trade Transparency", description: "Provide pre-trade and post-trade transparency for equity and non-equity instruments as required by regulation", severity: "high", category: "Transparency" },
+      { id: "mifid-5", title: "Record Keeping Requirements", description: "Maintain records of all services, activities, and transactions sufficient to enable regulatory supervision for a minimum of 5 years", severity: "high", category: "Records Management" },
+    ],
+    policyDomains: ["logging", "allowed_actions", "data_handling"],
+  },
+  "PSD2": {
+    id: "psd2",
+    name: "PSD2",
+    fullName: "Payment Services Directive 2",
+    description: "EU directive regulating payment services and payment service providers, introducing strong customer authentication and open banking requirements.",
+    category: "financial",
+    jurisdictions: ["EU"],
+    requirements: [
+      { id: "psd2-1", title: "Strong Customer Authentication", description: "Apply strong customer authentication using two or more independent elements (knowledge, possession, inherence) for electronic payment transactions", severity: "critical", category: "Authentication" },
+      { id: "psd2-2", title: "Secure Communication Standards", description: "Ensure secure communication channels for payment initiation and account information services using qualified certificates", severity: "critical", category: "Security" },
+      { id: "psd2-3", title: "Third-Party Provider Access", description: "Provide regulated third-party payment service providers with access to payment accounts through secure APIs", severity: "high", category: "Open Banking" },
+      { id: "psd2-4", title: "Fraud Monitoring", description: "Implement transaction monitoring mechanisms to detect unauthorized or fraudulent payment transactions in real time", severity: "high", category: "Fraud Prevention" },
+    ],
+    policyDomains: ["tool_permissions", "data_handling", "logging"],
+  },
+  "ISO 9001": {
+    id: "iso-9001",
+    name: "ISO 9001",
+    fullName: "ISO 9001:2015 Quality Management Systems",
+    description: "International standard specifying requirements for a quality management system focusing on customer satisfaction, process approach, and continual improvement.",
+    category: "quality",
+    jurisdictions: ["Global"],
+    requirements: [
+      { id: "iso9-1", title: "Process Approach", description: "Establish, implement, maintain, and continually improve a QMS using a process approach including the PDCA cycle and risk-based thinking", severity: "high", category: "Process Management" },
+      { id: "iso9-2", title: "Documented Information Control", description: "Maintain documented information required by the QMS including creation, updating, and control of documents and records", severity: "high", category: "Documentation" },
+      { id: "iso9-3", title: "Nonconformity and Corrective Action", description: "React to nonconformities, evaluate the need for action to eliminate root causes, implement corrective actions, and review effectiveness", severity: "high", category: "Quality" },
+      { id: "iso9-4", title: "Internal Audit Program", description: "Conduct internal audits at planned intervals to verify QMS conformity and effective implementation", severity: "medium", category: "Audit" },
+      { id: "iso9-5", title: "Management Review", description: "Conduct management reviews at planned intervals to ensure continuing suitability, adequacy, effectiveness, and alignment with strategic direction", severity: "medium", category: "Governance" },
+    ],
+    policyDomains: ["logging", "allowed_actions"],
+  },
+  "ISO 27001": {
+    id: "iso-27001",
+    name: "ISO 27001",
+    fullName: "ISO/IEC 27001:2022 Information Security Management",
+    description: "International standard for establishing, implementing, maintaining, and continually improving an information security management system (ISMS).",
+    category: "security",
+    jurisdictions: ["Global"],
+    requirements: [
+      { id: "iso27-1", title: "Information Security Risk Assessment", description: "Define and apply a risk assessment process that identifies risks to confidentiality, integrity, and availability of information", severity: "critical", category: "Risk Management" },
+      { id: "iso27-2", title: "Access Control Policy", description: "Establish, document, and review access control policies based on business and information security requirements", severity: "critical", category: "Access Control" },
+      { id: "iso27-3", title: "Incident Management Process", description: "Establish responsibilities and procedures for managing information security incidents including reporting and response", severity: "high", category: "Incident Response" },
+      { id: "iso27-4", title: "Asset Management", description: "Identify organizational assets and define appropriate protection responsibilities throughout their lifecycle", severity: "high", category: "Asset Management" },
+      { id: "iso27-5", title: "Cryptographic Controls", description: "Develop and implement a policy on the use of cryptographic controls for protection of information", severity: "high", category: "Encryption" },
+    ],
+    policyDomains: ["data_handling", "tool_permissions", "logging"],
+  },
+  "REACH": {
+    id: "reach",
+    name: "REACH",
+    fullName: "Registration, Evaluation, Authorisation and Restriction of Chemicals",
+    description: "EU regulation addressing the production and use of chemical substances and their potential impacts on human health and the environment.",
+    category: "industry_specific",
+    jurisdictions: ["EU"],
+    requirements: [
+      { id: "reach-1", title: "Substance Registration", description: "Register all chemical substances manufactured or imported in quantities of one tonne or more per year with ECHA", severity: "critical", category: "Registration" },
+      { id: "reach-2", title: "Safety Data Sheet Management", description: "Provide and maintain up-to-date safety data sheets for all hazardous substances throughout the supply chain", severity: "high", category: "Documentation" },
+      { id: "reach-3", title: "SVHC Notification", description: "Notify ECHA of Substances of Very High Concern present in articles above concentration and tonnage thresholds", severity: "high", category: "Compliance" },
+      { id: "reach-4", title: "Supply Chain Communication", description: "Communicate risk management measures and substance information up and down the supply chain", severity: "medium", category: "Communication" },
+    ],
+    policyDomains: ["data_handling", "allowed_actions"],
+  },
+  "RoHS": {
+    id: "rohs",
+    name: "RoHS",
+    fullName: "Restriction of Hazardous Substances Directive",
+    description: "EU directive restricting the use of specific hazardous materials found in electrical and electronic products to protect human health and the environment.",
+    category: "industry_specific",
+    jurisdictions: ["EU"],
+    requirements: [
+      { id: "rohs-1", title: "Restricted Substance Compliance", description: "Ensure electrical and electronic equipment does not contain lead, mercury, cadmium, hexavalent chromium, PBBs, or PBDEs above maximum concentration values", severity: "critical", category: "Material Compliance" },
+      { id: "rohs-2", title: "Technical Documentation", description: "Maintain technical documentation demonstrating conformity for at least 10 years after the product has been placed on the market", severity: "high", category: "Documentation" },
+      { id: "rohs-3", title: "CE Marking and Declaration", description: "Affix CE marking and draw up EU declaration of conformity for compliant electrical and electronic equipment", severity: "high", category: "Certification" },
+      { id: "rohs-4", title: "Supply Chain Due Diligence", description: "Verify compliance of components and materials from suppliers through testing, certificates of compliance, or supplier declarations", severity: "medium", category: "Supply Chain" },
+    ],
+    policyDomains: ["data_handling", "allowed_actions"],
+  },
+  "ITAR": {
+    id: "itar",
+    name: "ITAR",
+    fullName: "International Traffic in Arms Regulations",
+    description: "US regulation controlling the export and import of defense-related articles and services on the US Munitions List to safeguard national security.",
+    category: "security",
+    jurisdictions: ["US"],
+    requirements: [
+      { id: "itar-1", title: "Export License Compliance", description: "Obtain proper export licenses or authorizations before exporting or transferring defense articles, services, or technical data", severity: "critical", category: "Export Control" },
+      { id: "itar-2", title: "Access Restriction to US Persons", description: "Restrict access to ITAR-controlled technical data and defense articles to US persons only unless authorized", severity: "critical", category: "Access Control" },
+      { id: "itar-3", title: "Registration Requirements", description: "Register with the Directorate of Defense Trade Controls (DDTC) as a manufacturer or exporter of defense articles or services", severity: "high", category: "Registration" },
+      { id: "itar-4", title: "Record Keeping", description: "Maintain records of all ITAR-related transactions, licenses, and technical data transfers for a minimum of 5 years", severity: "high", category: "Records Management" },
+      { id: "itar-5", title: "Violation Reporting", description: "Report known or suspected ITAR violations to DDTC including unauthorized exports or disclosures of technical data", severity: "critical", category: "Compliance" },
+    ],
+    policyDomains: ["tool_permissions", "data_handling", "logging"],
+  },
+  "CCPA/CPRA": {
+    id: "ccpa-cpra",
+    name: "CCPA/CPRA",
+    fullName: "California Consumer Privacy Act / California Privacy Rights Act",
+    description: "California state laws granting consumers rights over their personal information and imposing obligations on businesses that collect consumer data.",
+    category: "privacy",
+    jurisdictions: ["US"],
+    requirements: [
+      { id: "ccpa-1", title: "Right to Know", description: "Provide consumers the right to know what personal information is collected, used, shared, or sold and for what purposes", severity: "critical", category: "Transparency" },
+      { id: "ccpa-2", title: "Right to Delete", description: "Honor consumer requests to delete personal information collected from them, with specified exceptions", severity: "critical", category: "Rights Management" },
+      { id: "ccpa-3", title: "Right to Opt-Out", description: "Provide consumers the right to opt-out of the sale or sharing of their personal information", severity: "high", category: "Consent" },
+      { id: "ccpa-4", title: "Data Minimization", description: "Limit collection and use of personal information to what is reasonably necessary and proportionate for the disclosed purposes", severity: "high", category: "Data Minimization" },
+      { id: "ccpa-5", title: "Privacy Notice Requirements", description: "Provide clear and conspicuous privacy notices at or before the point of collection describing data practices", severity: "high", category: "Transparency" },
+    ],
+    policyDomains: ["data_handling", "allowed_actions", "content_boundaries"],
+  },
+  "FTC Guidelines": {
+    id: "ftc-guidelines",
+    name: "FTC Guidelines",
+    fullName: "Federal Trade Commission Consumer Protection Guidelines",
+    description: "FTC regulations and guidelines governing unfair or deceptive business practices, advertising standards, and consumer data protection.",
+    category: "industry_specific",
+    jurisdictions: ["US"],
+    requirements: [
+      { id: "ftc-1", title: "Truth in Advertising", description: "Ensure all advertising and marketing claims are truthful, not misleading, and substantiated with evidence before dissemination", severity: "critical", category: "Advertising" },
+      { id: "ftc-2", title: "Endorsement Disclosures", description: "Clearly disclose material connections between endorsers and the company in all endorsement and testimonial content", severity: "high", category: "Transparency" },
+      { id: "ftc-3", title: "AI Transparency", description: "Disclose when AI is used in consumer-facing decisions and ensure AI-driven recommendations do not constitute unfair or deceptive practices", severity: "high", category: "AI Governance" },
+      { id: "ftc-4", title: "Data Security Standards", description: "Implement reasonable security measures to protect consumer personal information from unauthorized access or disclosure", severity: "high", category: "Security" },
+    ],
+    policyDomains: ["content_boundaries", "allowed_actions"],
+  },
+  "ADA Compliance": {
+    id: "ada-compliance",
+    name: "ADA Compliance",
+    fullName: "Americans with Disabilities Act - Digital Accessibility",
+    description: "Requirements for ensuring digital services and AI-powered interactions are accessible to individuals with disabilities under ADA Title III.",
+    category: "industry_specific",
+    jurisdictions: ["US"],
+    requirements: [
+      { id: "ada-1", title: "WCAG 2.1 Conformance", description: "Ensure all digital content and interfaces meet WCAG 2.1 Level AA success criteria for perceivable, operable, understandable, and robust content", severity: "critical", category: "Accessibility" },
+      { id: "ada-2", title: "Alternative Text and Descriptions", description: "Provide text alternatives for non-text content and audio descriptions for multimedia content", severity: "high", category: "Content" },
+      { id: "ada-3", title: "Keyboard Navigation", description: "Ensure all functionality is operable through a keyboard interface without requiring specific timings for individual keystrokes", severity: "high", category: "Interaction" },
+      { id: "ada-4", title: "Assistive Technology Compatibility", description: "Ensure AI-driven interfaces are compatible with screen readers, voice control, and other assistive technologies", severity: "high", category: "Compatibility" },
+    ],
+    policyDomains: ["content_boundaries", "allowed_actions"],
+  },
+};
+
+const CATEGORY_COLORS: Record<string, string> = {
+  privacy: "bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/20",
+  financial: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/20",
+  safety: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20",
+  quality: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+  security: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20",
+  industry_specific: "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border-cyan-500/20",
+};
+
+const SEVERITY_COLORS: Record<string, string> = {
+  critical: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20",
+  high: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20",
+  medium: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/20",
+  low: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+};
+
 export default function Governance() {
-  const { industry } = useIndustry();
+  const { industry, workspaceConfig, activeFrameworks } = useIndustry();
   const [search, setSearch] = useState("");
   const [domainFilter, setDomainFilter] = useState<string>("all");
   const [createOpen, setCreateOpen] = useState(false);
@@ -343,6 +696,9 @@ export default function Governance() {
   const [exportIncludeHashes, setExportIncludeHashes] = useState(false);
   const [exportObjectFilter, setExportObjectFilter] = useState("all");
   const [exportRedactionProfile, setExportRedactionProfile] = useState("none");
+  const [selectedRegulationId, setSelectedRegulationId] = useState<string | null>(null);
+  const [enhancedRegulations, setEnhancedRegulations] = useState<Record<string, any>>({});
+  const [generatingPoliciesFor, setGeneratingPoliciesFor] = useState<string | null>(null);
   const { toast } = useToast();
   const evidenceDrawer = useEvidenceDrawer();
   const policyPerm = usePermission("create_modify_policies");
@@ -471,6 +827,76 @@ export default function Governance() {
       toast({ title: "Failed to update exception", description: err.message, variant: "destructive" });
     },
   });
+
+  const enhanceRegulationMutation = useMutation({
+    mutationFn: async (regulation: RegulationDetail) => {
+      const res = await apiRequest("POST", "/api/ai/enhance-regulation", {
+        regulationName: regulation.name,
+        industry: industry?.id,
+        jurisdictions: workspaceConfig.jurisdictions,
+        requirements: regulation.requirements,
+      });
+      return res.json();
+    },
+    onSuccess: (data, regulation) => {
+      setEnhancedRegulations((prev) => ({ ...prev, [regulation.id]: data }));
+      toast({ title: "Regulation enhanced", description: `AI analysis complete for ${regulation.name}` });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to enhance regulation", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const generateRegulationPoliciesMutation = useMutation({
+    mutationFn: async (regulation: RegulationDetail) => {
+      setGeneratingPoliciesFor(regulation.id);
+      const res = await apiRequest("POST", "/api/ai/generate-regulation-policies", {
+        regulationName: regulation.name,
+        fullName: regulation.fullName,
+        category: regulation.category,
+        requirements: regulation.requirements,
+        policyDomains: regulation.policyDomains,
+        industry: industry?.id,
+        jurisdictions: workspaceConfig.jurisdictions,
+      });
+      const data = await res.json();
+      const policyList = (data.policies || []).map((p: any) => ({
+        name: `[${regulation.name}] ${p.name}`,
+        domain: p.domain || regulation.policyDomains[0] || "data_handling",
+        description: p.description,
+        policyJson: p.policyJson || p.rules || {},
+        scopeType: "org",
+        status: "active",
+      }));
+      const bulkRes = await apiRequest("POST", "/api/policies/bulk-create", { policies: policyList });
+      return bulkRes.json();
+    },
+    onSuccess: (_data, regulation) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/policies"] });
+      setGeneratingPoliciesFor(null);
+      toast({ title: "Compliance policies created", description: `Policies generated for ${regulation.name}` });
+    },
+    onError: (err: Error) => {
+      setGeneratingPoliciesFor(null);
+      toast({ title: "Failed to generate policies", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const detectedRegulations = useMemo(() => {
+    return activeFrameworks
+      .map((fw) => REGULATION_DATABASE[fw])
+      .filter(Boolean) as RegulationDetail[];
+  }, [activeFrameworks]);
+
+  const regulationSummary = useMemo(() => {
+    const totalReqs = detectedRegulations.reduce((sum, r) => sum + r.requirements.length, 0);
+    const allDomains = new Set(detectedRegulations.flatMap((r) => r.policyDomains));
+    const coveredDomains = new Set(
+      (policies || []).map((p) => p.domain).filter(Boolean)
+    );
+    const uncoveredDomains = Array.from(allDomains).filter((d) => !coveredDomains.has(d));
+    return { totalRegs: detectedRegulations.length, totalReqs, allDomains: Array.from(allDomains), coveredDomains: Array.from(coveredDomains), uncoveredDomains };
+  }, [detectedRegulations, policies]);
 
   const filtered = useMemo(() => {
     let result = policies || [];
@@ -821,6 +1247,7 @@ export default function Governance() {
           <TabsTrigger value="ethics" data-testid="tab-ethics">Ethical Boundaries</TabsTrigger>
           <TabsTrigger value="policy-packs" data-testid="tab-policy-packs">Policy Packs</TabsTrigger>
           <TabsTrigger value="what-if" data-testid="tab-what-if">What-If Analysis</TabsTrigger>
+          <TabsTrigger value="regulatory" data-testid="tab-regulatory">Regulatory Compliance</TabsTrigger>
         </TabsList>
 
         <TabsContent value="policies" className="mt-0 flex flex-col gap-4">
@@ -1986,6 +2413,256 @@ export default function Governance() {
 
         <TabsContent value="what-if" className="mt-0 flex flex-col gap-4">
           <WhatIfAnalysis policies={policies || []} />
+        </TabsContent>
+
+        <TabsContent value="regulatory" className="mt-0 flex flex-col gap-4" data-testid="content-regulatory">
+          {!industry || activeFrameworks.length === 0 ? (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-12 gap-4">
+                <Shield className="w-12 h-12 text-muted-foreground" />
+                <div className="text-center">
+                  <h3 className="text-lg font-semibold" data-testid="text-regulatory-empty-title">No Regulatory Frameworks Detected</h3>
+                  <p className="text-sm text-muted-foreground mt-1 max-w-md">
+                    Configure your workspace industry and jurisdictions to automatically detect applicable regulatory frameworks and compliance requirements.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {detectedRegulations.map((reg) => (
+                  <Card key={reg.id} data-testid={`card-regulation-${reg.id}`}>
+                    <CardHeader className="flex flex-row items-start justify-between gap-2 pb-2">
+                      <div className="flex flex-col gap-1 min-w-0">
+                        <CardTitle className="text-base flex items-center gap-2 flex-wrap" data-testid={`text-regulation-name-${reg.id}`}>
+                          <Shield className="w-4 h-4 shrink-0" />
+                          {reg.name}
+                        </CardTitle>
+                        <p className="text-xs text-muted-foreground truncate" data-testid={`text-regulation-fullname-${reg.id}`}>{reg.fullName}</p>
+                      </div>
+                      <Badge variant="outline" className={`shrink-0 ${CATEGORY_COLORS[reg.category] || ""}`} data-testid={`badge-category-${reg.id}`}>
+                        {reg.category.replace("_", " ")}
+                      </Badge>
+                    </CardHeader>
+                    <CardContent className="flex flex-col gap-3">
+                      <div className="flex items-center gap-1 flex-wrap">
+                        {reg.jurisdictions.map((j) => (
+                          <Badge key={j} variant="outline" size="sm" data-testid={`badge-jurisdiction-${reg.id}-${j}`}>
+                            <Globe className="w-3 h-3 mr-1" />
+                            {j}
+                          </Badge>
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <FileText className="w-4 h-4" />
+                        <span data-testid={`text-req-count-${reg.id}`}>{reg.requirements.length} requirements</span>
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Button variant="outline" size="sm" onClick={() => setSelectedRegulationId(reg.id)} data-testid={`button-view-details-${reg.id}`}>
+                          <ChevronRight className="w-4 h-4 mr-1" />
+                          View Details
+                        </Button>
+                        <PermissionGate action="create_modify_policies">
+                          <Button variant="outline" size="sm" onClick={() => enhanceRegulationMutation.mutate(reg)} disabled={enhanceRegulationMutation.isPending} data-testid={`button-ai-enhance-${reg.id}`}>
+                            {enhanceRegulationMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1" />}
+                            AI Enhance
+                          </Button>
+                        </PermissionGate>
+                        <PermissionGate action="create_modify_policies">
+                          <Button size="sm" onClick={() => generateRegulationPoliciesMutation.mutate(reg)} disabled={generatingPoliciesFor === reg.id} data-testid={`button-generate-policies-${reg.id}`}>
+                            {generatingPoliciesFor === reg.id ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Wand2 className="w-4 h-4 mr-1" />}
+                            Generate Policies
+                          </Button>
+                        </PermissionGate>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+
+              <Card data-testid="card-compliance-overview">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2" data-testid="text-compliance-overview-title">
+                    <ShieldCheck className="w-5 h-5" />
+                    Compliance Overview
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="flex flex-col gap-1">
+                      <span className="text-sm text-muted-foreground">Detected Regulations</span>
+                      <span className="text-2xl font-bold" data-testid="text-total-regulations">{regulationSummary.totalRegs}</span>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <span className="text-sm text-muted-foreground">Total Requirements</span>
+                      <span className="text-2xl font-bold" data-testid="text-total-requirements">{regulationSummary.totalReqs}</span>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <span className="text-sm text-muted-foreground">Domain Coverage</span>
+                      <span className="text-2xl font-bold" data-testid="text-domain-coverage">
+                        {regulationSummary.coveredDomains.length}/{regulationSummary.allDomains.length}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <span className="text-sm font-medium">Policy Domain Coverage</span>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {regulationSummary.allDomains.map((domain) => {
+                        const covered = regulationSummary.coveredDomains.includes(domain);
+                        return (
+                          <Badge
+                            key={domain}
+                            variant="outline"
+                            className={covered ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" : "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20"}
+                            data-testid={`badge-domain-${domain}`}
+                          >
+                            {covered ? <Check className="w-3 h-3 mr-1" /> : <AlertTriangle className="w-3 h-3 mr-1" />}
+                            {(domainLabels[domain] || domain).replace(/_/g, " ")}
+                          </Badge>
+                        );
+                      })}
+                    </div>
+                    {regulationSummary.uncoveredDomains.length > 0 && (
+                      <p className="text-xs text-muted-foreground mt-1" data-testid="text-uncovered-warning">
+                        {regulationSummary.uncoveredDomains.length} domain(s) without active policies. Consider generating policies for full coverage.
+                      </p>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </>
+          )}
+
+          {selectedRegulationId && (() => {
+            const reg = detectedRegulations.find((r) => r.id === selectedRegulationId);
+            if (!reg) return null;
+            const enhanced = enhancedRegulations[reg.id];
+            return (
+              <Dialog open={!!selectedRegulationId} onOpenChange={(open) => { if (!open) setSelectedRegulationId(null); }}>
+                <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto" data-testid="dialog-regulation-detail">
+                  <DialogHeader>
+                    <DialogTitle className="flex items-center gap-2 flex-wrap" data-testid="text-dialog-regulation-name">
+                      <Shield className="w-5 h-5" />
+                      {reg.name}
+                    </DialogTitle>
+                  </DialogHeader>
+                  <div className="flex flex-col gap-4">
+                    <p className="text-sm text-muted-foreground" data-testid="text-dialog-regulation-fullname">{reg.fullName}</p>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Badge variant="outline" className={CATEGORY_COLORS[reg.category] || ""} data-testid="badge-dialog-category">
+                        {reg.category.replace("_", " ")}
+                      </Badge>
+                      {reg.jurisdictions.map((j) => (
+                        <Badge key={j} variant="outline" size="sm" data-testid={`badge-dialog-jurisdiction-${j}`}>
+                          <Globe className="w-3 h-3 mr-1" />
+                          {j}
+                        </Badge>
+                      ))}
+                    </div>
+                    <p className="text-sm" data-testid="text-dialog-description">{reg.description}</p>
+
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <PermissionGate action="create_modify_policies">
+                        <Button variant="outline" size="sm" onClick={() => enhanceRegulationMutation.mutate(reg)} disabled={enhanceRegulationMutation.isPending} data-testid="button-dialog-ai-enhance">
+                          {enhanceRegulationMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1" />}
+                          AI Enhance
+                        </Button>
+                      </PermissionGate>
+                    </div>
+
+                    <div className="flex flex-col gap-2">
+                      <h4 className="text-sm font-semibold flex items-center gap-2">
+                        <BookOpen className="w-4 h-4" />
+                        Requirements ({reg.requirements.length})
+                      </h4>
+                      <div className="flex flex-col gap-2">
+                        {reg.requirements.map((req) => (
+                          <Card key={req.id} data-testid={`card-requirement-${req.id}`}>
+                            <CardContent className="py-3 flex flex-col gap-1">
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                <span className="text-sm font-medium" data-testid={`text-req-title-${req.id}`}>{req.title}</span>
+                                <Badge variant="outline" size="sm" className={SEVERITY_COLORS[req.severity] || ""} data-testid={`badge-severity-${req.id}`}>
+                                  {req.severity}
+                                </Badge>
+                              </div>
+                              <p className="text-xs text-muted-foreground" data-testid={`text-req-desc-${req.id}`}>{req.description}</p>
+                              <Badge variant="outline" size="sm" className="w-fit mt-1" data-testid={`badge-req-category-${req.id}`}>{req.category}</Badge>
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </div>
+                    </div>
+
+                    {enhanced && (
+                      <div className="flex flex-col gap-3" data-testid="section-enhanced-content">
+                        <h4 className="text-sm font-semibold flex items-center gap-2">
+                          <Sparkles className="w-4 h-4" />
+                          AI-Enhanced Analysis
+                        </h4>
+                        {enhanced.overview && (
+                          <div className="flex flex-col gap-1">
+                            <span className="text-xs font-medium text-muted-foreground">Overview</span>
+                            <p className="text-sm" data-testid="text-enhanced-overview">{enhanced.overview}</p>
+                          </div>
+                        )}
+                        {enhanced.keyRequirements && Array.isArray(enhanced.keyRequirements) && (
+                          <div className="flex flex-col gap-1">
+                            <span className="text-xs font-medium text-muted-foreground">Key Requirements</span>
+                            {enhanced.keyRequirements.map((kr: any, idx: number) => (
+                              <div key={idx} className="text-sm flex flex-col gap-0.5" data-testid={`text-key-req-${idx}`}>
+                                <span className="font-medium">{kr.title || kr.name}</span>
+                                {kr.implementationSteps && Array.isArray(kr.implementationSteps) && (
+                                  <ul className="list-disc list-inside text-xs text-muted-foreground">
+                                    {kr.implementationSteps.map((step: string, si: number) => (
+                                      <li key={si}>{step}</li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {enhanced.complianceChecklist && Array.isArray(enhanced.complianceChecklist) && (
+                          <div className="flex flex-col gap-1">
+                            <span className="text-xs font-medium text-muted-foreground">Compliance Checklist</span>
+                            <ul className="flex flex-col gap-1">
+                              {enhanced.complianceChecklist.map((item: string, idx: number) => (
+                                <li key={idx} className="text-sm flex items-center gap-2" data-testid={`text-checklist-${idx}`}>
+                                  <Check className="w-3 h-3 text-emerald-500 shrink-0" />
+                                  {item}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {enhanced.automationOpportunities && Array.isArray(enhanced.automationOpportunities) && (
+                          <div className="flex flex-col gap-1">
+                            <span className="text-xs font-medium text-muted-foreground">Automation Opportunities</span>
+                            <ul className="flex flex-col gap-1">
+                              {enhanced.automationOpportunities.map((item: string, idx: number) => (
+                                <li key={idx} className="text-sm flex items-center gap-2" data-testid={`text-automation-${idx}`}>
+                                  <Wand2 className="w-3 h-3 text-blue-500 shrink-0" />
+                                  {item}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <PermissionGate action="create_modify_policies">
+                      <Button className="w-full" onClick={() => generateRegulationPoliciesMutation.mutate(reg)} disabled={generatingPoliciesFor === reg.id} data-testid="button-dialog-generate-policies">
+                        {generatingPoliciesFor === reg.id ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Scale className="w-4 h-4 mr-2" />}
+                        Generate Compliance Policies
+                      </Button>
+                    </PermissionGate>
+                  </div>
+                </DialogContent>
+              </Dialog>
+            );
+          })()}
         </TabsContent>
 
         {selectedPolicyId && (
