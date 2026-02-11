@@ -8387,7 +8387,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
     }
   });
 
-  // ── Tool Catalog (governed inventory across all MCP servers) ──
+  // ── MCP Tool Registry (governed inventory across all MCP servers) ──
 
   app.get("/api/tool-catalog", async (_req, res) => {
     try {

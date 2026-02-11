@@ -1072,7 +1072,7 @@ export default function Integrations() {
               </div>
               <div className="flex flex-col gap-0.5 flex-1">
                 <span className="text-sm font-medium">MCP Servers</span>
-                <span className="text-xs text-muted-foreground">Manage Model Context Protocol servers, validate capabilities, and assign risk tiers</span>
+                <span className="text-xs text-muted-foreground">Manage Model Context Protocol server connections, validate capabilities, and assign risk tiers</span>
               </div>
               <Badge variant="secondary" className="text-[10px]">MCP</Badge>
             </CardContent>
@@ -1086,8 +1086,8 @@ export default function Integrations() {
                 <Wrench className="w-5 h-5 text-orange-500" />
               </div>
               <div className="flex flex-col gap-0.5 flex-1">
-                <span className="text-sm font-medium">Tool Catalog</span>
-                <span className="text-xs text-muted-foreground">Governed inventory of tools across all MCP servers with risk classification and policies</span>
+                <span className="text-sm font-medium">MCP Tool Registry</span>
+                <span className="text-xs text-muted-foreground">Governed inventory of tools synced from MCP servers — risk classification, ownership, and drift detection</span>
               </div>
               <Badge variant="secondary" className="text-[10px]">Governance</Badge>
             </CardContent>
@@ -1097,7 +1097,7 @@ export default function Integrations() {
 
       <Tabs defaultValue="catalog" data-testid="tabs-integrations">
         <TabsList data-testid="tabs-list-integrations">
-          <TabsTrigger value="catalog" data-testid="tab-catalog">Tool Catalog</TabsTrigger>
+          <TabsTrigger value="catalog" data-testid="tab-catalog">Connectors</TabsTrigger>
           <TabsTrigger value="health" data-testid="tab-health">Connector Health</TabsTrigger>
           <TabsTrigger value="logging" data-testid="tab-logging">Logging</TabsTrigger>
         </TabsList>

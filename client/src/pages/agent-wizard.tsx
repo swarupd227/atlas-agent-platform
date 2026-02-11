@@ -1398,7 +1398,7 @@ function Step3ModelTools({
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
           <div className="flex items-center gap-2">
-            <CardTitle className="text-sm font-medium">Tool Catalog</CardTitle>
+            <CardTitle className="text-sm font-medium">MCP Tool Registry</CardTitle>
             {state.toolsConfig.length > 0 && <Badge variant="outline" className="text-[10px]">{state.toolsConfig.length} selected</Badge>}
           </div>
           <div className="flex items-center gap-2">

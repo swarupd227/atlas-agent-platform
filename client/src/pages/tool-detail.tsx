@@ -126,7 +126,7 @@ export default function ToolDetailPage() {
         <Link href="/integrations/tool-catalog" data-testid="link-back-tool-catalog">
           <Button variant="ghost" size="sm">
             <ArrowLeft className="w-4 h-4 mr-1.5" />
-            Back to Tool Catalog
+            Back to MCP Tool Registry
           </Button>
         </Link>
         <Card>
@@ -147,7 +147,7 @@ export default function ToolDetailPage() {
         <Link href="/integrations/tool-catalog" data-testid="link-back-tool-catalog">
           <Button variant="ghost" size="sm">
             <ArrowLeft className="w-4 h-4 mr-1.5" />
-            Back to Tool Catalog
+            Back to MCP Tool Registry
           </Button>
         </Link>
 

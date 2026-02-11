@@ -99,8 +99,8 @@ export default function ToolCatalogPage() {
   return (
     <div className="flex flex-col gap-6 p-6">
       <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-page-title">Tool Catalog</h1>
-        <p className="text-sm text-muted-foreground" data-testid="text-page-subtitle">Governed inventory of tools across all MCP servers</p>
+        <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-page-title">MCP Tool Registry</h1>
+        <p className="text-sm text-muted-foreground" data-testid="text-page-subtitle">Governed inventory of tools synced from MCP servers</p>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

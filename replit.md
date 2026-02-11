@@ -45,7 +45,7 @@ The platform is built with a modern web stack: React, Vite, Tailwind CSS, shadcn
 - **Redaction Profiles (R0/R1/R2)**: Implements tiered data redaction for sensitive information across traces and audit events based on user roles.
 - **Tool Proxy Control Point**: All tool calls are routed through a proxy that enforces allowlists, blocklists, rate limiting, retries, shadow dry-run mode, and consistent redacted audit logging.
 - **MCP Server Directory**: Manages Model Context Protocol (MCP) servers, allowing integration of internal and third-party servers. Includes features for capability negotiation, tool/resource/prompt catalog synchronization, authentication configuration, and a production enablement flow with approval processes based on risk tiers.
-- **Tool Catalog**: A global, governed inventory of tools merged from all MCP servers. Provides tool details, input/output schemas, governance fields (risk classification, owner, enabled status, drift status), and an enablement flow requiring approvals for high-risk tools. Detects and flags tool drift via fingerprinting.
+- **MCP Tool Registry**: A global, governed inventory of tools synced from MCP servers. Provides tool details, input/output schemas, governance fields (risk classification, owner, enabled status, drift status), and an enablement flow requiring approvals for high-risk tools. Detects and flags tool drift via fingerprinting. (Previously "Tool Catalog" — renamed for clarity to distinguish from general integration connectors like Jira, Salesforce, etc.)
 - **Data Model**: A comprehensive schema that links incidents, patches, and deployments for full traceability.
 
 ## External Dependencies
