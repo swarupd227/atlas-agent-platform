@@ -386,6 +386,8 @@ export default function Governance() {
   });
 
   const [activatedPacks, setActivatedPacks] = useState<Set<string>>(new Set());
+  const [selectedPackId, setSelectedPackId] = useState<string | null>(null);
+  const selectedPack = selectedPackId ? POLICY_PACKS.find((p) => p.id === selectedPackId) || null : null;
 
   const activatePackMutation = useMutation({
     mutationFn: async (pack: PolicyPack) => {
@@ -1838,10 +1840,10 @@ export default function Governance() {
                             </div>
                           ))}
                         </div>
-                        <PermissionGate permission="create_modify_policies">
+                        <div className="flex items-center gap-2">
                           <Button
                             size="sm"
-                            className="w-full"
+                            className="flex-1"
                             disabled={isActivated || activatePackMutation.isPending}
                             onClick={() => activatePackMutation.mutate(pack)}
                             data-testid={`button-activate-pack-${pack.id}`}
@@ -1854,7 +1856,16 @@ export default function Governance() {
                               <><Sparkles className="h-3.5 w-3.5 mr-1.5" /> Activate Pack</>
                             )}
                           </Button>
-                        </PermissionGate>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setSelectedPackId(pack.id)}
+                            data-testid={`button-view-pack-${pack.id}`}
+                          >
+                            <Eye className="h-3.5 w-3.5 mr-1.5" />
+                            Details
+                          </Button>
+                        </div>
                       </CardContent>
                     </Card>
                   );
@@ -1894,11 +1905,10 @@ export default function Governance() {
                         <Badge variant="secondary" className="text-[10px]">{industryLabel[pack.industry] || pack.industry}</Badge>
                         <span className="text-[10px] text-muted-foreground ml-auto">{pack.policies.length} policies</span>
                       </div>
-                      <PermissionGate permission="create_modify_policies">
+                      <div className="flex items-center gap-2">
                         <Button
                           size="sm"
-                          variant="outline"
-                          className="w-full"
+                          className="flex-1"
                           disabled={isActivated || activatePackMutation.isPending}
                           onClick={() => activatePackMutation.mutate(pack)}
                           data-testid={`button-activate-pack-${pack.id}`}
@@ -1909,13 +1919,99 @@ export default function Governance() {
                             "Activate"
                           )}
                         </Button>
-                      </PermissionGate>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setSelectedPackId(pack.id)}
+                          data-testid={`button-view-pack-all-${pack.id}`}
+                        >
+                          <Eye className="h-3.5 w-3.5 mr-1.5" />
+                          Details
+                        </Button>
+                      </div>
                     </CardContent>
                   </Card>
                 );
               })}
             </div>
           </div>
+
+          {selectedPack && (
+            <Dialog open={!!selectedPackId} onOpenChange={(open) => { if (!open) setSelectedPackId(null); }}>
+              <DialogContent className="max-w-xl max-h-[80vh] overflow-y-auto">
+                <DialogHeader>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="space-y-1">
+                      <DialogTitle>{selectedPack.name}</DialogTitle>
+                      <p className="text-sm text-muted-foreground">{selectedPack.description}</p>
+                    </div>
+                  </div>
+                </DialogHeader>
+                <div className="space-y-4 mt-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Badge variant="secondary">
+                      <ShieldCheck className="h-3 w-3 mr-1" />
+                      {selectedPack.framework}
+                    </Badge>
+                    <Badge variant="outline" className={`${
+                      selectedPack.riskLevel === "critical" ? "text-red-600 dark:text-red-400" :
+                      selectedPack.riskLevel === "high" ? "text-amber-600 dark:text-amber-400" :
+                      selectedPack.riskLevel === "medium" ? "text-blue-600 dark:text-blue-400" :
+                      "text-green-600 dark:text-green-400"
+                    }`}>
+                      {selectedPack.riskLevel.toUpperCase()} RISK
+                    </Badge>
+                    <Badge variant="outline">
+                      {selectedPack.policies.length} {selectedPack.policies.length === 1 ? "policy" : "policies"}
+                    </Badge>
+                  </div>
+
+                  <div className="space-y-3">
+                    <h4 className="text-sm font-medium">Included Policies</h4>
+                    {selectedPack.policies.map((p, idx) => {
+                      const DIcon = domainIcons[p.domain] || Shield;
+                      return (
+                        <Card key={idx}>
+                          <CardContent className="p-4 space-y-2">
+                            <div className="flex items-center gap-2">
+                              <DIcon className="h-4 w-4 text-muted-foreground shrink-0" />
+                              <span className="text-sm font-medium">{p.name}</span>
+                              <Badge variant="outline" className="text-[10px] ml-auto">{p.domain.replace(/_/g, " ")}</Badge>
+                            </div>
+                            <p className="text-xs text-muted-foreground">{p.description}</p>
+                            <details className="group">
+                              <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground transition-colors" data-testid={`toggle-policy-json-${idx}`}>
+                                View policy rules
+                              </summary>
+                              <pre className="mt-2 text-[11px] bg-muted/50 p-3 rounded-md overflow-x-auto">
+                                {JSON.stringify(p.policyJson, null, 2)}
+                              </pre>
+                            </details>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                  </div>
+
+                  <Button
+                    className="w-full"
+                    disabled={activatedPacks.has(selectedPack.id) || activatePackMutation.isPending}
+                    onClick={() => {
+                      activatePackMutation.mutate(selectedPack);
+                      setSelectedPackId(null);
+                    }}
+                    data-testid="button-activate-pack-dialog"
+                  >
+                    {activatedPacks.has(selectedPack.id) ? (
+                      <><Check className="h-4 w-4 mr-2" /> Already Activated</>
+                    ) : (
+                      <><Sparkles className="h-4 w-4 mr-2" /> Activate Pack ({selectedPack.policies.length} policies)</>
+                    )}
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+          )}
         </TabsContent>
 
         <TabsContent value="what-if" className="mt-0 flex flex-col gap-4">
