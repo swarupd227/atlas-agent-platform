@@ -935,4 +935,44 @@ export const insertMcpElicitationSchema = createInsertSchema(mcpElicitations).om
 export type InsertMcpElicitation = z.infer<typeof insertMcpElicitationSchema>;
 export type McpElicitation = typeof mcpElicitations.$inferSelect;
 
+export const teamBlueprintNodes = pgTable("team_blueprint_nodes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  blueprintId: varchar("blueprint_id").notNull(),
+  nodeType: text("node_type").notNull(),
+  label: text("label").notNull(),
+  positionX: integer("position_x").default(0),
+  positionY: integer("position_y").default(0),
+  refAgentId: varchar("ref_agent_id"),
+  refRemoteAgentId: varchar("ref_remote_agent_id"),
+  refToolIds: text("ref_tool_ids").array().default(sql`'{}'::text[]`),
+  refPolicyId: varchar("ref_policy_id"),
+  gateType: text("gate_type"),
+  config: jsonb("config"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertTeamBlueprintNodeSchema = createInsertSchema(teamBlueprintNodes).omit({ id: true, createdAt: true });
+export type InsertTeamBlueprintNode = z.infer<typeof insertTeamBlueprintNodeSchema>;
+export type TeamBlueprintNode = typeof teamBlueprintNodes.$inferSelect;
+
+export const teamBlueprintEdges = pgTable("team_blueprint_edges", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  blueprintId: varchar("blueprint_id").notNull(),
+  sourceNodeId: varchar("source_node_id").notNull(),
+  targetNodeId: varchar("target_node_id").notNull(),
+  label: text("label"),
+  contentPartTypes: text("content_part_types").array().default(sql`'{}'::text[]`),
+  allowedMetadata: jsonb("allowed_metadata"),
+  slaTimeoutMs: integer("sla_timeout_ms"),
+  failureMode: text("failure_mode").default("escalate"),
+  retryPolicy: jsonb("retry_policy"),
+  condition: text("condition"),
+  config: jsonb("config"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertTeamBlueprintEdgeSchema = createInsertSchema(teamBlueprintEdges).omit({ id: true, createdAt: true });
+export type InsertTeamBlueprintEdge = z.infer<typeof insertTeamBlueprintEdgeSchema>;
+export type TeamBlueprintEdge = typeof teamBlueprintEdges.$inferSelect;
+
 export * from "./models/chat";

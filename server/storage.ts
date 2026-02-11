@@ -76,6 +76,10 @@ import {
   type AgentTeam, type InsertAgentTeam,
   mcpElicitations,
   type McpElicitation, type InsertMcpElicitation,
+  teamBlueprintNodes,
+  type TeamBlueprintNode, type InsertTeamBlueprintNode,
+  teamBlueprintEdges,
+  type TeamBlueprintEdge, type InsertTeamBlueprintEdge,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -320,6 +324,18 @@ export interface IStorage {
   getMcpElicitationsByStatus(status: string): Promise<McpElicitation[]>;
   createMcpElicitation(elicitation: InsertMcpElicitation): Promise<McpElicitation>;
   updateMcpElicitation(id: string, data: Partial<McpElicitation>): Promise<McpElicitation | undefined>;
+
+  getTeamBlueprintNodes(blueprintId: string): Promise<TeamBlueprintNode[]>;
+  getTeamBlueprintNode(id: string): Promise<TeamBlueprintNode | undefined>;
+  createTeamBlueprintNode(node: InsertTeamBlueprintNode): Promise<TeamBlueprintNode>;
+  updateTeamBlueprintNode(id: string, data: Partial<TeamBlueprintNode>): Promise<TeamBlueprintNode | undefined>;
+  deleteTeamBlueprintNode(id: string): Promise<boolean>;
+
+  getTeamBlueprintEdges(blueprintId: string): Promise<TeamBlueprintEdge[]>;
+  getTeamBlueprintEdge(id: string): Promise<TeamBlueprintEdge | undefined>;
+  createTeamBlueprintEdge(edge: InsertTeamBlueprintEdge): Promise<TeamBlueprintEdge>;
+  updateTeamBlueprintEdge(id: string, data: Partial<TeamBlueprintEdge>): Promise<TeamBlueprintEdge | undefined>;
+  deleteTeamBlueprintEdge(id: string): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1264,6 +1280,52 @@ export class DatabaseStorage implements IStorage {
   async updateMcpElicitation(id: string, data: Partial<McpElicitation>) {
     const [updated] = await db.update(mcpElicitations).set(data).where(eq(mcpElicitations.id, id)).returning();
     return updated;
+  }
+
+  async getTeamBlueprintNodes(blueprintId: string) {
+    return db.select().from(teamBlueprintNodes).where(eq(teamBlueprintNodes.blueprintId, blueprintId));
+  }
+  async getTeamBlueprintNode(id: string) {
+    const [n] = await db.select().from(teamBlueprintNodes).where(eq(teamBlueprintNodes.id, id));
+    return n;
+  }
+  async createTeamBlueprintNode(node: InsertTeamBlueprintNode) {
+    const [created] = await db.insert(teamBlueprintNodes).values(node).returning();
+    return created;
+  }
+  async updateTeamBlueprintNode(id: string, data: Partial<TeamBlueprintNode>) {
+    const [updated] = await db.update(teamBlueprintNodes).set(data).where(eq(teamBlueprintNodes.id, id)).returning();
+    return updated;
+  }
+  async deleteTeamBlueprintNode(id: string) {
+    await db.delete(teamBlueprintEdges).where(
+      eq(teamBlueprintEdges.sourceNodeId, id)
+    );
+    await db.delete(teamBlueprintEdges).where(
+      eq(teamBlueprintEdges.targetNodeId, id)
+    );
+    await db.delete(teamBlueprintNodes).where(eq(teamBlueprintNodes.id, id));
+    return true;
+  }
+
+  async getTeamBlueprintEdges(blueprintId: string) {
+    return db.select().from(teamBlueprintEdges).where(eq(teamBlueprintEdges.blueprintId, blueprintId));
+  }
+  async getTeamBlueprintEdge(id: string) {
+    const [e] = await db.select().from(teamBlueprintEdges).where(eq(teamBlueprintEdges.id, id));
+    return e;
+  }
+  async createTeamBlueprintEdge(edge: InsertTeamBlueprintEdge) {
+    const [created] = await db.insert(teamBlueprintEdges).values(edge).returning();
+    return created;
+  }
+  async updateTeamBlueprintEdge(id: string, data: Partial<TeamBlueprintEdge>) {
+    const [updated] = await db.update(teamBlueprintEdges).set(data).where(eq(teamBlueprintEdges.id, id)).returning();
+    return updated;
+  }
+  async deleteTeamBlueprintEdge(id: string) {
+    await db.delete(teamBlueprintEdges).where(eq(teamBlueprintEdges.id, id));
+    return true;
   }
 }
 

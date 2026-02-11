@@ -70,8 +70,9 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
   Brain, Wrench, Database, GitBranch, Split, UserCheck, Shield,
   Plus, Trash2, Save, Play, PenTool, ArrowLeft, AlertTriangle,
-  CheckCircle, ChevronDown, ChevronRight, X, MousePointer, Link2, FileText, MessageSquare, Server,
+  CheckCircle, ChevronDown, ChevronRight, X, MousePointer, Link2, FileText, MessageSquare, Server, Network,
 } from "lucide-react";
+import TeamGraphEditor from "./team-graph-editor";
 
 type BpNode = { id: string; type: string; label: string; [key: string]: any };
 type BpEdge = { from: string; to: string };
@@ -140,6 +141,7 @@ export default function BlueprintDetail() {
   const [mcpDependencies, setMcpDependencies] = useState<McpDependency[]>([]);
   const [contextPlan, setContextPlan] = useState<ContextPlanEntry[]>([]);
   const [depsOpen, setDepsOpen] = useState(false);
+  const [editorView, setEditorView] = useState<"single" | "team">("single");
 
   useEffect(() => {
     if (blueprint) {
@@ -313,6 +315,30 @@ export default function BlueprintDetail() {
         </Button>
       </div>
 
+      {linkedAgent?.agentType === "team" && (
+        <div className="flex border-b shrink-0 bg-muted/30">
+          <button
+            className={`flex items-center gap-1.5 px-4 py-2 text-xs font-medium ${editorView === "single" ? "border-b-2 border-primary text-foreground" : "text-muted-foreground"}`}
+            onClick={() => setEditorView("single")}
+            data-testid="tab-single-blueprint"
+          >
+            <GitBranch className="w-3.5 h-3.5" /> Single-Agent Blueprint
+          </button>
+          <button
+            className={`flex items-center gap-1.5 px-4 py-2 text-xs font-medium ${editorView === "team" ? "border-b-2 border-primary text-foreground" : "text-muted-foreground"}`}
+            onClick={() => setEditorView("team")}
+            data-testid="tab-team-blueprint"
+          >
+            <Network className="w-3.5 h-3.5" /> Team Graph
+          </button>
+        </div>
+      )}
+
+      {editorView === "team" && linkedAgent?.agentType === "team" && (
+        <TeamGraphEditor blueprintId={id!} />
+      )}
+
+      {!(editorView === "team" && linkedAgent?.agentType === "team") && (
       <div className="flex flex-1 min-h-0">
         <div className="w-[220px] border-r shrink-0 flex flex-col">
           <div className="p-3 border-b">
@@ -952,6 +978,7 @@ export default function BlueprintDetail() {
           </ScrollArea>
         </div>
       </div>
+      )}
 
       <Dialog open={signDialogOpen} onOpenChange={setSignDialogOpen}>
         <DialogContent>

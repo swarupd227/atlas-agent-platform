@@ -42,6 +42,8 @@ import {
   insertRemoteAgentSchema,
   insertAgentTeamSchema,
   insertMcpElicitationSchema,
+  insertTeamBlueprintNodeSchema,
+  insertTeamBlueprintEdgeSchema,
 } from "@shared/schema";
 
 const openai = new OpenAI({
@@ -9289,6 +9291,86 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
       elicitations: pendingElicitations,
       totalPending: gateApprovals.length + pendingElicitations.length,
     });
+  });
+
+  // ─── Team Blueprint Graph (nodes + edges) ──────────────────────────
+  app.get("/api/blueprints/:blueprintId/team-graph", async (req, res) => {
+    const { blueprintId } = req.params;
+    const [nodes, edges] = await Promise.all([
+      storage.getTeamBlueprintNodes(blueprintId),
+      storage.getTeamBlueprintEdges(blueprintId),
+    ]);
+    res.json({ nodes, edges });
+  });
+
+  app.get("/api/team-blueprint-nodes", async (req, res) => {
+    const blueprintId = req.query.blueprintId as string;
+    if (!blueprintId) return res.status(400).json({ error: "blueprintId required" });
+    const nodes = await storage.getTeamBlueprintNodes(blueprintId);
+    res.json(nodes);
+  });
+
+  app.post("/api/team-blueprint-nodes", async (req, res) => {
+    try {
+      const data = insertTeamBlueprintNodeSchema.parse(req.body);
+      const created = await storage.createTeamBlueprintNode(data);
+      res.status(201).json(created);
+    } catch (e) {
+      if (e instanceof ZodError) return res.status(400).json({ error: e.errors });
+      throw e;
+    }
+  });
+
+  app.patch("/api/team-blueprint-nodes/:id", async (req, res) => {
+    try {
+      const data = insertTeamBlueprintNodeSchema.partial().parse(req.body);
+      const updated = await storage.updateTeamBlueprintNode(req.params.id, data);
+      if (!updated) return res.status(404).json({ error: "Node not found" });
+      res.json(updated);
+    } catch (e) {
+      if (e instanceof ZodError) return res.status(400).json({ error: e.errors });
+      throw e;
+    }
+  });
+
+  app.delete("/api/team-blueprint-nodes/:id", async (req, res) => {
+    await storage.deleteTeamBlueprintNode(req.params.id);
+    res.json({ success: true });
+  });
+
+  app.get("/api/team-blueprint-edges", async (req, res) => {
+    const blueprintId = req.query.blueprintId as string;
+    if (!blueprintId) return res.status(400).json({ error: "blueprintId required" });
+    const edges = await storage.getTeamBlueprintEdges(blueprintId);
+    res.json(edges);
+  });
+
+  app.post("/api/team-blueprint-edges", async (req, res) => {
+    try {
+      const data = insertTeamBlueprintEdgeSchema.parse(req.body);
+      const created = await storage.createTeamBlueprintEdge(data);
+      res.status(201).json(created);
+    } catch (e) {
+      if (e instanceof ZodError) return res.status(400).json({ error: e.errors });
+      throw e;
+    }
+  });
+
+  app.patch("/api/team-blueprint-edges/:id", async (req, res) => {
+    try {
+      const data = insertTeamBlueprintEdgeSchema.partial().parse(req.body);
+      const updated = await storage.updateTeamBlueprintEdge(req.params.id, data);
+      if (!updated) return res.status(404).json({ error: "Edge not found" });
+      res.json(updated);
+    } catch (e) {
+      if (e instanceof ZodError) return res.status(400).json({ error: e.errors });
+      throw e;
+    }
+  });
+
+  app.delete("/api/team-blueprint-edges/:id", async (req, res) => {
+    await storage.deleteTeamBlueprintEdge(req.params.id);
+    res.json({ success: true });
   });
 
   // Start the job worker
