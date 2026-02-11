@@ -28,8 +28,6 @@ export function IndustryWorkspaceSelector() {
   const [chosenIntegrations, setChosenIntegrations] = useState<string[]>([]);
   const [dataClassDefault, setDataClassDefault] = useState<DataClassification>("internal");
 
-  if (isSelected) return null;
-
   const selected = selectedId ? INDUSTRIES.find((i) => i.id === selectedId) : null;
 
   const integrationCategories = useMemo(() => {
@@ -41,6 +39,8 @@ export function IndustryWorkspaceSelector() {
     }
     return cats;
   }, [selected]);
+
+  if (isSelected) return null;
 
   const handleContinueToConfig = () => {
     if (selectedId === "custom") {
