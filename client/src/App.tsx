@@ -56,6 +56,9 @@ import McpPromptDetail from "@/pages/mcp-prompt-detail";
 import RemoteAgents from "@/pages/remote-agents";
 import AgentTeams from "@/pages/agent-teams";
 import ApprovalGates from "@/pages/approval-gates";
+import Marketplace from "@/pages/marketplace";
+import MarketplaceDetail from "@/pages/marketplace-detail";
+import MarketplacePublishers from "@/pages/marketplace-publishers";
 
 function Router() {
   return (
@@ -96,6 +99,9 @@ function Router() {
       <Route path="/integrations/mcp-resources" component={McpResources} />
       <Route path="/integrations/tool-catalog/:id" component={ToolDetail} />
       <Route path="/integrations/tool-catalog" component={ToolCatalog} />
+      <Route path="/integrations/marketplace/publishers" component={MarketplacePublishers} />
+      <Route path="/integrations/marketplace/:id" component={MarketplaceDetail} />
+      <Route path="/integrations/marketplace" component={Marketplace} />
       <Route path="/integrations/mcp-servers/:id" component={McpServerDetail} />
       <Route path="/integrations/mcp-servers" component={McpServers} />
       <Route path="/integrations" component={Integrations} />

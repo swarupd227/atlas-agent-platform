@@ -19,6 +19,7 @@ import {
   PenTool,
   ScrollText,
   ShieldQuestion,
+  Store,
 } from "lucide-react";
 import {
   Sidebar,
@@ -56,6 +57,7 @@ const opsNav = [
   { title: "Approvals", url: "/approvals", icon: CheckCircle },
   { title: "Approval Gates", url: "/approvals/gates", icon: ShieldQuestion },
   { title: "Billing", url: "/billing", icon: CreditCard },
+  { title: "Marketplace", url: "/integrations/marketplace", icon: Store },
   { title: "Integrations", url: "/integrations", icon: Plug },
   { title: "Admin", url: "/admin", icon: ShieldCheck },
 ];
