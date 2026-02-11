@@ -1,4 +1,4 @@
-import { Switch, Route } from "wouter";
+import { Switch, Route, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -16,6 +16,7 @@ import { NotificationCenter } from "@/components/notification-center";
 import { EvidenceDrawerProvider } from "@/components/evidence-drawer";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import NotFound from "@/pages/not-found";
+import Landing from "@/pages/landing";
 import Overview from "@/pages/overview";
 import Outcomes from "@/pages/outcomes";
 import Agents from "@/pages/agents";
@@ -61,10 +62,10 @@ import MarketplaceDetail from "@/pages/marketplace-detail";
 import MarketplacePublishers from "@/pages/marketplace-publishers";
 import McpApps from "@/pages/mcp-apps";
 
-function Router() {
+function DashboardRouter() {
   return (
     <Switch>
-      <Route path="/" component={Overview} />
+      <Route path="/dashboard" component={Overview} />
       <Route path="/outcomes" component={Outcomes} />
       <Route path="/outcomes/discover" component={OutcomeDiscover} />
       <Route path="/outcomes/:id" component={OutcomeDetail} />
@@ -113,46 +114,55 @@ function Router() {
   );
 }
 
-function App() {
+function DashboardLayout() {
   const style = {
     "--sidebar-width": "15rem",
     "--sidebar-width-icon": "3.5rem",
   };
 
   return (
+    <RoleProvider>
+      <EnvironmentProvider>
+        <EvidenceDrawerProvider>
+          <SidebarProvider style={style as React.CSSProperties}>
+            <div className="flex h-screen w-full">
+              <AppSidebar />
+              <div className="flex flex-col flex-1 min-w-0">
+                <header className="flex items-center justify-between gap-2 p-2 border-b shrink-0 h-12">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <SidebarTrigger data-testid="button-sidebar-toggle" />
+                    <GlobalSearch />
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <EnvironmentSelector />
+                    <RoleSwitcher />
+                    <NotificationCenter />
+                    <ThemeToggle />
+                  </div>
+                </header>
+                <ScrollArea className="flex-1">
+                  <DashboardRouter />
+                </ScrollArea>
+              </div>
+            </div>
+          </SidebarProvider>
+          <CommandPalette />
+        </EvidenceDrawerProvider>
+      </EnvironmentProvider>
+    </RoleProvider>
+  );
+}
+
+function App() {
+  const [location] = useLocation();
+  const isLanding = location === "/";
+
+  return (
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
-          <RoleProvider>
-            <EnvironmentProvider>
-            <EvidenceDrawerProvider>
-            <SidebarProvider style={style as React.CSSProperties}>
-              <div className="flex h-screen w-full">
-                <AppSidebar />
-                <div className="flex flex-col flex-1 min-w-0">
-                  <header className="flex items-center justify-between gap-2 p-2 border-b shrink-0 h-12">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <SidebarTrigger data-testid="button-sidebar-toggle" />
-                      <GlobalSearch />
-                    </div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <EnvironmentSelector />
-                      <RoleSwitcher />
-                      <NotificationCenter />
-                      <ThemeToggle />
-                    </div>
-                  </header>
-                  <ScrollArea className="flex-1">
-                    <Router />
-                  </ScrollArea>
-                </div>
-              </div>
-            </SidebarProvider>
-            <CommandPalette />
-            <Toaster />
-            </EvidenceDrawerProvider>
-            </EnvironmentProvider>
-          </RoleProvider>
+          {isLanding ? <Landing /> : <DashboardLayout />}
+          <Toaster />
         </TooltipProvider>
       </QueryClientProvider>
     </ThemeProvider>

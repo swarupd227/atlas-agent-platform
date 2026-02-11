@@ -38,7 +38,7 @@ import { Badge } from "@/components/ui/badge";
 import { useRole } from "./role-provider";
 
 const platformNav = [
-  { title: "Overview", url: "/", icon: LayoutDashboard },
+  { title: "Overview", url: "/dashboard", icon: LayoutDashboard },
   { title: "Outcome Builder", url: "/outcomes/discover", icon: Sparkles },
   { title: "Outcomes", url: "/outcomes", icon: Target },
   { title: "Agents", url: "/agents", icon: Bot },
@@ -69,7 +69,7 @@ export function AppSidebar() {
   const { role, isRouteAllowed } = useRole();
 
   const isActive = (url: string) => {
-    if (url === "/") return location === "/";
+    if (url === "/dashboard") return location === "/dashboard";
     if (url === "/outcomes") return location === "/outcomes" || (location.startsWith("/outcomes/") && !location.startsWith("/outcomes/discover"));
     if (url === "/outcomes/discover") return location === "/outcomes/discover";
     return location.startsWith(url);
@@ -81,7 +81,7 @@ export function AppSidebar() {
   return (
     <Sidebar>
       <SidebarHeader className="p-4">
-        <Link href="/">
+        <Link href="/dashboard">
           <div className="flex items-center gap-2 cursor-pointer">
             <div className="flex items-center justify-center w-8 h-8 rounded-md bg-primary">
               <Zap className="w-4 h-4 text-primary-foreground" />
