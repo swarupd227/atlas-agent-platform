@@ -3019,6 +3019,121 @@ export async function registerRoutes(
       warnings.push({ type: "budget", severity: "warning", message: `Blueprint has ${llmNodes.length} LLM calls — consider consolidating to reduce costs` });
     }
 
+    const mcpDeps: Array<{ serverId: string; pinnedVersion: string }> = bpJson?.mcpDependencies || [];
+    const allToolsForCompile = toolNodes.some((t: any) => t.mcpToolId) ? await storage.getAllMcpServerTools() : [];
+    for (const toolNode of toolNodes) {
+      if (toolNode.mcpToolId) {
+        const allTools = allToolsForCompile;
+        const tool = allTools.find((t: any) => t.id === toolNode.mcpToolId);
+        if (tool) {
+          const annotations = tool.annotations as any;
+          const isWrite = tool.riskClassification === "high" || tool.riskClassification === "critical" ||
+            (annotations && (annotations.destructiveHint === true || annotations.readOnlyHint === false));
+          if (isWrite) {
+            warnings.push({
+              type: "governance",
+              severity: "warning",
+              message: `Tool '${tool.name}' in node '${toolNode.id}' has write/destructive capabilities — reviewer sign-off recommended`,
+              nodeId: toolNode.id,
+            });
+          }
+          if (mcpDeps.length > 0 && !mcpDeps.some((d: any) => d.serverId === tool.serverId)) {
+            warnings.push({
+              type: "dependency",
+              severity: "warning",
+              message: `Tool '${tool.name}' belongs to server not listed in MCP dependencies`,
+              nodeId: toolNode.id,
+            });
+          }
+        }
+      }
+    }
+
+    let compiledSnapshot: any = null;
+    if (errors.length === 0) {
+      const snapshotTools: any[] = [];
+      const allTools = allToolsForCompile.length > 0 ? allToolsForCompile : await storage.getAllMcpServerTools();
+      for (const toolNode of toolNodes) {
+        if (toolNode.mcpToolId) {
+          const tool = allTools.find((t: any) => t.id === toolNode.mcpToolId);
+          if (tool) {
+            snapshotTools.push({
+              nodeId: toolNode.id,
+              toolId: tool.id,
+              name: tool.name,
+              inputSchema: tool.inputSchema,
+              outputSchema: tool.outputSchema,
+              fingerprintHash: tool.fingerprintHash,
+              riskClassification: tool.riskClassification,
+            });
+          }
+        }
+      }
+
+      const snapshotPrompts: any[] = [];
+      const promptBindings: any[] = bpJson?.promptBindings || [];
+      if (promptBindings.length > 0) {
+        const allPrompts = await storage.getAllMcpServerPrompts();
+        for (const binding of promptBindings) {
+          const prompt = allPrompts.find((p: any) => p.id === binding.promptId);
+          if (prompt) {
+            snapshotPrompts.push({
+              promptId: prompt.id,
+              name: prompt.name,
+              arguments: prompt.arguments,
+              messages: prompt.messages,
+              publishedStatus: prompt.publishedStatus,
+              argumentMappings: binding.argumentMappings,
+            });
+          }
+        }
+      }
+
+      const snapshotResources: any[] = [];
+      const contextSources: string[] = bpJson?.contextSources || [];
+      const contextPlan: any[] = bpJson?.contextPlan || [];
+      if (contextSources.length > 0) {
+        const allResources = await storage.getAllMcpServerResources();
+        for (const resourceId of contextSources) {
+          const resource = allResources.find((r: any) => r.id === resourceId);
+          if (resource) {
+            const plan = contextPlan.find((cp: any) => cp.resourceId === resourceId);
+            snapshotResources.push({
+              resourceId: resource.id,
+              uri: resource.uri,
+              name: resource.name,
+              sensitivityLevel: resource.sensitivityLevel,
+              mimeType: resource.mimeType,
+              retrievalStrategy: plan?.retrievalStrategy || "eager",
+            });
+          }
+        }
+      }
+
+      const snapshotServers: any[] = [];
+      const allServersForSnapshot = mcpDeps.length > 0 ? await storage.getMcpServers() : [];
+      for (const dep of mcpDeps) {
+        const server = allServersForSnapshot.find((s: any) => s.id === dep.serverId);
+        if (server) {
+          snapshotServers.push({
+            serverId: server.id,
+            name: server.name,
+            pinnedVersion: dep.pinnedVersion,
+            status: server.status,
+            riskTier: server.riskTier,
+          });
+        }
+      }
+
+      compiledSnapshot = {
+        snapshotAt: new Date().toISOString(),
+        tools: snapshotTools,
+        prompts: snapshotPrompts,
+        resources: snapshotResources,
+        servers: snapshotServers,
+      };
+    }
+
     const validationResults = {
       compiledAt: new Date().toISOString(),
       passed: errors.length === 0,
@@ -3033,10 +3148,17 @@ export async function registerRoutes(
     };
 
     const newStatus = errors.length === 0 ? "compiled" : "draft";
-    const updated = await storage.updateBlueprint(req.params.id, {
+    const updatePayload: any = {
       validationResults,
       status: newStatus,
-    });
+    };
+    if (compiledSnapshot) {
+      updatePayload.blueprintJson = {
+        ...bpJson,
+        compiledSnapshot,
+      };
+    }
+    const updated = await storage.updateBlueprint(req.params.id, updatePayload);
 
     res.json({ ...updated, validationResults });
   });
@@ -3047,6 +3169,23 @@ export async function registerRoutes(
 
     if (blueprint.status !== "compiled") {
       return res.status(400).json({ error: "Blueprint must be compiled successfully before signing" });
+    }
+
+    const role = getRequestRole(req);
+    if (role !== "expert_validator" && role !== "admin" && role !== "compliance_security") {
+      return res.status(403).json({ error: "Only a reviewer (expert validator, admin, or compliance/security) can sign blueprints for production release" });
+    }
+
+    const bpJsonSign = blueprint.blueprintJson as any;
+    const vr = blueprint.validationResults as any;
+    const governanceWarnings = (vr?.warnings || []).filter((w: any) => w.type === "governance" || w.type === "dependency");
+    if (governanceWarnings.length > 0) {
+      if (role !== "admin" && role !== "compliance_security") {
+        return res.status(403).json({
+          error: "Blueprint has governance warnings that require admin or compliance/security sign-off",
+          warnings: governanceWarnings,
+        });
+      }
     }
 
     const { signedBy } = req.body;
@@ -8279,6 +8418,15 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
     } catch (e) {
       console.error("[mcp-initialize] Error:", e);
       res.status(500).json({ message: "Failed to initialize MCP server" });
+    }
+  });
+
+  app.get("/api/mcp-tools", async (_req, res) => {
+    try {
+      const tools = await storage.getAllMcpServerTools();
+      res.json(tools);
+    } catch (e) {
+      res.status(500).json({ message: "Failed to fetch MCP tools" });
     }
   });
 

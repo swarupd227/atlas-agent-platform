@@ -27,6 +27,37 @@ interface PromptBinding {
   promptId: string;
   argumentMappings: Record<string, string>;
 }
+
+interface McpServerBrief {
+  id: string;
+  name: string;
+  description: string | null;
+  status: string;
+  expectedProtocolVersion: string | null;
+  riskTier: string;
+}
+
+interface McpToolBrief {
+  id: string;
+  serverId: string;
+  name: string;
+  description: string | null;
+  inputSchema: any;
+  outputSchema: any;
+  riskClassification: string | null;
+  enabled: boolean;
+  annotations: any;
+}
+
+interface McpDependency {
+  serverId: string;
+  pinnedVersion: string;
+}
+
+interface ContextPlanEntry {
+  resourceId: string;
+  retrievalStrategy: "eager" | "lazy" | "on-demand";
+}
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -39,7 +70,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
   Brain, Wrench, Database, GitBranch, Split, UserCheck, Shield,
   Plus, Trash2, Save, Play, PenTool, ArrowLeft, AlertTriangle,
-  CheckCircle, ChevronDown, ChevronRight, X, MousePointer, Link2, FileText, MessageSquare,
+  CheckCircle, ChevronDown, ChevronRight, X, MousePointer, Link2, FileText, MessageSquare, Server,
 } from "lucide-react";
 
 type BpNode = { id: string; type: string; label: string; [key: string]: any };
@@ -88,6 +119,8 @@ export default function BlueprintDetail() {
   const { data: agents } = useQuery<Agent[]>({ queryKey: ["/api/agents"] });
   const { data: mcpResources } = useQuery<McpResourceBrief[]>({ queryKey: ["/api/mcp-resources"] });
   const { data: mcpPrompts } = useQuery<McpPromptBrief[]>({ queryKey: ["/api/mcp-prompts"] });
+  const { data: mcpServers } = useQuery<McpServerBrief[]>({ queryKey: ["/api/mcp-servers"] });
+  const { data: mcpTools } = useQuery<McpToolBrief[]>({ queryKey: ["/api/mcp-tools"] });
 
   const [nodes, setNodes] = useState<BpNode[]>([]);
   const [edges, setEdges] = useState<BpEdge[]>([]);
@@ -104,6 +137,9 @@ export default function BlueprintDetail() {
   const [promptNodesOpen, setPromptNodesOpen] = useState(false);
   const [attachedResourceIds, setAttachedResourceIds] = useState<Set<string>>(new Set());
   const [promptBindings, setPromptBindings] = useState<PromptBinding[]>([]);
+  const [mcpDependencies, setMcpDependencies] = useState<McpDependency[]>([]);
+  const [contextPlan, setContextPlan] = useState<ContextPlanEntry[]>([]);
+  const [depsOpen, setDepsOpen] = useState(false);
 
   useEffect(() => {
     if (blueprint) {
@@ -115,6 +151,8 @@ export default function BlueprintDetail() {
       if (blueprint.validationResults) setLocalValidation(blueprint.validationResults as ValidationResults);
       if (bj?.contextSources) setAttachedResourceIds(new Set(bj.contextSources));
       if (bj?.promptBindings) setPromptBindings(bj.promptBindings);
+      if (bj?.mcpDependencies) setMcpDependencies(bj.mcpDependencies);
+      if (bj?.contextPlan) setContextPlan(bj.contextPlan);
     }
   }, [blueprint]);
 
@@ -181,7 +219,7 @@ export default function BlueprintDetail() {
   const saveMutation = useMutation({
     mutationFn: async () => {
       await apiRequest("PATCH", `/api/blueprints/${id}`, {
-        blueprintJson: { nodes, edges, contextSources: Array.from(attachedResourceIds), promptBindings },
+        blueprintJson: { nodes, edges, contextSources: Array.from(attachedResourceIds), promptBindings, mcpDependencies, contextPlan },
         name: blueprintName,
       });
     },
@@ -449,19 +487,76 @@ export default function BlueprintDetail() {
                     {selectedNode.type === "tool_call" && (
                       <>
                         <div className="flex flex-col gap-1.5">
-                          <label className="text-xs font-medium text-muted-foreground">Tool Name</label>
-                          <Input
-                            value={selectedNode.toolName || ""}
-                            onChange={e => updateNode(selectedNode.id, { toolName: e.target.value })}
-                            placeholder="e.g. searchAPI"
-                            data-testid="input-tool-name"
-                          />
+                          <label className="text-xs font-medium text-muted-foreground">MCP Tool</label>
+                          {(() => {
+                            const depServerIds = mcpDependencies.map(d => d.serverId);
+                            const availableTools = (mcpTools || []).filter(t => t.enabled && (depServerIds.length === 0 || depServerIds.includes(t.serverId)));
+                            return (
+                              <div className="flex flex-col gap-1">
+                                <select
+                                  className="h-8 w-full rounded-md border bg-background px-2 text-xs"
+                                  value={selectedNode.mcpToolId || ""}
+                                  onChange={e => {
+                                    const tool = availableTools.find(t => t.id === e.target.value);
+                                    updateNode(selectedNode.id, {
+                                      mcpToolId: e.target.value || undefined,
+                                      toolName: tool?.name || selectedNode.toolName || "",
+                                      mcpToolServerId: tool?.serverId,
+                                    });
+                                  }}
+                                  data-testid="select-mcp-tool"
+                                >
+                                  <option value="">Manual entry</option>
+                                  {availableTools.map(t => {
+                                    const srv = mcpServers?.find(s => s.id === t.serverId);
+                                    return (
+                                      <option key={t.id} value={t.id}>
+                                        {t.name} ({srv?.name || "unknown"})
+                                      </option>
+                                    );
+                                  })}
+                                </select>
+                                {!selectedNode.mcpToolId && (
+                                  <Input
+                                    value={selectedNode.toolName || ""}
+                                    onChange={e => updateNode(selectedNode.id, { toolName: e.target.value })}
+                                    placeholder="e.g. searchAPI"
+                                    data-testid="input-tool-name"
+                                  />
+                                )}
+                              </div>
+                            );
+                          })()}
                         </div>
+                        {selectedNode.mcpToolId && (() => {
+                          const tool = (mcpTools || []).find(t => t.id === selectedNode.mcpToolId);
+                          if (!tool) return null;
+                          return (
+                            <div className="flex flex-col gap-1.5">
+                              <span className="text-[10px] text-muted-foreground">{tool.description || "No description"}</span>
+                              {tool.riskClassification && (
+                                <Badge variant="outline" className="text-[9px] w-fit">{tool.riskClassification} risk</Badge>
+                              )}
+                              {tool.inputSchema && (
+                                <div className="flex flex-col gap-0.5">
+                                  <label className="text-[10px] font-medium text-muted-foreground">Input Schema</label>
+                                  <pre className="text-[9px] bg-muted/50 rounded p-1.5 overflow-x-auto max-h-24 overflow-y-auto">{JSON.stringify(tool.inputSchema, null, 2)}</pre>
+                                </div>
+                              )}
+                              {tool.outputSchema && (
+                                <div className="flex flex-col gap-0.5">
+                                  <label className="text-[10px] font-medium text-muted-foreground">Output Schema</label>
+                                  <pre className="text-[9px] bg-muted/50 rounded p-1.5 overflow-x-auto max-h-24 overflow-y-auto">{JSON.stringify(tool.outputSchema, null, 2)}</pre>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
                         <div className="flex flex-col gap-1.5">
                           <label className="text-xs font-medium text-muted-foreground">Permissions (comma-separated)</label>
                           <Input
                             value={(selectedNode.permissions || []).join(", ")}
-                            onChange={e => updateNode(selectedNode.id, { permissions: e.target.value.split(",").map(s => s.trim()).filter(Boolean) })}
+                            onChange={e => updateNode(selectedNode.id, { permissions: e.target.value.split(",").map((s: string) => s.trim()).filter(Boolean) })}
                             placeholder="read, write"
                             data-testid="input-permissions"
                           />
@@ -603,6 +698,83 @@ export default function BlueprintDetail() {
             <div className="border-t mx-4">
               <button
                 className="flex items-center gap-2 py-3 w-full text-left"
+                onClick={() => setDepsOpen(!depsOpen)}
+                data-testid="button-toggle-mcp-deps"
+              >
+                {depsOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                <Server className="w-3.5 h-3.5 text-muted-foreground" />
+                <span className="text-xs font-medium text-muted-foreground">MCP Dependencies ({mcpDependencies.length})</span>
+              </button>
+              {depsOpen && (
+                <div className="flex flex-col gap-2 pb-4">
+                  {mcpServers && mcpServers.length > 0 ? (
+                    <>
+                      {mcpServers
+                        .filter(s => s.status === "active" || s.status === "registered")
+                        .map(s => {
+                          const dep = mcpDependencies.find(d => d.serverId === s.id);
+                          const isDep = !!dep;
+                          return (
+                            <div
+                              key={s.id}
+                              className={`flex items-start gap-2 p-2 rounded-md cursor-pointer ${isDep ? "bg-primary/10 border border-primary/20" : "bg-muted/50 hover-elevate"}`}
+                              onClick={() => {
+                                if (isDep) {
+                                  setMcpDependencies(prev => prev.filter(d => d.serverId !== s.id));
+                                } else {
+                                  setMcpDependencies(prev => [...prev, { serverId: s.id, pinnedVersion: s.expectedProtocolVersion || "2025-03-26" }]);
+                                }
+                                setDirty(true);
+                              }}
+                              data-testid={`mcp-dep-${s.id}`}
+                            >
+                              <Server className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                              <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+                                <span className="text-xs font-medium truncate">{s.name}</span>
+                                <span className="text-[10px] text-muted-foreground truncate">{s.description || "No description"}</span>
+                                <div className="flex items-center gap-1 flex-wrap">
+                                  <Badge variant="outline" className="text-[9px]">{s.riskTier}</Badge>
+                                  <Badge variant="outline" className="text-[9px]">{s.status}</Badge>
+                                </div>
+                              </div>
+                              {isDep && <CheckCircle className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />}
+                            </div>
+                          );
+                        })}
+                      {mcpDependencies.length > 0 && (
+                        <div className="flex flex-col gap-1 mt-1">
+                          <span className="text-[10px] font-medium text-muted-foreground px-1">Pinned Versions</span>
+                          {mcpDependencies.map(dep => {
+                            const srv = mcpServers?.find(s => s.id === dep.serverId);
+                            return (
+                              <div key={dep.serverId} className="flex items-center gap-1.5 px-1">
+                                <span className="text-[10px] text-muted-foreground truncate flex-1">{srv?.name || dep.serverId}</span>
+                                <Input
+                                  className="h-5 text-[10px] px-1.5 w-24"
+                                  value={dep.pinnedVersion}
+                                  onClick={e => e.stopPropagation()}
+                                  onChange={e => {
+                                    setMcpDependencies(prev => prev.map(d => d.serverId === dep.serverId ? { ...d, pinnedVersion: e.target.value } : d));
+                                    setDirty(true);
+                                  }}
+                                  data-testid={`input-pinned-version-${dep.serverId}`}
+                                />
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-xs text-muted-foreground text-center py-3" data-testid="text-no-mcp-servers">No MCP servers available</p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="border-t mx-4">
+              <button
+                className="flex items-center gap-2 py-3 w-full text-left"
                 onClick={() => setContextSourcesOpen(!contextSourcesOpen)}
                 data-testid="button-toggle-context-sources"
               >
@@ -619,30 +791,67 @@ export default function BlueprintDetail() {
                         .map(r => {
                           const attached = attachedResourceIds.has(r.id);
                           return (
-                            <div
-                              key={r.id}
-                              className={`flex items-start gap-2 p-2 rounded-md cursor-pointer ${attached ? "bg-primary/10 border border-primary/20" : "bg-muted/50 hover-elevate"}`}
-                              onClick={() => {
-                                setAttachedResourceIds(prev => {
-                                  const next = new Set(prev);
-                                  if (next.has(r.id)) next.delete(r.id);
-                                  else next.add(r.id);
-                                  return next;
-                                });
-                                setDirty(true);
-                              }}
-                              data-testid={`context-source-${r.id}`}
-                            >
-                              <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
-                              <div className="flex flex-col gap-0.5 min-w-0 flex-1">
-                                <span className="text-xs font-medium truncate">{r.name}</span>
-                                <span className="text-[10px] text-muted-foreground truncate">{r.uri}</span>
-                                <div className="flex items-center gap-1 flex-wrap">
-                                  <Badge variant="outline" className="text-[9px]">{r.sensitivityLevel}</Badge>
-                                  {r.mimeType && <Badge variant="outline" className="text-[9px]">{r.mimeType.split("/").pop()}</Badge>}
+                            <div key={r.id} className="flex flex-col">
+                              <div
+                                className={`flex items-start gap-2 p-2 rounded-md cursor-pointer ${attached ? "bg-primary/10 border border-primary/20" : "bg-muted/50 hover-elevate"}`}
+                                onClick={() => {
+                                  setAttachedResourceIds(prev => {
+                                    const next = new Set(prev);
+                                    if (next.has(r.id)) {
+                                      next.delete(r.id);
+                                      setContextPlan(prev => prev.filter(cp => cp.resourceId !== r.id));
+                                    } else {
+                                      next.add(r.id);
+                                      setContextPlan(prev => {
+                                        if (!prev.find(cp => cp.resourceId === r.id)) {
+                                          return [...prev, { resourceId: r.id, retrievalStrategy: "eager" as const }];
+                                        }
+                                        return prev;
+                                      });
+                                    }
+                                    return next;
+                                  });
+                                  setDirty(true);
+                                }}
+                                data-testid={`context-source-${r.id}`}
+                              >
+                                <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                                <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+                                  <span className="text-xs font-medium truncate">{r.name}</span>
+                                  <span className="text-[10px] text-muted-foreground truncate">{r.uri}</span>
+                                  <div className="flex items-center gap-1 flex-wrap">
+                                    <Badge variant="outline" className="text-[9px]">{r.sensitivityLevel}</Badge>
+                                    {r.mimeType && <Badge variant="outline" className="text-[9px]">{r.mimeType.split("/").pop()}</Badge>}
+                                  </div>
                                 </div>
+                                {attached && <CheckCircle className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />}
                               </div>
-                              {attached && <CheckCircle className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />}
+                              {attached && (
+                                <div className="ml-5 flex items-center gap-1.5 mt-1">
+                                  <span className="text-[10px] text-muted-foreground">Strategy:</span>
+                                  {(["eager", "lazy", "on-demand"] as const).map(strat => {
+                                    const plan = contextPlan.find(cp => cp.resourceId === r.id);
+                                    const isActive = plan?.retrievalStrategy === strat;
+                                    return (
+                                      <button
+                                        key={strat}
+                                        className={`text-[9px] px-1.5 py-0.5 rounded ${isActive ? "bg-primary/20 text-primary font-medium" : "bg-muted text-muted-foreground"}`}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setContextPlan(prev => {
+                                            const existing = prev.filter(cp => cp.resourceId !== r.id);
+                                            return [...existing, { resourceId: r.id, retrievalStrategy: strat }];
+                                          });
+                                          setDirty(true);
+                                        }}
+                                        data-testid={`strategy-${r.id}-${strat}`}
+                                      >
+                                        {strat}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
                             </div>
                           );
                         })}

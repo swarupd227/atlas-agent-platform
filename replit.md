@@ -19,7 +19,7 @@ The platform is built with a modern web stack: React, Vite, Tailwind CSS, shadcn
 - **Overview Dashboard**: Platform health, KPI progress, agent status.
 - **Outcomes**: Manages outcome contracts, KPIs, SLAs, and pricing.
 - **Agents**: Agent Registry for managing and monitoring agents, including detailed cockpit views, lifecycle management, and a design wizard.
-- **Blueprint Studio**: Visual editor for creating, versioning, and compiling agent blueprints with static checks and approval flows.
+- **Blueprint Studio**: Visual editor for creating, versioning, and compiling agent blueprints with static checks and approval flows. Includes MCP Dependencies tab (server selection with pinned versions), MCP Tool Nodes (governed tool picker from registry), Context Nodes (resource selection with retrieval strategy: eager/lazy/on-demand), compiler snapshots for reproducibility, and reviewer governance gates for production release.
 - **Templates**: Library of agent templates.
 - **Deployments**: Release Orchestrator with environment management, rollout strategies (shadow/canary/direct), and auto-incident generation. Includes a Create Release wizard for defining deployment parameters and safeguards. Supports "Deploy as Source Package" for CI/CD integration. Freeze Center for deployment freeze management.
 - **Monitor**: Outcome SLA Dashboard, live runs, drift detection, and agent health monitoring.
