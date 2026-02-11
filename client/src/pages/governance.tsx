@@ -393,6 +393,33 @@ export default function Governance() {
   const [selectedPackId, setSelectedPackId] = useState<string | null>(null);
   const selectedPack = selectedPackId ? POLICY_PACKS.find((p) => p.id === selectedPackId) || null : null;
 
+  const [enhancedPackRules, setEnhancedPackRules] = useState<Record<string, Record<number, Record<string, unknown>>>>(() => {
+    try {
+      const stored = localStorage.getItem("almp-enhanced-pack-rules");
+      return stored ? JSON.parse(stored) : {};
+    } catch { return {}; }
+  });
+
+  function persistEnhancedRules(packId: string, policyIdx: number, rules: Record<string, unknown>) {
+    setEnhancedPackRules((prev) => {
+      const next = { ...prev, [packId]: { ...prev[packId], [policyIdx]: rules } };
+      localStorage.setItem("almp-enhanced-pack-rules", JSON.stringify(next));
+      return next;
+    });
+  }
+
+  function getPackWithEnhancements(pack: PolicyPack): PolicyPack {
+    const enhancements = enhancedPackRules[pack.id];
+    if (!enhancements) return pack;
+    return {
+      ...pack,
+      policies: pack.policies.map((p, idx) => ({
+        ...p,
+        policyJson: enhancements[idx] || p.policyJson,
+      })),
+    };
+  }
+
   const activatePackMutation = useMutation({
     mutationFn: async (pack: PolicyPack) => {
       const policyList = pack.policies.map((p) => ({
@@ -1849,7 +1876,7 @@ export default function Governance() {
                             size="sm"
                             className="flex-1"
                             disabled={isActivated || activatePackMutation.isPending}
-                            onClick={() => activatePackMutation.mutate(pack)}
+                            onClick={() => activatePackMutation.mutate(getPackWithEnhancements(pack))}
                             data-testid={`button-activate-pack-${pack.id}`}
                           >
                             {isActivated ? (
@@ -1914,7 +1941,7 @@ export default function Governance() {
                           size="sm"
                           className="flex-1"
                           disabled={isActivated || activatePackMutation.isPending}
-                          onClick={() => activatePackMutation.mutate(pack)}
+                          onClick={() => activatePackMutation.mutate(getPackWithEnhancements(pack))}
                           data-testid={`button-activate-pack-${pack.id}`}
                         >
                           {isActivated ? (
@@ -1951,6 +1978,8 @@ export default function Governance() {
                 setSelectedPackId(null);
               }}
               activating={activatePackMutation.isPending}
+              savedEnhancements={enhancedPackRules[selectedPack.id] || {}}
+              onPersistEnhancement={(idx, rules) => persistEnhancedRules(selectedPack.id, idx, rules)}
             />
           )}
         </TabsContent>
@@ -2624,6 +2653,108 @@ function WhatIfAnalysis({ policies }: { policies: Policy[] }) {
   );
 }
 
+function renderRuleValue(key: string, value: unknown): JSX.Element {
+  if (Array.isArray(value)) {
+    return (
+      <div className="flex items-center gap-1 flex-wrap" data-testid={`rule-field-${key}`}>
+        {value.map((item, i) => (
+          <Badge key={i} variant="secondary" className="text-[10px]">
+            {String(item).replace(/_/g, " ")}
+          </Badge>
+        ))}
+      </div>
+    );
+  }
+  if (typeof value === "object" && value !== null) {
+    return (
+      <div className="space-y-1.5 pl-3 border-l-2 border-muted" data-testid={`rule-field-${key}`}>
+        {Object.entries(value).map(([k, v]) => (
+          <div key={k} className="flex items-start gap-2">
+            <span className="text-[10px] text-muted-foreground font-medium min-w-[80px] shrink-0 capitalize">{k.replace(/_/g, " ")}</span>
+            {renderRuleValue(k, v)}
+          </div>
+        ))}
+      </div>
+    );
+  }
+  if (typeof value === "boolean") {
+    return <Badge variant={value ? "default" : "outline"} className="text-[10px]">{value ? "Yes" : "No"}</Badge>;
+  }
+  if (typeof value === "number") {
+    return <span className="text-xs font-mono font-medium" data-testid={`rule-field-${key}`}>{value.toLocaleString()}</span>;
+  }
+  return <span className="text-xs" data-testid={`rule-field-${key}`}>{String(value).replace(/_/g, " ")}</span>;
+}
+
+function PolicyRuleViewer({ rules }: { rules: Record<string, unknown> }) {
+  const rulesList = (rules as { rules?: unknown[] }).rules;
+  if (!rulesList || !Array.isArray(rulesList)) {
+    return (
+      <div className="space-y-2 bg-muted/30 rounded-md p-3">
+        {Object.entries(rules).map(([key, value]) => (
+          <div key={key} className="flex items-start gap-3">
+            <span className="text-[11px] text-muted-foreground font-medium min-w-[90px] shrink-0 capitalize">{key.replace(/_/g, " ")}</span>
+            {renderRuleValue(key, value)}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  const ruleTypeLabels: Record<string, { label: string; color: string }> = {
+    data_class_restriction: { label: "Data Classification", color: "text-purple-600 dark:text-purple-400" },
+    tool_scope: { label: "Tool Access Scope", color: "text-blue-600 dark:text-blue-400" },
+    audit_requirement: { label: "Audit Requirement", color: "text-amber-600 dark:text-amber-400" },
+    data_minimization: { label: "Data Minimization", color: "text-teal-600 dark:text-teal-400" },
+    human_in_loop: { label: "Human-in-the-Loop", color: "text-red-600 dark:text-red-400" },
+    escalation: { label: "Escalation Rule", color: "text-orange-600 dark:text-orange-400" },
+    pre_action_check: { label: "Pre-Action Check", color: "text-indigo-600 dark:text-indigo-400" },
+    reporting_requirement: { label: "Reporting Requirement", color: "text-cyan-600 dark:text-cyan-400" },
+    data_integrity: { label: "Data Integrity", color: "text-emerald-600 dark:text-emerald-400" },
+    role_separation: { label: "Role Separation", color: "text-pink-600 dark:text-pink-400" },
+    anomaly_detection: { label: "Anomaly Detection", color: "text-rose-600 dark:text-rose-400" },
+    network_boundary: { label: "Network Boundary", color: "text-violet-600 dark:text-violet-400" },
+    action_blocklist: { label: "Action Blocklist", color: "text-red-600 dark:text-red-400" },
+    change_control: { label: "Change Control", color: "text-sky-600 dark:text-sky-400" },
+    consent_check: { label: "Consent Check", color: "text-lime-600 dark:text-lime-400" },
+    data_subject_rights: { label: "Data Subject Rights", color: "text-green-600 dark:text-green-400" },
+    data_residency: { label: "Data Residency", color: "text-fuchsia-600 dark:text-fuchsia-400" },
+  };
+
+  return (
+    <div className="space-y-2">
+      {rulesList.map((rule, rIdx) => {
+        const ruleObj = rule as Record<string, unknown>;
+        const ruleType = ruleObj.type as string | undefined;
+        const typeInfo = ruleType ? ruleTypeLabels[ruleType] : undefined;
+        const otherFields = Object.entries(ruleObj).filter(([k]) => k !== "type");
+
+        return (
+          <div key={rIdx} className="bg-muted/30 rounded-md p-3 space-y-2" data-testid={`rule-card-${rIdx}`}>
+            {ruleType && (
+              <div className="flex items-center gap-2">
+                <Badge variant="outline" className={`text-[10px] ${typeInfo?.color || ""}`}>
+                  {typeInfo?.label || ruleType.replace(/_/g, " ")}
+                </Badge>
+              </div>
+            )}
+            <div className="space-y-1.5">
+              {otherFields.map(([key, value]) => (
+                <div key={key} className="flex items-start gap-3">
+                  <span className="text-[11px] text-muted-foreground font-medium min-w-[90px] shrink-0 capitalize">
+                    {key.replace(/_/g, " ")}
+                  </span>
+                  {renderRuleValue(key, value)}
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function PolicyPackDetailDialog({
   pack,
   open,
@@ -2631,6 +2762,8 @@ function PolicyPackDetailDialog({
   isActivated,
   onActivate,
   activating,
+  savedEnhancements,
+  onPersistEnhancement,
 }: {
   pack: PolicyPack;
   open: boolean;
@@ -2638,12 +2771,13 @@ function PolicyPackDetailDialog({
   isActivated: boolean;
   onActivate: (pack: PolicyPack) => void;
   activating: boolean;
+  savedEnhancements: Record<number, Record<string, unknown>>;
+  onPersistEnhancement: (idx: number, rules: Record<string, unknown>) => void;
 }) {
   const { toast } = useToast();
-  const { industry } = useIndustry();
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [editedRules, setEditedRules] = useState<Record<number, string>>({});
-  const [enhancedPolicies, setEnhancedPolicies] = useState<Record<number, Record<string, unknown>>>({});
+  const [localEnhancements, setLocalEnhancements] = useState<Record<number, Record<string, unknown>>>({});
   const [enhancingIdx, setEnhancingIdx] = useState<number | null>(null);
 
   const industryLabel: Record<string, string> = {
@@ -2652,6 +2786,14 @@ function PolicyPackDetailDialog({
     manufacturing: "Manufacturing & Supply Chain",
     retail: "Retail & E-Commerce",
   };
+
+  function getEffectiveRules(idx: number): Record<string, unknown> {
+    return localEnhancements[idx] || savedEnhancements[idx] || pack.policies[idx].policyJson;
+  }
+
+  function isEnhanced(idx: number): boolean {
+    return !!localEnhancements[idx] || !!savedEnhancements[idx];
+  }
 
   const enhanceMutation = useMutation({
     mutationFn: async ({ policy, idx }: { policy: PolicyPackPolicy; idx: number }) => {
@@ -2662,16 +2804,16 @@ function PolicyPackDetailDialog({
         description: policy.description,
         framework: pack.framework,
         industry: industryLabel[pack.industry] || pack.industry,
-        existingRules: enhancedPolicies[idx] || policy.policyJson,
+        existingRules: getEffectiveRules(idx),
       });
       return { data: await res.json(), idx };
     },
     onSuccess: ({ data, idx }) => {
-      setEnhancedPolicies((prev) => ({ ...prev, [idx]: data.enhancedRules }));
-      setEditedRules((prev) => ({ ...prev, [idx]: JSON.stringify(data.enhancedRules, null, 2) }));
-      setEditingIdx(idx);
+      const enhanced = data.enhancedRules;
+      setLocalEnhancements((prev) => ({ ...prev, [idx]: enhanced }));
+      onPersistEnhancement(idx, enhanced);
       setEnhancingIdx(null);
-      toast({ title: "Policy rules enhanced", description: "Review the enriched rules and save when ready" });
+      toast({ title: "Policy rules enhanced and saved", description: "The enriched rules have been persisted" });
     },
     onError: (err: Error) => {
       setEnhancingIdx(null);
@@ -2682,16 +2824,13 @@ function PolicyPackDetailDialog({
   function handleSaveRules(idx: number) {
     try {
       const parsed = JSON.parse(editedRules[idx]);
-      setEnhancedPolicies((prev) => ({ ...prev, [idx]: parsed }));
+      setLocalEnhancements((prev) => ({ ...prev, [idx]: parsed }));
+      onPersistEnhancement(idx, parsed);
       setEditingIdx(null);
-      toast({ title: "Rules saved", description: "Enhanced rules will be used when you activate this pack" });
+      toast({ title: "Rules saved", description: "Your changes have been persisted" });
     } catch {
       toast({ title: "Invalid JSON", description: "Please fix the JSON syntax before saving", variant: "destructive" });
     }
-  }
-
-  function getEffectiveRules(idx: number): Record<string, unknown> {
-    return enhancedPolicies[idx] || pack.policies[idx].policyJson;
   }
 
   function handleActivateWithEnhancements() {
@@ -2705,7 +2844,7 @@ function PolicyPackDetailDialog({
     onActivate(enhancedPack);
   }
 
-  const hasEnhancements = Object.keys(enhancedPolicies).length > 0;
+  const hasAnyEnhancements = pack.policies.some((_, idx) => isEnhanced(idx));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -2733,7 +2872,7 @@ function PolicyPackDetailDialog({
             <Badge variant="outline">
               {pack.policies.length} {pack.policies.length === 1 ? "policy" : "policies"}
             </Badge>
-            {hasEnhancements && (
+            {hasAnyEnhancements && (
               <Badge variant="secondary" className="text-green-600 dark:text-green-400">
                 <Wand2 className="h-3 w-3 mr-1" />
                 Enhanced
@@ -2745,18 +2884,18 @@ function PolicyPackDetailDialog({
             <h4 className="text-sm font-medium">Included Policies</h4>
             {pack.policies.map((p, idx) => {
               const DIcon = domainIcons[p.domain] || Shield;
-              const isEnhanced = !!enhancedPolicies[idx];
+              const policyEnhanced = isEnhanced(idx);
               const isEditing = editingIdx === idx;
               const isEnhancing = enhancingIdx === idx;
               const currentRules = getEffectiveRules(idx);
 
               return (
-                <Card key={idx} className={isEnhanced ? "ring-1 ring-green-500/30" : ""}>
+                <Card key={idx} className={policyEnhanced ? "ring-1 ring-green-500/30" : ""}>
                   <CardContent className="p-4 space-y-3">
                     <div className="flex items-center gap-2">
                       <DIcon className="h-4 w-4 text-muted-foreground shrink-0" />
                       <span className="text-sm font-medium">{p.name}</span>
-                      {isEnhanced && (
+                      {policyEnhanced && (
                         <Badge variant="secondary" className="text-[10px] text-green-600 dark:text-green-400">
                           <Wand2 className="h-2.5 w-2.5 mr-0.5" /> AI Enhanced
                         </Badge>
@@ -2767,6 +2906,7 @@ function PolicyPackDetailDialog({
 
                     {isEditing ? (
                       <div className="space-y-2">
+                        <Label className="text-xs text-muted-foreground">Advanced Rule Editor</Label>
                         <Textarea
                           value={editedRules[idx] || JSON.stringify(currentRules, null, 2)}
                           onChange={(e) => setEditedRules((prev) => ({ ...prev, [idx]: e.target.value }))}
@@ -2794,35 +2934,37 @@ function PolicyPackDetailDialog({
                       </div>
                     ) : (
                       <div className="space-y-2">
-                        <pre className="text-[11px] bg-muted/50 p-3 rounded-md overflow-x-auto max-h-[200px]">
-                          {JSON.stringify(currentRules, null, 2)}
-                        </pre>
+                        <PolicyRuleViewer rules={currentRules} />
                         <div className="flex items-center gap-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={isEnhancing}
-                            onClick={() => enhanceMutation.mutate({ policy: p, idx })}
-                            data-testid={`button-ai-enhance-${idx}`}
-                          >
-                            {isEnhancing ? (
-                              <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> Enhancing...</>
-                            ) : (
-                              <><Wand2 className="h-3.5 w-3.5 mr-1.5" /> AI Enhance</>
-                            )}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              setEditedRules((prev) => ({ ...prev, [idx]: JSON.stringify(currentRules, null, 2) }));
-                              setEditingIdx(idx);
-                            }}
-                            data-testid={`button-edit-rules-${idx}`}
-                          >
-                            <Pencil className="h-3.5 w-3.5 mr-1.5" />
-                            Edit
-                          </Button>
+                          <PermissionGate action="create_modify_policies">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={isEnhancing}
+                              onClick={() => enhanceMutation.mutate({ policy: p, idx })}
+                              data-testid={`button-ai-enhance-${idx}`}
+                            >
+                              {isEnhancing ? (
+                                <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> Enhancing...</>
+                              ) : (
+                                <><Wand2 className="h-3.5 w-3.5 mr-1.5" /> AI Enhance</>
+                              )}
+                            </Button>
+                          </PermissionGate>
+                          <PermissionGate action="create_modify_policies">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setEditedRules((prev) => ({ ...prev, [idx]: JSON.stringify(currentRules, null, 2) }));
+                                setEditingIdx(idx);
+                              }}
+                              data-testid={`button-edit-rules-${idx}`}
+                            >
+                              <Pencil className="h-3.5 w-3.5 mr-1.5" />
+                              Edit
+                            </Button>
+                          </PermissionGate>
                         </div>
                       </div>
                     )}
@@ -2832,18 +2974,22 @@ function PolicyPackDetailDialog({
             })}
           </div>
 
-          <Button
-            className="w-full"
-            disabled={isActivated || activating}
-            onClick={handleActivateWithEnhancements}
-            data-testid="button-activate-pack-dialog"
-          >
-            {isActivated ? (
-              <><Check className="h-4 w-4 mr-2" /> Already Activated</>
-            ) : (
-              <><Sparkles className="h-4 w-4 mr-2" /> Activate Pack ({pack.policies.length} policies){hasEnhancements ? " with Enhancements" : ""}</>
-            )}
-          </Button>
+          <PermissionGate action="create_modify_policies">
+            <Button
+              className="w-full"
+              disabled={isActivated || activating}
+              onClick={handleActivateWithEnhancements}
+              data-testid="button-activate-pack-dialog"
+            >
+              {isActivated ? (
+                <><Check className="h-4 w-4 mr-2" /> Already Activated</>
+              ) : activating ? (
+                <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Activating...</>
+              ) : (
+                <><Sparkles className="h-4 w-4 mr-2" /> Activate Pack ({pack.policies.length} policies){hasAnyEnhancements ? " with Enhancements" : ""}</>
+              )}
+            </Button>
+          </PermissionGate>
         </div>
       </DialogContent>
     </Dialog>
