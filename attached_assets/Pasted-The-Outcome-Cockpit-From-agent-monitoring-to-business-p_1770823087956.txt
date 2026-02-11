@@ -1,0 +1,20 @@
+The Outcome Cockpit
+From agent monitoring to business portfolio management
+
+Design Principle
+Every screen in ALMP should answer a business question within 3 seconds of loading. If a screen requires translating technical metrics into business impact, the screen is wrong.
+
+1.1 Outcome Portfolio Dashboard (Home Screen)
+This replaces the traditional “Overview Dashboard.” Instead of showing system health and agent counts, the home screen presents a portfolio view of all business outcomes — like a fund manager’s dashboard for AI investments.
+
+What’s on Screen
+•	Portfolio Summary Bar: Total contracted value, revenue delivered this period, revenue at risk, projected shortfall/surplus. Updated in real time.
+•	Outcome Cards (sortable grid): Each outcome contract appears as a card showing its name, customer, contracted KPIs with live progress rings, confidence score (ML-predicted likelihood of meeting SLA by period end), financial impact (revenue earned vs. projected), and a risk heat indicator (green/amber/red).
+•	Confidence Trajectory Chart: A time-series sparkline on each card showing how confidence in meeting the SLA has trended over the past 30 days. A declining trajectory triggers proactive alerts even if the outcome is currently on-track.
+•	Financial Attribution Waterfall: A drill-down waterfall chart that breaks down: Gross outcome events → Exclusions (test, duplicate, fraud) → Net billable events → Revenue recognized. This makes billing transparent and dispute-resistant.
+•	Risk Exposure Panel: Aggregated risk across all outcomes, broken down by root cause category: agent drift, tool failures, SLA timeline pressure, cost overruns. Each category links to the specific agent/tool causing the risk.
+
+What Makes This Different from Competitors
+•	No competitor presents agent operations as a business portfolio. AWS AgentCore, Google ADK, and LangSmith all show technical metrics (latency, tokens, errors). ALMP translates these into revenue impact, SLA confidence, and cost-to-serve.
+•	The confidence trajectory is predictive, not reactive. Most monitoring tools tell you when something has already broken. ALMP tells you the probability of meeting your SLA given current trends, enabling proactive intervention.
+•	Financial attribution is built into the data model, not bolted on. Every agent run carries a cost allocation and outcome attribution tag from execution time, enabling accurate P&L views without post-hoc reconciliation.
