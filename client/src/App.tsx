@@ -14,6 +14,9 @@ import { GlobalSearch } from "@/components/global-search";
 import { EnvironmentSelector, EnvironmentProvider } from "@/components/environment-selector";
 import { NotificationCenter } from "@/components/notification-center";
 import { EvidenceDrawerProvider } from "@/components/evidence-drawer";
+import { IndustryProvider } from "@/components/industry-provider";
+import { IndustryWorkspaceSelector } from "@/components/industry-workspace-selector";
+import { IndustrySelector } from "@/components/industry-selector";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import NotFound from "@/pages/not-found";
 import Landing from "@/pages/landing";
@@ -121,35 +124,39 @@ function DashboardLayout() {
   };
 
   return (
-    <RoleProvider>
-      <EnvironmentProvider>
-        <EvidenceDrawerProvider>
-          <SidebarProvider style={style as React.CSSProperties}>
-            <div className="flex h-screen w-full">
-              <AppSidebar />
-              <div className="flex flex-col flex-1 min-w-0">
-                <header className="flex items-center justify-between gap-2 p-2 border-b shrink-0 h-12">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <SidebarTrigger data-testid="button-sidebar-toggle" />
-                    <GlobalSearch />
-                  </div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <EnvironmentSelector />
-                    <RoleSwitcher />
-                    <NotificationCenter />
-                    <ThemeToggle />
-                  </div>
-                </header>
-                <ScrollArea className="flex-1">
-                  <DashboardRouter />
-                </ScrollArea>
+    <IndustryProvider>
+      <RoleProvider>
+        <EnvironmentProvider>
+          <EvidenceDrawerProvider>
+            <IndustryWorkspaceSelector />
+            <SidebarProvider style={style as React.CSSProperties}>
+              <div className="flex h-screen w-full">
+                <AppSidebar />
+                <div className="flex flex-col flex-1 min-w-0">
+                  <header className="flex items-center justify-between gap-2 p-2 border-b shrink-0 h-12">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <SidebarTrigger data-testid="button-sidebar-toggle" />
+                      <GlobalSearch />
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <IndustrySelector />
+                      <EnvironmentSelector />
+                      <RoleSwitcher />
+                      <NotificationCenter />
+                      <ThemeToggle />
+                    </div>
+                  </header>
+                  <ScrollArea className="flex-1">
+                    <DashboardRouter />
+                  </ScrollArea>
+                </div>
               </div>
-            </div>
-          </SidebarProvider>
-          <CommandPalette />
-        </EvidenceDrawerProvider>
-      </EnvironmentProvider>
-    </RoleProvider>
+            </SidebarProvider>
+            <CommandPalette />
+          </EvidenceDrawerProvider>
+        </EnvironmentProvider>
+      </RoleProvider>
+    </IndustryProvider>
   );
 }
 

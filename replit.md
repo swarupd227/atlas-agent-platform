@@ -31,7 +31,8 @@ The platform is built with a modern web stack: React, Vite, Tailwind CSS, shadcn
 - **Evaluation Evidence System**: Robust evidence for agent performance and risks.
 - **Outcome Builder**: Conversational AI for defining goals and drafting outcome contracts.
 - **Role-based Access**: Six switchable personas for tailored access and actions.
-- **Global App Shell**: Provides environment selection, global search, command palette, notification center, role switcher, and theme toggle.
+- **Global App Shell**: Provides environment selection, global search, command palette, notification center, role switcher, industry workspace selector, and theme toggle.
+- **Industry Workspace Selector**: Global context switch that cascades through every screen. Five industry profiles: Financial Services (FIBO ontology), Healthcare & Life Sciences (SNOMED CT), Manufacturing & Supply Chain (ISA-95), Retail & E-Commerce (GS1), and Custom. Each profile carries pre-loaded ontology, agent skill counts, regulatory frameworks, golden template counts, and a terminology map that adapts platform labels per industry. First-login full-screen overlay for initial selection, compact header dropdown for switching anytime. Terminology engine (`useTerm()` hook) dynamically renames concepts like "Outcomes" → "Patient Throughput Targets" (healthcare) or "Service Commitments" (financial services) across sidebar, dashboard, and page titles.
 
 **Technical Implementations**:
 - **Eval Studio**: Comprehensive evaluation management, including test case creation, run history, scorers, thresholds, and regression analysis.

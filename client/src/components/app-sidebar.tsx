@@ -36,37 +36,39 @@ import {
 } from "@/components/ui/sidebar";
 import { Badge } from "@/components/ui/badge";
 import { useRole } from "./role-provider";
-
-const platformNav = [
-  { title: "Overview", url: "/dashboard", icon: LayoutDashboard },
-  { title: "Outcome Builder", url: "/outcomes/discover", icon: Sparkles },
-  { title: "Outcomes", url: "/outcomes", icon: Target },
-  { title: "Agents", url: "/agents", icon: Bot },
-  { title: "Templates", url: "/templates", icon: Library },
-  { title: "Blueprints", url: "/blueprints", icon: PenTool },
-  { title: "Evals", url: "/evals", icon: FlaskConical },
-  { title: "Deployments", url: "/deployments", icon: Rocket },
-  { title: "Monitor", url: "/monitor", icon: Activity },
-];
-
-const opsNav = [
-  { title: "Optimization", url: "/optimization", icon: Zap },
-  { title: "Ops", url: "/improvements", icon: Wrench },
-  { title: "Self-Heal", url: "/improvement-loop", icon: RotateCcw },
-  { title: "Governance", url: "/governance", icon: Shield },
-  { title: "Audit Trail", url: "/audit-trail", icon: ScrollText },
-  { title: "Approvals", url: "/approvals", icon: CheckCircle },
-  { title: "Approval Gates", url: "/approvals/gates", icon: ShieldQuestion },
-  { title: "Billing", url: "/billing", icon: CreditCard },
-  { title: "MCP Apps", url: "/integrations/mcp-apps", icon: AppWindow },
-  { title: "Marketplace", url: "/integrations/marketplace", icon: Store },
-  { title: "Integrations", url: "/integrations", icon: Plug },
-  { title: "Admin", url: "/admin", icon: ShieldCheck },
-];
+import { useIndustry } from "./industry-provider";
 
 export function AppSidebar() {
   const [location] = useLocation();
   const { role, isRouteAllowed } = useRole();
+  const { term, industry } = useIndustry();
+
+  const platformNav = [
+    { title: "Overview", url: "/dashboard", icon: LayoutDashboard },
+    { title: "Outcome Builder", url: "/outcomes/discover", icon: Sparkles },
+    { title: term("outcomes"), url: "/outcomes", icon: Target },
+    { title: term("agents"), url: "/agents", icon: Bot },
+    { title: term("templates"), url: "/templates", icon: Library },
+    { title: term("blueprints"), url: "/blueprints", icon: PenTool },
+    { title: term("evaluations"), url: "/evals", icon: FlaskConical },
+    { title: term("deployments"), url: "/deployments", icon: Rocket },
+    { title: term("monitor"), url: "/monitor", icon: Activity },
+  ];
+
+  const opsNav = [
+    { title: "Optimization", url: "/optimization", icon: Zap },
+    { title: "Ops", url: "/improvements", icon: Wrench },
+    { title: "Self-Heal", url: "/improvement-loop", icon: RotateCcw },
+    { title: term("governance"), url: "/governance", icon: Shield },
+    { title: "Audit Trail", url: "/audit-trail", icon: ScrollText },
+    { title: term("approvals"), url: "/approvals", icon: CheckCircle },
+    { title: "Approval Gates", url: "/approvals/gates", icon: ShieldQuestion },
+    { title: term("billing"), url: "/billing", icon: CreditCard },
+    { title: "MCP Apps", url: "/integrations/mcp-apps", icon: AppWindow },
+    { title: "Marketplace", url: "/integrations/marketplace", icon: Store },
+    { title: "Integrations", url: "/integrations", icon: Plug },
+    { title: "Admin", url: "/admin", icon: ShieldCheck },
+  ];
 
   const isActive = (url: string) => {
     if (url === "/dashboard") return location === "/dashboard";
@@ -133,7 +135,18 @@ export function AppSidebar() {
           </SidebarGroup>
         )}
       </SidebarContent>
-      <SidebarFooter className="p-4">
+      <SidebarFooter className="p-4 space-y-3">
+        {industry && (
+          <div className="flex items-center gap-2" data-testid="sidebar-industry-indicator">
+            <div
+              className="w-7 h-7 rounded-md flex items-center justify-center shrink-0"
+              style={{ backgroundColor: industry.color + "20", color: industry.color }}
+            >
+              <industry.icon className="w-3.5 h-3.5" />
+            </div>
+            <span className="text-[10px] text-muted-foreground truncate">{industry.shortLabel}</span>
+          </div>
+        )}
         <div className="flex items-center gap-2" data-testid="sidebar-role-indicator">
           <div className="w-7 h-7 rounded-md bg-muted flex items-center justify-center">
             <span className="text-xs font-medium text-muted-foreground" data-testid="text-role-initials">{role.initials}</span>

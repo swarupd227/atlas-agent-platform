@@ -32,6 +32,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { ErrorState } from "@/components/error-state";
 import { Link } from "wouter";
 import { useRole, type RoleId } from "@/components/role-provider";
+import { useIndustry } from "@/components/industry-provider";
 import {
   PortfolioSummaryBar,
   OutcomePortfolioCard,
@@ -889,6 +890,7 @@ function SystemStatusSection({ systemStatus, prominent }: { systemStatus: Overvi
 
 export default function Overview() {
   const { role } = useRole();
+  const { term, industry } = useIndustry();
   const config = ROLE_WIDGETS[role.id];
 
   const { data, isLoading, error, refetch } = useQuery<OverviewData>({
@@ -949,8 +951,15 @@ export default function Overview() {
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-dashboard-title">{config.title}</h1>
+            <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-dashboard-title">
+              {config.title.includes("Outcome Portfolio") ? `${term("outcome")} Portfolio` : config.title}
+            </h1>
             <Badge variant="outline" className="text-[10px]" data-testid="badge-role-label">{role.label}</Badge>
+              {industry && (
+                <Badge variant="secondary" className="text-[10px]" data-testid="badge-industry-label">
+                  {industry.shortLabel}
+                </Badge>
+              )}
           </div>
           <p className="text-sm text-muted-foreground" data-testid="text-dashboard-description">
             {config.description}
