@@ -4,6 +4,7 @@ import { useLocation, useSearch } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { AgentTemplate, OutcomeContract } from "@shared/schema";
+import { useIndustry, type IndustryId } from "@/components/industry-provider";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -246,6 +247,53 @@ const defaultWizardState: WizardState = {
     autoRollbackTriggers: [],
     rollbackStrategy: "immediate",
     healthCheckInterval: "5m",
+  },
+};
+
+const INDUSTRY_PRESETS: Record<string, {
+  label: string;
+  riskTier: string;
+  autonomyMode: string;
+  stopConditions: string[];
+  escalationTriggers: string[];
+  forbiddenOutputs: string[];
+  allowedActions: string[];
+}> = {
+  financial_services: {
+    label: "Financial Services Defaults",
+    riskTier: "HIGH",
+    autonomyMode: "assisted",
+    stopConditions: ["PII detected in output", "Transaction amount exceeds threshold", "Regulatory compliance check failed"],
+    escalationTriggers: ["Write to production trading system", "Customer complaint escalation", "Fraud detection signal"],
+    forbiddenOutputs: ["Raw account numbers", "Unmasked SSN or tax IDs", "Investment advice without disclaimers"],
+    allowedActions: ["Read customer records", "Generate compliance reports", "Query market data feeds"],
+  },
+  healthcare: {
+    label: "Healthcare Defaults",
+    riskTier: "HIGH",
+    autonomyMode: "manual",
+    stopConditions: ["PHI detected outside secure boundary", "Clinical decision without validation", "Patient safety signal detected"],
+    escalationTriggers: ["Adverse event signal", "Medication interaction warning", "Abnormal lab result flagged"],
+    forbiddenOutputs: ["Unredacted PHI", "Autonomous clinical diagnoses", "Treatment recommendations without clinician review"],
+    allowedActions: ["Read de-identified patient data", "Generate clinical summaries", "Query formulary database"],
+  },
+  manufacturing: {
+    label: "Manufacturing Defaults",
+    riskTier: "MEDIUM",
+    autonomyMode: "assisted",
+    stopConditions: ["Safety interlock override attempted", "Production parameter out of range", "Equipment fault detected"],
+    escalationTriggers: ["Quality non-conformance detected", "Emergency stop triggered", "Calibration overdue"],
+    forbiddenOutputs: ["Override safety interlocks", "Bypass quality hold", "Modify emergency stop configuration"],
+    allowedActions: ["Read sensor data", "Generate production reports", "Query maintenance schedules"],
+  },
+  retail: {
+    label: "Retail Defaults",
+    riskTier: "MEDIUM",
+    autonomyMode: "autonomous",
+    stopConditions: ["Payment card data detected in output", "Price manipulation detected", "Inventory discrepancy above threshold"],
+    escalationTriggers: ["High-value refund request", "Suspected fraud pattern", "Customer data deletion request"],
+    forbiddenOutputs: ["Unmasked credit card numbers", "Raw customer passwords", "Competitor price comparisons without context"],
+    allowedActions: ["Read product catalog", "Update order status", "Query inventory levels"],
   },
 };
 
@@ -941,6 +989,7 @@ function Step1BasicInfo({
   outcomes: OutcomeContract[] | undefined;
   outcomeLockedFromUrl?: boolean;
 }) {
+  const { industry } = useIndustry();
   const linkedOutcome = outcomeLockedFromUrl && outcomes ? outcomes.find((o) => o.id === state.outcomeId) : null;
   return (
     <div className="flex flex-col gap-6 max-w-2xl">
@@ -1007,6 +1056,45 @@ function Step1BasicInfo({
             </Select>
           </div>
         </div>
+        {industry && industry.id !== "custom" && INDUSTRY_PRESETS[industry.id] && (
+          <Card data-testid="card-industry-preset">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-2 min-w-0">
+                  <industry.icon className="h-4 w-4 shrink-0" style={{ color: industry.color }} />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">{INDUSTRY_PRESETS[industry.id].label}</p>
+                    <p className="text-xs text-muted-foreground">
+                      Apply industry-recommended risk tier, autonomy mode, and guardrail defaults
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    const preset = INDUSTRY_PRESETS[industry.id];
+                    updateState({
+                      riskTier: preset.riskTier,
+                      autonomyMode: preset.autonomyMode,
+                      guardrailsConfig: {
+                        ...state.guardrailsConfig,
+                        stopConditions: preset.stopConditions,
+                        escalationTriggers: preset.escalationTriggers,
+                        forbiddenOutputs: preset.forbiddenOutputs,
+                        allowedActions: preset.allowedActions,
+                      },
+                    });
+                  }}
+                  data-testid="button-apply-industry-preset"
+                >
+                  <Sparkles className="h-3.5 w-3.5 mr-1.5" />
+                  Apply Defaults
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
         {outcomeLockedFromUrl && linkedOutcome ? (
           <div className="flex flex-col gap-2">
             <Label>Linked Outcome</Label>
