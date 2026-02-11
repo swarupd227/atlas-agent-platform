@@ -5351,21 +5351,25 @@ Active agents: ${JSON.stringify(activeAgents.map(a => ({ id: a.id, name: a.name,
             role: "system",
             content: `You are an expert AI agent architect for the ALMP (Agent Lifecycle Management Platform). Your task is to enhance and enrich an existing agent template to make it more robust, production-ready, and comprehensive.
 
-Enhancement guidelines:
-1. DESCRIPTION: Expand the description to be more detailed and specific about the agent's capabilities, use cases, and expected outcomes. Keep it concise but informative (2-4 sentences).
-2. TOOLS: Add or improve tools - give each tool a clear, specific name and description. Suggest realistic tool permissions. Aim for 3-6 well-defined tools.
-3. WORKFLOW: Suggest a more complete workflow with proper node types. Available types: schema_validate, rag, llm_call, classifier, router, tool_call, human_review, transform, output_format. Aim for 4-8 meaningful nodes.
-4. PERMISSIONS: Suggest appropriate data access scopes, API access endpoints, and write access permissions based on the agent's purpose.
-5. MEMORY/RAG: If the agent could benefit from retrieval-augmented generation, suggest a complete memory/RAG configuration with vector store, retrieval strategy, chunk size, embedding model, and topK.
-6. POLICY BINDINGS: Suggest 2-4 relevant governance policies with appropriate enforcement levels (hard/soft/advisory).
-7. EVAL BINDINGS: Suggest 1-3 evaluation suites with appropriate schedules (on_deploy/daily/weekly/on_change/manual).
-8. ROLLBACK PLAN: Suggest trigger conditions and a rollback target version for safety.
-9. TAGS: Suggest 3-6 relevant tags for discoverability.
-10. RISK & AUTONOMY: Assess whether the current risk tier and autonomy mode are appropriate for the agent's purpose and adjust if needed.
+You MUST return recommendations for ALL of the following sections — no exceptions. Every section must be present in your JSON response even if you only make minor improvements to existing content.
 
-IMPORTANT: Preserve the agent's core identity (name, category, industry) but significantly enrich all other fields. If a field already has good content, improve it rather than replacing it entirely.
+Required sections in your JSON response:
+1. "description" (string): Expand to 2-4 detailed sentences about capabilities, use cases, and expected outcomes.
+2. "tools" (array of objects with "name", "description", "permissions" fields): 3-6 well-defined tools with clear names, descriptions, and realistic permissions arrays.
+3. "workflowNodes" (array of objects with "id", "type", "label" fields): 4-8 meaningful nodes. Available types: schema_validate, rag, llm_call, classifier, router, tool_call, human_review, transform, output_format.
+4. "permissions" (object with "dataAccess", "apiAccess", "writeAccess" arrays): Appropriate scopes based on the agent's purpose.
+5. "memoryRagConfig" (object with "vectorStore", "retrievalStrategy", "chunkSize", "embeddingModel", "topK"): Complete memory/RAG configuration.
+6. "policyBindings" (array of objects with "policyName", "enforcement" fields): 2-4 governance policies. Enforcement: hard/soft/advisory.
+7. "evalBindings" (array of objects with "suiteName", "schedule" fields): 1-3 evaluation suites. Schedule: on_deploy/daily/weekly/on_change/manual.
+8. "rollbackPlan" (object with "triggerConditions" array and "rollbackTargetVersion" string): Safety rollback configuration.
+9. "tags" (array of strings): 3-6 relevant tags for discoverability.
+10. "complexity" (string): One of: low, medium, high.
+11. "defaultRiskTier" (string): One of: LOW, MEDIUM, HIGH, CRITICAL.
+12. "defaultAutonomyMode" (string): One of: autonomous, assisted, supervised, manual.
 
-Return a JSON object with the enhanced template fields. Only include fields you are enhancing. The response must be valid JSON with no markdown wrapping.`
+IMPORTANT: Preserve the agent's core identity (name, category, industry) but significantly enrich all other fields. If a field already has good content, improve it rather than replacing it entirely. You MUST include ALL 12 sections listed above in your response.
+
+Return a JSON object with all the enhanced template fields. The response must be valid JSON with no markdown wrapping.`
           },
           {
             role: "user",

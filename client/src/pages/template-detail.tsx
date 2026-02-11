@@ -422,9 +422,9 @@ export default function TemplateDetail() {
         };
       }
       if (enhanced.tags && Array.isArray(enhanced.tags)) merged.tags = enhanced.tags;
-      if (enhanced.complexity) merged.complexity = enhanced.complexity;
-      if (enhanced.defaultRiskTier) merged.defaultRiskTier = enhanced.defaultRiskTier;
-      if (enhanced.defaultAutonomyMode) merged.defaultAutonomyMode = enhanced.defaultAutonomyMode;
+      if (enhanced.complexity && ["low","medium","high"].includes(enhanced.complexity)) merged.complexity = enhanced.complexity;
+      if (enhanced.defaultRiskTier && ["LOW","MEDIUM","HIGH","CRITICAL"].includes(enhanced.defaultRiskTier)) merged.defaultRiskTier = enhanced.defaultRiskTier;
+      if (enhanced.defaultAutonomyMode && ["autonomous","assisted","supervised","manual"].includes(enhanced.defaultAutonomyMode)) merged.defaultAutonomyMode = enhanced.defaultAutonomyMode;
       return merged;
     });
     setEnhanceDialogOpen(false);
@@ -1416,28 +1416,54 @@ export default function TemplateDetail() {
               <Wand2 className="w-5 h-5 text-primary" /> AI Enhancement Preview
             </DialogTitle>
             <DialogDescription>
-              Review the AI-suggested improvements below. Click "Apply Changes" to update your template or "Cancel" to discard.
+              Edit the AI-suggested improvements below, then click "Apply Changes" to update your template.
             </DialogDescription>
           </DialogHeader>
           {enhancePreview && (
             <div className="flex flex-col gap-4 py-2" data-testid="enhance-preview-content">
-              {enhancePreview.description && (
+              {enhancePreview.description !== undefined && (
                 <div>
                   <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Description</h4>
-                  <p className="text-sm" data-testid="preview-description">{enhancePreview.description}</p>
+                  <Textarea
+                    value={enhancePreview.description || ""}
+                    onChange={(e) => setEnhancePreview({ ...enhancePreview, description: e.target.value })}
+                    rows={3}
+                    className="text-sm"
+                    data-testid="preview-description"
+                  />
                 </div>
               )}
               {enhancePreview.tools && Array.isArray(enhancePreview.tools) && enhancePreview.tools.length > 0 && (
                 <div>
-                  <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Tools ({enhancePreview.tools.length})</h4>
-                  <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between mb-1">
+                    <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Tools ({enhancePreview.tools.length})</h4>
+                    <Button size="sm" variant="ghost" onClick={() => setEnhancePreview({ ...enhancePreview, tools: [...enhancePreview.tools, { name: "", description: "", permissions: [] }] })} data-testid="button-add-preview-tool">
+                      <Plus className="w-3 h-3 mr-1" /> Add
+                    </Button>
+                  </div>
+                  <div className="flex flex-col gap-2">
                     {enhancePreview.tools.map((t: any, i: number) => (
-                      <div key={i} className="flex items-start gap-2 text-sm">
-                        <Wrench className="w-3.5 h-3.5 mt-0.5 text-muted-foreground shrink-0" />
-                        <div>
-                          <span className="font-medium" data-testid={`preview-tool-name-${i}`}>{t.name}</span>
-                          {t.description && <span className="text-muted-foreground"> — {t.description}</span>}
+                      <div key={i} className="flex items-start gap-2">
+                        <Wrench className="w-3.5 h-3.5 mt-2.5 text-muted-foreground shrink-0" />
+                        <div className="flex-1 flex flex-col gap-1">
+                          <Input
+                            value={t.name || ""}
+                            onChange={(e) => { const tools = [...enhancePreview.tools]; tools[i] = { ...tools[i], name: e.target.value }; setEnhancePreview({ ...enhancePreview, tools }); }}
+                            placeholder="Tool name"
+                            className="text-sm"
+                            data-testid={`preview-tool-name-${i}`}
+                          />
+                          <Input
+                            value={t.description || ""}
+                            onChange={(e) => { const tools = [...enhancePreview.tools]; tools[i] = { ...tools[i], description: e.target.value }; setEnhancePreview({ ...enhancePreview, tools }); }}
+                            placeholder="Tool description"
+                            className="text-sm"
+                            data-testid={`preview-tool-desc-${i}`}
+                          />
                         </div>
+                        <Button size="icon" variant="ghost" onClick={() => { const tools = enhancePreview.tools.filter((_: any, idx: number) => idx !== i); setEnhancePreview({ ...enhancePreview, tools }); }} data-testid={`button-remove-preview-tool-${i}`}>
+                          <X className="w-3.5 h-3.5" />
+                        </Button>
                       </div>
                     ))}
                   </div>
@@ -1445,68 +1471,162 @@ export default function TemplateDetail() {
               )}
               {enhancePreview.workflowNodes && Array.isArray(enhancePreview.workflowNodes) && enhancePreview.workflowNodes.length > 0 && (
                 <div>
-                  <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Workflow ({enhancePreview.workflowNodes.length} nodes)</h4>
-                  <div className="flex flex-col gap-1">
+                  <div className="flex items-center justify-between mb-1">
+                    <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Workflow ({enhancePreview.workflowNodes.length} nodes)</h4>
+                    <Button size="sm" variant="ghost" onClick={() => setEnhancePreview({ ...enhancePreview, workflowNodes: [...enhancePreview.workflowNodes, { id: `step_${enhancePreview.workflowNodes.length + 1}`, type: "llm_call", label: "" }] })} data-testid="button-add-preview-workflow">
+                      <Plus className="w-3 h-3 mr-1" /> Add
+                    </Button>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
                     {enhancePreview.workflowNodes.map((n: any, i: number) => (
-                      <div key={i} className="flex items-center gap-2 text-sm">
+                      <div key={i} className="flex items-center gap-2">
                         <GitBranch className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                        <Badge variant="outline" className="text-[9px]">{n.type}</Badge>
-                        <span data-testid={`preview-workflow-label-${i}`}>{n.label}</span>
+                        <Select value={n.type || "llm_call"} onValueChange={(val) => { const nodes = [...enhancePreview.workflowNodes]; nodes[i] = { ...nodes[i], type: val }; setEnhancePreview({ ...enhancePreview, workflowNodes: nodes }); }}>
+                          <SelectTrigger className="w-[140px] text-xs" data-testid={`preview-workflow-type-${i}`}>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {["schema_validate","rag","llm_call","classifier","router","tool_call","human_review","transform","output_format"].map(t => (
+                              <SelectItem key={t} value={t}>{t}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Input
+                          value={n.label || ""}
+                          onChange={(e) => { const nodes = [...enhancePreview.workflowNodes]; nodes[i] = { ...nodes[i], label: e.target.value }; setEnhancePreview({ ...enhancePreview, workflowNodes: nodes }); }}
+                          placeholder="Node label"
+                          className="text-sm flex-1"
+                          data-testid={`preview-workflow-label-${i}`}
+                        />
+                        <Button size="icon" variant="ghost" onClick={() => { const nodes = enhancePreview.workflowNodes.filter((_: any, idx: number) => idx !== i); setEnhancePreview({ ...enhancePreview, workflowNodes: nodes }); }} data-testid={`button-remove-preview-workflow-${i}`}>
+                          <X className="w-3.5 h-3.5" />
+                        </Button>
                       </div>
                     ))}
                   </div>
                 </div>
               )}
-              {(enhancePreview.dataAccess || enhancePreview.apiAccess || enhancePreview.writeAccess || enhancePreview.permissions) && (
-                <div>
-                  <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Permissions</h4>
-                  <div className="text-sm flex flex-col gap-0.5">
-                    {(enhancePreview.permissions?.dataAccess || enhancePreview.dataAccess) && (
-                      <p><span className="text-muted-foreground">Data: </span>{Array.isArray(enhancePreview.permissions?.dataAccess || enhancePreview.dataAccess) ? (enhancePreview.permissions?.dataAccess || enhancePreview.dataAccess).join(", ") : (enhancePreview.permissions?.dataAccess || enhancePreview.dataAccess)}</p>
-                    )}
-                    {(enhancePreview.permissions?.apiAccess || enhancePreview.apiAccess) && (
-                      <p><span className="text-muted-foreground">API: </span>{Array.isArray(enhancePreview.permissions?.apiAccess || enhancePreview.apiAccess) ? (enhancePreview.permissions?.apiAccess || enhancePreview.apiAccess).join(", ") : (enhancePreview.permissions?.apiAccess || enhancePreview.apiAccess)}</p>
-                    )}
-                    {(enhancePreview.permissions?.writeAccess || enhancePreview.writeAccess) && (
-                      <p><span className="text-muted-foreground">Write: </span>{Array.isArray(enhancePreview.permissions?.writeAccess || enhancePreview.writeAccess) ? (enhancePreview.permissions?.writeAccess || enhancePreview.writeAccess).join(", ") : (enhancePreview.permissions?.writeAccess || enhancePreview.writeAccess)}</p>
-                    )}
-                  </div>
-                </div>
-              )}
-              {(enhancePreview.memoryRagConfig || enhancePreview.memoryRag) && (
-                <div>
-                  <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Memory / RAG</h4>
-                  {(() => { const rag = enhancePreview.memoryRagConfig || enhancePreview.memoryRag; return (
-                    <div className="text-sm flex flex-col gap-0.5">
-                      <p><span className="text-muted-foreground">Vector Store: </span>{rag.vectorStore}</p>
-                      <p><span className="text-muted-foreground">Strategy: </span>{rag.retrievalStrategy}</p>
-                      <p><span className="text-muted-foreground">Chunk Size: </span>{rag.chunkSize}</p>
-                      <p><span className="text-muted-foreground">Embedding: </span>{rag.embeddingModel}</p>
-                      <p><span className="text-muted-foreground">Top-K: </span>{rag.topK}</p>
+              {(() => {
+                const perms = enhancePreview.permissions || {};
+                const dataAccess = perms.dataAccess || enhancePreview.dataAccess;
+                const apiAccess = perms.apiAccess || enhancePreview.apiAccess;
+                const writeAccess = perms.writeAccess || enhancePreview.writeAccess;
+                if (!dataAccess && !apiAccess && !writeAccess) return null;
+                const updatePerm = (field: string, val: string) => {
+                  const updated = { ...enhancePreview };
+                  if (updated.permissions) { updated.permissions = { ...updated.permissions, [field]: val }; }
+                  else { updated[field] = val; }
+                  setEnhancePreview(updated);
+                };
+                return (
+                  <div>
+                    <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Permissions</h4>
+                    <div className="flex flex-col gap-1.5">
+                      <div>
+                        <label className="text-xs text-muted-foreground mb-0.5 block">Data Access</label>
+                        <Input value={Array.isArray(dataAccess) ? dataAccess.join(", ") : (dataAccess || "")} onChange={(e) => updatePerm("dataAccess", e.target.value)} className="text-sm" data-testid="preview-data-access" />
+                      </div>
+                      <div>
+                        <label className="text-xs text-muted-foreground mb-0.5 block">API Access</label>
+                        <Input value={Array.isArray(apiAccess) ? apiAccess.join(", ") : (apiAccess || "")} onChange={(e) => updatePerm("apiAccess", e.target.value)} className="text-sm" data-testid="preview-api-access" />
+                      </div>
+                      <div>
+                        <label className="text-xs text-muted-foreground mb-0.5 block">Write Access</label>
+                        <Input value={Array.isArray(writeAccess) ? writeAccess.join(", ") : (writeAccess || "")} onChange={(e) => updatePerm("writeAccess", e.target.value)} className="text-sm" data-testid="preview-write-access" />
+                      </div>
                     </div>
-                  ); })()}
-                </div>
-              )}
+                  </div>
+                );
+              })()}
+              {(() => {
+                const rag = enhancePreview.memoryRagConfig || enhancePreview.memoryRag;
+                if (!rag) return null;
+                const ragKey = enhancePreview.memoryRagConfig ? "memoryRagConfig" : "memoryRag";
+                const updateRag = (field: string, val: any) => setEnhancePreview({ ...enhancePreview, [ragKey]: { ...rag, [field]: val } });
+                return (
+                  <div>
+                    <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Memory / RAG</h4>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <div>
+                        <label className="text-xs text-muted-foreground mb-0.5 block">Vector Store</label>
+                        <Input value={rag.vectorStore || ""} onChange={(e) => updateRag("vectorStore", e.target.value)} className="text-sm" data-testid="preview-vector-store" />
+                      </div>
+                      <div>
+                        <label className="text-xs text-muted-foreground mb-0.5 block">Strategy</label>
+                        <Input value={rag.retrievalStrategy || ""} onChange={(e) => updateRag("retrievalStrategy", e.target.value)} className="text-sm" data-testid="preview-retrieval-strategy" />
+                      </div>
+                      <div>
+                        <label className="text-xs text-muted-foreground mb-0.5 block">Chunk Size</label>
+                        <Input type="number" value={rag.chunkSize || 512} onChange={(e) => updateRag("chunkSize", parseInt(e.target.value) || 512)} className="text-sm" data-testid="preview-chunk-size" />
+                      </div>
+                      <div>
+                        <label className="text-xs text-muted-foreground mb-0.5 block">Embedding Model</label>
+                        <Input value={rag.embeddingModel || ""} onChange={(e) => updateRag("embeddingModel", e.target.value)} className="text-sm" data-testid="preview-embedding-model" />
+                      </div>
+                      <div>
+                        <label className="text-xs text-muted-foreground mb-0.5 block">Top-K</label>
+                        <Input type="number" value={rag.topK || 5} onChange={(e) => updateRag("topK", parseInt(e.target.value) || 5)} className="text-sm" data-testid="preview-top-k" />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
               {enhancePreview.policyBindings && Array.isArray(enhancePreview.policyBindings) && enhancePreview.policyBindings.length > 0 && (
                 <div>
-                  <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Policy Bindings</h4>
-                  <div className="flex flex-wrap gap-1.5">
+                  <div className="flex items-center justify-between mb-1">
+                    <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Policy Bindings</h4>
+                    <Button size="sm" variant="ghost" onClick={() => setEnhancePreview({ ...enhancePreview, policyBindings: [...enhancePreview.policyBindings, { policyName: "", enforcement: "soft" }] })} data-testid="button-add-preview-policy">
+                      <Plus className="w-3 h-3 mr-1" /> Add
+                    </Button>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
                     {enhancePreview.policyBindings.map((p: any, i: number) => (
-                      <Badge key={i} variant="outline" className="text-[10px]">
-                        {p.policyName || p.name} <span className="text-muted-foreground ml-1">({p.enforcement})</span>
-                      </Badge>
+                      <div key={i} className="flex items-center gap-2">
+                        <Input value={p.policyName || p.name || ""} onChange={(e) => { const bindings = [...enhancePreview.policyBindings]; bindings[i] = { ...bindings[i], policyName: e.target.value }; setEnhancePreview({ ...enhancePreview, policyBindings: bindings }); }} placeholder="Policy name" className="text-sm flex-1" data-testid={`preview-policy-name-${i}`} />
+                        <Select value={p.enforcement || "soft"} onValueChange={(val) => { const bindings = [...enhancePreview.policyBindings]; bindings[i] = { ...bindings[i], enforcement: val }; setEnhancePreview({ ...enhancePreview, policyBindings: bindings }); }}>
+                          <SelectTrigger className="w-[100px] text-xs" data-testid={`preview-policy-enforcement-${i}`}>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="hard">hard</SelectItem>
+                            <SelectItem value="soft">soft</SelectItem>
+                            <SelectItem value="advisory">advisory</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Button size="icon" variant="ghost" onClick={() => { const bindings = enhancePreview.policyBindings.filter((_: any, idx: number) => idx !== i); setEnhancePreview({ ...enhancePreview, policyBindings: bindings }); }} data-testid={`button-remove-preview-policy-${i}`}>
+                          <X className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
                     ))}
                   </div>
                 </div>
               )}
               {enhancePreview.evalBindings && Array.isArray(enhancePreview.evalBindings) && enhancePreview.evalBindings.length > 0 && (
                 <div>
-                  <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Eval Bindings</h4>
-                  <div className="flex flex-wrap gap-1.5">
+                  <div className="flex items-center justify-between mb-1">
+                    <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Eval Bindings</h4>
+                    <Button size="sm" variant="ghost" onClick={() => setEnhancePreview({ ...enhancePreview, evalBindings: [...enhancePreview.evalBindings, { suiteName: "", schedule: "on_deploy" }] })} data-testid="button-add-preview-eval">
+                      <Plus className="w-3 h-3 mr-1" /> Add
+                    </Button>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
                     {enhancePreview.evalBindings.map((e: any, i: number) => (
-                      <Badge key={i} variant="outline" className="text-[10px]">
-                        {e.suiteName || e.name} <span className="text-muted-foreground ml-1">({e.schedule})</span>
-                      </Badge>
+                      <div key={i} className="flex items-center gap-2">
+                        <Input value={e.suiteName || e.name || ""} onChange={(ev) => { const bindings = [...enhancePreview.evalBindings]; bindings[i] = { ...bindings[i], suiteName: ev.target.value }; setEnhancePreview({ ...enhancePreview, evalBindings: bindings }); }} placeholder="Suite name" className="text-sm flex-1" data-testid={`preview-eval-name-${i}`} />
+                        <Select value={e.schedule || "on_deploy"} onValueChange={(val) => { const bindings = [...enhancePreview.evalBindings]; bindings[i] = { ...bindings[i], schedule: val }; setEnhancePreview({ ...enhancePreview, evalBindings: bindings }); }}>
+                          <SelectTrigger className="w-[110px] text-xs" data-testid={`preview-eval-schedule-${i}`}>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {["on_deploy","daily","weekly","on_change","manual"].map(s => (
+                              <SelectItem key={s} value={s}>{s}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Button size="icon" variant="ghost" onClick={() => { const bindings = enhancePreview.evalBindings.filter((_: any, idx: number) => idx !== i); setEnhancePreview({ ...enhancePreview, evalBindings: bindings }); }} data-testid={`button-remove-preview-eval-${i}`}>
+                          <X className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -1514,14 +1634,26 @@ export default function TemplateDetail() {
               {enhancePreview.rollbackPlan && (
                 <div>
                   <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Rollback Plan</h4>
-                  <div className="text-sm flex flex-col gap-0.5">
-                    <p><span className="text-muted-foreground">Target: </span>{enhancePreview.rollbackPlan.rollbackTargetVersion}</p>
-                    {Array.isArray(enhancePreview.rollbackPlan.triggerConditions) && enhancePreview.rollbackPlan.triggerConditions.map((c: string, i: number) => (
-                      <p key={i} className="flex items-center gap-1.5">
-                        <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />
-                        <span>{c}</span>
-                      </p>
-                    ))}
+                  <div className="flex flex-col gap-1.5">
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-0.5 block">Target Version</label>
+                      <Input value={enhancePreview.rollbackPlan.rollbackTargetVersion || ""} onChange={(e) => setEnhancePreview({ ...enhancePreview, rollbackPlan: { ...enhancePreview.rollbackPlan, rollbackTargetVersion: e.target.value } })} className="text-sm" data-testid="preview-rollback-target" />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-0.5 block">Trigger Conditions</label>
+                      {Array.isArray(enhancePreview.rollbackPlan.triggerConditions) && enhancePreview.rollbackPlan.triggerConditions.map((c: string, i: number) => (
+                        <div key={i} className="flex items-center gap-2 mb-1">
+                          <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />
+                          <Input value={c} onChange={(e) => { const conditions = [...enhancePreview.rollbackPlan.triggerConditions]; conditions[i] = e.target.value; setEnhancePreview({ ...enhancePreview, rollbackPlan: { ...enhancePreview.rollbackPlan, triggerConditions: conditions } }); }} className="text-sm flex-1" data-testid={`preview-rollback-condition-${i}`} />
+                          <Button size="icon" variant="ghost" onClick={() => { const conditions = enhancePreview.rollbackPlan.triggerConditions.filter((_: string, idx: number) => idx !== i); setEnhancePreview({ ...enhancePreview, rollbackPlan: { ...enhancePreview.rollbackPlan, triggerConditions: conditions } }); }}>
+                            <X className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      ))}
+                      <Button size="sm" variant="ghost" onClick={() => setEnhancePreview({ ...enhancePreview, rollbackPlan: { ...enhancePreview.rollbackPlan, triggerConditions: [...(enhancePreview.rollbackPlan.triggerConditions || []), ""] } })} data-testid="button-add-rollback-condition">
+                        <Plus className="w-3 h-3 mr-1" /> Add Condition
+                      </Button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -1530,18 +1662,62 @@ export default function TemplateDetail() {
                   <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Tags</h4>
                   <div className="flex flex-wrap gap-1.5">
                     {enhancePreview.tags.map((t: string, i: number) => (
-                      <Badge key={i} variant="secondary" className="text-[10px]">{t}</Badge>
+                      <Badge key={i} variant="secondary" className="text-[10px] gap-1 pr-1">
+                        {t}
+                        <button onClick={() => { const tags = enhancePreview.tags.filter((_: string, idx: number) => idx !== i); setEnhancePreview({ ...enhancePreview, tags }); }} className="ml-0.5 rounded-full" data-testid={`button-remove-preview-tag-${i}`}>
+                          <X className="w-2.5 h-2.5" />
+                        </button>
+                      </Badge>
                     ))}
+                    <Button size="sm" variant="ghost" onClick={() => { const tag = prompt("Enter tag name:"); if (tag) setEnhancePreview({ ...enhancePreview, tags: [...enhancePreview.tags, tag] }); }} data-testid="button-add-preview-tag">
+                      <Plus className="w-3 h-3 mr-1" /> Add
+                    </Button>
                   </div>
                 </div>
               )}
               {(enhancePreview.complexity || enhancePreview.defaultRiskTier || enhancePreview.defaultAutonomyMode) && (
                 <div>
                   <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Risk & Configuration</h4>
-                  <div className="flex flex-wrap gap-1.5">
-                    {enhancePreview.complexity && <Badge variant="outline" className="text-[10px]">Complexity: {enhancePreview.complexity}</Badge>}
-                    {enhancePreview.defaultRiskTier && <Badge variant="outline" className="text-[10px]">Risk: {enhancePreview.defaultRiskTier}</Badge>}
-                    {enhancePreview.defaultAutonomyMode && <Badge variant="outline" className="text-[10px]">Autonomy: {enhancePreview.defaultAutonomyMode}</Badge>}
+                  <div className="grid grid-cols-3 gap-2">
+                    {enhancePreview.complexity !== undefined && (
+                      <div>
+                        <label className="text-xs text-muted-foreground mb-0.5 block">Complexity</label>
+                        <Select value={enhancePreview.complexity} onValueChange={(val) => setEnhancePreview({ ...enhancePreview, complexity: val })}>
+                          <SelectTrigger className="text-xs" data-testid="preview-complexity">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {["low","medium","high"].map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+                    {enhancePreview.defaultRiskTier !== undefined && (
+                      <div>
+                        <label className="text-xs text-muted-foreground mb-0.5 block">Risk Tier</label>
+                        <Select value={enhancePreview.defaultRiskTier} onValueChange={(val) => setEnhancePreview({ ...enhancePreview, defaultRiskTier: val })}>
+                          <SelectTrigger className="text-xs" data-testid="preview-risk-tier">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {["LOW","MEDIUM","HIGH","CRITICAL"].map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+                    {enhancePreview.defaultAutonomyMode !== undefined && (
+                      <div>
+                        <label className="text-xs text-muted-foreground mb-0.5 block">Autonomy</label>
+                        <Select value={enhancePreview.defaultAutonomyMode} onValueChange={(val) => setEnhancePreview({ ...enhancePreview, defaultAutonomyMode: val })}>
+                          <SelectTrigger className="text-xs" data-testid="preview-autonomy">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {["autonomous","assisted","supervised","manual"].map(a => <SelectItem key={a} value={a}>{a}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
