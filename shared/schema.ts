@@ -996,6 +996,12 @@ export const traceSpans = pgTable("trace_spans", {
   a2aRemoteAgentName: text("a2a_remote_agent_name"),
   a2aTaskState: text("a2a_task_state"),
   a2aSkillName: text("a2a_skill_name"),
+  a2aMessageRole: text("a2a_message_role"),
+  a2aMessageId: varchar("a2a_message_id"),
+  a2aArtifactId: varchar("a2a_artifact_id"),
+  linkedTraceId: varchar("linked_trace_id"),
+  linkedSpanId: varchar("linked_span_id"),
+  messagingSemconv: jsonb("messaging_semconv"),
   status: text("status").notNull().default("ok"),
   statusMessage: text("status_message"),
   durationMs: integer("duration_ms").default(0),
@@ -1126,5 +1132,17 @@ export const marketplaceInstallRequests = pgTable("marketplace_install_requests"
 export const insertMarketplaceInstallRequestSchema = createInsertSchema(marketplaceInstallRequests).omit({ id: true, createdAt: true });
 export type InsertMarketplaceInstallRequest = z.infer<typeof insertMarketplaceInstallRequestSchema>;
 export type MarketplaceInstallRequest = typeof marketplaceInstallRequests.$inferSelect;
+
+export const platformSettings = pgTable("platform_settings", {
+  key: varchar("key").primaryKey(),
+  value: text("value").notNull(),
+  description: text("description"),
+  category: text("category").default("general"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertPlatformSettingSchema = createInsertSchema(platformSettings);
+export type InsertPlatformSetting = z.infer<typeof insertPlatformSettingSchema>;
+export type PlatformSetting = typeof platformSettings.$inferSelect;
 
 export * from "./models/chat";

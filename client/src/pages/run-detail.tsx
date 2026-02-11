@@ -32,6 +32,12 @@ import {
   Plug,
   ScrollText,
   Network,
+  ArrowUpRight,
+  ArrowDownLeft,
+  Link2,
+  ToggleLeft,
+  ToggleRight,
+  Package,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -40,7 +46,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatusBadge } from "@/components/status-badge";
-import type { RunTrace, RunStep, TraceSpan, McpTranscript } from "@shared/schema";
+import type { RunTrace, RunStep, TraceSpan, McpTranscript, PlatformSetting } from "@shared/schema";
 
 interface RunWithSteps extends RunTrace {
   steps: RunStep[];
@@ -180,17 +186,27 @@ function formatStepData(data: Record<string, unknown>): string {
   return JSON.stringify(data, null, 2);
 }
 
-function SpanCard({ span, children, isLast }: { span: TraceSpan; children?: React.ReactNode; isLast: boolean }) {
+function SpanCard({ span, children, isLast, semconvEnabled }: { span: TraceSpan; children?: React.ReactNode; isLast: boolean; semconvEnabled?: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const method = span.mcpMethod || span.spanName;
   const config = mcpMethodConfig[method] || { icon: Activity, label: method, color: "text-muted-foreground" };
-  const Icon = config.icon;
   const attrs = span.attributes as Record<string, unknown> | null;
   const evts = span.events as Array<Record<string, unknown>> | null;
+  const semconv = span.messagingSemconv as Record<string, unknown> | null;
+
+  const isProducer = span.a2aMessageRole === "producer";
+  const isConsumer = span.a2aMessageRole === "consumer";
+  const isA2a = span.invocationType === "a2a_delegation";
+
+  const SpanIcon = isProducer ? ArrowUpRight : isConsumer ? ArrowDownLeft : config.icon;
+  const spanIconColor = isProducer ? "text-blue-500" : isConsumer ? "text-emerald-500" : config.color;
 
   const statusColor = span.status === "ok" ? "border-emerald-500/30 bg-emerald-500/10" :
     span.status === "error" ? "border-red-500/30 bg-red-500/10" :
     "border-border bg-muted/50";
+
+  const a2aBorderAccent = isProducer ? "border-l-blue-400 dark:border-l-blue-600" :
+    isConsumer ? "border-l-emerald-400 dark:border-l-emerald-600" : "";
 
   const maxBarWidth = 200;
   const barWidth = span.durationMs ? Math.max(4, Math.min(maxBarWidth, (span.durationMs / 50) * maxBarWidth)) : 0;
@@ -199,7 +215,7 @@ function SpanCard({ span, children, isLast }: { span: TraceSpan; children?: Reac
     <div className="flex gap-3" data-testid={`trace-span-${span.id}`}>
       <div className="flex flex-col items-center shrink-0">
         <div className={`flex items-center justify-center w-8 h-8 rounded-full border-2 ${statusColor}`}>
-          <Icon className={`w-3.5 h-3.5 ${config.color}`} />
+          <SpanIcon className={`w-3.5 h-3.5 ${spanIconColor}`} />
         </div>
         {!isLast && (
           <div className="w-px flex-1 min-h-[24px] bg-border" />
@@ -214,11 +230,23 @@ function SpanCard({ span, children, isLast }: { span: TraceSpan; children?: Reac
             data-testid={`toggle-span-${span.id}`}
           >
             <div className="flex items-center gap-2 min-w-0 flex-wrap">
-              <span className="text-sm font-medium">{config.label}</span>
-              {span.invocationType === "a2a_delegation" && (
+              <span className="text-sm font-medium">{isA2a ? span.spanName : config.label}</span>
+              {isA2a && (
                 <Badge variant="outline" className="text-[10px] border-blue-300 dark:border-blue-600 text-blue-600 dark:text-blue-400">
                   <Network className="w-3 h-3 mr-0.5" />
                   A2A
+                </Badge>
+              )}
+              {isProducer && (
+                <Badge variant="outline" className="text-[10px] border-blue-300 dark:border-blue-500 text-blue-600 dark:text-blue-400" data-testid={`badge-producer-${span.id}`}>
+                  <ArrowUpRight className="w-3 h-3 mr-0.5" />
+                  Producer
+                </Badge>
+              )}
+              {isConsumer && (
+                <Badge variant="outline" className="text-[10px] border-emerald-300 dark:border-emerald-500 text-emerald-600 dark:text-emerald-400" data-testid={`badge-consumer-${span.id}`}>
+                  <ArrowDownLeft className="w-3 h-3 mr-0.5" />
+                  Consumer
                 </Badge>
               )}
               {span.mcpServerName && (
@@ -242,21 +270,33 @@ function SpanCard({ span, children, isLast }: { span: TraceSpan; children?: Reac
               {span.mcpResourceUri && (
                 <Badge variant="outline" className="text-[10px] font-mono">{span.mcpResourceUri}</Badge>
               )}
+              {span.a2aArtifactId && (
+                <Badge variant="outline" className="text-[10px] font-mono border-amber-200 dark:border-amber-700 text-amber-600 dark:text-amber-400" data-testid={`badge-artifact-${span.id}`}>
+                  <Package className="w-3 h-3 mr-0.5" />
+                  Artifact
+                </Badge>
+              )}
               {span.a2aTaskState && (
                 <Badge variant={span.a2aTaskState.includes("COMPLETED") ? "secondary" : "destructive"} className="text-[10px]">
                   {span.a2aTaskState}
                 </Badge>
               )}
-              {span.spanKind !== "internal" && (
+              {span.spanKind !== "internal" && !isProducer && !isConsumer && (
                 <Badge variant="secondary" className="text-[10px]">{span.spanKind}</Badge>
               )}
             </div>
             <div className="flex items-center gap-2 shrink-0">
+              {span.linkedTraceId && (
+                <Badge variant="outline" className="text-[10px] font-mono text-violet-600 dark:text-violet-400 border-violet-300 dark:border-violet-600" data-testid={`badge-linked-trace-${span.id}`}>
+                  <Link2 className="w-3 h-3 mr-0.5" />
+                  Linked
+                </Badge>
+              )}
               {span.durationMs != null && span.durationMs > 0 && (
                 <div className="flex items-center gap-1.5">
                   <div className="h-1.5 rounded-full bg-primary/30" style={{ width: `${barWidth}px` }}>
                     <div
-                      className={`h-full rounded-full ${span.status === "error" ? "bg-red-500" : "bg-primary"}`}
+                      className={`h-full rounded-full ${span.status === "error" ? "bg-red-500" : isProducer ? "bg-blue-500" : isConsumer ? "bg-emerald-500" : "bg-primary"}`}
                       style={{ width: "100%" }}
                     />
                   </div>
@@ -291,6 +331,12 @@ function SpanCard({ span, children, isLast }: { span: TraceSpan; children?: Reac
                     <span className="text-xs font-mono">{span.invocationType === "a2a_delegation" ? "A2A Delegation" : "MCP Tool"}</span>
                   </div>
                 )}
+                {span.a2aMessageRole && (
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Message Role</span>
+                    <span className="text-xs font-mono" data-testid={`text-role-${span.id}`}>{span.a2aMessageRole}</span>
+                  </div>
+                )}
                 {span.mcpMethod && (
                   <div className="flex flex-col gap-1">
                     <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">MCP Method</span>
@@ -321,7 +367,62 @@ function SpanCard({ span, children, isLast }: { span: TraceSpan; children?: Reac
                     <span className="text-xs font-mono">{span.a2aSkillName}</span>
                   </div>
                 )}
+                {span.a2aMessageId && (
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">A2A Message ID</span>
+                    <span className="text-xs font-mono" data-testid={`text-message-id-${span.id}`}>{span.a2aMessageId}</span>
+                  </div>
+                )}
+                {span.a2aArtifactId && (
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">A2A Artifact ID</span>
+                    <span className="text-xs font-mono" data-testid={`text-artifact-id-${span.id}`}>{span.a2aArtifactId}</span>
+                  </div>
+                )}
               </div>
+
+              {(span.linkedTraceId || span.linkedSpanId) && (
+                <div className="flex flex-col gap-1.5" data-testid={`section-linked-trace-${span.id}`}>
+                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Linked Trace</span>
+                  <div className="p-2.5 rounded-md bg-violet-500/5 dark:bg-violet-500/10 flex flex-col gap-1.5">
+                    {span.linkedTraceId && (
+                      <div className="flex items-center gap-2">
+                        <Link2 className="w-3 h-3 text-violet-500 shrink-0" />
+                        <span className="text-[10px] text-muted-foreground">Trace:</span>
+                        <span className="text-xs font-mono text-violet-600 dark:text-violet-400" data-testid={`text-linked-trace-${span.id}`}>{span.linkedTraceId}</span>
+                      </div>
+                    )}
+                    {span.linkedSpanId && (
+                      <div className="flex items-center gap-2">
+                        <Link2 className="w-3 h-3 text-violet-500 shrink-0" />
+                        <span className="text-[10px] text-muted-foreground">Span:</span>
+                        <span className="text-xs font-mono text-violet-600 dark:text-violet-400" data-testid={`text-linked-span-${span.id}`}>{span.linkedSpanId}</span>
+                      </div>
+                    )}
+                    <span className="text-[10px] text-muted-foreground/70">Cross-agent trace correlation via ALMP trace ID in A2A metadata</span>
+                  </div>
+                </div>
+              )}
+
+              {semconvEnabled && semconv && Object.keys(semconv).length > 0 && (
+                <div className="flex flex-col gap-1.5" data-testid={`section-semconv-${span.id}`}>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">OTel Messaging Semconv</span>
+                    <Badge variant="outline" className="text-[8px] text-amber-600 dark:text-amber-400 border-amber-300 dark:border-amber-600">Development</Badge>
+                  </div>
+                  <div className="p-2.5 rounded-md bg-amber-500/5 dark:bg-amber-500/10">
+                    <div className="grid grid-cols-1 gap-1.5">
+                      {Object.entries(semconv).map(([key, value]) => (
+                        <div key={key} className="flex items-start gap-2">
+                          <span className="text-[10px] font-mono text-amber-700 dark:text-amber-300 shrink-0">{key}:</span>
+                          <span className="text-[10px] font-mono text-foreground/80 break-all">{String(value)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {span.statusMessage && (
                 <div className="flex flex-col gap-1">
                   <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Status Message</span>
@@ -358,6 +459,11 @@ function TraceTimeline({ runId }: { runId: string }) {
     queryKey: ["/api/runtime/runs", runId, "observability"],
   });
 
+  const { data: semconvSetting } = useQuery<PlatformSetting>({
+    queryKey: ["/api/platform-settings", "OTEL_MESSAGING_SEMCONV_ENABLED"],
+  });
+  const semconvEnabled = semconvSetting?.value === "true";
+
   if (isLoading) {
     return (
       <div className="flex flex-col gap-3">
@@ -390,7 +496,7 @@ function TraceTimeline({ runId }: { runId: string }) {
   function renderSpan(span: TraceSpan, isLast: boolean): React.ReactNode {
     const children = childMap.get(span.id) || [];
     return (
-      <SpanCard key={span.id} span={span} isLast={isLast && children.length === 0}>
+      <SpanCard key={span.id} span={span} isLast={isLast && children.length === 0} semconvEnabled={semconvEnabled}>
         {children.length > 0 && (
           <div className="ml-4 mt-1">
             {children.map((child, ci) => renderSpan(child, ci === children.length - 1))}
@@ -403,14 +509,23 @@ function TraceTimeline({ runId }: { runId: string }) {
   const totalDuration = spans.reduce((acc, s) => acc + (s.durationMs || 0), 0);
   const mcpMethods = new Set(spans.filter(s => s.mcpMethod).map(s => s.mcpMethod));
   const errorCount = spans.filter(s => s.status === "error").length;
+  const a2aDelegations = spans.filter(s => s.invocationType === "a2a_delegation");
+  const producerSpans = spans.filter(s => s.a2aMessageRole === "producer");
+  const consumerSpans = spans.filter(s => s.a2aMessageRole === "consumer");
 
   return (
     <div className="flex flex-col gap-4" data-testid="section-trace-timeline">
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <Card>
           <CardContent className="p-3 flex flex-col gap-0.5">
             <span className="text-[11px] text-muted-foreground">Total Spans</span>
             <span className="text-lg font-semibold" data-testid="stat-span-count">{spans.length}</span>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-3 flex flex-col gap-0.5">
+            <span className="text-[11px] text-muted-foreground">A2A Delegations</span>
+            <span className="text-lg font-semibold" data-testid="stat-a2a-delegations">{a2aDelegations.length}</span>
           </CardContent>
         </Card>
         <Card>
@@ -434,6 +549,39 @@ function TraceTimeline({ runId }: { runId: string }) {
           </CardContent>
         </Card>
       </div>
+
+      {a2aDelegations.length > 0 && (
+        <Card data-testid="section-a2a-summary">
+          <CardContent className="p-3 flex flex-col gap-2">
+            <div className="flex items-center gap-2">
+              <Network className="w-4 h-4 text-blue-500" />
+              <span className="text-sm font-medium">A2A Messaging Spans</span>
+              {semconvEnabled && (
+                <Badge variant="outline" className="text-[8px] text-amber-600 dark:text-amber-400 border-amber-300 dark:border-amber-600">
+                  OTel Semconv: ON
+                </Badge>
+              )}
+            </div>
+            <div className="flex items-center gap-4 flex-wrap">
+              <div className="flex items-center gap-1.5">
+                <ArrowUpRight className="w-3.5 h-3.5 text-blue-500" />
+                <span className="text-xs text-muted-foreground">Producer spans:</span>
+                <span className="text-xs font-medium" data-testid="stat-producer-spans">{producerSpans.length}</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <ArrowDownLeft className="w-3.5 h-3.5 text-emerald-500" />
+                <span className="text-xs text-muted-foreground">Consumer spans:</span>
+                <span className="text-xs font-medium" data-testid="stat-consumer-spans">{consumerSpans.length}</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Link2 className="w-3.5 h-3.5 text-violet-500" />
+                <span className="text-xs text-muted-foreground">Linked traces:</span>
+                <span className="text-xs font-medium" data-testid="stat-linked-traces">{new Set(a2aDelegations.filter(s => s.linkedTraceId).map(s => s.linkedTraceId)).size}</span>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="flex flex-col">
         {rootSpans.map((span, i) => renderSpan(span, i === rootSpans.length - 1))}
@@ -759,7 +907,7 @@ export default function RunDetail() {
         <TabsContent value="mcp-trace">
           <div className="flex flex-col gap-1 mb-3">
             <h2 className="text-base font-semibold" data-testid="heading-mcp-trace">MCP Trace Timeline</h2>
-            <p className="text-xs text-muted-foreground">OpenTelemetry-style span waterfall for MCP interactions</p>
+            <p className="text-xs text-muted-foreground">OpenTelemetry-style span waterfall for MCP interactions and A2A delegations</p>
           </div>
           <TraceTimeline runId={run.id} />
         </TabsContent>

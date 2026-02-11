@@ -92,6 +92,8 @@ import {
   type TrustedPublisher, type InsertTrustedPublisher,
   marketplaceInstallRequests,
   type MarketplaceInstallRequest, type InsertMarketplaceInstallRequest,
+  platformSettings,
+  type PlatformSetting, type InsertPlatformSetting,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -378,6 +380,10 @@ export interface IStorage {
   getMarketplaceInstallRequest(id: string): Promise<MarketplaceInstallRequest | undefined>;
   createMarketplaceInstallRequest(request: InsertMarketplaceInstallRequest): Promise<MarketplaceInstallRequest>;
   updateMarketplaceInstallRequest(id: string, data: Partial<MarketplaceInstallRequest>): Promise<MarketplaceInstallRequest | undefined>;
+
+  getPlatformSettings(): Promise<PlatformSetting[]>;
+  getPlatformSetting(key: string): Promise<PlatformSetting | undefined>;
+  upsertPlatformSetting(setting: InsertPlatformSetting): Promise<PlatformSetting>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1463,6 +1469,25 @@ export class DatabaseStorage implements IStorage {
   async updateMarketplaceInstallRequest(id: string, data: Partial<MarketplaceInstallRequest>) {
     const [updated] = await db.update(marketplaceInstallRequests).set(data).where(eq(marketplaceInstallRequests.id, id)).returning();
     return updated;
+  }
+
+  async getPlatformSettings() {
+    return db.select().from(platformSettings);
+  }
+  async getPlatformSetting(key: string) {
+    const [setting] = await db.select().from(platformSettings).where(eq(platformSettings.key, key));
+    return setting;
+  }
+  async upsertPlatformSetting(setting: InsertPlatformSetting) {
+    const [upserted] = await db
+      .insert(platformSettings)
+      .values(setting)
+      .onConflictDoUpdate({
+        target: platformSettings.key,
+        set: { value: setting.value, description: setting.description, category: setting.category, updatedAt: new Date() },
+      })
+      .returning();
+    return upserted;
   }
 }
 

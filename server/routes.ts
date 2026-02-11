@@ -50,6 +50,7 @@ import {
   insertMarketplaceServerSchema,
   insertTrustedPublisherSchema,
   insertMarketplaceInstallRequestSchema,
+  insertPlatformSettingSchema,
 } from "@shared/schema";
 
 const openai = new OpenAI({
@@ -9972,6 +9973,31 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
       });
 
       res.json(await storage.getMarketplaceInstallRequest(req.params.id));
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  // ── Platform Settings ─────────────────────────────────
+  app.get("/api/platform-settings", async (_req, res) => {
+    const settings = await storage.getPlatformSettings();
+    res.json(settings);
+  });
+
+  app.get("/api/platform-settings/:key", async (req, res) => {
+    const setting = await storage.getPlatformSetting(req.params.key);
+    if (!setting) return res.status(404).json({ message: "Setting not found" });
+    res.json(setting);
+  });
+
+  app.put("/api/platform-settings/:key", async (req, res) => {
+    try {
+      const data = insertPlatformSettingSchema.parse({
+        key: req.params.key,
+        ...req.body,
+      });
+      const upserted = await storage.upsertPlatformSetting(data);
+      res.json(upserted);
     } catch (e) {
       handleZodError(res, e);
     }
