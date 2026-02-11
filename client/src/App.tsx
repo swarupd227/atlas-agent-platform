@@ -49,6 +49,8 @@ import McpServers from "@/pages/mcp-servers";
 import McpServerDetail from "@/pages/mcp-server-detail";
 import ToolCatalog from "@/pages/tool-catalog";
 import ToolDetail from "@/pages/tool-detail";
+import McpResources from "@/pages/mcp-resources";
+import McpResourceDetail from "@/pages/mcp-resource-detail";
 
 function Router() {
   return (
@@ -80,6 +82,8 @@ function Router() {
       <Route path="/improvement-loop" component={ImprovementLoop} />
       <Route path="/optimization" component={Optimization} />
       <Route path="/billing" component={Billing} />
+      <Route path="/integrations/mcp-resources/:id" component={McpResourceDetail} />
+      <Route path="/integrations/mcp-resources" component={McpResources} />
       <Route path="/integrations/tool-catalog/:id" component={ToolDetail} />
       <Route path="/integrations/tool-catalog" component={ToolCatalog} />
       <Route path="/integrations/mcp-servers/:id" component={McpServerDetail} />

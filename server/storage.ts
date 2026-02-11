@@ -281,7 +281,10 @@ export interface IStorage {
   deleteMcpServerToolsByServer(serverId: string): Promise<void>;
 
   getMcpServerResources(serverId: string): Promise<McpServerResource[]>;
+  getAllMcpServerResources(): Promise<McpServerResource[]>;
+  getMcpServerResourceById(id: string): Promise<McpServerResource | undefined>;
   createMcpServerResource(resource: InsertMcpServerResource): Promise<McpServerResource>;
+  updateMcpServerResource(id: string, data: Partial<McpServerResource>): Promise<McpServerResource | undefined>;
   deleteMcpServerResourcesByServer(serverId: string): Promise<void>;
 
   getMcpServerPrompts(serverId: string): Promise<McpServerPrompt[]>;
@@ -1114,9 +1117,23 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(mcpServerResources).where(eq(mcpServerResources.serverId, serverId));
   }
 
+  async getAllMcpServerResources() {
+    return db.select().from(mcpServerResources);
+  }
+
+  async getMcpServerResourceById(id: string) {
+    const [resource] = await db.select().from(mcpServerResources).where(eq(mcpServerResources.id, id));
+    return resource;
+  }
+
   async createMcpServerResource(resource: InsertMcpServerResource) {
     const [created] = await db.insert(mcpServerResources).values(resource).returning();
     return created;
+  }
+
+  async updateMcpServerResource(id: string, data: Partial<McpServerResource>) {
+    const [updated] = await db.update(mcpServerResources).set(data).where(eq(mcpServerResources.id, id)).returning();
+    return updated;
   }
 
   async deleteMcpServerResourcesByServer(serverId: string) {

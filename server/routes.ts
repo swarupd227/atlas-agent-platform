@@ -8205,8 +8205,12 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
         { serverId: server.id, name: "execute_query", description: "Execute a database query", inputSchema: { type: "object", properties: { sql: { type: "string" }, params: { type: "array" } }, required: ["sql"] } },
       ];
       const sampleResources = [
-        { serverId: server.id, uri: `mcp://${server.name}/config`, name: "Server Configuration", description: "Current server configuration", mimeType: "application/json" },
-        { serverId: server.id, uri: `mcp://${server.name}/status`, name: "Server Status", description: "Real-time server status", mimeType: "application/json" },
+        { serverId: server.id, uri: `docs://runbooks/incident-response`, name: "Incident Response Runbook", description: "Standard operating procedures for incident response", mimeType: "text/markdown", size: 24576, sensitivityLevel: "public", approvalStatus: "auto_approved", freshnessStatus: "fresh", subscribed: false, contentType: "text", owner: "ops-team" },
+        { serverId: server.id, uri: `docs://faq/platform-usage`, name: "Platform FAQ", description: "Frequently asked questions about the platform", mimeType: "text/markdown", size: 12800, sensitivityLevel: "public", approvalStatus: "auto_approved", freshnessStatus: "fresh", subscribed: true, contentType: "text", owner: "docs-team" },
+        { serverId: server.id, uri: `repo://api/openapi-spec.yaml`, name: "API Specification", description: "OpenAPI specification for internal services", mimeType: "application/yaml", size: 51200, sensitivityLevel: "internal", approvalStatus: "approved", freshnessStatus: "fresh", subscribed: true, contentType: "text", owner: "api-team" },
+        { serverId: server.id, uri: `db://exports/customer-data`, name: "Customer Data Export", description: "Aggregated customer data export for analytics", mimeType: "application/json", size: 2097152, sensitivityLevel: "confidential", approvalStatus: "pending", freshnessStatus: "stale", subscribed: false, contentType: "blob", owner: "data-team" },
+        { serverId: server.id, uri: `db://tables/users-pii`, name: "PII Database Access", description: "Direct access to user personally identifiable information", mimeType: "application/json", size: 10485760, sensitivityLevel: "restricted", approvalStatus: "denied", freshnessStatus: "unknown", subscribed: false, contentType: "blob", owner: "security-team" },
+        { serverId: server.id, uri: `docs://guides/deployment-checklist`, name: "Deployment Guide", description: "Step-by-step deployment checklist and procedures", mimeType: "text/markdown", size: 18432, sensitivityLevel: "internal", approvalStatus: "auto_approved", freshnessStatus: "fresh", subscribed: false, contentType: "text", owner: "devops-team" },
       ];
       const samplePrompts = [
         { serverId: server.id, name: "summarize", description: "Summarize a document or dataset", arguments: [{ name: "content", description: "Content to summarize", required: true }] },
@@ -8525,6 +8529,146 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
       res.json(updated);
     } catch (e) {
       res.status(500).json({ message: "Failed to record usage" });
+    }
+  });
+
+  // ── MCP Resources (governed knowledge connectors) ──
+
+  const mcpResourcePatchSchema = z.object({
+    sensitivityLevel: z.enum(["public", "internal", "confidential", "restricted"]).optional(),
+    owner: z.string().nullable().optional(),
+    subscribed: z.boolean().optional(),
+  }).strict();
+
+  app.get("/api/mcp-resources", async (_req, res) => {
+    try {
+      const resources = await storage.getAllMcpServerResources();
+      const servers = await storage.getMcpServers();
+      const serverMap = new Map(servers.map(s => [s.id, s]));
+      const enriched = resources.map(r => ({
+        ...r,
+        serverName: serverMap.get(r.serverId)?.name || "Unknown",
+        serverStatus: serverMap.get(r.serverId)?.status || "unknown",
+      }));
+      res.json(enriched);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch MCP resources" });
+    }
+  });
+
+  app.get("/api/mcp-resources/:id", async (req, res) => {
+    try {
+      const resource = await storage.getMcpServerResourceById(req.params.id);
+      if (!resource) return res.status(404).json({ message: "Resource not found" });
+      const servers = await storage.getMcpServers();
+      const server = servers.find(s => s.id === resource.serverId);
+      res.json({
+        ...resource,
+        serverName: server?.name || "Unknown",
+        serverStatus: server?.status || "unknown",
+      });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch resource" });
+    }
+  });
+
+  app.patch("/api/mcp-resources/:id", checkPermission("manage_mcp_servers"), async (req, res) => {
+    try {
+      const parsed = mcpResourcePatchSchema.parse(req.body);
+      const resource = await storage.getMcpServerResourceById(req.params.id);
+      if (!resource) return res.status(404).json({ message: "Resource not found" });
+
+      if (parsed.sensitivityLevel) {
+        const SENSITIVITY_ORDER = ["public", "internal", "confidential", "restricted"];
+        const currentIdx = SENSITIVITY_ORDER.indexOf(resource.sensitivityLevel || "public");
+        const newIdx = SENSITIVITY_ORDER.indexOf(parsed.sensitivityLevel);
+        if (newIdx > currentIdx) {
+          const role = getRequestRole(req);
+          if (role !== "compliance_security" && role !== "admin") {
+            return res.status(403).json({ message: "Only Data Steward (Security Admin) can escalate resource sensitivity level" });
+          }
+        }
+      }
+
+      const updated = await storage.updateMcpServerResource(resource.id, parsed);
+      if (!updated) return res.status(500).json({ message: "Failed to update resource" });
+      const role = getRequestRole(req);
+      await storage.createAuditEvent({
+        action: "mcp_resource.updated",
+        objectType: "mcp_server_resource",
+        objectId: resource.id,
+        actorId: role,
+        details: JSON.stringify({ changes: parsed }),
+      });
+      res.json(updated);
+    } catch (err: any) {
+      if (err?.name === "ZodError") return res.status(400).json({ message: "Invalid request", errors: err.errors });
+      res.status(500).json({ message: "Failed to update resource" });
+    }
+  });
+
+  app.post("/api/mcp-resources/:id/approve", checkPermission("manage_mcp_servers"), async (req, res) => {
+    try {
+      const { action: approvalAction } = req.body as { action: string };
+      if (!["approve", "deny"].includes(approvalAction)) {
+        return res.status(400).json({ message: "action must be 'approve' or 'deny'" });
+      }
+      const resource = await storage.getMcpServerResourceById(req.params.id);
+      if (!resource) return res.status(404).json({ message: "Resource not found" });
+
+      const role = getRequestRole(req);
+      if (role !== "compliance_security" && role !== "admin") {
+        return res.status(403).json({ message: "Only Data Steward (Security Admin) can approve or deny sensitive resources" });
+      }
+
+      const updated = await storage.updateMcpServerResource(resource.id, {
+        approvalStatus: approvalAction === "approve" ? "approved" : "denied",
+        approvedBy: role,
+        approvedAt: new Date(),
+      });
+
+      await storage.createAuditEvent({
+        action: `mcp_resource.${approvalAction === "approve" ? "approved" : "denied"}`,
+        objectType: "mcp_server_resource",
+        objectId: resource.id,
+        actorId: role,
+        details: JSON.stringify({ uri: resource.uri, sensitivityLevel: resource.sensitivityLevel }),
+      });
+
+      res.json(updated);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to process approval" });
+    }
+  });
+
+  app.post("/api/mcp-resources/:id/request-approval", checkPermission("manage_mcp_servers"), async (req, res) => {
+    try {
+      const resource = await storage.getMcpServerResourceById(req.params.id);
+      if (!resource) return res.status(404).json({ message: "Resource not found" });
+
+      if (resource.sensitivityLevel === "public") {
+        const updated = await storage.updateMcpServerResource(resource.id, {
+          approvalStatus: "auto_approved",
+          approvedAt: new Date(),
+        });
+        return res.json({ autoApproved: true, resource: updated });
+      }
+
+      const updated = await storage.updateMcpServerResource(resource.id, {
+        approvalStatus: "pending",
+      });
+
+      await storage.createAuditEvent({
+        action: "mcp_resource.approval_requested",
+        objectType: "mcp_server_resource",
+        objectId: resource.id,
+        actorId: "agent_engineer",
+        details: JSON.stringify({ uri: resource.uri, sensitivityLevel: resource.sensitivityLevel }),
+      });
+
+      res.json({ approvalRequired: true, resource: updated });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to request approval" });
     }
   });
 

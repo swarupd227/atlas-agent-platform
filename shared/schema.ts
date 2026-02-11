@@ -823,10 +823,20 @@ export const mcpServerResources = pgTable("mcp_server_resources", {
   description: text("description"),
   mimeType: text("mime_type"),
   annotations: jsonb("annotations"),
+  size: integer("size"),
+  sensitivityLevel: varchar("sensitivity_level", { length: 20 }).default("public"),
+  approvalStatus: varchar("approval_status", { length: 20 }).default("auto_approved"),
+  approvedBy: varchar("approved_by", { length: 255 }),
+  approvedAt: timestamp("approved_at"),
+  freshnessStatus: varchar("freshness_status", { length: 20 }).default("fresh"),
+  lastCheckedAt: timestamp("last_checked_at"),
+  subscribed: boolean("subscribed").default(false),
+  contentType: varchar("content_type", { length: 20 }).default("text"),
+  owner: varchar("owner", { length: 255 }),
   syncedAt: timestamp("synced_at").defaultNow(),
 });
 
-export const insertMcpServerResourceSchema = createInsertSchema(mcpServerResources).omit({ id: true, syncedAt: true });
+export const insertMcpServerResourceSchema = createInsertSchema(mcpServerResources).omit({ id: true, syncedAt: true, approvedBy: true, approvedAt: true, lastCheckedAt: true });
 export type InsertMcpServerResource = z.infer<typeof insertMcpServerResourceSchema>;
 export type McpServerResource = typeof mcpServerResources.$inferSelect;
 

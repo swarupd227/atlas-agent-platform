@@ -2,6 +2,16 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute, Link } from "wouter";
 import type { Blueprint, Agent } from "@shared/schema";
+
+interface McpResourceBrief {
+  id: string;
+  uri: string;
+  name: string;
+  mimeType: string | null;
+  sensitivityLevel: string;
+  approvalStatus: string;
+  serverName: string;
+}
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -14,7 +24,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
   Brain, Wrench, Database, GitBranch, Split, UserCheck, Shield,
   Plus, Trash2, Save, Play, PenTool, ArrowLeft, AlertTriangle,
-  CheckCircle, ChevronDown, ChevronRight, X, MousePointer, Link2,
+  CheckCircle, ChevronDown, ChevronRight, X, MousePointer, Link2, FileText,
 } from "lucide-react";
 
 type BpNode = { id: string; type: string; label: string; [key: string]: any };
@@ -61,6 +71,7 @@ export default function BlueprintDetail() {
     enabled: !!id,
   });
   const { data: agents } = useQuery<Agent[]>({ queryKey: ["/api/agents"] });
+  const { data: mcpResources } = useQuery<McpResourceBrief[]>({ queryKey: ["/api/mcp-resources"] });
 
   const [nodes, setNodes] = useState<BpNode[]>([]);
   const [edges, setEdges] = useState<BpEdge[]>([]);
@@ -73,6 +84,8 @@ export default function BlueprintDetail() {
   const [blueprintName, setBlueprintName] = useState("");
   const [localValidation, setLocalValidation] = useState<ValidationResults | null>(null);
   const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
+  const [contextSourcesOpen, setContextSourcesOpen] = useState(false);
+  const [attachedResourceIds, setAttachedResourceIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (blueprint) {
@@ -82,6 +95,7 @@ export default function BlueprintDetail() {
       setBlueprintName(blueprint.name);
       setDirty(false);
       if (blueprint.validationResults) setLocalValidation(blueprint.validationResults as ValidationResults);
+      if (bj?.contextSources) setAttachedResourceIds(new Set(bj.contextSources));
     }
   }, [blueprint]);
 
@@ -148,7 +162,7 @@ export default function BlueprintDetail() {
   const saveMutation = useMutation({
     mutationFn: async () => {
       await apiRequest("PATCH", `/api/blueprints/${id}`, {
-        blueprintJson: { nodes, edges },
+        blueprintJson: { nodes, edges, contextSources: Array.from(attachedResourceIds) },
         name: blueprintName,
       });
     },
@@ -566,6 +580,65 @@ export default function BlueprintDetail() {
                 )}
               </div>
             )}
+
+            <div className="border-t mx-4">
+              <button
+                className="flex items-center gap-2 py-3 w-full text-left"
+                onClick={() => setContextSourcesOpen(!contextSourcesOpen)}
+                data-testid="button-toggle-context-sources"
+              >
+                {contextSourcesOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                <FileText className="w-3.5 h-3.5 text-muted-foreground" />
+                <span className="text-xs font-medium text-muted-foreground">Context Sources ({attachedResourceIds.size})</span>
+              </button>
+              {contextSourcesOpen && (
+                <div className="flex flex-col gap-2 pb-4">
+                  {mcpResources && mcpResources.length > 0 ? (
+                    <>
+                      {mcpResources
+                        .filter(r => r.approvalStatus === "approved" || r.approvalStatus === "auto_approved")
+                        .map(r => {
+                          const attached = attachedResourceIds.has(r.id);
+                          return (
+                            <div
+                              key={r.id}
+                              className={`flex items-start gap-2 p-2 rounded-md cursor-pointer ${attached ? "bg-primary/10 border border-primary/20" : "bg-muted/50 hover-elevate"}`}
+                              onClick={() => {
+                                setAttachedResourceIds(prev => {
+                                  const next = new Set(prev);
+                                  if (next.has(r.id)) next.delete(r.id);
+                                  else next.add(r.id);
+                                  return next;
+                                });
+                                setDirty(true);
+                              }}
+                              data-testid={`context-source-${r.id}`}
+                            >
+                              <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                              <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+                                <span className="text-xs font-medium truncate">{r.name}</span>
+                                <span className="text-[10px] text-muted-foreground truncate">{r.uri}</span>
+                                <div className="flex items-center gap-1 flex-wrap">
+                                  <Badge variant="outline" className="text-[9px]">{r.sensitivityLevel}</Badge>
+                                  {r.mimeType && <Badge variant="outline" className="text-[9px]">{r.mimeType.split("/").pop()}</Badge>}
+                                </div>
+                              </div>
+                              {attached && <CheckCircle className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />}
+                            </div>
+                          );
+                        })}
+                      {mcpResources.filter(r => r.approvalStatus === "pending" || r.approvalStatus === "denied").length > 0 && (
+                        <p className="text-[10px] text-muted-foreground px-1">
+                          {mcpResources.filter(r => r.approvalStatus === "pending" || r.approvalStatus === "denied").length} resource(s) pending or denied approval
+                        </p>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-xs text-muted-foreground text-center py-3" data-testid="text-no-context-sources">No MCP resources available</p>
+                  )}
+                </div>
+              )}
+            </div>
           </ScrollArea>
         </div>
       </div>
