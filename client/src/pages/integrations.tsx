@@ -21,6 +21,8 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { Link } from "wouter";
+import { Server } from "lucide-react";
 import type { LoggingIntegration, ToolConnector } from "@shared/schema";
 
 const ICON_MAP: Record<string, LucideIcon> = {
@@ -1060,6 +1062,21 @@ export default function Integrations() {
           </div>
         </div>
       </div>
+
+      <Card className="hover-elevate mb-4" data-testid="card-mcp-servers-link">
+        <Link href="/integrations/mcp-servers">
+          <CardContent className="flex items-center gap-4 py-4 cursor-pointer">
+            <div className="flex items-center justify-center w-10 h-10 rounded-md bg-muted shrink-0">
+              <Server className="w-5 h-5 text-blue-500" />
+            </div>
+            <div className="flex flex-col gap-0.5 flex-1">
+              <span className="text-sm font-medium">MCP Servers</span>
+              <span className="text-xs text-muted-foreground">Manage Model Context Protocol servers, validate capabilities, and assign risk tiers</span>
+            </div>
+            <Badge variant="secondary" className="text-[10px]">MCP</Badge>
+          </CardContent>
+        </Link>
+      </Card>
 
       <Tabs defaultValue="catalog" data-testid="tabs-integrations">
         <TabsList data-testid="tabs-list-integrations">

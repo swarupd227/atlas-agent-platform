@@ -765,4 +765,86 @@ export const insertIncidentSchema = createInsertSchema(incidents).omit({ id: tru
 export type InsertIncident = z.infer<typeof insertIncidentSchema>;
 export type Incident = typeof incidents.$inferSelect;
 
+export const mcpServers = pgTable("mcp_servers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  description: text("description"),
+  transportType: text("transport_type").notNull().default("streamable-http"),
+  url: text("url"),
+  command: text("command"),
+  args: text("args").array().default(sql`'{}'::text[]`),
+  expectedProtocolVersion: text("expected_protocol_version").default("2025-03-26"),
+  negotiatedProtocolVersion: text("negotiated_protocol_version"),
+  status: text("status").notNull().default("registered"),
+  riskTier: text("risk_tier").notNull().default("MEDIUM"),
+  allowlisted: boolean("allowlisted").default(false),
+  capabilities: jsonb("capabilities"),
+  serverInfo: jsonb("server_info"),
+  healthStatus: text("health_status").default("unknown"),
+  lastHealthCheck: timestamp("last_health_check"),
+  addedBy: text("added_by"),
+  approvedBy: text("approved_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertMcpServerSchema = createInsertSchema(mcpServers).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertMcpServer = z.infer<typeof insertMcpServerSchema>;
+export type McpServer = typeof mcpServers.$inferSelect;
+
+export const mcpServerTools = pgTable("mcp_server_tools", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  serverId: varchar("server_id").notNull(),
+  name: text("name").notNull(),
+  description: text("description"),
+  inputSchema: jsonb("input_schema"),
+  annotations: jsonb("annotations"),
+  syncedAt: timestamp("synced_at").defaultNow(),
+});
+
+export const insertMcpServerToolSchema = createInsertSchema(mcpServerTools).omit({ id: true, syncedAt: true });
+export type InsertMcpServerTool = z.infer<typeof insertMcpServerToolSchema>;
+export type McpServerTool = typeof mcpServerTools.$inferSelect;
+
+export const mcpServerResources = pgTable("mcp_server_resources", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  serverId: varchar("server_id").notNull(),
+  uri: text("uri").notNull(),
+  name: text("name").notNull(),
+  description: text("description"),
+  mimeType: text("mime_type"),
+  annotations: jsonb("annotations"),
+  syncedAt: timestamp("synced_at").defaultNow(),
+});
+
+export const insertMcpServerResourceSchema = createInsertSchema(mcpServerResources).omit({ id: true, syncedAt: true });
+export type InsertMcpServerResource = z.infer<typeof insertMcpServerResourceSchema>;
+export type McpServerResource = typeof mcpServerResources.$inferSelect;
+
+export const mcpServerPrompts = pgTable("mcp_server_prompts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  serverId: varchar("server_id").notNull(),
+  name: text("name").notNull(),
+  description: text("description"),
+  arguments: jsonb("arguments"),
+  syncedAt: timestamp("synced_at").defaultNow(),
+});
+
+export const insertMcpServerPromptSchema = createInsertSchema(mcpServerPrompts).omit({ id: true, syncedAt: true });
+export type InsertMcpServerPrompt = z.infer<typeof insertMcpServerPromptSchema>;
+export type McpServerPrompt = typeof mcpServerPrompts.$inferSelect;
+
+export const mcpServerAuth = pgTable("mcp_server_auth", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  serverId: varchar("server_id").notNull(),
+  authType: text("auth_type").notNull().default("none"),
+  config: jsonb("config"),
+  lastRotated: timestamp("last_rotated"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertMcpServerAuthSchema = createInsertSchema(mcpServerAuth).omit({ id: true, createdAt: true });
+export type InsertMcpServerAuth = z.infer<typeof insertMcpServerAuthSchema>;
+export type McpServerAuth = typeof mcpServerAuth.$inferSelect;
+
 export * from "./models/chat";

@@ -45,6 +45,8 @@ import BlueprintDetail from "@/pages/blueprint-detail";
 import ShadowReplay from "@/pages/shadow-replay";
 import AuditTrail from "@/pages/audit-trail";
 import RunDetail from "@/pages/run-detail";
+import McpServers from "@/pages/mcp-servers";
+import McpServerDetail from "@/pages/mcp-server-detail";
 
 function Router() {
   return (
@@ -76,6 +78,8 @@ function Router() {
       <Route path="/improvement-loop" component={ImprovementLoop} />
       <Route path="/optimization" component={Optimization} />
       <Route path="/billing" component={Billing} />
+      <Route path="/integrations/mcp-servers/:id" component={McpServerDetail} />
+      <Route path="/integrations/mcp-servers" component={McpServers} />
       <Route path="/integrations" component={Integrations} />
       <Route path="/admin" component={Admin} />
       <Route component={NotFound} />

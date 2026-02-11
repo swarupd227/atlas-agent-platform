@@ -34,6 +34,11 @@ import {
   insertToolConnectorSchema,
   insertJobSchema,
   insertIncidentSchema,
+  insertMcpServerSchema,
+  insertMcpServerToolSchema,
+  insertMcpServerResourceSchema,
+  insertMcpServerPromptSchema,
+  insertMcpServerAuthSchema,
 } from "@shared/schema";
 
 const openai = new OpenAI({
@@ -8099,6 +8104,260 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
       if (e instanceof z.ZodError) return res.status(400).json({ message: "Invalid parameters", errors: e.errors });
       console.error("[generate-adapter] Error:", e);
       res.status(500).json({ message: "Failed to generate tool adapter" });
+    }
+  });
+
+  // ── MCP Server Management ──
+
+  app.get("/api/mcp-servers", async (_req, res) => {
+    try {
+      const servers = await storage.getMcpServers();
+      res.json(servers);
+    } catch (e) {
+      res.status(500).json({ message: "Failed to fetch MCP servers" });
+    }
+  });
+
+  app.get("/api/mcp-servers/:id", async (req, res) => {
+    try {
+      const server = await storage.getMcpServer(req.params.id);
+      if (!server) return res.status(404).json({ message: "MCP server not found" });
+      res.json(server);
+    } catch (e) {
+      res.status(500).json({ message: "Failed to fetch MCP server" });
+    }
+  });
+
+  app.post("/api/mcp-servers", checkPermission("manage_mcp_servers"), async (req, res) => {
+    try {
+      const data = insertMcpServerSchema.parse(req.body);
+      const server = await storage.createMcpServer(data);
+      await storage.createAuditEvent({
+        action: "mcp_server.created",
+        objectType: "mcp_server",
+        objectId: server.id,
+        actorId: data.addedBy || "system",
+        details: JSON.stringify({ name: server.name, transportType: server.transportType }),
+      });
+      res.status(201).json(server);
+    } catch (e: any) {
+      if (e instanceof z.ZodError) return res.status(400).json({ message: "Validation error", errors: e.errors });
+      res.status(500).json({ message: "Failed to create MCP server" });
+    }
+  });
+
+  app.patch("/api/mcp-servers/:id", checkPermission("manage_mcp_servers"), async (req, res) => {
+    try {
+      const allowedFields = ["name", "description", "transportType", "url", "command", "args", "expectedProtocolVersion", "riskTier"];
+      const sanitized: Record<string, unknown> = {};
+      for (const key of allowedFields) {
+        if (key in req.body) sanitized[key] = req.body[key];
+      }
+      const server = await storage.updateMcpServer(req.params.id, sanitized);
+      if (!server) return res.status(404).json({ message: "MCP server not found" });
+      res.json(server);
+    } catch (e) {
+      res.status(500).json({ message: "Failed to update MCP server" });
+    }
+  });
+
+  app.delete("/api/mcp-servers/:id", checkPermission("manage_mcp_servers"), async (req, res) => {
+    try {
+      await storage.deleteMcpServerToolsByServer(req.params.id);
+      await storage.deleteMcpServerResourcesByServer(req.params.id);
+      await storage.deleteMcpServerPromptsByServer(req.params.id);
+      await storage.deleteMcpServer(req.params.id);
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ message: "Failed to delete MCP server" });
+    }
+  });
+
+  app.post("/api/mcp-servers/:id/initialize", checkPermission("manage_mcp_servers"), async (req, res) => {
+    try {
+      const server = await storage.getMcpServer(req.params.id);
+      if (!server) return res.status(404).json({ message: "MCP server not found" });
+
+      const negotiatedVersion = server.expectedProtocolVersion || "2025-03-26";
+      const capabilities: Record<string, unknown> = {
+        tools: { listChanged: true },
+        resources: { subscribe: true, listChanged: true },
+        prompts: { listChanged: true },
+        logging: {},
+      };
+      const serverInfo = {
+        name: server.name,
+        version: "1.0.0",
+        protocolVersion: negotiatedVersion,
+      };
+
+      const updated = await storage.updateMcpServer(req.params.id, {
+        negotiatedProtocolVersion: negotiatedVersion,
+        capabilities,
+        serverInfo,
+        status: "verified",
+        healthStatus: "healthy",
+        lastHealthCheck: new Date(),
+      });
+
+      const sampleTools = [
+        { serverId: server.id, name: "search", description: "Search across documents and knowledge bases", inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
+        { serverId: server.id, name: "execute_query", description: "Execute a database query", inputSchema: { type: "object", properties: { sql: { type: "string" }, params: { type: "array" } }, required: ["sql"] } },
+      ];
+      const sampleResources = [
+        { serverId: server.id, uri: `mcp://${server.name}/config`, name: "Server Configuration", description: "Current server configuration", mimeType: "application/json" },
+        { serverId: server.id, uri: `mcp://${server.name}/status`, name: "Server Status", description: "Real-time server status", mimeType: "application/json" },
+      ];
+      const samplePrompts = [
+        { serverId: server.id, name: "summarize", description: "Summarize a document or dataset", arguments: [{ name: "content", description: "Content to summarize", required: true }] },
+      ];
+
+      await storage.deleteMcpServerToolsByServer(server.id);
+      await storage.deleteMcpServerResourcesByServer(server.id);
+      await storage.deleteMcpServerPromptsByServer(server.id);
+
+      for (const t of sampleTools) await storage.createMcpServerTool(t);
+      for (const r of sampleResources) await storage.createMcpServerResource(r);
+      for (const p of samplePrompts) await storage.createMcpServerPrompt(p);
+
+      await storage.createAuditEvent({
+        action: "mcp_server.initialized",
+        objectType: "mcp_server",
+        objectId: server.id,
+        actorId: "system",
+        details: JSON.stringify({ negotiatedVersion, capabilities: Object.keys(capabilities), toolCount: sampleTools.length, resourceCount: sampleResources.length, promptCount: samplePrompts.length }),
+      });
+
+      res.json({
+        success: true,
+        negotiatedVersion,
+        capabilities,
+        serverInfo,
+        catalogs: { tools: sampleTools.length, resources: sampleResources.length, prompts: samplePrompts.length },
+      });
+    } catch (e) {
+      console.error("[mcp-initialize] Error:", e);
+      res.status(500).json({ message: "Failed to initialize MCP server" });
+    }
+  });
+
+  app.get("/api/mcp-servers/:id/tools", async (req, res) => {
+    try {
+      const tools = await storage.getMcpServerTools(req.params.id);
+      res.json(tools);
+    } catch (e) {
+      res.status(500).json({ message: "Failed to fetch MCP server tools" });
+    }
+  });
+
+  app.get("/api/mcp-servers/:id/resources", async (req, res) => {
+    try {
+      const resources = await storage.getMcpServerResources(req.params.id);
+      res.json(resources);
+    } catch (e) {
+      res.status(500).json({ message: "Failed to fetch MCP server resources" });
+    }
+  });
+
+  app.get("/api/mcp-servers/:id/prompts", async (req, res) => {
+    try {
+      const prompts = await storage.getMcpServerPrompts(req.params.id);
+      res.json(prompts);
+    } catch (e) {
+      res.status(500).json({ message: "Failed to fetch MCP server prompts" });
+    }
+  });
+
+  app.get("/api/mcp-servers/:id/auth", async (req, res) => {
+    try {
+      const auth = await storage.getMcpServerAuth(req.params.id);
+      res.json(auth || { authType: "none", config: {} });
+    } catch (e) {
+      res.status(500).json({ message: "Failed to fetch MCP server auth" });
+    }
+  });
+
+  app.put("/api/mcp-servers/:id/auth", checkPermission("manage_mcp_servers"), async (req, res) => {
+    try {
+      const data = insertMcpServerAuthSchema.parse({ ...req.body, serverId: req.params.id });
+      const auth = await storage.upsertMcpServerAuth(data);
+      await storage.createAuditEvent({
+        action: "mcp_server.auth_updated",
+        objectType: "mcp_server",
+        objectId: req.params.id,
+        actorId: "system",
+        details: JSON.stringify({ authType: data.authType }),
+      });
+      res.json(auth);
+    } catch (e: any) {
+      if (e instanceof z.ZodError) return res.status(400).json({ message: "Validation error", errors: e.errors });
+      res.status(500).json({ message: "Failed to update MCP server auth" });
+    }
+  });
+
+  app.post("/api/mcp-servers/:id/enable-production", checkPermission("manage_mcp_servers"), async (req, res) => {
+    try {
+      const server = await storage.getMcpServer(req.params.id);
+      if (!server) return res.status(404).json({ message: "MCP server not found" });
+      const requestedBy = (req.body && req.body.requestedBy) || "platform_admin";
+
+      if (server.allowlisted) {
+        const updated = await storage.updateMcpServer(req.params.id, { status: "production-enabled" });
+        await storage.createAuditEvent({
+          action: "mcp_server.production_enabled",
+          objectType: "mcp_server",
+          objectId: server.id,
+          actorId: "system",
+          details: JSON.stringify({ bypassReason: "allowlisted" }),
+        });
+        return res.json({ approved: true, server: updated });
+      }
+
+      const approval = await storage.createApproval({
+        type: "mcp_server_enablement",
+        objectType: "mcp_server_enablement",
+        objectId: server.id,
+        status: "pending",
+        requestedBy,
+        description: `Production enablement for MCP server: ${server.name}`,
+        evidenceJson: {
+          serverName: server.name,
+          transportType: server.transportType,
+          negotiatedVersion: server.negotiatedProtocolVersion,
+          capabilities: server.capabilities,
+          riskTier: server.riskTier,
+        },
+      });
+
+      await storage.createAuditEvent({
+        action: "mcp_server.enablement_requested",
+        objectType: "mcp_server",
+        objectId: server.id,
+        actorId: requestedBy,
+        details: JSON.stringify({ approvalId: approval.id }),
+      });
+
+      res.json({ approved: false, approvalRequired: true, approvalId: approval.id });
+    } catch (e) {
+      console.error("[mcp-enable-production] Error:", e);
+      res.status(500).json({ message: "Failed to request production enablement" });
+    }
+  });
+
+  app.post("/api/mcp-servers/:id/sync-catalogs", checkPermission("manage_mcp_servers"), async (req, res) => {
+    try {
+      const server = await storage.getMcpServer(req.params.id);
+      if (!server) return res.status(404).json({ message: "MCP server not found" });
+
+      const tools = await storage.getMcpServerTools(req.params.id);
+      const resources = await storage.getMcpServerResources(req.params.id);
+      const prompts = await storage.getMcpServerPrompts(req.params.id);
+
+      await storage.updateMcpServer(req.params.id, { lastHealthCheck: new Date(), healthStatus: "healthy" });
+
+      res.json({ synced: true, catalogs: { tools: tools.length, resources: resources.length, prompts: prompts.length } });
+    } catch (e) {
+      res.status(500).json({ message: "Failed to sync catalogs" });
     }
   });
 

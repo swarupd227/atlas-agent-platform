@@ -18,7 +18,8 @@ type PermissionAction =
   | "view_traces"
   | "export_audit_bundle"
   | "approve_changes"
-  | "billing_invoices";
+  | "billing_invoices"
+  | "manage_mcp_servers";
 
 type AccessLevel = "full" | "conditional" | "denied";
 
@@ -33,6 +34,7 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
     export_audit_bundle: "full",
     approve_changes: "full",
     billing_invoices: "full",
+    manage_mcp_servers: "full",
   },
   outcome_owner: {
     create_modify_outcomes: "full",
@@ -44,6 +46,7 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
     export_audit_bundle: "conditional",
     approve_changes: "denied",
     billing_invoices: "conditional",
+    manage_mcp_servers: "denied",
   },
   agent_engineer: {
     create_modify_outcomes: "conditional",
@@ -55,6 +58,7 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
     export_audit_bundle: "denied",
     approve_changes: "denied",
     billing_invoices: "denied",
+    manage_mcp_servers: "conditional",
   },
   ops_sre: {
     create_modify_outcomes: "denied",
@@ -66,6 +70,7 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
     export_audit_bundle: "conditional",
     approve_changes: "denied",
     billing_invoices: "denied",
+    manage_mcp_servers: "denied",
   },
   compliance_security: {
     create_modify_outcomes: "conditional",
@@ -77,6 +82,7 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
     export_audit_bundle: "full",
     approve_changes: "denied",
     billing_invoices: "denied",
+    manage_mcp_servers: "full",
   },
   expert_validator: {
     create_modify_outcomes: "conditional",
@@ -88,6 +94,7 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
     export_audit_bundle: "full",
     approve_changes: "full",
     billing_invoices: "denied",
+    manage_mcp_servers: "conditional",
   },
   finance: {
     create_modify_outcomes: "denied",
@@ -99,6 +106,7 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
     export_audit_bundle: "conditional",
     approve_changes: "denied",
     billing_invoices: "full",
+    manage_mcp_servers: "denied",
   },
 };
 

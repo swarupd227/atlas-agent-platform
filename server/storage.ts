@@ -60,6 +60,16 @@ import {
   type RunStep, type InsertRunStep,
   incidents,
   type Incident, type InsertIncident,
+  mcpServers,
+  type McpServer, type InsertMcpServer,
+  mcpServerTools,
+  type McpServerTool, type InsertMcpServerTool,
+  mcpServerResources,
+  type McpServerResource, type InsertMcpServerResource,
+  mcpServerPrompts,
+  type McpServerPrompt, type InsertMcpServerPrompt,
+  mcpServerAuth,
+  type McpServerAuth, type InsertMcpServerAuth,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -256,6 +266,27 @@ export interface IStorage {
 
   getPoliciesByScope(scopeType: string, scopeId?: string): Promise<Policy[]>;
   updateTrace(id: string, data: Partial<RunTrace>): Promise<RunTrace | undefined>;
+
+  getMcpServers(): Promise<McpServer[]>;
+  getMcpServer(id: string): Promise<McpServer | undefined>;
+  createMcpServer(server: InsertMcpServer): Promise<McpServer>;
+  updateMcpServer(id: string, data: Partial<McpServer>): Promise<McpServer | undefined>;
+  deleteMcpServer(id: string): Promise<boolean>;
+
+  getMcpServerTools(serverId: string): Promise<McpServerTool[]>;
+  createMcpServerTool(tool: InsertMcpServerTool): Promise<McpServerTool>;
+  deleteMcpServerToolsByServer(serverId: string): Promise<void>;
+
+  getMcpServerResources(serverId: string): Promise<McpServerResource[]>;
+  createMcpServerResource(resource: InsertMcpServerResource): Promise<McpServerResource>;
+  deleteMcpServerResourcesByServer(serverId: string): Promise<void>;
+
+  getMcpServerPrompts(serverId: string): Promise<McpServerPrompt[]>;
+  createMcpServerPrompt(prompt: InsertMcpServerPrompt): Promise<McpServerPrompt>;
+  deleteMcpServerPromptsByServer(serverId: string): Promise<void>;
+
+  getMcpServerAuth(serverId: string): Promise<McpServerAuth | undefined>;
+  upsertMcpServerAuth(auth: InsertMcpServerAuth): Promise<McpServerAuth>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1023,6 +1054,84 @@ export class DatabaseStorage implements IStorage {
   async updateTrace(id: string, data: Partial<RunTrace>) {
     const [updated] = await db.update(runTraces).set(data).where(eq(runTraces.id, id)).returning();
     return updated;
+  }
+
+  async getMcpServers() {
+    return db.select().from(mcpServers);
+  }
+
+  async getMcpServer(id: string) {
+    const [server] = await db.select().from(mcpServers).where(eq(mcpServers.id, id));
+    return server;
+  }
+
+  async createMcpServer(server: InsertMcpServer) {
+    const [created] = await db.insert(mcpServers).values(server).returning();
+    return created;
+  }
+
+  async updateMcpServer(id: string, data: Partial<McpServer>) {
+    const [updated] = await db.update(mcpServers).set({ ...data, updatedAt: new Date() }).where(eq(mcpServers.id, id)).returning();
+    return updated;
+  }
+
+  async deleteMcpServer(id: string) {
+    const result = await db.delete(mcpServers).where(eq(mcpServers.id, id));
+    return true;
+  }
+
+  async getMcpServerTools(serverId: string) {
+    return db.select().from(mcpServerTools).where(eq(mcpServerTools.serverId, serverId));
+  }
+
+  async createMcpServerTool(tool: InsertMcpServerTool) {
+    const [created] = await db.insert(mcpServerTools).values(tool).returning();
+    return created;
+  }
+
+  async deleteMcpServerToolsByServer(serverId: string) {
+    await db.delete(mcpServerTools).where(eq(mcpServerTools.serverId, serverId));
+  }
+
+  async getMcpServerResources(serverId: string) {
+    return db.select().from(mcpServerResources).where(eq(mcpServerResources.serverId, serverId));
+  }
+
+  async createMcpServerResource(resource: InsertMcpServerResource) {
+    const [created] = await db.insert(mcpServerResources).values(resource).returning();
+    return created;
+  }
+
+  async deleteMcpServerResourcesByServer(serverId: string) {
+    await db.delete(mcpServerResources).where(eq(mcpServerResources.serverId, serverId));
+  }
+
+  async getMcpServerPrompts(serverId: string) {
+    return db.select().from(mcpServerPrompts).where(eq(mcpServerPrompts.serverId, serverId));
+  }
+
+  async createMcpServerPrompt(prompt: InsertMcpServerPrompt) {
+    const [created] = await db.insert(mcpServerPrompts).values(prompt).returning();
+    return created;
+  }
+
+  async deleteMcpServerPromptsByServer(serverId: string) {
+    await db.delete(mcpServerPrompts).where(eq(mcpServerPrompts.serverId, serverId));
+  }
+
+  async getMcpServerAuth(serverId: string) {
+    const [auth] = await db.select().from(mcpServerAuth).where(eq(mcpServerAuth.serverId, serverId));
+    return auth;
+  }
+
+  async upsertMcpServerAuth(auth: InsertMcpServerAuth) {
+    const existing = await this.getMcpServerAuth(auth.serverId);
+    if (existing) {
+      const [updated] = await db.update(mcpServerAuth).set(auth).where(eq(mcpServerAuth.serverId, auth.serverId)).returning();
+      return updated;
+    }
+    const [created] = await db.insert(mcpServerAuth).values(auth).returning();
+    return created;
   }
 }
 
