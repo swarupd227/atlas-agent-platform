@@ -59,6 +59,7 @@ import ApprovalGates from "@/pages/approval-gates";
 import Marketplace from "@/pages/marketplace";
 import MarketplaceDetail from "@/pages/marketplace-detail";
 import MarketplacePublishers from "@/pages/marketplace-publishers";
+import McpApps from "@/pages/mcp-apps";
 
 function Router() {
   return (
@@ -103,6 +104,7 @@ function Router() {
       <Route path="/integrations/marketplace/:id" component={MarketplaceDetail} />
       <Route path="/integrations/marketplace" component={Marketplace} />
       <Route path="/integrations/mcp-servers/:id" component={McpServerDetail} />
+      <Route path="/integrations/mcp-apps" component={McpApps} />
       <Route path="/integrations/mcp-servers" component={McpServers} />
       <Route path="/integrations" component={Integrations} />
       <Route path="/admin" component={Admin} />

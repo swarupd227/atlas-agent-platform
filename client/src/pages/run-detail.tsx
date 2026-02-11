@@ -38,6 +38,7 @@ import {
   ToggleLeft,
   ToggleRight,
   Package,
+  AppWindow,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -46,7 +47,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatusBadge } from "@/components/status-badge";
-import type { RunTrace, RunStep, TraceSpan, McpTranscript, PlatformSetting } from "@shared/schema";
+import type { RunTrace, RunStep, TraceSpan, McpTranscript, PlatformSetting, McpApp } from "@shared/schema";
+import McpAppRenderer from "@/components/mcp-app-renderer";
 
 interface RunWithSteps extends RunTrace {
   steps: RunStep[];
@@ -869,6 +871,10 @@ export default function RunDetail() {
             <ScrollText className="w-3.5 h-3.5 mr-1.5" />
             MCP Transcript
           </TabsTrigger>
+          <TabsTrigger value="mcp-apps" data-testid="tab-mcp-apps">
+            <AppWindow className="w-3.5 h-3.5 mr-1.5" />
+            MCP Apps
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="execution">
@@ -919,7 +925,48 @@ export default function RunDetail() {
           </div>
           <McpTranscriptView runId={run.id} />
         </TabsContent>
+
+        <TabsContent value="mcp-apps">
+          <div className="flex flex-col gap-1 mb-3">
+            <h2 className="text-base font-semibold" data-testid="heading-mcp-apps">MCP App Output</h2>
+            <p className="text-xs text-muted-foreground">Interactive dashboards rendered by MCP servers for richer tool output visualization</p>
+          </div>
+          <McpAppsPanel runId={run.id} />
+        </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+function McpAppsPanel({ runId }: { runId: string }) {
+  const { data: apps, isLoading } = useQuery<McpApp[]>({ queryKey: ["/api/mcp-apps"] });
+  const activeApps = (apps || []).filter(a => a.status === "active" && a.appType === "tool_output");
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col gap-3">
+        <Skeleton className="h-[300px] w-full" />
+      </div>
+    );
+  }
+
+  if (activeApps.length === 0) {
+    return (
+      <Card>
+        <CardContent className="py-12 text-center">
+          <AppWindow className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
+          <p className="text-sm text-muted-foreground" data-testid="text-no-mcp-apps">No MCP Apps available for this run</p>
+          <p className="text-xs text-muted-foreground mt-1">MCP servers can provide interactive dashboards for richer tool output visualization</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-4" data-testid="mcp-apps-panel">
+      {activeApps.map(app => (
+        <McpAppRenderer key={app.id} appId={app.id} contextType="run" contextId={runId} />
+      ))}
     </div>
   );
 }

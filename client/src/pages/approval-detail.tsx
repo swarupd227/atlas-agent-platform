@@ -29,6 +29,7 @@ import {
   TrendingDown,
   ArrowRight,
   Wrench,
+  AppWindow,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -54,7 +55,8 @@ import {
 import { StatusBadge } from "@/components/status-badge";
 import { DiffViewer } from "@/components/diff-viewer";
 import { PermissionGate, usePermission } from "@/components/role-provider";
-import type { Approval, Agent, EvalSuite, Policy, AuditEvent } from "@shared/schema";
+import type { Approval, Agent, EvalSuite, Policy, AuditEvent, McpApp } from "@shared/schema";
+import McpAppRenderer from "@/components/mcp-app-renderer";
 
 interface ApprovalDetailData extends Approval {
   agent: Agent | null;
@@ -1236,7 +1238,34 @@ export default function ApprovalDetail() {
             </div>
           </CardContent>
         </Card>
+
+        <ApprovalMcpAppsSection approvalId={approval.id} />
       </div>
     </div>
+  );
+}
+
+function ApprovalMcpAppsSection({ approvalId }: { approvalId: string }) {
+  const { data: apps, isLoading } = useQuery<McpApp[]>({ queryKey: ["/api/mcp-apps"] });
+  const approvalApps = (apps || []).filter(a => a.status === "active" && a.appType === "approval_workflow");
+
+  if (isLoading || approvalApps.length === 0) return null;
+
+  return (
+    <Card data-testid="section-mcp-app-approval">
+      <CardHeader className="pb-3">
+        <div className="flex items-center gap-2">
+          <AppWindow className="w-4 h-4 text-muted-foreground" />
+          <CardTitle className="text-sm font-medium">Embedded Approval App</CardTitle>
+          <Badge variant="outline" className="text-[10px]">{approvalApps.length} available</Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <p className="text-xs text-muted-foreground">Interactive MCP App for multi-step approval workflows</p>
+        {approvalApps.map(app => (
+          <McpAppRenderer key={app.id} appId={app.id} contextType="approval" contextId={approvalId} />
+        ))}
+      </CardContent>
+    </Card>
   );
 }

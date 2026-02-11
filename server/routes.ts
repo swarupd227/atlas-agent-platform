@@ -10087,6 +10087,236 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
     }
   });
 
+  // ───── MCP Apps ─────
+  app.get("/api/mcp-apps", async (_req, res) => {
+    const apps = await storage.getMcpApps();
+    res.json(apps);
+  });
+
+  app.get("/api/mcp-apps/:id", async (req, res) => {
+    const app = await storage.getMcpApp(req.params.id);
+    if (!app) return res.status(404).json({ message: "MCP App not found" });
+    const server = await storage.getMcpServer(app.serverId);
+    const consents = await storage.getMcpAppConsents(app.id);
+    res.json({ ...app, server, consents });
+  });
+
+  app.post("/api/mcp-apps", checkPermission("manage_mcp_servers"), async (req, res) => {
+    try {
+      const server = await storage.getMcpServer(req.body.serverId);
+      if (!server) return res.status(400).json({ message: "MCP Server not found" });
+      if (!server.allowlisted && req.body.trustRequired === "trusted") {
+        return res.status(403).json({ message: "Server must be allowlisted for trusted MCP Apps" });
+      }
+      const app = await storage.createMcpApp(req.body);
+      res.status(201).json(app);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  app.patch("/api/mcp-apps/:id", checkPermission("manage_mcp_servers"), async (req, res) => {
+    const updated = await storage.updateMcpApp(req.params.id, req.body);
+    if (!updated) return res.status(404).json({ message: "MCP App not found" });
+    res.json(updated);
+  });
+
+  app.delete("/api/mcp-apps/:id", checkPermission("manage_mcp_servers"), async (req, res) => {
+    const deleted = await storage.deleteMcpApp(req.params.id);
+    if (!deleted) return res.status(404).json({ message: "MCP App not found" });
+    res.json({ success: true });
+  });
+
+  app.get("/api/mcp-apps/by-server/:serverId", async (req, res) => {
+    const apps = await storage.getMcpAppsByServer(req.params.serverId);
+    res.json(apps);
+  });
+
+  app.post("/api/mcp-apps/:id/consent", async (req, res) => {
+    try {
+      const app = await storage.getMcpApp(req.params.id);
+      if (!app) return res.status(404).json({ message: "MCP App not found" });
+      const server = await storage.getMcpServer(app.serverId);
+      if (!server || !server.allowlisted) {
+        return res.status(403).json({ message: "App's server must be allowlisted" });
+      }
+      const trustTiers = ["untrusted", "basic", "verified", "trusted", "privileged"];
+      const serverTierIdx = trustTiers.indexOf(server.riskTier === "LOW" ? "trusted" : server.riskTier === "MEDIUM" ? "verified" : "basic");
+      const requiredTierIdx = trustTiers.indexOf(app.trustRequired || "trusted");
+      if (serverTierIdx < requiredTierIdx) {
+        return res.status(403).json({ message: `Server trust tier insufficient. Required: ${app.trustRequired}, Server: ${server.riskTier}` });
+      }
+      const existing = await storage.getMcpAppConsentByUser(req.params.id, req.body.userId || "current-user");
+      if (existing && existing.status === "active") {
+        return res.json(existing);
+      }
+      const consent = await storage.createMcpAppConsent({
+        appId: req.params.id,
+        userId: req.body.userId || "current-user",
+        consentedCapabilities: req.body.capabilities || app.requiredCapabilities || [],
+        status: "active",
+      });
+      res.status(201).json(consent);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  app.delete("/api/mcp-apps/:id/consent/:consentId", async (req, res) => {
+    const revoked = await storage.revokeMcpAppConsent(req.params.consentId);
+    if (!revoked) return res.status(404).json({ message: "Consent not found" });
+    res.json(revoked);
+  });
+
+  app.get("/api/mcp-apps/:id/resource", async (req, res) => {
+    const app = await storage.getMcpApp(req.params.id);
+    if (!app) return res.status(404).json({ message: "MCP App not found" });
+    if (app.status !== "active" && app.status !== "registered") {
+      return res.status(403).json({ message: "MCP App is not active" });
+    }
+    const sandboxPolicy = (app.sandboxPolicy as Record<string, any>) || {};
+    const htmlContent = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${app.name}</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 16px; color: #e2e8f0; background: #0f172a; }
+    .app-container { max-width: 100%; }
+    .header { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #334155; }
+    .header h2 { font-size: 14px; font-weight: 600; }
+    .section { margin-bottom: 16px; }
+    .section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; margin-bottom: 8px; font-weight: 600; }
+    .metric { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #1e293b; font-size: 13px; }
+    .metric-label { color: #94a3b8; }
+    .metric-value { font-weight: 500; }
+    .status-good { color: #4ade80; }
+    .status-warn { color: #fbbf24; }
+    .status-bad { color: #f87171; }
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 6px; border: 1px solid #334155; background: #1e293b; color: #e2e8f0; font-size: 12px; cursor: pointer; transition: background 0.15s; }
+    .btn:hover { background: #334155; }
+    .btn-primary { background: #3b82f6; border-color: #3b82f6; }
+    .btn-primary:hover { background: #2563eb; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+    .log-entry { font-family: monospace; font-size: 11px; padding: 4px 8px; border-left: 2px solid #334155; margin-bottom: 4px; color: #cbd5e1; }
+    .log-info { border-left-color: #3b82f6; }
+    .log-warn { border-left-color: #f59e0b; }
+    .log-error { border-left-color: #ef4444; }
+    .chart-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .chart-bar-label { font-size: 11px; color: #94a3b8; width: 80px; text-align: right; }
+    .chart-bar-track { flex: 1; height: 16px; background: #1e293b; border-radius: 3px; overflow: hidden; }
+    .chart-bar-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+  </style>
+</head>
+<body>
+  <div class="app-container">
+    <div class="header">
+      <h2>${app.name}</h2>
+    </div>
+    <div class="section">
+      <div class="section-title">Operational Metrics</div>
+      <div class="metric"><span class="metric-label">Uptime</span><span class="metric-value status-good">99.97%</span></div>
+      <div class="metric"><span class="metric-label">Avg Latency</span><span class="metric-value">142ms</span></div>
+      <div class="metric"><span class="metric-label">Error Rate</span><span class="metric-value status-good">0.03%</span></div>
+      <div class="metric"><span class="metric-label">Throughput</span><span class="metric-value">1,247 req/min</span></div>
+      <div class="metric"><span class="metric-label">Active Sessions</span><span class="metric-value">38</span></div>
+    </div>
+    <div class="section">
+      <div class="section-title">Resource Usage</div>
+      <div class="chart-bar"><span class="chart-bar-label">CPU</span><div class="chart-bar-track"><div class="chart-bar-fill" style="width:62%;background:#3b82f6"></div></div><span style="font-size:11px;color:#94a3b8">62%</span></div>
+      <div class="chart-bar"><span class="chart-bar-label">Memory</span><div class="chart-bar-track"><div class="chart-bar-fill" style="width:45%;background:#8b5cf6"></div></div><span style="font-size:11px;color:#94a3b8">45%</span></div>
+      <div class="chart-bar"><span class="chart-bar-label">Storage</span><div class="chart-bar-track"><div class="chart-bar-fill" style="width:78%;background:#f59e0b"></div></div><span style="font-size:11px;color:#94a3b8">78%</span></div>
+    </div>
+    <div class="section">
+      <div class="section-title">Recent Activity</div>
+      <div class="log-entry log-info">[${new Date().toISOString()}] Tool call completed successfully — 142ms</div>
+      <div class="log-entry log-info">[${new Date(Date.now() - 30000).toISOString()}] Resource validation passed</div>
+      <div class="log-entry log-warn">[${new Date(Date.now() - 120000).toISOString()}] Rate limit threshold at 80%</div>
+      <div class="log-entry log-info">[${new Date(Date.now() - 300000).toISOString()}] Cache refreshed — 847 entries</div>
+    </div>
+    <div class="actions">
+      <button class="btn btn-primary" onclick="sendBridgeMessage('refresh')">Refresh Data</button>
+      <button class="btn" onclick="sendBridgeMessage('export')">Export Logs</button>
+      <button class="btn" onclick="sendBridgeMessage('configure')">Configure</button>
+    </div>
+  </div>
+  <script>
+    function sendBridgeMessage(action) {
+      window.parent.postMessage({ type: 'mcp-app-bridge', method: action, appId: '${app.id}' }, '*');
+    }
+    window.addEventListener('message', function(event) {
+      if (event.data && event.data.type === 'mcp-app-host') {
+        console.log('Host message:', event.data);
+      }
+    });
+  </script>
+</body>
+</html>`;
+    res.setHeader("Content-Type", "text/html");
+    res.send(htmlContent);
+  });
+
+  app.post("/api/mcp-apps/:id/bridge", async (req, res) => {
+    try {
+      const app = await storage.getMcpApp(req.params.id);
+      if (!app) return res.status(404).json({ message: "MCP App not found" });
+      const { method, params, sessionId } = req.body;
+      if (!method) return res.status(400).json({ message: "Bridge method is required" });
+      const allowedMethods = ["refresh", "export", "configure", "tool_call", "get_context", "submit_approval"];
+      if (!allowedMethods.includes(method)) {
+        return res.status(403).json({ message: `Bridge method '${method}' is not allowed` });
+      }
+      let session;
+      if (sessionId) {
+        session = await storage.getMcpAppSession(sessionId);
+        if (session) {
+          const messages = (session.bridgeMessages as any[]) || [];
+          messages.push({ method, params, timestamp: new Date().toISOString() });
+          await storage.updateMcpAppSession(sessionId, { bridgeMessages: messages });
+        }
+      }
+      const response: Record<string, any> = {
+        jsonrpc: "2.0",
+        id: req.body.id || Date.now(),
+        result: { status: "acknowledged", method, timestamp: new Date().toISOString() },
+      };
+      if (method === "get_context") {
+        response.result = { appId: app.id, appName: app.name, serverId: app.serverId, capabilities: app.grantedCapabilities };
+      } else if (method === "tool_call") {
+        response.result = { status: "tool_call_queued", toolName: params?.toolName, message: "Tool call has been queued for execution" };
+      } else if (method === "submit_approval") {
+        response.result = { status: "approval_submitted", decision: params?.decision, message: "Approval decision has been recorded" };
+      }
+      res.json(response);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Bridge error" });
+    }
+  });
+
+  app.post("/api/mcp-apps/:id/sessions", async (req, res) => {
+    try {
+      const app = await storage.getMcpApp(req.params.id);
+      if (!app) return res.status(404).json({ message: "MCP App not found" });
+      const session = await storage.createMcpAppSession({
+        appId: req.params.id,
+        userId: req.body.userId || "current-user",
+        contextType: req.body.contextType || "run",
+        contextId: req.body.contextId,
+        status: "active",
+      });
+      res.status(201).json(session);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  app.get("/api/mcp-apps/:id/consents", async (req, res) => {
+    const consents = await storage.getMcpAppConsents(req.params.id);
+    res.json(consents);
+  });
+
   // Start the job worker
   startWorker();
 

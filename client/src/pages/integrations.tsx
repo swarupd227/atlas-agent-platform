@@ -22,7 +22,7 @@ import type { LucideIcon } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
-import { Server, Wrench } from "lucide-react";
+import { Server, Wrench, AppWindow } from "lucide-react";
 import type { LoggingIntegration, ToolConnector } from "@shared/schema";
 
 const ICON_MAP: Record<string, LucideIcon> = {
@@ -1120,6 +1120,21 @@ export default function Integrations() {
                 <span className="text-xs text-muted-foreground">Prompt library — reusable workflow templates, playbooks, and structured prompts from MCP servers</span>
               </div>
               <Badge variant="secondary" className="text-[10px]">Prompts</Badge>
+            </CardContent>
+          </Link>
+        </Card>
+
+        <Card className="hover-elevate" data-testid="card-mcp-apps-link">
+          <Link href="/integrations/mcp-apps">
+            <CardContent className="flex items-center gap-4 py-4 cursor-pointer">
+              <div className="flex items-center justify-center w-10 h-10 rounded-md bg-muted shrink-0">
+                <AppWindow className="w-5 h-5 text-cyan-500" />
+              </div>
+              <div className="flex flex-col gap-0.5 flex-1">
+                <span className="text-sm font-medium">MCP Apps</span>
+                <span className="text-xs text-muted-foreground">Interactive HTML dashboards rendered inline in run and approval screens — sandboxed with trust validation</span>
+              </div>
+              <Badge variant="secondary" className="text-[10px]">Apps</Badge>
             </CardContent>
           </Link>
         </Card>

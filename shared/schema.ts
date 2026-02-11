@@ -1145,4 +1145,56 @@ export const insertPlatformSettingSchema = createInsertSchema(platformSettings);
 export type InsertPlatformSetting = z.infer<typeof insertPlatformSettingSchema>;
 export type PlatformSetting = typeof platformSettings.$inferSelect;
 
+export const mcpApps = pgTable("mcp_apps", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  serverId: varchar("server_id").notNull(),
+  toolId: varchar("tool_id"),
+  name: text("name").notNull(),
+  description: text("description"),
+  resourceUri: text("resource_uri").notNull(),
+  sandboxPolicy: jsonb("sandbox_policy").default(sql`'{"allowScripts":true,"allowForms":false,"allowPopups":false,"allowModals":false,"csp":"default-src ''self''"}'::jsonb`),
+  requiredCapabilities: text("required_capabilities").array().default(sql`'{}'::text[]`),
+  grantedCapabilities: text("granted_capabilities").array().default(sql`'{}'::text[]`),
+  trustRequired: text("trust_required").notNull().default("trusted"),
+  status: text("status").notNull().default("registered"),
+  appType: text("app_type").notNull().default("tool_output"),
+  version: text("version").default("1.0.0"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertMcpAppSchema = createInsertSchema(mcpApps).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertMcpApp = z.infer<typeof insertMcpAppSchema>;
+export type McpApp = typeof mcpApps.$inferSelect;
+
+export const mcpAppConsents = pgTable("mcp_app_consents", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  appId: varchar("app_id").notNull(),
+  userId: varchar("user_id").notNull(),
+  consentedCapabilities: text("consented_capabilities").array().default(sql`'{}'::text[]`),
+  consentedAt: timestamp("consented_at").defaultNow(),
+  revokedAt: timestamp("revoked_at"),
+  status: text("status").notNull().default("active"),
+});
+
+export const insertMcpAppConsentSchema = createInsertSchema(mcpAppConsents).omit({ id: true, consentedAt: true });
+export type InsertMcpAppConsent = z.infer<typeof insertMcpAppConsentSchema>;
+export type McpAppConsent = typeof mcpAppConsents.$inferSelect;
+
+export const mcpAppSessions = pgTable("mcp_app_sessions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  appId: varchar("app_id").notNull(),
+  userId: varchar("user_id").notNull(),
+  contextType: text("context_type").notNull().default("run"),
+  contextId: varchar("context_id"),
+  bridgeMessages: jsonb("bridge_messages").default(sql`'[]'::jsonb`),
+  status: text("status").notNull().default("active"),
+  startedAt: timestamp("started_at").defaultNow(),
+  endedAt: timestamp("ended_at"),
+});
+
+export const insertMcpAppSessionSchema = createInsertSchema(mcpAppSessions).omit({ id: true, startedAt: true });
+export type InsertMcpAppSession = z.infer<typeof insertMcpAppSessionSchema>;
+export type McpAppSession = typeof mcpAppSessions.$inferSelect;
+
 export * from "./models/chat";

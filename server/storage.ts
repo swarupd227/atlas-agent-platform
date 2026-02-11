@@ -94,6 +94,12 @@ import {
   type MarketplaceInstallRequest, type InsertMarketplaceInstallRequest,
   platformSettings,
   type PlatformSetting, type InsertPlatformSetting,
+  mcpApps,
+  type McpApp, type InsertMcpApp,
+  mcpAppConsents,
+  type McpAppConsent, type InsertMcpAppConsent,
+  mcpAppSessions,
+  type McpAppSession, type InsertMcpAppSession,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -384,6 +390,23 @@ export interface IStorage {
   getPlatformSettings(): Promise<PlatformSetting[]>;
   getPlatformSetting(key: string): Promise<PlatformSetting | undefined>;
   upsertPlatformSetting(setting: InsertPlatformSetting): Promise<PlatformSetting>;
+
+  getMcpApps(): Promise<McpApp[]>;
+  getMcpApp(id: string): Promise<McpApp | undefined>;
+  createMcpApp(app: InsertMcpApp): Promise<McpApp>;
+  updateMcpApp(id: string, data: Partial<McpApp>): Promise<McpApp | undefined>;
+  deleteMcpApp(id: string): Promise<boolean>;
+  getMcpAppsByServer(serverId: string): Promise<McpApp[]>;
+
+  getMcpAppConsents(appId: string): Promise<McpAppConsent[]>;
+  getMcpAppConsentByUser(appId: string, userId: string): Promise<McpAppConsent | undefined>;
+  createMcpAppConsent(consent: InsertMcpAppConsent): Promise<McpAppConsent>;
+  revokeMcpAppConsent(id: string): Promise<McpAppConsent | undefined>;
+
+  getMcpAppSessions(appId: string): Promise<McpAppSession[]>;
+  getMcpAppSession(id: string): Promise<McpAppSession | undefined>;
+  createMcpAppSession(session: InsertMcpAppSession): Promise<McpAppSession>;
+  updateMcpAppSession(id: string, data: Partial<McpAppSession>): Promise<McpAppSession | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1488,6 +1511,60 @@ export class DatabaseStorage implements IStorage {
       })
       .returning();
     return upserted;
+  }
+  async getMcpApps() {
+    return db.select().from(mcpApps);
+  }
+  async getMcpApp(id: string) {
+    const [app] = await db.select().from(mcpApps).where(eq(mcpApps.id, id));
+    return app;
+  }
+  async createMcpApp(app: InsertMcpApp) {
+    const [created] = await db.insert(mcpApps).values(app).returning();
+    return created;
+  }
+  async updateMcpApp(id: string, data: Partial<McpApp>) {
+    const [updated] = await db.update(mcpApps).set({ ...data, updatedAt: new Date() }).where(eq(mcpApps.id, id)).returning();
+    return updated;
+  }
+  async deleteMcpApp(id: string) {
+    const result = await db.delete(mcpApps).where(eq(mcpApps.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+  async getMcpAppsByServer(serverId: string) {
+    return db.select().from(mcpApps).where(eq(mcpApps.serverId, serverId));
+  }
+
+  async getMcpAppConsents(appId: string) {
+    return db.select().from(mcpAppConsents).where(eq(mcpAppConsents.appId, appId));
+  }
+  async getMcpAppConsentByUser(appId: string, userId: string) {
+    const results = await db.select().from(mcpAppConsents).where(eq(mcpAppConsents.appId, appId));
+    return results.find(c => c.userId === userId);
+  }
+  async createMcpAppConsent(consent: InsertMcpAppConsent) {
+    const [created] = await db.insert(mcpAppConsents).values(consent).returning();
+    return created;
+  }
+  async revokeMcpAppConsent(id: string) {
+    const [updated] = await db.update(mcpAppConsents).set({ status: "revoked", revokedAt: new Date() }).where(eq(mcpAppConsents.id, id)).returning();
+    return updated;
+  }
+
+  async getMcpAppSessions(appId: string) {
+    return db.select().from(mcpAppSessions).where(eq(mcpAppSessions.appId, appId));
+  }
+  async getMcpAppSession(id: string) {
+    const [session] = await db.select().from(mcpAppSessions).where(eq(mcpAppSessions.id, id));
+    return session;
+  }
+  async createMcpAppSession(session: InsertMcpAppSession) {
+    const [created] = await db.insert(mcpAppSessions).values(session).returning();
+    return created;
+  }
+  async updateMcpAppSession(id: string, data: Partial<McpAppSession>) {
+    const [updated] = await db.update(mcpAppSessions).set(data).where(eq(mcpAppSessions.id, id)).returning();
+    return updated;
   }
 }
 
