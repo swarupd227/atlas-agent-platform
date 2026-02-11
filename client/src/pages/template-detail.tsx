@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRoute, useLocation, Link } from "wouter";
 import type { AgentTemplate } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -268,6 +268,42 @@ export default function TemplateDetail() {
     enabled: !!templateId && !isNew,
   });
 
+  useEffect(() => {
+    if (template && editing && Object.keys(editData).length === 0) {
+      const tools = Array.isArray(template.toolsConfig) ? (template.toolsConfig as ToolConfig[]) : [];
+      const workflow = template.blueprintJson as { nodes?: WorkflowNode[] } | null;
+      const permissions = template.permissionsConfig as PermissionsConfig | null;
+      const memoryConfig = template.memoryRagConfig as MemoryRagConfig;
+      const policies = Array.isArray(template.policyBindings) ? (template.policyBindings as PolicyBinding[]) : [];
+      const evals = Array.isArray(template.evalBindings) ? (template.evalBindings as EvalBinding[]) : [];
+      const rollbackData = template.rollbackPlan as RollbackPlan;
+
+      setEditData({
+        name: template.name,
+        description: template.description || "",
+        category: template.category,
+        industry: template.industry || "cross_industry",
+        complexity: template.complexity || "medium",
+        defaultRiskTier: template.defaultRiskTier || "MEDIUM",
+        defaultAutonomyMode: template.defaultAutonomyMode || "assisted",
+        modelProvider: template.modelProvider || "openai",
+        modelName: template.modelName || "gpt-4.1",
+        tags: [...(template.tags || [])],
+        newTag: "",
+        tools: tools.map(t => ({ ...t, permissions: t.permissions ? [...t.permissions] : [] })),
+        workflowNodes: workflow?.nodes ? workflow.nodes.map(n => ({ ...n })) : [],
+        dataAccess: permissions?.dataAccess ? permissions.dataAccess.join(", ") : "",
+        apiAccess: permissions?.apiAccess ? permissions.apiAccess.join(", ") : "",
+        writeAccess: permissions?.writeAccess ? permissions.writeAccess.join(", ") : "",
+        memoryRagConfig: memoryConfig ? { ...memoryConfig } : null,
+        policyBindings: policies.map(p => ({ ...p })),
+        evalBindings: evals.map(e => ({ ...e })),
+        rollbackPlan: rollbackData ? { triggerConditions: [...rollbackData.triggerConditions], rollbackTargetVersion: rollbackData.rollbackTargetVersion } : null,
+        newTriggerCondition: "",
+      });
+    }
+  }, [template, editing]);
+
   const createMutation = useMutation({
     mutationFn: async (data: Record<string, any>) => {
       const res = await apiRequest("POST", "/api/agent-templates", data);
@@ -529,19 +565,27 @@ export default function TemplateDetail() {
           <div className="flex-1 min-w-0">
             {editing ? (
               <div className="flex flex-col gap-2">
-                <Input
-                  value={editData.name}
-                  onChange={(e) => setEditData({ ...editData, name: e.target.value })}
-                  className="font-semibold text-lg"
-                  data-testid="input-template-name"
-                />
-                <Textarea
-                  value={editData.description}
-                  onChange={(e) => setEditData({ ...editData, description: e.target.value })}
-                  className="text-sm"
-                  rows={2}
-                  data-testid="input-template-description"
-                />
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Template Name</label>
+                  <Input
+                    value={editData.name || ""}
+                    onChange={(e) => setEditData({ ...editData, name: e.target.value })}
+                    className="font-semibold text-lg"
+                    placeholder="Enter template name"
+                    data-testid="input-template-name"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Description</label>
+                  <Textarea
+                    value={editData.description || ""}
+                    onChange={(e) => setEditData({ ...editData, description: e.target.value })}
+                    className="text-sm"
+                    rows={2}
+                    placeholder="Describe what this agent template does"
+                    data-testid="input-template-description"
+                  />
+                </div>
               </div>
             ) : (
               <>
@@ -555,58 +599,73 @@ export default function TemplateDetail() {
 
       <div className="flex items-center gap-2 flex-wrap">
         {editing ? (
-          <>
-            <Select value={editData.category} onValueChange={(v) => setEditData({ ...editData, category: v })}>
-              <SelectTrigger className="w-44" data-testid="select-edit-category">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {allCategories.map(c => (
-                  <SelectItem key={c} value={c}>{categoryLabels[c]}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={editData.industry} onValueChange={(v) => setEditData({ ...editData, industry: v })}>
-              <SelectTrigger className="w-44" data-testid="select-edit-industry">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {allIndustries.map(i => (
-                  <SelectItem key={i} value={i}>{industryLabels[i]}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={editData.complexity} onValueChange={(v) => setEditData({ ...editData, complexity: v })}>
-              <SelectTrigger className="w-32" data-testid="select-edit-complexity">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {complexityOptions.map(c => (
-                  <SelectItem key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={editData.defaultRiskTier} onValueChange={(v) => setEditData({ ...editData, defaultRiskTier: v })}>
-              <SelectTrigger className="w-32" data-testid="select-edit-risk-tier">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {riskTierOptions.map(r => (
-                  <SelectItem key={r} value={r}>{r}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={editData.defaultAutonomyMode} onValueChange={(v) => setEditData({ ...editData, defaultAutonomyMode: v })}>
-              <SelectTrigger className="w-36" data-testid="select-edit-autonomy">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {autonomyOptions.map(a => (
-                  <SelectItem key={a} value={a}>{a.charAt(0).toUpperCase() + a.slice(1)}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </>
+          <div className="flex items-end gap-2 flex-wrap">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Category</label>
+              <Select value={editData.category || "general"} onValueChange={(v) => setEditData({ ...editData, category: v })}>
+                <SelectTrigger className="w-44" data-testid="select-edit-category">
+                  <SelectValue placeholder="Category" />
+                </SelectTrigger>
+                <SelectContent>
+                  {allCategories.map(c => (
+                    <SelectItem key={c} value={c}>{categoryLabels[c]}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Industry</label>
+              <Select value={editData.industry || "cross_industry"} onValueChange={(v) => setEditData({ ...editData, industry: v })}>
+                <SelectTrigger className="w-44" data-testid="select-edit-industry">
+                  <SelectValue placeholder="Industry" />
+                </SelectTrigger>
+                <SelectContent>
+                  {allIndustries.map(i => (
+                    <SelectItem key={i} value={i}>{industryLabels[i]}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Complexity</label>
+              <Select value={editData.complexity || "medium"} onValueChange={(v) => setEditData({ ...editData, complexity: v })}>
+                <SelectTrigger className="w-32" data-testid="select-edit-complexity">
+                  <SelectValue placeholder="Complexity" />
+                </SelectTrigger>
+                <SelectContent>
+                  {complexityOptions.map(c => (
+                    <SelectItem key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Risk Tier</label>
+              <Select value={editData.defaultRiskTier || "MEDIUM"} onValueChange={(v) => setEditData({ ...editData, defaultRiskTier: v })}>
+                <SelectTrigger className="w-32" data-testid="select-edit-risk-tier">
+                  <SelectValue placeholder="Risk Tier" />
+                </SelectTrigger>
+                <SelectContent>
+                  {riskTierOptions.map(r => (
+                    <SelectItem key={r} value={r}>{r}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Autonomy</label>
+              <Select value={editData.defaultAutonomyMode || "assisted"} onValueChange={(v) => setEditData({ ...editData, defaultAutonomyMode: v })}>
+                <SelectTrigger className="w-36" data-testid="select-edit-autonomy">
+                  <SelectValue placeholder="Autonomy" />
+                </SelectTrigger>
+                <SelectContent>
+                  {autonomyOptions.map(a => (
+                    <SelectItem key={a} value={a}>{a.charAt(0).toUpperCase() + a.slice(1)}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
         ) : (
           <>
             <Badge variant="outline" className="text-[10px]">{categoryLabels[displayTemplate?.category || "general"] || displayTemplate?.category}</Badge>
@@ -664,18 +723,24 @@ export default function TemplateDetail() {
             </div>
             {editing ? (
               <div className="flex flex-col gap-2 mt-2">
-                <Input
-                  value={editData.modelProvider}
-                  onChange={(e) => setEditData({ ...editData, modelProvider: e.target.value })}
-                  placeholder="Provider"
-                  data-testid="input-edit-model-provider"
-                />
-                <Input
-                  value={editData.modelName}
-                  onChange={(e) => setEditData({ ...editData, modelName: e.target.value })}
-                  placeholder="Model name"
-                  data-testid="input-edit-model-name"
-                />
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1 block">Provider</label>
+                  <Input
+                    value={editData.modelProvider || ""}
+                    onChange={(e) => setEditData({ ...editData, modelProvider: e.target.value })}
+                    placeholder="e.g., openai, anthropic, google"
+                    data-testid="input-edit-model-provider"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1 block">Model Name</label>
+                  <Input
+                    value={editData.modelName || ""}
+                    onChange={(e) => setEditData({ ...editData, modelName: e.target.value })}
+                    placeholder="e.g., gpt-4.1, claude-sonnet-4-20250514"
+                    data-testid="input-edit-model-name"
+                  />
+                </div>
               </div>
             ) : (
               <p className="text-sm font-medium mt-1" data-testid="text-model-config">{displayTemplate?.modelProvider} / {displayTemplate?.modelName}</p>
@@ -923,39 +988,54 @@ export default function TemplateDetail() {
             {editing ? (
               editData.memoryRagConfig ? (
                 <div className="flex flex-col gap-2">
-                  <Input
-                    value={editData.memoryRagConfig.vectorStore}
-                    onChange={(e) => setEditData({ ...editData, memoryRagConfig: { ...editData.memoryRagConfig, vectorStore: e.target.value } })}
-                    placeholder="Vector store"
-                    data-testid="input-edit-vector-store"
-                  />
-                  <Input
-                    value={editData.memoryRagConfig.retrievalStrategy}
-                    onChange={(e) => setEditData({ ...editData, memoryRagConfig: { ...editData.memoryRagConfig, retrievalStrategy: e.target.value } })}
-                    placeholder="Retrieval strategy"
-                    data-testid="input-edit-retrieval-strategy"
-                  />
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">Vector Store</label>
+                    <Input
+                      value={editData.memoryRagConfig.vectorStore}
+                      onChange={(e) => setEditData({ ...editData, memoryRagConfig: { ...editData.memoryRagConfig, vectorStore: e.target.value } })}
+                      placeholder="e.g., pinecone, weaviate, chromadb"
+                      data-testid="input-edit-vector-store"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">Retrieval Strategy</label>
+                    <Input
+                      value={editData.memoryRagConfig.retrievalStrategy}
+                      onChange={(e) => setEditData({ ...editData, memoryRagConfig: { ...editData.memoryRagConfig, retrievalStrategy: e.target.value } })}
+                      placeholder="e.g., similarity, hybrid, mmr"
+                      data-testid="input-edit-retrieval-strategy"
+                    />
+                  </div>
                   <div className="grid grid-cols-3 gap-2">
-                    <Input
-                      type="number"
-                      value={editData.memoryRagConfig.chunkSize}
-                      onChange={(e) => setEditData({ ...editData, memoryRagConfig: { ...editData.memoryRagConfig, chunkSize: parseInt(e.target.value) || 0 } })}
-                      placeholder="Chunk size"
-                      data-testid="input-edit-chunk-size"
-                    />
-                    <Input
-                      value={editData.memoryRagConfig.embeddingModel}
-                      onChange={(e) => setEditData({ ...editData, memoryRagConfig: { ...editData.memoryRagConfig, embeddingModel: e.target.value } })}
-                      placeholder="Embedding model"
-                      data-testid="input-edit-embedding-model"
-                    />
-                    <Input
-                      type="number"
-                      value={editData.memoryRagConfig.topK}
-                      onChange={(e) => setEditData({ ...editData, memoryRagConfig: { ...editData.memoryRagConfig, topK: parseInt(e.target.value) || 0 } })}
-                      placeholder="Top K"
-                      data-testid="input-edit-top-k"
-                    />
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-1 block">Chunk Size</label>
+                      <Input
+                        type="number"
+                        value={editData.memoryRagConfig.chunkSize}
+                        onChange={(e) => setEditData({ ...editData, memoryRagConfig: { ...editData.memoryRagConfig, chunkSize: parseInt(e.target.value) || 0 } })}
+                        placeholder="512"
+                        data-testid="input-edit-chunk-size"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-1 block">Embedding Model</label>
+                      <Input
+                        value={editData.memoryRagConfig.embeddingModel}
+                        onChange={(e) => setEditData({ ...editData, memoryRagConfig: { ...editData.memoryRagConfig, embeddingModel: e.target.value } })}
+                        placeholder="text-embedding-3-small"
+                        data-testid="input-edit-embedding-model"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-1 block">Top K</label>
+                      <Input
+                        type="number"
+                        value={editData.memoryRagConfig.topK}
+                        onChange={(e) => setEditData({ ...editData, memoryRagConfig: { ...editData.memoryRagConfig, topK: parseInt(e.target.value) || 0 } })}
+                        placeholder="5"
+                        data-testid="input-edit-top-k"
+                      />
+                    </div>
                   </div>
                 </div>
               ) : (
