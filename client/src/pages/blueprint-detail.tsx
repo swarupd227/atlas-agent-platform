@@ -12,6 +12,21 @@ interface McpResourceBrief {
   approvalStatus: string;
   serverName: string;
 }
+
+interface McpPromptBrief {
+  id: string;
+  name: string;
+  description: string | null;
+  arguments: Array<{ name: string; description: string; required: boolean }> | null;
+  publishedStatus: string;
+  approvalStatus: string;
+  serverName: string;
+}
+
+interface PromptBinding {
+  promptId: string;
+  argumentMappings: Record<string, string>;
+}
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -24,7 +39,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
   Brain, Wrench, Database, GitBranch, Split, UserCheck, Shield,
   Plus, Trash2, Save, Play, PenTool, ArrowLeft, AlertTriangle,
-  CheckCircle, ChevronDown, ChevronRight, X, MousePointer, Link2, FileText,
+  CheckCircle, ChevronDown, ChevronRight, X, MousePointer, Link2, FileText, MessageSquare,
 } from "lucide-react";
 
 type BpNode = { id: string; type: string; label: string; [key: string]: any };
@@ -72,6 +87,7 @@ export default function BlueprintDetail() {
   });
   const { data: agents } = useQuery<Agent[]>({ queryKey: ["/api/agents"] });
   const { data: mcpResources } = useQuery<McpResourceBrief[]>({ queryKey: ["/api/mcp-resources"] });
+  const { data: mcpPrompts } = useQuery<McpPromptBrief[]>({ queryKey: ["/api/mcp-prompts"] });
 
   const [nodes, setNodes] = useState<BpNode[]>([]);
   const [edges, setEdges] = useState<BpEdge[]>([]);
@@ -85,7 +101,9 @@ export default function BlueprintDetail() {
   const [localValidation, setLocalValidation] = useState<ValidationResults | null>(null);
   const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
   const [contextSourcesOpen, setContextSourcesOpen] = useState(false);
+  const [promptNodesOpen, setPromptNodesOpen] = useState(false);
   const [attachedResourceIds, setAttachedResourceIds] = useState<Set<string>>(new Set());
+  const [promptBindings, setPromptBindings] = useState<PromptBinding[]>([]);
 
   useEffect(() => {
     if (blueprint) {
@@ -96,6 +114,7 @@ export default function BlueprintDetail() {
       setDirty(false);
       if (blueprint.validationResults) setLocalValidation(blueprint.validationResults as ValidationResults);
       if (bj?.contextSources) setAttachedResourceIds(new Set(bj.contextSources));
+      if (bj?.promptBindings) setPromptBindings(bj.promptBindings);
     }
   }, [blueprint]);
 
@@ -162,7 +181,7 @@ export default function BlueprintDetail() {
   const saveMutation = useMutation({
     mutationFn: async () => {
       await apiRequest("PATCH", `/api/blueprints/${id}`, {
-        blueprintJson: { nodes, edges, contextSources: Array.from(attachedResourceIds) },
+        blueprintJson: { nodes, edges, contextSources: Array.from(attachedResourceIds), promptBindings },
         name: blueprintName,
       });
     },
@@ -635,6 +654,88 @@ export default function BlueprintDetail() {
                     </>
                   ) : (
                     <p className="text-xs text-muted-foreground text-center py-3" data-testid="text-no-context-sources">No MCP resources available</p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="border-t mx-4">
+              <button
+                className="flex items-center gap-2 py-3 w-full text-left"
+                onClick={() => setPromptNodesOpen(!promptNodesOpen)}
+                data-testid="button-toggle-prompt-nodes"
+              >
+                {promptNodesOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                <MessageSquare className="w-3.5 h-3.5 text-muted-foreground" />
+                <span className="text-xs font-medium text-muted-foreground">Prompt Nodes ({promptBindings.length})</span>
+              </button>
+              {promptNodesOpen && (
+                <div className="flex flex-col gap-2 pb-4">
+                  {mcpPrompts && mcpPrompts.filter(p => p.publishedStatus === "published").length > 0 ? (
+                    <>
+                      {mcpPrompts
+                        .filter(p => p.publishedStatus === "published")
+                        .map(p => {
+                          const binding = promptBindings.find(b => b.promptId === p.id);
+                          const isBound = !!binding;
+                          return (
+                            <div key={p.id} className="flex flex-col gap-1.5">
+                              <div
+                                className={`flex items-start gap-2 p-2 rounded-md cursor-pointer ${isBound ? "bg-primary/10 border border-primary/20" : "bg-muted/50 hover-elevate"}`}
+                                onClick={() => {
+                                  if (isBound) {
+                                    setPromptBindings(prev => prev.filter(b => b.promptId !== p.id));
+                                  } else {
+                                    setPromptBindings(prev => [...prev, { promptId: p.id, argumentMappings: {} }]);
+                                  }
+                                  setDirty(true);
+                                }}
+                                data-testid={`prompt-node-${p.id}`}
+                              >
+                                <MessageSquare className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                                <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+                                  <span className="text-xs font-medium truncate">{p.name}</span>
+                                  <span className="text-[10px] text-muted-foreground truncate">{p.description || "No description"}</span>
+                                  <div className="flex items-center gap-1 flex-wrap">
+                                    <Badge variant="outline" className="text-[9px]">{p.serverName}</Badge>
+                                    {p.arguments && <Badge variant="outline" className="text-[9px]">{p.arguments.length} args</Badge>}
+                                  </div>
+                                </div>
+                                {isBound && <CheckCircle className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />}
+                              </div>
+                              {isBound && p.arguments && p.arguments.length > 0 && (
+                                <div className="ml-5 flex flex-col gap-1 pb-1">
+                                  {p.arguments.map(arg => (
+                                    <div key={arg.name} className="flex items-center gap-1.5">
+                                      <span className="text-[10px] text-muted-foreground w-16 shrink-0 truncate" title={arg.name}>{arg.name}{arg.required ? "*" : ""}</span>
+                                      <Input
+                                        className="h-6 text-[10px] px-1.5"
+                                        placeholder={`Map to variable...`}
+                                        value={binding?.argumentMappings[arg.name] || ""}
+                                        onClick={e => e.stopPropagation()}
+                                        onChange={e => {
+                                          const val = e.target.value;
+                                          setPromptBindings(prev =>
+                                            prev.map(b =>
+                                              b.promptId === p.id
+                                                ? { ...b, argumentMappings: { ...b.argumentMappings, [arg.name]: val } }
+                                                : b
+                                            )
+                                          );
+                                          setDirty(true);
+                                        }}
+                                        data-testid={`input-arg-mapping-${p.id}-${arg.name}`}
+                                      />
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                    </>
+                  ) : (
+                    <p className="text-xs text-muted-foreground text-center py-3" data-testid="text-no-prompt-nodes">No published prompts available</p>
                   )}
                 </div>
               )}

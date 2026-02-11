@@ -1108,6 +1108,21 @@ export default function Integrations() {
             </CardContent>
           </Link>
         </Card>
+
+        <Card className="hover-elevate" data-testid="card-mcp-prompts-link">
+          <Link href="/integrations/mcp-prompts">
+            <CardContent className="flex items-center gap-4 py-4 cursor-pointer">
+              <div className="flex items-center justify-center w-10 h-10 rounded-md bg-muted shrink-0">
+                <MessagesSquare className="w-5 h-5 text-purple-500" />
+              </div>
+              <div className="flex flex-col gap-0.5 flex-1">
+                <span className="text-sm font-medium">MCP Prompts</span>
+                <span className="text-xs text-muted-foreground">Prompt library — reusable workflow templates, playbooks, and structured prompts from MCP servers</span>
+              </div>
+              <Badge variant="secondary" className="text-[10px]">Prompts</Badge>
+            </CardContent>
+          </Link>
+        </Card>
       </div>
 
       <Tabs defaultValue="catalog" data-testid="tabs-integrations">

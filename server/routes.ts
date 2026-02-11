@@ -8213,7 +8213,44 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
         { serverId: server.id, uri: `docs://guides/deployment-checklist`, name: "Deployment Guide", description: "Step-by-step deployment checklist and procedures", mimeType: "text/markdown", size: 18432, sensitivityLevel: "internal", approvalStatus: "auto_approved", freshnessStatus: "fresh", subscribed: false, contentType: "text", owner: "devops-team" },
       ];
       const samplePrompts = [
-        { serverId: server.id, name: "summarize", description: "Summarize a document or dataset", arguments: [{ name: "content", description: "Content to summarize", required: true }] },
+        {
+          serverId: server.id, name: "summarize", description: "Summarize a document or dataset into key points",
+          arguments: [{ name: "content", description: "Content to summarize", required: true }, { name: "format", description: "Output format: bullets, paragraph, or executive", required: false }],
+          messages: [{ role: "system", content: "You are a concise summarizer. Extract the key points from the provided content." }, { role: "user", content: "Summarize the following:\n\n{{content}}\n\nFormat: {{format}}" }],
+          publishedStatus: "published", publishedBy: "domain-expert", approvalStatus: "not_required", owner: "content-team",
+        },
+        {
+          serverId: server.id, name: "classify-ticket", description: "Classify a support ticket by priority and category",
+          arguments: [{ name: "subject", description: "Ticket subject line", required: true }, { name: "body", description: "Ticket body text", required: true }, { name: "customer_tier", description: "Customer tier: free, standard, premium, enterprise", required: false }],
+          messages: [{ role: "system", content: "You are a ticket classification agent. Determine priority (P0-P3) and category (billing, technical, account, feature_request)." }, { role: "user", content: "Subject: {{subject}}\nBody: {{body}}\nCustomer Tier: {{customer_tier}}" }],
+          publishedStatus: "published", publishedBy: "domain-expert", approvalStatus: "not_required", owner: "support-team",
+        },
+        {
+          serverId: server.id, name: "generate-response", description: "Generate a customer-facing response using knowledge base context",
+          arguments: [{ name: "query", description: "Customer query", required: true }, { name: "kb_context", description: "Retrieved knowledge base articles", required: true }, { name: "tone", description: "Response tone: formal, friendly, empathetic", required: false }],
+          messages: [{ role: "system", content: "You are a support agent. Draft a response using the knowledge base context. Never fabricate information." }, { role: "user", content: "Customer query: {{query}}\n\nKnowledge base context:\n{{kb_context}}\n\nTone: {{tone}}" }],
+          publishedStatus: "published", publishedBy: "domain-expert", approvalStatus: "approved", approvedBy: "security-admin", owner: "support-team",
+          embeddedResourceRefs: ["mcp://knowledge-base/articles", "mcp://customer-data/profiles"],
+        },
+        {
+          serverId: server.id, name: "analyze-sentiment", description: "Analyze customer sentiment from interaction history",
+          arguments: [{ name: "messages", description: "Array of customer messages", required: true }],
+          messages: [{ role: "system", content: "Analyze the sentiment of the customer interaction. Return: overall_sentiment (positive/neutral/negative), confidence (0-1), escalation_recommended (boolean)." }, { role: "user", content: "Analyze sentiment for:\n{{messages}}" }],
+          publishedStatus: "draft", approvalStatus: "not_required", owner: "analytics-team",
+        },
+        {
+          serverId: server.id, name: "pii-redaction-check", description: "Scan draft responses for PII before sending to customers",
+          arguments: [{ name: "draft", description: "Draft response text", required: true }, { name: "redaction_level", description: "R0 (none), R1 (standard), R2 (strict)", required: true }],
+          messages: [{ role: "system", content: "Scan the text for PII (SSN, credit cards, addresses, phone numbers). Apply the specified redaction level. Return redacted text and a list of findings." }, { role: "user", content: "Redaction level: {{redaction_level}}\n\nDraft:\n{{draft}}" }],
+          publishedStatus: "draft", approvalStatus: "pending_approval", owner: "security-team",
+          embeddedResourceRefs: ["mcp://compliance/pii-patterns", "mcp://customer-data/profiles"],
+        },
+        {
+          serverId: server.id, name: "escalation-decision", description: "Decide whether a ticket should be escalated to a human agent",
+          arguments: [{ name: "ticket_summary", description: "Brief ticket summary", required: true }, { name: "confidence_score", description: "AI confidence score (0-1)", required: true }, { name: "policy_violations", description: "List of policy violations detected", required: false }],
+          messages: [{ role: "system", content: "Determine if this ticket requires human escalation. Consider: confidence below 0.7, policy violations, customer tier, and issue severity." }, { role: "user", content: "Ticket: {{ticket_summary}}\nConfidence: {{confidence_score}}\nViolations: {{policy_violations}}" }],
+          publishedStatus: "published", publishedBy: "domain-expert", approvalStatus: "not_required", owner: "support-team",
+        },
       ];
 
       await storage.deleteMcpServerToolsByServer(server.id);
@@ -8667,6 +8704,149 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
       });
 
       res.json({ approvalRequired: true, resource: updated });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to request approval" });
+    }
+  });
+
+  // ── MCP Prompts API ──────────────────────────────────────────────────
+  const mcpPromptPatchSchema = z.object({
+    publishedStatus: z.enum(["draft", "published"]).optional(),
+    owner: z.string().nullable().optional(),
+  }).strict();
+
+  app.get("/api/mcp-prompts", async (_req, res) => {
+    try {
+      const prompts = await storage.getAllMcpServerPrompts();
+      const servers = await storage.getMcpServers();
+      const serverMap = new Map(servers.map(s => [s.id, s]));
+      const enriched = prompts.map(p => ({
+        ...p,
+        serverName: serverMap.get(p.serverId)?.name || "Unknown",
+        serverStatus: serverMap.get(p.serverId)?.status || "unknown",
+      }));
+      res.json(enriched);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch MCP prompts" });
+    }
+  });
+
+  app.get("/api/mcp-prompts/:id", async (req, res) => {
+    try {
+      const prompt = await storage.getMcpServerPromptById(req.params.id);
+      if (!prompt) return res.status(404).json({ message: "Prompt not found" });
+      const servers = await storage.getMcpServers();
+      const server = servers.find(s => s.id === prompt.serverId);
+      res.json({
+        ...prompt,
+        serverName: server?.name || "Unknown",
+        serverStatus: server?.status || "unknown",
+      });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch prompt" });
+    }
+  });
+
+  app.patch("/api/mcp-prompts/:id", checkPermission("manage_mcp_servers"), async (req, res) => {
+    try {
+      const parsed = mcpPromptPatchSchema.parse(req.body);
+      const prompt = await storage.getMcpServerPromptById(req.params.id);
+      if (!prompt) return res.status(404).json({ message: "Prompt not found" });
+
+      const role = getRequestRole(req);
+
+      if (parsed.publishedStatus === "published") {
+        if (prompt.publishedStatus !== "published") {
+          if (role !== "domain_expert" && role !== "admin") {
+            return res.status(403).json({ message: "Only Domain Expert or Admin can publish prompts" });
+          }
+          (parsed as any).publishedBy = role;
+        }
+        const refs = prompt.embeddedResourceRefs as string[] | null;
+        if (refs && refs.length > 0 && prompt.approvalStatus !== "approved") {
+          return res.status(403).json({
+            message: "Prompt embeds external resources. Security Admin approval required before publishing.",
+            requiresApproval: true,
+          });
+        }
+      }
+
+      const updated = await storage.updateMcpServerPrompt(prompt.id, parsed);
+      if (!updated) return res.status(500).json({ message: "Failed to update prompt" });
+      await storage.createAuditEvent({
+        action: "mcp_prompt.updated",
+        objectType: "mcp_server_prompt",
+        objectId: prompt.id,
+        actorId: role,
+        details: JSON.stringify({ changes: parsed }),
+      });
+      res.json(updated);
+    } catch (err: any) {
+      if (err?.name === "ZodError") return res.status(400).json({ message: "Invalid request", errors: err.errors });
+      res.status(500).json({ message: "Failed to update prompt" });
+    }
+  });
+
+  app.post("/api/mcp-prompts/:id/approve", checkPermission("manage_mcp_servers"), async (req, res) => {
+    try {
+      const { action: approvalAction } = req.body as { action: string };
+      if (!["approve", "deny"].includes(approvalAction)) {
+        return res.status(400).json({ message: "action must be 'approve' or 'deny'" });
+      }
+      const prompt = await storage.getMcpServerPromptById(req.params.id);
+      if (!prompt) return res.status(404).json({ message: "Prompt not found" });
+
+      const role = getRequestRole(req);
+      if (role !== "compliance_security" && role !== "admin") {
+        return res.status(403).json({ message: "Only Security Admin can approve prompts with sensitive embedded resources" });
+      }
+
+      const updated = await storage.updateMcpServerPrompt(prompt.id, {
+        approvalStatus: approvalAction === "approve" ? "approved" : "denied",
+        approvedBy: role,
+        approvedAt: new Date(),
+      });
+
+      await storage.createAuditEvent({
+        action: `mcp_prompt.${approvalAction === "approve" ? "approved" : "denied"}`,
+        objectType: "mcp_server_prompt",
+        objectId: prompt.id,
+        actorId: role,
+        details: JSON.stringify({ name: prompt.name, embeddedResourceRefs: prompt.embeddedResourceRefs }),
+      });
+
+      res.json(updated);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to process approval" });
+    }
+  });
+
+  app.post("/api/mcp-prompts/:id/request-approval", checkPermission("manage_mcp_servers"), async (req, res) => {
+    try {
+      const prompt = await storage.getMcpServerPromptById(req.params.id);
+      if (!prompt) return res.status(404).json({ message: "Prompt not found" });
+
+      const refs = prompt.embeddedResourceRefs as string[] | null;
+      if (!refs || refs.length === 0) {
+        const updated = await storage.updateMcpServerPrompt(prompt.id, {
+          approvalStatus: "not_required",
+        });
+        return res.json({ autoApproved: true, prompt: updated });
+      }
+
+      const updated = await storage.updateMcpServerPrompt(prompt.id, {
+        approvalStatus: "pending_approval",
+      });
+
+      await storage.createAuditEvent({
+        action: "mcp_prompt.approval_requested",
+        objectType: "mcp_server_prompt",
+        objectId: prompt.id,
+        actorId: getRequestRole(req),
+        details: JSON.stringify({ name: prompt.name, embeddedResourceRefs: refs }),
+      });
+
+      res.json({ approvalRequired: true, prompt: updated });
     } catch (err) {
       res.status(500).json({ message: "Failed to request approval" });
     }
