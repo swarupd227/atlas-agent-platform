@@ -31,6 +31,10 @@ import {
   Layers,
   Play,
   Trash2,
+  Loader2,
+  Pencil,
+  Save,
+  Wand2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -1937,80 +1941,17 @@ export default function Governance() {
           </div>
 
           {selectedPack && (
-            <Dialog open={!!selectedPackId} onOpenChange={(open) => { if (!open) setSelectedPackId(null); }}>
-              <DialogContent className="max-w-xl max-h-[80vh] overflow-y-auto">
-                <DialogHeader>
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="space-y-1">
-                      <DialogTitle>{selectedPack.name}</DialogTitle>
-                      <p className="text-sm text-muted-foreground">{selectedPack.description}</p>
-                    </div>
-                  </div>
-                </DialogHeader>
-                <div className="space-y-4 mt-2">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <Badge variant="secondary">
-                      <ShieldCheck className="h-3 w-3 mr-1" />
-                      {selectedPack.framework}
-                    </Badge>
-                    <Badge variant="outline" className={`${
-                      selectedPack.riskLevel === "critical" ? "text-red-600 dark:text-red-400" :
-                      selectedPack.riskLevel === "high" ? "text-amber-600 dark:text-amber-400" :
-                      selectedPack.riskLevel === "medium" ? "text-blue-600 dark:text-blue-400" :
-                      "text-green-600 dark:text-green-400"
-                    }`}>
-                      {selectedPack.riskLevel.toUpperCase()} RISK
-                    </Badge>
-                    <Badge variant="outline">
-                      {selectedPack.policies.length} {selectedPack.policies.length === 1 ? "policy" : "policies"}
-                    </Badge>
-                  </div>
-
-                  <div className="space-y-3">
-                    <h4 className="text-sm font-medium">Included Policies</h4>
-                    {selectedPack.policies.map((p, idx) => {
-                      const DIcon = domainIcons[p.domain] || Shield;
-                      return (
-                        <Card key={idx}>
-                          <CardContent className="p-4 space-y-2">
-                            <div className="flex items-center gap-2">
-                              <DIcon className="h-4 w-4 text-muted-foreground shrink-0" />
-                              <span className="text-sm font-medium">{p.name}</span>
-                              <Badge variant="outline" className="text-[10px] ml-auto">{p.domain.replace(/_/g, " ")}</Badge>
-                            </div>
-                            <p className="text-xs text-muted-foreground">{p.description}</p>
-                            <details className="group">
-                              <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground transition-colors" data-testid={`toggle-policy-json-${idx}`}>
-                                View policy rules
-                              </summary>
-                              <pre className="mt-2 text-[11px] bg-muted/50 p-3 rounded-md overflow-x-auto">
-                                {JSON.stringify(p.policyJson, null, 2)}
-                              </pre>
-                            </details>
-                          </CardContent>
-                        </Card>
-                      );
-                    })}
-                  </div>
-
-                  <Button
-                    className="w-full"
-                    disabled={activatedPacks.has(selectedPack.id) || activatePackMutation.isPending}
-                    onClick={() => {
-                      activatePackMutation.mutate(selectedPack);
-                      setSelectedPackId(null);
-                    }}
-                    data-testid="button-activate-pack-dialog"
-                  >
-                    {activatedPacks.has(selectedPack.id) ? (
-                      <><Check className="h-4 w-4 mr-2" /> Already Activated</>
-                    ) : (
-                      <><Sparkles className="h-4 w-4 mr-2" /> Activate Pack ({selectedPack.policies.length} policies)</>
-                    )}
-                  </Button>
-                </div>
-              </DialogContent>
-            </Dialog>
+            <PolicyPackDetailDialog
+              pack={selectedPack}
+              open={!!selectedPackId}
+              onOpenChange={(open) => { if (!open) setSelectedPackId(null); }}
+              isActivated={activatedPacks.has(selectedPack.id)}
+              onActivate={(pack) => {
+                activatePackMutation.mutate(pack);
+                setSelectedPackId(null);
+              }}
+              activating={activatePackMutation.isPending}
+            />
           )}
         </TabsContent>
 
@@ -2680,5 +2621,231 @@ function WhatIfAnalysis({ policies }: { policies: Policy[] }) {
         </div>
       )}
     </div>
+  );
+}
+
+function PolicyPackDetailDialog({
+  pack,
+  open,
+  onOpenChange,
+  isActivated,
+  onActivate,
+  activating,
+}: {
+  pack: PolicyPack;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  isActivated: boolean;
+  onActivate: (pack: PolicyPack) => void;
+  activating: boolean;
+}) {
+  const { toast } = useToast();
+  const { industry } = useIndustry();
+  const [editingIdx, setEditingIdx] = useState<number | null>(null);
+  const [editedRules, setEditedRules] = useState<Record<number, string>>({});
+  const [enhancedPolicies, setEnhancedPolicies] = useState<Record<number, Record<string, unknown>>>({});
+  const [enhancingIdx, setEnhancingIdx] = useState<number | null>(null);
+
+  const industryLabel: Record<string, string> = {
+    financial_services: "Financial Services",
+    healthcare: "Healthcare & Life Sciences",
+    manufacturing: "Manufacturing & Supply Chain",
+    retail: "Retail & E-Commerce",
+  };
+
+  const enhanceMutation = useMutation({
+    mutationFn: async ({ policy, idx }: { policy: PolicyPackPolicy; idx: number }) => {
+      setEnhancingIdx(idx);
+      const res = await apiRequest("POST", "/api/ai/enhance-policy-rules", {
+        policyName: policy.name,
+        domain: policy.domain,
+        description: policy.description,
+        framework: pack.framework,
+        industry: industryLabel[pack.industry] || pack.industry,
+        existingRules: enhancedPolicies[idx] || policy.policyJson,
+      });
+      return { data: await res.json(), idx };
+    },
+    onSuccess: ({ data, idx }) => {
+      setEnhancedPolicies((prev) => ({ ...prev, [idx]: data.enhancedRules }));
+      setEditedRules((prev) => ({ ...prev, [idx]: JSON.stringify(data.enhancedRules, null, 2) }));
+      setEditingIdx(idx);
+      setEnhancingIdx(null);
+      toast({ title: "Policy rules enhanced", description: "Review the enriched rules and save when ready" });
+    },
+    onError: (err: Error) => {
+      setEnhancingIdx(null);
+      toast({ title: "Enhancement failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  function handleSaveRules(idx: number) {
+    try {
+      const parsed = JSON.parse(editedRules[idx]);
+      setEnhancedPolicies((prev) => ({ ...prev, [idx]: parsed }));
+      setEditingIdx(null);
+      toast({ title: "Rules saved", description: "Enhanced rules will be used when you activate this pack" });
+    } catch {
+      toast({ title: "Invalid JSON", description: "Please fix the JSON syntax before saving", variant: "destructive" });
+    }
+  }
+
+  function getEffectiveRules(idx: number): Record<string, unknown> {
+    return enhancedPolicies[idx] || pack.policies[idx].policyJson;
+  }
+
+  function handleActivateWithEnhancements() {
+    const enhancedPack: PolicyPack = {
+      ...pack,
+      policies: pack.policies.map((p, idx) => ({
+        ...p,
+        policyJson: getEffectiveRules(idx),
+      })),
+    };
+    onActivate(enhancedPack);
+  }
+
+  const hasEnhancements = Object.keys(enhancedPolicies).length > 0;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <div className="space-y-1">
+            <DialogTitle>{pack.name}</DialogTitle>
+            <p className="text-sm text-muted-foreground">{pack.description}</p>
+          </div>
+        </DialogHeader>
+        <div className="space-y-4 mt-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Badge variant="secondary">
+              <ShieldCheck className="h-3 w-3 mr-1" />
+              {pack.framework}
+            </Badge>
+            <Badge variant="outline" className={`${
+              pack.riskLevel === "critical" ? "text-red-600 dark:text-red-400" :
+              pack.riskLevel === "high" ? "text-amber-600 dark:text-amber-400" :
+              pack.riskLevel === "medium" ? "text-blue-600 dark:text-blue-400" :
+              "text-green-600 dark:text-green-400"
+            }`}>
+              {pack.riskLevel.toUpperCase()} RISK
+            </Badge>
+            <Badge variant="outline">
+              {pack.policies.length} {pack.policies.length === 1 ? "policy" : "policies"}
+            </Badge>
+            {hasEnhancements && (
+              <Badge variant="secondary" className="text-green-600 dark:text-green-400">
+                <Wand2 className="h-3 w-3 mr-1" />
+                Enhanced
+              </Badge>
+            )}
+          </div>
+
+          <div className="space-y-3">
+            <h4 className="text-sm font-medium">Included Policies</h4>
+            {pack.policies.map((p, idx) => {
+              const DIcon = domainIcons[p.domain] || Shield;
+              const isEnhanced = !!enhancedPolicies[idx];
+              const isEditing = editingIdx === idx;
+              const isEnhancing = enhancingIdx === idx;
+              const currentRules = getEffectiveRules(idx);
+
+              return (
+                <Card key={idx} className={isEnhanced ? "ring-1 ring-green-500/30" : ""}>
+                  <CardContent className="p-4 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <DIcon className="h-4 w-4 text-muted-foreground shrink-0" />
+                      <span className="text-sm font-medium">{p.name}</span>
+                      {isEnhanced && (
+                        <Badge variant="secondary" className="text-[10px] text-green-600 dark:text-green-400">
+                          <Wand2 className="h-2.5 w-2.5 mr-0.5" /> AI Enhanced
+                        </Badge>
+                      )}
+                      <Badge variant="outline" className="text-[10px] ml-auto">{p.domain.replace(/_/g, " ")}</Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground">{p.description}</p>
+
+                    {isEditing ? (
+                      <div className="space-y-2">
+                        <Textarea
+                          value={editedRules[idx] || JSON.stringify(currentRules, null, 2)}
+                          onChange={(e) => setEditedRules((prev) => ({ ...prev, [idx]: e.target.value }))}
+                          className="font-mono text-[11px] min-h-[200px]"
+                          data-testid={`textarea-policy-rules-${idx}`}
+                        />
+                        <div className="flex items-center gap-2">
+                          <Button
+                            size="sm"
+                            onClick={() => handleSaveRules(idx)}
+                            data-testid={`button-save-rules-${idx}`}
+                          >
+                            <Save className="h-3.5 w-3.5 mr-1.5" />
+                            Save Rules
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setEditingIdx(null)}
+                            data-testid={`button-cancel-edit-${idx}`}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <pre className="text-[11px] bg-muted/50 p-3 rounded-md overflow-x-auto max-h-[200px]">
+                          {JSON.stringify(currentRules, null, 2)}
+                        </pre>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={isEnhancing}
+                            onClick={() => enhanceMutation.mutate({ policy: p, idx })}
+                            data-testid={`button-ai-enhance-${idx}`}
+                          >
+                            {isEnhancing ? (
+                              <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> Enhancing...</>
+                            ) : (
+                              <><Wand2 className="h-3.5 w-3.5 mr-1.5" /> AI Enhance</>
+                            )}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setEditedRules((prev) => ({ ...prev, [idx]: JSON.stringify(currentRules, null, 2) }));
+                              setEditingIdx(idx);
+                            }}
+                            data-testid={`button-edit-rules-${idx}`}
+                          >
+                            <Pencil className="h-3.5 w-3.5 mr-1.5" />
+                            Edit
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+
+          <Button
+            className="w-full"
+            disabled={isActivated || activating}
+            onClick={handleActivateWithEnhancements}
+            data-testid="button-activate-pack-dialog"
+          >
+            {isActivated ? (
+              <><Check className="h-4 w-4 mr-2" /> Already Activated</>
+            ) : (
+              <><Sparkles className="h-4 w-4 mr-2" /> Activate Pack ({pack.policies.length} policies){hasEnhancements ? " with Enhancements" : ""}</>
+            )}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

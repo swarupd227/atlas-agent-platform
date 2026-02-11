@@ -1800,6 +1800,68 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/ai/enhance-policy-rules", checkPermission("create_modify_policies"), async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI service not configured" });
+      }
+      const { policyName, domain, description, framework, industry, existingRules } = req.body;
+      if (!policyName || !domain || !description) {
+        return res.status(400).json({ error: "policyName, domain, and description are required" });
+      }
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        max_tokens: 2048,
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert in regulatory compliance and AI governance policy design. You specialize in creating detailed, production-grade policy rule configurations for AI agent management platforms.
+
+When given a policy name, domain, description, regulatory framework, and industry context, you must produce a comprehensive, deeply detailed JSON policy rules object that reflects real-world regulatory requirements and industry best practices.
+
+Your output must be a single valid JSON object with a "rules" array. Each rule should include:
+- "type": a descriptive rule type identifier
+- "description": detailed explanation of what this rule enforces
+- Relevant configuration fields specific to the rule type (thresholds, lists, conditions, actions, etc.)
+- "severity": "critical" | "high" | "medium" | "low"
+- "enforcement": "block" | "warn" | "audit" | "require_approval"
+- "remediation": what to do when the rule is violated
+
+Be thorough and specific to the ${industry || "general"} industry and ${framework || "general"} regulatory framework. Include at least 4-6 detailed rules per policy. Use realistic thresholds, identifiers, and terminology from the actual regulatory framework.`
+          },
+          {
+            role: "user",
+            content: `Enhance and deeply enrich the following policy rules for production use:
+
+Policy Name: ${policyName}
+Domain: ${domain}
+Description: ${description}
+Framework: ${framework || "General"}
+Industry: ${industry || "General"}
+
+Current (basic) rules:
+${JSON.stringify(existingRules, null, 2)}
+
+Return ONLY a valid JSON object with an enriched "rules" array. Do not include markdown formatting or code blocks.`
+          }
+        ],
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) {
+        return res.status(500).json({ error: "No response from AI" });
+      }
+
+      const enhanced = JSON.parse(content);
+      res.json({ enhancedRules: enhanced });
+    } catch (e: any) {
+      console.error("AI enhance policy error:", e);
+      res.status(500).json({ error: e.message || "Failed to enhance policy rules" });
+    }
+  });
+
   app.post("/api/policies", checkPermission("create_modify_policies"), async (req, res) => {
     try {
       const data = insertPolicySchema.parse(req.body);
