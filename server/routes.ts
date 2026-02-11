@@ -46,6 +46,10 @@ import {
   insertTeamBlueprintEdgeSchema,
   insertTraceSpanSchema,
   insertMcpTranscriptSchema,
+  insertRegistrySourceSchema,
+  insertMarketplaceServerSchema,
+  insertTrustedPublisherSchema,
+  insertMarketplaceInstallRequestSchema,
 } from "@shared/schema";
 
 const openai = new OpenAI({
@@ -9685,6 +9689,292 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
       storage.getMcpTranscripts(runId),
     ]);
     res.json({ spans, transcripts });
+  });
+
+  // ── Marketplace: Registry Sources ─────────────────────────
+  app.get("/api/marketplace/registry-sources", async (_req, res) => {
+    const sources = await storage.getRegistrySources();
+    res.json(sources);
+  });
+
+  app.get("/api/marketplace/registry-sources/:id", async (req, res) => {
+    const source = await storage.getRegistrySource(req.params.id);
+    if (!source) return res.status(404).json({ message: "Not found" });
+    res.json(source);
+  });
+
+  app.post("/api/marketplace/registry-sources", checkPermission("manage_mcp_servers"), async (req, res) => {
+    try {
+      const data = insertRegistrySourceSchema.parse(req.body);
+      const created = await storage.createRegistrySource(data);
+      res.status(201).json(created);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  app.patch("/api/marketplace/registry-sources/:id", async (req, res) => {
+    try {
+      const data = insertRegistrySourceSchema.partial().parse(req.body);
+      const updated = await storage.updateRegistrySource(req.params.id, data);
+      if (!updated) return res.status(404).json({ message: "Not found" });
+      res.json(updated);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  app.delete("/api/marketplace/registry-sources/:id", async (req, res) => {
+    const deleted = await storage.deleteRegistrySource(req.params.id);
+    if (!deleted) return res.status(404).json({ message: "Not found" });
+    res.status(204).send();
+  });
+
+  app.post("/api/marketplace/registry-sources/:id/sync", async (req, res) => {
+    const source = await storage.getRegistrySource(req.params.id);
+    if (!source) return res.status(404).json({ message: "Not found" });
+    const updated = await storage.updateRegistrySource(req.params.id, {
+      lastSyncAt: new Date(),
+      lastSyncStatus: "success",
+    });
+    await storage.createAuditEvent({
+      objectType: "registry_source",
+      objectId: req.params.id,
+      action: "marketplace.registry_synced",
+      actorId: "system",
+      details: JSON.stringify({ sourceId: req.params.id, sourceName: source.name }),
+    });
+    res.json(updated);
+  });
+
+  // ── Marketplace: Servers ─────────────────────────────────
+  app.get("/api/marketplace/servers", async (req, res) => {
+    let servers = await storage.getMarketplaceServers();
+    const category = req.query.category as string | undefined;
+    const search = req.query.search as string | undefined;
+    const status = req.query.status as string | undefined;
+    if (category) {
+      servers = servers.filter(s => s.category === category);
+    }
+    if (search) {
+      const q = search.toLowerCase();
+      servers = servers.filter(s =>
+        s.name.toLowerCase().includes(q) ||
+        (s.displayName || "").toLowerCase().includes(q) ||
+        (s.description || "").toLowerCase().includes(q)
+      );
+    }
+    if (status) {
+      servers = servers.filter(s => s.installStatus === status);
+    }
+    res.json(servers);
+  });
+
+  app.get("/api/marketplace/servers/:id", async (req, res) => {
+    const server = await storage.getMarketplaceServer(req.params.id);
+    if (!server) return res.status(404).json({ message: "Not found" });
+    res.json(server);
+  });
+
+  // ── Marketplace: Trusted Publishers ──────────────────────
+  app.get("/api/marketplace/trusted-publishers", async (_req, res) => {
+    const publishers = await storage.getTrustedPublishers();
+    res.json(publishers);
+  });
+
+  app.get("/api/marketplace/trusted-publishers/:id", async (req, res) => {
+    const publisher = await storage.getTrustedPublisher(req.params.id);
+    if (!publisher) return res.status(404).json({ message: "Not found" });
+    res.json(publisher);
+  });
+
+  app.post("/api/marketplace/trusted-publishers", checkPermission("manage_security"), async (req, res) => {
+    try {
+      const data = insertTrustedPublisherSchema.parse(req.body);
+      const created = await storage.createTrustedPublisher(data);
+      res.status(201).json(created);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  app.patch("/api/marketplace/trusted-publishers/:id", async (req, res) => {
+    try {
+      const data = insertTrustedPublisherSchema.partial().parse(req.body);
+      const updated = await storage.updateTrustedPublisher(req.params.id, data);
+      if (!updated) return res.status(404).json({ message: "Not found" });
+      res.json(updated);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  app.delete("/api/marketplace/trusted-publishers/:id", async (req, res) => {
+    const deleted = await storage.deleteTrustedPublisher(req.params.id);
+    if (!deleted) return res.status(404).json({ message: "Not found" });
+    res.status(204).send();
+  });
+
+  // ── Marketplace: Install Flow ────────────────────────────
+  app.post("/api/marketplace/servers/:id/install", async (req, res) => {
+    try {
+      const server = await storage.getMarketplaceServer(req.params.id);
+      if (!server) return res.status(404).json({ message: "Marketplace server not found" });
+
+      if (server.installStatus !== "available") {
+        return res.status(400).json({ message: "Server is already installed or pending installation" });
+      }
+
+      const publishers = await storage.getTrustedPublishers();
+      const trustedPublisher = publishers.find(p => p.namespace === server.namespace && p.status === "active");
+
+      if (trustedPublisher && (trustedPublisher.autoApprove || trustedPublisher.isInternal)) {
+        const mcpServer = await storage.createMcpServer({
+          name: server.name,
+          description: server.description,
+          transportType: server.transportType || "streamable-http",
+          url: server.url,
+          capabilities: server.capabilities as any,
+          riskTier: server.riskTier || "MEDIUM",
+        });
+
+        await storage.updateMarketplaceServer(server.id, {
+          installStatus: "installed",
+          installedServerId: mcpServer.id,
+        });
+
+        await storage.createAuditEvent({
+          objectType: "marketplace_server",
+          objectId: server.id,
+          action: "marketplace.install_auto_approved",
+          actorId: req.body.requestedBy || "system",
+          details: JSON.stringify({
+            serverName: server.name,
+            namespace: server.namespace,
+            publisher: trustedPublisher.displayName,
+            installedServerId: mcpServer.id,
+          }),
+        });
+
+        return res.status(201).json({ status: "auto_approved", mcpServer, installRequest: null });
+      }
+
+      const installRequest = await storage.createMarketplaceInstallRequest({
+        marketplaceServerId: server.id,
+        serverName: server.name,
+        namespace: server.namespace,
+        publisher: server.publisher,
+        requestedBy: req.body.requestedBy || "system",
+        status: "pending",
+        approvalRequired: true,
+      });
+
+      await storage.updateMarketplaceServer(server.id, { installStatus: "pending" });
+
+      await storage.createAuditEvent({
+        objectType: "marketplace_server",
+        objectId: server.id,
+        action: "marketplace.install_requested",
+        actorId: req.body.requestedBy || "system",
+        details: JSON.stringify({
+          serverName: server.name,
+          namespace: server.namespace,
+          installRequestId: installRequest.id,
+        }),
+      });
+
+      res.status(201).json({ status: "pending_approval", mcpServer: null, installRequest });
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  app.get("/api/marketplace/install-requests", async (_req, res) => {
+    const requests = await storage.getMarketplaceInstallRequests();
+    res.json(requests);
+  });
+
+  app.patch("/api/marketplace/install-requests/:id/approve", checkPermission("manage_security"), async (req, res) => {
+    try {
+      const request = await storage.getMarketplaceInstallRequest(req.params.id);
+      if (!request) return res.status(404).json({ message: "Install request not found" });
+      if (request.status !== "pending") return res.status(400).json({ message: "Request is not pending" });
+
+      const server = await storage.getMarketplaceServer(request.marketplaceServerId);
+      if (!server) return res.status(404).json({ message: "Marketplace server not found" });
+
+      const mcpServer = await storage.createMcpServer({
+        name: server.name,
+        description: server.description,
+        transportType: server.transportType || "streamable-http",
+        url: server.url,
+        capabilities: server.capabilities as any,
+        riskTier: server.riskTier || "MEDIUM",
+      });
+
+      await storage.updateMarketplaceInstallRequest(req.params.id, {
+        status: "approved",
+        approvedBy: req.body.approvedBy || "system",
+        approvedAt: new Date(),
+        installedServerId: mcpServer.id,
+      });
+
+      await storage.updateMarketplaceServer(server.id, {
+        installStatus: "installed",
+        installedServerId: mcpServer.id,
+      });
+
+      await storage.createAuditEvent({
+        objectType: "marketplace_server",
+        objectId: server.id,
+        action: "marketplace.install_approved",
+        actorId: req.body.approvedBy || "system",
+        details: JSON.stringify({
+          serverName: server.name,
+          namespace: server.namespace,
+          installRequestId: req.params.id,
+          installedServerId: mcpServer.id,
+        }),
+      });
+
+      res.json({ request: await storage.getMarketplaceInstallRequest(req.params.id), mcpServer });
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  app.patch("/api/marketplace/install-requests/:id/reject", checkPermission("manage_security"), async (req, res) => {
+    try {
+      const request = await storage.getMarketplaceInstallRequest(req.params.id);
+      if (!request) return res.status(404).json({ message: "Install request not found" });
+      if (request.status !== "pending") return res.status(400).json({ message: "Request is not pending" });
+
+      await storage.updateMarketplaceInstallRequest(req.params.id, {
+        status: "rejected",
+        rejectedReason: req.body.reason || "Rejected by security admin",
+      });
+
+      await storage.updateMarketplaceServer(request.marketplaceServerId, {
+        installStatus: "available",
+      });
+
+      await storage.createAuditEvent({
+        objectType: "marketplace_server",
+        objectId: request.marketplaceServerId,
+        action: "marketplace.install_rejected",
+        actorId: req.body.rejectedBy || "system",
+        details: JSON.stringify({
+          serverName: request.serverName,
+          namespace: request.namespace,
+          installRequestId: req.params.id,
+          reason: req.body.reason,
+        }),
+      });
+
+      res.json(await storage.getMarketplaceInstallRequest(req.params.id));
+    } catch (e) {
+      handleZodError(res, e);
+    }
   });
 
   // Start the job worker

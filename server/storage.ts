@@ -84,6 +84,14 @@ import {
   type TraceSpan, type InsertTraceSpan,
   mcpTranscripts,
   type McpTranscript, type InsertMcpTranscript,
+  registrySources,
+  type RegistrySource, type InsertRegistrySource,
+  marketplaceServers,
+  type MarketplaceServer, type InsertMarketplaceServer,
+  trustedPublishers,
+  type TrustedPublisher, type InsertTrustedPublisher,
+  marketplaceInstallRequests,
+  type MarketplaceInstallRequest, type InsertMarketplaceInstallRequest,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -348,6 +356,28 @@ export interface IStorage {
 
   getMcpTranscripts(runId: string): Promise<McpTranscript[]>;
   createMcpTranscript(transcript: InsertMcpTranscript): Promise<McpTranscript>;
+
+  getRegistrySources(): Promise<RegistrySource[]>;
+  getRegistrySource(id: string): Promise<RegistrySource | undefined>;
+  createRegistrySource(source: InsertRegistrySource): Promise<RegistrySource>;
+  updateRegistrySource(id: string, data: Partial<RegistrySource>): Promise<RegistrySource | undefined>;
+  deleteRegistrySource(id: string): Promise<boolean>;
+
+  getMarketplaceServers(): Promise<MarketplaceServer[]>;
+  getMarketplaceServer(id: string): Promise<MarketplaceServer | undefined>;
+  createMarketplaceServer(server: InsertMarketplaceServer): Promise<MarketplaceServer>;
+  updateMarketplaceServer(id: string, data: Partial<MarketplaceServer>): Promise<MarketplaceServer | undefined>;
+
+  getTrustedPublishers(): Promise<TrustedPublisher[]>;
+  getTrustedPublisher(id: string): Promise<TrustedPublisher | undefined>;
+  createTrustedPublisher(publisher: InsertTrustedPublisher): Promise<TrustedPublisher>;
+  updateTrustedPublisher(id: string, data: Partial<TrustedPublisher>): Promise<TrustedPublisher | undefined>;
+  deleteTrustedPublisher(id: string): Promise<boolean>;
+
+  getMarketplaceInstallRequests(): Promise<MarketplaceInstallRequest[]>;
+  getMarketplaceInstallRequest(id: string): Promise<MarketplaceInstallRequest | undefined>;
+  createMarketplaceInstallRequest(request: InsertMarketplaceInstallRequest): Promise<MarketplaceInstallRequest>;
+  updateMarketplaceInstallRequest(id: string, data: Partial<MarketplaceInstallRequest>): Promise<MarketplaceInstallRequest | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1362,6 +1392,77 @@ export class DatabaseStorage implements IStorage {
   async createMcpTranscript(transcript: InsertMcpTranscript) {
     const [created] = await db.insert(mcpTranscripts).values(transcript).returning();
     return created;
+  }
+  async getRegistrySources() {
+    return db.select().from(registrySources);
+  }
+  async getRegistrySource(id: string) {
+    const [source] = await db.select().from(registrySources).where(eq(registrySources.id, id));
+    return source;
+  }
+  async createRegistrySource(source: InsertRegistrySource) {
+    const [created] = await db.insert(registrySources).values(source).returning();
+    return created;
+  }
+  async updateRegistrySource(id: string, data: Partial<RegistrySource>) {
+    const [updated] = await db.update(registrySources).set(data).where(eq(registrySources.id, id)).returning();
+    return updated;
+  }
+  async deleteRegistrySource(id: string) {
+    const result = await db.delete(registrySources).where(eq(registrySources.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async getMarketplaceServers() {
+    return db.select().from(marketplaceServers);
+  }
+  async getMarketplaceServer(id: string) {
+    const [server] = await db.select().from(marketplaceServers).where(eq(marketplaceServers.id, id));
+    return server;
+  }
+  async createMarketplaceServer(server: InsertMarketplaceServer) {
+    const [created] = await db.insert(marketplaceServers).values(server).returning();
+    return created;
+  }
+  async updateMarketplaceServer(id: string, data: Partial<MarketplaceServer>) {
+    const [updated] = await db.update(marketplaceServers).set(data).where(eq(marketplaceServers.id, id)).returning();
+    return updated;
+  }
+
+  async getTrustedPublishers() {
+    return db.select().from(trustedPublishers);
+  }
+  async getTrustedPublisher(id: string) {
+    const [publisher] = await db.select().from(trustedPublishers).where(eq(trustedPublishers.id, id));
+    return publisher;
+  }
+  async createTrustedPublisher(publisher: InsertTrustedPublisher) {
+    const [created] = await db.insert(trustedPublishers).values(publisher).returning();
+    return created;
+  }
+  async updateTrustedPublisher(id: string, data: Partial<TrustedPublisher>) {
+    const [updated] = await db.update(trustedPublishers).set(data).where(eq(trustedPublishers.id, id)).returning();
+    return updated;
+  }
+  async deleteTrustedPublisher(id: string) {
+    const result = await db.delete(trustedPublishers).where(eq(trustedPublishers.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async getMarketplaceInstallRequests() {
+    return db.select().from(marketplaceInstallRequests);
+  }
+  async getMarketplaceInstallRequest(id: string) {
+    const [request] = await db.select().from(marketplaceInstallRequests).where(eq(marketplaceInstallRequests.id, id));
+    return request;
+  }
+  async createMarketplaceInstallRequest(request: InsertMarketplaceInstallRequest) {
+    const [created] = await db.insert(marketplaceInstallRequests).values(request).returning();
+    return created;
+  }
+  async updateMarketplaceInstallRequest(id: string, data: Partial<MarketplaceInstallRequest>) {
+    const [updated] = await db.update(marketplaceInstallRequests).set(data).where(eq(marketplaceInstallRequests.id, id)).returning();
+    return updated;
   }
 }
 
