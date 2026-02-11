@@ -70,6 +70,10 @@ import {
   type McpServerPrompt, type InsertMcpServerPrompt,
   mcpServerAuth,
   type McpServerAuth, type InsertMcpServerAuth,
+  remoteAgents,
+  type RemoteAgent, type InsertRemoteAgent,
+  agentTeams,
+  type AgentTeam, type InsertAgentTeam,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -296,6 +300,18 @@ export interface IStorage {
 
   getMcpServerAuth(serverId: string): Promise<McpServerAuth | undefined>;
   upsertMcpServerAuth(auth: InsertMcpServerAuth): Promise<McpServerAuth>;
+
+  getRemoteAgents(): Promise<RemoteAgent[]>;
+  getRemoteAgent(id: string): Promise<RemoteAgent | undefined>;
+  getRemoteAgentByAgentId(agentId: string): Promise<RemoteAgent | undefined>;
+  createRemoteAgent(remote: InsertRemoteAgent): Promise<RemoteAgent>;
+  updateRemoteAgent(id: string, data: Partial<RemoteAgent>): Promise<RemoteAgent | undefined>;
+  deleteRemoteAgent(id: string): Promise<boolean>;
+
+  getAgentTeamMembers(teamAgentId: string): Promise<AgentTeam[]>;
+  createAgentTeamMember(member: InsertAgentTeam): Promise<AgentTeam>;
+  deleteAgentTeamMember(id: string): Promise<boolean>;
+  getAgentTeamsByMember(memberAgentId: string): Promise<AgentTeam[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1183,6 +1199,44 @@ export class DatabaseStorage implements IStorage {
     }
     const [created] = await db.insert(mcpServerAuth).values(auth).returning();
     return created;
+  }
+
+  async getRemoteAgents() {
+    return db.select().from(remoteAgents);
+  }
+  async getRemoteAgent(id: string) {
+    const [r] = await db.select().from(remoteAgents).where(eq(remoteAgents.id, id));
+    return r;
+  }
+  async getRemoteAgentByAgentId(agentId: string) {
+    const [r] = await db.select().from(remoteAgents).where(eq(remoteAgents.agentId, agentId));
+    return r;
+  }
+  async createRemoteAgent(remote: InsertRemoteAgent) {
+    const [created] = await db.insert(remoteAgents).values(remote).returning();
+    return created;
+  }
+  async updateRemoteAgent(id: string, data: Partial<RemoteAgent>) {
+    const [updated] = await db.update(remoteAgents).set(data).where(eq(remoteAgents.id, id)).returning();
+    return updated;
+  }
+  async deleteRemoteAgent(id: string) {
+    await db.delete(remoteAgents).where(eq(remoteAgents.id, id));
+    return true;
+  }
+  async getAgentTeamMembers(teamAgentId: string) {
+    return db.select().from(agentTeams).where(eq(agentTeams.teamAgentId, teamAgentId));
+  }
+  async createAgentTeamMember(member: InsertAgentTeam) {
+    const [created] = await db.insert(agentTeams).values(member).returning();
+    return created;
+  }
+  async deleteAgentTeamMember(id: string) {
+    await db.delete(agentTeams).where(eq(agentTeams.id, id));
+    return true;
+  }
+  async getAgentTeamsByMember(memberAgentId: string) {
+    return db.select().from(agentTeams).where(eq(agentTeams.memberAgentId, memberAgentId));
   }
 }
 

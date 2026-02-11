@@ -20,6 +20,9 @@ import {
   AlertTriangle,
   CheckCircle,
   TrendingUp,
+  Users,
+  Globe,
+  Network,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -239,11 +242,30 @@ export default function Agents() {
         )}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         <StatCard title="Total Agents" value={agents?.length || 0} icon={Bot} variant="default" testId="stat-total-agents" />
+        <StatCard title="Teams" value={agents?.filter(a => a.agentType === "team")?.length || 0} icon={Users} variant="default" testId="stat-teams" />
+        <StatCard title="Remote (A2A)" value={agents?.filter(a => a.agentType === "remote")?.length || 0} icon={Globe} variant="default" testId="stat-remote" />
         <StatCard title="Avg Success Rate" value={`${avgSuccess}%`} icon={Activity} trend="up" trendValue="1.2%" variant="success" testId="stat-avg-success" />
         <StatCard title="Monthly Cost" value={`$${totalCost.toLocaleString()}`} icon={DollarSign} variant="default" subtitle={`Revenue: $${totalRevenue.toLocaleString()}`} testId="stat-monthly-cost" />
-        <StatCard title="Autonomous" value={agents?.filter((a) => a.autonomyMode === "autonomous")?.length || 0} icon={Zap} variant="default" subtitle="fully autonomous" testId="stat-autonomous" />
+      </div>
+
+      <div className="flex items-center gap-1 border-b" data-testid="registry-tabs">
+        <Link href="/agents">
+          <Button variant="ghost" size="sm" className="rounded-none border-b-2 border-primary" data-testid="tab-agents">
+            <Bot className="w-3.5 h-3.5 mr-1.5" /> All Agents
+          </Button>
+        </Link>
+        <Link href="/agents/teams">
+          <Button variant="ghost" size="sm" className="rounded-none border-b-2 border-transparent text-muted-foreground" data-testid="tab-teams">
+            <Users className="w-3.5 h-3.5 mr-1.5" /> Teams
+          </Button>
+        </Link>
+        <Link href="/agents/remote">
+          <Button variant="ghost" size="sm" className="rounded-none border-b-2 border-transparent text-muted-foreground" data-testid="tab-remote">
+            <Globe className="w-3.5 h-3.5 mr-1.5" /> Remote Agents (A2A)
+          </Button>
+        </Link>
       </div>
 
       <OutcomeKpiStrip />
@@ -426,10 +448,20 @@ export default function Agents() {
                       <Link href={`/agents/${agent.id}`}>
                         <div className="flex items-center gap-2.5 cursor-pointer" data-testid={`link-agent-${agent.id}`}>
                           <div className="flex items-center justify-center w-7 h-7 rounded-md bg-primary/10 shrink-0">
-                            <Bot className="w-3.5 h-3.5 text-primary" />
+                            {agent.agentType === "team" ? <Users className="w-3.5 h-3.5 text-primary" /> :
+                             agent.agentType === "remote" ? <Globe className="w-3.5 h-3.5 text-primary" /> :
+                             <Bot className="w-3.5 h-3.5 text-primary" />}
                           </div>
                           <div className="flex flex-col">
-                            <span className="text-sm font-medium hover:underline">{agent.name}</span>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-sm font-medium hover:underline">{agent.name}</span>
+                              {agent.agentType === "team" && (
+                                <Badge variant="outline" className="text-[10px] bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20">Team</Badge>
+                              )}
+                              {agent.agentType === "remote" && (
+                                <Badge variant="outline" className="text-[10px] bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border-cyan-500/20">A2A</Badge>
+                              )}
+                            </div>
                             <span className="text-[11px] text-muted-foreground">{agent.owner || "Unassigned"}</span>
                           </div>
                         </div>

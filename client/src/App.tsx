@@ -53,6 +53,8 @@ import McpResources from "@/pages/mcp-resources";
 import McpResourceDetail from "@/pages/mcp-resource-detail";
 import McpPrompts from "@/pages/mcp-prompts";
 import McpPromptDetail from "@/pages/mcp-prompt-detail";
+import RemoteAgents from "@/pages/remote-agents";
+import AgentTeams from "@/pages/agent-teams";
 
 function Router() {
   return (
@@ -65,6 +67,8 @@ function Router() {
       <Route path="/templates" component={Templates} />
       <Route path="/templates/:id" component={TemplateDetail} />
       <Route path="/agents/wizard" component={AgentWizard} />
+      <Route path="/agents/teams" component={AgentTeams} />
+      <Route path="/agents/remote" component={RemoteAgents} />
       <Route path="/agents/:id" component={AgentDetail} />
       <Route path="/blueprints" component={Blueprints} />
       <Route path="/blueprints/:id" component={BlueprintDetail} />

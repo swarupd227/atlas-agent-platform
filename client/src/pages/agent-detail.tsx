@@ -69,6 +69,7 @@ import {
   XOctagon,
   Circle,
   Globe,
+  HelpCircle,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -89,7 +90,9 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import type { Agent, RunTrace, EvalSuite, OutcomeContract, ImprovementRecommendation, AutonomousActionLog, AgentVersion, Deployment, Policy, Approval, PolicyException, ToolConnector } from "@shared/schema";
+import type { Agent, RunTrace, EvalSuite, OutcomeContract, ImprovementRecommendation, AutonomousActionLog, AgentVersion, Deployment, Policy, Approval, PolicyException, ToolConnector, RemoteAgent, AgentTeam } from "@shared/schema";
+import { Wifi, WifiOff, Crown } from "lucide-react";
+
 
 export default function AgentDetail() {
   const [, params] = useRoute("/agents/:id");
@@ -149,6 +152,21 @@ export default function AgentDetail() {
   });
   const { data: allToolConnectors } = useQuery<ToolConnector[]>({
     queryKey: ["/api/tool-connectors"],
+  });
+  const { data: remoteAgents } = useQuery<RemoteAgent[]>({
+    queryKey: ["/api/remote-agents"],
+  });
+  const { data: teamMembers } = useQuery<AgentTeam[]>({
+    queryKey: ["/api/agent-teams", agentId, "members"],
+    queryFn: async () => {
+      if (!agentId) return [];
+      const res = await fetch(`/api/agent-teams/${agentId}/members`);
+      return res.json();
+    },
+    enabled: !!agentId && agent?.agentType === "team",
+  });
+  const { data: allAgents } = useQuery<Agent[]>({
+    queryKey: ["/api/agents"],
   });
 
   const [, navigate] = useLocation();
@@ -499,6 +517,12 @@ export default function AgentDetail() {
           <TabsTrigger value="autonomous" data-testid="tab-autonomous">Autonomous</TabsTrigger>
           <TabsTrigger value="governance" data-testid="tab-governance">Governance</TabsTrigger>
           <TabsTrigger value="timeline" data-testid="tab-timeline">Timeline</TabsTrigger>
+          {agent.agentType === "remote" && (
+            <TabsTrigger value="a2a" data-testid="tab-a2a">A2A Card</TabsTrigger>
+          )}
+          {agent.agentType === "team" && (
+            <TabsTrigger value="team" data-testid="tab-team">Team Members</TabsTrigger>
+          )}
         </TabsList>
 
         <TabsContent value="summary" className="flex flex-col gap-4 mt-0">
@@ -2559,6 +2583,127 @@ export default function AgentDetail() {
             );
           })()}
         </TabsContent>
+
+        {agent.agentType === "remote" && (() => {
+          const ra = remoteAgents?.find(r => r.agentId === agentId);
+          const trustColors: Record<string, string> = {
+            untrusted: "text-red-600 dark:text-red-400",
+            basic: "text-yellow-600 dark:text-yellow-400",
+            verified: "text-blue-600 dark:text-blue-400",
+            trusted: "text-green-600 dark:text-green-400",
+            privileged: "text-purple-600 dark:text-purple-400",
+          };
+          const statusIcons: Record<string, typeof Wifi> = {
+            online: Wifi,
+            offline: WifiOff,
+            degraded: AlertTriangle,
+            unknown: HelpCircle,
+          };
+          return (
+            <TabsContent value="a2a" className="flex flex-col gap-4 mt-0" data-testid="tab-content-a2a">
+              {ra ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <Card>
+                    <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+                      <CardTitle className="text-base">Connectivity</CardTitle>
+                      {(() => {
+                        const StatusIcon = statusIcons[ra.connectivityStatus] || HelpCircle;
+                        return <StatusIcon className={`h-5 w-5 ${ra.connectivityStatus === "online" ? "text-green-500" : ra.connectivityStatus === "offline" ? "text-red-500" : "text-yellow-500"}`} />;
+                      })()}
+                    </CardHeader>
+                    <CardContent className="flex flex-col gap-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm text-muted-foreground">Status</span>
+                        <Badge variant={ra.connectivityStatus === "online" ? "default" : "secondary"} data-testid="badge-a2a-status">{ra.connectivityStatus}</Badge>
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm text-muted-foreground">Trust Tier</span>
+                        <span className={`text-sm font-medium ${trustColors[ra.trustTier] || ""}`} data-testid="text-a2a-trust">{ra.trustTier}</span>
+                      </div>
+                      {ra.agentCardUrl && (
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm text-muted-foreground">Agent Card URL</span>
+                          <span className="text-sm truncate max-w-[200px]" title={ra.agentCardUrl} data-testid="text-a2a-url">{ra.agentCardUrl}</span>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-base">Allowed Skills</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      {ra.allowedSkills && ra.allowedSkills.length > 0 ? (
+                        <div className="flex flex-wrap gap-2" data-testid="list-a2a-skills">
+                          {ra.allowedSkills.map((skill, i) => (
+                            <Badge key={i} variant="secondary" data-testid={`badge-skill-${i}`}>{skill}</Badge>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">No skills whitelisted</p>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  {ra.agentCard && (
+                    <Card className="md:col-span-2">
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-base">Agent Card Details</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <pre className="text-xs bg-muted p-3 rounded-md overflow-auto max-h-64" data-testid="pre-a2a-card">
+                          {JSON.stringify(ra.agentCard, null, 2)}
+                        </pre>
+                      </CardContent>
+                    </Card>
+                  )}
+                </div>
+              ) : (
+                <Card>
+                  <CardContent className="py-8 text-center text-muted-foreground">
+                    No A2A remote agent configuration found for this agent.
+                  </CardContent>
+                </Card>
+              )}
+            </TabsContent>
+          );
+        })()}
+
+        {agent.agentType === "team" && (
+          <TabsContent value="team" className="flex flex-col gap-4 mt-0" data-testid="tab-content-team">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Team Composition</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {teamMembers && teamMembers.length > 0 ? (
+                  <div className="flex flex-col gap-2" data-testid="list-team-members">
+                    {teamMembers.map((tm) => {
+                      const memberAgent = allAgents?.find(a => a.id === tm.memberAgentId);
+                      const roleIcon = tm.memberRole === "lead" ? Crown : tm.memberRole === "observer" ? Eye : Users;
+                      const RoleIcon = roleIcon;
+                      return (
+                        <div key={tm.id} className="flex items-center justify-between gap-2 p-3 rounded-md border" data-testid={`row-team-member-${tm.id}`}>
+                          <div className="flex items-center gap-3">
+                            <RoleIcon className="h-4 w-4 text-muted-foreground" />
+                            <div>
+                              <p className="text-sm font-medium">{memberAgent?.name || tm.memberAgentId}</p>
+                              {memberAgent && <p className="text-xs text-muted-foreground">{memberAgent.agentType} agent</p>}
+                            </div>
+                          </div>
+                          <Badge variant="secondary" data-testid={`badge-role-${tm.id}`}>{tm.memberRole}</Badge>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground py-4 text-center">No members assigned to this team yet.</p>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+        )}
       </Tabs>
 
       <Dialog open={shadowReplayOpen} onOpenChange={setShadowReplayOpen}>

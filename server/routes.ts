@@ -39,6 +39,8 @@ import {
   insertMcpServerResourceSchema,
   insertMcpServerPromptSchema,
   insertMcpServerAuthSchema,
+  insertRemoteAgentSchema,
+  insertAgentTeamSchema,
 } from "@shared/schema";
 
 const openai = new OpenAI({
@@ -8998,6 +9000,78 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
     } catch (err) {
       res.status(500).json({ message: "Failed to request approval" });
     }
+  });
+
+  // ── Multi-Agent Orchestration: Remote Agents (A2A) ──
+  app.get("/api/remote-agents", async (_req, res) => {
+    const remotes = await storage.getRemoteAgents();
+    res.json(remotes);
+  });
+
+  app.get("/api/remote-agents/:id", async (req, res) => {
+    const remote = await storage.getRemoteAgent(req.params.id);
+    if (!remote) return res.status(404).json({ error: "Remote agent not found" });
+    res.json(remote);
+  });
+
+  app.post("/api/remote-agents", async (req, res) => {
+    try {
+      const data = insertRemoteAgentSchema.parse(req.body);
+      const remote = await storage.createRemoteAgent(data);
+      res.status(201).json(remote);
+    } catch (e) {
+      if (e instanceof ZodError) return res.status(400).json({ error: e.errors });
+      throw e;
+    }
+  });
+
+  app.patch("/api/remote-agents/:id", async (req, res) => {
+    try {
+      const partial = insertRemoteAgentSchema.partial().parse(req.body);
+      const updated = await storage.updateRemoteAgent(req.params.id, partial);
+      if (!updated) return res.status(404).json({ error: "Remote agent not found" });
+      res.json(updated);
+    } catch (e) {
+      if (e instanceof ZodError) return res.status(400).json({ error: e.errors });
+      throw e;
+    }
+  });
+
+  app.delete("/api/remote-agents/:id", async (req, res) => {
+    await storage.deleteRemoteAgent(req.params.id);
+    res.json({ success: true });
+  });
+
+  // ── Multi-Agent Orchestration: Agent Teams ──
+  app.get("/api/agent-teams/:teamAgentId/members", async (req, res) => {
+    const members = await storage.getAgentTeamMembers(req.params.teamAgentId);
+    res.json(members);
+  });
+
+  app.post("/api/agent-teams/members", async (req, res) => {
+    try {
+      const data = insertAgentTeamSchema.parse(req.body);
+      const teamAgent = await storage.getAgent(data.teamAgentId);
+      if (!teamAgent) return res.status(404).json({ error: "Team agent not found" });
+      if (teamAgent.agentType !== "team") return res.status(400).json({ error: "Agent is not a team type" });
+      const memberAgent = await storage.getAgent(data.memberAgentId);
+      if (!memberAgent) return res.status(404).json({ error: "Member agent not found" });
+      const member = await storage.createAgentTeamMember(data);
+      res.status(201).json(member);
+    } catch (e) {
+      if (e instanceof ZodError) return res.status(400).json({ error: e.errors });
+      throw e;
+    }
+  });
+
+  app.delete("/api/agent-teams/members/:id", async (req, res) => {
+    await storage.deleteAgentTeamMember(req.params.id);
+    res.json({ success: true });
+  });
+
+  app.get("/api/agent-teams/by-member/:memberAgentId", async (req, res) => {
+    const teams = await storage.getAgentTeamsByMember(req.params.memberAgentId);
+    res.json(teams);
   });
 
   // Start the job worker

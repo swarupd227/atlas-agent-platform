@@ -63,6 +63,7 @@ export type KpiDefinition = typeof kpiDefinitions.$inferSelect;
 export const agents = pgTable("agents", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
+  agentType: text("agent_type").default("single"),
   description: text("description"),
   owner: text("owner"),
   outcomeId: varchar("outcome_id"),
@@ -873,5 +874,38 @@ export const mcpServerAuth = pgTable("mcp_server_auth", {
 export const insertMcpServerAuthSchema = createInsertSchema(mcpServerAuth).omit({ id: true, createdAt: true });
 export type InsertMcpServerAuth = z.infer<typeof insertMcpServerAuthSchema>;
 export type McpServerAuth = typeof mcpServerAuth.$inferSelect;
+
+export const remoteAgents = pgTable("remote_agents", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  agentId: varchar("agent_id"),
+  agentCardUrl: text("agent_card_url"),
+  agentCardData: jsonb("agent_card_data"),
+  trustTier: text("trust_tier").default("basic"),
+  connectivityStatus: text("connectivity_status").default("unknown"),
+  allowedSkills: text("allowed_skills").array().default(sql`'{}'::text[]`),
+  securityRequirements: jsonb("security_requirements"),
+  defaultInputModes: text("default_input_modes").array().default(sql`'{}'::text[]`),
+  defaultOutputModes: text("default_output_modes").array().default(sql`'{}'::text[]`),
+  providerInfo: jsonb("provider_info"),
+  lastHealthCheckAt: timestamp("last_health_check_at"),
+  lastSyncedAt: timestamp("last_synced_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertRemoteAgentSchema = createInsertSchema(remoteAgents).omit({ id: true, createdAt: true });
+export type InsertRemoteAgent = z.infer<typeof insertRemoteAgentSchema>;
+export type RemoteAgent = typeof remoteAgents.$inferSelect;
+
+export const agentTeams = pgTable("agent_teams", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  teamAgentId: varchar("team_agent_id").notNull(),
+  memberAgentId: varchar("member_agent_id").notNull(),
+  role: text("role").default("member"),
+  addedAt: timestamp("added_at").defaultNow(),
+});
+
+export const insertAgentTeamSchema = createInsertSchema(agentTeams).omit({ id: true, addedAt: true });
+export type InsertAgentTeam = z.infer<typeof insertAgentTeamSchema>;
+export type AgentTeam = typeof agentTeams.$inferSelect;
 
 export * from "./models/chat";
