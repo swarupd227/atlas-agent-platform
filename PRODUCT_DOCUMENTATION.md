@@ -1,0 +1,1235 @@
+# ALMP - Agent Lifecycle Management Platform
+# Product Documentation
+
+---
+
+## Table of Contents
+
+1. [Platform Overview](#1-platform-overview)
+2. [Getting Started](#2-getting-started)
+3. [Global App Shell](#3-global-app-shell)
+4. [Role-Based Access](#4-role-based-access)
+5. [Overview Dashboard](#5-overview-dashboard)
+6. [Outcome Builder](#6-outcome-builder)
+7. [Outcomes Management](#7-outcomes-management)
+8. [Agent Registry](#8-agent-registry)
+9. [Agent Design Wizard](#9-agent-design-wizard)
+10. [Multi-Agent Orchestration](#10-multi-agent-orchestration)
+11. [Templates](#11-templates)
+12. [Blueprint Studio](#12-blueprint-studio)
+13. [Evaluation Studio](#13-evaluation-studio)
+14. [Shadow Replay](#14-shadow-replay)
+15. [Deployments & Release Orchestrator](#15-deployments--release-orchestrator)
+16. [Monitor](#16-monitor)
+17. [Optimization (Patch Center)](#17-optimization-patch-center)
+18. [Ops & Self-Healing Loop](#18-ops--self-healing-loop)
+19. [Governance](#19-governance)
+20. [Audit Trail](#20-audit-trail)
+21. [Approvals](#21-approvals)
+22. [Approval Gates](#22-approval-gates)
+23. [Billing & Metering](#23-billing--metering)
+24. [MCP Integration Suite](#24-mcp-integration-suite)
+25. [MCP Apps](#25-mcp-apps)
+26. [Marketplace](#26-marketplace)
+27. [Admin](#27-admin)
+28. [API Reference](#28-api-reference)
+29. [Data Model](#29-data-model)
+30. [Security & Compliance](#30-security--compliance)
+
+---
+
+## 1. Platform Overview
+
+ALMP (Agent Lifecycle Management Platform) is an enterprise-grade platform for managing the full lifecycle of AI agents. It is designed around a core operational philosophy:
+
+- **80% Autonomous Execution**: Agents operate independently, self-optimizing, self-healing, and autonomously deploying improvements based on defined outcome contracts.
+- **20% Expert Validation**: High-risk changes, policy exceptions, and major releases require explicit human approval from designated Expert Validators.
+
+**Core Value Proposition**: Outcome-driven AI operations where customers pay for measurable results, not compute time. The platform ensures agents deliver on contracted KPIs with full traceability, governance, and cost transparency.
+
+### Key Capabilities
+
+| Capability | Description |
+|---|---|
+| Outcome Contracts | Define measurable KPIs with SLAs and pricing models |
+| Agent Lifecycle | Create, configure, deploy, monitor, and optimize agents |
+| Multi-Agent Orchestration | Team-based agent coordination with A2A protocol support |
+| Blueprint Studio | Visual agent configuration with versioning and approval flows |
+| MCP Integration | Model Context Protocol servers, tools, resources, and prompts |
+| Self-Healing | Automated incident detection, patching, and resolution |
+| Outcome-Based Billing | Metered billing tied to delivered outcomes |
+| Enterprise Governance | Policy enforcement, audit trails, and compliance frameworks |
+
+### Technology Stack
+
+- **Frontend**: React, Vite, Tailwind CSS, shadcn/ui, wouter (routing), Recharts (charts), TanStack Query (data fetching)
+- **Backend**: Express.js REST API
+- **Database**: PostgreSQL with Drizzle ORM
+- **AI Providers**: OpenAI integration for conversational design and AI-powered features
+
+---
+
+## 2. Getting Started
+
+### Navigation
+
+The platform uses a collapsible sidebar organized into two groups:
+
+**Platform Navigation**
+- Overview, Outcome Builder, Outcomes, Agents, Templates, Blueprints, Evals, Deployments, Monitor
+
+**Operations & Management**
+- Optimization, Ops, Self-Heal, Governance, Audit Trail, Approvals, Approval Gates, Billing, MCP Apps, Marketplace, Integrations, Admin
+
+### First Steps
+
+1. **Select a Role** using the Role Switcher in the sidebar footer to see the platform from your persona's perspective.
+2. **Choose an Environment** (Development, Staging, Production) using the environment selector in the top header.
+3. **Visit the Overview Dashboard** for a high-level summary of platform health, outcomes, agents, and pending approvals.
+4. **Use the Outcome Builder** to define your first outcome contract with AI assistance.
+
+---
+
+## 3. Global App Shell
+
+The app shell provides persistent UI elements available on every page:
+
+### Header Bar
+- **Sidebar Toggle**: Collapse/expand the navigation sidebar.
+- **Environment Selector**: Switch between Development, Staging, and Production environments. Data and views are scoped to the selected environment.
+- **Global Search**: Search across agents, outcomes, deployments, and other platform objects.
+- **Command Palette** (keyboard shortcut): Quick-access command palette for power users to navigate, search, and execute actions.
+- **Notification Center**: Real-time notifications for approvals, incidents, drift alerts, and deployment events.
+- **Role Switcher**: Switch between personas to see role-appropriate views.
+- **Theme Toggle**: Switch between light and dark mode.
+
+### Sidebar
+- Role-filtered navigation items (only routes your current role has access to are displayed).
+- Active route highlighting.
+- Current role indicator in the footer.
+
+---
+
+## 4. Role-Based Access
+
+ALMP implements seven switchable personas, each with tailored access and dashboards:
+
+### Admin
+- **Access**: Full platform access across all modules.
+- **Focus**: System configuration, user management, platform health monitoring.
+- **Dashboard**: Complete view of all widgets including outcome health, agents at risk, approvals, financials, and system status.
+
+### Outcome Owner
+- **Access**: Outcomes, Outcome Builder, Billing, Approvals, Agents, Monitor.
+- **Focus**: Defining KPIs, tracking ROI, approving outcome contracts.
+- **Dashboard**: Outcome health and KPI delivery status, financial snapshot, pending approvals.
+
+### Agent Engineer
+- **Access**: Agents, Templates, Blueprints, Evals, Improvements, Outcome Builder, Integrations, Deployments.
+- **Focus**: Designing agent blueprints, configuring tools and memory, building evaluation suites.
+- **Dashboard**: Agent risk indicators, system status, eval backlog.
+
+### Ops / SRE
+- **Access**: Deployments, Monitor, Agents, Improvements, Self-Heal, Integrations, Governance.
+- **Focus**: Monitoring, incident response, reliability, rollback operations, cost controls.
+- **Dashboard**: System status (prominent), agent health, tool error rates, queue depth.
+
+### Compliance / Security
+- **Access**: Governance, Audit Trail, Approvals, Admin, Agents, Deployments, Monitor.
+- **Focus**: Policy authoring, audit exports, access controls, compliance reporting.
+- **Dashboard**: Policy violations (prominent), audit events, approval queue.
+
+### Expert Validator
+- **Access**: Approvals, Agents, Deployments, Evals, Governance, Audit Trail.
+- **Focus**: Reviewing and approving high-risk changes, exceptions, and major releases.
+- **Dashboard**: Approval queue (prominent), agents at risk.
+
+### Finance
+- **Access**: Billing, Outcomes, Approvals.
+- **Focus**: Billing rules, outcome metering, dispute resolution.
+- **Dashboard**: Financial snapshot (prominent), billing metrics.
+
+---
+
+## 5. Overview Dashboard
+
+The Overview Dashboard provides a role-adaptive summary of platform health. Widgets are shown or hidden based on the current persona.
+
+### Widgets
+
+**Outcome Health**
+- Lists all outcome contracts with their status (on_track, at_risk, breaching).
+- Shows KPI progress bars with current vs. target values.
+- SLA breach indicators and confidence scores.
+- Risk tier classification per outcome.
+
+**Agents at Risk**
+- Highlights agents with elevated risk based on drift detection, open incidents, latency, and cost.
+- Health score display with color-coded severity.
+- Direct links to agent cockpit for investigation.
+
+**Approval Queue**
+- Pending approvals with type, risk score, requester, and due date.
+- Quick-access buttons to review individual approvals.
+- Total pending count indicator.
+
+**Financial Snapshot**
+- Billed, pending, and disputed revenue totals.
+- 30-day revenue summary.
+- Quick navigation to detailed billing.
+
+**System Status**
+- Tool error rate, queue depth, eval backlog.
+- Connector health percentage.
+- Active vs. total agent count.
+
+**Policy Violations** (Compliance/Security role)
+- Recent policy violations with agent name, policy, severity, and action taken (blocked/warned).
+- Trace ID links for forensic investigation.
+
+---
+
+## 6. Outcome Builder
+
+An AI-powered conversational interface for defining business goals and drafting outcome contracts.
+
+### Features
+
+- **Chat-Based Design**: Describe your business objectives in natural language. The AI assistant guides you through defining measurable KPIs, SLAs, and pricing models.
+- **Section-by-Section Drafting**: The AI generates structured sections covering:
+  - Outcome name and description
+  - Business context and objectives
+  - KPI definitions with targets and units
+  - SLA thresholds and breach levels
+  - Pricing model (per-unit, tiered, subscription, success-fee)
+  - Risk assessment
+  - Agent requirements
+  - Governance and compliance constraints
+  - Monitoring configuration
+  - Acceptance criteria
+  - Financial projections
+  - Implementation timeline
+- **Interactive Preview**: Review the AI-generated contract with editable sections. Add, remove, or modify any section before finalizing.
+- **Export to Outcome**: Convert the drafted contract into a live outcome in the platform.
+
+---
+
+## 7. Outcomes Management
+
+Manage outcome contracts that define the measurable results agents must deliver.
+
+### Outcomes List
+
+- Filterable and searchable table of all outcome contracts.
+- Status indicators: draft, active, at_risk, breaching, completed, suspended.
+- Risk tier badges (low, medium, high, critical).
+- KPI summary strips showing progress toward targets.
+- Quick actions: view details, manage KPIs.
+
+### Outcome Detail
+
+- **Contract Overview**: Full outcome contract details including description, pricing model, billing cycle, and customer assignment.
+- **KPI Dashboard**: Individual KPI cards showing current value, target, progress bar, SLA threshold, breach status, and trend direction.
+- **Evidence Panel**: Evaluation evidence linked to the outcome, with scoring results and confidence intervals.
+- **Agent Assignments**: Agents contributing to this outcome with their health scores and recent run traces.
+- **Financial Summary**: Revenue generated, billing events, and cost breakdown for this outcome.
+- **Timeline**: Chronological view of contract changes, KPI updates, and significant events.
+
+---
+
+## 8. Agent Registry
+
+Central hub for managing and monitoring all AI agents on the platform.
+
+### Agent List
+
+- Filterable by status (active, paused, quarantined, draft, archived), type (single, team, remote), and environment.
+- Search by agent name or ID.
+- Key metrics displayed per agent: health score, environment, type, status, and risk tier.
+- Quick actions: view cockpit, pause/resume, create new agent.
+
+### Agent Cockpit (Detail View)
+
+The Agent Cockpit is a comprehensive dashboard for a single agent, organized into multiple tabs:
+
+**Overview Tab**
+- Agent metadata: name, description, type, model, environment, version.
+- Health score with color-coded indicator.
+- Risk tier and drift status.
+- Quick stats: total runs, success rate, average latency, cost per run.
+
+**Configuration Tab**
+- Model settings (provider, model name, temperature, max tokens).
+- System prompt and instruction configuration.
+- Memory and context settings.
+- Tool assignments.
+
+**Runs Tab**
+- Paginated list of execution traces with status, duration, token usage, and cost.
+- Click-through to detailed Run Detail or Trace Detail views.
+
+**Evaluations Tab**
+- Linked evaluation suites with pass/fail rates.
+- Regression detection and drift indicators.
+- Links to Eval Detail pages.
+
+**Deployments Tab**
+- Release history for this agent across environments.
+- Rollout strategy and status per release.
+
+**Blueprint Tab**
+- Current blueprint configuration with version history.
+- MCP dependencies, tool nodes, and context nodes.
+
+**Timeline Tab**
+- Aggregated version changes, audit events, and recommendations with diff visualization.
+- "Time travel" capability to see agent state at any historical point.
+
+**Redaction Profiles**
+- R0 (No redaction), R1 (PII masked), R2 (Full redaction) settings.
+- Controls what data is visible in traces and audit events based on user roles.
+
+### Agent Types
+
+| Type | Description |
+|---|---|
+| **Single** | Standard autonomous agent with its own blueprint and tool configuration |
+| **Team** | Composite orchestrator that coordinates multiple member agents with defined roles (lead/member/observer) |
+| **Remote** | External agent connected via Google A2A protocol with capability discovery and trust tier management |
+
+---
+
+## 9. Agent Design Wizard
+
+A step-by-step wizard for creating new agents with AI assistance.
+
+### Wizard Steps
+
+1. **Basic Info**: Name, description, agent type selection.
+2. **Model Configuration**: Choose AI provider, model, temperature, and token limits.
+3. **System Prompt**: Define the agent's core instructions and behavior.
+4. **Tools & Capabilities**: Select MCP tools from the governed registry.
+5. **Memory & Context**: Configure memory strategy and context sources.
+6. **Evaluation Setup**: Define initial eval suite with test cases and thresholds.
+7. **Governance**: Assign policies and compliance requirements.
+8. **Review & Create**: Summary of all settings with AI-generated recommendations.
+
+### AI Enhancement
+
+The wizard includes an "AI Enhance" feature that analyzes your configuration and suggests improvements for:
+- System prompt optimization
+- Tool selection recommendations
+- Memory strategy suggestions
+- Evaluation coverage recommendations
+
+---
+
+## 10. Multi-Agent Orchestration
+
+### Agent Teams
+
+Create and manage composite agent teams where multiple agents collaborate on complex tasks.
+
+**Team Configuration**
+- Team name, description, and orchestration strategy.
+- Member management with role assignments:
+  - **Lead**: Primary orchestrator that coordinates the team.
+  - **Member**: Contributing agent that handles specific subtasks.
+  - **Observer**: Monitoring agent that logs activity without active participation.
+- Team blueprint with graph-based orchestration model.
+
+**Team Graph Editor**
+- Visual canvas for designing agent collaboration flows.
+- Four node types:
+  - **Internal Agent**: Standard platform agents.
+  - **Tool Set**: Groups of MCP tools.
+  - **Edge Gate**: Policy checkpoints and conditional routing.
+  - **Remote A2A Agent**: External agents connected via A2A protocol.
+- Edge contracts with A2A-typed content parts (text, URL, data, file).
+- SLA/timeout configuration per edge.
+- Failure modes: retry, skip, escalate.
+- Retry policies per connection.
+
+### Remote Agents (A2A)
+
+Manage external agents connected via Google's Agent-to-Agent (A2A) communication protocol.
+
+**Remote Agent Registry**
+- Add remote agents by providing their A2A Agent Card URL.
+- Automatic capability discovery from Agent Card metadata.
+- Connectivity status monitoring (connected, disconnected, error).
+
+**Trust Tiers**
+- **Untrusted**: No access, discovery only.
+- **Basic**: Limited interactions, heavily monitored.
+- **Verified**: Standard interactions with audit logging.
+- **Trusted**: Extended access with reduced oversight.
+- **Privileged**: Full access (requires Security Admin approval).
+
+**Security Controls**
+- Allowed skills whitelist per remote agent.
+- Rate limiting (50 requests/minute default for A2A delegations).
+- A2A-specific audit logging.
+- Trust tier validation before every delegation.
+
+---
+
+## 11. Templates
+
+A library of reusable agent templates to accelerate agent creation.
+
+### Features
+
+- **Template Catalog**: Browse pre-built agent configurations organized by category.
+- **Template Detail**: Full configuration preview including model settings, system prompt, tool assignments, and governance rules.
+- **Instantiate**: Create a new agent directly from a template with customization options.
+- **Category Filtering**: Filter templates by use case (customer service, data analysis, content generation, etc.).
+
+---
+
+## 12. Blueprint Studio
+
+Visual editor for creating, versioning, and compiling agent blueprints.
+
+### Blueprint Management
+
+- **Blueprint List**: All blueprints with version, status (draft, review, approved, production), and linked agents.
+- **Version History**: Track changes across blueprint versions with diff visualization.
+
+### Blueprint Detail
+
+**Configuration Tab**
+- Agent model settings, system prompt, and behavior parameters.
+- Editable sections with save and version controls.
+
+**MCP Dependencies Tab**
+- Select MCP servers the blueprint depends on.
+- Pin specific server versions for reproducibility.
+- Dependency health indicators.
+
+**MCP Tool Nodes**
+- Governed tool picker sourced from the MCP Tool Registry.
+- Tool input/output schema preview.
+- Risk classification and governance status per tool.
+
+**Context Nodes**
+- Select MCP resources as context sources.
+- Retrieval strategy configuration:
+  - **Eager**: Load at agent startup.
+  - **Lazy**: Load on first access.
+  - **On-demand**: Load only when explicitly requested.
+- Sensitivity classification awareness.
+
+**Prompt Nodes**
+- Select prompts from the MCP Prompt Library.
+- Map prompt arguments to agent context variables.
+
+**Team Blueprint** (for team-type agents)
+- Graph-based orchestration tab with visual canvas.
+- Node configuration panels for agent, tool, policy, and remote agent pickers.
+- Edge contract editor with content type definitions and metadata schemas.
+
+### Governance Gates
+
+- Reviewer assignments for production releases.
+- Approval flow configuration.
+- Compiler snapshots for reproducibility.
+- Static checks before compilation.
+
+---
+
+## 13. Evaluation Studio
+
+Comprehensive evaluation management for measuring agent quality and detecting regressions.
+
+### Eval Suite Management
+
+- **Eval List**: All evaluation suites with pass rates, run counts, and drift status.
+- **Create Eval Suite**: Define test cases, scorers, thresholds, and regression criteria.
+- **AI Test Case Generation**: Generate test cases using AI based on agent configuration and expected behavior.
+
+### Eval Detail
+
+**Test Cases Tab**
+- Individual test cases with input, expected output, and scoring criteria.
+- Editable test case management (add, edit, delete).
+- Bulk import/export capabilities.
+
+**Run History Tab**
+- Chronological list of evaluation runs with pass/fail rates.
+- Trend charts showing evaluation quality over time.
+- Regression detection with alerts.
+
+**Scorers Tab**
+- Configure scoring functions (exact match, semantic similarity, LLM-as-judge, custom).
+- Threshold management per scorer.
+- Weight assignments for composite scores.
+
+**Regression Analysis**
+- Baseline comparison across runs.
+- Statistical significance testing.
+- Drift percentage calculations.
+
+---
+
+## 14. Shadow Replay
+
+Replay production traces against candidate agent versions for safe comparison and validation before deployment.
+
+### Features
+
+- **Trace Selection**: Choose production traces to replay against a new agent version.
+- **Side-by-Side Comparison**: Compare original production output with candidate version output.
+- **Scoring**: Automated quality scoring of replayed results.
+- **Redaction Support**: Apply R0/R1/R2 redaction profiles to replayed data.
+- **Approval Evidence**: Results feed into deployment approval evidence for informed release decisions.
+
+---
+
+## 15. Deployments & Release Orchestrator
+
+Manage the deployment lifecycle of agents across environments with built-in safety mechanisms.
+
+### Release List
+
+- All releases with status (pending, deploying, deployed, failed, rolled_back).
+- Environment targeting (staging, shadow, canary, production).
+- Rollout strategy indicators.
+- Quick actions: view details, rollback, promote.
+
+### Create Release Wizard
+
+Step-by-step release creation:
+1. **Agent Selection**: Choose agent and version to deploy.
+2. **Environment**: Select target environment.
+3. **Rollout Strategy**:
+   - **Shadow**: Run alongside production without serving traffic.
+   - **Canary**: Gradually shift traffic percentage.
+   - **Direct**: Immediate full deployment.
+4. **Safeguards**: Configure auto-rollback thresholds, health checks, and monitoring duration.
+5. **Review & Deploy**: Summary with approval requirements.
+
+### Release Detail
+
+- **Deployment Status**: Real-time progress through deployment stages.
+- **Canary Monitoring**: Traffic split percentage, error rates, latency comparison.
+- **Auto-Promotion/Rollback**: Configurable thresholds for automatic promotion to full production or rollback on failure.
+- **Shadow Replay Evidence**: Results from shadow runs linked to the release.
+- **Approval Chain**: Required approvals and their status.
+
+### Deployment Sequence
+
+Orchestrated deployment through stages:
+1. **Staging**: Automated testing in staging environment.
+2. **Shadow**: Shadow replay against production traffic.
+3. **Canary**: Gradual traffic shift with monitoring.
+4. **Production**: Full deployment after all checks pass.
+
+### Additional Features
+
+- **Deploy as Source Package**: Export agent configuration for CI/CD integration.
+- **Freeze Center**: Manage deployment freezes during critical periods.
+
+---
+
+## 16. Monitor
+
+Real-time observability dashboard for agent health, performance, and compliance.
+
+### Tabs
+
+**Outcome SLA Dashboard**
+- KPI delivery status across all outcomes.
+- SLA breach indicators and trend analysis.
+
+**Live Runs**
+- Real-time feed of agent execution runs.
+- Status, duration, token usage, and cost per run.
+- Click-through to Run Detail for full trace inspection.
+
+**Drift Detection**
+- Active drift signals with severity (low, medium, high, critical).
+- Drift metrics: pass rate deviation, latency changes, hallucination rates.
+- Baseline vs. current comparison.
+- Acknowledge, resolve, or escalate drift signals.
+
+**Agent Health**
+- Health scores across all agents.
+- Tool connector status and error rates.
+- Latency percentile charts (p50, p95, p99).
+
+**Policy Violations**
+- Real-time policy violation feed.
+- Severity classification and blocking actions.
+- Links to traces for investigation.
+
+### Run Detail
+
+Detailed view of a single agent execution:
+- **Execution Timeline**: Step-by-step execution with timing.
+- **MCP Trace**: OpenTelemetry-style span waterfall for MCP interactions (initialization, list sync, resource reads, tool calls, confirmations, outcomes).
+- **MCP Transcript**: Structured JSON-RPC request/response log with session tracking.
+
+### Trace Detail
+
+Deep-dive into execution traces:
+- Full input/output display.
+- Tool call details with parameters and responses.
+- Token usage breakdown.
+- Policy check results.
+- Cost attribution.
+
+---
+
+## 17. Optimization (Patch Center)
+
+AI-driven autonomous optimization and self-healing capabilities.
+
+### Patch Management
+
+- **AI-Proposed Patches**: The system analyzes agent performance and proposes configuration changes (prompt tuning, model swaps, parameter adjustments).
+- **Patch Types**: prompt_optimization, model_swap, parameter_tuning, tool_config, memory_optimization.
+- **Impact Analysis**: Predicted improvement with confidence scores.
+- **Approval Flow**: Patches require approval before application based on risk level.
+- **Rollback**: One-click rollback to pre-patch configuration.
+
+### Experiment Management (A/B Testing)
+
+- **Create Experiments**: Define A/B tests comparing current configuration against proposed changes.
+- **Traffic Splitting**: Configure traffic percentage for each variant.
+- **Metrics Tracking**: Track success rate, latency, cost, and custom metrics per variant.
+- **Statistical Analysis**: Significance testing to determine winning variants.
+- **Auto-Promote**: Automatically promote winning variants based on defined thresholds.
+
+---
+
+## 18. Ops & Self-Healing Loop
+
+### Ops Dashboard
+
+- Operational view of incidents, remediation actions, and system health.
+- Incident list with severity, status, and affected agents.
+- Quick actions for incident management.
+
+### Self-Healing Loop
+
+Automated incident resolution pipeline:
+
+1. **Detection**: Drift detection, error rate spikes, SLA breaches, or health score drops trigger incidents.
+2. **Analysis**: AI analyzes the incident and proposes remediation.
+3. **Patching**: Auto-generated patches for common issues.
+4. **Approval**: Expert validation for high-risk remediations.
+5. **Deployment**: Automated deployment of approved patches.
+6. **Verification**: Post-deployment monitoring to confirm resolution.
+7. **Closure**: Auto-closure on successful verification, auto-reopening if issues recur.
+
+### Autonomy Hooks
+
+Automated actions triggered by specific conditions:
+- Expand eval suites when drift is detected.
+- Quarantine agents on confidence drops below threshold.
+- Auto-scale resources on load spikes.
+- Trigger shadow replay on regression detection.
+
+---
+
+## 19. Governance
+
+Certified Agent Compliance Layer for policy management and enforcement.
+
+### Policy Management
+
+- **Policy Library**: Create and manage governance policies across domains:
+  - Data Handling
+  - Tool Permissions
+  - Logging Requirements
+  - Allowed Actions
+  - Content Boundaries
+- **Policy Configuration**: Define rules with conditions, actions (block, warn, log), and severity levels.
+- **Policy Testing**: Create test cases to validate policy behavior before enforcement.
+- **Version Control**: Track policy changes with full version history.
+
+### Compliance Frameworks
+
+- SOC 2 mapping with control coverage tracking.
+- EU AI Act compliance indicators.
+- GDPR compliance checks.
+- Framework coverage scores and gap analysis.
+
+### Policy Enforcement
+
+- Pre-action policy checks before agent tool calls and actions.
+- Real-time violation detection and blocking.
+- Exception management with approval workflows.
+- Policy exception requests with justification.
+
+### Compliance Reports
+
+- Generate compliance reports for specific frameworks.
+- Coverage percentage with evidence links.
+- Gap identification and remediation tracking.
+- Export capabilities for auditor consumption.
+
+### Tool Access Controls
+
+- Allowlist/blocklist management per agent.
+- Rate limiting per tool.
+- Shadow dry-run mode for testing tool policies.
+- Redacted audit logging for sensitive tool calls.
+
+---
+
+## 20. Audit Trail
+
+Immutable, hash-chained audit log for all platform actions.
+
+### Features
+
+- **Event Stream**: Chronological log of all platform events with user, action, object, and timestamp.
+- **Hash Chain Integrity**: Each event includes a SHA-256 hash linking to the previous event, enabling tamper detection.
+- **Filtering**: Filter by action type, user, date range, object type, and severity.
+- **MCP Action Filters**: Specialized filters for MCP-specific actions:
+  - tool_call, resource_read, server_init, prompt_get, confirmation, list_sync
+- **MCP Object Types**: Filter by MCP object categories.
+- **Search**: Full-text search across audit event details.
+- **Export**: Download audit logs for external analysis or compliance submissions.
+- **Integrity Verification**: Verify hash chain integrity to detect any tampering.
+
+---
+
+## 21. Approvals
+
+Expert validation queue for the 20% human oversight requirement.
+
+### Approval Queue
+
+- Filterable list of pending approvals across all types.
+- Priority sorting by risk score and due date.
+- Approval types:
+  - Deployment approvals
+  - Policy exception requests
+  - Agent configuration changes
+  - Blueprint production releases
+  - MCP server enablement
+  - Tool enablement (high-risk)
+  - Outcome contract approvals
+  - Patch approvals
+
+### Approval Detail
+
+- **Context Panel**: Full details of the change being approved.
+- **Evidence Section**: Evaluation results, shadow replay data, blast radius analysis, and configuration diffs.
+- **Risk Assessment**: AI-generated risk score with contributing factors.
+- **Actions**: Approve, reject, request changes, or escalate.
+- **Audit Trail**: History of all actions taken on this approval.
+
+---
+
+## 22. Approval Gates
+
+Unified MCP elicitation and ALMP supervision experience combining expert validation with MCP elicitation flows.
+
+### Features
+
+- **Tool-Call Gate Checking**: Automatic gates for:
+  - Write tool invocations
+  - Data export operations
+  - Scope escalation attempts
+- **Form Mode Elicitations**: Inline forms for collecting additional information during gated operations.
+- **URL Mode Elicitations**: External panel support for OAuth flows and sensitive data entry.
+- **Server Identity Tracking**: Track which MCP server initiated the gated operation.
+- **Risk Flag Analysis**: AI analysis of risk factors associated with each gated action.
+- **Actions**: Approve, decline, or cancel gated operations.
+
+### Permission Requirements
+
+- Expert Validator and Security Admin personas have access to Approval Gates.
+
+---
+
+## 23. Billing & Metering
+
+Outcome-based billing system where customers pay for measurable results.
+
+### Metering Dashboard
+
+**Summary Metrics**
+- Total revenue, pending revenue, projected annual revenue.
+- Revenue growth percentage.
+- Total units delivered vs. billable units.
+- Acceptance rate (billable/total).
+- Invoice counts by status (paid, pending, overdue).
+
+**Revenue Charts**
+- Monthly revenue trend line chart.
+- Revenue by outcome pie chart.
+- Units delivered bar chart.
+
+### Metering Pipeline
+
+The billing system processes outcome events through a pipeline:
+1. **Ingestion**: Capture outcome delivery events from agent runs.
+2. **Exclusion Rules**: Filter out non-billable events (test runs, duplicates, internal operations).
+3. **Deduplication**: Detect and remove duplicate events.
+4. **Fraud Checks**: Flag suspicious patterns for review.
+5. **Signing**: Generate SHA-256 signed hashes for tamper evidence.
+6. **Aggregation**: Aggregate billable events for invoice generation.
+
+### Invoice Management
+
+- **Invoice List**: All invoices with status (draft, sent, paid, overdue, disputed).
+- **Invoice Detail**: Line items with drill-down from invoice to events to traces.
+- **Pricing Models**: Support for multiple models:
+  - Per-unit pricing
+  - Tiered pricing
+  - Subscription
+  - Success-fee
+- **Dispute Management**: Create, track, and resolve billing disputes.
+
+### Exclusion Reasons Breakdown
+
+- Visual breakdown of why events were excluded from billing.
+- Categories: test_run, duplicate, below_threshold, fraud_flag, internal, manual_exclusion.
+
+---
+
+## 24. MCP Integration Suite
+
+Comprehensive Model Context Protocol (MCP) integration for managing servers, tools, resources, and prompts.
+
+### MCP Server Directory
+
+**Server Management**
+- Register internal and third-party MCP servers.
+- Server metadata: name, URL, version, capabilities, authentication method.
+- Status monitoring (active, inactive, error).
+
+**Capability Negotiation**
+- Automatic capability detection from MCP servers.
+- Tool, resource, and prompt catalog synchronization.
+
+**Authentication Configuration**
+- Support for multiple auth methods per server.
+- Credential management and rotation.
+
+**Production Enablement Flow**
+- Risk-tier-based approval process:
+  - Low risk: Auto-approved.
+  - Medium risk: Single reviewer approval.
+  - High risk: Multi-reviewer approval with Security Admin sign-off.
+- Approval status tracking.
+
+### MCP Tool Registry
+
+**Global Tool Inventory**
+- Governed catalog of all tools synced from MCP servers.
+- Tool details: name, description, input/output schemas, server source.
+- Governance fields: risk classification (low/medium/high/critical), owner, enabled status, drift status.
+
+**Tool Governance**
+- Enablement flow requiring approvals for high-risk tools.
+- Allowlist and blocklist management.
+- Rate limiting configuration.
+- Shadow dry-run mode for testing.
+
+**Drift Detection**
+- Fingerprint-based tool drift detection.
+- Alerts when tool schemas or behavior change from registered baseline.
+- Drift acknowledgment and resolution workflows.
+
+### MCP Resources
+
+**Governed Knowledge Connectors**
+- Manage document stores, repositories, database exports, and ticket systems via MCP resource primitives (resources/list, resources/read).
+- Sensitivity classification: public, internal, confidential, restricted.
+
+**Approval Gates**
+- Data steward approval required for internal resources.
+- Security Admin approval required for confidential/restricted resources.
+
+**Freshness Tracking**
+- Monitor resource freshness with last-synced timestamps.
+- Subscription support for real-time updates.
+
+**Blueprint Integration**
+- Resources appear as "Context Sources" in Blueprint Studio.
+- Retrieval strategy selection (eager/lazy/on-demand).
+
+### MCP Prompt Library
+
+**Prompt Catalog**
+- Browse imported MCP prompt templates (playbooks, workflow prompts) by server and status.
+- Prompt detail with argument definitions, message preview, and governance information.
+
+**Blueprint Binding**
+- "Prompt Nodes" panel in Blueprint Studio for selecting prompts.
+- Argument mapping to agent context variables.
+
+**Governance**
+- Domain experts can publish prompts.
+- Security Admin approval required if prompt embeds sensitive resources.
+- Uses MCP primitives: prompts/list, prompts/get, list change notifications.
+
+### Integrations Hub
+
+Central page for managing all integration points:
+- MCP Servers overview with status.
+- Tool Registry summary with drift alerts.
+- Resource directory with sensitivity levels.
+- Prompt Library with usage counts.
+- Quick navigation to detailed management pages.
+
+---
+
+## 25. MCP Apps
+
+Interactive HTML applications rendered inline within ALMP run and approval screens, powered by MCP servers.
+
+### Features
+
+- **Sandboxed Rendering**: MCP Apps run in sandboxed iframes with strict security boundaries.
+- **PostMessage Bridge**: JSON-RPC communication bridge between the app and the platform.
+- **Trust Tier Validation**: Apps require appropriate trust level from their source MCP server.
+- **User Consent Flow**: Explicit user consent required before app rendering, with trust level display.
+- **App Catalog**: Browse available MCP apps with descriptions, trust levels, and server attribution.
+
+### Security Model
+
+- Content Security Policy enforcement within iframes.
+- No direct DOM access to parent platform.
+- Communication restricted to approved JSON-RPC methods.
+- Server allowlisting in the database.
+
+---
+
+## 26. Marketplace
+
+Discover, publish, and install MCP servers, tools, and agent templates from the community.
+
+### Features
+
+- **Marketplace Catalog**: Browse published MCP integrations with categories, ratings, and install counts.
+- **Detail Pages**: Full documentation, configuration guides, and compatibility information per listing.
+- **Publisher Profiles**: View publisher information, verified status, and published listings.
+- **Install Flow**: One-click installation with automatic MCP server registration and tool sync.
+- **Search & Filter**: Find integrations by category, publisher, rating, or keyword.
+
+---
+
+## 27. Admin
+
+Platform administration for system-level configuration and management.
+
+### Features
+
+- **User Management**: View and manage platform users and their role assignments.
+- **System Configuration**: Platform-wide settings and feature flags.
+- **Environment Management**: Configure Development, Staging, and Production environments.
+- **Redaction Profiles**: Configure R0/R1/R2 redaction levels for the platform.
+  - **R0**: No redaction — full data visibility.
+  - **R1**: PII masking — personally identifiable information is masked.
+  - **R2**: Full redaction — sensitive data completely hidden.
+- **Data Export**: Export platform data for compliance or migration.
+
+---
+
+## 28. API Reference
+
+The platform exposes a comprehensive REST API. Below are the implemented endpoint groups:
+
+### Outcomes & KPIs
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/outcomes` | List all outcome contracts |
+| GET | `/api/outcomes/:id` | Get outcome detail |
+| POST | `/api/outcomes` | Create outcome contract |
+| PATCH | `/api/outcomes/:id` | Update outcome |
+| GET | `/api/outcomes/:id/kpis` | List KPIs for an outcome |
+| GET | `/api/outcomes/:id/evidence` | Get evaluation evidence for outcome |
+| GET | `/api/outcomes/:id/events` | Get outcome delivery events |
+| GET | `/api/outcomes/:id/audit` | Get audit events for outcome |
+| GET | `/api/outcomes/:id/snapshots` | Get historical snapshots |
+| POST | `/api/outcomes/:id/versions` | Create outcome version |
+| GET | `/api/outcomes/:id/versions` | List outcome versions |
+| POST | `/api/exports/outcome/:id/audit` | Export audit trail for outcome |
+| GET | `/api/kpis` | List all KPIs |
+| POST | `/api/kpis` | Create KPI |
+| PATCH | `/api/kpis/:id` | Update KPI |
+| DELETE | `/api/kpis/:id` | Delete KPI |
+
+### Agents
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/agents` | List all agents |
+| GET | `/api/agents/:id` | Get agent detail |
+| POST | `/api/agents` | Create agent |
+| PATCH | `/api/agents/:id` | Update agent |
+| POST | `/api/agents/bulk-action` | Bulk actions on multiple agents |
+| GET | `/api/agents/:id/traces` | List execution traces for agent |
+| GET | `/api/agents/:id/evals` | Get evaluation results for agent |
+| GET | `/api/agents/:id/recommendations` | Get AI recommendations for agent |
+| GET | `/api/agents/:id/autonomous-actions` | Get autonomous action history |
+| GET | `/api/agents/:id/versions` | List agent configuration versions |
+
+### Deployments
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/deployments` | List all deployments/releases |
+| GET | `/api/deployments/:id` | Get deployment detail |
+| POST | `/api/deployments` | Create deployment |
+| PATCH | `/api/deployments/:id` | Update deployment |
+| POST | `/api/deployments/:id/promote` | Promote deployment to next stage |
+| POST | `/api/deployments/:id/rollback` | Rollback deployment |
+| POST | `/api/deployments/:id/auto-promote` | Configure auto-promotion |
+| POST | `/api/deployments/:id/routing` | Configure traffic routing |
+| GET | `/api/deployments/:id/readiness` | Get deployment readiness checks |
+| GET | `/api/deployments/health` | Get deployment health overview |
+| GET | `/api/deployments/freeze-status` | Get freeze center status |
+| POST | `/api/deployments/freeze` | Create deployment freeze |
+
+### Evaluations
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/evals` | List all evaluation suites |
+| POST | `/api/evals` | Create evaluation suite |
+| GET | `/api/eval-suites` | List eval suite summaries |
+| GET | `/api/eval-runs` | List evaluation runs |
+
+### Governance & Policies
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/policies` | List governance policies |
+| GET | `/api/policies/:id` | Get policy detail |
+| POST | `/api/policies` | Create policy |
+| PATCH | `/api/policies/:id` | Update policy |
+| GET | `/api/policies/:id/test-cases` | List policy test cases |
+| POST | `/api/policies/:id/test-cases` | Create policy test case |
+| POST | `/api/policies/:id/test-cases/:testId/run` | Execute policy test case |
+| POST | `/api/policies/:id/simulate-traces` | Simulate policy against traces |
+
+### Approvals
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/approvals` | List all approvals |
+| GET | `/api/approvals/:id` | Get approval detail |
+| POST | `/api/approvals` | Create approval request |
+| PATCH | `/api/approvals/:id` | Update approval (approve/reject) |
+| GET | `/api/approvals/:id/requirements` | Get approval requirements |
+| GET | `/api/approval-queue` | Get filtered approval queue |
+
+### Audit Trail
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/audit-trail` | Query audit events with filters |
+
+### MCP Integration
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/mcp-servers` | List MCP servers |
+| POST | `/api/mcp-servers` | Register MCP server |
+| GET | `/api/mcp-servers/:id` | Get MCP server detail |
+| PATCH | `/api/mcp-servers/:id` | Update MCP server |
+| GET | `/api/mcp-tools` | List MCP tools |
+| GET | `/api/mcp-tools/:id` | Get MCP tool detail |
+| GET | `/api/mcp-resources` | List MCP resources |
+| GET | `/api/mcp-resources/:id` | Get MCP resource detail |
+| GET | `/api/mcp-prompts` | List MCP prompts |
+| GET | `/api/mcp-prompts/:id` | Get MCP prompt detail |
+| GET | `/api/mcp-apps` | List MCP apps |
+| GET | `/api/mcp-apps/:id` | Get MCP app detail |
+
+### MCP Observability
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/trace-spans` | List trace spans (OpenTelemetry) |
+| POST | `/api/trace-spans` | Create trace span |
+| PATCH | `/api/trace-spans/:id` | Update trace span |
+| GET | `/api/mcp-transcripts` | List MCP JSON-RPC transcripts |
+| POST | `/api/mcp-transcripts` | Create MCP transcript entry |
+| GET | `/api/runtime/runs/:id/observability` | Get full run observability data |
+
+### Approval Gates & Elicitations
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/api/tool-call-gate-check` | Check if tool call requires approval gate |
+| GET | `/api/mcp-elicitations` | List MCP elicitation requests |
+| POST | `/api/mcp-elicitations` | Create MCP elicitation |
+| POST | `/api/mcp-elicitations/:id/url-complete` | Complete URL-mode elicitation |
+
+### Tool Proxy
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/api/tool-proxy/invoke` | Invoke MCP tool through governed proxy |
+| POST | `/api/tool-proxy/a2a-delegate` | Delegate to A2A remote agent |
+| GET | `/api/tool-proxy/a2a-status` | Check A2A delegation status |
+
+### Multi-Agent Orchestration
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/agent-teams` | List agent teams |
+| POST | `/api/agent-teams` | Create agent team |
+| GET | `/api/remote-agents` | List remote A2A agents |
+| POST | `/api/remote-agents` | Register remote agent |
+| GET | `/api/blueprints/:id/team-graph` | Get team blueprint graph |
+| GET | `/api/team-blueprint-nodes` | List team graph nodes |
+| POST | `/api/team-blueprint-nodes` | Create team graph node |
+| PATCH | `/api/team-blueprint-nodes/:id` | Update team graph node |
+| DELETE | `/api/team-blueprint-nodes/:id` | Delete team graph node |
+| GET | `/api/team-blueprint-edges` | List team graph edges |
+| POST | `/api/team-blueprint-edges` | Create team graph edge |
+| PATCH | `/api/team-blueprint-edges/:id` | Update team graph edge |
+| DELETE | `/api/team-blueprint-edges/:id` | Delete team graph edge |
+
+### Marketplace
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/marketplace/registry-sources` | List marketplace registry sources |
+| GET | `/api/marketplace/registry-sources/:id` | Get registry source detail |
+| POST | `/api/marketplace/registry-sources` | Add registry source |
+| PATCH | `/api/marketplace/registry-sources/:id` | Update registry source |
+| DELETE | `/api/marketplace/registry-sources/:id` | Remove registry source |
+| POST | `/api/marketplace/registry-sources/:id/sync` | Sync registry source |
+| GET | `/api/marketplace/servers` | Browse marketplace servers |
+| GET | `/api/marketplace/servers/:id` | Get marketplace server detail |
+| POST | `/api/marketplace/servers/:id/install` | Install server from marketplace |
+| GET | `/api/marketplace/install-requests` | List install requests |
+| PATCH | `/api/marketplace/install-requests/:id/approve` | Approve install request |
+| PATCH | `/api/marketplace/install-requests/:id/reject` | Reject install request |
+| GET | `/api/marketplace/trusted-publishers` | List trusted publishers |
+| POST | `/api/marketplace/trusted-publishers` | Add trusted publisher |
+
+### Billing & Metering
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/billing/metering` | Get metering dashboard data |
+| GET | `/api/invoices` | List invoices |
+| GET | `/api/billing/disputes` | List billing disputes |
+| POST | `/api/billing/disputes` | Create billing dispute |
+
+### Platform & Admin
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/platform-settings` | List platform settings |
+| GET | `/api/platform-settings/:key` | Get specific setting |
+| PUT | `/api/platform-settings/:key` | Update platform setting |
+| GET | `/api/overview` | Get overview dashboard data |
+
+### AI Endpoints
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/api/ai/chat` | Conversational AI for Outcome Builder |
+| POST | `/api/ai/enhance-agent` | AI agent enhancement suggestions |
+| POST | `/api/ai/generate-test-cases` | AI-generated evaluation test cases |
+
+---
+
+## 29. Data Model
+
+The platform uses a comprehensive PostgreSQL schema managed by Drizzle ORM. Key entities:
+
+### Core Entities
+
+| Entity | Description |
+|---|---|
+| **Outcomes** | Business outcome contracts with pricing, SLAs, and status |
+| **KPIs** | Measurable key performance indicators linked to outcomes |
+| **Agents** | AI agent configurations with model, tools, and governance settings |
+| **Blueprints** | Versioned agent configuration snapshots |
+| **EvalSuites** | Evaluation test suites with scorers and thresholds |
+| **Releases** | Deployment records with environment, strategy, and status |
+
+### Governance Entities
+
+| Entity | Description |
+|---|---|
+| **Policies** | Governance rules with conditions and enforcement actions |
+| **PolicyExceptions** | Approved exceptions to policy rules |
+| **PolicyTestCases** | Test cases for validating policy behavior |
+| **ComplianceReports** | Generated compliance framework reports |
+| **AuditEvents** | Immutable hash-chained audit log entries |
+| **Approvals** | Expert validation requests with risk scores |
+
+### Operations Entities
+
+| Entity | Description |
+|---|---|
+| **RunTraces** | Agent execution traces with timing and cost |
+| **Incidents** | Operational incidents with severity and status |
+| **Patches** | AI-proposed configuration changes |
+| **Experiments** | A/B testing experiments |
+| **DriftDetections** | Detected behavioral drift records |
+
+### MCP Entities
+
+| Entity | Description |
+|---|---|
+| **McpServers** | Registered MCP server configurations |
+| **McpTools** | Synced tool definitions from MCP servers |
+| **McpResources** | Knowledge connectors via MCP resource primitives |
+| **McpPrompts** | Imported prompt templates from MCP servers |
+| **McpApps** | Interactive HTML apps served by MCP servers |
+
+### Multi-Agent Entities
+
+| Entity | Description |
+|---|---|
+| **AgentTeams** | Team compositions with orchestration config |
+| **AgentTeamMembers** | Team membership with role assignments |
+| **RemoteAgents** | A2A-connected external agent records |
+
+### Billing Entities
+
+| Entity | Description |
+|---|---|
+| **Invoices** | Generated invoices with line items |
+| **BillingEvents** | Outcome delivery events processed through metering pipeline |
+| **BillingDisputes** | Billing dispute records |
+
+---
+
+## 30. Security & Compliance
+
+### Authentication & Authorization
+
+- Role-based access control with seven defined personas.
+- Route-level access restrictions based on active role.
+- Permission-gated UI components that show/hide based on role capabilities.
+
+### Data Protection
+
+- **Redaction Profiles**: Three-tier data redaction system (R0/R1/R2) applied across traces, audit events, and API responses based on user role and sensitivity configuration.
+- **Secret Management**: Environment variables and API keys stored securely, never exposed in frontend code or logs.
+- **Audit Logging**: Every platform action logged with hash-chain integrity for tamper detection.
+
+### MCP Security
+
+- **Server Trust Tiers**: Five-level trust hierarchy for MCP servers (untrusted through privileged).
+- **Tool Governance**: Risk-classified tools with approval flows for high-risk enablement.
+- **Resource Sensitivity**: Four-level sensitivity classification (public/internal/confidential/restricted) with appropriate approval gates.
+- **Sandboxed Execution**: MCP Apps execute in sandboxed iframes with Content Security Policy enforcement.
+
+### Compliance Frameworks
+
+- SOC 2 control mapping and coverage tracking.
+- EU AI Act compliance indicators and gap analysis.
+- GDPR compliance checks for data handling policies.
+- Exportable compliance reports for external auditors.
+
+### Tool Proxy Security
+
+- Unified proxy for MCP tool calls and A2A delegations.
+- Allowlist/blocklist enforcement.
+- Per-tool and per-agent rate limiting.
+- Shadow dry-run mode for testing tool policies without side effects.
+- Redacted audit logging for sensitive operations.
+
+### Immutable Audit Trail
+
+- SHA-256 hash chain linking consecutive audit events.
+- Tamper detection through hash verification.
+- Full event provenance (who, what, when, where).
+- MCP-specific action type filtering for granular investigation.
+
+---
+
+*This documentation reflects the current state of the ALMP platform. Features and capabilities are subject to ongoing development and enhancement.*
