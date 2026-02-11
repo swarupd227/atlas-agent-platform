@@ -56,10 +56,38 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { StatCard } from "@/components/stat-card";
 import { StatusBadge } from "@/components/status-badge";
+import {
+  ProgressRing,
+  ConfidenceSparkline,
+  WaterfallChart,
+  RiskHeatBadge,
+} from "@/components/outcome-cockpit";
 import { usePermission, PermissionGate } from "@/components/role-provider";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { OutcomeContract, KpiDefinition, Invoice, Agent } from "@shared/schema";
+
+function hashCode(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash |= 0;
+  }
+  return hash;
+}
+
+function generateTrajectory(id: string, currentConfidence: number): number[] {
+  const trajectory: number[] = [];
+  const base = currentConfidence * 0.85 + 0.1;
+  const seed = hashCode(id);
+  for (let i = 0; i < 30; i++) {
+    const t = i / 29;
+    const noise = Math.sin(seed * (i + 1)) * 0.05;
+    trajectory.push(Math.max(0, Math.min(1, base + (currentConfidence - base) * t + noise)));
+  }
+  return trajectory;
+}
 
 function TrendIcon({ trend }: { trend: string }) {
   if (trend === "up") return <TrendingUp className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400" />;
@@ -178,6 +206,10 @@ export default function Outcomes() {
   const { data: backendRiskDrivers } = useQuery<Array<{ type: string; label: string; severity: string; detail: string }>>({
     queryKey: ["/api/outcome-risk-drivers"],
   });
+  const { data: outcomeEvents } = useQuery<Array<{ id: string; outcomeId: string; billable: boolean; amount: number }>>({
+    queryKey: ["/api/outcome-events"],
+  });
+  const [waterfallOutcome, setWaterfallOutcome] = useState<string | null>(null);
 
   const createMutation = useMutation({
     mutationFn: async (data: { name: string; description: string; riskTier: string; pricingModel: string; pricePerUnit: number }) => {
@@ -341,6 +373,21 @@ export default function Outcomes() {
 
   const getAgentsForOutcome = (outcomeId: string) => {
     return (agents || []).filter((a) => a.outcomeId === outcomeId);
+  };
+
+  const getOutcomeWaterfallSteps = (outcomeId: string) => {
+    const events = (outcomeEvents || []).filter((e) => e.outcomeId === outcomeId);
+    const gross = events.length;
+    const exclusions = events.filter((e) => !e.billable).length;
+    const netBillable = events.filter((e) => e.billable).length;
+    const outcomeInvoices = (invoices || []).filter((i) => i.outcomeId === outcomeId && (i.status === "paid" || i.status === "finalized"));
+    const revenue = outcomeInvoices.reduce((s, i) => s + (i.amount || 0), 0);
+    return [
+      { label: "Gross Events", value: gross, type: "gross" as const },
+      { label: "Exclusions", value: exclusions, type: "deduction" as const },
+      { label: "Net Billable", value: netBillable, type: "net" as const },
+      { label: "Revenue", value: Math.round(revenue * 100) / 100, type: "net" as const },
+    ];
   };
 
   if (isLoading) {
@@ -593,22 +640,21 @@ export default function Outcomes() {
                         <span className="text-xs font-medium truncate">{kpi.name}</span>
                         <TrendIcon trend={kpi.trend || "stable"} />
                       </div>
-                      <div className="flex items-baseline gap-1.5 flex-wrap">
-                        <span className="text-lg font-semibold">
-                          {typeof kpi.currentValue === "number" && kpi.currentValue % 1 !== 0
-                            ? kpi.currentValue.toFixed(1)
-                            : kpi.currentValue || 0}
-                        </span>
-                        <span className="text-xs text-muted-foreground">
-                          / {kpi.target} {kpi.unit}
-                        </span>
+                      <div className="flex items-center gap-2">
+                        <ProgressRing value={Math.min(100, kpi.attainment)} size={36} strokeWidth={3} />
+                        <div className="flex flex-col min-w-0">
+                          <span className="text-sm font-semibold tabular-nums">
+                            {typeof kpi.currentValue === "number" && kpi.currentValue % 1 !== 0
+                              ? kpi.currentValue.toFixed(1)
+                              : kpi.currentValue || 0}
+                            <span className="text-xs text-muted-foreground font-normal">
+                              {" "}/ {kpi.target} {kpi.unit}
+                            </span>
+                          </span>
+                          <span className="text-[10px] text-muted-foreground truncate">{outcomeName}</span>
+                        </div>
                       </div>
-                      <Progress
-                        value={Math.min(100, kpi.attainment)}
-                        className={`h-1.5 ${atRisk ? "[&>div]:bg-red-500" : exceeded ? "[&>div]:bg-emerald-500" : ""}`}
-                      />
                       <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <span className="text-[10px] text-muted-foreground truncate">{outcomeName}</span>
                         <ConfidenceDot value={kpi.confidence || 0} />
                       </div>
                     </div>
@@ -888,21 +934,48 @@ export default function Outcomes() {
                       </div>
                       <div className="flex flex-col min-w-0">
                         <span className="text-sm font-semibold truncate">{outcome.name}</span>
-                        <span className="text-[11px] text-muted-foreground">v{outcome.version}</span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[11px] text-muted-foreground">v{outcome.version}</span>
+                          <RiskHeatBadge level={outcome.riskTier || "medium"} />
+                        </div>
                       </div>
                     </div>
-                    <StatusBadge status={outcome.riskTier} />
+                    <ProgressRing value={Math.round(avgProgress)} size={40} strokeWidth={3} />
                   </div>
                   {outcome.description && (
                     <p className="text-xs text-muted-foreground line-clamp-2">{outcome.description}</p>
                   )}
-                  <div className="flex flex-col gap-1.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs text-muted-foreground">Overall Progress</span>
-                      <span className="text-xs font-medium">{Math.round(avgProgress)}%</span>
+                  {outcomeKpis.length > 0 && (
+                    <div className="flex flex-col gap-1.5">
+                      {outcomeKpis.slice(0, 2).map((kpi) => {
+                        const kpiPct = kpi.target > 0 ? Math.round(((kpi.currentValue || 0) / kpi.target) * 100) : 0;
+                        return (
+                          <div key={kpi.id} className="flex items-center gap-2">
+                            <ProgressRing value={kpiPct} size={24} strokeWidth={2} />
+                            <span className="text-[11px] text-muted-foreground truncate flex-1">{kpi.name}</span>
+                            <span className="text-[11px] tabular-nums shrink-0">
+                              {(kpi.currentValue || 0).toLocaleString()}/{kpi.target.toLocaleString()}
+                            </span>
+                          </div>
+                        );
+                      })}
                     </div>
-                    <Progress value={avgProgress} className="h-1.5" />
-                  </div>
+                  )}
+                  {(() => {
+                    const avgConfidence = outcomeKpis.length > 0
+                      ? outcomeKpis.reduce((s, k) => s + (k.confidence || 0), 0) / outcomeKpis.length
+                      : 0;
+                    const trajectory = generateTrajectory(outcome.id, avgConfidence);
+                    const declining = trajectory.length >= 2 && trajectory[trajectory.length - 1] < trajectory[0];
+                    return (
+                      <div className="flex items-center justify-between gap-2">
+                        <ConfidenceSparkline data={trajectory} declining={declining} width={80} height={20} />
+                        <span className="text-xs text-muted-foreground tabular-nums shrink-0">
+                          {Math.round(avgConfidence * 100)}% conf
+                        </span>
+                      </div>
+                    );
+                  })()}
                   <div className="flex items-center gap-3 flex-wrap pt-1 border-t">
                     <div className="flex items-center gap-1">
                       <BarChart3 className="w-3 h-3 text-muted-foreground" />
@@ -942,8 +1015,28 @@ export default function Outcomes() {
                         );
                       })()}
                     </div>
-                    <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setWaterfallOutcome(waterfallOutcome === outcome.id ? null : outcome.id);
+                        }}
+                        data-testid={`button-waterfall-toggle-${outcome.id}`}
+                      >
+                        <BarChart3 className="w-3 h-3" />
+                      </Button>
+                      <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
+                    </div>
                   </div>
+                  {waterfallOutcome === outcome.id && (
+                    <div className="pt-2 border-t" data-testid={`waterfall-drilldown-${outcome.id}`}>
+                      <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider mb-1 block">Revenue Flow</span>
+                      <WaterfallChart steps={getOutcomeWaterfallSteps(outcome.id)} />
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </Link>

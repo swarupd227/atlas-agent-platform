@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Target,
@@ -18,6 +19,9 @@ import {
   FlaskConical,
   CircleAlert,
   Minus,
+  Wrench,
+  Gauge,
+  ArrowUpDown,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -28,6 +32,19 @@ import { StatusBadge } from "@/components/status-badge";
 import { ErrorState } from "@/components/error-state";
 import { Link } from "wouter";
 import { useRole, type RoleId } from "@/components/role-provider";
+import {
+  PortfolioSummaryBar,
+  OutcomePortfolioCard,
+  WaterfallChart,
+  RiskExposurePanel,
+} from "@/components/outcome-cockpit";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface KpiSummary {
   id: string;
@@ -77,6 +94,26 @@ interface ApprovalItem {
   environment: string | null;
 }
 
+interface OutcomePortfolioItem {
+  id: string;
+  name: string;
+  status: string;
+  riskTier: string;
+  confidence: number;
+  confidenceTrajectory: number[];
+  kpis: Array<{ id: string; name: string; current: number; target: number; unit: string; trend: string }>;
+  valueDelivered: number;
+  valueCommitted: number;
+  agentCount: number;
+}
+
+interface RiskExposureItem {
+  category: string;
+  count: number;
+  severity: string;
+  items: Array<{ name: string; detail: string }>;
+}
+
 interface OverviewData {
   outcomeHealth: OutcomeHealth[];
   agentsAtRisk: AgentAtRisk[];
@@ -98,6 +135,20 @@ interface OverviewData {
     activeAgents: number;
     totalAgents: number;
   };
+  portfolio?: {
+    committedValue: number;
+    valueDelivered: number;
+    valueAtRisk: number;
+    projectedGap: number;
+  };
+  outcomePortfolio?: OutcomePortfolioItem[];
+  waterfall?: {
+    grossEvents: number;
+    exclusions: number;
+    netBillable: number;
+    revenueRecognized: number;
+  };
+  riskExposure?: RiskExposureItem[];
 }
 
 interface PolicyViolation {
@@ -115,6 +166,7 @@ interface PolicyViolation {
 interface RoleWidgetConfig {
   title: string;
   description: string;
+  showOutcomeCockpit: boolean;
   showOutcomeHealth: boolean;
   showAgentsAtRisk: boolean;
   showApprovalQueue: boolean;
@@ -129,12 +181,13 @@ interface RoleWidgetConfig {
 
 const ROLE_WIDGETS: Record<RoleId, RoleWidgetConfig> = {
   admin: {
-    title: "Admin Dashboard",
-    description: "Full platform overview and management",
-    showOutcomeHealth: true,
+    title: "Outcome Portfolio",
+    description: "Agent commitments, value delivery, and business impact",
+    showOutcomeCockpit: true,
+    showOutcomeHealth: false,
     showAgentsAtRisk: true,
     showApprovalQueue: true,
-    showFinancialSnapshot: true,
+    showFinancialSnapshot: false,
     showSystemStatus: true,
     showPolicyViolations: false,
     outcomeCompact: false,
@@ -143,12 +196,13 @@ const ROLE_WIDGETS: Record<RoleId, RoleWidgetConfig> = {
     systemProminent: false,
   },
   outcome_owner: {
-    title: "Outcome Owner Dashboard",
-    description: "KPI delivery and business outcomes",
-    showOutcomeHealth: true,
+    title: "Outcome Portfolio",
+    description: "Agent commitments, value delivery, and business impact",
+    showOutcomeCockpit: true,
+    showOutcomeHealth: false,
     showAgentsAtRisk: false,
     showApprovalQueue: true,
-    showFinancialSnapshot: true,
+    showFinancialSnapshot: false,
     showSystemStatus: false,
     showPolicyViolations: false,
     outcomeCompact: false,
@@ -159,6 +213,7 @@ const ROLE_WIDGETS: Record<RoleId, RoleWidgetConfig> = {
   agent_engineer: {
     title: "Agent Engineer Dashboard",
     description: "Agent performance and development",
+    showOutcomeCockpit: false,
     showOutcomeHealth: true,
     showAgentsAtRisk: true,
     showApprovalQueue: false,
@@ -173,6 +228,7 @@ const ROLE_WIDGETS: Record<RoleId, RoleWidgetConfig> = {
   ops_sre: {
     title: "Ops / SRE Dashboard",
     description: "Operations, reliability, and incidents",
+    showOutcomeCockpit: false,
     showOutcomeHealth: false,
     showAgentsAtRisk: true,
     showApprovalQueue: true,
@@ -187,6 +243,7 @@ const ROLE_WIDGETS: Record<RoleId, RoleWidgetConfig> = {
   compliance_security: {
     title: "Compliance / Security Dashboard",
     description: "Policy enforcement and compliance",
+    showOutcomeCockpit: false,
     showOutcomeHealth: false,
     showAgentsAtRisk: false,
     showApprovalQueue: true,
@@ -201,6 +258,7 @@ const ROLE_WIDGETS: Record<RoleId, RoleWidgetConfig> = {
   expert_validator: {
     title: "Expert Validator Dashboard",
     description: "Pending approvals and high-risk changes",
+    showOutcomeCockpit: false,
     showOutcomeHealth: false,
     showAgentsAtRisk: true,
     showApprovalQueue: true,
@@ -213,15 +271,16 @@ const ROLE_WIDGETS: Record<RoleId, RoleWidgetConfig> = {
     systemProminent: false,
   },
   finance: {
-    title: "Finance Dashboard",
-    description: "Billing, revenue, and cost tracking",
-    showOutcomeHealth: true,
+    title: "Outcome Portfolio",
+    description: "Value delivery, financial attribution, and revenue tracking",
+    showOutcomeCockpit: true,
+    showOutcomeHealth: false,
     showAgentsAtRisk: false,
     showApprovalQueue: false,
-    showFinancialSnapshot: true,
+    showFinancialSnapshot: false,
     showSystemStatus: false,
     showPolicyViolations: false,
-    outcomeCompact: true,
+    outcomeCompact: false,
     approvalProminent: false,
     financialProminent: true,
     systemProminent: false,
@@ -280,6 +339,141 @@ function TrendIcon({ trend }: { trend: string | null }) {
   if (trend === "up") return <TrendingUp className="w-3 h-3 text-emerald-500" />;
   if (trend === "down") return <TrendingDown className="w-3 h-3 text-red-500" />;
   return <Minus className="w-3 h-3 text-muted-foreground" />;
+}
+
+const RISK_CATEGORY_ICONS: Record<string, typeof AlertTriangle> = {
+  "Agent Drift": Activity,
+  "Tool Failures": Wrench,
+  "SLA Pressure": Clock,
+  "Cost Overruns": DollarSign,
+};
+
+function OutcomeCockpitView({ data, isFinanceRole }: { data: OverviewData; isFinanceRole: boolean }) {
+  const [sortBy, setSortBy] = useState<"confidence" | "risk" | "value">("confidence");
+
+  const portfolio = data.portfolio || { committedValue: 0, valueDelivered: 0, valueAtRisk: 0, projectedGap: 0 };
+  const outcomes = data.outcomePortfolio || [];
+  const waterfall = data.waterfall || { grossEvents: 0, exclusions: 0, netBillable: 0, revenueRecognized: 0 };
+  const riskExposure = data.riskExposure || [];
+
+  const riskOrder: Record<string, number> = { CRITICAL: 0, critical: 0, HIGH: 1, high: 1, MEDIUM: 2, medium: 2, LOW: 3, low: 3 };
+
+  const sortedOutcomes = [...outcomes].sort((a, b) => {
+    if (sortBy === "confidence") return a.confidence - b.confidence;
+    if (sortBy === "risk") return (riskOrder[a.riskTier] ?? 99) - (riskOrder[b.riskTier] ?? 99);
+    if (sortBy === "value") return b.valueDelivered - a.valueDelivered;
+    return 0;
+  });
+
+  const riskCategories = riskExposure.map((r) => ({
+    category: r.category,
+    icon: RISK_CATEGORY_ICONS[r.category] || AlertTriangle,
+    count: r.count,
+    severity: r.severity as "low" | "medium" | "high" | "critical",
+    items: r.items,
+  }));
+
+  const waterfallSteps = [
+    { label: "Gross Events", value: waterfall.grossEvents, type: "gross" as const },
+    { label: "Exclusions", value: waterfall.exclusions, type: "deduction" as const },
+    { label: "Net Billable", value: waterfall.netBillable, type: "net" as const },
+    { label: "Revenue", value: waterfall.revenueRecognized, type: "net" as const },
+  ];
+
+  return (
+    <div className="flex flex-col gap-6">
+      <PortfolioSummaryBar
+        committedValue={portfolio.committedValue}
+        valueDelivered={portfolio.valueDelivered}
+        valueAtRisk={portfolio.valueAtRisk}
+        projectedGap={portfolio.projectedGap}
+      />
+
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <h2 className="text-sm font-medium text-muted-foreground" data-testid="text-outcome-portfolio-heading">
+            Agent Outcome Contracts
+          </h2>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Select value={sortBy} onValueChange={(v) => setSortBy(v as typeof sortBy)}>
+              <SelectTrigger className="h-8 w-36 text-xs" data-testid="select-sort-outcomes">
+                <ArrowUpDown className="w-3 h-3 mr-1" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="confidence">By Confidence</SelectItem>
+                <SelectItem value="risk">By Risk</SelectItem>
+                <SelectItem value="value">By Value</SelectItem>
+              </SelectContent>
+            </Select>
+            <Link href="/outcomes">
+              <Button variant="ghost" size="sm" data-testid="link-view-all-outcomes">
+                View All <ArrowRight className="w-3.5 h-3.5 ml-1" />
+              </Button>
+            </Link>
+          </div>
+        </div>
+        {sortedOutcomes.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" data-testid="grid-outcome-portfolio">
+            {sortedOutcomes.map((outcome) => (
+              <Link key={outcome.id} href={`/outcomes/${outcome.id}`}>
+                <OutcomePortfolioCard outcome={outcome} />
+              </Link>
+            ))}
+          </div>
+        ) : (
+          <Card>
+            <CardContent className="p-6 flex flex-col items-center justify-center gap-3">
+              <Target className="w-8 h-8 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground text-center">
+                No outcome contracts yet. Create your first to start tracking agent commitments.
+              </p>
+              <Link href="/outcomes/discover">
+                <Button size="sm" data-testid="button-create-first-outcome-cockpit">
+                  <Sparkles className="w-3.5 h-3.5 mr-1" />
+                  Create Outcome
+                </Button>
+              </Link>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <Card data-testid="card-financial-waterfall">
+          <CardHeader className="p-4 pb-2">
+            <div className="flex items-center justify-between gap-2">
+              <CardTitle className="text-sm font-medium">Financial Attribution</CardTitle>
+              <Link href="/billing">
+                <Button variant="ghost" size="sm" data-testid="link-waterfall-billing">
+                  View Billing <ArrowRight className="w-3.5 h-3.5 ml-1" />
+                </Button>
+              </Link>
+            </div>
+          </CardHeader>
+          <CardContent className="p-4 pt-2">
+            <WaterfallChart steps={waterfallSteps} />
+          </CardContent>
+        </Card>
+
+        {riskCategories.length > 0 ? (
+          <RiskExposurePanel risks={riskCategories} />
+        ) : (
+          <Card data-testid="card-no-risk">
+            <CardHeader className="p-4 pb-2">
+              <CardTitle className="text-sm font-medium">Risk Exposure</CardTitle>
+            </CardHeader>
+            <CardContent className="p-4 pt-2">
+              <div className="flex items-center gap-3 p-4 rounded-md bg-emerald-500/5">
+                <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                <span className="text-xs text-muted-foreground">No significant risk exposure detected</span>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function PolicyViolationsSection({ violations, isLoading }: { violations: PolicyViolation[]; isLoading: boolean }) {
@@ -715,7 +909,7 @@ export default function Overview() {
     );
   }
 
-  const hasOutcomes = data.outcomeHealth.length > 0;
+  const hasOutcomes = data.outcomeHealth.length > 0 || (data.outcomePortfolio && data.outcomePortfolio.length > 0);
 
   if (!hasOutcomes && data.agentsAtRisk.length === 0) {
     return (
@@ -770,6 +964,10 @@ export default function Overview() {
         </Link>
       </div>
 
+      {config.showOutcomeCockpit && (
+        <OutcomeCockpitView data={data} isFinanceRole={role.id === "finance"} />
+      )}
+
       {config.showOutcomeHealth && (
         <OutcomeHealthSection outcomes={data.outcomeHealth} compact={config.outcomeCompact} />
       )}
@@ -795,7 +993,7 @@ export default function Overview() {
         <PolicyViolationsSection violations={violations || []} isLoading={violationsLoading} />
       )}
 
-      {config.financialProminent && (
+      {config.financialProminent && !config.showOutcomeCockpit && (
         <div className="grid grid-cols-1 gap-4">
           <FinancialSnapshotSection financialSnapshot={data.financialSnapshot} prominent={true} />
         </div>
@@ -812,7 +1010,7 @@ export default function Overview() {
         </div>
       )}
 
-      {config.financialProminent && config.showSystemStatus && (
+      {config.showSystemStatus && !showFinancialAndSystemRow && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <SystemStatusSection systemStatus={data.systemStatus} prominent={config.systemProminent} />
         </div>
