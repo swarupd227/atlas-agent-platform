@@ -80,6 +80,10 @@ import {
   type TeamBlueprintNode, type InsertTeamBlueprintNode,
   teamBlueprintEdges,
   type TeamBlueprintEdge, type InsertTeamBlueprintEdge,
+  traceSpans,
+  type TraceSpan, type InsertTraceSpan,
+  mcpTranscripts,
+  type McpTranscript, type InsertMcpTranscript,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -336,6 +340,14 @@ export interface IStorage {
   createTeamBlueprintEdge(edge: InsertTeamBlueprintEdge): Promise<TeamBlueprintEdge>;
   updateTeamBlueprintEdge(id: string, data: Partial<TeamBlueprintEdge>): Promise<TeamBlueprintEdge | undefined>;
   deleteTeamBlueprintEdge(id: string): Promise<boolean>;
+
+  getTraceSpans(runId: string): Promise<TraceSpan[]>;
+  getTraceSpan(id: string): Promise<TraceSpan | undefined>;
+  createTraceSpan(span: InsertTraceSpan): Promise<TraceSpan>;
+  updateTraceSpan(id: string, data: Partial<TraceSpan>): Promise<TraceSpan | undefined>;
+
+  getMcpTranscripts(runId: string): Promise<McpTranscript[]>;
+  createMcpTranscript(transcript: InsertMcpTranscript): Promise<McpTranscript>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1326,6 +1338,30 @@ export class DatabaseStorage implements IStorage {
   async deleteTeamBlueprintEdge(id: string) {
     await db.delete(teamBlueprintEdges).where(eq(teamBlueprintEdges.id, id));
     return true;
+  }
+
+  async getTraceSpans(runId: string) {
+    return db.select().from(traceSpans).where(eq(traceSpans.runId, runId)).orderBy(traceSpans.startedAt);
+  }
+  async getTraceSpan(id: string) {
+    const [s] = await db.select().from(traceSpans).where(eq(traceSpans.id, id));
+    return s;
+  }
+  async createTraceSpan(span: InsertTraceSpan) {
+    const [created] = await db.insert(traceSpans).values(span).returning();
+    return created;
+  }
+  async updateTraceSpan(id: string, data: Partial<TraceSpan>) {
+    const [updated] = await db.update(traceSpans).set(data).where(eq(traceSpans.id, id)).returning();
+    return updated;
+  }
+
+  async getMcpTranscripts(runId: string) {
+    return db.select().from(mcpTranscripts).where(eq(mcpTranscripts.runId, runId)).orderBy(mcpTranscripts.sequenceNum);
+  }
+  async createMcpTranscript(transcript: InsertMcpTranscript) {
+    const [created] = await db.insert(mcpTranscripts).values(transcript).returning();
+    return created;
   }
 }
 

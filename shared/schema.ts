@@ -975,4 +975,51 @@ export const insertTeamBlueprintEdgeSchema = createInsertSchema(teamBlueprintEdg
 export type InsertTeamBlueprintEdge = z.infer<typeof insertTeamBlueprintEdgeSchema>;
 export type TeamBlueprintEdge = typeof teamBlueprintEdges.$inferSelect;
 
+export const traceSpans = pgTable("trace_spans", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  runId: varchar("run_id").notNull(),
+  parentSpanId: varchar("parent_span_id"),
+  spanName: text("span_name").notNull(),
+  spanKind: text("span_kind").notNull().default("internal"),
+  mcpMethod: text("mcp_method"),
+  mcpServerId: varchar("mcp_server_id"),
+  mcpServerName: text("mcp_server_name"),
+  mcpToolName: text("mcp_tool_name"),
+  mcpResourceUri: text("mcp_resource_uri"),
+  status: text("status").notNull().default("ok"),
+  statusMessage: text("status_message"),
+  durationMs: integer("duration_ms").default(0),
+  attributes: jsonb("attributes"),
+  events: jsonb("events"),
+  startedAt: timestamp("started_at").defaultNow(),
+  endedAt: timestamp("ended_at"),
+});
+
+export const insertTraceSpanSchema = createInsertSchema(traceSpans).omit({ id: true, startedAt: true });
+export type InsertTraceSpan = z.infer<typeof insertTraceSpanSchema>;
+export type TraceSpan = typeof traceSpans.$inferSelect;
+
+export const mcpTranscripts = pgTable("mcp_transcripts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  runId: varchar("run_id").notNull(),
+  spanId: varchar("span_id"),
+  sequenceNum: integer("sequence_num").notNull().default(0),
+  direction: text("direction").notNull().default("request"),
+  mcpMethod: text("mcp_method").notNull(),
+  mcpServerId: varchar("mcp_server_id"),
+  mcpServerName: text("mcp_server_name"),
+  jsonrpcId: text("jsonrpc_id"),
+  params: jsonb("params"),
+  result: jsonb("result"),
+  error: jsonb("error"),
+  durationMs: integer("duration_ms"),
+  sessionId: text("session_id"),
+  protocolVersion: text("protocol_version"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertMcpTranscriptSchema = createInsertSchema(mcpTranscripts).omit({ id: true, createdAt: true });
+export type InsertMcpTranscript = z.infer<typeof insertMcpTranscriptSchema>;
+export type McpTranscript = typeof mcpTranscripts.$inferSelect;
+
 export * from "./models/chat";

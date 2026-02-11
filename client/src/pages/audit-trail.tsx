@@ -77,6 +77,7 @@ function getActionBadgeClass(action: string): string {
   if (a === "rejected") return "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20";
   if (a === "updated") return "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20";
   if (a === "rollback") return "bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/20";
+  if (a.startsWith("mcp_")) return "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border-cyan-500/20";
   return "bg-muted text-muted-foreground";
 }
 
@@ -222,6 +223,12 @@ export default function AuditTrail() {
                 <SelectItem value="blocked">Blocked</SelectItem>
                 <SelectItem value="promoted">Promoted</SelectItem>
                 <SelectItem value="rollback">Rollback</SelectItem>
+                <SelectItem value="mcp_tool_call">MCP Tool Call</SelectItem>
+                <SelectItem value="mcp_resource_read">MCP Resource Read</SelectItem>
+                <SelectItem value="mcp_server_init">MCP Server Init</SelectItem>
+                <SelectItem value="mcp_prompt_get">MCP Prompt Get</SelectItem>
+                <SelectItem value="mcp_confirmation">MCP Confirmation</SelectItem>
+                <SelectItem value="mcp_list_sync">MCP List Sync</SelectItem>
               </SelectContent>
             </Select>
 
@@ -239,6 +246,10 @@ export default function AuditTrail() {
                 <SelectItem value="approval">Approval</SelectItem>
                 <SelectItem value="blueprint">Blueprint</SelectItem>
                 <SelectItem value="eval_suite">Eval Suite</SelectItem>
+                <SelectItem value="mcp_server">MCP Server</SelectItem>
+                <SelectItem value="mcp_tool">MCP Tool</SelectItem>
+                <SelectItem value="mcp_resource">MCP Resource</SelectItem>
+                <SelectItem value="mcp_prompt">MCP Prompt</SelectItem>
               </SelectContent>
             </Select>
 

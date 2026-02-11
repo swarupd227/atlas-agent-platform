@@ -44,6 +44,8 @@ import {
   insertMcpElicitationSchema,
   insertTeamBlueprintNodeSchema,
   insertTeamBlueprintEdgeSchema,
+  insertTraceSpanSchema,
+  insertMcpTranscriptSchema,
 } from "@shared/schema";
 
 const openai = new OpenAI({
@@ -9371,6 +9373,66 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
   app.delete("/api/team-blueprint-edges/:id", async (req, res) => {
     await storage.deleteTeamBlueprintEdge(req.params.id);
     res.json({ success: true });
+  });
+
+  // ── Trace Spans ─────────────────────────────────────────
+  app.get("/api/trace-spans", async (req, res) => {
+    const runId = req.query.runId as string;
+    if (!runId) return res.status(400).json({ error: "runId required" });
+    const spans = await storage.getTraceSpans(runId);
+    res.json(spans);
+  });
+
+  app.post("/api/trace-spans", async (req, res) => {
+    try {
+      const data = insertTraceSpanSchema.parse(req.body);
+      const created = await storage.createTraceSpan(data);
+      res.status(201).json(created);
+    } catch (e) {
+      if (e instanceof ZodError) return res.status(400).json({ error: e.errors });
+      throw e;
+    }
+  });
+
+  app.patch("/api/trace-spans/:id", async (req, res) => {
+    try {
+      const data = insertTraceSpanSchema.partial().parse(req.body);
+      const updated = await storage.updateTraceSpan(req.params.id, data);
+      if (!updated) return res.status(404).json({ error: "Span not found" });
+      res.json(updated);
+    } catch (e) {
+      if (e instanceof ZodError) return res.status(400).json({ error: e.errors });
+      throw e;
+    }
+  });
+
+  // ── MCP Transcripts ───────────────────────────────────
+  app.get("/api/mcp-transcripts", async (req, res) => {
+    const runId = req.query.runId as string;
+    if (!runId) return res.status(400).json({ error: "runId required" });
+    const transcripts = await storage.getMcpTranscripts(runId);
+    res.json(transcripts);
+  });
+
+  app.post("/api/mcp-transcripts", async (req, res) => {
+    try {
+      const data = insertMcpTranscriptSchema.parse(req.body);
+      const created = await storage.createMcpTranscript(data);
+      res.status(201).json(created);
+    } catch (e) {
+      if (e instanceof ZodError) return res.status(400).json({ error: e.errors });
+      throw e;
+    }
+  });
+
+  // ── Run Detail: combined trace with spans + transcripts
+  app.get("/api/runtime/runs/:id/observability", async (req, res) => {
+    const runId = req.params.id;
+    const [spans, transcripts] = await Promise.all([
+      storage.getTraceSpans(runId),
+      storage.getMcpTranscripts(runId),
+    ]);
+    res.json({ spans, transcripts });
   });
 
   // Start the job worker
