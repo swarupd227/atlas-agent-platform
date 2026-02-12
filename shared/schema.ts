@@ -91,6 +91,7 @@ export const agents = pgTable("agents", {
   toolAccessClass: text("tool_access_class").default("standard"),
   complianceTags: text("compliance_tags").array().default(sql`'{}'::text[]`),
   ontologyTags: jsonb("ontology_tags"),
+  department: text("department"),
   lastIncidentAt: timestamp("last_incident_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });

@@ -14,6 +14,7 @@ import {
   Globe,
   Server,
   Lock,
+  Building2,
 } from "lucide-react";
 
 type WizardStep = "select" | "configure" | "review";
@@ -24,6 +25,7 @@ export function IndustryWorkspaceSelector() {
   const [step, setStep] = useState<WizardStep>("select");
 
   const [chosenSubVerticals, setChosenSubVerticals] = useState<string[]>([]);
+  const [chosenDepartments, setChosenDepartments] = useState<string[]>([]);
   const [chosenJurisdictions, setChosenJurisdictions] = useState<string[]>([]);
   const [chosenIntegrations, setChosenIntegrations] = useState<string[]>([]);
   const [dataClassDefault, setDataClassDefault] = useState<DataClassification>("internal");
@@ -60,6 +62,7 @@ export function IndustryWorkspaceSelector() {
       subVerticals: chosenSubVerticals,
       jurisdictions: chosenJurisdictions,
       integrations: chosenIntegrations,
+      departments: chosenDepartments,
       dataClassificationDefault: dataClassDefault,
     };
     setWorkspaceConfig(config);
@@ -244,6 +247,33 @@ export function IndustryWorkspaceSelector() {
                   </CardContent>
                 </Card>
 
+                <Card data-testid="card-config-departments">
+                  <CardContent className="p-5 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <Building2 className="h-4 w-4 text-violet-500" />
+                      <h3 className="font-semibold text-sm">Departments</h3>
+                    </div>
+                    <p className="text-xs text-muted-foreground">Select departments that will use AI agents. This determines applicable regulations and policies.</p>
+                    <div className="flex flex-wrap gap-2">
+                      {selected.departments.map((dept) => {
+                        const active = chosenDepartments.includes(dept);
+                        return (
+                          <Badge
+                            key={dept}
+                            variant={active ? "default" : "outline"}
+                            className={`cursor-pointer toggle-elevate ${active ? "toggle-elevated" : ""}`}
+                            onClick={() => toggleItem(chosenDepartments, dept, setChosenDepartments)}
+                            data-testid={`badge-department-${dept.replace(/[\s\/&]/g, "-").toLowerCase()}`}
+                          >
+                            {active && <Check className="h-3 w-3 mr-1" />}
+                            {dept}
+                          </Badge>
+                        );
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
+
                 <Card data-testid="card-config-jurisdictions">
                   <CardContent className="p-5 space-y-3">
                     <div className="flex items-center gap-2">
@@ -404,6 +434,22 @@ export function IndustryWorkspaceSelector() {
                         </div>
                       ) : (
                         <p className="text-xs text-muted-foreground">All sub-verticals (none selected)</p>
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium flex items-center gap-1.5">
+                        <Building2 className="h-3.5 w-3.5 text-violet-500" />
+                        Departments
+                      </p>
+                      {chosenDepartments.length > 0 ? (
+                        <div className="flex flex-wrap gap-1.5">
+                          {chosenDepartments.map((dept) => (
+                            <Badge key={dept} variant="secondary" className="text-xs">{dept}</Badge>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">All departments (none selected)</p>
                       )}
                     </div>
 

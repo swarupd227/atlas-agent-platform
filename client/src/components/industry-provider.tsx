@@ -28,6 +28,7 @@ export interface WorkspaceConfig {
   subVerticals: string[];
   jurisdictions: string[];
   integrations: string[];
+  departments: string[];
   dataClassificationDefault: DataClassification;
 }
 
@@ -45,6 +46,7 @@ export interface IndustryProfile {
   subVerticals: string[];
   jurisdictions: string[];
   integrationSystems: IntegrationSystem[];
+  departments: string[];
 }
 
 export const INDUSTRIES: IndustryProfile[] = [
@@ -71,6 +73,7 @@ export const INDUSTRIES: IndustryProfile[] = [
       { id: "guidewire", name: "Guidewire", category: "Insurance", description: "Insurance core system platform" },
       { id: "duck_creek", name: "Duck Creek", category: "Insurance", description: "SaaS insurance platform" },
     ],
+    departments: ["Treasury", "Risk Management", "Compliance", "Trading", "Client Services", "Finance & Accounting", "Marketing", "HR", "IT & Operations", "Legal"],
   },
   {
     id: "healthcare",
@@ -95,6 +98,7 @@ export const INDUSTRIES: IndustryProfile[] = [
       { id: "labcorp", name: "LabCorp/Covance", category: "Diagnostics", description: "Laboratory diagnostics and drug development" },
       { id: "allscripts", name: "Allscripts", category: "EHR", description: "Healthcare IT solutions" },
     ],
+    departments: ["Clinical Operations", "Pharmacy", "Research & Development", "Finance & Billing", "Marketing & Outreach", "Human Resources", "IT & Health Informatics", "Supply Chain", "Quality & Safety", "Legal & Compliance"],
   },
   {
     id: "manufacturing",
@@ -119,6 +123,7 @@ export const INDUSTRIES: IndustryProfile[] = [
       { id: "sap_ibp", name: "SAP IBP", category: "Supply Chain", description: "Integrated business planning for supply chain" },
       { id: "kinaxis", name: "Kinaxis RapidResponse", category: "Supply Chain", description: "Supply chain planning and analytics" },
     ],
+    departments: ["Production", "Quality Assurance", "Supply Chain & Logistics", "Engineering", "Finance & Accounting", "Marketing & Sales", "HR & Safety", "IT & Automation", "Maintenance", "Legal & Compliance"],
   },
   {
     id: "retail",
@@ -143,6 +148,7 @@ export const INDUSTRIES: IndustryProfile[] = [
       { id: "algolia", name: "Algolia", category: "Search", description: "AI-powered search and discovery" },
       { id: "stripe", name: "Stripe", category: "Payments", description: "Payment processing infrastructure" },
     ],
+    departments: ["Merchandising", "E-Commerce", "Marketing & Advertising", "Customer Service", "Supply Chain & Fulfillment", "Finance & Accounting", "HR & Training", "IT & Digital", "Loss Prevention", "Legal & Compliance"],
   },
   {
     id: "custom",
@@ -158,6 +164,7 @@ export const INDUSTRIES: IndustryProfile[] = [
     subVerticals: [],
     jurisdictions: ["US", "EU", "UK", "APAC", "Global"],
     integrationSystems: [],
+    departments: [],
   },
 ];
 
@@ -280,6 +287,7 @@ const DEFAULT_WORKSPACE_CONFIG: WorkspaceConfig = {
   subVerticals: [],
   jurisdictions: [],
   integrations: [],
+  departments: [],
   dataClassificationDefault: "internal",
 };
 
@@ -293,6 +301,7 @@ interface IndustryContextType {
   workspaceConfig: WorkspaceConfig;
   setWorkspaceConfig: (config: WorkspaceConfig) => void;
   activeFrameworks: string[];
+  activeDepartments: string[];
 }
 
 const JURISDICTION_FRAMEWORKS: Record<string, Record<string, string[]>> = {
@@ -323,6 +332,54 @@ const JURISDICTION_FRAMEWORKS: Record<string, Record<string, string[]>> = {
     UK: ["UK GDPR"],
     APAC: ["PDPA"],
     Global: ["PCI DSS"],
+  },
+  custom: {},
+};
+
+const DEPARTMENT_FRAMEWORKS: Record<string, Record<string, string[]>> = {
+  financial_services: {
+    "Treasury": ["Basel III", "SOX"],
+    "Risk Management": ["Basel III", "EU AI Act"],
+    "Compliance": ["SOX", "MiFID II", "FCA Regulations"],
+    "Trading": ["MiFID II", "FCA Regulations"],
+    "Finance & Accounting": ["SOX", "Basel III"],
+    "Marketing": ["FTC Guidelines", "GDPR"],
+    "Legal": ["GDPR", "EU AI Act"],
+  },
+  healthcare: {
+    "Clinical Operations": ["HIPAA", "FDA AI/ML Guidance", "21 CFR Part 11"],
+    "Pharmacy": ["FDA AI/ML Guidance", "21 CFR Part 11", "GxP"],
+    "Research & Development": ["21 CFR Part 11", "GxP", "FDA AI/ML Guidance"],
+    "Finance & Billing": ["SOX", "HIPAA"],
+    "Marketing & Outreach": ["FDA AI/ML Guidance", "FTC Guidelines", "HIPAA"],
+    "Human Resources": ["HIPAA", "GDPR"],
+    "IT & Health Informatics": ["HIPAA", "HITECH", "21 CFR Part 11"],
+    "Supply Chain": ["GxP", "FDA AI/ML Guidance"],
+    "Quality & Safety": ["FDA AI/ML Guidance", "GxP", "21 CFR Part 11"],
+    "Legal & Compliance": ["HIPAA", "HITECH", "GDPR"],
+  },
+  manufacturing: {
+    "Production": ["ISO 9001", "OSHA", "ISA-95"],
+    "Quality Assurance": ["ISO 9001", "ISO 27001"],
+    "Supply Chain & Logistics": ["ITAR", "REACH", "RoHS"],
+    "Engineering": ["ISA-95", "ISO 9001"],
+    "Finance & Accounting": ["SOX", "ISO 27001"],
+    "Marketing & Sales": ["FTC Guidelines", "GDPR"],
+    "HR & Safety": ["OSHA", "GDPR"],
+    "IT & Automation": ["ISO 27001", "ISA-95"],
+    "Maintenance": ["OSHA", "ISO 9001"],
+    "Legal & Compliance": ["ITAR", "REACH", "GDPR"],
+  },
+  retail: {
+    "Merchandising": ["FTC Guidelines", "PCI DSS"],
+    "E-Commerce": ["PCI DSS", "CCPA/CPRA", "GDPR"],
+    "Marketing & Advertising": ["FTC Guidelines", "CCPA/CPRA", "GDPR"],
+    "Customer Service": ["CCPA/CPRA", "GDPR", "ADA Compliance"],
+    "Supply Chain & Fulfillment": ["FTC Guidelines"],
+    "Finance & Accounting": ["SOX", "PCI DSS"],
+    "IT & Digital": ["PCI DSS", "ISO 27001"],
+    "Loss Prevention": ["PCI DSS", "CCPA/CPRA"],
+    "Legal & Compliance": ["GDPR", "CCPA/CPRA", "FTC Guidelines"],
   },
   custom: {},
 };
@@ -378,8 +435,16 @@ export function IndustryProvider({ children }: { children: ReactNode }) {
         frameworks.add(fw);
       }
     }
+    const deptMap = DEPARTMENT_FRAMEWORKS[industryId] || {};
+    for (const dept of workspaceConfig.departments || []) {
+      for (const fw of (deptMap[dept] || [])) {
+        frameworks.add(fw);
+      }
+    }
     return Array.from(frameworks);
-  }, [industryId, workspaceConfig.jurisdictions]);
+  }, [industryId, workspaceConfig.jurisdictions, workspaceConfig.departments]);
+
+  const activeDepartments = workspaceConfig.departments || [];
 
   const term = useCallback(
     (key: TermKey): string => {
@@ -401,6 +466,7 @@ export function IndustryProvider({ children }: { children: ReactNode }) {
         workspaceConfig,
         setWorkspaceConfig,
         activeFrameworks,
+        activeDepartments,
       }}
     >
       {children}

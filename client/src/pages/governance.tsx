@@ -37,6 +37,7 @@ import {
   Wand2,
   Globe,
   ExternalLink,
+  Building2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -330,6 +331,7 @@ interface RegulationDetail {
   description: string;
   category: "privacy" | "financial" | "safety" | "quality" | "security" | "industry_specific";
   jurisdictions: string[];
+  departments?: string[];
   requirements: Array<{
     id: string;
     title: string;
@@ -356,6 +358,7 @@ const REGULATION_DATABASE: Record<string, RegulationDetail> = {
       { id: "hipaa-5", title: "Minimum Necessary Standard", description: "Limit PHI disclosures to the minimum amount necessary to accomplish the intended purpose of the use or disclosure", severity: "high", category: "Data Minimization" },
     ],
     policyDomains: ["data_handling", "logging", "tool_permissions"],
+    departments: ["Clinical Operations", "IT & Health Informatics", "Finance & Billing", "Human Resources", "Legal & Compliance"],
   },
   "HITECH": {
     id: "hitech",
@@ -371,6 +374,7 @@ const REGULATION_DATABASE: Record<string, RegulationDetail> = {
       { id: "hitech-4", title: "Accounting of Disclosures", description: "Provide individuals with an accounting of disclosures of their PHI made through electronic health records", severity: "medium", category: "Transparency" },
     ],
     policyDomains: ["data_handling", "logging"],
+    departments: ["IT & Health Informatics", "Clinical Operations", "Legal & Compliance"],
   },
   "GDPR": {
     id: "gdpr",
@@ -404,6 +408,7 @@ const REGULATION_DATABASE: Record<string, RegulationDetail> = {
       { id: "sox-5", title: "Record Retention", description: "Retain all audit and review workpapers, financial records, and communications for a minimum of 7 years", severity: "high", category: "Records Management" },
     ],
     policyDomains: ["data_handling", "tool_permissions", "logging"],
+    departments: ["Finance & Accounting", "Legal & Compliance", "Treasury"],
   },
   "Basel III": {
     id: "basel-iii",
@@ -420,6 +425,7 @@ const REGULATION_DATABASE: Record<string, RegulationDetail> = {
       { id: "basel-5", title: "Stress Testing Framework", description: "Conduct regular stress tests to evaluate capital adequacy under adverse economic scenarios", severity: "high", category: "Stress Testing" },
     ],
     policyDomains: ["data_handling", "logging", "allowed_actions"],
+    departments: ["Risk Management", "Treasury", "Compliance"],
   },
   "PCI DSS": {
     id: "pci-dss",
@@ -436,6 +442,7 @@ const REGULATION_DATABASE: Record<string, RegulationDetail> = {
       { id: "pci-5", title: "Monitoring and Testing", description: "Track and monitor all access to network resources and cardholder data and regularly test security systems and processes", severity: "high", category: "Monitoring" },
     ],
     policyDomains: ["data_handling", "tool_permissions", "logging"],
+    departments: ["E-Commerce", "Finance & Accounting", "IT & Digital"],
   },
   "FDA AI/ML Guidance": {
     id: "fda-aiml",
@@ -452,6 +459,7 @@ const REGULATION_DATABASE: Record<string, RegulationDetail> = {
       { id: "fda-5", title: "Clinical Validation", description: "Demonstrate clinical validity through appropriate clinical studies or real-world evidence before and after deployment", severity: "critical", category: "Validation" },
     ],
     policyDomains: ["allowed_actions", "content_boundaries", "logging"],
+    departments: ["Clinical Operations", "Research & Development", "Quality & Safety", "Pharmacy"],
   },
   "21 CFR Part 11": {
     id: "21cfr11",
@@ -467,6 +475,7 @@ const REGULATION_DATABASE: Record<string, RegulationDetail> = {
       { id: "cfr-4", title: "Record Protection", description: "Protect electronic records to enable accurate and ready retrieval throughout the record retention period", severity: "high", category: "Records Management" },
     ],
     policyDomains: ["logging", "data_handling", "tool_permissions"],
+    departments: ["Research & Development", "Quality & Safety", "Pharmacy", "IT & Health Informatics"],
   },
   "GxP": {
     id: "gxp",
@@ -483,6 +492,7 @@ const REGULATION_DATABASE: Record<string, RegulationDetail> = {
       { id: "gxp-5", title: "Deviation and CAPA Management", description: "Investigate all deviations from approved procedures and implement corrective and preventive actions", severity: "high", category: "Quality" },
     ],
     policyDomains: ["logging", "allowed_actions", "data_handling"],
+    departments: ["Research & Development", "Pharmacy", "Quality & Safety", "Supply Chain"],
   },
   "EU AI Act": {
     id: "eu-ai-act",
@@ -500,6 +510,7 @@ const REGULATION_DATABASE: Record<string, RegulationDetail> = {
       { id: "euai-6", title: "Post-Market Monitoring", description: "Establish a post-market monitoring system proportionate to the nature and risks of the AI system", severity: "high", category: "Monitoring" },
     ],
     policyDomains: ["content_boundaries", "allowed_actions", "logging", "tool_permissions"],
+    departments: ["IT & Operations", "Compliance", "Risk Management", "Legal"],
   },
   "MiFID II": {
     id: "mifid-ii",
@@ -516,6 +527,7 @@ const REGULATION_DATABASE: Record<string, RegulationDetail> = {
       { id: "mifid-5", title: "Record Keeping Requirements", description: "Maintain records of all services, activities, and transactions sufficient to enable regulatory supervision for a minimum of 5 years", severity: "high", category: "Records Management" },
     ],
     policyDomains: ["logging", "allowed_actions", "data_handling"],
+    departments: ["Trading", "Compliance", "Client Services"],
   },
   "PSD2": {
     id: "psd2",
@@ -531,6 +543,7 @@ const REGULATION_DATABASE: Record<string, RegulationDetail> = {
       { id: "psd2-4", title: "Fraud Monitoring", description: "Implement transaction monitoring mechanisms to detect unauthorized or fraudulent payment transactions in real time", severity: "high", category: "Fraud Prevention" },
     ],
     policyDomains: ["tool_permissions", "data_handling", "logging"],
+    departments: ["Client Services", "IT & Operations"],
   },
   "ISO 9001": {
     id: "iso-9001",
@@ -547,6 +560,7 @@ const REGULATION_DATABASE: Record<string, RegulationDetail> = {
       { id: "iso9-5", title: "Management Review", description: "Conduct management reviews at planned intervals to ensure continuing suitability, adequacy, effectiveness, and alignment with strategic direction", severity: "medium", category: "Governance" },
     ],
     policyDomains: ["logging", "allowed_actions"],
+    departments: ["Quality Assurance", "Production", "Engineering"],
   },
   "ISO 27001": {
     id: "iso-27001",
@@ -563,6 +577,7 @@ const REGULATION_DATABASE: Record<string, RegulationDetail> = {
       { id: "iso27-5", title: "Cryptographic Controls", description: "Develop and implement a policy on the use of cryptographic controls for protection of information", severity: "high", category: "Encryption" },
     ],
     policyDomains: ["data_handling", "tool_permissions", "logging"],
+    departments: ["IT & Automation", "Finance & Accounting", "Legal & Compliance"],
   },
   "REACH": {
     id: "reach",
@@ -578,6 +593,7 @@ const REGULATION_DATABASE: Record<string, RegulationDetail> = {
       { id: "reach-4", title: "Supply Chain Communication", description: "Communicate risk management measures and substance information up and down the supply chain", severity: "medium", category: "Communication" },
     ],
     policyDomains: ["data_handling", "allowed_actions"],
+    departments: ["Supply Chain & Logistics", "Engineering", "Legal & Compliance"],
   },
   "RoHS": {
     id: "rohs",
@@ -593,6 +609,7 @@ const REGULATION_DATABASE: Record<string, RegulationDetail> = {
       { id: "rohs-4", title: "Supply Chain Due Diligence", description: "Verify compliance of components and materials from suppliers through testing, certificates of compliance, or supplier declarations", severity: "medium", category: "Supply Chain" },
     ],
     policyDomains: ["data_handling", "allowed_actions"],
+    departments: ["Supply Chain & Logistics", "Engineering", "Legal & Compliance"],
   },
   "ITAR": {
     id: "itar",
@@ -609,6 +626,7 @@ const REGULATION_DATABASE: Record<string, RegulationDetail> = {
       { id: "itar-5", title: "Violation Reporting", description: "Report known or suspected ITAR violations to DDTC including unauthorized exports or disclosures of technical data", severity: "critical", category: "Compliance" },
     ],
     policyDomains: ["tool_permissions", "data_handling", "logging"],
+    departments: ["Supply Chain & Logistics", "Engineering", "Legal & Compliance"],
   },
   "CCPA/CPRA": {
     id: "ccpa-cpra",
@@ -625,6 +643,7 @@ const REGULATION_DATABASE: Record<string, RegulationDetail> = {
       { id: "ccpa-5", title: "Privacy Notice Requirements", description: "Provide clear and conspicuous privacy notices at or before the point of collection describing data practices", severity: "high", category: "Transparency" },
     ],
     policyDomains: ["data_handling", "allowed_actions", "content_boundaries"],
+    departments: ["Marketing & Advertising", "E-Commerce", "Customer Service", "IT & Digital"],
   },
   "FTC Guidelines": {
     id: "ftc-guidelines",
@@ -640,6 +659,7 @@ const REGULATION_DATABASE: Record<string, RegulationDetail> = {
       { id: "ftc-4", title: "Data Security Standards", description: "Implement reasonable security measures to protect consumer personal information from unauthorized access or disclosure", severity: "high", category: "Security" },
     ],
     policyDomains: ["content_boundaries", "allowed_actions"],
+    departments: ["Marketing & Advertising", "Merchandising", "Legal & Compliance"],
   },
   "ADA Compliance": {
     id: "ada-compliance",
@@ -655,6 +675,7 @@ const REGULATION_DATABASE: Record<string, RegulationDetail> = {
       { id: "ada-4", title: "Assistive Technology Compatibility", description: "Ensure AI-driven interfaces are compatible with screen readers, voice control, and other assistive technologies", severity: "high", category: "Compatibility" },
     ],
     policyDomains: ["content_boundaries", "allowed_actions"],
+    departments: ["E-Commerce", "Customer Service", "IT & Digital"],
   },
 };
 
@@ -675,7 +696,7 @@ const SEVERITY_COLORS: Record<string, string> = {
 };
 
 export default function Governance() {
-  const { industry, workspaceConfig, activeFrameworks } = useIndustry();
+  const { industry, workspaceConfig, activeFrameworks, activeDepartments } = useIndustry();
   const [search, setSearch] = useState("");
   const [domainFilter, setDomainFilter] = useState<string>("all");
   const [createOpen, setCreateOpen] = useState(false);
@@ -697,6 +718,7 @@ export default function Governance() {
   const [exportObjectFilter, setExportObjectFilter] = useState("all");
   const [exportRedactionProfile, setExportRedactionProfile] = useState("none");
   const [selectedRegulationId, setSelectedRegulationId] = useState<string | null>(null);
+  const [deptFilter, setDeptFilter] = useState<string | null>(null);
   const [enhancedRegulations, setEnhancedRegulations] = useState<Record<string, any>>({});
   const [generatingPoliciesFor, setGeneratingPoliciesFor] = useState<string | null>(null);
   const { toast } = useToast();
@@ -887,6 +909,13 @@ export default function Governance() {
       .map((fw) => REGULATION_DATABASE[fw])
       .filter(Boolean) as RegulationDetail[];
   }, [activeFrameworks]);
+
+  const filteredRegulations = useMemo(() => {
+    if (!deptFilter) return detectedRegulations;
+    return detectedRegulations.filter(
+      (reg) => !reg.departments || reg.departments.length === 0 || reg.departments.includes(deptFilter)
+    );
+  }, [detectedRegulations, deptFilter]);
 
   const regulationSummary = useMemo(() => {
     const totalReqs = detectedRegulations.reduce((sum, r) => sum + r.requirements.length, 0);
@@ -2430,8 +2459,32 @@ export default function Governance() {
             </Card>
           ) : (
             <>
+              {activeDepartments.length > 0 && (
+                <div className="flex items-center gap-2 flex-wrap" data-testid="dept-filter-row">
+                  <span className="text-sm font-medium text-muted-foreground">Filter by Department:</span>
+                  <Badge
+                    variant={deptFilter === null ? "default" : "outline"}
+                    className="cursor-pointer"
+                    onClick={() => setDeptFilter(null)}
+                    data-testid="badge-dept-filter-all"
+                  >
+                    All
+                  </Badge>
+                  {activeDepartments.map((dept) => (
+                    <Badge
+                      key={dept}
+                      variant={deptFilter === dept ? "default" : "outline"}
+                      className="cursor-pointer"
+                      onClick={() => setDeptFilter(deptFilter === dept ? null : dept)}
+                      data-testid={`badge-dept-filter-${dept.replace(/[\s\/&]/g, "-").toLowerCase()}`}
+                    >
+                      {dept}
+                    </Badge>
+                  ))}
+                </div>
+              )}
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                {detectedRegulations.map((reg) => (
+                {filteredRegulations.map((reg) => (
                   <Card key={reg.id} data-testid={`card-regulation-${reg.id}`}>
                     <CardHeader className="flex flex-row items-start justify-between gap-2 pb-2">
                       <div className="flex flex-col gap-1 min-w-0">
@@ -2451,6 +2504,12 @@ export default function Governance() {
                           <Badge key={j} variant="outline" size="sm" data-testid={`badge-jurisdiction-${reg.id}-${j}`}>
                             <Globe className="w-3 h-3 mr-1" />
                             {j}
+                          </Badge>
+                        ))}
+                        {reg.departments && reg.departments.length > 0 && reg.departments.map((dept) => (
+                          <Badge key={dept} variant="outline" size="sm" className="bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20" data-testid={`badge-dept-${reg.id}-${dept.replace(/[\s\/&]/g, "-").toLowerCase()}`}>
+                            <Building2 className="w-3 h-3 mr-1" />
+                            {dept}
                           </Badge>
                         ))}
                       </div>

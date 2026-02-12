@@ -63,6 +63,7 @@ import {
   PhoneForwarded,
   Settings,
   Eye,
+  Building2,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -158,6 +159,7 @@ interface WizardState {
   autonomyMode: string;
   outcomeId: string;
   ontologyTags: OntologyTag[];
+  department: string;
   modelProvider: string;
   modelName: string;
   toolsConfig: ToolConfig[];
@@ -221,6 +223,7 @@ const defaultWizardState: WizardState = {
   autonomyMode: "assisted",
   outcomeId: "",
   ontologyTags: [],
+  department: "",
   modelProvider: "openai",
   modelName: "gpt-4.1",
   toolsConfig: [],
@@ -611,6 +614,7 @@ export default function AgentWizard() {
       guardrailsConfig: wizardState.guardrailsConfig,
       evalSuiteConfig: wizardState.evalSuiteConfig,
       ontologyTags: wizardState.ontologyTags.length > 0 ? wizardState.ontologyTags : undefined,
+      department: wizardState.department || undefined,
       rolloutConfig: wizardState.rolloutConfig,
       rollbackPlan: wizardState.rolloutConfig ? {
         rollbackStrategy: wizardState.rolloutConfig.rollbackStrategy,
@@ -1246,6 +1250,32 @@ function Step1BasicInfo({
                   Apply Defaults
                 </Button>
               </div>
+            </CardContent>
+          </Card>
+        )}
+        {industry && industry.id !== "custom" && industry.departments.length > 0 && (
+          <Card data-testid="card-agent-department">
+            <CardContent className="p-4 space-y-3">
+              <div className="flex items-center gap-2 min-w-0">
+                <Building2 className="h-4 w-4 text-muted-foreground shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">Department</p>
+                  <p className="text-xs text-muted-foreground">
+                    Assign this agent to a department for targeted policy and regulation filtering
+                  </p>
+                </div>
+              </div>
+              <Select value={state.department || "_none"} onValueChange={(v) => updateState({ department: v === "_none" ? "" : v })}>
+                <SelectTrigger data-testid="select-agent-department">
+                  <SelectValue placeholder="Select a department" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="_none">None</SelectItem>
+                  {industry.departments.map((dept) => (
+                    <SelectItem key={dept} value={dept}>{dept}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </CardContent>
           </Card>
         )}
