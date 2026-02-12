@@ -10,7 +10,11 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Database, Search, TrendingUp, BarChart3, Trophy, ArrowRight, Tag, Calendar, Users, Target, Layers, Sparkles, Filter } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { useToast } from "@/hooks/use-toast";
+import { Database, Search, TrendingUp, BarChart3, Trophy, ArrowRight, Tag, Calendar, Users, Target, Layers, Sparkles, Filter, Plus, Loader2, Wand2 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
 const industryOptions = [
@@ -52,8 +56,48 @@ export default function GoldenDatasetsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [industryFilter, setIndustryFilter] = useState("all");
   const [activeTab, setActiveTab] = useState("browser");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [aiGenerateOpen, setAiGenerateOpen] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newDescription, setNewDescription] = useState("");
+  const [newIndustry, setNewIndustry] = useState("financial_services");
+  const [newUseCase, setNewUseCase] = useState("");
+  const [aiIndustry, setAiIndustry] = useState("financial_services");
+  const [aiUseCase, setAiUseCase] = useState("");
+  const [aiCount, setAiCount] = useState(5);
+  const { toast } = useToast();
 
   const { data: datasets = [], isLoading } = useQuery<GoldenDataset[]>({ queryKey: ["/api/golden-datasets"] });
+
+  const createMutation = useMutation({
+    mutationFn: (data: any) => apiRequest("POST", "/api/golden-datasets", data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/golden-datasets"] });
+      toast({ title: "Dataset created" });
+      setCreateOpen(false);
+      setNewName("");
+      setNewDescription("");
+      setNewUseCase("");
+    },
+  });
+
+  const aiGenerateMutation = useMutation({
+    mutationFn: (data: any) => apiRequest("POST", "/api/ai/generate-golden-dataset", data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/golden-datasets"] });
+      toast({ title: "Dataset generated with AI test cases" });
+      setAiGenerateOpen(false);
+      setAiUseCase("");
+    },
+  });
+
+  const seedMutation = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/golden-datasets/seed"),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/golden-datasets"] });
+      toast({ title: "Sample datasets loaded" });
+    },
+  });
 
   const filtered = useMemo(() => {
     return datasets.filter((d) => {
@@ -116,13 +160,146 @@ export default function GoldenDatasetsPage() {
 
   return (
     <div className="flex flex-col gap-6 p-6" data-testid="page-golden-datasets">
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex items-center justify-center w-9 h-9 rounded-md bg-primary/10 shrink-0">
-          <Database className="w-4 h-4 text-primary" />
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center justify-center w-9 h-9 rounded-md bg-primary/10 shrink-0">
+            <Database className="w-4 h-4 text-primary" />
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-page-title">Golden Datasets</h1>
+            <p className="text-sm text-muted-foreground" data-testid="text-page-subtitle">Industry-specific evaluation datasets & benchmarks</p>
+          </div>
         </div>
-        <div className="flex flex-col gap-0.5">
-          <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-page-title">Golden Datasets</h1>
-          <p className="text-sm text-muted-foreground" data-testid="text-page-subtitle">Industry-specific evaluation datasets & benchmarks</p>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Dialog open={aiGenerateOpen} onOpenChange={setAiGenerateOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline" data-testid="button-ai-generate-dataset">
+                <Sparkles className="w-4 h-4 mr-1.5" />
+                AI Generate Dataset
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>AI Generate Dataset with Test Cases</DialogTitle>
+              </DialogHeader>
+              <div className="flex flex-col gap-4">
+                <div className="flex flex-col gap-2">
+                  <Label>Industry</Label>
+                  <Select value={aiIndustry} onValueChange={setAiIndustry}>
+                    <SelectTrigger data-testid="select-ai-industry">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {industryOptions.filter(o => o.value !== "all").map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Label>Use Case</Label>
+                  <Input
+                    placeholder="e.g., Customer Support Automation, Fraud Detection..."
+                    value={aiUseCase}
+                    onChange={(e) => setAiUseCase(e.target.value)}
+                    data-testid="input-ai-usecase"
+                  />
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Label>Number of Test Cases</Label>
+                  <Select value={String(aiCount)} onValueChange={(v) => setAiCount(Number(v))}>
+                    <SelectTrigger data-testid="select-ai-count">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="3">3 test cases</SelectItem>
+                      <SelectItem value="5">5 test cases</SelectItem>
+                      <SelectItem value="8">8 test cases</SelectItem>
+                      <SelectItem value="10">10 test cases</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button
+                  onClick={() => aiGenerateMutation.mutate({ industry: aiIndustry, useCase: aiUseCase, count: aiCount })}
+                  disabled={!aiUseCase.trim() || aiGenerateMutation.isPending}
+                  data-testid="button-submit-ai-generate"
+                >
+                  {aiGenerateMutation.isPending ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1.5" />}
+                  {aiGenerateMutation.isPending ? "Generating..." : "Generate Dataset"}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+            <DialogTrigger asChild>
+              <Button data-testid="button-create-dataset">
+                <Plus className="w-4 h-4 mr-1.5" />
+                Create Dataset
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Create Golden Dataset</DialogTitle>
+              </DialogHeader>
+              <div className="flex flex-col gap-4">
+                <div className="flex flex-col gap-2">
+                  <Label>Name</Label>
+                  <Input
+                    placeholder="Dataset name..."
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    data-testid="input-create-name"
+                  />
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Label>Description</Label>
+                  <Textarea
+                    placeholder="Describe the evaluation dataset..."
+                    value={newDescription}
+                    onChange={(e) => setNewDescription(e.target.value)}
+                    data-testid="input-create-description"
+                  />
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Label>Industry</Label>
+                  <Select value={newIndustry} onValueChange={setNewIndustry}>
+                    <SelectTrigger data-testid="select-create-industry">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {industryOptions.filter(o => o.value !== "all").map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Label>Use Case</Label>
+                  <Input
+                    placeholder="e.g., Customer Support, Risk Assessment..."
+                    value={newUseCase}
+                    onChange={(e) => setNewUseCase(e.target.value)}
+                    data-testid="input-create-usecase"
+                  />
+                </div>
+                <Button
+                  onClick={() => createMutation.mutate({
+                    name: newName,
+                    description: newDescription,
+                    industry: newIndustry,
+                    useCase: newUseCase,
+                    version: "1.0.0",
+                    status: "active",
+                  })}
+                  disabled={!newName.trim() || !newUseCase.trim() || createMutation.isPending}
+                  data-testid="button-submit-create"
+                >
+                  {createMutation.isPending ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Plus className="w-4 h-4 mr-1.5" />}
+                  {createMutation.isPending ? "Creating..." : "Create Dataset"}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
         </div>
       </div>
 
@@ -170,9 +347,33 @@ export default function GoldenDatasetsPage() {
 
             {filtered.length === 0 ? (
               <Card>
-                <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
+                <CardContent className="flex flex-col items-center justify-center py-12 gap-4">
                   <Database className="w-10 h-10 text-muted-foreground/50" />
                   <p className="text-sm text-muted-foreground" data-testid="text-empty-state">No datasets found</p>
+                  {datasets.length === 0 && !searchQuery && industryFilter === "all" && (
+                    <div className="flex flex-col items-center gap-3">
+                      <p className="text-xs text-muted-foreground">Get started by loading sample datasets or creating your own</p>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Button
+                          variant="outline"
+                          onClick={() => seedMutation.mutate()}
+                          disabled={seedMutation.isPending}
+                          data-testid="button-load-samples"
+                        >
+                          {seedMutation.isPending ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Database className="w-4 h-4 mr-1.5" />}
+                          {seedMutation.isPending ? "Loading..." : "Load Sample Datasets"}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={() => setAiGenerateOpen(true)}
+                          data-testid="button-empty-ai-generate"
+                        >
+                          <Sparkles className="w-4 h-4 mr-1.5" />
+                          AI Generate Dataset
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             ) : (
