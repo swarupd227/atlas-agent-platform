@@ -1340,11 +1340,38 @@ export const skills = pgTable("skills", {
   status: text("status").notNull().default("active"),
   complexity: text("complexity").notNull().default("intermediate"),
   aiEnrichment: jsonb("ai_enrichment"),
+  yamlFrontmatter: jsonb("yaml_frontmatter"),
+  markdownBody: text("markdown_body"),
+  allowedTools: text("allowed_tools").array().default(sql`'{}'::text[]`),
+  requiredMcpServers: text("required_mcp_servers").array().default(sql`'{}'::text[]`),
+  requiredDataClassifications: text("required_data_classifications").array().default(sql`'{}'::text[]`),
+  disableModelInvocation: boolean("disable_model_invocation").default(false),
+  contextMode: text("context_mode").default("inline"),
+  userInvocable: boolean("user_invocable").default(true),
+  descriptionQualityScore: real("description_quality_score"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
 export const insertSkillSchema = createInsertSchema(skills).omit({ id: true, createdAt: true });
 export type InsertSkill = z.infer<typeof insertSkillSchema>;
 export type Skill = typeof skills.$inferSelect;
+
+export const skillVersions = pgTable("skill_versions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  skillId: varchar("skill_id").notNull(),
+  version: text("version").notNull(),
+  changeLog: text("change_log").notNull().default(""),
+  yamlFrontmatter: jsonb("yaml_frontmatter"),
+  markdownBody: text("markdown_body"),
+  snapshotData: jsonb("snapshot_data"),
+  shadowReplayResults: jsonb("shadow_replay_results"),
+  promotedToProduction: boolean("promoted_to_production").default(false),
+  author: text("author").notNull().default("system"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertSkillVersionSchema = createInsertSchema(skillVersions).omit({ id: true, createdAt: true });
+export type InsertSkillVersion = z.infer<typeof insertSkillVersionSchema>;
+export type SkillVersion = typeof skillVersions.$inferSelect;
 
 export * from "./models/chat";

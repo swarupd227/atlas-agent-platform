@@ -56,6 +56,7 @@ import {
   insertComplianceControlSchema,
   insertRegulatoryChangeSchema,
   insertSkillSchema,
+  insertSkillVersionSchema,
 } from "@shared/schema";
 
 const openai = new OpenAI({
@@ -12237,6 +12238,173 @@ Return ONLY a valid JSON object with a "skills" array.`
   app.delete("/api/skills/:id", async (req, res) => {
     await storage.deleteSkill(req.params.id);
     res.json({ success: true });
+  });
+
+  // Skill Versions
+  app.get("/api/skills/:skillId/versions", async (req, res) => {
+    const versions = await storage.getSkillVersions(req.params.skillId);
+    res.json(versions);
+  });
+
+  app.post("/api/skills/:skillId/versions", async (req, res) => {
+    try {
+      const data = insertSkillVersionSchema.parse({ ...req.body, skillId: req.params.skillId });
+      const version = await storage.createSkillVersion(data);
+      res.json(version);
+    } catch (e: any) {
+      if (e instanceof ZodError) return res.status(400).json({ error: e.errors });
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.patch("/api/skill-versions/:id", async (req, res) => {
+    try {
+      const updated = await storage.updateSkillVersion(req.params.id, req.body);
+      if (!updated) return res.status(404).json({ error: "Version not found" });
+      res.json(updated);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // AI: Score description quality
+  app.post("/api/ai/skill-description-quality", async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI service not configured" });
+      }
+      const { description, industry, domain } = req.body;
+      if (!description) return res.status(400).json({ error: "description is required" });
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1-mini",
+        max_tokens: 512,
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert at evaluating AI agent skill descriptions for the ${(industry || "general").replace(/_/g, " ")} industry.
+Score the description on a 0-100 scale based on: clarity (does it clearly explain what the skill does?), specificity (does it mention concrete actions, data, or outcomes?), activation guidance (would an agent know when to activate this skill?), and completeness (does it cover scope, constraints, and expected results?).
+Return JSON: { "score": number, "feedback": string (1-2 sentences of improvement advice), "strengths": string[], "weaknesses": string[] }`
+          },
+          {
+            role: "user",
+            content: `Score this skill description for the ${(domain || "general")} domain:\n\n"${description}"`
+          }
+        ],
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) return res.status(500).json({ error: "No response from AI" });
+      res.json(JSON.parse(content));
+    } catch (e: any) {
+      res.status(500).json({ error: e.message || "Failed to score description" });
+    }
+  });
+
+  // AI: Instruction Builder - convert natural language to structured SKILL.md
+  app.post("/api/ai/skill-instruction-builder", async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI service not configured" });
+      }
+      const { naturalLanguageInput, skillName, industry, domain } = req.body;
+      if (!naturalLanguageInput) return res.status(400).json({ error: "naturalLanguageInput is required" });
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        max_tokens: 4096,
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert AI agent skill designer for the ${(industry || "general").replace(/_/g, " ")} industry, ${(domain || "general")} domain.
+
+Convert the user's natural language workflow description into a structured SKILL.md format. Return JSON with:
+- "name": Skill name (use provided name or infer one)
+- "description": A polished 2-4 sentence description
+- "yamlFrontmatter": Object with fields: name, description, industry, domain, version ("1.0.0"), allowed-tools (array of tool names/wildcards), required-mcp-servers (array), required-data-classifications (array), disable-model-invocation (boolean), context ("fork"|"inline"), user-invocable (boolean), tags (array)
+- "markdownBody": The full Markdown instruction body with:
+  - "## Trigger Conditions" - when the skill activates
+  - "## Required Data" - data gathering steps
+  - "## Procedure" - numbered procedural steps with decision trees
+  - "## Decision Criteria" - clear decision logic with conditions
+  - "## Edge Cases" - handling unusual scenarios
+  - "## Output Format" - expected output structure
+  - "## Review Checklist" - verification steps
+- "suggestedDependencies": Array of { name, type: "mcp-tool"|"data-source"|"skill"|"policy" }
+- "suggestedTags": Array of relevant tags`
+          },
+          {
+            role: "user",
+            content: `Skill Name: ${skillName || "Auto-detect from description"}
+Industry: ${(industry || "general").replace(/_/g, " ")}
+Domain: ${domain || "General"}
+
+Domain expert description:
+${naturalLanguageInput}`
+          }
+        ],
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) return res.status(500).json({ error: "No response from AI" });
+      res.json(JSON.parse(content));
+    } catch (e: any) {
+      console.error("AI instruction builder error:", e);
+      res.status(500).json({ error: e.message || "Failed to generate instructions" });
+    }
+  });
+
+  // AI: Skill Testing Sandbox - simulate agent execution
+  app.post("/api/ai/skill-test-sandbox", async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI service not configured" });
+      }
+      const { skillName, description, markdownBody, testScenario, withSkill } = req.body;
+      if (!testScenario) return res.status(400).json({ error: "testScenario is required" });
+
+      const skillContext = withSkill ? `
+The agent has this skill active:
+Name: ${skillName}
+Description: ${description}
+Instructions:
+${markdownBody || "No instructions defined"}` : "The agent has NO specific skill active and must rely on general knowledge.";
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        max_tokens: 2048,
+        messages: [
+          {
+            role: "system",
+            content: `You are simulating an AI agent's behavior when given a scenario. ${skillContext}
+
+Simulate how the agent would handle the scenario. Return JSON:
+- "activationTriggered": boolean (would the skill activate?)
+- "activationReason": string (why/why not)
+- "contextInjected": string[] (what context the skill provides)
+- "steps": Array of { "step": number, "action": string, "reasoning": string, "toolsUsed": string[] }
+- "output": string (the agent's final output/response)
+- "qualityScore": number (0-100, how well the agent handled it)
+- "issues": string[] (potential problems or gaps)
+- "recommendations": string[] (how to improve the skill for this scenario)`
+          },
+          {
+            role: "user",
+            content: `Test Scenario:\n${testScenario}`
+          }
+        ],
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) return res.status(500).json({ error: "No response from AI" });
+      res.json(JSON.parse(content));
+    } catch (e: any) {
+      console.error("AI sandbox test error:", e);
+      res.status(500).json({ error: e.message || "Failed to run sandbox test" });
+    }
   });
 
   // Start the job worker

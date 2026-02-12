@@ -114,6 +114,8 @@ import {
   type OntologyEnhancement, type InsertOntologyEnhancement,
   skills,
   type Skill, type InsertSkill,
+  skillVersions,
+  type SkillVersion, type InsertSkillVersion,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -457,6 +459,11 @@ export interface IStorage {
   createSkill(skill: InsertSkill): Promise<Skill>;
   updateSkill(id: string, data: Partial<Skill>): Promise<Skill | undefined>;
   deleteSkill(id: string): Promise<boolean>;
+
+  getSkillVersions(skillId: string): Promise<SkillVersion[]>;
+  getSkillVersion(id: string): Promise<SkillVersion | undefined>;
+  createSkillVersion(version: InsertSkillVersion): Promise<SkillVersion>;
+  updateSkillVersion(id: string, data: Partial<SkillVersion>): Promise<SkillVersion | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1729,6 +1736,22 @@ export class DatabaseStorage implements IStorage {
   async deleteSkill(id: string) {
     const result = await db.delete(skills).where(eq(skills.id, id));
     return true;
+  }
+
+  async getSkillVersions(skillId: string) {
+    return db.select().from(skillVersions).where(eq(skillVersions.skillId, skillId)).orderBy(skillVersions.createdAt);
+  }
+  async getSkillVersion(id: string) {
+    const [v] = await db.select().from(skillVersions).where(eq(skillVersions.id, id));
+    return v;
+  }
+  async createSkillVersion(version: InsertSkillVersion) {
+    const [created] = await db.insert(skillVersions).values(version).returning();
+    return created;
+  }
+  async updateSkillVersion(id: string, data: Partial<SkillVersion>) {
+    const [updated] = await db.update(skillVersions).set(data).where(eq(skillVersions.id, id)).returning();
+    return updated;
   }
 }
 

@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "wouter";
 import type { Skill } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -40,6 +41,7 @@ import {
   Plug,
   BookOpen,
   Link2,
+  Pencil,
 } from "lucide-react";
 
 const INDUSTRY_CONFIG: Record<string, { label: string; icon: typeof Building2; color: string }> = {
@@ -698,6 +700,12 @@ function SkillDetailSheet({
                 </Badge>
               </div>
             </div>
+            <Link href={`/skills/studio/${skill.id}`}>
+              <Button size="sm" variant="outline" data-testid="button-open-studio">
+                <Pencil className="w-3.5 h-3.5 mr-1.5" />
+                Open in Studio
+              </Button>
+            </Link>
           </div>
         </SheetHeader>
 
