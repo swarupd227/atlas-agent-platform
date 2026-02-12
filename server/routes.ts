@@ -11296,7 +11296,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
 
       const response = await openai.chat.completions.create({
         model: "gpt-4.1",
-        max_completion_tokens: 4096,
+        max_completion_tokens: 8192,
         messages: [
           {
             role: "system",
@@ -11313,7 +11313,7 @@ Given a regulation, generate a JSON object with a "policies" array. Each policy 
 - "enforcementPoint": where the policy is checked (e.g., "pre_deployment", "runtime", "data_ingestion", "model_training", "api_gateway")
 - "evidenceRequired": array of evidence artifacts needed (e.g., ["risk_assessment_report", "audit_log", "consent_records"])
 
-Generate 6-8 comprehensive policies per regulation covering key articles and sections. Use real regulatory article references and terminology. Make the policy code realistic and executable.`
+Generate comprehensive policies covering all major articles and sections of the regulation — typically 6-12 policies depending on the regulation's scope and complexity. Cover every key requirement that impacts AI agent operations. Use real regulatory article references and terminology. Make the policy code realistic and executable.`
           },
           {
             role: "user",

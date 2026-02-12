@@ -212,6 +212,8 @@ export default function PolicyEngine() {
   const [aiImpactLoading, setAiImpactLoading] = useState<string | null>(null);
   const [pushingPolicy, setPushingPolicy] = useState<string | null>(null);
   const [aiControlsLoading, setAiControlsLoading] = useState(false);
+  const [aiEnhancingReg, setAiEnhancingReg] = useState<string | null>(null);
+  const [aiRegEnhanceResult, setAiRegEnhanceResult] = useState<{ regId: string; regName: string; enriched: any } | null>(null);
 
   async function handleAiGenerateControls(reg: Regulation) {
     setAiControlsLoading(true);
@@ -273,6 +275,24 @@ export default function PolicyEngine() {
       toast({ title: "Change status updated" });
     },
   });
+
+  async function handleAiEnhanceRegulation(reg: Regulation) {
+    setAiEnhancingReg(reg.id);
+    try {
+      const res = await apiRequest("POST", "/api/ai/enhance-regulation", {
+        regulationName: reg.name,
+        industry: reg.industry,
+        jurisdictions: [reg.jurisdiction],
+        requirements: [],
+      });
+      const data = await res.json();
+      setAiRegEnhanceResult({ regId: reg.id, regName: reg.name, enriched: data.enriched });
+    } catch (e: any) {
+      toast({ title: "AI enhancement failed", description: e.message, variant: "destructive" });
+    } finally {
+      setAiEnhancingReg(null);
+    }
+  }
 
   async function handleAiGeneratePolicies(reg: Regulation) {
     setAiGenerating(reg.id);
@@ -580,6 +600,7 @@ export default function PolicyEngine() {
         setSelectedPolicy(null);
         setAiEnhanceResult(null);
         setAiGapResult(null);
+        setAiRegEnhanceResult(null);
       }}>
         <TabsList className="flex flex-wrap">
           <TabsTrigger value="regulations" data-testid="tab-regulations">
@@ -712,25 +733,44 @@ export default function PolicyEngine() {
                         )}
                       </div>
                     )}
-                    {regPolicies.length === 0 && (
+                    <div className="flex items-center gap-1.5 pt-1">
                       <Button
                         size="sm"
                         variant="outline"
-                        className="w-full mt-1"
-                        disabled={aiGenerating === reg.id}
+                        className="flex-1"
+                        disabled={aiEnhancingReg === reg.id}
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleAiGeneratePolicies(reg);
+                          handleAiEnhanceRegulation(reg);
                         }}
-                        data-testid={`button-ai-generate-${reg.id}`}
+                        data-testid={`button-ai-enhance-reg-${reg.id}`}
                       >
-                        {aiGenerating === reg.id ? (
-                          <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" />Generating...</>
+                        {aiEnhancingReg === reg.id ? (
+                          <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" />Enhancing...</>
                         ) : (
-                          <><Sparkles className="w-3 h-3 mr-1.5" />AI Generate Policies</>
+                          <><Sparkles className="w-3 h-3 mr-1.5" />AI Enhance</>
                         )}
                       </Button>
-                    )}
+                      {regPolicies.length === 0 && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="flex-1"
+                          disabled={aiGenerating === reg.id}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleAiGeneratePolicies(reg);
+                          }}
+                          data-testid={`button-ai-generate-${reg.id}`}
+                        >
+                          {aiGenerating === reg.id ? (
+                            <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" />Generating...</>
+                          ) : (
+                            <><Sparkles className="w-3 h-3 mr-1.5" />Generate Policies</>
+                          )}
+                        </Button>
+                      )}
+                    </div>
                   </CardContent>
                 </Card>
               );
@@ -742,6 +782,117 @@ export default function PolicyEngine() {
               <CardContent className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                 <Scale className="w-10 h-10 mb-2 opacity-40" />
                 <p className="text-sm">No regulations match your filters</p>
+              </CardContent>
+            </Card>
+          )}
+
+          {aiRegEnhanceResult && (
+            <Card className="border-primary/30" data-testid="panel-reg-enhancement">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-primary" />
+                    AI Enhancement: {aiRegEnhanceResult.regName}
+                  </CardTitle>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setAiRegEnhanceResult(null)}
+                    data-testid="button-close-reg-enhancement"
+                  >
+                    <XCircle className="w-4 h-4" />
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4 text-sm">
+                {aiRegEnhanceResult.enriched.overview && (
+                  <div>
+                    <h4 className="font-medium text-xs text-muted-foreground mb-1">Overview</h4>
+                    <p className="text-sm leading-relaxed">{aiRegEnhanceResult.enriched.overview}</p>
+                  </div>
+                )}
+
+                {aiRegEnhanceResult.enriched.keyRequirements?.length > 0 && (
+                  <div>
+                    <h4 className="font-medium text-xs text-muted-foreground mb-2">Key Requirements</h4>
+                    <div className="space-y-2">
+                      {aiRegEnhanceResult.enriched.keyRequirements.map((req: any, i: number) => (
+                        <div key={i} className="border rounded-md p-2.5 space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-medium text-xs">{req.title}</span>
+                            {severityBadge(req.severity)}
+                          </div>
+                          <p className="text-xs text-muted-foreground">{req.description}</p>
+                          {req.implementationSteps?.length > 0 && (
+                            <ul className="text-xs text-muted-foreground space-y-0.5 mt-1">
+                              {req.implementationSteps.map((step: string, j: number) => (
+                                <li key={j} className="flex items-start gap-1.5">
+                                  <ArrowRight className="w-3 h-3 mt-0.5 shrink-0 text-primary" />
+                                  {step}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {aiRegEnhanceResult.enriched.aiAgentImplications?.length > 0 && (
+                  <div>
+                    <h4 className="font-medium text-xs text-muted-foreground mb-1">AI Agent Implications</h4>
+                    <ul className="space-y-1">
+                      {aiRegEnhanceResult.enriched.aiAgentImplications.map((imp: string, i: number) => (
+                        <li key={i} className="text-xs flex items-start gap-1.5">
+                          <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0 text-yellow-500" />
+                          {imp}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {aiRegEnhanceResult.enriched.complianceChecklist?.length > 0 && (
+                  <div>
+                    <h4 className="font-medium text-xs text-muted-foreground mb-2">Compliance Checklist</h4>
+                    <div className="space-y-1">
+                      {aiRegEnhanceResult.enriched.complianceChecklist.map((item: any, i: number) => (
+                        <div key={i} className="flex items-center gap-2 text-xs">
+                          <Badge
+                            variant={item.priority === "must" ? "default" : item.priority === "should" ? "secondary" : "outline"}
+                            className="text-[10px] shrink-0"
+                          >
+                            {item.priority}
+                          </Badge>
+                          <span>{item.item}</span>
+                          <span className="text-muted-foreground ml-auto shrink-0">{item.category}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {aiRegEnhanceResult.enriched.penaltiesAndRisks && (
+                  <div>
+                    <h4 className="font-medium text-xs text-muted-foreground mb-1">Penalties & Risks</h4>
+                    <p className="text-xs text-muted-foreground">{aiRegEnhanceResult.enriched.penaltiesAndRisks}</p>
+                  </div>
+                )}
+
+                {aiRegEnhanceResult.enriched.automationOpportunities?.length > 0 && (
+                  <div>
+                    <h4 className="font-medium text-xs text-muted-foreground mb-1">Automation Opportunities</h4>
+                    <ul className="space-y-1">
+                      {aiRegEnhanceResult.enriched.automationOpportunities.map((opp: string, i: number) => (
+                        <li key={i} className="text-xs flex items-start gap-1.5">
+                          <Zap className="w-3 h-3 mt-0.5 shrink-0 text-primary" />
+                          {opp}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}
