@@ -71,6 +71,11 @@ interface EnrichedConcept {
   relatedStandards?: string[];
   implementationGuidance?: string;
   riskFactors?: string[];
+  suggestedProperties?: OntologyProperty[];
+  suggestedRelationships?: OntologyRelationship[];
+  suggestedTags?: string[];
+  agentSkills?: string[];
+  agentTypes?: string[];
 }
 
 const AGENT_MAPPING: Record<string, { skills: string[]; agentTypes: string[] }> = {
@@ -202,6 +207,7 @@ export default function OntologyExplorer() {
         ontologyName: industry?.ontology,
         properties: concept.properties,
         relationships: concept.relationships,
+        tags: concept.tags,
       });
       return res.json();
     },
@@ -226,12 +232,38 @@ export default function OntologyExplorer() {
         relatedStandards: enriched.relatedStandards || [],
         dataHandlingConsiderations: enriched.dataHandlingConsiderations || null,
         implementationGuidance: enriched.implementationGuidance || null,
+        suggestedProperties: enriched.suggestedProperties || [],
+        suggestedRelationships: enriched.suggestedRelationships || [],
+        suggestedTags: enriched.suggestedTags || [],
+        agentSkills: enriched.agentSkills || [],
+        agentTypes: enriched.agentTypes || [],
         applied: true,
       });
 
       const updatePayload: Record<string, unknown> = {};
       if (enriched.enrichedDescription) {
         updatePayload.description = enriched.enrichedDescription;
+      }
+      if (enriched.suggestedProperties && enriched.suggestedProperties.length > 0) {
+        const existingNames = new Set(concept.properties.map((p) => p.name));
+        const newProps = enriched.suggestedProperties.filter((p) => !existingNames.has(p.name));
+        if (newProps.length > 0) {
+          updatePayload.properties = [...concept.properties, ...newProps];
+        }
+      }
+      if (enriched.suggestedRelationships && enriched.suggestedRelationships.length > 0) {
+        const existingKeys = new Set(concept.relationships.map((r) => `${r.type}-${r.targetId}`));
+        const newRels = enriched.suggestedRelationships.filter((r) => !existingKeys.has(`${r.type}-${r.targetId}`));
+        if (newRels.length > 0) {
+          updatePayload.relationships = [...concept.relationships, ...newRels];
+        }
+      }
+      if (enriched.suggestedTags && enriched.suggestedTags.length > 0) {
+        const existingTags = new Set(concept.tags.map((t) => t.toLowerCase()));
+        const newTags = enriched.suggestedTags.filter((t) => !existingTags.has(t.toLowerCase()));
+        if (newTags.length > 0) {
+          updatePayload.tags = [...concept.tags, ...newTags];
+        }
       }
       if (Object.keys(updatePayload).length > 0) {
         await apiRequest("PUT", `/api/ontology/concepts/${concept.id}`, updatePayload);
@@ -266,6 +298,11 @@ export default function OntologyExplorer() {
         relatedStandards: (dbEnh.relatedStandards as string[]) || [],
         dataHandlingConsiderations: dbEnh.dataHandlingConsiderations || undefined,
         implementationGuidance: dbEnh.implementationGuidance || undefined,
+        suggestedProperties: (dbEnh.suggestedProperties as OntologyProperty[]) || [],
+        suggestedRelationships: (dbEnh.suggestedRelationships as OntologyRelationship[]) || [],
+        suggestedTags: (dbEnh.suggestedTags as string[]) || [],
+        agentSkills: (dbEnh.agentSkills as string[]) || [],
+        agentTypes: (dbEnh.agentTypes as string[]) || [],
       };
     }
     return null;
@@ -531,42 +568,62 @@ export default function OntologyExplorer() {
                 </CardContent>
               </Card>
 
-              <Card data-testid="card-agent-mapping">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm flex items-center gap-2">
-                    <Brain className="w-4 h-4" />
-                    Agent Mapping
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {AGENT_MAPPING[selectedConcept.category] ? (
-                    <>
-                      <div>
-                        <div className="text-xs font-medium mb-1.5">Relevant Agent Skills</div>
-                        <div className="flex flex-wrap gap-1.5">
-                          {AGENT_MAPPING[selectedConcept.category].skills.map((skill) => (
-                            <Badge key={skill} variant="secondary" className="text-[10px]" data-testid={`badge-skill-${skill.toLowerCase().replace(/\s+/g, "-")}`}>
-                              {skill}
-                            </Badge>
-                          ))}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-xs font-medium mb-1.5">Applicable Agent Types</div>
-                        <div className="flex flex-wrap gap-1.5">
-                          {AGENT_MAPPING[selectedConcept.category].agentTypes.map((agentType) => (
-                            <Badge key={agentType} variant="outline" className="text-[10px]" data-testid={`badge-agent-${agentType.toLowerCase().replace(/\s+/g, "-")}`}>
-                              {agentType}
-                            </Badge>
-                          ))}
-                        </div>
-                      </div>
-                    </>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">No agent mapping available for this category.</p>
-                  )}
-                </CardContent>
-              </Card>
+              {(() => {
+                const appliedEnh = isApplied(selectedConcept.id) ? getEnrichment(selectedConcept.id) : null;
+                const hasAiSkills = appliedEnh?.agentSkills && appliedEnh.agentSkills.length > 0;
+                const hasAiTypes = appliedEnh?.agentTypes && appliedEnh.agentTypes.length > 0;
+                const hasAiAgent = hasAiSkills || hasAiTypes;
+                const fallback = AGENT_MAPPING[selectedConcept.category];
+                const skills = hasAiSkills ? appliedEnh!.agentSkills! : fallback?.skills || [];
+                const agentTypes = hasAiTypes ? appliedEnh!.agentTypes! : fallback?.agentTypes || [];
+                const hasData = skills.length > 0 || agentTypes.length > 0;
+
+                return (
+                  <Card data-testid="card-agent-mapping">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        <Brain className="w-4 h-4" />
+                        Agent Mapping
+                        {hasAiAgent && (
+                          <Badge variant="secondary" className="text-[10px]"><Sparkles className="w-2.5 h-2.5 mr-1" />AI</Badge>
+                        )}
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      {hasData ? (
+                        <>
+                          {skills.length > 0 && (
+                            <div>
+                              <div className="text-xs font-medium mb-1.5">Relevant Agent Skills</div>
+                              <div className="flex flex-wrap gap-1.5">
+                                {skills.map((skill) => (
+                                  <Badge key={skill} variant="secondary" className="text-[10px]" data-testid={`badge-skill-${skill.toLowerCase().replace(/\s+/g, "-")}`}>
+                                    {skill}
+                                  </Badge>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {agentTypes.length > 0 && (
+                            <div>
+                              <div className="text-xs font-medium mb-1.5">Applicable Agent Types</div>
+                              <div className="flex flex-wrap gap-1.5">
+                                {agentTypes.map((agentType) => (
+                                  <Badge key={agentType} variant="outline" className="text-[10px]" data-testid={`badge-agent-${agentType.toLowerCase().replace(/\s+/g, "-")}`}>
+                                    {agentType}
+                                  </Badge>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">No agent mapping available for this category.</p>
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })()}
 
               {(() => {
                 const appliedEnrichment = isApplied(selectedConcept.id) ? getEnrichment(selectedConcept.id) : null;
@@ -870,6 +927,102 @@ export default function OntologyExplorer() {
                                   <p className="text-xs text-muted-foreground" data-testid="text-implementation-guidance">
                                     {enrichment.implementationGuidance}
                                   </p>
+                                </CardContent>
+                              </Card>
+                            )}
+
+                            {enrichment.agentSkills && enrichment.agentSkills.length > 0 && (
+                              <Card className="bg-muted/50" data-testid="card-preview-agent-skills">
+                                <CardContent className="pt-4">
+                                  <div className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
+                                    <Brain className="w-3 h-3" />
+                                    Agent Skills (concept-specific)
+                                  </div>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {enrichment.agentSkills.map((skill, i) => (
+                                      <Badge key={i} variant="secondary" className="text-[10px]" data-testid={`badge-preview-skill-${i}`}>
+                                        {skill}
+                                      </Badge>
+                                    ))}
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            )}
+
+                            {enrichment.agentTypes && enrichment.agentTypes.length > 0 && (
+                              <Card className="bg-muted/50" data-testid="card-preview-agent-types">
+                                <CardContent className="pt-4">
+                                  <div className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
+                                    <Brain className="w-3 h-3" />
+                                    Agent Types (concept-specific)
+                                  </div>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {enrichment.agentTypes.map((at, i) => (
+                                      <Badge key={i} variant="outline" className="text-[10px]" data-testid={`badge-preview-agent-type-${i}`}>
+                                        {at}
+                                      </Badge>
+                                    ))}
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            )}
+
+                            {enrichment.suggestedProperties && enrichment.suggestedProperties.length > 0 && (
+                              <Card className="bg-muted/50" data-testid="card-preview-properties">
+                                <CardContent className="pt-4">
+                                  <div className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
+                                    <GitBranch className="w-3 h-3" />
+                                    Suggested Properties
+                                  </div>
+                                  <div className="space-y-2">
+                                    {enrichment.suggestedProperties.map((prop, i) => (
+                                      <div key={i} className="flex items-start gap-3 text-xs py-1.5 border-b last:border-0" data-testid={`preview-property-${i}`}>
+                                        <code className="font-mono text-primary shrink-0 min-w-[120px]">{prop.name}</code>
+                                        <Badge variant="outline" className="text-[10px] shrink-0">{prop.type}</Badge>
+                                        <span className="text-muted-foreground">{prop.description}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            )}
+
+                            {enrichment.suggestedRelationships && enrichment.suggestedRelationships.length > 0 && (
+                              <Card className="bg-muted/50" data-testid="card-preview-relationships">
+                                <CardContent className="pt-4">
+                                  <div className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
+                                    <Link2 className="w-3 h-3" />
+                                    Suggested Relationships
+                                  </div>
+                                  <div className="space-y-2">
+                                    {enrichment.suggestedRelationships.map((rel, i) => (
+                                      <div key={i} className="text-xs py-1.5 border-b last:border-0" data-testid={`preview-relationship-${i}`}>
+                                        <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                                          <Badge variant="secondary" className="text-[10px]">{rel.type.replace("_", " ")}</Badge>
+                                          <span className="font-medium">{rel.targetId}</span>
+                                        </div>
+                                        <span className="text-muted-foreground">{rel.label}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            )}
+
+                            {enrichment.suggestedTags && enrichment.suggestedTags.length > 0 && (
+                              <Card className="bg-muted/50" data-testid="card-preview-tags">
+                                <CardContent className="pt-4">
+                                  <div className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
+                                    <Tag className="w-3 h-3" />
+                                    Suggested Tags
+                                  </div>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {enrichment.suggestedTags.map((tag, i) => (
+                                      <Badge key={i} variant="outline" className="text-xs" data-testid={`badge-preview-tag-${i}`}>
+                                        {tag}
+                                      </Badge>
+                                    ))}
+                                  </div>
                                 </CardContent>
                               </Card>
                             )}

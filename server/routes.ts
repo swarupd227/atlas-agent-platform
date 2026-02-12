@@ -1876,22 +1876,28 @@ Return ONLY a valid JSON object with an enriched "rules" array. Do not include m
         return res.status(400).json({ error: "label, category, and description are required" });
       }
 
+      const existingTags = req.body.tags || [];
       const response = await openai.chat.completions.create({
         model: "gpt-4.1",
-        max_tokens: 2048,
+        max_tokens: 3000,
         messages: [
           {
             role: "system",
             content: `You are a domain expert in ${ontologyName || "industry"} ontology and ${industry || "enterprise"} operations. You specialize in explaining how ontology concepts relate to AI agent lifecycle management.
 
-When given an ontology concept, produce a comprehensive JSON enrichment with these fields:
+When given an ontology concept, produce a comprehensive JSON enrichment with ALL of these fields:
 - "enrichedDescription": A detailed 3-5 sentence explanation of the concept in the context of ${industry || "enterprise"} operations
 - "regulatoryRelevance": How this concept relates to regulatory compliance requirements
-- "agentUseCases": Array of 3-5 specific use cases where AI agents would leverage this concept
+- "agentUseCases": Array of 3-5 specific use cases where AI agents would leverage this specific concept (not generic category-level use cases)
 - "dataHandlingConsiderations": Privacy, security, and data classification considerations
 - "relatedStandards": Array of relevant industry standards or frameworks
 - "implementationGuidance": Brief guidance on implementing AI agents that work with this concept
-- "riskFactors": Array of 2-3 risk factors to consider`
+- "riskFactors": Array of 2-3 risk factors to consider
+- "suggestedProperties": Array of 2-4 additional properties that would enrich this concept. Each object must have: {"name": "camelCaseName", "type": "string|decimal|date|enum|boolean|integer", "description": "Brief description"}. Only suggest properties NOT already present.
+- "suggestedRelationships": Array of 1-3 additional relationships this concept should have. Each object must have: {"type": "related|parent|child|depends_on", "targetId": "a plausible concept id", "label": "Human-readable relationship description"}. Be specific about what concepts this should relate to.
+- "suggestedTags": Array of 3-5 additional classification tags for this concept. Only suggest tags NOT already present in the existing tags.
+- "agentSkills": Array of 3-5 specific skills an AI agent would need to work with THIS concept (e.g., "Trade Lifecycle Tracking", "Counterparty Exposure Calculation"). Be concept-specific, not generic.
+- "agentTypes": Array of 2-4 specific AI agent types that would directly operate on THIS concept (e.g., "Derivatives Pricing Agent", "Settlement Reconciliation Agent"). Be concept-specific, not generic.`
           },
           {
             role: "user",
@@ -1902,6 +1908,7 @@ Category: ${category}
 Description: ${description}
 Properties: ${JSON.stringify(properties || [])}
 Relationships: ${JSON.stringify(relationships || [])}
+Existing Tags: ${JSON.stringify(existingTags)}
 
 Return ONLY a valid JSON object. Do not include markdown formatting or code blocks.`
           }

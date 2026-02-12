@@ -1309,6 +1309,11 @@ export const ontologyEnhancements = pgTable("ontology_enhancements", {
   relatedStandards: jsonb("related_standards").default(sql`'[]'::jsonb`),
   dataHandlingConsiderations: text("data_handling_considerations"),
   implementationGuidance: text("implementation_guidance"),
+  suggestedProperties: jsonb("suggested_properties").default(sql`'[]'::jsonb`),
+  suggestedRelationships: jsonb("suggested_relationships").default(sql`'[]'::jsonb`),
+  suggestedTags: jsonb("suggested_tags").default(sql`'[]'::jsonb`),
+  agentSkills: jsonb("agent_skills").default(sql`'[]'::jsonb`),
+  agentTypes: jsonb("agent_types").default(sql`'[]'::jsonb`),
   applied: boolean("applied").default(false),
   createdAt: timestamp("created_at").defaultNow(),
 });
