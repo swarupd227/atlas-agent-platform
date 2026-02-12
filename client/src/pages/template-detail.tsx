@@ -57,6 +57,8 @@ import {
   Calculator,
   Camera,
   CheckCircle,
+  CheckCircle2,
+  XCircle,
   ClipboardList,
   Clock,
   Cloud,
@@ -235,6 +237,17 @@ export default function TemplateDetail() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [enhancePreview, setEnhancePreview] = useState<Record<string, any> | null>(null);
   const [enhanceDialogOpen, setEnhanceDialogOpen] = useState(false);
+  const [wizardStep, setWizardStep] = useState(1);
+  const [customization, setCustomization] = useState({
+    dataSources: {} as Record<string, string>,
+    costCeiling: "",
+    qualityFloor: "",
+    riskTolerance: "",
+    maxLatency: "500",
+    additionalSkills: [] as string[],
+    newSkill: "",
+  });
+  const [deployDialogOpen, setDeployDialogOpen] = useState(false);
   const [editData, setEditData] = useState<Record<string, any>>(isNew ? {
     name: "",
     description: "",
@@ -362,6 +375,29 @@ export default function TemplateDetail() {
     },
     onError: (err: Error) => {
       toast({ title: "Enhancement failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const deployMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/deployments", {
+        agentName: `${template?.name} - Shadow Deploy`,
+        agentId: template?.id,
+        environment: "shadow",
+        rolloutStrategy: "shadow",
+        status: "pending",
+        version: "1.0.0",
+        shadowEnabled: true,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deployments"] });
+      setDeployDialogOpen(false);
+      toast({ title: "Deployment initiated", description: "Template deployed to shadow replay pipeline. Golden evaluation dataset will run automatically." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Deployment failed", description: err.message, variant: "destructive" });
     },
   });
 
@@ -549,6 +585,16 @@ export default function TemplateDetail() {
   const policyBindings = displayTemplate ? (Array.isArray(displayTemplate.policyBindings) ? (displayTemplate.policyBindings as PolicyBinding[]) : []) : [];
   const evalBindings = displayTemplate ? (Array.isArray(displayTemplate.evalBindings) ? (displayTemplate.evalBindings as EvalBinding[]) : []) : [];
   const rollback = displayTemplate ? (displayTemplate.rollbackPlan as RollbackPlan) : null;
+  const costProfile = displayTemplate?.costProfile as { monthlyEstimate?: number; perRunCost?: number; tier?: string } | null;
+  const complianceCerts = displayTemplate?.complianceCertifications || [];
+
+  const complianceChecks = [
+    { label: "MCP Servers Available", pass: tools.length > 0, remedy: "Add at least one tool/MCP server in the template configuration." },
+    { label: "Data Classifications Configured", pass: !!permissions, remedy: "Configure data access permissions in the template." },
+    { label: "Approval Flows Defined", pass: policyBindings.some(p => p.enforcement === "hard"), remedy: "Add at least one policy binding with 'hard' enforcement level." },
+    { label: "Audit Retention Policies", pass: complianceCerts.length > 0, remedy: "Add compliance certifications to the template." },
+  ];
+  const allChecksPassed = complianceChecks.every(c => c.pass);
 
   return (
     <div className="flex flex-col gap-6 p-6" data-testid="page-template-detail">
@@ -715,70 +761,66 @@ export default function TemplateDetail() {
         )}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card>
-          <CardContent className="p-4 flex flex-col gap-1">
-            <div className="flex items-center gap-2 text-muted-foreground text-xs font-medium uppercase tracking-wider">
-              <Sparkles className="w-3.5 h-3.5" /> Model Config
-            </div>
-            {editing ? (
-              <div className="flex flex-col gap-2 mt-2">
-                <div>
-                  <label className="text-xs text-muted-foreground mb-1 block">Provider</label>
-                  <Input
-                    value={editData.modelProvider || ""}
-                    onChange={(e) => setEditData({ ...editData, modelProvider: e.target.value })}
-                    placeholder="e.g., openai, anthropic, google"
-                    data-testid="input-edit-model-provider"
-                  />
+      {editing ? (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Card>
+              <CardContent className="p-4 flex flex-col gap-1">
+                <div className="flex items-center gap-2 text-muted-foreground text-xs font-medium uppercase tracking-wider">
+                  <Sparkles className="w-3.5 h-3.5" /> Model Config
                 </div>
-                <div>
-                  <label className="text-xs text-muted-foreground mb-1 block">Model Name</label>
-                  <Input
-                    value={editData.modelName || ""}
-                    onChange={(e) => setEditData({ ...editData, modelName: e.target.value })}
-                    placeholder="e.g., gpt-4.1, claude-sonnet-4-20250514"
-                    data-testid="input-edit-model-name"
-                  />
+                <div className="flex flex-col gap-2 mt-2">
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">Provider</label>
+                    <Input
+                      value={editData.modelProvider || ""}
+                      onChange={(e) => setEditData({ ...editData, modelProvider: e.target.value })}
+                      placeholder="e.g., openai, anthropic, google"
+                      data-testid="input-edit-model-provider"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">Model Name</label>
+                    <Input
+                      value={editData.modelName || ""}
+                      onChange={(e) => setEditData({ ...editData, modelName: e.target.value })}
+                      placeholder="e.g., gpt-4.1, claude-sonnet-4-20250514"
+                      data-testid="input-edit-model-name"
+                    />
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <p className="text-sm font-medium mt-1" data-testid="text-model-config">{displayTemplate?.modelProvider} / {displayTemplate?.modelName}</p>
-            )}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4 flex flex-col gap-1">
-            <div className="flex items-center gap-2 text-muted-foreground text-xs font-medium uppercase tracking-wider">
-              <Shield className="w-3.5 h-3.5" /> Risk & Autonomy
-            </div>
-            <p className="text-sm font-medium mt-1" data-testid="text-risk-autonomy">
-              {displayTemplate?.defaultRiskTier} / {displayTemplate?.defaultAutonomyMode}
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4 flex flex-col gap-1">
-            <div className="flex items-center gap-2 text-muted-foreground text-xs font-medium uppercase tracking-wider">
-              <Layers className="w-3.5 h-3.5" /> Complexity
-            </div>
-            <p className="text-sm font-medium mt-1" data-testid="text-complexity">
-              {(displayTemplate?.complexity || "medium").charAt(0).toUpperCase() + (displayTemplate?.complexity || "medium").slice(1)}
-            </p>
-          </CardContent>
-        </Card>
-      </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4 flex flex-col gap-1">
+                <div className="flex items-center gap-2 text-muted-foreground text-xs font-medium uppercase tracking-wider">
+                  <Shield className="w-3.5 h-3.5" /> Risk & Autonomy
+                </div>
+                <p className="text-sm font-medium mt-1" data-testid="text-risk-autonomy">
+                  {editData.defaultRiskTier || "MEDIUM"} / {editData.defaultAutonomyMode || "assisted"}
+                </p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4 flex flex-col gap-1">
+                <div className="flex items-center gap-2 text-muted-foreground text-xs font-medium uppercase tracking-wider">
+                  <Layers className="w-3.5 h-3.5" /> Complexity
+                </div>
+                <p className="text-sm font-medium mt-1" data-testid="text-complexity">
+                  {(editData.complexity || "medium").charAt(0).toUpperCase() + (editData.complexity || "medium").slice(1)}
+                </p>
+              </CardContent>
+            </Card>
+          </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <Wrench className="w-4 h-4 text-muted-foreground" /> Tools ({editing ? editData.tools?.length || 0 : tools.length})
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-3">
-            {editing ? (
-              <>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                  <Wrench className="w-4 h-4 text-muted-foreground" /> Tools ({editData.tools?.length || 0})
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-3">
                 {(editData.tools || []).map((tool: ToolConfig, idx: number) => (
                   <div key={idx} className="flex flex-col gap-1.5 p-3 rounded-md bg-muted/50">
                     <div className="flex items-center gap-2">
@@ -825,36 +867,16 @@ export default function TemplateDetail() {
                 >
                   <Plus className="w-4 h-4 mr-1.5" /> Add Tool
                 </Button>
-              </>
-            ) : tools.length > 0 ? (
-              tools.map((tool, idx) => (
-                <div key={idx} className="flex flex-col gap-0.5 p-3 rounded-md bg-muted/50">
-                  <span className="text-sm font-medium" data-testid={`text-tool-name-${idx}`}>{tool.name}</span>
-                  <span className="text-xs text-muted-foreground">{tool.description}</span>
-                  {tool.permissions && tool.permissions.length > 0 && (
-                    <div className="flex items-center gap-1 mt-1 flex-wrap">
-                      {tool.permissions.map((p) => (
-                        <Badge key={p} variant="secondary" className="text-[9px]">{p}</Badge>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))
-            ) : (
-              <p className="text-xs text-muted-foreground">No tools configured</p>
-            )}
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
 
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <GitBranch className="w-4 h-4 text-muted-foreground" /> Workflow ({editing ? editData.workflowNodes?.length || 0 : workflow?.nodes?.length || 0} steps)
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-2">
-            {editing ? (
-              <>
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                  <GitBranch className="w-4 h-4 text-muted-foreground" /> Workflow ({editData.workflowNodes?.length || 0} steps)
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-2">
                 {(editData.workflowNodes || []).map((node: WorkflowNode, idx: number) => (
                   <div key={idx} className="flex items-center gap-2">
                     <span className="text-xs text-muted-foreground w-5 shrink-0">{idx + 1}.</span>
@@ -896,189 +918,120 @@ export default function TemplateDetail() {
                 >
                   <Plus className="w-4 h-4 mr-1.5" /> Add Step
                 </Button>
-              </>
-            ) : workflow?.nodes && workflow.nodes.length > 0 ? (
-              workflow.nodes.map((node, idx) => (
-                <div key={node.id} className="flex items-center gap-2 text-sm">
-                  <span className="text-xs text-muted-foreground w-5 shrink-0">{idx + 1}.</span>
-                  <Badge variant="outline" className="text-[9px] shrink-0">{node.type}</Badge>
-                  <span className="text-muted-foreground" data-testid={`text-workflow-label-${idx}`}>{node.label}</span>
-                </div>
-              ))
-            ) : (
-              <p className="text-xs text-muted-foreground">No workflow defined</p>
-            )}
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
 
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <Lock className="w-4 h-4 text-muted-foreground" /> Permissions
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-3">
-            {editing ? (
-              <div className="flex flex-col gap-3">
-                <div>
-                  <label className="text-xs text-muted-foreground mb-1 block">Data Access (comma-separated)</label>
-                  <Input
-                    value={editData.dataAccess}
-                    onChange={(e) => setEditData({ ...editData, dataAccess: e.target.value })}
-                    placeholder="e.g., tickets, users, kb_articles"
-                    data-testid="input-edit-data-access"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-muted-foreground mb-1 block">API Access (comma-separated)</label>
-                  <Input
-                    value={editData.apiAccess}
-                    onChange={(e) => setEditData({ ...editData, apiAccess: e.target.value })}
-                    placeholder="e.g., crm_api, email_api"
-                    data-testid="input-edit-api-access"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-muted-foreground mb-1 block">Write Access (comma-separated)</label>
-                  <Input
-                    value={editData.writeAccess}
-                    onChange={(e) => setEditData({ ...editData, writeAccess: e.target.value })}
-                    placeholder="e.g., ticket_responses, notes"
-                    data-testid="input-edit-write-access"
-                  />
-                </div>
-              </div>
-            ) : permissions ? (
-              <div className="flex flex-col gap-2">
-                {(permissions.dataAccess || []).length > 0 && (
-                  <div className="text-xs">
-                    <span className="text-muted-foreground font-medium">Data Access: </span>
-                    <span>{permissions.dataAccess!.join(", ")}</span>
-                  </div>
-                )}
-                {(permissions.apiAccess || []).length > 0 && (
-                  <div className="text-xs">
-                    <span className="text-muted-foreground font-medium">API Access: </span>
-                    <span>{permissions.apiAccess!.join(", ")}</span>
-                  </div>
-                )}
-                {(permissions.writeAccess || []).length > 0 && (
-                  <div className="text-xs">
-                    <span className="text-muted-foreground font-medium">Write Access: </span>
-                    <span>{permissions.writeAccess!.join(", ")}</span>
-                  </div>
-                )}
-                {!(permissions.dataAccess?.length || permissions.apiAccess?.length || permissions.writeAccess?.length) && (
-                  <p className="text-xs text-muted-foreground">No permissions configured</p>
-                )}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground">No permissions configured</p>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <Brain className="w-4 h-4 text-muted-foreground" /> Memory & RAG
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-2">
-            {editing ? (
-              editData.memoryRagConfig ? (
-                <div className="flex flex-col gap-2">
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                  <Lock className="w-4 h-4 text-muted-foreground" /> Permissions
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-3">
+                <div className="flex flex-col gap-3">
                   <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Vector Store</label>
+                    <label className="text-xs text-muted-foreground mb-1 block">Data Access (comma-separated)</label>
                     <Input
-                      value={editData.memoryRagConfig.vectorStore}
-                      onChange={(e) => setEditData({ ...editData, memoryRagConfig: { ...editData.memoryRagConfig, vectorStore: e.target.value } })}
-                      placeholder="e.g., pinecone, weaviate, chromadb"
-                      data-testid="input-edit-vector-store"
+                      value={editData.dataAccess}
+                      onChange={(e) => setEditData({ ...editData, dataAccess: e.target.value })}
+                      placeholder="e.g., tickets, users, kb_articles"
+                      data-testid="input-edit-data-access"
                     />
                   </div>
                   <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Retrieval Strategy</label>
+                    <label className="text-xs text-muted-foreground mb-1 block">API Access (comma-separated)</label>
                     <Input
-                      value={editData.memoryRagConfig.retrievalStrategy}
-                      onChange={(e) => setEditData({ ...editData, memoryRagConfig: { ...editData.memoryRagConfig, retrievalStrategy: e.target.value } })}
-                      placeholder="e.g., similarity, hybrid, mmr"
-                      data-testid="input-edit-retrieval-strategy"
+                      value={editData.apiAccess}
+                      onChange={(e) => setEditData({ ...editData, apiAccess: e.target.value })}
+                      placeholder="e.g., crm_api, email_api"
+                      data-testid="input-edit-api-access"
                     />
                   </div>
-                  <div className="grid grid-cols-3 gap-2">
-                    <div>
-                      <label className="text-xs text-muted-foreground mb-1 block">Chunk Size</label>
-                      <Input
-                        type="number"
-                        value={editData.memoryRagConfig.chunkSize}
-                        onChange={(e) => setEditData({ ...editData, memoryRagConfig: { ...editData.memoryRagConfig, chunkSize: parseInt(e.target.value) || 0 } })}
-                        placeholder="512"
-                        data-testid="input-edit-chunk-size"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs text-muted-foreground mb-1 block">Embedding Model</label>
-                      <Input
-                        value={editData.memoryRagConfig.embeddingModel}
-                        onChange={(e) => setEditData({ ...editData, memoryRagConfig: { ...editData.memoryRagConfig, embeddingModel: e.target.value } })}
-                        placeholder="text-embedding-3-small"
-                        data-testid="input-edit-embedding-model"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs text-muted-foreground mb-1 block">Top K</label>
-                      <Input
-                        type="number"
-                        value={editData.memoryRagConfig.topK}
-                        onChange={(e) => setEditData({ ...editData, memoryRagConfig: { ...editData.memoryRagConfig, topK: parseInt(e.target.value) || 0 } })}
-                        placeholder="5"
-                        data-testid="input-edit-top-k"
-                      />
-                    </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">Write Access (comma-separated)</label>
+                    <Input
+                      value={editData.writeAccess}
+                      onChange={(e) => setEditData({ ...editData, writeAccess: e.target.value })}
+                      placeholder="e.g., ticket_responses, notes"
+                      data-testid="input-edit-write-access"
+                    />
                   </div>
                 </div>
-              ) : (
-                <p className="text-xs text-muted-foreground">Not configured</p>
-              )
-            ) : memory ? (
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <div>
-                  <span className="text-muted-foreground">Vector Store: </span>
-                  <span className="font-medium">{memory.vectorStore}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Strategy: </span>
-                  <span className="font-medium">{memory.retrievalStrategy}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Chunk Size: </span>
-                  <span className="font-medium">{memory.chunkSize}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Embedding: </span>
-                  <span className="font-medium">{memory.embeddingModel}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Top K: </span>
-                  <span className="font-medium">{memory.topK}</span>
-                </div>
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground">Not configured</p>
-            )}
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
 
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <ScrollText className="w-4 h-4 text-muted-foreground" /> Policy Bindings ({editing ? editData.policyBindings?.length || 0 : policyBindings.length})
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-2">
-            {editing ? (
-              <>
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                  <Brain className="w-4 h-4 text-muted-foreground" /> Memory & RAG
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-2">
+                {editData.memoryRagConfig ? (
+                  <div className="flex flex-col gap-2">
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-1 block">Vector Store</label>
+                      <Input
+                        value={editData.memoryRagConfig.vectorStore}
+                        onChange={(e) => setEditData({ ...editData, memoryRagConfig: { ...editData.memoryRagConfig, vectorStore: e.target.value } })}
+                        placeholder="e.g., pinecone, weaviate, chromadb"
+                        data-testid="input-edit-vector-store"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-1 block">Retrieval Strategy</label>
+                      <Input
+                        value={editData.memoryRagConfig.retrievalStrategy}
+                        onChange={(e) => setEditData({ ...editData, memoryRagConfig: { ...editData.memoryRagConfig, retrievalStrategy: e.target.value } })}
+                        placeholder="e.g., similarity, hybrid, mmr"
+                        data-testid="input-edit-retrieval-strategy"
+                      />
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <label className="text-xs text-muted-foreground mb-1 block">Chunk Size</label>
+                        <Input
+                          type="number"
+                          value={editData.memoryRagConfig.chunkSize}
+                          onChange={(e) => setEditData({ ...editData, memoryRagConfig: { ...editData.memoryRagConfig, chunkSize: parseInt(e.target.value) || 0 } })}
+                          placeholder="512"
+                          data-testid="input-edit-chunk-size"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-muted-foreground mb-1 block">Embedding Model</label>
+                        <Input
+                          value={editData.memoryRagConfig.embeddingModel}
+                          onChange={(e) => setEditData({ ...editData, memoryRagConfig: { ...editData.memoryRagConfig, embeddingModel: e.target.value } })}
+                          placeholder="text-embedding-3-small"
+                          data-testid="input-edit-embedding-model"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-muted-foreground mb-1 block">Top K</label>
+                        <Input
+                          type="number"
+                          value={editData.memoryRagConfig.topK}
+                          onChange={(e) => setEditData({ ...editData, memoryRagConfig: { ...editData.memoryRagConfig, topK: parseInt(e.target.value) || 0 } })}
+                          placeholder="5"
+                          data-testid="input-edit-top-k"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Not configured</p>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                  <ScrollText className="w-4 h-4 text-muted-foreground" /> Policy Bindings ({editData.policyBindings?.length || 0})
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-2">
                 {(editData.policyBindings || []).map((p: PolicyBinding, idx: number) => (
                   <div key={idx} className="flex items-center gap-2">
                     <Input
@@ -1130,31 +1083,16 @@ export default function TemplateDetail() {
                 >
                   <Plus className="w-4 h-4 mr-1.5" /> Add Policy
                 </Button>
-              </>
-            ) : policyBindings.length > 0 ? (
-              policyBindings.map((p, idx) => (
-                <div key={idx} className="flex items-center gap-2 text-xs">
-                  <span data-testid={`text-policy-name-${idx}`}>{p.policyName}</span>
-                  <Badge variant={p.enforcement === "hard" ? "destructive" : "secondary"} className="text-[9px]">
-                    {p.enforcement}
-                  </Badge>
-                </div>
-              ))
-            ) : (
-              <p className="text-xs text-muted-foreground">No policy bindings</p>
-            )}
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
 
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <FlaskConical className="w-4 h-4 text-muted-foreground" /> Eval Bindings ({editing ? editData.evalBindings?.length || 0 : evalBindings.length})
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-2">
-            {editing ? (
-              <>
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                  <FlaskConical className="w-4 h-4 text-muted-foreground" /> Eval Bindings ({editData.evalBindings?.length || 0})
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-2">
                 {(editData.evalBindings || []).map((e: EvalBinding, idx: number) => (
                   <div key={idx} className="flex items-center gap-2">
                     <Input
@@ -1206,119 +1144,88 @@ export default function TemplateDetail() {
                 >
                   <Plus className="w-4 h-4 mr-1.5" /> Add Eval Binding
                 </Button>
-              </>
-            ) : evalBindings.length > 0 ? (
-              evalBindings.map((e, idx) => (
-                <div key={idx} className="flex items-center gap-2 text-xs">
-                  <span data-testid={`text-eval-name-${idx}`}>{e.suiteName}</span>
-                  <Badge variant="outline" className="text-[9px]">{e.schedule}</Badge>
-                </div>
-              ))
-            ) : (
-              <p className="text-xs text-muted-foreground">No eval bindings</p>
-            )}
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
 
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <RotateCcw className="w-4 h-4 text-muted-foreground" /> Rollback Plan
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-2">
-            {editing ? (
-              editData.rollbackPlan ? (
-                <div className="flex flex-col gap-2">
-                  <label className="text-xs text-muted-foreground">Rollback Target Version</label>
-                  <Input
-                    value={editData.rollbackPlan.rollbackTargetVersion}
-                    onChange={(e) => setEditData({
-                      ...editData,
-                      rollbackPlan: { ...editData.rollbackPlan, rollbackTargetVersion: e.target.value },
-                    })}
-                    placeholder="e.g., 1.0.0"
-                    data-testid="input-edit-rollback-target"
-                  />
-                  <label className="text-xs text-muted-foreground mt-1">Trigger Conditions</label>
-                  {(editData.rollbackPlan.triggerConditions || []).map((cond: string, idx: number) => (
-                    <div key={idx} className="flex items-center gap-2">
-                      <Input
-                        value={cond}
-                        onChange={(e) => {
-                          const updated = [...editData.rollbackPlan.triggerConditions];
-                          updated[idx] = e.target.value;
-                          setEditData({
-                            ...editData,
-                            rollbackPlan: { ...editData.rollbackPlan, triggerConditions: updated },
-                          });
-                        }}
-                        className="flex-1"
-                        data-testid={`input-trigger-condition-${idx}`}
-                      />
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => {
-                          const updated = editData.rollbackPlan.triggerConditions.filter((_: any, i: number) => i !== idx);
-                          setEditData({
-                            ...editData,
-                            rollbackPlan: { ...editData.rollbackPlan, triggerConditions: updated },
-                          });
-                        }}
-                        data-testid={`button-remove-trigger-${idx}`}
-                      >
-                        <X className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  ))}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setEditData({
-                      ...editData,
-                      rollbackPlan: {
-                        ...editData.rollbackPlan,
-                        triggerConditions: [...(editData.rollbackPlan.triggerConditions || []), ""],
-                      },
-                    })}
-                    data-testid="button-add-trigger"
-                  >
-                    <Plus className="w-4 h-4 mr-1.5" /> Add Condition
-                  </Button>
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground">Not configured</p>
-              )
-            ) : rollback ? (
-              <div className="flex flex-col gap-2">
-                <div className="text-xs">
-                  <span className="text-muted-foreground">Target: </span>
-                  <span className="font-medium">{rollback.rollbackTargetVersion}</span>
-                </div>
-                <div className="text-xs text-muted-foreground">Trigger Conditions:</div>
-                {rollback.triggerConditions.map((cond, idx) => (
-                  <div key={idx} className="text-xs flex items-center gap-1.5">
-                    <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />
-                    <span>{cond}</span>
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                  <RotateCcw className="w-4 h-4 text-muted-foreground" /> Rollback Plan
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-2">
+                {editData.rollbackPlan ? (
+                  <div className="flex flex-col gap-2">
+                    <label className="text-xs text-muted-foreground">Rollback Target Version</label>
+                    <Input
+                      value={editData.rollbackPlan.rollbackTargetVersion}
+                      onChange={(e) => setEditData({
+                        ...editData,
+                        rollbackPlan: { ...editData.rollbackPlan, rollbackTargetVersion: e.target.value },
+                      })}
+                      placeholder="e.g., 1.0.0"
+                      data-testid="input-edit-rollback-target"
+                    />
+                    <label className="text-xs text-muted-foreground mt-1">Trigger Conditions</label>
+                    {(editData.rollbackPlan.triggerConditions || []).map((cond: string, idx: number) => (
+                      <div key={idx} className="flex items-center gap-2">
+                        <Input
+                          value={cond}
+                          onChange={(e) => {
+                            const updated = [...editData.rollbackPlan.triggerConditions];
+                            updated[idx] = e.target.value;
+                            setEditData({
+                              ...editData,
+                              rollbackPlan: { ...editData.rollbackPlan, triggerConditions: updated },
+                            });
+                          }}
+                          className="flex-1"
+                          data-testid={`input-trigger-condition-${idx}`}
+                        />
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => {
+                            const updated = editData.rollbackPlan.triggerConditions.filter((_: any, i: number) => i !== idx);
+                            setEditData({
+                              ...editData,
+                              rollbackPlan: { ...editData.rollbackPlan, triggerConditions: updated },
+                            });
+                          }}
+                          data-testid={`button-remove-trigger-${idx}`}
+                        >
+                          <X className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    ))}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setEditData({
+                        ...editData,
+                        rollbackPlan: {
+                          ...editData.rollbackPlan,
+                          triggerConditions: [...(editData.rollbackPlan.triggerConditions || []), ""],
+                        },
+                      })}
+                      data-testid="button-add-trigger"
+                    >
+                      <Plus className="w-4 h-4 mr-1.5" /> Add Condition
+                    </Button>
                   </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground">Not configured</p>
-            )}
-          </CardContent>
-        </Card>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Not configured</p>
+                )}
+              </CardContent>
+            </Card>
 
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <Tag className="w-4 h-4 text-muted-foreground" /> Tags
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-2">
-            {editing ? (
-              <>
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                  <Tag className="w-4 h-4 text-muted-foreground" /> Tags
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-2">
                 <div className="flex items-center gap-1.5 flex-wrap">
                   {(editData.tags || []).map((t: string, idx: number) => (
                     <Badge key={idx} variant="secondary" className="text-[10px] gap-1">
@@ -1371,20 +1278,536 @@ export default function TemplateDetail() {
                     <Plus className="w-4 h-4" />
                   </Button>
                 </div>
-              </>
-            ) : (displayTemplate?.tags || []).length > 0 ? (
-              <div className="flex items-center gap-1.5 flex-wrap">
-                {(displayTemplate?.tags || []).map((t) => (
-                  <Badge key={t} variant="secondary" className="text-[10px]">{t}</Badge>
-                ))}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground">No tags</p>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+              </CardContent>
+            </Card>
+          </div>
+        </>
+      ) : (
+        <>
+          {/* Performance & Cost Stats */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4" data-testid="section-performance-stats">
+            <Card>
+              <CardContent className="p-4 flex flex-col gap-1">
+                <span className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Deployments</span>
+                <span className="text-2xl font-semibold" data-testid="text-deployment-count">{displayTemplate?.deploymentCount || 0}</span>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4 flex flex-col gap-1">
+                <span className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Avg KPI Delivery</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-2xl font-semibold" data-testid="text-avg-kpi">{displayTemplate?.avgKpiDelivery || 0}%</span>
+                </div>
+                <div className="w-full h-2 rounded-full bg-muted mt-1">
+                  <div
+                    className="h-2 rounded-full bg-green-600 dark:bg-green-500"
+                    style={{ width: `${Math.min(displayTemplate?.avgKpiDelivery || 0, 100)}%` }}
+                    data-testid="bar-kpi-delivery"
+                  />
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4 flex flex-col gap-1">
+                <span className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Time to Production</span>
+                <span className="text-2xl font-semibold" data-testid="text-time-to-prod">{displayTemplate?.estimatedTimeToProd || "2-4 weeks"}</span>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4 flex flex-col gap-1">
+                <span className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Cost Profile</span>
+                <span className="text-2xl font-semibold" data-testid="text-cost-profile">
+                  {costProfile?.monthlyEstimate ? `$${costProfile.monthlyEstimate}/mo` : costProfile?.tier || "Standard"}
+                </span>
+                {costProfile?.perRunCost && (
+                  <span className="text-xs text-muted-foreground">${costProfile.perRunCost}/run</span>
+                )}
+              </CardContent>
+            </Card>
+          </div>
 
+          {/* Template Anatomy Exploded View */}
+          <div>
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3" data-testid="heading-anatomy">Template Anatomy</h2>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4" data-testid="section-anatomy">
+              {/* 1. Agent Blueprint */}
+              <Card data-testid="card-agent-blueprint">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-primary" /> Agent Blueprint
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-2">
+                  <div className="text-xs">
+                    <span className="text-muted-foreground font-medium">Model: </span>
+                    <span data-testid="text-model-config">{displayTemplate?.modelProvider} / {displayTemplate?.modelName}</span>
+                  </div>
+                  {workflow?.nodes && workflow.nodes.length > 0 && (
+                    <div className="text-xs">
+                      <span className="text-muted-foreground font-medium">Prompt Structure: </span>
+                      <span>{workflow.nodes.length} workflow nodes</span>
+                      <div className="flex flex-col gap-1 mt-1.5">
+                        {workflow.nodes.map((node, idx) => (
+                          <div key={node.id} className="flex items-center gap-2 text-xs">
+                            <span className="text-muted-foreground w-4 shrink-0">{idx + 1}.</span>
+                            <Badge variant="outline" className="text-[9px] shrink-0">{node.type}</Badge>
+                            <span className="text-muted-foreground">{node.label}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <div className="text-xs">
+                    <span className="text-muted-foreground font-medium">Tool Bindings: </span>
+                    <span>{tools.length} configured</span>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* 2. Skill Set */}
+              <Card data-testid="card-skill-set">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <Layers className="w-4 h-4 text-primary" /> Skill Set
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-2">
+                  <div className="text-xs text-muted-foreground font-medium">Pre-loaded Industry Skills</div>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <Badge variant="secondary" className="text-[10px]">{categoryLabels[displayTemplate?.category || "general"] || displayTemplate?.category}</Badge>
+                    <Badge variant="secondary" className="text-[10px]">{industryLabels[displayTemplate?.industry || "cross_industry"] || displayTemplate?.industry}</Badge>
+                  </div>
+                  {(displayTemplate?.tags || []).length > 0 && (
+                    <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                      {(displayTemplate?.tags || []).map((t) => (
+                        <Badge key={t} variant="outline" className="text-[10px]">{t}</Badge>
+                      ))}
+                    </div>
+                  )}
+                  {(displayTemplate?.tags || []).length === 0 && (
+                    <p className="text-xs text-muted-foreground">No additional skill tags</p>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* 3. MCP Connections */}
+              <Card data-testid="card-mcp-connections">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <Server className="w-4 h-4 text-primary" /> MCP Connections
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-2">
+                  {tools.length > 0 ? (
+                    <>
+                      <div className="text-xs text-muted-foreground font-medium">Pre-configured MCP Servers/Tools</div>
+                      {tools.map((tool, idx) => (
+                        <div key={idx} className="flex flex-col gap-0.5 p-2 rounded-md bg-muted/50">
+                          <div className="flex items-center gap-2">
+                            <Server className="w-3 h-3 text-muted-foreground shrink-0" />
+                            <span className="text-sm font-medium" data-testid={`text-mcp-tool-${idx}`}>{tool.name}</span>
+                          </div>
+                          <span className="text-xs text-muted-foreground ml-5">{tool.description}</span>
+                          {tool.permissions && tool.permissions.length > 0 && (
+                            <div className="flex items-center gap-1 mt-1 ml-5 flex-wrap">
+                              {tool.permissions.map((p) => (
+                                <Badge key={p} variant="secondary" className="text-[9px]">{p}</Badge>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">No MCP connections configured</p>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* 4. Governance Policies */}
+              <Card data-testid="card-governance-policies">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <Shield className="w-4 h-4 text-primary" /> Governance Policies
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-2">
+                  {complianceCerts.length > 0 && (
+                    <div>
+                      <div className="text-xs text-muted-foreground font-medium mb-1">Compliance Certifications</div>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {complianceCerts.map((cert: string) => (
+                          <Badge key={cert} variant="outline" className="text-[10px]">{cert}</Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {policyBindings.length > 0 ? (
+                    <div>
+                      <div className="text-xs text-muted-foreground font-medium mb-1">Policy Bindings</div>
+                      {policyBindings.map((p, idx) => (
+                        <div key={idx} className="flex items-center gap-2 text-xs mb-1">
+                          <span data-testid={`text-policy-name-${idx}`}>{p.policyName}</span>
+                          <Badge variant={p.enforcement === "hard" ? "destructive" : "secondary"} className="text-[9px]">
+                            {p.enforcement}
+                          </Badge>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">No policy bindings configured</p>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* 5. Evaluation Suite */}
+              <Card data-testid="card-evaluation-suite">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <FlaskConical className="w-4 h-4 text-primary" /> Evaluation Suite
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-2">
+                  {evalBindings.length > 0 ? (
+                    <>
+                      {evalBindings.map((e, idx) => (
+                        <div key={idx} className="flex items-center gap-2 text-xs">
+                          <span data-testid={`text-eval-name-${idx}`}>{e.suiteName}</span>
+                          <Badge variant="outline" className="text-[9px]">{e.schedule}</Badge>
+                        </div>
+                      ))}
+                      <div className="text-xs text-muted-foreground mt-1 flex items-center gap-1.5">
+                        <CheckCircle2 className="w-3 h-3 text-green-600 dark:text-green-500" />
+                        Golden evaluation dataset available
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">No eval bindings configured</p>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* 6. Autonomy Profile */}
+              <Card data-testid="card-autonomy-profile">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <Brain className="w-4 h-4 text-primary" /> Autonomy Profile
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-2">
+                  <div className="text-xs">
+                    <span className="text-muted-foreground font-medium">Risk Tier: </span>
+                    <span data-testid="text-risk-tier">{displayTemplate?.defaultRiskTier || "MEDIUM"}</span>
+                  </div>
+                  <div className="text-xs">
+                    <span className="text-muted-foreground font-medium">Autonomy Mode: </span>
+                    <span data-testid="text-autonomy-mode">{displayTemplate?.defaultAutonomyMode || "assisted"}</span>
+                  </div>
+                  {rollback ? (
+                    <div className="mt-1">
+                      <div className="text-xs text-muted-foreground font-medium">Rollback Trigger Conditions:</div>
+                      {rollback.triggerConditions.map((cond, idx) => (
+                        <div key={idx} className="text-xs flex items-center gap-1.5 mt-0.5">
+                          <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />
+                          <span>{cond}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground mt-1">No rollback plan configured</p>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* 7. Deployment Pipeline */}
+              <Card className="lg:col-span-2" data-testid="card-deployment-pipeline">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <Rocket className="w-4 h-4 text-primary" /> Deployment Pipeline
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-3">
+                  <div className="text-xs text-muted-foreground font-medium">Pre-configured Deployment Stages</div>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <div className="flex items-center gap-2 p-2 rounded-md bg-muted/50">
+                      <div className="w-2 h-2 rounded-full bg-blue-500" />
+                      <span className="text-sm font-medium">Shadow Replay</span>
+                    </div>
+                    <ArrowRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                    <div className="flex items-center gap-2 p-2 rounded-md bg-muted/50">
+                      <div className="w-2 h-2 rounded-full bg-amber-500" />
+                      <span className="text-sm font-medium">Canary</span>
+                    </div>
+                    <ArrowRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                    <div className="flex items-center gap-2 p-2 rounded-md bg-muted/50">
+                      <div className="w-2 h-2 rounded-full bg-green-600 dark:bg-green-500" />
+                      <span className="text-sm font-medium">Production</span>
+                    </div>
+                  </div>
+                  <div className="text-xs">
+                    <span className="text-muted-foreground font-medium">Estimated Time-to-Prod: </span>
+                    <span data-testid="text-pipeline-time">{displayTemplate?.estimatedTimeToProd || "2-4 weeks"}</span>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+
+          {/* Customization Wizard */}
+          <div data-testid="section-customization-wizard">
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3">Customize & Deploy</h2>
+            <Card>
+              <CardContent className="p-0">
+                <div className="flex items-center gap-1 p-4 border-b flex-wrap">
+                  {[
+                    { step: 1, label: "Data Sources" },
+                    { step: 2, label: "Thresholds" },
+                    { step: 3, label: "Additional Skills" },
+                    { step: 4, label: "Review & Deploy" },
+                  ].map((s) => (
+                    <Button
+                      key={s.step}
+                      variant={wizardStep === s.step ? "default" : "ghost"}
+                      size="sm"
+                      onClick={() => setWizardStep(s.step)}
+                      data-testid={`button-wizard-step-${s.step}`}
+                    >
+                      <span className="mr-1.5 font-semibold">{s.step}.</span> {s.label}
+                    </Button>
+                  ))}
+                </div>
+
+                <div className="p-4">
+                  {wizardStep === 1 && (
+                    <div className="flex flex-col gap-4" data-testid="wizard-step-1">
+                      <div>
+                        <h3 className="text-sm font-medium mb-1">Connect Organization Data Sources</h3>
+                        <p className="text-xs text-muted-foreground mb-3">Connect your organization-specific data sources based on the template requirements.</p>
+                      </div>
+                      {(permissions?.dataAccess || []).length > 0 ? (
+                        (permissions!.dataAccess || []).map((source) => (
+                          <div key={source}>
+                            <label className="text-xs text-muted-foreground mb-1 block font-medium">{source}</label>
+                            <Input
+                              value={customization.dataSources[source] || ""}
+                              onChange={(e) => setCustomization({
+                                ...customization,
+                                dataSources: { ...customization.dataSources, [source]: e.target.value },
+                              })}
+                              placeholder={`Enter connection URL or path for ${source}`}
+                              data-testid={`input-datasource-${source}`}
+                            />
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-xs text-muted-foreground">No specific data sources required by this template.</p>
+                      )}
+                    </div>
+                  )}
+
+                  {wizardStep === 2 && (
+                    <div className="flex flex-col gap-4" data-testid="wizard-step-2">
+                      <div>
+                        <h3 className="text-sm font-medium mb-1">Organization Thresholds</h3>
+                        <p className="text-xs text-muted-foreground mb-3">Configure operational thresholds with industry-benchmark defaults.</p>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-xs text-muted-foreground mb-1 block font-medium">Cost Ceiling (monthly max)</label>
+                          <Input
+                            value={customization.costCeiling || (costProfile?.monthlyEstimate ? String(costProfile.monthlyEstimate) : "")}
+                            onChange={(e) => setCustomization({ ...customization, costCeiling: e.target.value })}
+                            placeholder={costProfile?.monthlyEstimate ? `$${costProfile.monthlyEstimate}` : "Enter monthly cost ceiling"}
+                            data-testid="input-cost-ceiling"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-muted-foreground mb-1 block font-medium">Quality Floor (min KPI %)</label>
+                          <Input
+                            value={customization.qualityFloor || (displayTemplate?.avgKpiDelivery ? String(displayTemplate.avgKpiDelivery) : "")}
+                            onChange={(e) => setCustomization({ ...customization, qualityFloor: e.target.value })}
+                            placeholder={displayTemplate?.avgKpiDelivery ? `${displayTemplate.avgKpiDelivery}%` : "Enter minimum KPI %"}
+                            data-testid="input-quality-floor"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-muted-foreground mb-1 block font-medium">Risk Tolerance</label>
+                          <Input
+                            value={customization.riskTolerance || (displayTemplate?.defaultRiskTier || "")}
+                            onChange={(e) => setCustomization({ ...customization, riskTolerance: e.target.value })}
+                            placeholder={displayTemplate?.defaultRiskTier || "MEDIUM"}
+                            data-testid="input-risk-tolerance"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-muted-foreground mb-1 block font-medium">Max Latency (ms)</label>
+                          <Input
+                            value={customization.maxLatency}
+                            onChange={(e) => setCustomization({ ...customization, maxLatency: e.target.value })}
+                            placeholder="500"
+                            data-testid="input-max-latency"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {wizardStep === 3 && (
+                    <div className="flex flex-col gap-4" data-testid="wizard-step-3">
+                      <div>
+                        <h3 className="text-sm font-medium mb-1">Additional Skills</h3>
+                        <p className="text-xs text-muted-foreground mb-3">Add organization-specific skills to extend the template capabilities.</p>
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {customization.additionalSkills.map((skill, idx) => (
+                          <Badge key={idx} variant="secondary" className="text-[10px] gap-1">
+                            {skill}
+                            <button
+                              onClick={() => {
+                                const updated = customization.additionalSkills.filter((_, i) => i !== idx);
+                                setCustomization({ ...customization, additionalSkills: updated });
+                              }}
+                              className="ml-0.5"
+                              data-testid={`button-remove-skill-${idx}`}
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </Badge>
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Input
+                          value={customization.newSkill}
+                          onChange={(e) => setCustomization({ ...customization, newSkill: e.target.value })}
+                          placeholder="Add a skill"
+                          className="flex-1"
+                          data-testid="input-new-skill"
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && customization.newSkill.trim()) {
+                              e.preventDefault();
+                              setCustomization({
+                                ...customization,
+                                additionalSkills: [...customization.additionalSkills, customization.newSkill.trim()],
+                                newSkill: "",
+                              });
+                            }
+                          }}
+                          data-testid="input-add-skill"
+                        />
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            if (customization.newSkill.trim()) {
+                              setCustomization({
+                                ...customization,
+                                additionalSkills: [...customization.additionalSkills, customization.newSkill.trim()],
+                                newSkill: "",
+                              });
+                            }
+                          }}
+                          data-testid="button-add-skill"
+                        >
+                          <Plus className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {wizardStep === 4 && (
+                    <div className="flex flex-col gap-4" data-testid="wizard-step-4">
+                      <div>
+                        <h3 className="text-sm font-medium mb-1">Review & Deploy</h3>
+                        <p className="text-xs text-muted-foreground mb-3">Review your customizations and deploy the template.</p>
+                      </div>
+
+                      {/* Customization Summary */}
+                      <Card>
+                        <CardContent className="p-4 flex flex-col gap-3">
+                          <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Customization Summary</div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                            <div>
+                              <span className="text-muted-foreground font-medium">Data Sources: </span>
+                              <span>{Object.keys(customization.dataSources).filter(k => customization.dataSources[k]).length} connected</span>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground font-medium">Cost Ceiling: </span>
+                              <span>{customization.costCeiling || (costProfile?.monthlyEstimate ? `$${costProfile.monthlyEstimate}` : "Not set")}</span>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground font-medium">Quality Floor: </span>
+                              <span>{customization.qualityFloor || (displayTemplate?.avgKpiDelivery ? `${displayTemplate.avgKpiDelivery}%` : "Not set")}</span>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground font-medium">Risk Tolerance: </span>
+                              <span>{customization.riskTolerance || displayTemplate?.defaultRiskTier || "Not set"}</span>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground font-medium">Max Latency: </span>
+                              <span>{customization.maxLatency}ms</span>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground font-medium">Additional Skills: </span>
+                              <span>{customization.additionalSkills.length} added</span>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+
+                      {/* Compliance Pre-Check */}
+                      <Card>
+                        <CardContent className="p-4 flex flex-col gap-3">
+                          <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Compliance Pre-Check</div>
+                          <div className="flex flex-col gap-2">
+                            {complianceChecks.map((check, idx) => (
+                              <div key={idx} className="flex items-center gap-2 text-xs" data-testid={`compliance-check-${idx}`}>
+                                {check.pass ? (
+                                  <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-500 shrink-0" />
+                                ) : (
+                                  <XCircle className="w-4 h-4 text-red-500 shrink-0" />
+                                )}
+                                <span className={check.pass ? "" : "text-muted-foreground"}>{check.label}</span>
+                              </div>
+                            ))}
+                          </div>
+                          {!allChecksPassed && (
+                            <div className="flex items-start gap-2 p-3 rounded-md bg-amber-500/10 border border-amber-500/20 text-xs" data-testid="compliance-warning">
+                              <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                              <div className="flex flex-col gap-1">
+                                <span className="font-medium">Remediation Steps Required</span>
+                                {complianceChecks.filter(c => !c.pass).map((check, idx) => (
+                                  <span key={idx} className="text-muted-foreground">{check.remedy}</span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+
+                      {/* Deploy Button */}
+                      <Button
+                        className="w-full"
+                        disabled={!allChecksPassed || deployMutation.isPending}
+                        onClick={() => setDeployDialogOpen(true)}
+                        data-testid="button-deploy-shadow"
+                      >
+                        {deployMutation.isPending ? (
+                          <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                        ) : (
+                          <Rocket className="w-4 h-4 mr-1.5" />
+                        )}
+                        {deployMutation.isPending ? "Deploying..." : "Deploy to Shadow Replay"}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </>
+      )}
+
+      {/* Delete Confirmation Dialog */}
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <DialogContent data-testid="dialog-delete-confirm">
           <DialogHeader>
@@ -1409,6 +1832,38 @@ export default function TemplateDetail() {
         </DialogContent>
       </Dialog>
 
+      {/* Deploy Confirmation Dialog */}
+      <Dialog open={deployDialogOpen} onOpenChange={setDeployDialogOpen}>
+        <DialogContent data-testid="dialog-deploy-confirm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Rocket className="w-5 h-5 text-primary" /> Deploy to Shadow Replay
+            </DialogTitle>
+            <DialogDescription>
+              This template will be deployed to the shadow replay pipeline. The golden evaluation dataset will run automatically to validate performance before promotion to canary and production stages.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeployDialogOpen(false)} data-testid="button-cancel-deploy">
+              Cancel
+            </Button>
+            <Button
+              onClick={() => deployMutation.mutate()}
+              disabled={deployMutation.isPending}
+              data-testid="button-confirm-deploy"
+            >
+              {deployMutation.isPending ? (
+                <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+              ) : (
+                <Rocket className="w-4 h-4 mr-1.5" />
+              )}
+              {deployMutation.isPending ? "Deploying..." : "Confirm Deploy"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* AI Enhance Dialog */}
       <Dialog open={enhanceDialogOpen} onOpenChange={(open) => { setEnhanceDialogOpen(open); if (!open) setEnhancePreview(null); }}>
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto" data-testid="dialog-ai-enhance">
           <DialogHeader>
@@ -1435,7 +1890,7 @@ export default function TemplateDetail() {
               )}
               {enhancePreview.tools && Array.isArray(enhancePreview.tools) && enhancePreview.tools.length > 0 && (
                 <div>
-                  <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center justify-between gap-2 mb-1 flex-wrap">
                     <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Tools ({enhancePreview.tools.length})</h4>
                     <Button size="sm" variant="ghost" onClick={() => setEnhancePreview({ ...enhancePreview, tools: [...enhancePreview.tools, { name: "", description: "", permissions: [] }] })} data-testid="button-add-preview-tool">
                       <Plus className="w-3 h-3 mr-1" /> Add
@@ -1471,7 +1926,7 @@ export default function TemplateDetail() {
               )}
               {enhancePreview.workflowNodes && Array.isArray(enhancePreview.workflowNodes) && enhancePreview.workflowNodes.length > 0 && (
                 <div>
-                  <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center justify-between gap-2 mb-1 flex-wrap">
                     <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Workflow ({enhancePreview.workflowNodes.length} nodes)</h4>
                     <Button size="sm" variant="ghost" onClick={() => setEnhancePreview({ ...enhancePreview, workflowNodes: [...enhancePreview.workflowNodes, { id: `step_${enhancePreview.workflowNodes.length + 1}`, type: "llm_call", label: "" }] })} data-testid="button-add-preview-workflow">
                       <Plus className="w-3 h-3 mr-1" /> Add
@@ -1573,7 +2028,7 @@ export default function TemplateDetail() {
               })()}
               {enhancePreview.policyBindings && Array.isArray(enhancePreview.policyBindings) && enhancePreview.policyBindings.length > 0 && (
                 <div>
-                  <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center justify-between gap-2 mb-1 flex-wrap">
                     <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Policy Bindings</h4>
                     <Button size="sm" variant="ghost" onClick={() => setEnhancePreview({ ...enhancePreview, policyBindings: [...enhancePreview.policyBindings, { policyName: "", enforcement: "soft" }] })} data-testid="button-add-preview-policy">
                       <Plus className="w-3 h-3 mr-1" /> Add
@@ -1603,7 +2058,7 @@ export default function TemplateDetail() {
               )}
               {enhancePreview.evalBindings && Array.isArray(enhancePreview.evalBindings) && enhancePreview.evalBindings.length > 0 && (
                 <div>
-                  <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center justify-between gap-2 mb-1 flex-wrap">
                     <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Eval Bindings</h4>
                     <Button size="sm" variant="ghost" onClick={() => setEnhancePreview({ ...enhancePreview, evalBindings: [...enhancePreview.evalBindings, { suiteName: "", schedule: "on_deploy" }] })} data-testid="button-add-preview-eval">
                       <Plus className="w-3 h-3 mr-1" /> Add
