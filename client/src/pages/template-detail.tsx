@@ -275,6 +275,8 @@ export default function TemplateDetail() {
     embeddingModel: "",
     topK: "",
     tags: [] as string[],
+    complianceCertifications: [] as string[],
+    newCert: "",
     policyBindings: [] as PolicyBinding[],
     evalBindings: [] as EvalBinding[],
     triggerConditions: [""],
@@ -504,6 +506,8 @@ export default function TemplateDetail() {
       modelName: template.modelName || "gpt-4.1",
       tags: [...(template.tags || [])],
       newTag: "",
+      complianceCertifications: [...(template.complianceCertifications || [])],
+      newCert: "",
       tools: tools.map(t => ({ ...t, permissions: t.permissions ? [...t.permissions] : [] })),
       workflowNodes: workflow?.nodes ? workflow.nodes.map(n => ({ ...n })) : [],
       dataAccess: permissions?.dataAccess ? permissions.dataAccess.join(", ") : "",
@@ -543,6 +547,7 @@ export default function TemplateDetail() {
       blueprintJson: { nodes: editData.workflowNodes },
       permissionsConfig: { dataAccess: dataAccessArr, apiAccess: apiAccessArr, writeAccess: writeAccessArr },
       memoryRagConfig: editData.memoryRagConfig,
+      complianceCertifications: editData.complianceCertifications || [],
       policyBindings: editData.policyBindings,
       evalBindings: editData.evalBindings,
       rollbackPlan: editData.rollbackPlan,
@@ -620,6 +625,8 @@ export default function TemplateDetail() {
       modelName: template.modelName || "gpt-4.1",
       tags: [...(template.tags || [])],
       newTag: "",
+      complianceCertifications: [...(template.complianceCertifications || [])],
+      newCert: "",
       tools: tls.map(t => ({ ...t, permissions: t.permissions ? [...t.permissions] : [] })),
       workflowNodes: wf?.nodes ? wf.nodes.map(n => ({ ...n })) : [],
       dataAccess: perms?.dataAccess ? perms.dataAccess.join(", ") : "",
@@ -1083,6 +1090,71 @@ export default function TemplateDetail() {
                 ) : (
                   <p className="text-xs text-muted-foreground">Not configured</p>
                 )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-muted-foreground" /> Compliance Certifications ({editData.complianceCertifications?.length || 0})
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-2">
+                {(editData.complianceCertifications || []).length > 0 && (
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {(editData.complianceCertifications || []).map((cert: string, idx: number) => (
+                      <Badge key={idx} variant="secondary" className="text-[10px] gap-1">
+                        {cert}
+                        <button
+                          onClick={() => {
+                            const updated = editData.complianceCertifications.filter((_: any, i: number) => i !== idx);
+                            setEditData({ ...editData, complianceCertifications: updated });
+                          }}
+                          className="ml-0.5"
+                          data-testid={`button-remove-cert-${idx}`}
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  <Input
+                    value={editData.newCert || ""}
+                    onChange={(e) => setEditData({ ...editData, newCert: e.target.value })}
+                    placeholder="e.g. SOC2, ISO-27001, HIPAA, GDPR, PCI-DSS"
+                    className="flex-1"
+                    data-testid="input-new-cert"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && (editData.newCert || "").trim()) {
+                        e.preventDefault();
+                        setEditData({
+                          ...editData,
+                          complianceCertifications: [...(editData.complianceCertifications || []), editData.newCert.trim()],
+                          newCert: "",
+                        });
+                      }
+                    }}
+                  />
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={() => {
+                      if ((editData.newCert || "").trim()) {
+                        setEditData({
+                          ...editData,
+                          complianceCertifications: [...(editData.complianceCertifications || []), editData.newCert.trim()],
+                          newCert: "",
+                        });
+                      }
+                    }}
+                    data-testid="button-add-cert"
+                  >
+                    <Plus className="w-4 h-4" />
+                  </Button>
+                </div>
+                <p className="text-[10px] text-muted-foreground">Add certifications like SOC2, ISO-27001, HIPAA, GDPR, PCI-DSS to satisfy audit retention policies.</p>
               </CardContent>
             </Card>
 
