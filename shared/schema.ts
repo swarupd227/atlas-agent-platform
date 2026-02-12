@@ -1396,4 +1396,53 @@ export const insertSkillChainSchema = createInsertSchema(skillChains).omit({ id:
 export type InsertSkillChain = z.infer<typeof insertSkillChainSchema>;
 export type SkillChain = typeof skillChains.$inferSelect;
 
+// Golden Evaluation Datasets
+export const goldenDatasets = pgTable("golden_datasets", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  description: text("description").notNull(),
+  industry: text("industry").notNull(),
+  useCase: text("use_case").notNull(),
+  version: text("version").notNull().default("1.0.0"),
+  testCaseCount: integer("test_case_count").notNull().default(0),
+  scenarioCategories: jsonb("scenario_categories").notNull().default(sql`'{"happyPath":0,"edgeCases":0,"adversarial":0,"complianceCritical":0}'::jsonb`),
+  qualityCoverage: real("quality_coverage").default(0),
+  coverageDimensions: jsonb("coverage_dimensions").default(sql`'[]'::jsonb`),
+  benchmarkAvg: real("benchmark_avg").default(0),
+  benchmarkRange: jsonb("benchmark_range").default(sql`'{"low":0,"high":0}'::jsonb`),
+  contributorCount: integer("contributor_count").notNull().default(0),
+  contributors: jsonb("contributors").default(sql`'[]'::jsonb`),
+  growthHistory: jsonb("growth_history").default(sql`'[]'::jsonb`),
+  status: text("status").notNull().default("active"),
+  tags: text("tags").array().default(sql`'{}'::text[]`),
+  aiGenerated: boolean("ai_generated").default(false),
+  lastUpdatedAt: timestamp("last_updated_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertGoldenDatasetSchema = createInsertSchema(goldenDatasets).omit({ id: true, createdAt: true, lastUpdatedAt: true });
+export type InsertGoldenDataset = z.infer<typeof insertGoldenDatasetSchema>;
+export type GoldenDataset = typeof goldenDatasets.$inferSelect;
+
+export const goldenTestCases = pgTable("golden_test_cases", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  datasetId: varchar("dataset_id").notNull(),
+  name: text("name").notNull(),
+  inputScenario: text("input_scenario").notNull(),
+  expectedBehavior: text("expected_behavior").notNull(),
+  evaluationCriteria: jsonb("evaluation_criteria").notNull().default(sql`'[]'::jsonb`),
+  rubricScoring: jsonb("rubric_scoring").default(sql`'{"dimensions":[],"passingScore":0.8}'::jsonb`),
+  difficultyTier: text("difficulty_tier").notNull().default("routine"),
+  scenarioCategory: text("scenario_category").notNull().default("happy_path"),
+  tags: text("tags").array().default(sql`'{}'::text[]`),
+  contributorOrg: text("contributor_org"),
+  aiGenerated: boolean("ai_generated").default(false),
+  status: text("status").notNull().default("active"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertGoldenTestCaseSchema = createInsertSchema(goldenTestCases).omit({ id: true, createdAt: true });
+export type InsertGoldenTestCase = z.infer<typeof insertGoldenTestCaseSchema>;
+export type GoldenTestCase = typeof goldenTestCases.$inferSelect;
+
 export * from "./models/chat";

@@ -118,6 +118,10 @@ import {
   type SkillVersion, type InsertSkillVersion,
   skillChains,
   type SkillChain, type InsertSkillChain,
+  goldenDatasets,
+  type GoldenDataset, type InsertGoldenDataset,
+  goldenTestCases,
+  type GoldenTestCase, type InsertGoldenTestCase,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -472,6 +476,18 @@ export interface IStorage {
   createSkillChain(chain: InsertSkillChain): Promise<SkillChain>;
   updateSkillChain(id: string, data: Partial<SkillChain>): Promise<SkillChain | undefined>;
   deleteSkillChain(id: string): Promise<boolean>;
+
+  getGoldenDatasets(): Promise<GoldenDataset[]>;
+  getGoldenDataset(id: string): Promise<GoldenDataset | undefined>;
+  createGoldenDataset(dataset: InsertGoldenDataset): Promise<GoldenDataset>;
+  updateGoldenDataset(id: string, data: Partial<GoldenDataset>): Promise<GoldenDataset | undefined>;
+  deleteGoldenDataset(id: string): Promise<boolean>;
+
+  getGoldenTestCases(datasetId: string): Promise<GoldenTestCase[]>;
+  getGoldenTestCase(id: string): Promise<GoldenTestCase | undefined>;
+  createGoldenTestCase(testCase: InsertGoldenTestCase): Promise<GoldenTestCase>;
+  updateGoldenTestCase(id: string, data: Partial<GoldenTestCase>): Promise<GoldenTestCase | undefined>;
+  deleteGoldenTestCase(id: string): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1780,6 +1796,60 @@ export class DatabaseStorage implements IStorage {
   async deleteSkillChain(id: string) {
     const result = await db.delete(skillChains).where(eq(skillChains.id, id));
     return (result as any).rowCount > 0;
+  }
+
+  async getGoldenDatasets() {
+    return db.select().from(goldenDatasets).orderBy(desc(goldenDatasets.createdAt));
+  }
+  async getGoldenDataset(id: string) {
+    const [dataset] = await db.select().from(goldenDatasets).where(eq(goldenDatasets.id, id));
+    return dataset;
+  }
+  async createGoldenDataset(dataset: InsertGoldenDataset) {
+    const [created] = await db.insert(goldenDatasets).values(dataset).returning();
+    return created;
+  }
+  async updateGoldenDataset(id: string, data: Partial<GoldenDataset>) {
+    const [updated] = await db.update(goldenDatasets).set({ ...data, lastUpdatedAt: new Date() }).where(eq(goldenDatasets.id, id)).returning();
+    return updated;
+  }
+  async deleteGoldenDataset(id: string) {
+    await db.delete(goldenTestCases).where(eq(goldenTestCases.datasetId, id));
+    const result = await db.delete(goldenDatasets).where(eq(goldenDatasets.id, id));
+    return (result as any).rowCount > 0;
+  }
+
+  async getGoldenTestCases(datasetId: string) {
+    return db.select().from(goldenTestCases).where(eq(goldenTestCases.datasetId, datasetId)).orderBy(goldenTestCases.createdAt);
+  }
+  async getGoldenTestCase(id: string) {
+    const [tc] = await db.select().from(goldenTestCases).where(eq(goldenTestCases.id, id));
+    return tc;
+  }
+  async createGoldenTestCase(testCase: InsertGoldenTestCase) {
+    const [created] = await db.insert(goldenTestCases).values(testCase).returning();
+    await this.updateDatasetTestCaseCount(testCase.datasetId);
+    return created;
+  }
+  async updateGoldenTestCase(id: string, data: Partial<GoldenTestCase>) {
+    const [updated] = await db.update(goldenTestCases).set(data).where(eq(goldenTestCases.id, id)).returning();
+    return updated;
+  }
+  async deleteGoldenTestCase(id: string) {
+    const tc = await this.getGoldenTestCase(id);
+    const result = await db.delete(goldenTestCases).where(eq(goldenTestCases.id, id));
+    if (tc) await this.updateDatasetTestCaseCount(tc.datasetId);
+    return (result as any).rowCount > 0;
+  }
+
+  private async updateDatasetTestCaseCount(datasetId: string) {
+    const cases = await db.select().from(goldenTestCases).where(eq(goldenTestCases.datasetId, datasetId));
+    const categories: Record<string, number> = { happyPath: 0, edgeCases: 0, adversarial: 0, complianceCritical: 0 };
+    cases.forEach(c => {
+      const cat = c.scenarioCategory === "happy_path" ? "happyPath" : c.scenarioCategory === "edge_case" ? "edgeCases" : c.scenarioCategory === "adversarial" ? "adversarial" : "complianceCritical";
+      categories[cat]++;
+    });
+    await db.update(goldenDatasets).set({ testCaseCount: cases.length, scenarioCategories: categories }).where(eq(goldenDatasets.id, datasetId));
   }
 }
 

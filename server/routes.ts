@@ -58,6 +58,8 @@ import {
   insertSkillSchema,
   insertSkillVersionSchema,
   insertSkillChainSchema,
+  insertGoldenDatasetSchema,
+  insertGoldenTestCaseSchema,
 } from "@shared/schema";
 
 const openai = new OpenAI({
@@ -12477,6 +12479,197 @@ Simulate how the agent would handle the scenario. Return JSON:
     } catch (e: any) {
       console.error("AI sandbox test error:", e);
       res.status(500).json({ error: e.message || "Failed to run sandbox test" });
+    }
+  });
+
+  // === Golden Evaluation Datasets CRUD ===
+  app.get("/api/golden-datasets", async (_req, res) => {
+    try {
+      const datasets = await storage.getGoldenDatasets();
+      res.json(datasets);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/golden-datasets/:id", async (req, res) => {
+    try {
+      const dataset = await storage.getGoldenDataset(req.params.id);
+      if (!dataset) return res.status(404).json({ error: "Dataset not found" });
+      res.json(dataset);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/golden-datasets", async (req, res) => {
+    try {
+      const parsed = insertGoldenDatasetSchema.parse(req.body);
+      const dataset = await storage.createGoldenDataset(parsed);
+      res.json(dataset);
+    } catch (e: any) {
+      if (e instanceof ZodError) return res.status(400).json({ error: e.errors });
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.patch("/api/golden-datasets/:id", async (req, res) => {
+    try {
+      const updated = await storage.updateGoldenDataset(req.params.id, req.body);
+      if (!updated) return res.status(404).json({ error: "Dataset not found" });
+      res.json(updated);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.delete("/api/golden-datasets/:id", async (req, res) => {
+    try {
+      const deleted = await storage.deleteGoldenDataset(req.params.id);
+      if (!deleted) return res.status(404).json({ error: "Dataset not found" });
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Golden Test Cases CRUD
+  app.get("/api/golden-datasets/:datasetId/test-cases", async (req, res) => {
+    try {
+      const testCases = await storage.getGoldenTestCases(req.params.datasetId);
+      res.json(testCases);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/golden-datasets/:datasetId/test-cases", async (req, res) => {
+    try {
+      const parsed = insertGoldenTestCaseSchema.parse({ ...req.body, datasetId: req.params.datasetId });
+      const tc = await storage.createGoldenTestCase(parsed);
+      res.json(tc);
+    } catch (e: any) {
+      if (e instanceof ZodError) return res.status(400).json({ error: e.errors });
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.patch("/api/golden-test-cases/:id", async (req, res) => {
+    try {
+      const updated = await storage.updateGoldenTestCase(req.params.id, req.body);
+      if (!updated) return res.status(404).json({ error: "Test case not found" });
+      res.json(updated);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.delete("/api/golden-test-cases/:id", async (req, res) => {
+    try {
+      const deleted = await storage.deleteGoldenTestCase(req.params.id);
+      if (!deleted) return res.status(404).json({ error: "Test case not found" });
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // AI: Generate golden test cases
+  app.post("/api/ai/generate-golden-test-cases", async (req, res) => {
+    try {
+      const { datasetId, industry, useCase, count = 5, difficultyMix } = req.body;
+      if (!datasetId || !industry || !useCase) {
+        return res.status(400).json({ error: "datasetId, industry, and useCase are required" });
+      }
+      const existing = await storage.getGoldenTestCases(datasetId);
+      const existingSummary = existing.slice(0, 10).map(tc => `- ${tc.name}: ${tc.inputScenario.slice(0, 100)}`).join("\n");
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert at creating golden evaluation test cases for AI agents in the ${industry} industry. Generate ${Math.min(count, 10)} diverse test cases for the "${useCase}" use case. Each test case should have varied difficulty tiers and scenario categories.
+
+Return JSON: { "testCases": [{ "name": string, "inputScenario": string (detailed scenario description), "expectedBehavior": string (what the agent should do), "evaluationCriteria": [{ "dimension": string, "weight": number, "description": string }], "rubricScoring": { "dimensions": [{ "name": string, "maxScore": number, "criteria": string }], "passingScore": number }, "difficultyTier": "routine"|"complex"|"edge_case"|"adversarial", "scenarioCategory": "happy_path"|"edge_case"|"adversarial"|"compliance_critical", "tags": string[] }] }
+
+${difficultyMix ? `Difficulty distribution preference: ${JSON.stringify(difficultyMix)}` : "Mix difficulties evenly."}
+${existingSummary ? `\nExisting test cases (avoid duplicates):\n${existingSummary}` : ""}`
+          },
+          { role: "user", content: `Generate ${Math.min(count, 10)} golden evaluation test cases for "${useCase}" in ${industry}.` }
+        ],
+        temperature: 0.7,
+        response_format: { type: "json_object" },
+      });
+
+      const raw = response.choices[0].message.content || "{}";
+      let result;
+      try { result = JSON.parse(raw); } catch { result = { testCases: [] }; }
+
+      const created = [];
+      for (const tc of (result.testCases || []).slice(0, 10)) {
+        const saved = await storage.createGoldenTestCase({
+          datasetId,
+          name: tc.name || "Untitled Test Case",
+          inputScenario: tc.inputScenario || "",
+          expectedBehavior: tc.expectedBehavior || "",
+          evaluationCriteria: tc.evaluationCriteria || [],
+          rubricScoring: tc.rubricScoring || { dimensions: [], passingScore: 0.8 },
+          difficultyTier: tc.difficultyTier || "routine",
+          scenarioCategory: tc.scenarioCategory || "happy_path",
+          tags: tc.tags || [],
+          aiGenerated: true,
+          status: "active",
+        });
+        created.push(saved);
+      }
+
+      res.json({ generated: created.length, testCases: created });
+    } catch (e: any) {
+      console.error("AI generate golden test cases error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // AI: Enhance a golden test case
+  app.post("/api/ai/enhance-golden-test-case", async (req, res) => {
+    try {
+      const { testCaseId, enhanceType } = req.body;
+      if (!testCaseId) return res.status(400).json({ error: "testCaseId is required" });
+
+      const tc = await storage.getGoldenTestCase(testCaseId);
+      if (!tc) return res.status(404).json({ error: "Test case not found" });
+
+      const enhancePrompt = enhanceType === "rubric"
+        ? "Improve and expand the rubric scoring dimensions to be more comprehensive and measurable."
+        : enhanceType === "criteria"
+        ? "Improve the evaluation criteria to be more specific, measurable, and comprehensive."
+        : enhanceType === "adversarial"
+        ? "Make this test case more adversarial and challenging, testing edge cases and failure modes."
+        : "Improve all aspects: make the scenario more realistic, criteria more specific, and rubric more comprehensive.";
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert at enhancing golden evaluation test cases for AI agents. ${enhancePrompt}
+
+Return JSON with the enhanced fields: { "name": string, "inputScenario": string, "expectedBehavior": string, "evaluationCriteria": [{ "dimension": string, "weight": number, "description": string }], "rubricScoring": { "dimensions": [{ "name": string, "maxScore": number, "criteria": string }], "passingScore": number }, "difficultyTier": string, "tags": string[] }`
+          },
+          {
+            role: "user",
+            content: `Enhance this test case:\nName: ${tc.name}\nScenario: ${tc.inputScenario}\nExpected: ${tc.expectedBehavior}\nCriteria: ${JSON.stringify(tc.evaluationCriteria)}\nRubric: ${JSON.stringify(tc.rubricScoring)}\nDifficulty: ${tc.difficultyTier}`
+          }
+        ],
+        temperature: 0.5,
+        response_format: { type: "json_object" },
+      });
+
+      const raw = response.choices[0].message.content || "{}";
+      let enhanced;
+      try { enhanced = JSON.parse(raw); } catch { return res.status(500).json({ error: "Failed to parse AI response" }); }
+
+      const updated = await storage.updateGoldenTestCase(testCaseId, {
+        name: enhanced.name || tc.name,
+        inputScenario: enhanced.inputScenario || tc.inputScenario,
+        expectedBehavior: enhanced.expectedBehavior || tc.expectedBehavior,
+        evaluationCriteria: enhanced.evaluationCriteria || tc.evaluationCriteria,
+        rubricScoring: enhanced.rubricScoring || tc.rubricScoring,
+        difficultyTier: enhanced.difficultyTier || tc.difficultyTier,
+        tags: enhanced.tags || tc.tags,
+      });
+
+      res.json(updated);
+    } catch (e: any) {
+      console.error("AI enhance golden test case error:", e);
+      res.status(500).json({ error: e.message });
     }
   });
 

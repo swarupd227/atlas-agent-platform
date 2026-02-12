@@ -69,6 +69,8 @@ import PolicyEngine from "@/pages/policy-engine";
 import SkillCatalog from "@/pages/skills";
 import SkillStudio from "@/pages/skill-studio";
 import SkillComposer from "@/pages/skill-composer";
+import GoldenDatasets from "@/pages/golden-datasets";
+import GoldenDatasetDetail from "@/pages/golden-dataset-detail";
 
 function DashboardRouter() {
   return (
@@ -89,6 +91,8 @@ function DashboardRouter() {
       <Route path="/evals" component={Evals} />
       <Route path="/evals/replay" component={ShadowReplay} />
       <Route path="/evals/:id" component={EvalDetail} />
+      <Route path="/golden-datasets/:id" component={GoldenDatasetDetail} />
+      <Route path="/golden-datasets" component={GoldenDatasets} />
       <Route path="/deployments" component={Deployments} />
       <Route path="/deployments/:id" component={ReleaseDetail} />
       <Route path="/traces/:id" component={TraceDetail} />

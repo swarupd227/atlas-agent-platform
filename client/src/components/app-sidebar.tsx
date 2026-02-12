@@ -26,6 +26,7 @@ import {
   Layers,
   Pencil,
   Link2,
+  Database,
 } from "lucide-react";
 import {
   Sidebar,
@@ -56,6 +57,7 @@ export function AppSidebar() {
     { title: "Golden Template Gallery", url: "/templates", icon: Library },
     { title: "Blueprints", url: "/blueprints", icon: PenTool },
     { title: "Evaluations", url: "/evals", icon: FlaskConical },
+    { title: "Golden Datasets", url: "/golden-datasets", icon: Database },
     { title: "Deployments", url: "/deployments", icon: Rocket },
     { title: "Monitor", url: "/monitor", icon: Activity },
     { title: "Skills Library", url: "/skills", icon: Layers },
