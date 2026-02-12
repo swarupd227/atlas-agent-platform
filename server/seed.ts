@@ -17,6 +17,7 @@ import { batch1Templates } from "./templates-batch1";
 import { batch2Templates } from "./templates-batch2";
 
 export async function seedDatabase() {
+  try {
   const existingToolConnectors = await db.select().from(toolConnectors);
   if (existingToolConnectors.length === 0) {
     const toolConnectorSeeds = [
@@ -4558,8 +4559,12 @@ export async function seedDatabase() {
       },
     ]);
   }
+  } catch (mainSeedErr) {
+    console.error("Main seed error (non-fatal, continuing to regulatory seed):", mainSeedErr);
+  }
 
   // Seed regulatory data (regulations, policies, compliance controls, changes)
+  try {
   const existingRegs = await storage.getRegulations();
   if (existingRegs.length === 0) {
     console.log("Seeding regulatory data...");
@@ -4899,6 +4904,9 @@ export async function seedDatabase() {
     }
 
     console.log(`Seeded ${createdRegs.length} regulations, ${seedPolicies.length} policies, ${seedControls.length} controls, ${seedChanges.length} changes`);
+  }
+  } catch (regSeedErr) {
+    console.error("Regulatory seed error (non-fatal):", regSeedErr);
   }
 
 
