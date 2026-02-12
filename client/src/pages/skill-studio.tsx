@@ -612,124 +612,195 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
 
         <TabsContent value="editor" className="flex-1 min-h-0 mt-0">
           <ScrollArea className="h-full">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-5">
-              <div className="space-y-4">
-                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">YAML Frontmatter</h3>
-                <Separator />
-                <div className="space-y-1.5">
-                  <Label htmlFor="skill-name">Name</Label>
-                  <Input id="skill-name" value={name} onChange={e => setName(e.target.value)} data-testid="input-name" />
+            <div className="p-5 space-y-5">
+              {!markdownBody && !description && (
+                <Card className="border-dashed" data-testid="card-getting-started">
+                  <CardContent className="p-4">
+                    <div className="flex items-start gap-3">
+                      <div className="rounded-md bg-primary/10 p-2 shrink-0">
+                        <Sparkles className="w-5 h-5 text-primary" />
+                      </div>
+                      <div className="space-y-2 min-w-0">
+                        <p className="text-sm font-medium">Getting Started</p>
+                        <p className="text-xs text-muted-foreground leading-relaxed">
+                          Build your agent skill in two parts: <strong>Step 1</strong> fill in the metadata on the left (name, description, industry, etc.) and <strong>Step 2</strong> write the instructions on the right using markdown. Use the template buttons to quickly scaffold common sections, or switch to the <strong>Instruction Builder</strong> tab to have AI generate everything from a plain-language description.
+                        </p>
+                        <div className="flex items-center gap-2 flex-wrap pt-1">
+                          <Button variant="outline" size="sm" onClick={() => setActiveTab("builder")} data-testid="button-try-ai-builder">
+                            <Sparkles className="w-3 h-3 mr-1" /> Try AI Instruction Builder
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              <div className="flex items-center gap-6 text-xs text-muted-foreground" data-testid="progress-steps">
+                <div className="flex items-center gap-1.5">
+                  <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-semibold ${name && description ? "bg-primary text-primary-foreground" : "border border-muted-foreground/40"}`}>1</div>
+                  <span className={name && description ? "text-foreground font-medium" : ""}>Metadata</span>
                 </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="skill-description">Description</Label>
-                  <Textarea id="skill-description" value={description} onChange={e => handleDescriptionChange(e.target.value)} rows={3} data-testid="input-description" />
-                  <DescriptionQualityBar score={qualityScore} feedback={qualityFeedback} />
+                <div className="h-px flex-1 max-w-8 bg-border" />
+                <div className="flex items-center gap-1.5">
+                  <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-semibold ${markdownBody ? "bg-primary text-primary-foreground" : "border border-muted-foreground/40"}`}>2</div>
+                  <span className={markdownBody ? "text-foreground font-medium" : ""}>Instructions</span>
                 </div>
-                <div className="space-y-1.5">
-                  <Label>Industry</Label>
-                  <Select value={industry} onValueChange={setIndustry}>
-                    <SelectTrigger data-testid="select-industry">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="financial_services">Financial Services</SelectItem>
-                      <SelectItem value="healthcare">Healthcare</SelectItem>
-                      <SelectItem value="manufacturing">Manufacturing</SelectItem>
-                      <SelectItem value="retail">Retail</SelectItem>
-                      <SelectItem value="custom">Custom</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="skill-domain">Domain</Label>
-                  <Input id="skill-domain" value={domain} onChange={e => setDomain(e.target.value)} data-testid="input-domain" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="skill-tags">Tags (comma-separated)</Label>
-                  <Input id="skill-tags" value={tags} onChange={e => setTags(e.target.value)} placeholder="compliance, fraud, kyc" data-testid="input-tags" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="skill-allowed-tools">Allowed Tools (one per line)</Label>
-                  <Textarea id="skill-allowed-tools" value={allowedTools} onChange={e => setAllowedTools(e.target.value)} rows={3} placeholder="mcp:*&#10;tool:search" data-testid="input-allowed-tools" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="skill-mcp-servers">Required MCP Servers (one per line)</Label>
-                  <Textarea id="skill-mcp-servers" value={requiredMcpServers} onChange={e => setRequiredMcpServers(e.target.value)} rows={2} data-testid="input-mcp-servers" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="skill-data-class">Required Data Classifications (one per line)</Label>
-                  <Textarea id="skill-data-class" value={requiredDataClassifications} onChange={e => setRequiredDataClassifications(e.target.value)} rows={2} data-testid="input-data-classifications" />
-                </div>
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="skill-disable-model">Disable Model Invocation</Label>
-                  <Switch id="skill-disable-model" checked={disableModelInvocation} onCheckedChange={setDisableModelInvocation} data-testid="switch-disable-model" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Context Mode</Label>
-                  <Select value={contextMode} onValueChange={setContextMode}>
-                    <SelectTrigger data-testid="select-context-mode">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="fork">Fork</SelectItem>
-                      <SelectItem value="inline">Inline</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="skill-user-invocable">User Invocable</Label>
-                  <Switch id="skill-user-invocable" checked={userInvocable} onCheckedChange={setUserInvocable} data-testid="switch-user-invocable" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="skill-version">Version</Label>
-                  <Input id="skill-version" value={version} onChange={e => setVersion(e.target.value)} data-testid="input-version" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Complexity</Label>
-                  <Select value={complexity} onValueChange={setComplexity}>
-                    <SelectTrigger data-testid="select-complexity">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="beginner">Beginner</SelectItem>
-                      <SelectItem value="intermediate">Intermediate</SelectItem>
-                      <SelectItem value="advanced">Advanced</SelectItem>
-                      <SelectItem value="expert">Expert</SelectItem>
-                    </SelectContent>
-                  </Select>
+                <div className="h-px flex-1 max-w-8 bg-border" />
+                <div className="flex items-center gap-1.5">
+                  <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-semibold ${name && description && markdownBody ? "bg-primary text-primary-foreground" : "border border-muted-foreground/40"}`}>3</div>
+                  <span className={name && description && markdownBody ? "text-foreground font-medium" : ""}>Save & Test</span>
                 </div>
               </div>
 
-              <div className="space-y-3">
-                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Markdown Body</h3>
-                <Separator />
-                <div className="flex items-center gap-2 flex-wrap">
-                  {Object.keys(SECTION_TEMPLATES).map(key => (
-                    <Button key={key} variant="outline" size="sm" onClick={() => insertTemplate(key)} data-testid={`button-add-${key.toLowerCase().replace(/\s/g, "-")}`}>
-                      <Plus className="w-3 h-3 mr-1" /> {key}
-                    </Button>
-                  ))}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Step 1: Skill Metadata</h3>
+                  </div>
+                  <p className="text-xs text-muted-foreground -mt-2">Define what the skill is, which industry it applies to, and its classification details.</p>
+                  <Separator />
+                  <div className="space-y-1.5">
+                    <Label htmlFor="skill-name">Name</Label>
+                    <Input id="skill-name" value={name} onChange={e => setName(e.target.value)} placeholder="e.g., Real-Time Sanctions Screening" data-testid="input-name" />
+                    <p className="text-[11px] text-muted-foreground">A clear, descriptive name for this skill</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="skill-description">Description</Label>
+                    <Textarea id="skill-description" value={description} onChange={e => handleDescriptionChange(e.target.value)} rows={3} placeholder="Describe what this skill does, when it activates, and what outcome it produces..." data-testid="input-description" />
+                    <DescriptionQualityBar score={qualityScore} feedback={qualityFeedback} />
+                    <p className="text-[11px] text-muted-foreground">AI scores your description quality as you type</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Industry</Label>
+                    <Select value={industry} onValueChange={setIndustry}>
+                      <SelectTrigger data-testid="select-industry">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="financial_services">Financial Services</SelectItem>
+                        <SelectItem value="healthcare">Healthcare</SelectItem>
+                        <SelectItem value="manufacturing">Manufacturing</SelectItem>
+                        <SelectItem value="retail">Retail</SelectItem>
+                        <SelectItem value="custom">Custom</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="skill-domain">Domain</Label>
+                    <Input id="skill-domain" value={domain} onChange={e => setDomain(e.target.value)} placeholder="e.g., KYC/AML, Claims Processing" data-testid="input-domain" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="skill-tags">Tags (comma-separated)</Label>
+                    <Input id="skill-tags" value={tags} onChange={e => setTags(e.target.value)} placeholder="compliance, fraud, kyc" data-testid="input-tags" />
+                  </div>
+
+                  <Separator />
+                  <p className="text-xs text-muted-foreground font-medium">Advanced Configuration</p>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="skill-allowed-tools">Allowed Tools (one per line)</Label>
+                    <Textarea id="skill-allowed-tools" value={allowedTools} onChange={e => setAllowedTools(e.target.value)} rows={2} placeholder="mcp:sanctions-api&#10;tool:search" data-testid="input-allowed-tools" />
+                    <p className="text-[11px] text-muted-foreground">MCP tools and external APIs this skill can use</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="skill-mcp-servers">Required MCP Servers (one per line)</Label>
+                    <Textarea id="skill-mcp-servers" value={requiredMcpServers} onChange={e => setRequiredMcpServers(e.target.value)} rows={2} placeholder="compliance-server&#10;data-warehouse" data-testid="input-mcp-servers" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="skill-data-class">Required Data Classifications (one per line)</Label>
+                    <Textarea id="skill-data-class" value={requiredDataClassifications} onChange={e => setRequiredDataClassifications(e.target.value)} rows={2} placeholder="PII&#10;financial-records" data-testid="input-data-classifications" />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label htmlFor="skill-disable-model">Disable Model Invocation</Label>
+                      <p className="text-[11px] text-muted-foreground">Prevent the skill from calling LLM models</p>
+                    </div>
+                    <Switch id="skill-disable-model" checked={disableModelInvocation} onCheckedChange={setDisableModelInvocation} data-testid="switch-disable-model" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Context Mode</Label>
+                    <Select value={contextMode} onValueChange={setContextMode}>
+                      <SelectTrigger data-testid="select-context-mode">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="fork">Fork (isolated context)</SelectItem>
+                        <SelectItem value="inline">Inline (shared context)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label htmlFor="skill-user-invocable">User Invocable</Label>
+                      <p className="text-[11px] text-muted-foreground">Allow users to trigger this skill manually</p>
+                    </div>
+                    <Switch id="skill-user-invocable" checked={userInvocable} onCheckedChange={setUserInvocable} data-testid="switch-user-invocable" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="skill-version">Version</Label>
+                    <Input id="skill-version" value={version} onChange={e => setVersion(e.target.value)} data-testid="input-version" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Complexity</Label>
+                    <Select value={complexity} onValueChange={setComplexity}>
+                      <SelectTrigger data-testid="select-complexity">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="beginner">Beginner</SelectItem>
+                        <SelectItem value="intermediate">Intermediate</SelectItem>
+                        <SelectItem value="advanced">Advanced</SelectItem>
+                        <SelectItem value="expert">Expert</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
-                {showPreview ? (
-                  <Card>
-                    <CardContent className="p-4">
-                      {renderPreview()}
-                    </CardContent>
-                  </Card>
-                ) : (
-                  <Textarea
-                    value={markdownBody}
-                    onChange={e => setMarkdownBody(e.target.value)}
-                    rows={24}
-                    className="font-mono text-sm"
-                    placeholder="# Skill Instructions&#10;&#10;Write the skill's markdown body here..."
-                    data-testid="input-markdown-body"
-                  />
-                )}
-                <Button variant="outline" size="sm" onClick={() => setShowPreview(!showPreview)} data-testid="button-toggle-preview">
-                  {showPreview ? <EyeOff className="w-3.5 h-3.5 mr-1.5" /> : <Eye className="w-3.5 h-3.5 mr-1.5" />}
-                  {showPreview ? "Edit" : "Preview"}
-                </Button>
+
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Step 2: Skill Instructions</h3>
+                  </div>
+                  <p className="text-xs text-muted-foreground -mt-1">Write step-by-step instructions the agent follows when this skill activates. Use the template buttons below to add common sections.</p>
+                  <Separator />
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {Object.keys(SECTION_TEMPLATES).map(key => (
+                      <Button key={key} variant="outline" size="sm" onClick={() => insertTemplate(key)} data-testid={`button-add-${key.toLowerCase().replace(/\s/g, "-")}`}>
+                        <Plus className="w-3 h-3 mr-1" /> {key}
+                      </Button>
+                    ))}
+                  </div>
+                  {showPreview ? (
+                    <Card>
+                      <CardContent className="p-4">
+                        {renderPreview()}
+                      </CardContent>
+                    </Card>
+                  ) : (
+                    <div className="relative">
+                      <Textarea
+                        value={markdownBody}
+                        onChange={e => setMarkdownBody(e.target.value)}
+                        rows={24}
+                        className="font-mono text-sm"
+                        placeholder={"# Skill Instructions\n\nClick a template button above to get started, or write your own instructions.\n\nExample structure:\n- Trigger Conditions: When should this skill activate?\n- Procedure: What steps should the agent follow?\n- Decision Tree: How should the agent handle different scenarios?\n- Edge Cases: What unusual situations should be handled?\n- Output Format: What should the result look like?"}
+                        data-testid="input-markdown-body"
+                      />
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Button variant="outline" size="sm" onClick={() => setShowPreview(!showPreview)} data-testid="button-toggle-preview">
+                      {showPreview ? <EyeOff className="w-3.5 h-3.5 mr-1.5" /> : <Eye className="w-3.5 h-3.5 mr-1.5" />}
+                      {showPreview ? "Edit" : "Preview"}
+                    </Button>
+                    {name && description && markdownBody && (
+                      <Button size="sm" onClick={handleSave} disabled={saving} data-testid="button-save-bottom">
+                        {saving ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-1.5" />}
+                        Save Skill
+                      </Button>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           </ScrollArea>
