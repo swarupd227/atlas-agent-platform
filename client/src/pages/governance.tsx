@@ -1338,6 +1338,12 @@ export default function Governance() {
                           )}
                           <div className="flex items-center gap-2 pt-1 border-t flex-wrap">
                             <Badge variant="outline" className="text-[10px] capitalize">{policy.scopeType}</Badge>
+                            {(policy as any).policyJson?.rules?.[0]?.sourceRegulation && (
+                              <Badge variant="outline" className="text-[10px] gap-1">
+                                <Scale className="w-3 h-3" />
+                                {(policy as any).policyJson.rules[0].sourceRegulation}
+                              </Badge>
+                            )}
                             {(policy as any).versionHistory && Array.isArray((policy as any).versionHistory) && (
                               <Badge variant="secondary" className="text-[10px]">{((policy as any).versionHistory as any[]).length} prior versions</Badge>
                             )}

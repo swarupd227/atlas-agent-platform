@@ -11276,6 +11276,287 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
     } catch (e) { handleZodError(res, e); }
   });
 
+  // AI: Generate regulatory policy code from regulation
+  app.post("/api/ai/generate-regulatory-policy", checkPermission("create_modify_policies"), async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI service not configured" });
+      }
+      const { regulationId, regulationName, regulationDescription, jurisdiction, industry, articleRef } = req.body;
+      if (!regulationName || !regulationDescription) {
+        return res.status(400).json({ error: "regulationName and regulationDescription are required" });
+      }
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        max_completion_tokens: 4096,
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert in regulatory compliance policy-as-code. You encode regulatory requirements as machine-executable policies using OPA Rego and Cedar policy languages.
+
+Given a regulation, generate a JSON object with a "policies" array. Each policy must have:
+- "title": descriptive policy title
+- "articleRef": specific article/section reference (e.g., "Art. 9", "§ 164.312")
+- "naturalLanguage": 1-2 sentence plain English rule description
+- "policyLanguage": either "opa" or "cedar"
+- "policyCode": complete executable policy code in the chosen language. For OPA, use Rego syntax with a package declaration, default deny, and allow rules. For Cedar, use permit/forbid statements with conditions.
+- "severity": "critical" | "high" | "medium" | "low"
+- "violationAction": "block" | "warn" | "escalate" | "log"
+- "enforcementPoint": where the policy is checked (e.g., "pre_deployment", "runtime", "data_ingestion", "model_training", "api_gateway")
+- "evidenceRequired": array of evidence artifacts needed (e.g., ["risk_assessment_report", "audit_log", "consent_records"])
+
+Generate 2-4 comprehensive policies per regulation. Use real regulatory article references and terminology. Make the policy code realistic and executable.`
+          },
+          {
+            role: "user",
+            content: `Generate machine-executable policies for:
+
+Regulation: ${regulationName}
+Description: ${regulationDescription}
+Jurisdiction: ${jurisdiction || "Global"}
+Industry: ${industry || "cross_industry"}
+${articleRef ? `Focus on: ${articleRef}` : "Cover key requirements"}
+
+Return ONLY a valid JSON object with a "policies" array.`
+          }
+        ],
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) return res.status(500).json({ error: "No response from AI" });
+      const result = JSON.parse(content);
+      res.json(result);
+    } catch (e: any) {
+      console.error("AI generate regulatory policy error:", e);
+      res.status(500).json({ error: e.message || "Failed to generate policies" });
+    }
+  });
+
+  // AI: Enhance existing regulatory policy code
+  app.post("/api/ai/enhance-regulatory-policy", checkPermission("create_modify_policies"), async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI service not configured" });
+      }
+      const { title, naturalLanguage, policyLanguage, policyCode, severity, regulationName } = req.body;
+      if (!title || !policyCode) {
+        return res.status(400).json({ error: "title and policyCode are required" });
+      }
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        max_completion_tokens: 4096,
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert in regulatory policy-as-code. You improve and enhance existing machine-executable policies written in OPA Rego or Cedar.
+
+Given an existing policy, produce a JSON object with:
+- "enhancedCode": improved, more comprehensive policy code with better conditions, edge cases, and helper rules
+- "enhancedNaturalLanguage": improved plain English description
+- "additionalEvidenceRequired": array of any additional evidence artifacts this enhanced policy would need
+- "improvementNotes": array of 2-4 bullet points explaining what was improved
+- "suggestedSeverity": recommended severity level based on the enhanced policy
+- "suggestedViolationAction": recommended action based on the enhanced policy
+
+Make the code more production-ready with proper error handling, comprehensive conditions, and realistic compliance checks.`
+          },
+          {
+            role: "user",
+            content: `Enhance this ${policyLanguage?.toUpperCase() || "OPA"} regulatory policy:
+
+Title: ${title}
+Regulation: ${regulationName || "Unknown"}
+Current Rule: ${naturalLanguage}
+Current Severity: ${severity}
+Current Code:
+${policyCode}
+
+Return ONLY a valid JSON object.`
+          }
+        ],
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) return res.status(500).json({ error: "No response from AI" });
+      const result = JSON.parse(content);
+      res.json(result);
+    } catch (e: any) {
+      console.error("AI enhance regulatory policy error:", e);
+      res.status(500).json({ error: e.message || "Failed to enhance policy" });
+    }
+  });
+
+  // AI: Analyze compliance gaps and suggest remediation
+  app.post("/api/ai/analyze-compliance-gaps", checkPermission("create_modify_policies"), async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI service not configured" });
+      }
+      const { controls, regulationName } = req.body;
+      if (!controls || !Array.isArray(controls)) {
+        return res.status(400).json({ error: "controls array is required" });
+      }
+
+      const gapControls = controls.filter((c: any) => c.coverageStatus === "partial" || c.coverageStatus === "gap");
+      if (gapControls.length === 0) {
+        return res.json({ remediations: [], summary: "All controls have full coverage." });
+      }
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        max_completion_tokens: 4096,
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert in AI governance compliance remediation. You analyze compliance gaps in an Agent Lifecycle Management Platform (ALMP) and suggest specific, actionable remediation steps.
+
+The ALMP has these modules: Agent Design, Blueprint Studio, Deployment, Monitor, Governance, Audit, Billing, Eval Studio, Self-Heal, Tool Registry.
+
+Given controls with partial or gap coverage, produce a JSON object with:
+- "remediations": array of objects, each with:
+  - "controlRef": the requirement reference
+  - "controlTitle": the requirement title
+  - "currentStatus": "partial" or "gap"
+  - "gapAnalysis": detailed explanation of what's missing
+  - "suggestedActions": array of 2-4 specific actions to close the gap
+  - "platformModules": which ALMP modules need updates
+  - "estimatedEffort": "low" | "medium" | "high"
+  - "priority": "critical" | "high" | "medium" | "low"
+- "summary": brief overall summary of the gap situation`
+          },
+          {
+            role: "user",
+            content: `Analyze compliance gaps and suggest remediation:
+
+Regulation: ${regulationName || "Multiple"}
+Controls with gaps:
+${JSON.stringify(gapControls.map((c: any) => ({
+  ref: c.requirementRef,
+  title: c.requirementTitle,
+  status: c.coverageStatus,
+  currentControl: c.almpControl,
+  module: c.controlModule,
+  gap: c.gapDescription || "Not specified",
+  customerAction: c.customerActionRequired || "None specified"
+})), null, 2)}
+
+Return ONLY a valid JSON object.`
+          }
+        ],
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) return res.status(500).json({ error: "No response from AI" });
+      const result = JSON.parse(content);
+      res.json(result);
+    } catch (e: any) {
+      console.error("AI analyze compliance gaps error:", e);
+      res.status(500).json({ error: e.message || "Failed to analyze gaps" });
+    }
+  });
+
+  // AI: Assess impact of regulatory changes
+  app.post("/api/ai/assess-change-impact", checkPermission("create_modify_policies"), async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI service not configured" });
+      }
+      const { changeTitle, changeDescription, changeType, regulationName, existingPolicies, existingControls } = req.body;
+      if (!changeTitle || !changeDescription) {
+        return res.status(400).json({ error: "changeTitle and changeDescription are required" });
+      }
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        max_completion_tokens: 4096,
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert in regulatory change impact analysis for AI agent management platforms. You assess how regulatory changes affect existing policies, controls, and agent operations.
+
+Given a regulatory change, produce a JSON object with:
+- "impactSummary": 2-3 sentence summary of the overall impact
+- "affectedPolicies": array of objects with "policyTitle" and "impactDescription" for each affected policy
+- "affectedControls": array of objects with "controlRef", "controlTitle", and "requiredUpdate" for each affected control
+- "newPoliciesNeeded": array of objects with "title", "description", "severity", "enforcementPoint" for any new policies that should be created
+- "riskAssessment": object with "overallRisk" ("critical"|"high"|"medium"|"low"), "complianceRisk" description, "operationalRisk" description
+- "recommendedTimeline": object with "immediateActions" (array of strings), "shortTermActions" (array, within 30 days), "longTermActions" (array, within 90 days)
+- "estimatedEffort": "low" | "medium" | "high"`
+          },
+          {
+            role: "user",
+            content: `Assess the impact of this regulatory change:
+
+Change: ${changeTitle}
+Description: ${changeDescription}
+Type: ${changeType || "amendment"}
+Regulation: ${regulationName || "Unknown"}
+
+Existing policies: ${JSON.stringify((existingPolicies || []).map((p: any) => ({ title: p.title, severity: p.severity, enforcement: p.enforcementPoint })), null, 2)}
+
+Existing controls: ${JSON.stringify((existingControls || []).map((c: any) => ({ ref: c.requirementRef, title: c.requirementTitle, status: c.coverageStatus })), null, 2)}
+
+Return ONLY a valid JSON object.`
+          }
+        ],
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) return res.status(500).json({ error: "No response from AI" });
+      const result = JSON.parse(content);
+      res.json(result);
+    } catch (e: any) {
+      console.error("AI assess change impact error:", e);
+      res.status(500).json({ error: e.message || "Failed to assess impact" });
+    }
+  });
+
+  // Push regulatory policy to governance policy packs
+  app.post("/api/regulatory-policies/:id/push-to-governance", checkPermission("create_modify_policies"), async (req, res) => {
+    try {
+      const policy = await storage.getRegulatoryPolicy(req.params.id);
+      if (!policy) return res.status(404).json({ message: "Policy not found" });
+
+      const regulation = await storage.getRegulation(policy.regulationId);
+      const regName = regulation?.name || "Unknown";
+
+      const govPolicy = {
+        name: `[${regName}] ${policy.title}`,
+        domain: "audit_compliance" as const,
+        description: `${policy.naturalLanguage} (Source: ${regName} ${policy.articleRef})`,
+        policyJson: {
+          rules: [{
+            type: "regulatory_enforcement",
+            description: policy.naturalLanguage,
+            severity: policy.severity,
+            enforcement: policy.violationAction === "block" ? "block" : policy.violationAction === "escalate" ? "require_approval" : policy.violationAction === "warn" ? "warn" : "audit",
+            policyLanguage: policy.policyLanguage,
+            policyCode: policy.policyCode,
+            articleRef: policy.articleRef,
+            evidenceRequired: policy.evidenceRequired,
+            sourceRegulation: regName,
+            sourceRegulationId: policy.regulationId,
+            sourcePolicyId: policy.id,
+          }]
+        },
+        scopeType: "org" as const,
+        status: "active" as const,
+      };
+
+      const created = await storage.createPolicy(govPolicy);
+      res.status(201).json({ message: "Policy pushed to governance", policy: created });
+    } catch (e: any) {
+      console.error("Push to governance error:", e);
+      res.status(500).json({ error: e.message || "Failed to push policy" });
+    }
+  });
+
   // Seed endpoint for regulatory data
   app.post("/api/regulations/seed", async (_req, res) => {
     try {

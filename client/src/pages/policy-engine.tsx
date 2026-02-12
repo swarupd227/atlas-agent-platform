@@ -23,6 +23,14 @@ import {
   Copy,
   BarChart3,
   TrendingUp,
+  Sparkles,
+  ArrowRight,
+  Send,
+  Loader2,
+  Lightbulb,
+  Target,
+  Link2,
+  Wrench,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -173,6 +181,15 @@ export default function PolicyEngine() {
     queryKey: ["/api/regulatory-changes"],
   });
 
+  const [aiGenerating, setAiGenerating] = useState<string | null>(null);
+  const [aiEnhancing, setAiEnhancing] = useState(false);
+  const [aiEnhanceResult, setAiEnhanceResult] = useState<any>(null);
+  const [aiGapResult, setAiGapResult] = useState<any>(null);
+  const [aiGapLoading, setAiGapLoading] = useState(false);
+  const [aiImpactResults, setAiImpactResults] = useState<Record<string, any>>({});
+  const [aiImpactLoading, setAiImpactLoading] = useState<string | null>(null);
+  const [pushingPolicy, setPushingPolicy] = useState<string | null>(null);
+
   const togglePolicyMutation = useMutation({
     mutationFn: async ({ id, enabled }: { id: string; enabled: boolean }) => {
       await apiRequest("PATCH", `/api/regulatory-policies/${id}`, { enabled });
@@ -192,6 +209,148 @@ export default function PolicyEngine() {
       toast({ title: "Change status updated" });
     },
   });
+
+  async function handleAiGeneratePolicies(reg: Regulation) {
+    setAiGenerating(reg.id);
+    try {
+      const res = await apiRequest("POST", "/api/ai/generate-regulatory-policy", {
+        regulationId: reg.id,
+        regulationName: reg.name,
+        regulationDescription: reg.description,
+        jurisdiction: reg.jurisdiction,
+        industry: reg.industry,
+      });
+      const data = await res.json();
+      if (data.policies && Array.isArray(data.policies)) {
+        let created = 0;
+        let failed = 0;
+        for (const p of data.policies) {
+          try {
+            await apiRequest("POST", "/api/regulatory-policies", {
+              regulationId: reg.id,
+              title: p.title,
+              articleRef: p.articleRef || "General",
+              naturalLanguage: p.naturalLanguage,
+              policyLanguage: p.policyLanguage || "opa",
+              policyCode: p.policyCode,
+              severity: p.severity || "medium",
+              violationAction: p.violationAction || "warn",
+              enforcementPoint: p.enforcementPoint || "runtime",
+              evidenceRequired: p.evidenceRequired || [],
+              enabled: true,
+            });
+            created++;
+          } catch {
+            failed++;
+          }
+        }
+        queryClient.invalidateQueries({ queryKey: ["/api/regulatory-policies"] });
+        if (failed > 0) {
+          toast({ title: `Generated ${created} policies for ${reg.name}`, description: `${failed} failed to save`, variant: "destructive" });
+        } else {
+          toast({ title: `Generated ${created} policies for ${reg.name}` });
+        }
+        setSelectedRegulation(reg);
+        setActiveTab("policies");
+      }
+    } catch (e: any) {
+      toast({ title: "AI generation failed", description: e.message, variant: "destructive" });
+    } finally {
+      setAiGenerating(null);
+    }
+  }
+
+  async function handleAiEnhancePolicy(policy: RegulatoryPolicy) {
+    const reg = regulations.find((r) => r.id === policy.regulationId);
+    setAiEnhancing(true);
+    setAiEnhanceResult(null);
+    try {
+      const res = await apiRequest("POST", "/api/ai/enhance-regulatory-policy", {
+        title: policy.title,
+        naturalLanguage: policy.naturalLanguage,
+        policyLanguage: policy.policyLanguage,
+        policyCode: policy.policyCode,
+        severity: policy.severity,
+        regulationName: reg?.name,
+      });
+      const data = await res.json();
+      setAiEnhanceResult(data);
+    } catch (e: any) {
+      toast({ title: "AI enhancement failed", description: e.message, variant: "destructive" });
+    } finally {
+      setAiEnhancing(false);
+    }
+  }
+
+  async function applyEnhancement(policy: RegulatoryPolicy, enhancement: any) {
+    try {
+      await apiRequest("PATCH", `/api/regulatory-policies/${policy.id}`, {
+        policyCode: enhancement.enhancedCode,
+        naturalLanguage: enhancement.enhancedNaturalLanguage || policy.naturalLanguage,
+        severity: enhancement.suggestedSeverity || policy.severity,
+        violationAction: enhancement.suggestedViolationAction || policy.violationAction,
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/regulatory-policies"] });
+      setAiEnhanceResult(null);
+      setSelectedPolicy(null);
+      toast({ title: "Enhancement applied successfully" });
+    } catch (e: any) {
+      toast({ title: "Failed to apply enhancement", description: e.message, variant: "destructive" });
+    }
+  }
+
+  async function handleAnalyzeGaps() {
+    setAiGapLoading(true);
+    setAiGapResult(null);
+    try {
+      const regName = selectedRegulation?.name;
+      const res = await apiRequest("POST", "/api/ai/analyze-compliance-gaps", {
+        controls: filteredControls,
+        regulationName: regName,
+      });
+      const data = await res.json();
+      setAiGapResult(data);
+    } catch (e: any) {
+      toast({ title: "Gap analysis failed", description: e.message, variant: "destructive" });
+    } finally {
+      setAiGapLoading(false);
+    }
+  }
+
+  async function handleAssessImpact(change: RegulatoryChange) {
+    const reg = regulations.find((r) => r.id === change.regulationId);
+    setAiImpactLoading(change.id);
+    try {
+      const changePolicies = allPolicies.filter((p) => p.regulationId === change.regulationId);
+      const changeControls = allControls.filter((c) => c.regulationId === change.regulationId);
+      const res = await apiRequest("POST", "/api/ai/assess-change-impact", {
+        changeTitle: change.changeTitle,
+        changeDescription: change.changeDescription,
+        changeType: change.changeType,
+        regulationName: reg?.name,
+        existingPolicies: changePolicies,
+        existingControls: changeControls,
+      });
+      const data = await res.json();
+      setAiImpactResults((prev) => ({ ...prev, [change.id]: data }));
+    } catch (e: any) {
+      toast({ title: "Impact analysis failed", description: e.message, variant: "destructive" });
+    } finally {
+      setAiImpactLoading(null);
+    }
+  }
+
+  async function handlePushToGovernance(policy: RegulatoryPolicy) {
+    setPushingPolicy(policy.id);
+    try {
+      await apiRequest("POST", `/api/regulatory-policies/${policy.id}/push-to-governance`);
+      toast({ title: "Policy pushed to Governance", description: "Created as operational policy in Governance > Policies tab" });
+    } catch (e: any) {
+      toast({ title: "Push failed", description: e.message, variant: "destructive" });
+    } finally {
+      setPushingPolicy(null);
+    }
+  }
 
   const filteredRegulations = useMemo(() => {
     return regulations.filter((r) => {
@@ -436,6 +595,25 @@ export default function PolicyEngine() {
                         )}
                       </div>
                     )}
+                    {regPolicies.length === 0 && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="w-full mt-1"
+                        disabled={aiGenerating === reg.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleAiGeneratePolicies(reg);
+                        }}
+                        data-testid={`button-ai-generate-${reg.id}`}
+                      >
+                        {aiGenerating === reg.id ? (
+                          <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" />Generating...</>
+                        ) : (
+                          <><Sparkles className="w-3 h-3 mr-1.5" />AI Generate Policies</>
+                        )}
+                      </Button>
+                    )}
                   </CardContent>
                 </Card>
               );
@@ -611,6 +789,97 @@ export default function PolicyEngine() {
                         </div>
                       </div>
                     )}
+
+                    <div className="flex items-center gap-2 pt-2 border-t flex-wrap">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={aiEnhancing}
+                        onClick={() => handleAiEnhancePolicy(selectedPolicy)}
+                        data-testid="button-ai-enhance-policy"
+                      >
+                        {aiEnhancing ? (
+                          <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" />Enhancing...</>
+                        ) : (
+                          <><Sparkles className="w-3 h-3 mr-1.5" />AI Enhance</>
+                        )}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={pushingPolicy === selectedPolicy.id}
+                        onClick={() => handlePushToGovernance(selectedPolicy)}
+                        data-testid="button-push-governance"
+                      >
+                        {pushingPolicy === selectedPolicy.id ? (
+                          <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" />Pushing...</>
+                        ) : (
+                          <><Send className="w-3 h-3 mr-1.5" />Push to Governance</>
+                        )}
+                      </Button>
+                    </div>
+
+                    {aiEnhanceResult && (
+                      <div className="border rounded-md p-3 space-y-3 bg-muted/30">
+                        <div className="flex items-center justify-between gap-2">
+                          <h4 className="text-xs font-semibold flex items-center gap-1.5">
+                            <Sparkles className="w-3.5 h-3.5 text-primary" />
+                            AI Enhancement Preview
+                          </h4>
+                          <div className="flex items-center gap-1.5">
+                            <Button
+                              size="sm"
+                              onClick={() => applyEnhancement(selectedPolicy, aiEnhanceResult)}
+                              data-testid="button-apply-enhancement"
+                            >
+                              <CheckCircle className="w-3 h-3 mr-1" />
+                              Apply
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setAiEnhanceResult(null)}
+                              data-testid="button-dismiss-enhancement"
+                            >
+                              Dismiss
+                            </Button>
+                          </div>
+                        </div>
+
+                        {aiEnhanceResult.improvementNotes && (
+                          <div>
+                            <h5 className="text-[11px] font-medium text-muted-foreground mb-1">Improvements</h5>
+                            <ul className="space-y-1">
+                              {(aiEnhanceResult.improvementNotes as string[]).map((note: string, i: number) => (
+                                <li key={i} className="text-[11px] text-muted-foreground flex items-start gap-1.5">
+                                  <Lightbulb className="w-3 h-3 shrink-0 mt-0.5 text-yellow-500" />
+                                  {note}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {aiEnhanceResult.enhancedCode && (
+                          <div>
+                            <h5 className="text-[11px] font-medium text-muted-foreground mb-1">Enhanced Code</h5>
+                            <pre className="text-[11px] bg-muted rounded-md p-3 overflow-x-auto max-h-[200px] overflow-y-auto font-mono leading-relaxed" data-testid="code-enhanced-policy">
+                              {aiEnhanceResult.enhancedCode}
+                            </pre>
+                          </div>
+                        )}
+
+                        {aiEnhanceResult.suggestedSeverity && (
+                          <div className="flex items-center gap-2 text-[11px]">
+                            <span className="text-muted-foreground">Suggested severity:</span>
+                            {severityBadge(aiEnhanceResult.suggestedSeverity)}
+                            {aiEnhanceResult.suggestedViolationAction && (
+                              <>{actionBadge(aiEnhanceResult.suggestedViolationAction)}</>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               ) : (
@@ -634,6 +903,21 @@ export default function PolicyEngine() {
                 <Badge variant="secondary" className="text-xs">
                   {selectedRegulation.name}
                 </Badge>
+              )}
+              {filteredControls.some((c) => c.coverageStatus === "partial" || c.coverageStatus === "gap") && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={aiGapLoading}
+                  onClick={handleAnalyzeGaps}
+                  data-testid="button-ai-analyze-gaps"
+                >
+                  {aiGapLoading ? (
+                    <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" />Analyzing...</>
+                  ) : (
+                    <><Sparkles className="w-3 h-3 mr-1.5" />AI Analyze Gaps</>
+                  )}
+                </Button>
               )}
             </div>
             <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
@@ -743,6 +1027,74 @@ export default function PolicyEngine() {
               </CardContent>
             </Card>
           )}
+
+          {aiGapResult && (
+            <Card data-testid="card-ai-gap-analysis">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between gap-2">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-primary" />
+                    AI Gap Analysis & Remediation
+                  </CardTitle>
+                  <Button size="sm" variant="ghost" onClick={() => setAiGapResult(null)} data-testid="button-dismiss-gap-analysis">
+                    <XCircle className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+                {aiGapResult.summary && (
+                  <p className="text-xs text-muted-foreground mt-1">{aiGapResult.summary}</p>
+                )}
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {(aiGapResult.remediations || []).map((rem: any, i: number) => (
+                  <div key={i} className="border rounded-md p-3 space-y-2" data-testid={`gap-remediation-${i}`}>
+                    <div className="flex items-start justify-between gap-2 flex-wrap">
+                      <div>
+                        <p className="text-xs font-semibold">{rem.controlRef} — {rem.controlTitle}</p>
+                        <div className="flex items-center gap-1.5 mt-1">
+                          {coverageBadge(rem.currentStatus)}
+                          <Badge variant="outline" className="text-[10px]">
+                            <Target className="w-3 h-3 mr-1" />
+                            {rem.priority} priority
+                          </Badge>
+                          <Badge variant="outline" className="text-[10px]">
+                            <Wrench className="w-3 h-3 mr-1" />
+                            {rem.estimatedEffort} effort
+                          </Badge>
+                        </div>
+                      </div>
+                    </div>
+                    {rem.gapAnalysis && (
+                      <p className="text-[11px] text-muted-foreground">{rem.gapAnalysis}</p>
+                    )}
+                    {rem.suggestedActions && rem.suggestedActions.length > 0 && (
+                      <div>
+                        <h5 className="text-[11px] font-medium mb-1 flex items-center gap-1">
+                          <ArrowRight className="w-3 h-3" />
+                          Suggested Actions
+                        </h5>
+                        <ul className="space-y-1">
+                          {rem.suggestedActions.map((action: string, j: number) => (
+                            <li key={j} className="text-[11px] text-muted-foreground flex items-start gap-1.5">
+                              <CircleDot className="w-3 h-3 shrink-0 mt-0.5 text-primary" />
+                              {action}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {rem.platformModules && rem.platformModules.length > 0 && (
+                      <div className="flex items-center gap-1 flex-wrap">
+                        <span className="text-[10px] text-muted-foreground">Modules:</span>
+                        {rem.platformModules.map((m: string) => (
+                          <Badge key={m} variant="outline" className="text-[9px]">{m}</Badge>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
 
         <TabsContent value="changes" className="space-y-4">
@@ -828,28 +1180,41 @@ export default function PolicyEngine() {
                       </div>
                     )}
 
-                    {change.status === "pending_review" && (
-                      <div className="flex items-center gap-2 pt-1">
-                        <Button
-                          size="sm"
-                          onClick={() => updateChangeMutation.mutate({ id: change.id, status: "in_progress" })}
-                          data-testid={`button-acknowledge-${change.id}`}
-                        >
-                          <Play className="w-3 h-3 mr-1" />
-                          Acknowledge
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => updateChangeMutation.mutate({ id: change.id, status: "dismissed" })}
-                          data-testid={`button-dismiss-${change.id}`}
-                        >
-                          Dismiss
-                        </Button>
-                      </div>
-                    )}
-                    {change.status === "in_progress" && (
-                      <div className="flex items-center gap-2 pt-1">
+                    <div className="flex items-center gap-2 pt-1 flex-wrap">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={aiImpactLoading === change.id}
+                        onClick={() => handleAssessImpact(change)}
+                        data-testid={`button-ai-impact-${change.id}`}
+                      >
+                        {aiImpactLoading === change.id ? (
+                          <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" />Analyzing...</>
+                        ) : (
+                          <><Sparkles className="w-3 h-3 mr-1.5" />AI Impact Analysis</>
+                        )}
+                      </Button>
+                      {change.status === "pending_review" && (
+                        <>
+                          <Button
+                            size="sm"
+                            onClick={() => updateChangeMutation.mutate({ id: change.id, status: "in_progress" })}
+                            data-testid={`button-acknowledge-${change.id}`}
+                          >
+                            <Play className="w-3 h-3 mr-1" />
+                            Acknowledge
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => updateChangeMutation.mutate({ id: change.id, status: "dismissed" })}
+                            data-testid={`button-dismiss-${change.id}`}
+                          >
+                            Dismiss
+                          </Button>
+                        </>
+                      )}
+                      {change.status === "in_progress" && (
                         <Button
                           size="sm"
                           onClick={() => updateChangeMutation.mutate({ id: change.id, status: "completed" })}
@@ -858,6 +1223,109 @@ export default function PolicyEngine() {
                           <CheckCircle className="w-3 h-3 mr-1" />
                           Mark Complete
                         </Button>
+                      )}
+                    </div>
+
+                    {aiImpactResults[change.id] && (
+                      <div className="border rounded-md p-3 space-y-3 bg-muted/30" data-testid={`card-ai-impact-${change.id}`}>
+                        <div className="flex items-center justify-between gap-2">
+                          <h5 className="text-xs font-semibold flex items-center gap-1.5">
+                            <Sparkles className="w-3.5 h-3.5 text-primary" />
+                            AI Impact Analysis
+                          </h5>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setAiImpactResults((prev) => {
+                              const next = { ...prev };
+                              delete next[change.id];
+                              return next;
+                            })}
+                            data-testid={`button-dismiss-impact-${change.id}`}
+                          >
+                            <XCircle className="w-3 h-3" />
+                          </Button>
+                        </div>
+
+                        {aiImpactResults[change.id].impactSummary && (
+                          <p className="text-[11px] text-muted-foreground">{aiImpactResults[change.id].impactSummary}</p>
+                        )}
+
+                        {aiImpactResults[change.id].riskAssessment && (
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[10px] text-muted-foreground">Risk:</span>
+                            {impactBadge(aiImpactResults[change.id].riskAssessment.overallRisk)}
+                            <Badge variant="outline" className="text-[10px]">
+                              <Wrench className="w-3 h-3 mr-1" />
+                              {aiImpactResults[change.id].estimatedEffort} effort
+                            </Badge>
+                          </div>
+                        )}
+
+                        {aiImpactResults[change.id].affectedPolicies?.length > 0 && (
+                          <div>
+                            <h6 className="text-[11px] font-medium mb-1 flex items-center gap-1">
+                              <FileCode className="w-3 h-3" />
+                              Affected Policies ({aiImpactResults[change.id].affectedPolicies.length})
+                            </h6>
+                            <ul className="space-y-1">
+                              {aiImpactResults[change.id].affectedPolicies.map((p: any, j: number) => (
+                                <li key={j} className="text-[11px] text-muted-foreground flex items-start gap-1.5">
+                                  <CircleDot className="w-3 h-3 shrink-0 mt-0.5" />
+                                  <span><span className="font-medium">{p.policyTitle}:</span> {p.impactDescription}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {aiImpactResults[change.id].recommendedTimeline && (
+                          <div className="space-y-2">
+                            {aiImpactResults[change.id].recommendedTimeline.immediateActions?.length > 0 && (
+                              <div>
+                                <h6 className="text-[11px] font-medium mb-1 text-red-600 dark:text-red-400">Immediate Actions</h6>
+                                <ul className="space-y-1">
+                                  {aiImpactResults[change.id].recommendedTimeline.immediateActions.map((a: string, j: number) => (
+                                    <li key={j} className="text-[11px] text-muted-foreground flex items-start gap-1.5">
+                                      <ArrowRight className="w-3 h-3 shrink-0 mt-0.5 text-red-500" />
+                                      {a}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                            {aiImpactResults[change.id].recommendedTimeline.shortTermActions?.length > 0 && (
+                              <div>
+                                <h6 className="text-[11px] font-medium mb-1 text-yellow-600 dark:text-yellow-400">Short-Term (30 days)</h6>
+                                <ul className="space-y-1">
+                                  {aiImpactResults[change.id].recommendedTimeline.shortTermActions.map((a: string, j: number) => (
+                                    <li key={j} className="text-[11px] text-muted-foreground flex items-start gap-1.5">
+                                      <ArrowRight className="w-3 h-3 shrink-0 mt-0.5 text-yellow-500" />
+                                      {a}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {aiImpactResults[change.id].newPoliciesNeeded?.length > 0 && (
+                          <div>
+                            <h6 className="text-[11px] font-medium mb-1 flex items-center gap-1">
+                              <Lightbulb className="w-3 h-3 text-yellow-500" />
+                              New Policies Recommended
+                            </h6>
+                            <ul className="space-y-1">
+                              {aiImpactResults[change.id].newPoliciesNeeded.map((p: any, j: number) => (
+                                <li key={j} className="text-[11px] text-muted-foreground flex items-start gap-1.5">
+                                  <CircleDot className="w-3 h-3 shrink-0 mt-0.5 text-primary" />
+                                  <span><span className="font-medium">{p.title}:</span> {p.description}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
                       </div>
                     )}
                   </CardContent>
