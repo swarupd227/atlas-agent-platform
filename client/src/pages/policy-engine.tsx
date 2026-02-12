@@ -287,8 +287,11 @@ export default function PolicyEngine() {
         requirements: [],
       });
       const data = await res.json();
-      setAiRegEnhanceResult({ regId: reg.id, regName: reg.name, enriched: data.enriched });
-      toast({ title: `AI Enhancement ready for ${reg.name}`, description: "Scroll down to see the full analysis" });
+      const enriched = data.enriched;
+      await apiRequest("PATCH", `/api/regulations/${reg.id}`, { aiEnrichment: enriched });
+      queryClient.invalidateQueries({ queryKey: ["/api/regulations"] });
+      setAiRegEnhanceResult({ regId: reg.id, regName: reg.name, enriched });
+      toast({ title: `AI Enhancement saved for ${reg.name}` });
       setTimeout(() => {
         regEnhanceRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       }, 100);
@@ -683,7 +686,9 @@ export default function PolicyEngine() {
                       setAiRegEnhanceResult(null);
                     } else {
                       setSelectedRegulation(reg);
-                      if (aiRegEnhanceResult && aiRegEnhanceResult.regId !== reg.id) {
+                      if (reg.aiEnrichment) {
+                        setAiRegEnhanceResult({ regId: reg.id, regName: reg.name, enriched: reg.aiEnrichment });
+                      } else {
                         setAiRegEnhanceResult(null);
                       }
                       setTimeout(() => {

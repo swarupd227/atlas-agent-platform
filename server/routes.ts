@@ -11201,6 +11201,20 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
     } catch (e) { handleZodError(res, e); }
   });
 
+  app.patch("/api/regulations/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const patchSchema = insertRegulationSchema.partial();
+      const data = patchSchema.parse(req.body);
+      const updated = await storage.updateRegulation(id, data);
+      if (!updated) return res.status(404).json({ error: "Regulation not found" });
+      res.json(updated);
+    } catch (e: any) {
+      if (e instanceof ZodError) return res.status(400).json({ error: e.errors });
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.get("/api/regulatory-policies", async (_req, res) => {
     const policies = await storage.getRegulatoryPolicies();
     res.json(policies);

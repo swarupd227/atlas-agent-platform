@@ -1213,6 +1213,7 @@ export const regulations = pgTable("regulations", {
   encodedPolicyCount: integer("encoded_policy_count").default(0),
   sourceUrl: text("source_url"),
   version: text("version").default("1.0"),
+  aiEnrichment: jsonb("ai_enrichment"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
