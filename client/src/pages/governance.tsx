@@ -1266,7 +1266,7 @@ export default function Governance() {
       </div>
 
       <Tabs defaultValue="policies" className="flex flex-col gap-4">
-        <TabsList className="w-fit flex-wrap">
+        <TabsList className="w-full justify-start overflow-x-auto">
           <TabsTrigger value="policies" data-testid="tab-policies">Policy Library</TabsTrigger>
           <TabsTrigger value="enforcement" data-testid="tab-enforcement">Enforcement</TabsTrigger>
           <TabsTrigger value="audit" data-testid="tab-audit">Audit Trail</TabsTrigger>
