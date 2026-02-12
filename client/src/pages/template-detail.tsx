@@ -99,10 +99,13 @@ import {
   UserCheck,
   Users,
   Zap,
+  Search,
+  ExternalLink,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import type { Skill } from "@shared/schema";
 
 type ToolConfig = { name: string; description: string; permissions?: string[] };
 type WorkflowNode = { id: string; type: string; label: string };
@@ -248,6 +251,8 @@ export default function TemplateDetail() {
     newSkill: "",
   });
   const [deployDialogOpen, setDeployDialogOpen] = useState(false);
+  const [skillLibraryOpen, setSkillLibraryOpen] = useState(false);
+  const [skillSearch, setSkillSearch] = useState("");
   const [editData, setEditData] = useState<Record<string, any>>(isNew ? {
     name: "",
     description: "",
@@ -279,6 +284,11 @@ export default function TemplateDetail() {
   const { data: template, isLoading } = useQuery<AgentTemplate>({
     queryKey: ["/api/agent-templates", templateId],
     enabled: !!templateId && !isNew,
+  });
+
+  const { data: allSkills } = useQuery<Skill[]>({
+    queryKey: ["/api/skills"],
+    enabled: skillLibraryOpen,
   });
 
   useEffect(() => {
@@ -588,11 +598,62 @@ export default function TemplateDetail() {
   const costProfile = displayTemplate?.costProfile as { monthlyEstimate?: number; perRunCost?: number; tier?: string } | null;
   const complianceCerts = displayTemplate?.complianceCertifications || [];
 
+  const handleFixCompliance = (fixType: string) => {
+    if (!template) return;
+    const tls = Array.isArray(template.toolsConfig) ? (template.toolsConfig as ToolConfig[]) : [];
+    const wf = template.blueprintJson as { nodes?: WorkflowNode[] } | null;
+    const perms = template.permissionsConfig as PermissionsConfig | null;
+    const memCfg = template.memoryRagConfig as MemoryRagConfig;
+    const pb = Array.isArray(template.policyBindings) ? (template.policyBindings as PolicyBinding[]) : [];
+    const eb = Array.isArray(template.evalBindings) ? (template.evalBindings as EvalBinding[]) : [];
+    const rb = template.rollbackPlan as RollbackPlan;
+
+    const newEditData: Record<string, any> = {
+      name: template.name,
+      description: template.description || "",
+      category: template.category,
+      industry: template.industry || "cross_industry",
+      complexity: template.complexity || "medium",
+      defaultRiskTier: template.defaultRiskTier || "MEDIUM",
+      defaultAutonomyMode: template.defaultAutonomyMode || "assisted",
+      modelProvider: template.modelProvider || "openai",
+      modelName: template.modelName || "gpt-4.1",
+      tags: [...(template.tags || [])],
+      newTag: "",
+      tools: tls.map(t => ({ ...t, permissions: t.permissions ? [...t.permissions] : [] })),
+      workflowNodes: wf?.nodes ? wf.nodes.map(n => ({ ...n })) : [],
+      dataAccess: perms?.dataAccess ? perms.dataAccess.join(", ") : "",
+      apiAccess: perms?.apiAccess ? perms.apiAccess.join(", ") : "",
+      writeAccess: perms?.writeAccess ? perms.writeAccess.join(", ") : "",
+      memoryRagConfig: memCfg ? { ...memCfg } : null,
+      policyBindings: pb.map(p => ({ ...p })),
+      evalBindings: eb.map(e => ({ ...e })),
+      rollbackPlan: rb ? { triggerConditions: [...rb.triggerConditions], rollbackTargetVersion: rb.rollbackTargetVersion } : null,
+      newTriggerCondition: "",
+    };
+
+    if (fixType === "policies" && !pb.some(p => p.enforcement === "hard")) {
+      newEditData.policyBindings = [...newEditData.policyBindings, { policyName: "", enforcement: "hard" }];
+    }
+
+    setEditData(newEditData);
+    setEditing(true);
+
+    const fixMessages: Record<string, { title: string; description: string }> = {
+      tools: { title: "Fix: MCP Servers", description: "Add tools/MCP servers in the edit form below." },
+      permissions: { title: "Fix: Data Classifications", description: "Configure data access permissions in the edit form." },
+      policies: { title: "Fix: Approval Flows", description: "A hard-enforcement policy binding has been added. Complete the policy name." },
+      certs: { title: "Fix: Audit Retention", description: "Add compliance certifications in the edit form." },
+    };
+    const msg = fixMessages[fixType];
+    if (msg) toast(msg);
+  };
+
   const complianceChecks = [
-    { label: "MCP Servers Available", pass: tools.length > 0, remedy: "Add at least one tool/MCP server in the template configuration." },
-    { label: "Data Classifications Configured", pass: !!permissions, remedy: "Configure data access permissions in the template." },
-    { label: "Approval Flows Defined", pass: policyBindings.some(p => p.enforcement === "hard"), remedy: "Add at least one policy binding with 'hard' enforcement level." },
-    { label: "Audit Retention Policies", pass: complianceCerts.length > 0, remedy: "Add compliance certifications to the template." },
+    { label: "MCP Servers Available", pass: tools.length > 0, remedy: "Add at least one tool/MCP server in the template configuration.", fixType: "tools" },
+    { label: "Data Classifications Configured", pass: !!permissions, remedy: "Configure data access permissions in the template.", fixType: "permissions" },
+    { label: "Approval Flows Defined", pass: policyBindings.some(p => p.enforcement === "hard"), remedy: "Add at least one policy binding with 'hard' enforcement level.", fixType: "policies" },
+    { label: "Audit Retention Policies", pass: complianceCerts.length > 0, remedy: "Add compliance certifications to the template.", fixType: "certs" },
   ];
   const allChecksPassed = complianceChecks.every(c => c.pass);
 
@@ -1656,61 +1717,185 @@ export default function TemplateDetail() {
                     <div className="flex flex-col gap-4" data-testid="wizard-step-3">
                       <div>
                         <h3 className="text-sm font-medium mb-1">Additional Skills</h3>
-                        <p className="text-xs text-muted-foreground mb-3">Add organization-specific skills to extend the template capabilities.</p>
+                        <p className="text-xs text-muted-foreground mb-3">Browse and add skills from the Skill Library, or type a custom skill name.</p>
                       </div>
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        {customization.additionalSkills.map((skill, idx) => (
-                          <Badge key={idx} variant="secondary" className="text-[10px] gap-1">
-                            {skill}
-                            <button
-                              onClick={() => {
-                                const updated = customization.additionalSkills.filter((_, i) => i !== idx);
-                                setCustomization({ ...customization, additionalSkills: updated });
-                              }}
-                              className="ml-0.5"
-                              data-testid={`button-remove-skill-${idx}`}
-                            >
-                              <X className="w-3 h-3" />
-                            </button>
-                          </Badge>
-                        ))}
-                      </div>
+
+                      {customization.additionalSkills.length > 0 && (
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {customization.additionalSkills.map((skill, idx) => (
+                            <Badge key={idx} variant="secondary" className="text-[10px] gap-1">
+                              {skill}
+                              <button
+                                onClick={() => {
+                                  const updated = customization.additionalSkills.filter((_, i) => i !== idx);
+                                  setCustomization({ ...customization, additionalSkills: updated });
+                                }}
+                                className="ml-0.5"
+                                data-testid={`button-remove-skill-${idx}`}
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
+
                       <div className="flex items-center gap-2">
-                        <Input
-                          value={customization.newSkill}
-                          onChange={(e) => setCustomization({ ...customization, newSkill: e.target.value })}
-                          placeholder="Add a skill"
-                          className="flex-1"
-                          data-testid="input-new-skill"
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" && customization.newSkill.trim()) {
-                              e.preventDefault();
-                              setCustomization({
-                                ...customization,
-                                additionalSkills: [...customization.additionalSkills, customization.newSkill.trim()],
-                                newSkill: "",
-                              });
-                            }
-                          }}
-                          data-testid="input-add-skill"
-                        />
                         <Button
                           variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            if (customization.newSkill.trim()) {
-                              setCustomization({
-                                ...customization,
-                                additionalSkills: [...customization.additionalSkills, customization.newSkill.trim()],
-                                newSkill: "",
-                              });
-                            }
-                          }}
-                          data-testid="button-add-skill"
+                          className="flex-1 justify-start gap-2"
+                          onClick={() => setSkillLibraryOpen(true)}
+                          data-testid="button-open-skill-library"
                         >
-                          <Plus className="w-4 h-4" />
+                          <BookOpen className="w-4 h-4" />
+                          Browse Skill Library
                         </Button>
+                        <div className="flex items-center gap-1">
+                          <Input
+                            value={customization.newSkill}
+                            onChange={(e) => setCustomization({ ...customization, newSkill: e.target.value })}
+                            placeholder="Or type custom skill"
+                            className="w-40"
+                            data-testid="input-new-skill"
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && customization.newSkill.trim()) {
+                                e.preventDefault();
+                                setCustomization({
+                                  ...customization,
+                                  additionalSkills: [...customization.additionalSkills, customization.newSkill.trim()],
+                                  newSkill: "",
+                                });
+                              }
+                            }}
+                          />
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            onClick={() => {
+                              if (customization.newSkill.trim()) {
+                                setCustomization({
+                                  ...customization,
+                                  additionalSkills: [...customization.additionalSkills, customization.newSkill.trim()],
+                                  newSkill: "",
+                                });
+                              }
+                            }}
+                            data-testid="button-add-skill"
+                          >
+                            <Plus className="w-4 h-4" />
+                          </Button>
+                        </div>
                       </div>
+
+                      {skillLibraryOpen && (
+                        <Card data-testid="skill-library-picker">
+                          <CardContent className="p-3 flex flex-col gap-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2 flex-1">
+                                <Search className="w-4 h-4 text-muted-foreground shrink-0" />
+                                <Input
+                                  value={skillSearch}
+                                  onChange={(e) => setSkillSearch(e.target.value)}
+                                  placeholder="Search skills by name, domain, or tag..."
+                                  className="flex-1"
+                                  data-testid="input-skill-search"
+                                />
+                              </div>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => { setSkillLibraryOpen(false); setSkillSearch(""); }}
+                                data-testid="button-close-skill-library"
+                              >
+                                <X className="w-4 h-4" />
+                              </Button>
+                            </div>
+
+                            <div className="max-h-64 overflow-y-auto flex flex-col gap-1.5" data-testid="skill-library-list">
+                              {!allSkills ? (
+                                <div className="flex items-center justify-center py-6 text-xs text-muted-foreground">
+                                  <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                                  Loading skills...
+                                </div>
+                              ) : (() => {
+                                const q = skillSearch.toLowerCase();
+                                const filtered = allSkills.filter(s =>
+                                  (s.name || "").toLowerCase().includes(q) ||
+                                  (s.domain || "").toLowerCase().includes(q) ||
+                                  (s.industry || "").toLowerCase().includes(q) ||
+                                  (s.tags || []).some((t: string) => (t || "").toLowerCase().includes(q))
+                                );
+                                if (filtered.length === 0) {
+                                  return (
+                                    <div className="text-xs text-muted-foreground py-4 text-center">
+                                      No skills match your search.
+                                    </div>
+                                  );
+                                }
+                                return filtered.map(skill => {
+                                  const alreadyAdded = customization.additionalSkills.includes(skill.name);
+                                  return (
+                                    <div
+                                      key={skill.id}
+                                      className={`flex items-center gap-3 p-2.5 rounded-md border text-xs transition-colors ${alreadyAdded ? "border-green-500/30 bg-green-500/5" : "hover-elevate"}`}
+                                      data-testid={`skill-library-item-${skill.id}`}
+                                    >
+                                      <div className="flex-1 min-w-0">
+                                        <div className="font-medium truncate">{skill.name}</div>
+                                        <div className="text-muted-foreground truncate mt-0.5">{skill.description}</div>
+                                        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                                          {skill.domain && <Badge variant="outline" className="text-[9px]">{skill.domain}</Badge>}
+                                          {skill.industry && <Badge variant="outline" className="text-[9px]">{skill.industry.replace(/_/g, " ")}</Badge>}
+                                          {skill.complexity && <Badge variant="outline" className="text-[9px]">{skill.complexity}</Badge>}
+                                        </div>
+                                      </div>
+                                      {alreadyAdded ? (
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          className="shrink-0 text-green-600 dark:text-green-500"
+                                          onClick={() => {
+                                            setCustomization({
+                                              ...customization,
+                                              additionalSkills: customization.additionalSkills.filter(s => s !== skill.name),
+                                            });
+                                          }}
+                                          data-testid={`button-remove-library-skill-${skill.id}`}
+                                        >
+                                          <CheckCircle2 className="w-4 h-4 mr-1" />
+                                          Added
+                                        </Button>
+                                      ) : (
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          className="shrink-0"
+                                          onClick={() => {
+                                            setCustomization({
+                                              ...customization,
+                                              additionalSkills: [...customization.additionalSkills, skill.name],
+                                            });
+                                          }}
+                                          data-testid={`button-add-library-skill-${skill.id}`}
+                                        >
+                                          <Plus className="w-3 h-3 mr-1" />
+                                          Add
+                                        </Button>
+                                      )}
+                                    </div>
+                                  );
+                                });
+                              })()}
+                            </div>
+
+                            {allSkills && (
+                              <div className="text-[10px] text-muted-foreground text-center pt-1 border-t">
+                                {allSkills.length} skills available in the library
+                              </div>
+                            )}
+                          </CardContent>
+                        </Card>
+                      )}
                     </div>
                   )}
 
@@ -1766,7 +1951,19 @@ export default function TemplateDetail() {
                                 ) : (
                                   <XCircle className="w-4 h-4 text-red-500 shrink-0" />
                                 )}
-                                <span className={check.pass ? "" : "text-muted-foreground"}>{check.label}</span>
+                                <span className={`flex-1 ${check.pass ? "" : "text-muted-foreground"}`}>{check.label}</span>
+                                {!check.pass && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="gap-1"
+                                    onClick={() => handleFixCompliance(check.fixType)}
+                                    data-testid={`button-fix-${check.fixType}`}
+                                  >
+                                    <Wrench className="w-3 h-3" />
+                                    Fix Now
+                                  </Button>
+                                )}
                               </div>
                             ))}
                           </div>
