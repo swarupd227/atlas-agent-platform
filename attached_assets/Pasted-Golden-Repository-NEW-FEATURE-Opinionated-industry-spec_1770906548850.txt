@@ -1,0 +1,13 @@
+Golden Repository
+NEW FEATURE — Opinionated, industry-specific starting points for agent deployment
+
+★ NEW FEATURE: Why This Exists
+Spotify’s Golden Paths concept reduced new service setup from 14 days to minutes. ALMP’s Golden Repository does the same for AI agents: pre-configured, compliance-ready, industry-specific agent templates that encode best practices from Day 1 and, critically, Day 2-50 operations. This is how the platform accumulates compounding industry expertise.
+
+3.1 Golden Template Gallery
+Screen Description
+The primary browsing interface for industry-specific golden agent configurations.
+What’s on Screen
+•	Industry-Organized Gallery: Golden templates grouped by industry and use case. Each template is a complete, deployable agent configuration — not a starting point that requires extensive customization, but an opinionated best practice that works out of the box. Financial Services templates: KYC Document Verification Agent, Transaction Monitoring Analyst, Credit Risk Assessment Agent, Regulatory Report Generator, Customer Suitability Advisor. Healthcare templates: Prior Authorization Agent, Clinical Documentation Assistant, Revenue Cycle Denial Management Agent, Care Gap Identifier, Adverse Event Reporter. Manufacturing templates: Predictive Maintenance Analyst, Quality Defect Classifier, Supply Chain Disruption Monitor, Production Schedule Optimizer. Retail templates: Customer Intent Resolution Agent, Demand Forecast Analyst, Dynamic Pricing Agent, Returns Processing Agent.
+•	Template Card: Each template shows: use case name, industry, description, included components (agent blueprint, skills, MCP connections, governance policies, evaluation suite, golden evaluation dataset, autonomy profile, deployment runbook), compliance certifications (which regulations it satisfies), deployment count (how many organizations have used this template), aggregate performance (average KPI delivery from deployments), and estimated time-to-production.
+•	Template Comparison: Select templates for side-by-side comparison of: capabilities, compliance coverage, cost profile, and performance benchmarks.
