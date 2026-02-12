@@ -12323,8 +12323,12 @@ Return ONLY a valid JSON object with a "skills" array.`
       if (!nodes || !Array.isArray(nodes) || nodes.length < 2) {
         return res.json({ conflicts: [] });
       }
+      const apiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+      if (!apiKey || apiKey.includes("DUMMY") || apiKey.includes("dummy") || apiKey.length < 20) {
+        return res.status(503).json({ error: "A valid OpenAI API key is required for AI conflict analysis. Please configure your OpenAI API key in the project settings." });
+      }
       const limitedNodes = nodes.slice(0, 20);
-      const openai = new OpenAI({ apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY });
+      const openai = new OpenAI({ apiKey });
       const skillSummaries = limitedNodes.map((n: any) => `- "${String(n.skillName || "").slice(0, 200)}": ${String(n.description || "No description").slice(0, 500)}`).join("\n");
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",
@@ -12340,6 +12344,9 @@ Return ONLY a valid JSON object with a "skills" array.`
       try { result = JSON.parse(raw); } catch { result = { conflicts: [] }; }
       res.json(result);
     } catch (e: any) {
+      if (e?.status === 401 || e?.code === "invalid_api_key" || (e?.message && e.message.includes("Incorrect API key"))) {
+        return res.status(503).json({ error: "The OpenAI API key is invalid. Please update it in your project settings with a valid key from platform.openai.com." });
+      }
       res.status(500).json({ error: e.message });
     }
   });

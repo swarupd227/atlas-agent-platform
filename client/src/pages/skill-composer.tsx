@@ -323,7 +323,13 @@ function ComposerEditor({ chainId }: { chainId: string }) {
       setConflicts(data.conflicts || []);
       setShowConflicts(true);
     } catch (e: any) {
-      toast({ title: "Analysis failed", description: e.message, variant: "destructive" });
+      const msg = e.message || "";
+      const isKeyIssue = msg.includes("API key") || msg.includes("not configured") || msg.includes("503");
+      toast({
+        title: isKeyIssue ? "AI Service Not Available" : "Analysis failed",
+        description: isKeyIssue ? "A valid OpenAI API key is needed for conflict analysis. Please configure one in your project settings." : msg,
+        variant: "destructive",
+      });
     } finally {
       setConflictsLoading(false);
     }
