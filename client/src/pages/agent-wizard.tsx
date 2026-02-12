@@ -1064,6 +1064,9 @@ function OntologyTagSection({
             )}
           </Button>
         </div>
+        {(!state.name || !state.description) && (
+          <p className="text-[11px] text-muted-foreground">Fill in agent name and description above to enable AI suggestions.</p>
+        )}
 
         {state.ontologyTags.length > 0 && (
           <div className="flex items-center gap-1.5 flex-wrap" data-testid="selected-ontology-tags">

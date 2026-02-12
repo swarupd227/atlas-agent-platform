@@ -2032,7 +2032,7 @@ Return ONLY a valid JSON object with a "policies" array. Do not include markdown
     }
   });
 
-  app.post("/api/ai/suggest-ontology-tags", checkPermission("create_modify_policies"), async (req, res) => {
+  app.post("/api/ai/suggest-ontology-tags", async (req, res) => {
     try {
       if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
         return res.status(503).json({ error: "AI service not configured" });
