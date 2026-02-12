@@ -211,6 +211,48 @@ export default function PolicyEngine() {
   const [aiImpactResults, setAiImpactResults] = useState<Record<string, any>>({});
   const [aiImpactLoading, setAiImpactLoading] = useState<string | null>(null);
   const [pushingPolicy, setPushingPolicy] = useState<string | null>(null);
+  const [aiControlsLoading, setAiControlsLoading] = useState(false);
+
+  async function handleAiGenerateControls(reg: Regulation) {
+    setAiControlsLoading(true);
+    try {
+      const regPolicies = allPolicies.filter((p) => p.regulationId === reg.id);
+      const res = await apiRequest("POST", "/api/ai/generate-compliance-controls", {
+        regulationId: reg.id,
+        regulationName: reg.name,
+        regulationDescription: reg.description,
+        jurisdiction: reg.jurisdiction,
+        industry: reg.industry,
+        existingPolicies: regPolicies.map((p) => ({ title: p.title, articleRef: p.articleRef })),
+      });
+      const data = await res.json();
+      if (data.controls && Array.isArray(data.controls)) {
+        let created = 0;
+        for (const c of data.controls) {
+          try {
+            await apiRequest("POST", "/api/compliance-controls", {
+              regulationId: reg.id,
+              requirementRef: c.requirementRef || "General",
+              requirementTitle: c.requirementTitle,
+              almpControl: c.almpControl,
+              controlModule: c.controlModule || "Governance",
+              evidenceArtifact: c.evidenceArtifact,
+              coverageStatus: c.coverageStatus || "partial",
+              gapDescription: c.gapDescription || null,
+              customerActionRequired: c.customerActionRequired || null,
+            });
+            created++;
+          } catch { /* skip duplicates */ }
+        }
+        queryClient.invalidateQueries({ queryKey: ["/api/compliance-controls"] });
+        toast({ title: `Generated ${created} compliance controls for ${reg.name}` });
+      }
+    } catch (e: any) {
+      toast({ title: "AI generation failed", description: e.message, variant: "destructive" });
+    } finally {
+      setAiControlsLoading(false);
+    }
+  }
 
   const togglePolicyMutation = useMutation({
     mutationFn: async ({ id, enabled }: { id: string; enabled: boolean }) => {
@@ -533,7 +575,12 @@ export default function PolicyEngine() {
         />
       </div>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
+      <Tabs value={activeTab} onValueChange={(tab) => {
+        setActiveTab(tab);
+        setSelectedPolicy(null);
+        setAiEnhanceResult(null);
+        setAiGapResult(null);
+      }}>
         <TabsList className="flex flex-wrap">
           <TabsTrigger value="regulations" data-testid="tab-regulations">
             <Scale className="w-3.5 h-3.5 mr-1.5" />
@@ -974,6 +1021,21 @@ export default function PolicyEngine() {
                   {selectedRegulation.name}
                 </Badge>
               )}
+              {selectedRegulation && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={aiControlsLoading}
+                  onClick={() => handleAiGenerateControls(selectedRegulation)}
+                  data-testid="button-ai-generate-controls-header"
+                >
+                  {aiControlsLoading ? (
+                    <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" />Generating...</>
+                  ) : (
+                    <><Sparkles className="w-3 h-3 mr-1.5" />AI Generate Controls</>
+                  )}
+                </Button>
+              )}
               {filteredControls.some((c) => c.coverageStatus === "partial" || c.coverageStatus === "gap") && (
                 <Button
                   size="sm"
@@ -1065,10 +1127,30 @@ export default function PolicyEngine() {
                 </TableBody>
               </Table>
               {filteredControls.length === 0 && (
-                <div className="text-center py-12 text-muted-foreground">
-                  <Layers className="w-8 h-8 mx-auto mb-2 opacity-40" />
-                  <p className="text-sm">No compliance controls found</p>
-                  <p className="text-xs mt-1">Select a regulation to view its control matrix</p>
+                <div className="flex flex-col items-center text-center py-12 text-muted-foreground gap-3">
+                  <Layers className="w-8 h-8 opacity-40" />
+                  <div>
+                    <p className="text-sm font-medium">No compliance controls found</p>
+                    <p className="text-xs mt-1">
+                      {selectedRegulation
+                        ? `No controls mapped for ${selectedRegulation.name} yet.`
+                        : "Select a regulation first, then generate compliance controls."}
+                    </p>
+                  </div>
+                  {selectedRegulation && (
+                    <Button
+                      size="sm"
+                      disabled={aiControlsLoading}
+                      onClick={() => handleAiGenerateControls(selectedRegulation)}
+                      data-testid="button-ai-generate-controls"
+                    >
+                      {aiControlsLoading ? (
+                        <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" />Generating Controls...</>
+                      ) : (
+                        <><Sparkles className="w-3 h-3 mr-1.5" />AI Generate Compliance Controls</>
+                      )}
+                    </Button>
+                  )}
                 </div>
               )}
             </CardContent>

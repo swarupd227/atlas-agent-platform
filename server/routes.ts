@@ -11313,7 +11313,7 @@ Given a regulation, generate a JSON object with a "policies" array. Each policy 
 - "enforcementPoint": where the policy is checked (e.g., "pre_deployment", "runtime", "data_ingestion", "model_training", "api_gateway")
 - "evidenceRequired": array of evidence artifacts needed (e.g., ["risk_assessment_report", "audit_log", "consent_records"])
 
-Generate 2-4 comprehensive policies per regulation. Use real regulatory article references and terminology. Make the policy code realistic and executable.`
+Generate 6-8 comprehensive policies per regulation covering key articles and sections. Use real regulatory article references and terminology. Make the policy code realistic and executable.`
           },
           {
             role: "user",
@@ -11338,6 +11338,66 @@ Return ONLY a valid JSON object with a "policies" array.`
     } catch (e: any) {
       console.error("AI generate regulatory policy error:", e);
       res.status(500).json({ error: e.message || "Failed to generate policies" });
+    }
+  });
+
+  // AI: Generate compliance controls for a regulation
+  app.post("/api/ai/generate-compliance-controls", checkPermission("create_modify_policies"), async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI service not configured" });
+      }
+      const { regulationId, regulationName, regulationDescription, jurisdiction, industry, existingPolicies } = req.body;
+      if (!regulationName || !regulationDescription) {
+        return res.status(400).json({ error: "regulationName and regulationDescription are required" });
+      }
+
+      const policiesContext = existingPolicies?.length > 0
+        ? `\nExisting encoded policies:\n${existingPolicies.map((p: any) => `- ${p.articleRef}: ${p.title}`).join("\n")}`
+        : "";
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        max_completion_tokens: 4096,
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert in regulatory compliance mapping. You create compliance control matrices that map regulatory requirements to platform controls.
+
+Given a regulation, generate a JSON object with a "controls" array. Each control must have:
+- "requirementRef": specific article/section reference (e.g., "Art. 6", "§ 164.312(a)")
+- "requirementTitle": short title of the requirement
+- "almpControl": which ALMP platform feature satisfies this (e.g., "Agent Risk Tier Assignment", "Immutable Audit Log", "Eval Studio + Shadow Replay")
+- "controlModule": which ALMP module (one of: "Agent Design", "Deployment", "Monitor", "Audit", "Governance", "Approvals", "Billing")
+- "evidenceArtifact": what evidence artifact proves compliance (e.g., "Risk Classification Report", "Audit Trail Logs")
+- "coverageStatus": "full" | "partial" | "gap"
+- "gapDescription": if partial or gap, describe what's missing (null if full)
+- "customerActionRequired": if partial or gap, describe what customer needs to do (null if full)
+
+Generate 5-8 controls covering the major requirements of the regulation. Be realistic about coverage — not everything should be "full".`
+          },
+          {
+            role: "user",
+            content: `Generate compliance control matrix for:
+
+Regulation: ${regulationName}
+Description: ${regulationDescription}
+Jurisdiction: ${jurisdiction || "Global"}
+Industry: ${industry || "cross_industry"}${policiesContext}
+
+Return ONLY a valid JSON object with a "controls" array.`
+          }
+        ],
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) return res.status(500).json({ error: "No response from AI" });
+      const result = JSON.parse(content);
+      res.json(result);
+    } catch (e: any) {
+      console.error("AI generate compliance controls error:", e);
+      res.status(500).json({ error: e.message || "Failed to generate controls" });
     }
   });
 
