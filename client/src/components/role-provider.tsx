@@ -37,7 +37,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "AD",
     description: "Full platform access, user management, system configuration",
     icon: ShieldCheck,
-    allowedRoutes: ["/dashboard", "/outcomes", "/outcomes/discover", "/agents", "/templates", "/blueprints", "/evals", "/deployments", "/monitor", "/governance", "/audit-trail", "/approvals", "/billing", "/improvements", "/improvement-loop", "/integrations", "/admin", "/ontology"],
+    allowedRoutes: ["/dashboard", "/outcomes", "/outcomes/discover", "/agents", "/templates", "/blueprints", "/evals", "/deployments", "/monitor", "/governance", "/audit-trail", "/approvals", "/billing", "/improvements", "/improvement-loop", "/integrations", "/admin", "/ontology", "/skills"],
   },
   {
     id: "outcome_owner",
@@ -46,7 +46,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "OO",
     description: "Defines KPIs, sees ROI, approves outcome contracts",
     icon: Target,
-    allowedRoutes: ["/dashboard", "/outcomes", "/outcomes/discover", "/billing", "/approvals", "/agents", "/monitor", "/ontology"],
+    allowedRoutes: ["/dashboard", "/outcomes", "/outcomes/discover", "/billing", "/approvals", "/agents", "/monitor", "/ontology", "/skills"],
   },
   {
     id: "agent_engineer",
@@ -55,7 +55,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "AE",
     description: "Designs blueprints, tools, memory, eval suites",
     icon: Bot,
-    allowedRoutes: ["/dashboard", "/agents", "/templates", "/blueprints", "/evals", "/improvements", "/improvement-loop", "/outcomes/discover", "/integrations", "/deployments", "/ontology"],
+    allowedRoutes: ["/dashboard", "/agents", "/templates", "/blueprints", "/evals", "/improvements", "/improvement-loop", "/outcomes/discover", "/integrations", "/deployments", "/ontology", "/skills"],
   },
   {
     id: "ops_sre",
@@ -64,7 +64,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "SR",
     description: "Monitoring, incidents, reliability, rollback, cost controls",
     icon: Activity,
-    allowedRoutes: ["/dashboard", "/deployments", "/monitor", "/agents", "/improvements", "/improvement-loop", "/integrations", "/governance", "/ontology"],
+    allowedRoutes: ["/dashboard", "/deployments", "/monitor", "/agents", "/improvements", "/improvement-loop", "/integrations", "/governance", "/ontology", "/skills"],
   },
   {
     id: "compliance_security",
@@ -73,7 +73,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "CS",
     description: "Policy authoring, audit exports, access controls",
     icon: Shield,
-    allowedRoutes: ["/dashboard", "/governance", "/audit-trail", "/approvals", "/admin", "/agents", "/deployments", "/monitor", "/ontology"],
+    allowedRoutes: ["/dashboard", "/governance", "/audit-trail", "/approvals", "/admin", "/agents", "/deployments", "/monitor", "/ontology", "/skills"],
   },
   {
     id: "expert_validator",
@@ -82,7 +82,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "EV",
     description: "Approves high-risk changes, exceptions, major releases",
     icon: UserCheck,
-    allowedRoutes: ["/dashboard", "/approvals", "/agents", "/deployments", "/evals", "/governance", "/audit-trail", "/ontology"],
+    allowedRoutes: ["/dashboard", "/approvals", "/agents", "/deployments", "/evals", "/governance", "/audit-trail", "/ontology", "/skills"],
   },
   {
     id: "finance",
