@@ -68,6 +68,7 @@ import OntologyExplorer from "@/pages/ontology";
 import PolicyEngine from "@/pages/policy-engine";
 import SkillCatalog from "@/pages/skills";
 import SkillStudio from "@/pages/skill-studio";
+import SkillComposer from "@/pages/skill-composer";
 
 function DashboardRouter() {
   return (
@@ -116,6 +117,8 @@ function DashboardRouter() {
       <Route path="/integrations/mcp-apps" component={McpApps} />
       <Route path="/integrations/mcp-servers" component={McpServers} />
       <Route path="/integrations" component={Integrations} />
+      <Route path="/skills/composer/:id" component={SkillComposer} />
+      <Route path="/skills/composer" component={SkillComposer} />
       <Route path="/skills/studio/:id" component={SkillStudio} />
       <Route path="/skills/studio" component={SkillStudio} />
       <Route path="/skills" component={SkillCatalog} />

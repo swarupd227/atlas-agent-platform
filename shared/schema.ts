@@ -1374,4 +1374,21 @@ export const insertSkillVersionSchema = createInsertSchema(skillVersions).omit({
 export type InsertSkillVersion = z.infer<typeof insertSkillVersionSchema>;
 export type SkillVersion = typeof skillVersions.$inferSelect;
 
+export const skillChains = pgTable("skill_chains", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  description: text("description").default(""),
+  nodes: jsonb("nodes").default([]),
+  edges: jsonb("edges").default([]),
+  conflicts: jsonb("conflicts").default([]),
+  contextBudget: jsonb("context_budget"),
+  status: text("status").notNull().default("draft"),
+  industry: text("industry").default("financial_services"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertSkillChainSchema = createInsertSchema(skillChains).omit({ id: true, createdAt: true });
+export type InsertSkillChain = z.infer<typeof insertSkillChainSchema>;
+export type SkillChain = typeof skillChains.$inferSelect;
+
 export * from "./models/chat";

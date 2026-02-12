@@ -25,6 +25,7 @@ import {
   Gavel,
   Layers,
   Pencil,
+  Link2,
 } from "lucide-react";
 import {
   Sidebar,
@@ -59,6 +60,7 @@ export function AppSidebar() {
     { title: "Monitor", url: "/monitor", icon: Activity },
     { title: "Skills Library", url: "/skills", icon: Layers },
     { title: "Skill Studio", url: "/skills/studio", icon: Pencil },
+    { title: "Skill Composer", url: "/skills/composer", icon: Link2 },
     { title: "Ontology", url: "/ontology", icon: BookOpen },
   ];
 
@@ -85,6 +87,7 @@ export function AppSidebar() {
     if (url === "/governance") return location === "/governance";
     if (url === "/skills") return location === "/skills";
     if (url === "/skills/studio") return location.startsWith("/skills/studio");
+    if (url === "/skills/composer") return location.startsWith("/skills/composer");
     return location.startsWith(url);
   };
 

@@ -57,6 +57,7 @@ import {
   insertRegulatoryChangeSchema,
   insertSkillSchema,
   insertSkillVersionSchema,
+  insertSkillChainSchema,
 } from "@shared/schema";
 
 const openai = new OpenAI({
@@ -12262,6 +12263,82 @@ Return ONLY a valid JSON object with a "skills" array.`
       const updated = await storage.updateSkillVersion(req.params.id, req.body);
       if (!updated) return res.status(404).json({ error: "Version not found" });
       res.json(updated);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Skill Chains CRUD
+  app.get("/api/skill-chains", async (_req, res) => {
+    const chains = await storage.getSkillChains();
+    res.json(chains);
+  });
+
+  app.get("/api/skill-chains/:id", async (req, res) => {
+    const chain = await storage.getSkillChain(req.params.id);
+    if (!chain) return res.status(404).json({ error: "Chain not found" });
+    res.json(chain);
+  });
+
+  app.post("/api/skill-chains", async (req, res) => {
+    try {
+      const data = insertSkillChainSchema.parse(req.body);
+      const chain = await storage.createSkillChain(data);
+      res.json(chain);
+    } catch (e: any) {
+      if (e instanceof ZodError) return res.status(400).json({ error: e.errors });
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.patch("/api/skill-chains/:id", async (req, res) => {
+    try {
+      const data = insertSkillChainSchema.partial().parse(req.body);
+      const updated = await storage.updateSkillChain(req.params.id, data);
+      if (!updated) return res.status(404).json({ error: "Chain not found" });
+      res.json(updated);
+    } catch (e: any) {
+      if (e instanceof ZodError) return res.status(400).json({ error: e.errors });
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/skill-chains/:id", async (req, res) => {
+    try {
+      const deleted = await storage.deleteSkillChain(req.params.id);
+      if (!deleted) return res.status(404).json({ error: "Chain not found" });
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // AI: Analyze skill chain conflicts
+  app.post("/api/ai/skill-chain-conflicts", async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI service not configured" });
+      }
+      const { nodes } = req.body;
+      if (!nodes || !Array.isArray(nodes) || nodes.length < 2) {
+        return res.json({ conflicts: [] });
+      }
+      const limitedNodes = nodes.slice(0, 20);
+      const openai = new OpenAI({ apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY });
+      const skillSummaries = limitedNodes.map((n: any) => `- "${String(n.skillName || "").slice(0, 200)}": ${String(n.description || "No description").slice(0, 500)}`).join("\n");
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "system", content: "You are an expert at analyzing AI agent skill chains. Identify potential conflicts where skills may give contradictory guidance. Return JSON: { conflicts: [{ skillA: string, skillB: string, type: 'contradiction' | 'overlap' | 'ordering', description: string, severity: 'high' | 'medium' | 'low', resolution: string }] }" },
+          { role: "user", content: `Analyze these skills in a chain for conflicts:\n${skillSummaries}` },
+        ],
+        temperature: 0.3,
+        response_format: { type: "json_object" },
+      });
+      const raw = response.choices[0].message.content || "{}";
+      let result;
+      try { result = JSON.parse(raw); } catch { result = { conflicts: [] }; }
+      res.json(result);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

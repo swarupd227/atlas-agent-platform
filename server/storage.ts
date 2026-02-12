@@ -116,6 +116,8 @@ import {
   type Skill, type InsertSkill,
   skillVersions,
   type SkillVersion, type InsertSkillVersion,
+  skillChains,
+  type SkillChain, type InsertSkillChain,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -464,6 +466,12 @@ export interface IStorage {
   getSkillVersion(id: string): Promise<SkillVersion | undefined>;
   createSkillVersion(version: InsertSkillVersion): Promise<SkillVersion>;
   updateSkillVersion(id: string, data: Partial<SkillVersion>): Promise<SkillVersion | undefined>;
+
+  getSkillChains(): Promise<SkillChain[]>;
+  getSkillChain(id: string): Promise<SkillChain | undefined>;
+  createSkillChain(chain: InsertSkillChain): Promise<SkillChain>;
+  updateSkillChain(id: string, data: Partial<SkillChain>): Promise<SkillChain | undefined>;
+  deleteSkillChain(id: string): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1752,6 +1760,26 @@ export class DatabaseStorage implements IStorage {
   async updateSkillVersion(id: string, data: Partial<SkillVersion>) {
     const [updated] = await db.update(skillVersions).set(data).where(eq(skillVersions.id, id)).returning();
     return updated;
+  }
+
+  async getSkillChains() {
+    return db.select().from(skillChains).orderBy(skillChains.createdAt);
+  }
+  async getSkillChain(id: string) {
+    const [chain] = await db.select().from(skillChains).where(eq(skillChains.id, id));
+    return chain;
+  }
+  async createSkillChain(chain: InsertSkillChain) {
+    const [created] = await db.insert(skillChains).values(chain).returning();
+    return created;
+  }
+  async updateSkillChain(id: string, data: Partial<SkillChain>) {
+    const [updated] = await db.update(skillChains).set(data).where(eq(skillChains.id, id)).returning();
+    return updated;
+  }
+  async deleteSkillChain(id: string) {
+    const result = await db.delete(skillChains).where(eq(skillChains.id, id));
+    return (result as any).rowCount > 0;
   }
 }
 
