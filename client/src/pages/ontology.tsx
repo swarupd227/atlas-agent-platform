@@ -994,14 +994,16 @@ export default function OntologyExplorer() {
                                     <Link2 className="w-3 h-3" />
                                     Suggested Relationships
                                   </div>
-                                  <div className="space-y-2">
+                                  <div className="grid gap-2 sm:grid-cols-2">
                                     {enrichment.suggestedRelationships.map((rel, i) => (
-                                      <div key={i} className="text-xs py-1.5 border-b last:border-0" data-testid={`preview-relationship-${i}`}>
-                                        <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-                                          <Badge variant="secondary" className="text-[10px]">{rel.type.replace("_", " ")}</Badge>
-                                          <span className="font-medium">{rel.targetId}</span>
+                                      <div key={i} className="p-3 rounded-md border" data-testid={`preview-relationship-${i}`}>
+                                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                          <Badge className={`text-[10px] ${relationshipTypeColors[rel.type] || ""}`}>
+                                            {rel.type.replace("_", " ")}
+                                          </Badge>
                                         </div>
-                                        <span className="text-muted-foreground">{rel.label}</span>
+                                        <div className="text-xs font-medium">{rel.targetId}</div>
+                                        <div className="text-[11px] text-muted-foreground mt-0.5">{rel.label}</div>
                                       </div>
                                     ))}
                                   </div>
