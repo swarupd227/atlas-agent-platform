@@ -1,0 +1,14 @@
+Agent Skills Library & Studio
+NEW FEATURE — Portable industry expertise encoded as composable, versioned skill units
+
+★ NEW FEATURE: Why This Exists
+Anthropic’s Agent Skills standard (December 2025) provides the primitive for encoding procedural expertise. ALMP creates the enterprise management layer: versioned industry skill libraries, governed skill composition, skill performance analytics, and a marketplace for sharing skills across organizations. Skills are the encoded tribal knowledge of each industry — they are ALMP’s most defensible asset.
+
+2.1 Skill Catalog
+Screen Description
+The primary browsing interface for all available agent skills, organized by industry vertical and functional domain.
+What’s on Screen
+•	Industry-Organized Skill Library: Skills grouped by industry (Financial Services, Healthcare, Manufacturing, Retail) and then by functional domain within each industry. Financial Services domains: KYC/AML, Credit Risk, Trade Operations, Regulatory Reporting, Customer Advisory. Healthcare domains: Clinical Documentation, Prior Authorization, Revenue Cycle, Care Coordination, Pharmacovigilance. Manufacturing domains: Quality Control, Predictive Maintenance, Supply Chain Planning, Production Scheduling. Retail domains: Demand Forecasting, Customer Service, Inventory Management, Dynamic Pricing.
+•	Skill Card: Each skill shows: name, description (the critical field that controls when agents activate the skill), industry tags, version number, author, trust tier (platform-provided, customer-created, marketplace), activation count (how many agents use this skill), performance score (aggregate quality metrics from production usage), and dependencies (required MCP tools, data sources, or other skills).
+•	Skill Search & Filter: Full-text search plus filters for industry, domain, trust tier, performance score, and compatibility (which agent types can use this skill).
+•	Skill Comparison: Select two or more skills for side-by-side comparison of: scope, performance, dependencies, and customer reviews.
