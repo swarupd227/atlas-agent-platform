@@ -11906,6 +11906,84 @@ Return ONLY a valid JSON object.`
     }
   });
 
+  // Ontology Concepts routes
+  app.get("/api/ontology/concepts", async (req, res) => {
+    try {
+      const industryId = req.query.industryId as string;
+      if (!industryId) {
+        return res.status(400).json({ message: "industryId query parameter is required" });
+      }
+      const concepts = await storage.getOntologyConcepts(industryId);
+      res.json(concepts);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/ontology/concepts/:id", async (req, res) => {
+    try {
+      const concept = await storage.getOntologyConcept(req.params.id);
+      if (!concept) return res.status(404).json({ message: "Concept not found" });
+      res.json(concept);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.put("/api/ontology/concepts/:id", async (req, res) => {
+    try {
+      const updated = await storage.updateOntologyConcept(req.params.id, req.body);
+      if (!updated) return res.status(404).json({ message: "Concept not found" });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Ontology Enhancements routes
+  app.get("/api/ontology/enhancements", async (req, res) => {
+    try {
+      const conceptIdsParam = req.query.conceptIds as string;
+      if (!conceptIdsParam) {
+        return res.status(400).json({ message: "conceptIds query parameter is required" });
+      }
+      const conceptIds = conceptIdsParam.split(",").filter(Boolean);
+      const enhancements = await storage.getOntologyEnhancements(conceptIds);
+      res.json(enhancements);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/ontology/enhancements", async (req, res) => {
+    try {
+      const { conceptId } = req.body;
+      if (!conceptId) {
+        return res.status(400).json({ message: "conceptId is required" });
+      }
+      const existing = await storage.getOntologyEnhancement(conceptId);
+      if (existing) {
+        const updated = await storage.updateOntologyEnhancement(existing.id, req.body);
+        res.json(updated);
+      } else {
+        const created = await storage.createOntologyEnhancement(req.body);
+        res.status(201).json(created);
+      }
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.put("/api/ontology/enhancements/:id", async (req, res) => {
+    try {
+      const updated = await storage.updateOntologyEnhancement(req.params.id, req.body);
+      if (!updated) return res.status(404).json({ message: "Enhancement not found" });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   // Start the job worker
   startWorker();
 

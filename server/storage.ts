@@ -1,4 +1,4 @@
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, inArray } from "drizzle-orm";
 import { createHash } from "crypto";
 import { db } from "./db";
 import {
@@ -108,6 +108,10 @@ import {
   type ComplianceControl, type InsertComplianceControl,
   regulatoryChanges,
   type RegulatoryChange, type InsertRegulatoryChange,
+  ontologyConcepts,
+  type OntologyConcept, type InsertOntologyConcept,
+  ontologyEnhancements,
+  type OntologyEnhancement, type InsertOntologyEnhancement,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -435,6 +439,16 @@ export interface IStorage {
   getRegulatoryChangesByRegulation(regulationId: string): Promise<RegulatoryChange[]>;
   createRegulatoryChange(change: InsertRegulatoryChange): Promise<RegulatoryChange>;
   updateRegulatoryChange(id: string, data: Partial<RegulatoryChange>): Promise<RegulatoryChange | undefined>;
+
+  getOntologyConcepts(industryId: string): Promise<OntologyConcept[]>;
+  getOntologyConcept(id: string): Promise<OntologyConcept | undefined>;
+  createOntologyConcept(concept: InsertOntologyConcept): Promise<OntologyConcept>;
+  updateOntologyConcept(id: string, data: Partial<OntologyConcept>): Promise<OntologyConcept | undefined>;
+
+  getOntologyEnhancement(conceptId: string): Promise<OntologyEnhancement | undefined>;
+  getOntologyEnhancements(conceptIds: string[]): Promise<OntologyEnhancement[]>;
+  createOntologyEnhancement(enhancement: InsertOntologyEnhancement): Promise<OntologyEnhancement>;
+  updateOntologyEnhancement(id: string, data: Partial<OntologyEnhancement>): Promise<OntologyEnhancement | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1653,6 +1667,39 @@ export class DatabaseStorage implements IStorage {
   }
   async updateRegulatoryChange(id: string, data: Partial<RegulatoryChange>) {
     const [updated] = await db.update(regulatoryChanges).set(data).where(eq(regulatoryChanges.id, id)).returning();
+    return updated;
+  }
+
+  async getOntologyConcepts(industryId: string) {
+    return db.select().from(ontologyConcepts).where(eq(ontologyConcepts.industryId, industryId));
+  }
+  async getOntologyConcept(id: string) {
+    const [concept] = await db.select().from(ontologyConcepts).where(eq(ontologyConcepts.id, id));
+    return concept;
+  }
+  async createOntologyConcept(concept: InsertOntologyConcept) {
+    const [created] = await db.insert(ontologyConcepts).values(concept).returning();
+    return created;
+  }
+  async updateOntologyConcept(id: string, data: Partial<OntologyConcept>) {
+    const [updated] = await db.update(ontologyConcepts).set(data).where(eq(ontologyConcepts.id, id)).returning();
+    return updated;
+  }
+
+  async getOntologyEnhancement(conceptId: string) {
+    const [enhancement] = await db.select().from(ontologyEnhancements).where(eq(ontologyEnhancements.conceptId, conceptId)).limit(1);
+    return enhancement;
+  }
+  async getOntologyEnhancements(conceptIds: string[]) {
+    if (conceptIds.length === 0) return [];
+    return db.select().from(ontologyEnhancements).where(inArray(ontologyEnhancements.conceptId, conceptIds));
+  }
+  async createOntologyEnhancement(enhancement: InsertOntologyEnhancement) {
+    const [created] = await db.insert(ontologyEnhancements).values(enhancement).returning();
+    return created;
+  }
+  async updateOntologyEnhancement(id: string, data: Partial<OntologyEnhancement>) {
+    const [updated] = await db.update(ontologyEnhancements).set(data).where(eq(ontologyEnhancements.id, id)).returning();
     return updated;
   }
 }

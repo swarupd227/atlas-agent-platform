@@ -1281,4 +1281,40 @@ export const insertRegulatoryChangeSchema = createInsertSchema(regulatoryChanges
 export type InsertRegulatoryChange = z.infer<typeof insertRegulatoryChangeSchema>;
 export type RegulatoryChange = typeof regulatoryChanges.$inferSelect;
 
+export const ontologyConcepts = pgTable("ontology_concepts", {
+  id: varchar("id").primaryKey(),
+  industryId: text("industry_id").notNull(),
+  ontologyName: text("ontology_name").notNull(),
+  label: text("label").notNull(),
+  category: text("category").notNull(),
+  description: text("description").notNull(),
+  properties: jsonb("properties").notNull().default(sql`'[]'::jsonb`),
+  relationships: jsonb("relationships").notNull().default(sql`'[]'::jsonb`),
+  tags: text("tags").array().default(sql`'{}'::text[]`),
+  industryRelevance: text("industry_relevance"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertOntologyConceptSchema = createInsertSchema(ontologyConcepts).omit({ createdAt: true });
+export type InsertOntologyConcept = z.infer<typeof insertOntologyConceptSchema>;
+export type OntologyConcept = typeof ontologyConcepts.$inferSelect;
+
+export const ontologyEnhancements = pgTable("ontology_enhancements", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  conceptId: varchar("concept_id").notNull(),
+  enrichedDescription: text("enriched_description"),
+  agentUseCases: jsonb("agent_use_cases").default(sql`'[]'::jsonb`),
+  regulatoryRelevance: text("regulatory_relevance"),
+  riskFactors: jsonb("risk_factors").default(sql`'[]'::jsonb`),
+  relatedStandards: jsonb("related_standards").default(sql`'[]'::jsonb`),
+  dataHandlingConsiderations: text("data_handling_considerations"),
+  implementationGuidance: text("implementation_guidance"),
+  applied: boolean("applied").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertOntologyEnhancementSchema = createInsertSchema(ontologyEnhancements).omit({ id: true, createdAt: true });
+export type InsertOntologyEnhancement = z.infer<typeof insertOntologyEnhancementSchema>;
+export type OntologyEnhancement = typeof ontologyEnhancements.$inferSelect;
+
 export * from "./models/chat";
