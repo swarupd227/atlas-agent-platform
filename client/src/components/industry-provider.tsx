@@ -429,19 +429,24 @@ export function IndustryProvider({ children }: { children: ReactNode }) {
   const activeFrameworks = useMemo(() => {
     if (!industryId || industryId === "custom") return [];
     const frameworkMap = JURISDICTION_FRAMEWORKS[industryId] || {};
-    const frameworks = new Set<string>();
+    const jurisdictionFrameworks = new Set<string>();
     for (const j of workspaceConfig.jurisdictions) {
       for (const fw of (frameworkMap[j] || [])) {
-        frameworks.add(fw);
+        jurisdictionFrameworks.add(fw);
       }
     }
+    const departments = workspaceConfig.departments || [];
+    if (departments.length === 0) return Array.from(jurisdictionFrameworks);
     const deptMap = DEPARTMENT_FRAMEWORKS[industryId] || {};
-    for (const dept of workspaceConfig.departments || []) {
+    const deptRelevant = new Set<string>();
+    for (const dept of departments) {
       for (const fw of (deptMap[dept] || [])) {
-        frameworks.add(fw);
+        if (jurisdictionFrameworks.has(fw)) {
+          deptRelevant.add(fw);
+        }
       }
     }
-    return Array.from(frameworks);
+    return Array.from(deptRelevant);
   }, [industryId, workspaceConfig.jurisdictions, workspaceConfig.departments]);
 
   const activeDepartments = workspaceConfig.departments || [];
