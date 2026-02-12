@@ -96,7 +96,7 @@ export function IndustryWorkspaceSelector() {
   return (
     <div className="fixed inset-0 z-[100] bg-background flex flex-col" data-testid="industry-workspace-selector">
       <div className="flex-1 flex flex-col items-center justify-center p-4 overflow-auto">
-        <div className="max-w-5xl w-full space-y-5">
+        <div className="max-w-5xl w-full space-y-4">
 
           {step === "select" && (
             <>
@@ -197,26 +197,26 @@ export function IndustryWorkspaceSelector() {
 
           {step === "configure" && selected && (
             <>
-              <div className="text-center space-y-1">
+              <div className="text-center space-y-0.5">
                 <StepBreadcrumb current="configure" />
-                <h1 className="text-2xl font-bold tracking-tight" data-testid="text-configure-title">
+                <h1 className="text-xl font-bold tracking-tight" data-testid="text-configure-title">
                   Configure {selected.label}
                 </h1>
-                <p className="text-muted-foreground text-sm max-w-xl mx-auto">
-                  Tailor your workspace by selecting the segments, departments, jurisdictions, and systems relevant to your organization.
+                <p className="text-muted-foreground text-xs max-w-xl mx-auto">
+                  Select the segments, departments, jurisdictions, and systems relevant to your organization.
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 max-w-5xl mx-auto">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 max-w-5xl mx-auto">
                 <Card data-testid="card-config-subverticals">
-                  <CardContent className="p-5 space-y-3">
+                  <CardContent className="p-4 space-y-2.5">
                     <div className="flex items-center gap-2">
-                      <div className="h-7 w-7 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: selected.color + "20", color: selected.color }}>
-                        <selected.icon className="h-3.5 w-3.5" />
+                      <div className="h-6 w-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: selected.color + "20", color: selected.color }}>
+                        <selected.icon className="h-3 w-3" />
                       </div>
                       <div>
-                        <h3 className="font-semibold text-sm">Sub-Verticals</h3>
-                        <p className="text-[11px] text-muted-foreground">Select segments relevant to your operations</p>
+                        <h3 className="font-semibold text-xs">Sub-Verticals</h3>
+                        <p className="text-[10px] text-muted-foreground">Select segments relevant to your operations</p>
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -240,14 +240,14 @@ export function IndustryWorkspaceSelector() {
                 </Card>
 
                 <Card data-testid="card-config-departments">
-                  <CardContent className="p-5 space-y-3">
+                  <CardContent className="p-4 space-y-2.5">
                     <div className="flex items-center gap-2">
-                      <div className="h-7 w-7 rounded-md flex items-center justify-center shrink-0 bg-violet-500/15 text-violet-500">
-                        <Building2 className="h-3.5 w-3.5" />
+                      <div className="h-6 w-6 rounded-md flex items-center justify-center shrink-0 bg-violet-500/15 text-violet-500">
+                        <Building2 className="h-3 w-3" />
                       </div>
                       <div>
-                        <h3 className="font-semibold text-sm">Departments</h3>
-                        <p className="text-[11px] text-muted-foreground">Select departments that will use AI agents</p>
+                        <h3 className="font-semibold text-xs">Departments</h3>
+                        <p className="text-[10px] text-muted-foreground">Select departments that will use AI agents</p>
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -271,14 +271,14 @@ export function IndustryWorkspaceSelector() {
                 </Card>
 
                 <Card data-testid="card-config-jurisdictions">
-                  <CardContent className="p-5 space-y-3">
+                  <CardContent className="p-4 space-y-2.5">
                     <div className="flex items-center gap-2">
-                      <div className="h-7 w-7 rounded-md flex items-center justify-center shrink-0 bg-blue-500/15 text-blue-500">
-                        <Globe className="h-3.5 w-3.5" />
+                      <div className="h-6 w-6 rounded-md flex items-center justify-center shrink-0 bg-blue-500/15 text-blue-500">
+                        <Globe className="h-3 w-3" />
                       </div>
                       <div>
-                        <h3 className="font-semibold text-sm">Jurisdictions</h3>
-                        <p className="text-[11px] text-muted-foreground">Determines which regulatory frameworks apply</p>
+                        <h3 className="font-semibold text-xs">Jurisdictions</h3>
+                        <p className="text-[10px] text-muted-foreground">Determines which regulatory frameworks apply</p>
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -302,14 +302,14 @@ export function IndustryWorkspaceSelector() {
                 </Card>
 
                 <Card data-testid="card-config-data-classification">
-                  <CardContent className="p-5 space-y-3">
+                  <CardContent className="p-4 space-y-2.5">
                     <div className="flex items-center gap-2">
-                      <div className="h-7 w-7 rounded-md flex items-center justify-center shrink-0 bg-red-500/15 text-red-500">
-                        <Lock className="h-3.5 w-3.5" />
+                      <div className="h-6 w-6 rounded-md flex items-center justify-center shrink-0 bg-red-500/15 text-red-500">
+                        <Lock className="h-3 w-3" />
                       </div>
                       <div>
-                        <h3 className="font-semibold text-sm">Data Classification Default</h3>
-                        <p className="text-[11px] text-muted-foreground">Default classification for new data assets and agent outputs</p>
+                        <h3 className="font-semibold text-xs">Data Classification</h3>
+                        <p className="text-[10px] text-muted-foreground">Default for new data assets and agent outputs</p>
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -338,17 +338,17 @@ export function IndustryWorkspaceSelector() {
                 </Card>
 
                 <Card className="lg:col-span-2" data-testid="card-config-integrations">
-                  <CardContent className="p-5 space-y-3">
+                  <CardContent className="p-4 space-y-2.5">
                     <div className="flex items-center gap-2">
-                      <div className="h-7 w-7 rounded-md flex items-center justify-center shrink-0 bg-orange-500/15 text-orange-500">
-                        <Server className="h-3.5 w-3.5" />
+                      <div className="h-6 w-6 rounded-md flex items-center justify-center shrink-0 bg-orange-500/15 text-orange-500">
+                        <Server className="h-3 w-3" />
                       </div>
                       <div>
-                        <h3 className="font-semibold text-sm">Integration Landscape</h3>
-                        <p className="text-[11px] text-muted-foreground">Select the core systems your organization uses</p>
+                        <h3 className="font-semibold text-xs">Integration Landscape</h3>
+                        <p className="text-[10px] text-muted-foreground">Select the core systems your organization uses</p>
                       </div>
                     </div>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                       {Object.entries(integrationCategories).map(([category, systems]) => (
                         <div key={category} className="space-y-1.5">
                           <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">{category}</p>
