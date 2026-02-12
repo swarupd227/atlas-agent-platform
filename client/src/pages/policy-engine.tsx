@@ -629,6 +629,11 @@ export default function PolicyEngine() {
                         <Building2 className="w-3 h-3 mr-1" />
                         {reg.industry.replace(/_/g, " ")}
                       </Badge>
+                      {reg.effectiveDate && (
+                        <Badge variant="outline" className="text-[10px]">
+                          {new Date(reg.effectiveDate).toLocaleDateString("en-US", { month: "short", year: "numeric" })}
+                        </Badge>
+                      )}
                       <Badge variant="outline" className="text-[10px]">
                         v{reg.version}
                       </Badge>
