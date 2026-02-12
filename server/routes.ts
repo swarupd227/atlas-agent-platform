@@ -12072,6 +12072,130 @@ Return ONLY a valid JSON object.`
     }
   });
 
+  // AI: Enhance a skill with detailed analysis
+  app.post("/api/ai/enhance-skill", async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI service not configured" });
+      }
+      const { skillName, skillDescription, industry, domain, dependencies, tags } = req.body;
+      if (!skillName || !skillDescription || !industry) {
+        return res.status(400).json({ error: "skillName, skillDescription, and industry are required" });
+      }
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        max_tokens: 4096,
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert in AI agent skill design and enterprise automation for the ${industry.replace(/_/g, " ")} industry, specifically the ${domain || "general"} domain.
+
+When given an agent skill, produce a comprehensive JSON enrichment with these fields:
+- "overview": A detailed 3-5 sentence analysis of the skill's purpose, value proposition, and enterprise impact
+- "implementationGuidance": Object with { "prerequisites": string[], "setupSteps": string[], "configurationOptions": { "name": string, "description": string, "defaultValue": string }[], "estimatedSetupTime": string }
+- "bestPractices": Array of { "title": string, "description": string, "category": "performance"|"security"|"reliability"|"scalability" }
+- "riskFactors": Array of { "risk": string, "severity": "critical"|"high"|"medium"|"low", "mitigation": string }
+- "optimizationTips": Array of { "tip": string, "expectedImprovement": string, "effort": "low"|"medium"|"high" }
+- "relatedSkills": Array of { "name": string, "relationship": "complementary"|"alternative"|"prerequisite", "reason": string }
+- "useCases": Array of { "scenario": string, "outcome": string, "industry": string }
+- "complianceConsiderations": Array of { "regulation": string, "requirement": string, "howSkillAddresses": string }
+- "performanceBenchmarks": { "typicalLatency": string, "throughput": string, "accuracy": string, "errorRate": string }
+- "integrationPoints": Array of { "system": string, "protocol": string, "dataFlow": "inbound"|"outbound"|"bidirectional" }`
+          },
+          {
+            role: "user",
+            content: `Provide detailed enrichment for this agent skill:
+
+Skill: ${skillName}
+Description: ${skillDescription}
+Industry: ${industry.replace(/_/g, " ")}
+Domain: ${domain || "General"}
+Dependencies: ${JSON.stringify(dependencies || [])}
+Tags: ${JSON.stringify(tags || [])}
+
+Return ONLY a valid JSON object. Do not include markdown formatting or code blocks.`
+          }
+        ],
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) return res.status(500).json({ error: "No response from AI" });
+      const enriched = JSON.parse(content);
+      res.json({ enriched });
+    } catch (e: any) {
+      console.error("AI enhance skill error:", e);
+      res.status(500).json({ error: e.message || "Failed to enhance skill" });
+    }
+  });
+
+  // AI: Generate new skills for an industry/domain
+  app.post("/api/ai/generate-skills", async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI service not configured" });
+      }
+      const { industry, domain, existingSkillNames, count } = req.body;
+      if (!industry || !domain) {
+        return res.status(400).json({ error: "industry and domain are required" });
+      }
+
+      const numSkills = Math.min(count || 5, 8);
+      const existingContext = existingSkillNames?.length > 0
+        ? `\nExisting skills in this domain (do NOT duplicate these):\n${existingSkillNames.map((n: string) => `- ${n}`).join("\n")}`
+        : "";
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        max_completion_tokens: 6144,
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert in AI agent skill design for enterprise automation. You create detailed, production-ready agent skill definitions for the ${industry.replace(/_/g, " ")} industry.
+
+Generate a JSON object with a "skills" array. Each skill MUST have:
+- "name": descriptive skill name (clear, professional)
+- "description": detailed 2-3 sentence description explaining what the skill does, when it activates, and what outcomes it produces. This is the critical field that controls when agents activate the skill.
+- "domain": "${domain}"
+- "industry": "${industry}"
+- "version": "1.0.0"
+- "author": "AI Generated"
+- "trustTier": "customer-created"
+- "activationCount": 0
+- "performanceScore": a realistic score between 75 and 95
+- "dependencies": array of 2-4 tool/connector names the skill requires (use realistic names like "erp-connector", "ml-engine", etc.)
+- "tags": array of 3-5 relevant tags
+- "agentTypeCompatibility": array from ["single", "team", "remote"] (at least 1-2 types)
+- "status": "active"
+- "complexity": "beginner" | "intermediate" | "advanced"
+
+Generate exactly ${numSkills} unique, practical skills that would be valuable in real enterprise deployments.`
+          },
+          {
+            role: "user",
+            content: `Generate ${numSkills} new agent skills for:
+
+Industry: ${industry.replace(/_/g, " ")}
+Domain: ${domain}
+${existingContext}
+
+Return ONLY a valid JSON object with a "skills" array.`
+          }
+        ],
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) return res.status(500).json({ error: "No response from AI" });
+      const result = JSON.parse(content);
+      res.json(result);
+    } catch (e: any) {
+      console.error("AI generate skills error:", e);
+      res.status(500).json({ error: e.message || "Failed to generate skills" });
+    }
+  });
+
   // Skills CRUD
   app.get("/api/skills", async (_req, res) => {
     const allSkills = await storage.getSkills();

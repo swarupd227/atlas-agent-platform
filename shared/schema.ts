@@ -1339,6 +1339,7 @@ export const skills = pgTable("skills", {
   agentTypeCompatibility: text("agent_type_compatibility").array().default(sql`'{"single","team","remote"}'::text[]`),
   status: text("status").notNull().default("active"),
   complexity: text("complexity").notNull().default("intermediate"),
+  aiEnrichment: jsonb("ai_enrichment"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

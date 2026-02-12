@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { Skill } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,6 +9,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
   Search,
   Layers,
@@ -29,6 +31,16 @@ import {
   Heart,
   Factory,
   ShoppingCart,
+  Sparkles,
+  Loader2,
+  Plus,
+  AlertTriangle,
+  Lightbulb,
+  Target,
+  Settings,
+  Plug,
+  BookOpen,
+  Link2,
 } from "lucide-react";
 
 const INDUSTRY_CONFIG: Record<string, { label: string; icon: typeof Building2; color: string }> = {
@@ -63,6 +75,8 @@ function ScoreBar({ score }: { score: number }) {
 }
 
 export default function SkillCatalog() {
+  const { toast } = useToast();
+  const enrichRef = useRef<HTMLDivElement>(null);
   const [search, setSearch] = useState("");
   const [industryFilter, setIndustryFilter] = useState("all");
   const [domainFilter, setDomainFilter] = useState("all");
@@ -74,9 +88,78 @@ export default function SkillCatalog() {
   const [showCompare, setShowCompare] = useState(false);
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
 
+  const [aiEnhancingSkill, setAiEnhancingSkill] = useState<string | null>(null);
+  const [aiEnhanceResult, setAiEnhanceResult] = useState<{ skillId: string; skillName: string; enriched: any } | null>(null);
+  const [aiGenerating, setAiGenerating] = useState(false);
+  const [generateIndustry, setGenerateIndustry] = useState("financial_services");
+  const [generateDomain, setGenerateDomain] = useState("");
+  const [showGeneratePanel, setShowGeneratePanel] = useState(false);
+
   const { data: skills = [], isLoading } = useQuery<Skill[]>({
     queryKey: ["/api/skills"],
   });
+
+  async function handleAiEnhanceSkill(skill: Skill) {
+    setAiEnhancingSkill(skill.id);
+    try {
+      const res = await apiRequest("POST", "/api/ai/enhance-skill", {
+        skillName: skill.name,
+        skillDescription: skill.description,
+        industry: skill.industry,
+        domain: skill.domain,
+        dependencies: skill.dependencies,
+        tags: skill.tags,
+      });
+      const data = await res.json();
+      const enriched = data.enriched;
+      await apiRequest("PATCH", `/api/skills/${skill.id}`, { aiEnrichment: enriched });
+      queryClient.invalidateQueries({ queryKey: ["/api/skills"] });
+      setAiEnhanceResult({ skillId: skill.id, skillName: skill.name, enriched });
+      toast({ title: `AI Enhancement saved for ${skill.name}` });
+      setTimeout(() => enrichRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
+    } catch (e: any) {
+      toast({ title: "AI enhancement failed", description: e.message, variant: "destructive" });
+    } finally {
+      setAiEnhancingSkill(null);
+    }
+  }
+
+  async function handleAiGenerateSkills() {
+    if (!generateDomain) {
+      toast({ title: "Please enter a domain", variant: "destructive" });
+      return;
+    }
+    setAiGenerating(true);
+    try {
+      const existingSkillNames = skills
+        .filter((s) => s.industry === generateIndustry && s.domain === generateDomain)
+        .map((s) => s.name);
+      const res = await apiRequest("POST", "/api/ai/generate-skills", {
+        industry: generateIndustry,
+        domain: generateDomain,
+        existingSkillNames,
+        count: 5,
+      });
+      const data = await res.json();
+      const generated = data.skills || [];
+      let savedCount = 0;
+      for (const skill of generated) {
+        try {
+          await apiRequest("POST", "/api/skills", skill);
+          savedCount++;
+        } catch (e) {
+          console.error("Failed to save generated skill:", e);
+        }
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/skills"] });
+      toast({ title: `Generated ${savedCount} new skills for ${generateDomain}` });
+      setShowGeneratePanel(false);
+    } catch (e: any) {
+      toast({ title: "AI generation failed", description: e.message, variant: "destructive" });
+    } finally {
+      setAiGenerating(false);
+    }
+  }
 
   const domains = useMemo(() => {
     const domainSet = new Set<string>();
@@ -180,6 +263,15 @@ export default function SkillCatalog() {
                 Compare ({compareList.length})
               </Button>
             )}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setShowGeneratePanel(!showGeneratePanel)}
+              data-testid="button-toggle-generate"
+            >
+              <Sparkles className="w-4 h-4 mr-1" />
+              Generate with AI
+            </Button>
           </div>
         </div>
 
@@ -260,6 +352,62 @@ export default function SkillCatalog() {
           </CardContent>
         </Card>
 
+        {showGeneratePanel && (
+          <Card data-testid="panel-generate-skills">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between gap-3">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Sparkles className="w-5 h-5" />
+                  AI Skill Generator
+                </CardTitle>
+                <Button variant="ghost" size="icon" onClick={() => setShowGeneratePanel(false)} data-testid="button-close-generate">
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground mb-4">
+                Generate new skills for a specific industry and domain. AI will create 5 unique, production-ready skill definitions that avoid duplicating existing skills.
+              </p>
+              <div className="flex items-end gap-3 flex-wrap">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-muted-foreground">Industry</label>
+                  <Select value={generateIndustry} onValueChange={setGenerateIndustry}>
+                    <SelectTrigger className="w-[200px]" data-testid="select-generate-industry">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(INDUSTRY_CONFIG).map(([key, cfg]) => (
+                        <SelectItem key={key} value={key}>{cfg.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5 flex-1 min-w-[200px]">
+                  <label className="text-xs font-medium text-muted-foreground">Domain</label>
+                  <Input
+                    placeholder="e.g., Fraud Detection, Clinical Trials..."
+                    value={generateDomain}
+                    onChange={(e) => setGenerateDomain(e.target.value)}
+                    data-testid="input-generate-domain"
+                  />
+                </div>
+                <Button
+                  onClick={handleAiGenerateSkills}
+                  disabled={aiGenerating || !generateDomain}
+                  data-testid="button-generate-skills"
+                >
+                  {aiGenerating ? (
+                    <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> Generating...</>
+                  ) : (
+                    <><Plus className="w-4 h-4 mr-1" /> Generate 5 Skills</>
+                  )}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {filteredSkills.length === 0 ? (
           <Card>
             <CardContent className="py-12 text-center">
@@ -328,8 +476,18 @@ export default function SkillCatalog() {
                                     skill={skill}
                                     isComparing={compareList.includes(skill.id)}
                                     onToggleCompare={() => toggleCompare(skill.id)}
-                                    onSelect={() => setSelectedSkill(skill)}
+                                    onSelect={() => {
+                                      setSelectedSkill(skill);
+                                      if (skill.aiEnrichment) {
+                                        setAiEnhanceResult({ skillId: skill.id, skillName: skill.name, enriched: skill.aiEnrichment });
+                                      } else if (aiEnhanceResult?.skillId !== skill.id) {
+                                        setAiEnhanceResult(null);
+                                      }
+                                    }}
                                     isSelected={selectedSkill?.id === skill.id}
+                                    onAiEnhance={() => handleAiEnhanceSkill(skill)}
+                                    isEnhancing={aiEnhancingSkill === skill.id}
+                                    hasEnrichment={!!skill.aiEnrichment}
                                   />
                                 ))}
                               </div>
@@ -344,7 +502,17 @@ export default function SkillCatalog() {
         )}
 
         {selectedSkill && (
-          <SkillDetailPanel skill={selectedSkill} onClose={() => setSelectedSkill(null)} />
+          <SkillDetailPanel skill={selectedSkill} onClose={() => { setSelectedSkill(null); setAiEnhanceResult(null); }} />
+        )}
+
+        {aiEnhanceResult && (
+          <div ref={enrichRef}>
+            <AiEnrichmentPanel
+              enriched={aiEnhanceResult.enriched}
+              skillName={aiEnhanceResult.skillName}
+              onClose={() => setAiEnhanceResult(null)}
+            />
+          </div>
         )}
 
         {showCompare && compareSkills.length >= 2 && (
@@ -365,12 +533,18 @@ function SkillCard({
   onToggleCompare,
   onSelect,
   isSelected,
+  onAiEnhance,
+  isEnhancing,
+  hasEnrichment,
 }: {
   skill: Skill;
   isComparing: boolean;
   onToggleCompare: () => void;
   onSelect: () => void;
   isSelected: boolean;
+  onAiEnhance: () => void;
+  isEnhancing: boolean;
+  hasEnrichment: boolean;
 }) {
   const deps = (skill.dependencies as string[] | null) || [];
   const tags = (skill.tags as string[] | null) || [];
@@ -430,23 +604,42 @@ function SkillCard({
           </div>
         )}
 
-        <div className="flex items-center justify-between gap-2 pt-1">
-          <span className="text-[10px] text-muted-foreground">
+        <div className="flex items-center justify-between gap-2 pt-1 flex-wrap">
+          <span className="text-[10px] text-muted-foreground flex items-center gap-1" data-testid={`text-deps-${skill.id}`}>
             {deps.length} {deps.length === 1 ? "dependency" : "dependencies"}
+            {hasEnrichment && <Sparkles className="w-3 h-3 text-amber-500" data-testid={`icon-enriched-${skill.id}`} />}
           </span>
-          <Button
-            variant={isComparing ? "default" : "outline"}
-            size="sm"
-            className="h-6 text-[10px] px-2"
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleCompare();
-            }}
-            data-testid={`button-compare-${skill.id}`}
-          >
-            {isComparing ? <CheckCircle2 className="w-3 h-3 mr-1" /> : <BarChart3 className="w-3 h-3 mr-1" />}
-            {isComparing ? "Selected" : "Compare"}
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={isEnhancing}
+              onClick={(e) => {
+                e.stopPropagation();
+                onAiEnhance();
+              }}
+              data-testid={`button-enhance-${skill.id}`}
+            >
+              {isEnhancing ? (
+                <Loader2 className="w-3 h-3 animate-spin" />
+              ) : (
+                <Sparkles className="w-3 h-3" />
+              )}
+              {hasEnrichment ? "Re-Enhance" : "AI Enhance"}
+            </Button>
+            <Button
+              variant={isComparing ? "default" : "outline"}
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleCompare();
+              }}
+              data-testid={`button-compare-${skill.id}`}
+            >
+              {isComparing ? <CheckCircle2 className="w-3 h-3" /> : <BarChart3 className="w-3 h-3" />}
+              {isComparing ? "Selected" : "Compare"}
+            </Button>
+          </div>
         </div>
       </CardContent>
     </Card>
@@ -699,5 +892,84 @@ function CompareRow({ label, values, highlight }: { label: string; values: strin
         </td>
       ))}
     </tr>
+  );
+}
+
+function flattenValue(val: unknown): string {
+  if (val === null || val === undefined) return "";
+  if (typeof val === "string") return val;
+  if (typeof val === "number" || typeof val === "boolean") return String(val);
+  if (Array.isArray(val)) return val.map(flattenValue).join(", ");
+  if (typeof val === "object") {
+    return Object.entries(val as Record<string, unknown>)
+      .map(([k, v]) => `${k}: ${flattenValue(v)}`)
+      .join("; ");
+  }
+  return String(val);
+}
+
+function AiEnrichmentPanel({ enriched, skillName, onClose }: { enriched: any; skillName: string; onClose: () => void }) {
+  const sections = [
+    { key: "implementationGuidance", label: "Implementation Guidance", icon: BookOpen },
+    { key: "bestPractices", label: "Best Practices", icon: CheckCircle2 },
+    { key: "riskFactors", label: "Risk Factors", icon: AlertTriangle },
+    { key: "optimizationTips", label: "Optimization Tips", icon: Zap },
+    { key: "relatedSkills", label: "Related Skills", icon: GitBranch },
+    { key: "useCases", label: "Use Cases", icon: Target },
+    { key: "complianceConsiderations", label: "Compliance Considerations", icon: Shield },
+    { key: "performanceBenchmarks", label: "Performance Benchmarks", icon: Activity },
+    { key: "integrationPoints", label: "Integration Points", icon: Link2 },
+  ];
+
+  return (
+    <Card className="mt-4" data-testid="panel-ai-enrichment">
+      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+        <div className="flex items-center gap-2">
+          <Sparkles className="w-4 h-4 text-amber-500" />
+          <CardTitle className="text-sm" data-testid="text-enrichment-title">AI Analysis: {skillName}</CardTitle>
+        </div>
+        <Button size="icon" variant="ghost" onClick={onClose} data-testid="button-close-enrichment">
+          <X className="w-4 h-4" />
+        </Button>
+      </CardHeader>
+      <CardContent>
+        {enriched?.detailedAnalysis && (
+          <p className="text-sm text-muted-foreground mb-4" data-testid="text-enrichment-analysis">{enriched.detailedAnalysis}</p>
+        )}
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+          {sections.map(({ key, label, icon: Icon }) => {
+            const data = enriched?.[key];
+            if (!data) return null;
+            let items: string[];
+            if (Array.isArray(data)) {
+              items = data.map((d) => flattenValue(d));
+            } else if (typeof data === "string") {
+              items = [data];
+            } else if (typeof data === "object" && data !== null) {
+              items = Object.entries(data).map(([k, v]) => `${k}: ${flattenValue(v)}`);
+            } else {
+              items = [String(data)];
+            }
+            if (items.length === 0) return null;
+            return (
+              <div key={key} className="space-y-1" data-testid={`section-enrichment-${key}`}>
+                <div className="flex items-center gap-1 text-xs font-medium" data-testid={`text-section-label-${key}`}>
+                  <Icon className="w-3 h-3" />
+                  {label}
+                </div>
+                <ul className="space-y-0.5">
+                  {items.map((item: string, i: number) => (
+                    <li key={i} className="text-xs text-muted-foreground flex items-start gap-1" data-testid={`text-enrichment-item-${key}-${i}`}>
+                      <span className="text-muted-foreground/50 mt-0.5">-</span>
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
