@@ -203,137 +203,177 @@ export function IndustryWorkspaceSelector() {
                   Configure {selected.label}
                 </h1>
                 <p className="text-muted-foreground text-sm max-w-xl mx-auto">
-                  Set your sub-verticals, departments, jurisdictions, integrations, and data classification.
+                  Tailor your workspace by selecting the segments, departments, jurisdictions, and systems relevant to your organization.
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-w-5xl mx-auto">
-                <div className="space-y-1.5" data-testid="card-config-subverticals">
-                  <div className="flex items-center gap-1.5">
-                    <selected.icon className="h-3.5 w-3.5" style={{ color: selected.color }} />
-                    <h3 className="font-medium text-xs">Sub-Vertical</h3>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {selected.subVerticals.map((sv) => {
-                      const active = chosenSubVerticals.includes(sv);
-                      return (
-                        <Badge
-                          key={sv}
-                          variant={active ? "default" : "outline"}
-                          className={`cursor-pointer text-[11px] toggle-elevate ${active ? "toggle-elevated" : ""}`}
-                          onClick={() => toggleItem(chosenSubVerticals, sv, setChosenSubVerticals)}
-                          data-testid={`badge-subvertical-${sv.replace(/[\s\/&]/g, "-").toLowerCase()}`}
-                        >
-                          {active && <Check className="h-2.5 w-2.5 mr-0.5" />}
-                          {sv}
-                        </Badge>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="space-y-1.5" data-testid="card-config-departments">
-                  <div className="flex items-center gap-1.5">
-                    <Building2 className="h-3.5 w-3.5 text-violet-500" />
-                    <h3 className="font-medium text-xs">Departments</h3>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {selected.departments.map((dept) => {
-                      const active = chosenDepartments.includes(dept);
-                      return (
-                        <Badge
-                          key={dept}
-                          variant={active ? "default" : "outline"}
-                          className={`cursor-pointer text-[11px] toggle-elevate ${active ? "toggle-elevated" : ""}`}
-                          onClick={() => toggleItem(chosenDepartments, dept, setChosenDepartments)}
-                          data-testid={`badge-department-${dept.replace(/[\s\/&]/g, "-").toLowerCase()}`}
-                        >
-                          {active && <Check className="h-2.5 w-2.5 mr-0.5" />}
-                          {dept}
-                        </Badge>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="space-y-1.5" data-testid="card-config-jurisdictions">
-                  <div className="flex items-center gap-1.5">
-                    <Globe className="h-3.5 w-3.5 text-blue-500" />
-                    <h3 className="font-medium text-xs">Jurisdictions</h3>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {selected.jurisdictions.map((j) => {
-                      const active = chosenJurisdictions.includes(j);
-                      return (
-                        <Badge
-                          key={j}
-                          variant={active ? "default" : "outline"}
-                          className={`cursor-pointer text-[11px] toggle-elevate ${active ? "toggle-elevated" : ""}`}
-                          onClick={() => toggleItem(chosenJurisdictions, j, setChosenJurisdictions)}
-                          data-testid={`badge-jurisdiction-${j.toLowerCase()}`}
-                        >
-                          {active && <Check className="h-2.5 w-2.5 mr-0.5" />}
-                          {j}
-                        </Badge>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="space-y-1.5 md:col-span-2" data-testid="card-config-integrations">
-                  <div className="flex items-center gap-1.5">
-                    <Server className="h-3.5 w-3.5 text-orange-500" />
-                    <h3 className="font-medium text-xs">Integrations</h3>
-                  </div>
-                  <div className="flex flex-wrap gap-x-4 gap-y-2">
-                    {Object.entries(integrationCategories).map(([category, systems]) => (
-                      <div key={category} className="space-y-1">
-                        <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">{category}</p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {systems.map((sys) => {
-                            const active = chosenIntegrations.includes(sys.id);
-                            return (
-                              <Badge
-                                key={sys.id}
-                                variant={active ? "default" : "outline"}
-                                className={`cursor-pointer text-[11px] toggle-elevate ${active ? "toggle-elevated" : ""}`}
-                                onClick={() => toggleItem(chosenIntegrations, sys.id, setChosenIntegrations)}
-                                data-testid={`badge-integration-${sys.id}`}
-                              >
-                                {active && <Check className="h-2.5 w-2.5 mr-0.5" />}
-                                {sys.name}
-                              </Badge>
-                            );
-                          })}
-                        </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 max-w-5xl mx-auto">
+                <Card data-testid="card-config-subverticals">
+                  <CardContent className="p-5 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <div className="h-7 w-7 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: selected.color + "20", color: selected.color }}>
+                        <selected.icon className="h-3.5 w-3.5" />
                       </div>
-                    ))}
-                  </div>
-                </div>
+                      <div>
+                        <h3 className="font-semibold text-sm">Sub-Verticals</h3>
+                        <p className="text-[11px] text-muted-foreground">Select segments relevant to your operations</p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {selected.subVerticals.map((sv) => {
+                        const active = chosenSubVerticals.includes(sv);
+                        return (
+                          <Badge
+                            key={sv}
+                            variant={active ? "default" : "outline"}
+                            className={`cursor-pointer toggle-elevate ${active ? "toggle-elevated" : ""}`}
+                            onClick={() => toggleItem(chosenSubVerticals, sv, setChosenSubVerticals)}
+                            data-testid={`badge-subvertical-${sv.replace(/[\s\/&]/g, "-").toLowerCase()}`}
+                          >
+                            {active && <Check className="h-3 w-3 mr-1" />}
+                            {sv}
+                          </Badge>
+                        );
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
 
-                <div className="space-y-1.5" data-testid="card-config-data-classification">
-                  <div className="flex items-center gap-1.5">
-                    <Lock className="h-3.5 w-3.5 text-red-500" />
-                    <h3 className="font-medium text-xs">Data Classification</h3>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {DATA_CLASS_OPTIONS.map((opt) => {
-                      const active = dataClassDefault === opt.value;
-                      return (
-                        <Badge
-                          key={opt.value}
-                          variant={active ? "default" : "outline"}
-                          className={`cursor-pointer text-[11px] toggle-elevate ${active ? "toggle-elevated" : ""}`}
-                          onClick={() => setDataClassDefault(opt.value)}
-                          data-testid={`option-dataclass-${opt.value}`}
-                        >
-                          {active && <Check className="h-2.5 w-2.5 mr-0.5" />}
-                          {opt.label}
-                        </Badge>
-                      );
-                    })}
-                  </div>
-                </div>
+                <Card data-testid="card-config-departments">
+                  <CardContent className="p-5 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <div className="h-7 w-7 rounded-md flex items-center justify-center shrink-0 bg-violet-500/15 text-violet-500">
+                        <Building2 className="h-3.5 w-3.5" />
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-sm">Departments</h3>
+                        <p className="text-[11px] text-muted-foreground">Select departments that will use AI agents</p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {selected.departments.map((dept) => {
+                        const active = chosenDepartments.includes(dept);
+                        return (
+                          <Badge
+                            key={dept}
+                            variant={active ? "default" : "outline"}
+                            className={`cursor-pointer toggle-elevate ${active ? "toggle-elevated" : ""}`}
+                            onClick={() => toggleItem(chosenDepartments, dept, setChosenDepartments)}
+                            data-testid={`badge-department-${dept.replace(/[\s\/&]/g, "-").toLowerCase()}`}
+                          >
+                            {active && <Check className="h-3 w-3 mr-1" />}
+                            {dept}
+                          </Badge>
+                        );
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card data-testid="card-config-jurisdictions">
+                  <CardContent className="p-5 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <div className="h-7 w-7 rounded-md flex items-center justify-center shrink-0 bg-blue-500/15 text-blue-500">
+                        <Globe className="h-3.5 w-3.5" />
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-sm">Jurisdictions</h3>
+                        <p className="text-[11px] text-muted-foreground">Determines which regulatory frameworks apply</p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {selected.jurisdictions.map((j) => {
+                        const active = chosenJurisdictions.includes(j);
+                        return (
+                          <Badge
+                            key={j}
+                            variant={active ? "default" : "outline"}
+                            className={`cursor-pointer toggle-elevate ${active ? "toggle-elevated" : ""}`}
+                            onClick={() => toggleItem(chosenJurisdictions, j, setChosenJurisdictions)}
+                            data-testid={`badge-jurisdiction-${j.toLowerCase()}`}
+                          >
+                            {active && <Check className="h-3 w-3 mr-1" />}
+                            {j}
+                          </Badge>
+                        );
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card data-testid="card-config-data-classification">
+                  <CardContent className="p-5 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <div className="h-7 w-7 rounded-md flex items-center justify-center shrink-0 bg-red-500/15 text-red-500">
+                        <Lock className="h-3.5 w-3.5" />
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-sm">Data Classification Default</h3>
+                        <p className="text-[11px] text-muted-foreground">Default classification for new data assets and agent outputs</p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {DATA_CLASS_OPTIONS.map((opt) => {
+                        const active = dataClassDefault === opt.value;
+                        return (
+                          <Badge
+                            key={opt.value}
+                            variant={active ? "default" : "outline"}
+                            className={`cursor-pointer toggle-elevate ${active ? "toggle-elevated" : ""}`}
+                            onClick={() => setDataClassDefault(opt.value)}
+                            data-testid={`option-dataclass-${opt.value}`}
+                          >
+                            {active && <Check className="h-3 w-3 mr-1" />}
+                            {opt.label}
+                          </Badge>
+                        );
+                      })}
+                    </div>
+                    {dataClassDefault && (
+                      <p className="text-[11px] text-muted-foreground">
+                        {DATA_CLASS_OPTIONS.find((o) => o.value === dataClassDefault)?.description}
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card className="lg:col-span-2" data-testid="card-config-integrations">
+                  <CardContent className="p-5 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <div className="h-7 w-7 rounded-md flex items-center justify-center shrink-0 bg-orange-500/15 text-orange-500">
+                        <Server className="h-3.5 w-3.5" />
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-sm">Integration Landscape</h3>
+                        <p className="text-[11px] text-muted-foreground">Select the core systems your organization uses</p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      {Object.entries(integrationCategories).map(([category, systems]) => (
+                        <div key={category} className="space-y-1.5">
+                          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">{category}</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {systems.map((sys) => {
+                              const active = chosenIntegrations.includes(sys.id);
+                              return (
+                                <Badge
+                                  key={sys.id}
+                                  variant={active ? "default" : "outline"}
+                                  className={`cursor-pointer toggle-elevate ${active ? "toggle-elevated" : ""}`}
+                                  onClick={() => toggleItem(chosenIntegrations, sys.id, setChosenIntegrations)}
+                                  data-testid={`badge-integration-${sys.id}`}
+                                >
+                                  {active && <Check className="h-3 w-3 mr-1" />}
+                                  {sys.name}
+                                </Badge>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
               </div>
 
               <div className="flex items-center justify-center gap-3">
@@ -342,7 +382,7 @@ export function IndustryWorkspaceSelector() {
                   Back
                 </Button>
                 <Button onClick={handleContinueToReview} data-testid="button-continue-to-review">
-                  Review
+                  Review Configuration
                   <ArrowRight className="h-4 w-4 ml-1" />
                 </Button>
               </div>
