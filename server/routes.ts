@@ -11313,7 +11313,7 @@ Given a regulation, generate a JSON object with a "policies" array. Each policy 
 - "enforcementPoint": where the policy is checked (e.g., "pre_deployment", "runtime", "data_ingestion", "model_training", "api_gateway")
 - "evidenceRequired": array of evidence artifacts needed (e.g., ["risk_assessment_report", "audit_log", "consent_records"])
 
-Generate comprehensive policies covering all major articles and sections of the regulation — typically 6-12 policies depending on the regulation's scope and complexity. Cover every key requirement that impacts AI agent operations. Use real regulatory article references and terminology. Make the policy code realistic and executable.`
+IMPORTANT: You MUST generate a MINIMUM of 8 policies, and up to 12 for complex regulations. Do NOT generate fewer than 8. Cover all major articles, sections, and requirements of the regulation that impact AI agent operations. Each policy should address a distinct article or requirement. Use real regulatory article references and terminology. Make the policy code realistic and executable. Alternate between OPA Rego and Cedar policy languages across the policies.`
           },
           {
             role: "user",
@@ -11323,9 +11323,9 @@ Regulation: ${regulationName}
 Description: ${regulationDescription}
 Jurisdiction: ${jurisdiction || "Global"}
 Industry: ${industry || "cross_industry"}
-${articleRef ? `Focus on: ${articleRef}` : "Cover key requirements"}
+${articleRef ? `Focus on: ${articleRef}` : "Cover ALL key requirements across the full regulation"}
 
-Return ONLY a valid JSON object with a "policies" array.`
+You MUST return at least 8 policies. Return ONLY a valid JSON object with a "policies" array.`
           }
         ],
         response_format: { type: "json_object" },
