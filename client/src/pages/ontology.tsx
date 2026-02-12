@@ -569,6 +569,130 @@ export default function OntologyExplorer() {
               </Card>
 
               {(() => {
+                const appliedEnrichment = isApplied(selectedConcept.id) ? getEnrichment(selectedConcept.id) : null;
+                if (!appliedEnrichment) return null;
+                return (
+                  <>
+                    {appliedEnrichment.agentUseCases && appliedEnrichment.agentUseCases.length > 0 && (
+                      <Card data-testid="card-applied-agent-use-cases">
+                        <CardHeader className="pb-3">
+                          <CardTitle className="text-sm flex items-center gap-2">
+                            <Lightbulb className="w-4 h-4" />
+                            Agent Use Cases
+                            <Badge variant="secondary" className="text-[10px]"><Sparkles className="w-2.5 h-2.5 mr-1" />AI</Badge>
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <ul className="space-y-2">
+                            {appliedEnrichment.agentUseCases.map((uc, i) => (
+                              <li key={i} className="text-xs text-muted-foreground flex items-start gap-2" data-testid={`text-applied-use-case-${i}`}>
+                                <Lightbulb className="w-3 h-3 mt-0.5 shrink-0 text-yellow-500" />
+                                <span>{uc}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    {appliedEnrichment.regulatoryRelevance && (
+                      <Card data-testid="card-applied-regulatory-relevance">
+                        <CardHeader className="pb-3">
+                          <CardTitle className="text-sm flex items-center gap-2">
+                            <Shield className="w-4 h-4" />
+                            Regulatory Relevance
+                            <Badge variant="secondary" className="text-[10px]"><Sparkles className="w-2.5 h-2.5 mr-1" />AI</Badge>
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <p className="text-xs text-muted-foreground" data-testid="text-applied-regulatory-relevance">
+                            {appliedEnrichment.regulatoryRelevance}
+                          </p>
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    {appliedEnrichment.riskFactors && appliedEnrichment.riskFactors.length > 0 && (
+                      <Card data-testid="card-applied-risk-factors">
+                        <CardHeader className="pb-3">
+                          <CardTitle className="text-sm flex items-center gap-2">
+                            <AlertTriangle className="w-4 h-4" />
+                            Risk Factors
+                            <Badge variant="secondary" className="text-[10px]"><Sparkles className="w-2.5 h-2.5 mr-1" />AI</Badge>
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <ul className="space-y-1.5">
+                            {appliedEnrichment.riskFactors.map((rf, i) => (
+                              <li key={i} className="text-xs text-muted-foreground flex items-start gap-2" data-testid={`text-applied-risk-factor-${i}`}>
+                                <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0 text-destructive" />
+                                <span>{rf}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    {appliedEnrichment.relatedStandards && appliedEnrichment.relatedStandards.length > 0 && (
+                      <Card data-testid="card-applied-related-standards">
+                        <CardHeader className="pb-3">
+                          <CardTitle className="text-sm flex items-center gap-2">
+                            <BookOpen className="w-4 h-4" />
+                            Related Standards
+                            <Badge variant="secondary" className="text-[10px]"><Sparkles className="w-2.5 h-2.5 mr-1" />AI</Badge>
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="flex flex-wrap gap-1.5">
+                            {appliedEnrichment.relatedStandards.map((std, i) => (
+                              <Badge key={i} variant="outline" className="text-xs" data-testid={`badge-applied-standard-${i}`}>
+                                {std}
+                              </Badge>
+                            ))}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    {appliedEnrichment.dataHandlingConsiderations && (
+                      <Card data-testid="card-applied-data-handling">
+                        <CardHeader className="pb-3">
+                          <CardTitle className="text-sm flex items-center gap-2">
+                            <Shield className="w-4 h-4" />
+                            Data Handling Considerations
+                            <Badge variant="secondary" className="text-[10px]"><Sparkles className="w-2.5 h-2.5 mr-1" />AI</Badge>
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <p className="text-xs text-muted-foreground" data-testid="text-applied-data-handling">
+                            {appliedEnrichment.dataHandlingConsiderations}
+                          </p>
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    {appliedEnrichment.implementationGuidance && (
+                      <Card data-testid="card-applied-implementation-guidance">
+                        <CardHeader className="pb-3">
+                          <CardTitle className="text-sm flex items-center gap-2">
+                            <GitBranch className="w-4 h-4" />
+                            Implementation Guidance
+                            <Badge variant="secondary" className="text-[10px]"><Sparkles className="w-2.5 h-2.5 mr-1" />AI</Badge>
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <p className="text-xs text-muted-foreground" data-testid="text-applied-implementation-guidance">
+                            {appliedEnrichment.implementationGuidance}
+                          </p>
+                        </CardContent>
+                      </Card>
+                    )}
+                  </>
+                );
+              })()}
+
+              {(() => {
                 const enrichment = getEnrichment(selectedConcept.id);
                 const applied = isApplied(selectedConcept.id);
                 const hasLocal = hasLocalEnrichment(selectedConcept.id);
