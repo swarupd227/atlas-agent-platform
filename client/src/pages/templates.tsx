@@ -251,9 +251,9 @@ export default function Templates() {
     <div className="flex flex-col gap-6 p-6" data-testid="page-templates">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-page-title">Golden Repository</h1>
+          <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-page-title">Golden Template Gallery</h1>
           <p className="text-sm text-muted-foreground">
-            {industry && industry.id !== "custom" ? `Compliance-ready golden configurations for ${industry.label}` : "Industry-specific, compliance-ready golden agent configurations"}
+            {industry && industry.id !== "custom" ? `Compliance-ready golden configurations tailored for ${industry.label}` : "Compliance-ready golden agent configurations across all industries"}
           </p>
         </div>
         <div className="flex items-center gap-2">

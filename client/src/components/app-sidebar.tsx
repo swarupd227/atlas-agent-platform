@@ -53,7 +53,7 @@ export function AppSidebar() {
     { title: "Outcome Builder", url: "/outcomes/discover", icon: Sparkles },
     { title: "Outcomes", url: "/outcomes", icon: Target },
     { title: "Agents", url: "/agents", icon: Bot },
-    { title: "Golden Repository", url: "/templates", icon: Library },
+    { title: "Golden Template Gallery", url: "/templates", icon: Library },
     { title: "Blueprints", url: "/blueprints", icon: PenTool },
     { title: "Evaluations", url: "/evals", icon: FlaskConical },
     { title: "Deployments", url: "/deployments", icon: Rocket },
