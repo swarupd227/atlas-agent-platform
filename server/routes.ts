@@ -11266,7 +11266,11 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
   app.patch("/api/regulatory-changes/:id", async (req, res) => {
     try {
       const data = insertRegulatoryChangeSchema.partial().parse(req.body);
-      const updated = await storage.updateRegulatoryChange(req.params.id, data);
+      const updateData: any = { ...data };
+      if (data.reviewedBy) {
+        updateData.reviewedAt = new Date();
+      }
+      const updated = await storage.updateRegulatoryChange(req.params.id, updateData);
       if (!updated) return res.status(404).json({ message: "Not found" });
       res.json(updated);
     } catch (e) { handleZodError(res, e); }

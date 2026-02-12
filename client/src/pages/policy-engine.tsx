@@ -1,0 +1,881 @@
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { useState, useMemo } from "react";
+import {
+  Shield,
+  Search,
+  FileCode,
+  AlertTriangle,
+  CheckCircle,
+  Filter,
+  Globe,
+  BookOpen,
+  Layers,
+  Play,
+  Code,
+  Scale,
+  Gavel,
+  Building2,
+  ShieldCheck,
+  Zap,
+  CircleDot,
+  XCircle,
+  RefreshCw,
+  Copy,
+  BarChart3,
+  TrendingUp,
+} from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Progress } from "@/components/ui/progress";
+import { Switch } from "@/components/ui/switch";
+import { StatCard } from "@/components/stat-card";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import type {
+  Regulation,
+  RegulatoryPolicy,
+  ComplianceControl,
+  RegulatoryChange,
+} from "@shared/schema";
+
+function severityColor(severity: string): string {
+  switch (severity) {
+    case "critical": return "text-red-600 dark:text-red-400";
+    case "high": return "text-orange-600 dark:text-orange-400";
+    case "medium": return "text-yellow-600 dark:text-yellow-400";
+    case "low": return "text-green-600 dark:text-green-400";
+    default: return "text-muted-foreground";
+  }
+}
+
+function severityBadge(severity: string) {
+  const variants: Record<string, "destructive" | "default" | "secondary" | "outline"> = {
+    critical: "destructive",
+    high: "default",
+    medium: "secondary",
+    low: "outline",
+  };
+  return <Badge variant={variants[severity] || "outline"} className="text-[10px]">{severity}</Badge>;
+}
+
+function actionBadge(action: string) {
+  const colors: Record<string, string> = {
+    block: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
+    warn: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300",
+    escalate: "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300",
+    log: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
+  };
+  return (
+    <Badge variant="outline" className={`text-[10px] border-0 ${colors[action] || ""}`}>
+      {action}
+    </Badge>
+  );
+}
+
+function jurisdictionBadge(jurisdiction: string) {
+  return (
+    <Badge variant="outline" className="text-[10px] gap-1">
+      <Globe className="w-3 h-3" />
+      {jurisdiction}
+    </Badge>
+  );
+}
+
+function coverageBadge(status: string) {
+  if (status === "full") return <Badge variant="default" className="text-[10px] bg-green-600"><CheckCircle className="w-3 h-3 mr-1" />Full</Badge>;
+  if (status === "partial") return <Badge variant="secondary" className="text-[10px]"><AlertTriangle className="w-3 h-3 mr-1" />Partial</Badge>;
+  return <Badge variant="destructive" className="text-[10px]"><XCircle className="w-3 h-3 mr-1" />Gap</Badge>;
+}
+
+function changeTypeBadge(type: string) {
+  const config: Record<string, { icon: typeof AlertTriangle; label: string }> = {
+    enforcement_phase: { icon: Gavel, label: "Enforcement" },
+    amendment: { icon: FileCode, label: "Amendment" },
+    guidance_update: { icon: BookOpen, label: "Guidance" },
+    proposed_rule: { icon: Scale, label: "Proposed" },
+    new_regulation: { icon: Shield, label: "New" },
+  };
+  const c = config[type] || { icon: FileCode, label: type };
+  const Icon = c.icon;
+  return (
+    <Badge variant="outline" className="text-[10px] gap-1">
+      <Icon className="w-3 h-3" />
+      {c.label}
+    </Badge>
+  );
+}
+
+function impactBadge(level: string) {
+  if (level === "critical") return <Badge variant="destructive" className="text-[10px]">Critical</Badge>;
+  if (level === "high") return <Badge variant="default" className="text-[10px]">High</Badge>;
+  if (level === "medium") return <Badge variant="secondary" className="text-[10px]">Medium</Badge>;
+  return <Badge variant="outline" className="text-[10px]">Low</Badge>;
+}
+
+function statusBadge(status: string) {
+  const config: Record<string, { variant: "default" | "secondary" | "outline" | "destructive"; label: string }> = {
+    pending_review: { variant: "secondary", label: "Pending Review" },
+    in_progress: { variant: "default", label: "In Progress" },
+    completed: { variant: "outline", label: "Completed" },
+    dismissed: { variant: "outline", label: "Dismissed" },
+  };
+  const c = config[status] || { variant: "outline", label: status };
+  return <Badge variant={c.variant} className="text-[10px]">{c.label}</Badge>;
+}
+
+export default function PolicyEngine() {
+  const { toast } = useToast();
+  const [activeTab, setActiveTab] = useState("regulations");
+  const [searchFilter, setSearchFilter] = useState("");
+  const [jurisdictionFilter, setJurisdictionFilter] = useState("all");
+  const [industryFilter, setIndustryFilter] = useState("all");
+  const [selectedRegulation, setSelectedRegulation] = useState<Regulation | null>(null);
+  const [selectedPolicy, setSelectedPolicy] = useState<RegulatoryPolicy | null>(null);
+  const [changeStatusFilter, setChangeStatusFilter] = useState("all");
+
+  const { data: regulations = [], isLoading: regsLoading } = useQuery<Regulation[]>({
+    queryKey: ["/api/regulations"],
+  });
+
+  const { data: allPolicies = [], isLoading: policiesLoading } = useQuery<RegulatoryPolicy[]>({
+    queryKey: ["/api/regulatory-policies"],
+  });
+
+  const { data: allControls = [], isLoading: controlsLoading } = useQuery<ComplianceControl[]>({
+    queryKey: ["/api/compliance-controls"],
+  });
+
+  const { data: allChanges = [], isLoading: changesLoading } = useQuery<RegulatoryChange[]>({
+    queryKey: ["/api/regulatory-changes"],
+  });
+
+  const togglePolicyMutation = useMutation({
+    mutationFn: async ({ id, enabled }: { id: string; enabled: boolean }) => {
+      await apiRequest("PATCH", `/api/regulatory-policies/${id}`, { enabled });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/regulatory-policies"] });
+      toast({ title: "Policy updated" });
+    },
+  });
+
+  const updateChangeMutation = useMutation({
+    mutationFn: async ({ id, status }: { id: string; status: string }) => {
+      await apiRequest("PATCH", `/api/regulatory-changes/${id}`, { status, reviewedBy: "current_user" });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/regulatory-changes"] });
+      toast({ title: "Change status updated" });
+    },
+  });
+
+  const filteredRegulations = useMemo(() => {
+    return regulations.filter((r) => {
+      if (searchFilter && !r.name.toLowerCase().includes(searchFilter.toLowerCase()) && !r.fullName.toLowerCase().includes(searchFilter.toLowerCase())) return false;
+      if (jurisdictionFilter !== "all" && r.jurisdiction !== jurisdictionFilter) return false;
+      if (industryFilter !== "all" && r.industry !== industryFilter) return false;
+      return true;
+    });
+  }, [regulations, searchFilter, jurisdictionFilter, industryFilter]);
+
+  const filteredPolicies = useMemo(() => {
+    let policies = allPolicies;
+    if (selectedRegulation) {
+      policies = policies.filter((p) => p.regulationId === selectedRegulation.id);
+    }
+    if (searchFilter) {
+      policies = policies.filter((p) =>
+        p.title.toLowerCase().includes(searchFilter.toLowerCase()) ||
+        p.articleRef.toLowerCase().includes(searchFilter.toLowerCase())
+      );
+    }
+    return policies;
+  }, [allPolicies, selectedRegulation, searchFilter]);
+
+  const filteredControls = useMemo(() => {
+    let controls = allControls;
+    if (selectedRegulation) {
+      controls = controls.filter((c) => c.regulationId === selectedRegulation.id);
+    }
+    return controls;
+  }, [allControls, selectedRegulation]);
+
+  const filteredChanges = useMemo(() => {
+    let changes = allChanges;
+    if (selectedRegulation) {
+      changes = changes.filter((c) => c.regulationId === selectedRegulation.id);
+    }
+    if (changeStatusFilter !== "all") {
+      changes = changes.filter((c) => c.status === changeStatusFilter);
+    }
+    return changes;
+  }, [allChanges, selectedRegulation, changeStatusFilter]);
+
+  const stats = useMemo(() => {
+    const totalPolicies = allPolicies.length;
+    const enabledPolicies = allPolicies.filter((p) => p.enabled).length;
+    const criticalPolicies = allPolicies.filter((p) => p.severity === "critical").length;
+    const fullCoverage = allControls.filter((c) => c.coverageStatus === "full").length;
+    const totalControls = allControls.length;
+    const coveragePercent = totalControls > 0 ? Math.round((fullCoverage / totalControls) * 100) : 0;
+    const pendingChanges = allChanges.filter((c) => c.status === "pending_review").length;
+    return { totalPolicies, enabledPolicies, criticalPolicies, fullCoverage, totalControls, coveragePercent, pendingChanges };
+  }, [allPolicies, allControls, allChanges]);
+
+  const isLoading = regsLoading || policiesLoading || controlsLoading || changesLoading;
+
+  if (isLoading) {
+    return (
+      <div className="p-6 space-y-4">
+        <Skeleton className="h-8 w-64" />
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-24" />
+          ))}
+        </div>
+        <Skeleton className="h-96" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6 space-y-4" data-testid="page-policy-engine">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2" data-testid="text-page-title">
+            <Gavel className="w-6 h-6" />
+            Regulatory Policy-as-Code Engine
+          </h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Encode regulatory requirements as machine-executable policies with OPA Rego and Cedar
+          </p>
+        </div>
+        {selectedRegulation && (
+          <Button variant="outline" size="sm" onClick={() => setSelectedRegulation(null)} data-testid="button-clear-filter">
+            <XCircle className="w-3.5 h-3.5 mr-1.5" />
+            Clear: {selectedRegulation.name}
+          </Button>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatCard
+          title="Total Regulations"
+          value={regulations.length}
+          icon={Scale}
+          subtitle={`${regulations.filter((r) => r.enforcementStatus === "active").length} active`}
+        />
+        <StatCard
+          title="Encoded Policies"
+          value={stats.totalPolicies}
+          icon={FileCode}
+          subtitle={`${stats.enabledPolicies} enabled, ${stats.criticalPolicies} critical`}
+        />
+        <StatCard
+          title="Compliance Coverage"
+          value={`${stats.coveragePercent}%`}
+          icon={ShieldCheck}
+          subtitle={`${stats.fullCoverage}/${stats.totalControls} controls fully mapped`}
+        />
+        <StatCard
+          title="Pending Changes"
+          value={stats.pendingChanges}
+          icon={AlertTriangle}
+          subtitle={`${allChanges.length} total tracked`}
+        />
+      </div>
+
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList className="flex flex-wrap">
+          <TabsTrigger value="regulations" data-testid="tab-regulations">
+            <Scale className="w-3.5 h-3.5 mr-1.5" />
+            Regulation Library
+          </TabsTrigger>
+          <TabsTrigger value="policies" data-testid="tab-policies-code">
+            <Code className="w-3.5 h-3.5 mr-1.5" />
+            Policy Editor
+          </TabsTrigger>
+          <TabsTrigger value="compliance" data-testid="tab-compliance-matrix">
+            <Layers className="w-3.5 h-3.5 mr-1.5" />
+            Compliance Matrix
+          </TabsTrigger>
+          <TabsTrigger value="changes" data-testid="tab-change-tracker">
+            <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+            Change Tracker
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="regulations" className="space-y-4">
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="relative flex-1 min-w-[200px] max-w-sm">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder="Search regulations..."
+                value={searchFilter}
+                onChange={(e) => setSearchFilter(e.target.value)}
+                className="pl-9"
+                data-testid="input-search-regulations"
+              />
+            </div>
+            <Select value={jurisdictionFilter} onValueChange={setJurisdictionFilter}>
+              <SelectTrigger className="w-[140px]" data-testid="select-jurisdiction">
+                <Globe className="w-3.5 h-3.5 mr-1.5 text-muted-foreground shrink-0" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Jurisdictions</SelectItem>
+                <SelectItem value="EU">EU</SelectItem>
+                <SelectItem value="US">US</SelectItem>
+                <SelectItem value="Global">Global</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={industryFilter} onValueChange={setIndustryFilter}>
+              <SelectTrigger className="w-[160px]" data-testid="select-industry">
+                <Building2 className="w-3.5 h-3.5 mr-1.5 text-muted-foreground shrink-0" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Industries</SelectItem>
+                <SelectItem value="cross_industry">Cross-Industry</SelectItem>
+                <SelectItem value="healthcare">Healthcare</SelectItem>
+                <SelectItem value="financial_services">Financial Services</SelectItem>
+                <SelectItem value="manufacturing">Manufacturing</SelectItem>
+                <SelectItem value="retail">Retail</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {filteredRegulations.map((reg) => {
+              const regPolicies = allPolicies.filter((p) => p.regulationId === reg.id);
+              const regControls = allControls.filter((c) => c.regulationId === reg.id);
+              const regChanges = allChanges.filter((c) => c.regulationId === reg.id);
+              const isSelected = selectedRegulation?.id === reg.id;
+              return (
+                <Card
+                  key={reg.id}
+                  className={`cursor-pointer hover-elevate ${isSelected ? "ring-2 ring-primary" : ""}`}
+                  onClick={() => {
+                    setSelectedRegulation(isSelected ? null : reg);
+                    if (!isSelected) setActiveTab("policies");
+                  }}
+                  data-testid={`card-regulation-${reg.id}`}
+                >
+                  <CardHeader className="pb-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <CardTitle className="text-sm font-semibold leading-tight">{reg.name}</CardTitle>
+                      <Badge
+                        variant={reg.enforcementStatus === "active" ? "default" : "secondary"}
+                        className="text-[10px] shrink-0"
+                      >
+                        {reg.enforcementStatus}
+                      </Badge>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground leading-snug line-clamp-2">{reg.fullName}</p>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    <p className="text-xs text-muted-foreground line-clamp-2">{reg.description}</p>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {jurisdictionBadge(reg.jurisdiction)}
+                      <Badge variant="outline" className="text-[10px]">
+                        <Building2 className="w-3 h-3 mr-1" />
+                        {reg.industry.replace(/_/g, " ")}
+                      </Badge>
+                      <Badge variant="outline" className="text-[10px]">
+                        v{reg.version}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center justify-between pt-1 border-t text-[11px] text-muted-foreground">
+                      <div className="flex items-center gap-3">
+                        <span className="flex items-center gap-1">
+                          <FileCode className="w-3 h-3" />
+                          {regPolicies.length} policies
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <Layers className="w-3 h-3" />
+                          {regControls.length} controls
+                        </span>
+                      </div>
+                      {regChanges.length > 0 && (
+                        <Badge variant="secondary" className="text-[10px]">
+                          {regChanges.filter((c) => c.status === "pending_review").length} changes
+                        </Badge>
+                      )}
+                    </div>
+                    {reg.modulesAffected && (reg.modulesAffected as string[]).length > 0 && (
+                      <div className="flex items-center gap-1 flex-wrap">
+                        {(reg.modulesAffected as string[]).slice(0, 4).map((m) => (
+                          <Badge key={m} variant="outline" className="text-[9px] px-1.5 py-0">{m}</Badge>
+                        ))}
+                        {(reg.modulesAffected as string[]).length > 4 && (
+                          <span className="text-[10px] text-muted-foreground">+{(reg.modulesAffected as string[]).length - 4}</span>
+                        )}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+
+          {filteredRegulations.length === 0 && (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                <Scale className="w-10 h-10 mb-2 opacity-40" />
+                <p className="text-sm">No regulations match your filters</p>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="policies" className="space-y-4">
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="relative flex-1 min-w-[200px] max-w-sm">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder="Search policies by title or article..."
+                value={searchFilter}
+                onChange={(e) => setSearchFilter(e.target.value)}
+                className="pl-9"
+                data-testid="input-search-policies"
+              />
+            </div>
+            {selectedRegulation && (
+              <Badge variant="secondary" className="text-xs">
+                Filtered: {selectedRegulation.name}
+              </Badge>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div className="lg:col-span-1 space-y-2">
+              <h3 className="text-sm font-medium text-muted-foreground px-1">
+                Policies ({filteredPolicies.length})
+              </h3>
+              <div className="space-y-1.5 max-h-[600px] overflow-y-auto pr-1">
+                {filteredPolicies.map((policy) => {
+                  const reg = regulations.find((r) => r.id === policy.regulationId);
+                  const isActive = selectedPolicy?.id === policy.id;
+                  return (
+                    <Card
+                      key={policy.id}
+                      className={`cursor-pointer hover-elevate ${isActive ? "ring-2 ring-primary" : ""}`}
+                      onClick={() => setSelectedPolicy(policy)}
+                      data-testid={`card-policy-${policy.id}`}
+                    >
+                      <CardContent className="p-3 space-y-1.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-semibold truncate">{policy.title}</p>
+                            <p className="text-[10px] text-muted-foreground">{policy.articleRef}</p>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            {severityBadge(policy.severity)}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {reg && (
+                            <Badge variant="outline" className="text-[9px]">{reg.name}</Badge>
+                          )}
+                          <Badge variant="outline" className="text-[9px] gap-0.5">
+                            <Code className="w-2.5 h-2.5" />
+                            {policy.policyLanguage}
+                          </Badge>
+                          {actionBadge(policy.violationAction)}
+                          {!policy.enabled && (
+                            <Badge variant="outline" className="text-[9px] opacity-50">disabled</Badge>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+                {filteredPolicies.length === 0 && (
+                  <div className="text-center py-8 text-muted-foreground text-sm">
+                    <FileCode className="w-8 h-8 mx-auto mb-2 opacity-40" />
+                    <p>No policies found</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="lg:col-span-2">
+              {selectedPolicy ? (
+                <Card data-testid="panel-policy-detail">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-start justify-between gap-2 flex-wrap">
+                      <div className="min-w-0 flex-1">
+                        <CardTitle className="text-base">{selectedPolicy.title}</CardTitle>
+                        <p className="text-xs text-muted-foreground mt-0.5">{selectedPolicy.articleRef}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs text-muted-foreground">
+                                {selectedPolicy.enabled ? "Enabled" : "Disabled"}
+                              </span>
+                              <Switch
+                                checked={selectedPolicy.enabled ?? false}
+                                onCheckedChange={(checked) => {
+                                  togglePolicyMutation.mutate({ id: selectedPolicy.id, enabled: checked });
+                                  setSelectedPolicy({ ...selectedPolicy, enabled: checked });
+                                }}
+                                data-testid="switch-policy-enabled"
+                              />
+                            </div>
+                          </TooltipTrigger>
+                          <TooltipContent>Toggle policy enforcement</TooltipContent>
+                        </Tooltip>
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div>
+                      <h4 className="text-xs font-medium text-muted-foreground mb-1">Natural Language Rule</h4>
+                      <p className="text-sm leading-relaxed bg-muted/50 rounded-md p-3">
+                        {selectedPolicy.naturalLanguage}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {severityBadge(selectedPolicy.severity)}
+                      {actionBadge(selectedPolicy.violationAction)}
+                      <Badge variant="outline" className="text-[10px] gap-1">
+                        <Code className="w-3 h-3" />
+                        {selectedPolicy.policyLanguage.toUpperCase()}
+                      </Badge>
+                      <Badge variant="outline" className="text-[10px] gap-1">
+                        <Zap className="w-3 h-3" />
+                        {selectedPolicy.enforcementPoint}
+                      </Badge>
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <h4 className="text-xs font-medium text-muted-foreground">
+                          Policy Code ({selectedPolicy.policyLanguage.toUpperCase()})
+                        </h4>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            navigator.clipboard.writeText(selectedPolicy.policyCode);
+                            toast({ title: "Copied to clipboard" });
+                          }}
+                          data-testid="button-copy-code"
+                        >
+                          <Copy className="w-3 h-3 mr-1" />
+                          Copy
+                        </Button>
+                      </div>
+                      <pre className="text-[11px] bg-muted rounded-md p-3 overflow-x-auto max-h-[300px] overflow-y-auto font-mono leading-relaxed" data-testid="code-policy">
+                        {selectedPolicy.policyCode}
+                      </pre>
+                    </div>
+
+                    {selectedPolicy.evidenceRequired && (selectedPolicy.evidenceRequired as string[]).length > 0 && (
+                      <div>
+                        <h4 className="text-xs font-medium text-muted-foreground mb-1.5">Evidence Required</h4>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {(selectedPolicy.evidenceRequired as string[]).map((ev) => (
+                            <Badge key={ev} variant="outline" className="text-[10px]">
+                              <BookOpen className="w-3 h-3 mr-1" />
+                              {ev.replace(/_/g, " ")}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              ) : (
+                <Card>
+                  <CardContent className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+                    <Code className="w-10 h-10 mb-3 opacity-40" />
+                    <p className="text-sm font-medium">Select a policy to view details</p>
+                    <p className="text-xs mt-1">Click any policy from the list to see its code and configuration</p>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="compliance" className="space-y-4">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-medium">Compliance Control Matrix</h3>
+              {selectedRegulation && (
+                <Badge variant="secondary" className="text-xs">
+                  {selectedRegulation.name}
+                </Badge>
+              )}
+            </div>
+            <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+              <span className="flex items-center gap-1">
+                <CheckCircle className="w-3 h-3 text-green-500" />
+                Full: {filteredControls.filter((c) => c.coverageStatus === "full").length}
+              </span>
+              <span className="flex items-center gap-1">
+                <AlertTriangle className="w-3 h-3 text-yellow-500" />
+                Partial: {filteredControls.filter((c) => c.coverageStatus === "partial").length}
+              </span>
+              <span className="flex items-center gap-1">
+                <XCircle className="w-3 h-3 text-red-500" />
+                Gap: {filteredControls.filter((c) => c.coverageStatus === "gap").length}
+              </span>
+            </div>
+          </div>
+
+          {filteredControls.length > 0 && (
+            <div className="mb-3">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xs text-muted-foreground">Overall Coverage</span>
+                <span className="text-xs font-medium">
+                  {Math.round((filteredControls.filter((c) => c.coverageStatus === "full").length / filteredControls.length) * 100)}%
+                </span>
+              </div>
+              <Progress
+                value={(filteredControls.filter((c) => c.coverageStatus === "full").length / filteredControls.length) * 100}
+                className="h-2"
+              />
+            </div>
+          )}
+
+          <Card>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-xs w-[100px]">Ref</TableHead>
+                    <TableHead className="text-xs">Requirement</TableHead>
+                    <TableHead className="text-xs">ALMP Control</TableHead>
+                    <TableHead className="text-xs w-[110px]">Module</TableHead>
+                    <TableHead className="text-xs">Evidence Artifact</TableHead>
+                    <TableHead className="text-xs w-[90px]">Coverage</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredControls.map((control) => {
+                    const reg = regulations.find((r) => r.id === control.regulationId);
+                    return (
+                      <TableRow key={control.id} data-testid={`row-control-${control.id}`}>
+                        <TableCell className="text-xs font-mono">
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="cursor-help">{control.requirementRef}</span>
+                            </TooltipTrigger>
+                            <TooltipContent>{reg?.name}</TooltipContent>
+                          </Tooltip>
+                        </TableCell>
+                        <TableCell>
+                          <p className="text-xs font-medium">{control.requirementTitle}</p>
+                          {control.gapDescription && (
+                            <p className="text-[10px] text-muted-foreground mt-0.5">{control.gapDescription}</p>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-xs">{control.almpControl}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="text-[10px]">{control.controlModule}</Badge>
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">{control.evidenceArtifact}</TableCell>
+                        <TableCell>{coverageBadge(control.coverageStatus)}</TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+              {filteredControls.length === 0 && (
+                <div className="text-center py-12 text-muted-foreground">
+                  <Layers className="w-8 h-8 mx-auto mb-2 opacity-40" />
+                  <p className="text-sm">No compliance controls found</p>
+                  <p className="text-xs mt-1">Select a regulation to view its control matrix</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {filteredControls.some((c) => c.customerActionRequired) && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-yellow-500" />
+                  Customer Actions Required
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {filteredControls
+                  .filter((c) => c.customerActionRequired)
+                  .map((c) => (
+                    <div key={c.id} className="flex items-start gap-2 p-2 rounded-md bg-muted/50">
+                      <CircleDot className="w-3.5 h-3.5 text-yellow-500 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-xs font-medium">{c.requirementRef} — {c.requirementTitle}</p>
+                        <p className="text-[11px] text-muted-foreground">{c.customerActionRequired}</p>
+                      </div>
+                    </div>
+                  ))}
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="changes" className="space-y-4">
+          <div className="flex items-center gap-3 flex-wrap">
+            <h3 className="text-sm font-medium">Regulatory Change Tracker</h3>
+            {selectedRegulation && (
+              <Badge variant="secondary" className="text-xs">
+                {selectedRegulation.name}
+              </Badge>
+            )}
+            <div className="flex-1" />
+            <Select value={changeStatusFilter} onValueChange={setChangeStatusFilter}>
+              <SelectTrigger className="w-[160px]" data-testid="select-change-status">
+                <Filter className="w-3.5 h-3.5 mr-1.5 text-muted-foreground shrink-0" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Statuses</SelectItem>
+                <SelectItem value="pending_review">Pending Review</SelectItem>
+                <SelectItem value="in_progress">In Progress</SelectItem>
+                <SelectItem value="completed">Completed</SelectItem>
+                <SelectItem value="dismissed">Dismissed</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-3">
+            {filteredChanges.map((change) => {
+              const reg = regulations.find((r) => r.id === change.regulationId);
+              const recs = change.recommendedUpdates as { actions?: string[] } | null;
+              return (
+                <Card key={change.id} data-testid={`card-change-${change.id}`}>
+                  <CardContent className="p-4 space-y-3">
+                    <div className="flex items-start justify-between gap-3 flex-wrap">
+                      <div className="min-w-0 flex-1">
+                        <h4 className="text-sm font-semibold">{change.changeTitle}</h4>
+                        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                          {reg && <Badge variant="outline" className="text-[10px]">{reg.name}</Badge>}
+                          {changeTypeBadge(change.changeType)}
+                          {impactBadge(change.impactLevel)}
+                          {statusBadge(change.status)}
+                        </div>
+                      </div>
+                      {change.effectiveDate && (
+                        <div className="text-right shrink-0">
+                          <p className="text-[10px] text-muted-foreground">Effective</p>
+                          <p className="text-xs font-medium">
+                            {new Date(change.effectiveDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      {change.changeDescription}
+                    </p>
+
+                    <div className="flex items-center gap-4 text-[11px] text-muted-foreground">
+                      <span className="flex items-center gap-1">
+                        <Shield className="w-3 h-3" />
+                        {change.affectedAgentCount} agents affected
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <BarChart3 className="w-3 h-3" />
+                        {change.affectedOutcomeCount} outcomes affected
+                      </span>
+                    </div>
+
+                    {recs?.actions && recs.actions.length > 0 && (
+                      <div className="bg-muted/50 rounded-md p-3">
+                        <h5 className="text-[11px] font-medium mb-1.5 flex items-center gap-1">
+                          <TrendingUp className="w-3 h-3" />
+                          Recommended Actions
+                        </h5>
+                        <ul className="space-y-1">
+                          {recs.actions.map((action, i) => (
+                            <li key={i} className="text-[11px] text-muted-foreground flex items-start gap-1.5">
+                              <CircleDot className="w-3 h-3 shrink-0 mt-0.5" />
+                              {action}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {change.status === "pending_review" && (
+                      <div className="flex items-center gap-2 pt-1">
+                        <Button
+                          size="sm"
+                          onClick={() => updateChangeMutation.mutate({ id: change.id, status: "in_progress" })}
+                          data-testid={`button-acknowledge-${change.id}`}
+                        >
+                          <Play className="w-3 h-3 mr-1" />
+                          Acknowledge
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => updateChangeMutation.mutate({ id: change.id, status: "dismissed" })}
+                          data-testid={`button-dismiss-${change.id}`}
+                        >
+                          Dismiss
+                        </Button>
+                      </div>
+                    )}
+                    {change.status === "in_progress" && (
+                      <div className="flex items-center gap-2 pt-1">
+                        <Button
+                          size="sm"
+                          onClick={() => updateChangeMutation.mutate({ id: change.id, status: "completed" })}
+                          data-testid={`button-complete-${change.id}`}
+                        >
+                          <CheckCircle className="w-3 h-3 mr-1" />
+                          Mark Complete
+                        </Button>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+
+          {filteredChanges.length === 0 && (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                <RefreshCw className="w-10 h-10 mb-2 opacity-40" />
+                <p className="text-sm">No regulatory changes match your filters</p>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}

@@ -22,6 +22,7 @@ import {
   Store,
   AppWindow,
   BookOpen,
+  Gavel,
 } from "lucide-react";
 import {
   Sidebar,
@@ -62,6 +63,7 @@ export function AppSidebar() {
     { title: "Ops", url: "/improvements", icon: Wrench },
     { title: "Self-Heal", url: "/improvement-loop", icon: RotateCcw },
     { title: "Governance", url: "/governance", icon: Shield },
+    { title: "Policy Engine", url: "/governance/policy-engine", icon: Gavel },
     { title: "Audit Trail", url: "/audit-trail", icon: ScrollText },
     { title: "Approvals", url: "/approvals", icon: CheckCircle },
     { title: "Approval Gates", url: "/approvals/gates", icon: ShieldQuestion },
@@ -76,6 +78,7 @@ export function AppSidebar() {
     if (url === "/dashboard") return location === "/dashboard";
     if (url === "/outcomes") return location === "/outcomes" || (location.startsWith("/outcomes/") && !location.startsWith("/outcomes/discover"));
     if (url === "/outcomes/discover") return location === "/outcomes/discover";
+    if (url === "/governance") return location === "/governance";
     return location.startsWith(url);
   };
 

@@ -65,6 +65,7 @@ import MarketplaceDetail from "@/pages/marketplace-detail";
 import MarketplacePublishers from "@/pages/marketplace-publishers";
 import McpApps from "@/pages/mcp-apps";
 import OntologyExplorer from "@/pages/ontology";
+import PolicyEngine from "@/pages/policy-engine";
 
 function DashboardRouter() {
   return (
@@ -90,6 +91,7 @@ function DashboardRouter() {
       <Route path="/traces/:id" component={TraceDetail} />
       <Route path="/runtime/runs/:id" component={RunDetail} />
       <Route path="/monitor" component={Monitor} />
+      <Route path="/governance/policy-engine" component={PolicyEngine} />
       <Route path="/governance" component={Governance} />
       <Route path="/audit-trail" component={AuditTrail} />
       <Route path="/approvals/gates" component={ApprovalGates} />
