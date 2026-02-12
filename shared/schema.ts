@@ -391,6 +391,11 @@ export const agentTemplates = pgTable("agent_templates", {
   defaultRiskTier: text("default_risk_tier").default("MEDIUM"),
   defaultAutonomyMode: text("default_autonomy_mode").default("assisted"),
   usageCount: integer("usage_count").default(0),
+  complianceCertifications: text("compliance_certifications").array().default(sql`'{}'::text[]`),
+  deploymentCount: integer("deployment_count").default(0),
+  avgKpiDelivery: integer("avg_kpi_delivery").default(0),
+  estimatedTimeToProd: text("estimated_time_to_prod").default("2-4 weeks"),
+  costProfile: jsonb("cost_profile"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

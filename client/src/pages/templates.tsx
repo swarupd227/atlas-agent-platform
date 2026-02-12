@@ -86,6 +86,8 @@ import {
   Pencil,
   Trash2,
   ExternalLink,
+  DollarSign,
+  Columns3,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -198,6 +200,8 @@ export default function Templates() {
     return "all";
   });
   const [selectedTemplate, setSelectedTemplate] = useState<AgentTemplate | null>(null);
+  const [compareTemplates, setCompareTemplates] = useState<AgentTemplate[]>([]);
+  const [showComparison, setShowComparison] = useState(false);
   const [, navigate] = useLocation();
 
   const { toast } = useToast();
@@ -247,12 +251,18 @@ export default function Templates() {
     <div className="flex flex-col gap-6 p-6" data-testid="page-templates">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Agent Templates</h1>
+          <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-page-title">Golden Repository</h1>
           <p className="text-sm text-muted-foreground">
-            {industry && industry.id !== "custom" ? `Templates for ${industry.label} and cross-industry use` : "Industry-wide pre-built agent configurations ready to deploy"}
+            {industry && industry.id !== "custom" ? `Compliance-ready golden configurations for ${industry.label}` : "Industry-specific, compliance-ready golden agent configurations"}
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {compareTemplates.length >= 2 && (
+            <Button size="sm" variant="outline" onClick={() => setShowComparison(true)} data-testid="button-compare">
+              <Columns3 className="w-4 h-4 mr-1" />
+              Compare ({compareTemplates.length})
+            </Button>
+          )}
           <Badge variant="outline" className="text-xs">
             {templates?.length || 0} templates
           </Badge>
@@ -435,6 +445,21 @@ export default function Templates() {
                         {(template.complexity || "medium").toUpperCase()}
                       </span>
                     </div>
+                    {(template.complianceCertifications || []).length > 0 && (
+                      <div className="flex items-center gap-1 flex-wrap">
+                        {(template.complianceCertifications || []).slice(0, 2).map((cert) => (
+                          <Badge key={cert} variant="outline" className="text-[9px]">
+                            <ShieldCheck className="w-2.5 h-2.5 mr-0.5" />
+                            {cert}
+                          </Badge>
+                        ))}
+                        {(template.complianceCertifications || []).length > 2 && (
+                          <span className="text-[10px] text-muted-foreground">
+                            +{(template.complianceCertifications || []).length - 2} more
+                          </span>
+                        )}
+                      </div>
+                    )}
                     {(template.tags || []).length > 0 && (
                       <div className="flex items-center gap-1 flex-wrap">
                         {(template.tags || []).slice(0, 3).map((tag) => (
@@ -449,7 +474,21 @@ export default function Templates() {
                         )}
                       </div>
                     )}
-                    <div className="flex items-center gap-1 border-t pt-2 mt-1">
+                    <div className="flex items-center gap-3 text-[10px] text-muted-foreground border-t pt-2 mt-1">
+                      <span className="flex items-center gap-1" data-testid={`text-deployment-count-${template.id}`}>
+                        <Users className="w-3 h-3" />
+                        {template.deploymentCount || 0} deployments
+                      </span>
+                      <span className="flex items-center gap-1" data-testid={`text-kpi-${template.id}`}>
+                        <BarChart3 className="w-3 h-3" />
+                        {template.avgKpiDelivery || 0}% KPI
+                      </span>
+                      <span className="flex items-center gap-1 ml-auto">
+                        <Clock className="w-3 h-3" />
+                        {template.estimatedTimeToProd || "2-4 wks"}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1 flex-wrap">
                       <Button
                         variant="ghost"
                         size="sm"
@@ -469,6 +508,23 @@ export default function Templates() {
                       >
                         <Pencil className="w-3 h-3 mr-1" />
                         Edit
+                      </Button>
+                      <Button
+                        variant={compareTemplates.some(c => c.id === template.id) ? "default" : "ghost"}
+                        size="sm"
+                        className="text-xs flex-1"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setCompareTemplates(prev =>
+                            prev.some(c => c.id === template.id)
+                              ? prev.filter(c => c.id !== template.id)
+                              : prev.length < 3 ? [...prev, template] : prev
+                          );
+                        }}
+                        data-testid={`checkbox-compare-${template.id}`}
+                      >
+                        <Columns3 className="w-3 h-3 mr-1" />
+                        {compareTemplates.some(c => c.id === template.id) ? "Selected" : "Compare"}
                       </Button>
                       <Button
                         variant="ghost"
@@ -518,6 +574,145 @@ export default function Templates() {
               data-testid="button-confirm-delete"
             >
               {deleteMutation.isPending ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showComparison && compareTemplates.length >= 2} onOpenChange={setShowComparison}>
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto" data-testid="dialog-comparison">
+          <DialogHeader>
+            <DialogTitle>Template Comparison</DialogTitle>
+            <DialogDescription>
+              Side-by-side comparison of {compareTemplates.length} templates
+            </DialogDescription>
+          </DialogHeader>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b">
+                  <th className="text-left p-2 text-xs font-medium text-muted-foreground w-32">Attribute</th>
+                  {compareTemplates.map((t) => (
+                    <th key={t.id} className="text-left p-2 text-xs font-medium min-w-[180px]">{t.name}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-b">
+                  <td className="p-2 text-xs text-muted-foreground">Industry</td>
+                  {compareTemplates.map((t) => (
+                    <td key={t.id} className="p-2 text-xs">{industryLabels[t.industry || "cross_industry"] || t.industry}</td>
+                  ))}
+                </tr>
+                <tr className="border-b">
+                  <td className="p-2 text-xs text-muted-foreground">Category</td>
+                  {compareTemplates.map((t) => (
+                    <td key={t.id} className="p-2 text-xs">{categoryLabels[t.category] || t.category}</td>
+                  ))}
+                </tr>
+                <tr className="border-b">
+                  <td className="p-2 text-xs text-muted-foreground">Complexity</td>
+                  {compareTemplates.map((t) => (
+                    <td key={t.id} className="p-2 text-xs">
+                      <span className={`font-medium ${complexityColors[t.complexity || "medium"]}`}>{(t.complexity || "medium").toUpperCase()}</span>
+                    </td>
+                  ))}
+                </tr>
+                <tr className="border-b">
+                  <td className="p-2 text-xs text-muted-foreground">Risk Tier</td>
+                  {compareTemplates.map((t) => (
+                    <td key={t.id} className="p-2 text-xs">{t.defaultRiskTier}</td>
+                  ))}
+                </tr>
+                <tr className="border-b">
+                  <td className="p-2 text-xs text-muted-foreground">Autonomy</td>
+                  {compareTemplates.map((t) => (
+                    <td key={t.id} className="p-2 text-xs capitalize">{t.defaultAutonomyMode}</td>
+                  ))}
+                </tr>
+                <tr className="border-b">
+                  <td className="p-2 text-xs text-muted-foreground">Compliance</td>
+                  {compareTemplates.map((t) => (
+                    <td key={t.id} className="p-2">
+                      <div className="flex flex-wrap gap-1">
+                        {(t.complianceCertifications || []).map((cert) => (
+                          <Badge key={cert} variant="outline" className="text-[9px]">{cert}</Badge>
+                        ))}
+                      </div>
+                    </td>
+                  ))}
+                </tr>
+                <tr className="border-b">
+                  <td className="p-2 text-xs text-muted-foreground">Deployments</td>
+                  {compareTemplates.map((t) => (
+                    <td key={t.id} className="p-2 text-xs font-medium">{t.deploymentCount || 0}</td>
+                  ))}
+                </tr>
+                <tr className="border-b">
+                  <td className="p-2 text-xs text-muted-foreground">Avg KPI</td>
+                  {compareTemplates.map((t) => (
+                    <td key={t.id} className="p-2">
+                      <div className="flex items-center gap-2">
+                        <div className="w-16 bg-muted rounded-full h-1.5">
+                          <div
+                            className={`h-1.5 rounded-full ${(t.avgKpiDelivery || 0) >= 80 ? "bg-green-600 dark:bg-green-500" : (t.avgKpiDelivery || 0) >= 60 ? "bg-yellow-600 dark:bg-yellow-500" : "bg-red-600 dark:bg-red-500"}`}
+                            style={{ width: `${Math.min(100, t.avgKpiDelivery || 0)}%` }}
+                          />
+                        </div>
+                        <span className="text-xs font-medium">{t.avgKpiDelivery || 0}%</span>
+                      </div>
+                    </td>
+                  ))}
+                </tr>
+                <tr className="border-b">
+                  <td className="p-2 text-xs text-muted-foreground">Time to Prod</td>
+                  {compareTemplates.map((t) => (
+                    <td key={t.id} className="p-2 text-xs">{t.estimatedTimeToProd || "2-4 weeks"}</td>
+                  ))}
+                </tr>
+                <tr className="border-b">
+                  <td className="p-2 text-xs text-muted-foreground">Monthly Cost</td>
+                  {compareTemplates.map((t) => {
+                    const cp = t.costProfile as { monthlyEstimate?: string } | null;
+                    return <td key={t.id} className="p-2 text-xs font-medium">{cp?.monthlyEstimate || "N/A"}</td>;
+                  })}
+                </tr>
+                <tr className="border-b">
+                  <td className="p-2 text-xs text-muted-foreground">Compute Tier</td>
+                  {compareTemplates.map((t) => {
+                    const cp = t.costProfile as { computeTier?: string } | null;
+                    return <td key={t.id} className="p-2 text-xs">{cp?.computeTier || "N/A"}</td>;
+                  })}
+                </tr>
+                <tr className="border-b">
+                  <td className="p-2 text-xs text-muted-foreground">API Calls/mo</td>
+                  {compareTemplates.map((t) => {
+                    const cp = t.costProfile as { apiCallsPerMonth?: string } | null;
+                    return <td key={t.id} className="p-2 text-xs">{cp?.apiCallsPerMonth || "N/A"}</td>;
+                  })}
+                </tr>
+                <tr className="border-b">
+                  <td className="p-2 text-xs text-muted-foreground">Tools</td>
+                  {compareTemplates.map((t) => {
+                    const tools = Array.isArray(t.toolsConfig) ? t.toolsConfig.length : 0;
+                    return <td key={t.id} className="p-2 text-xs">{tools} tools</td>;
+                  })}
+                </tr>
+                <tr>
+                  <td className="p-2 text-xs text-muted-foreground">Model</td>
+                  {compareTemplates.map((t) => (
+                    <td key={t.id} className="p-2 text-xs">{t.modelProvider} / {t.modelName}</td>
+                  ))}
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setCompareTemplates([]); setShowComparison(false); }} data-testid="button-clear-comparison">
+              Clear Selection
+            </Button>
+            <Button variant="outline" onClick={() => setShowComparison(false)} data-testid="button-close-comparison">
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -658,6 +853,70 @@ function TemplateDetail({
               ))}
             </div>
           )}
+
+          {(template.complianceCertifications || []).length > 0 && (
+            <div className="border-t pt-3 flex flex-col gap-2">
+              <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Compliance Certifications</h3>
+              <div className="flex items-center gap-1 flex-wrap">
+                {(template.complianceCertifications || []).map((cert) => (
+                  <Badge key={cert} variant="outline" className="text-[9px]">
+                    <ShieldCheck className="w-2.5 h-2.5 mr-0.5" />
+                    {cert}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="border-t pt-3 flex flex-col gap-2">
+            <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Performance</h3>
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground flex items-center gap-1"><Users className="w-3 h-3" /> Deployments</span>
+                <span className="font-medium">{template.deploymentCount || 0}</span>
+              </div>
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground flex items-center gap-1"><BarChart3 className="w-3 h-3" /> Avg KPI Delivery</span>
+                  <span className="font-medium">{template.avgKpiDelivery || 0}%</span>
+                </div>
+                <div className="w-full bg-muted rounded-full h-1.5">
+                  <div
+                    className={`h-1.5 rounded-full ${(template.avgKpiDelivery || 0) >= 80 ? "bg-green-600 dark:bg-green-500" : (template.avgKpiDelivery || 0) >= 60 ? "bg-yellow-600 dark:bg-yellow-500" : "bg-red-600 dark:bg-red-500"}`}
+                    style={{ width: `${Math.min(100, template.avgKpiDelivery || 0)}%` }}
+                  />
+                </div>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground flex items-center gap-1"><Clock className="w-3 h-3" /> Time to Production</span>
+                <span className="font-medium">{template.estimatedTimeToProd || "2-4 weeks"}</span>
+              </div>
+            </div>
+          </div>
+
+          {(() => {
+            const cp = template.costProfile as { monthlyEstimate?: string; computeTier?: string; apiCallsPerMonth?: string } | null;
+            if (!cp) return null;
+            return (
+              <div className="border-t pt-3 flex flex-col gap-2">
+                <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Cost Profile</h3>
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground flex items-center gap-1"><DollarSign className="w-3 h-3" /> Monthly</span>
+                    <span className="font-medium">{cp.monthlyEstimate || "N/A"}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">Compute</span>
+                    <Badge variant="outline" className="text-[9px]">{cp.computeTier || "N/A"}</Badge>
+                  </div>
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">API Calls/mo</span>
+                    <span className="font-medium">{cp.apiCallsPerMonth || "N/A"}</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           <div className="border-t pt-4 flex flex-col gap-2">
             <Button
