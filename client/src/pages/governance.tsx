@@ -1269,12 +1269,12 @@ export default function Governance() {
         <TabsList className="w-full justify-start">
           <TabsTrigger value="policies" data-testid="tab-policies">Policies</TabsTrigger>
           <TabsTrigger value="enforcement" data-testid="tab-enforcement">Enforcement</TabsTrigger>
-          <TabsTrigger value="audit" data-testid="tab-audit">Audit</TabsTrigger>
+          <TabsTrigger value="audit" data-testid="tab-audit">Audit Trail</TabsTrigger>
           <TabsTrigger value="compliance" data-testid="tab-compliance">Reports</TabsTrigger>
           <TabsTrigger value="exceptions" data-testid="tab-exceptions">Exceptions</TabsTrigger>
-          <TabsTrigger value="tool-access" data-testid="tab-tool-access">Tools</TabsTrigger>
+          <TabsTrigger value="tool-access" data-testid="tab-tool-access">Tool Access</TabsTrigger>
           <TabsTrigger value="ethics" data-testid="tab-ethics">Ethics</TabsTrigger>
-          <TabsTrigger value="policy-packs" data-testid="tab-policy-packs">Packs</TabsTrigger>
+          <TabsTrigger value="policy-packs" data-testid="tab-policy-packs">Policy Packs</TabsTrigger>
           <TabsTrigger value="what-if" data-testid="tab-what-if">What-If</TabsTrigger>
           <TabsTrigger value="regulatory" data-testid="tab-regulatory">Regulatory</TabsTrigger>
         </TabsList>
