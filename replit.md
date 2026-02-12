@@ -1,58 +1,57 @@
 # ALMP - Agent Lifecycle Management Platform
 
 ## Overview
-ALMP is an Agent Lifecycle Management Platform designed for managing AI agents with an 80% autonomous execution and 20% expert validation model. The platform aims to provide outcome-driven billing, where customers pay for measurable results. It offers comprehensive tools for agent creation, deployment, monitoring, and governance, focusing on delivering business value and enabling efficient AI operations. Its core ambition is to automate and optimize the lifecycle of AI agents, ensuring measurable outcomes and robust oversight.
+ALMP is an Agent Lifecycle Management Platform designed for managing AI agents with an 80% autonomous execution and 20% expert validation model. The platform focuses on outcome-driven billing, where customers pay for measurable results. It provides tools for agent creation, deployment, monitoring, and governance, aiming to deliver business value and enable efficient AI operations by automating and optimizing the AI agent lifecycle.
 
 ## User Preferences
 I prefer that you ask me before making any major changes to the codebase. When suggesting code, please provide clear explanations for the choices made. I value an iterative development approach, where we can discuss and refine solutions progressively.
 
 ## System Architecture
-The platform is built with a modern web stack: React, Vite, Tailwind CSS, shadcn/ui, and wouter for the frontend; Express.js for the backend REST API; and PostgreSQL with Drizzle ORM for the database.
+The platform utilizes a modern web stack: React, Vite, Tailwind CSS, shadcn/ui, and wouter for the frontend; Express.js for the backend REST API; and PostgreSQL with Drizzle ORM for the database.
 
 **UI/UX Design Principles**:
-- **Outcome-first navigation**: Prioritizes KPI delivery status.
-- **Evidence-by-default**: Approvals include configuration differences, blast radius analysis, and evaluation proof.
-- **Autonomy with guardrails**: Policies are checked before actions, with expert approval for violations.
-- **Time travel**: Agent timeline aggregates version changes, audit events, and recommendations with diff visualization.
+- Outcome-first navigation for KPI delivery status.
+- Evidence-by-default for approvals, including configuration differences and blast radius analysis.
+- Autonomy with guardrails, checking policies before actions.
+- Time travel for agent timelines, aggregating version changes and audit events.
 
 **Core Features**:
-- **Overview Dashboard**: Platform health, KPI progress, agent status.
+- **Overview Dashboard**: Displays platform health, KPI progress, and agent status.
 - **Outcomes**: Manages outcome contracts, KPIs, SLAs, and pricing.
-- **Agents**: Agent Registry for managing and monitoring agents, including detailed cockpit views, lifecycle management, and a design wizard. Supports Multi-Agent Orchestration with three agent types: single (standard), team (composite orchestrators with member agents), and remote (A2A-connected external agents). Remote agents are backed by Google A2A AgentCards with capability discovery, trust tiers (untrusted/basic/verified/trusted/privileged), connectivity status, allowed skills whitelist, and security requirements. Teams support member roles (lead/member/observer).
-- **Blueprint Studio**: Visual editor for creating, versioning, and compiling agent blueprints with static checks and approval flows. Includes MCP Dependencies tab (server selection with pinned versions), MCP Tool Nodes (governed tool picker from registry), Context Nodes (resource selection with retrieval strategy: eager/lazy/on-demand), compiler snapshots for reproducibility, and reviewer governance gates for production release. **Team Blueprint** support: graph-based orchestration model for team-type agents with four node types (internal agent, tool set, edge gate, remote A2A agent), edge contracts with A2A-typed content parts (text/url/data/file), allowed metadata schemas, SLA/timeout, failure modes (retry/skip/escalate), and retry policies. Team Graph editor tab with visual canvas, node config panels (agent picker, tool picker, policy picker, remote agent picker), and edge contract editor.
-- **Templates**: Library of agent templates.
-- **Deployments**: Release Orchestrator with environment management, rollout strategies (shadow/canary/direct), and auto-incident generation. Includes a Create Release wizard for defining deployment parameters and safeguards. Supports "Deploy as Source Package" for CI/CD integration. Freeze Center for deployment freeze management.
-- **Monitor**: Outcome SLA Dashboard, live runs, drift detection, and agent health monitoring. **MCP-Aware Observability**: Run-time trace view with OpenTelemetry-style span waterfall for MCP interactions (initialization, list sync, resource reads, tool calls, confirmations, outcomes). Run Detail page features three tabs: Execution timeline, MCP Trace (hierarchical span tree with duration bars, server/tool/resource attribution), and MCP Transcript (structured JSON-RPC request/response log with session tracking). Audit Trail enhanced with MCP action type filters (tool_call, resource_read, server_init, prompt_get, confirmation, list_sync) and MCP object types.
-- **Governance**: Certified Agent Compliance Layer with policy management, enforcement, audit trails, and tool access controls. **Regulatory Compliance** tab with automatic detection of applicable regulations based on industry + jurisdiction (20 regulations: HIPAA, GDPR, SOX, PCI DSS, etc.), AI-enhanced requirement enrichment, and one-click policy generation from regulatory frameworks. Policy packs with AI-enhanced structured rules displayed via PolicyRuleViewer (type badges, labeled fields, array values as badges). **Regulatory Policy-as-Code Engine** (dedicated page at `/governance/policy-engine`): Encodes regulatory requirements as machine-executable policies using OPA Rego and Cedar. Four tabs: Regulation Library (10 seeded regulations across EU/US/Global jurisdictions with filtering), Policy Editor (split-pane with policy list and detail view showing natural language rules, executable code, severity, enforcement points, and evidence requirements), Compliance Matrix (table mapping regulatory requirements to ALMP controls with Full/Partial/Gap coverage tracking and customer action items), and Change Tracker (regulatory change management with acknowledge/dismiss/complete workflow). Backed by 4 DB tables: regulations, regulatory_policies, compliance_controls, regulatory_changes. **AI Features**: AI Generate Policies (auto-generates OPA Rego/Cedar code for regulations without policies), AI Enhance (improves existing policy code quality with preview/apply workflow), AI Analyze Gaps (compliance matrix gap analysis with remediation suggestions), AI Impact Analysis (assesses regulatory change impact on policies/controls with timeline recommendations). **Cross-linking**: Push to Governance action converts regulatory policies into operational policies in the Governance Policies tab; Source Regulation badges on governance policy cards trace back to originating regulation.
-- **Optimization (Patch Center)**: Autonomous optimization and self-healing with AI-proposed changes, experiment management (A/B testing), and auto-remediation.
-- **Approvals**: Expert validation queue for various approval types.
-- **Approval Gates**: Unified MCP elicitation and ALMP supervision experience combining expert validation gates (20% human oversight) with MCP elicitation flows. Features tool-call gate checking (write tools, data export, scope escalation), form and URL mode elicitations, server identity tracking, risk flag analysis, and approve/decline/cancel actions. URL-mode supports OAuth and sensitive data entry via external panels. Permission-gated for Expert Validator and Security Admin personas.
+- **Agents**: Agent Registry for management and monitoring, supporting single, team (composite orchestrators), and remote (A2A-connected) agent types. Remote agents leverage Google A2A AgentCards with capability discovery and trust tiers. Team agents support member roles.
+- **Blueprint Studio**: Visual editor for creating, versioning, and compiling agent blueprints with static checks and approval flows. Supports MCP Dependencies, MCP Tool Nodes, Context Nodes, and compiler snapshots for reproducibility. Includes Team Blueprint support for graph-based orchestration with various node types, edge contracts, and failure modes.
+- **Deployments**: Release Orchestrator with environment management, rollout strategies (shadow/canary/direct), auto-incident generation, and a Freeze Center.
+- **Monitor**: Outcome SLA Dashboard, live runs, drift detection, and agent health monitoring. Features MCP-aware observability with OpenTelemetry-style span waterfalls for MCP interactions and an enhanced audit trail.
+- **Governance**: Certified Agent Compliance Layer with policy management, enforcement, and audit trails. Includes a Regulatory Compliance tab for detecting regulations, generating policies (Policy-as-Code Engine using OPA Rego and Cedar), and managing regulatory changes. AI features support policy generation, enhancement, gap analysis, and impact analysis.
+- **Optimization (Patch Center)**: Autonomous optimization, self-healing, AI-proposed changes, and experiment management.
+- **Approvals**: Expert validation queue and approval gates for human oversight, combining MCP elicitation with ALMP supervision.
 - **Billing**: Outcome-based metering and invoicing.
-- **Evaluation Evidence System**: Robust evidence for agent performance and risks.
+- **Evaluation Evidence System**: Provides robust evidence for agent performance and risks.
 - **Outcome Builder**: Conversational AI for defining goals and drafting outcome contracts.
-- **Role-based Access**: Six switchable personas for tailored access and actions.
-- **Global App Shell**: Provides environment selection, global search, command palette, notification center, role switcher, industry workspace selector, and theme toggle.
-- **Industry Workspace Selector**: Global context switch that cascades through every screen. Five industry profiles: Financial Services (FIBO ontology), Healthcare & Life Sciences (SNOMED CT), Manufacturing & Supply Chain (ISA-95), Retail & E-Commerce (GS1), and Custom. Each profile carries pre-loaded ontology, agent skill counts, regulatory frameworks, golden template counts, department lists, and a terminology map that adapts platform labels per industry. First-login full-screen overlay for initial selection, compact header dropdown for switching anytime. Terminology engine (`useTerm()` hook) dynamically renames concepts like "Outcomes" → "Patient Throughput Targets" (healthcare) or "Service Commitments" (financial services) across sidebar, dashboard, and page titles. **Department Layer**: Each industry has 10 pre-loaded departments (e.g., Healthcare: Clinical Operations, Pharmacy, R&D, Finance & Billing, etc.). Departments selected in workspace config cascade into regulatory framework activation via `DEPARTMENT_FRAMEWORKS` mapping, regulation filtering in Governance, and agent department assignment in the Agent Wizard. Department filter in Regulatory Compliance tab narrows regulations to department-relevant ones.
+- **Role-based Access**: Six switchable personas for tailored access.
+- **Global App Shell**: Provides environment selection, search, command palette, notifications, and role switcher.
+- **Agent Skills Library**: Catalog of composable, versioned skill units with industry-organized browsing, search, filtering, and comparison features.
+- **Industry Workspace Selector**: Global context switch adapting platform terminology and activating regulatory frameworks based on selected industry profiles (Financial Services, Healthcare, Manufacturing, Retail, Custom). Includes a Department Layer for granular framework activation and agent assignment.
 
 **Technical Implementations**:
-- **Eval Studio**: Comprehensive evaluation management, including test case creation, run history, scorers, thresholds, and regression analysis.
-- **Shadow Replay**: Replaying production traces against candidate versions for comparison and validation.
-- **Autonomy Hooks**: Automated actions like expanding eval suites on drift or quarantining agents on confidence drops.
-- **Code Generation / Export**: Supports dual-mode agent deployment: config-driven runtime execution and code generation/export for standalone deployment using a Ralph Loop pattern. An Export Wizard guides the user through configuring export type, framework, tool adapters, dependencies, environment variables, observability settings, build/test gates, and delivery targets (ZIP, Git, Replit).
-- **AI Endpoints**: Dedicated API endpoints for conversational design, template matching, outcome discovery, agent/replacement proposals, and AI-generated test cases.
-- **Self-Healing Loop**: Automates incident resolution from detection through patching, approval, and deployment, with incident status tracking and auto-closure/reopening.
-- **Deployment Sequence**: Orchestrates deployments through staging, shadow, canary, and production environments with auto-computed approvals, shadow replay evidence, and canary monitoring for auto-promotion/rollback.
-- **Billing Metering Pipeline**: Ingests outcome events, applies exclusion rules, deduplication, fraud checks, and generates SHA-256 signed hashes for tamper evidence. Aggregates billable events for invoice generation based on various pricing models. Provides drill-down from invoice to events to traces.
-- **Immutable Audit Log**: Maintains a hash-chained audit log for tamper detection and integrity verification.
-- **Redaction Profiles (R0/R1/R2)**: Implements tiered data redaction for sensitive information across traces and audit events based on user roles.
-- **Tool Proxy Control Point**: Unified proxy for both MCP tool calls and A2A delegations, treating them as distinct invocation classes (`mcp_tool` | `a2a_delegation`). MCP path enforces allowlists, blocklists, rate limiting, retries, shadow dry-run mode, and redacted audit logging. A2A path enforces trust-tier checks (minimum basic), skill whitelist, connectivity validation, A2A-specific rate limiting (50/min), and maps A2A interruption states (`input_required`, `auth_required`) to approval gate triggers. Endpoints: POST `/api/tool-proxy/a2a-delegate`, GET `/api/tool-proxy/a2a-status`.
-- **MCP Server Directory**: Manages Model Context Protocol (MCP) servers, allowing integration of internal and third-party servers. Includes features for capability negotiation, tool/resource/prompt catalog synchronization, authentication configuration, and a production enablement flow with approval processes based on risk tiers.
-- **MCP Tool Registry**: A global, governed inventory of tools synced from MCP servers. Provides tool details, input/output schemas, governance fields (risk classification, owner, enabled status, drift status), and an enablement flow requiring approvals for high-risk tools. Detects and flags tool drift via fingerprinting. (Previously "Tool Catalog" — renamed for clarity to distinguish from general integration connectors like Jira, Salesforce, etc.)
-- **MCP Resources**: Governed knowledge connectors — document stores, repos, DB exports, tickets accessed uniformly via MCP resource primitives (resources/list, resources/read). Features sensitivity classification (public/internal/confidential/restricted), approval gates (data steward/Security Admin required for sensitive URIs), freshness tracking, subscription support, and integration into Blueprint Studio as "Context Sources" for model context.
-- **MCP Prompt Library**: Imports MCP prompt templates (playbooks, workflow prompts) and binds them into blueprints. Catalog page for browsing prompts by server/status, detail page with arguments/message preview/governance tabs, and Blueprint Studio "Prompt Nodes" panel for selecting prompts and mapping arguments. Domain expert can publish prompts; Security Admin approval required if prompt embeds sensitive resources. Uses MCP primitives: prompts/list, prompts/get, list change notifications.
-- **Ontology Explorer**: Industry knowledge graph browser with 25-30 concepts per industry (FIBO for Financial Services, SNOMED CT for Healthcare, ISA-95 for Manufacturing, GS1 for Retail). Category-based navigation, concept detail panel with properties/relationships, search filtering, and AI-enhanced concept descriptions.
-- **Agent Wizard Ontology Integration**: Step 1 includes Domain Ontology Tags card with AI Suggest Tags feature that analyzes agent name/description/skills to recommend relevant ontology concepts. Tags persist in `ontology_tags` JSONB column on agents table.
-- **Data Model**: A comprehensive schema that links incidents, patches, and deployments for full traceability.
+- **Eval Studio**: Evaluation management including test cases, run history, and regression analysis.
+- **Shadow Replay**: Replaying production traces for comparison and validation.
+- **Autonomy Hooks**: Automated actions like expanding eval suites or quarantining agents.
+- **Code Generation / Export**: Supports dual-mode deployment (config-driven runtime or standalone code export) via an Export Wizard.
+- **AI Endpoints**: Dedicated APIs for conversational design, template matching, outcome discovery, and AI-generated test cases.
+- **Self-Healing Loop**: Automates incident resolution from detection to deployment.
+- **Deployment Sequence**: Orchestrates deployments through various environments with auto-computed approvals and monitoring.
+- **Billing Metering Pipeline**: Ingests outcome events, applies processing rules, and generates tamper-evident billing data.
+- **Immutable Audit Log**: Hash-chained audit log for integrity verification.
+- **Redaction Profiles (R0/R1/R2)**: Tiered data redaction for sensitive information.
+- **Tool Proxy Control Point**: Unified proxy for MCP tool calls and A2A delegations, enforcing allowlists, rate limiting, and trust-tier checks.
+- **MCP Server Directory**: Manages MCP server integrations, including capability negotiation and catalog synchronization.
+- **MCP Tool Registry**: Governed inventory of tools with details, schemas, governance fields, and drift detection.
+- **MCP Resources**: Governed knowledge connectors with sensitivity classification, approval gates, and freshness tracking.
+- **MCP Prompt Library**: Imports MCP prompt templates and binds them into blueprints, with domain expert publishing and security admin approval flows.
+- **Ontology Explorer**: Industry knowledge graph browser with concept details, search, and AI-enhanced descriptions.
+- **Agent Wizard Ontology Integration**: AI-suggested ontology tags for agent definition.
+- **Data Model**: Comprehensive schema linking incidents, patches, and deployments.
 
 ## External Dependencies
 - **LLM Providers**: For AI capabilities.

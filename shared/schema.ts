@@ -1323,4 +1323,27 @@ export const insertOntologyEnhancementSchema = createInsertSchema(ontologyEnhanc
 export type InsertOntologyEnhancement = z.infer<typeof insertOntologyEnhancementSchema>;
 export type OntologyEnhancement = typeof ontologyEnhancements.$inferSelect;
 
+export const skills = pgTable("skills", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  description: text("description").notNull(),
+  industry: text("industry").notNull(),
+  domain: text("domain").notNull(),
+  version: text("version").notNull().default("1.0.0"),
+  author: text("author").notNull(),
+  trustTier: text("trust_tier").notNull().default("platform-provided"),
+  activationCount: integer("activation_count").notNull().default(0),
+  performanceScore: real("performance_score").default(0),
+  dependencies: jsonb("dependencies").notNull().default(sql`'[]'::jsonb`),
+  tags: text("tags").array().default(sql`'{}'::text[]`),
+  agentTypeCompatibility: text("agent_type_compatibility").array().default(sql`'{"single","team","remote"}'::text[]`),
+  status: text("status").notNull().default("active"),
+  complexity: text("complexity").notNull().default("intermediate"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertSkillSchema = createInsertSchema(skills).omit({ id: true, createdAt: true });
+export type InsertSkill = z.infer<typeof insertSkillSchema>;
+export type Skill = typeof skills.$inferSelect;
+
 export * from "./models/chat";

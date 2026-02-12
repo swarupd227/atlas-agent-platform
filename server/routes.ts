@@ -55,6 +55,7 @@ import {
   insertRegulatoryPolicySchema,
   insertComplianceControlSchema,
   insertRegulatoryChangeSchema,
+  insertSkillSchema,
 } from "@shared/schema";
 
 const openai = new OpenAI({
@@ -12069,6 +12070,47 @@ Return ONLY a valid JSON object.`
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
+  });
+
+  // Skills CRUD
+  app.get("/api/skills", async (_req, res) => {
+    const allSkills = await storage.getSkills();
+    res.json(allSkills);
+  });
+
+  app.get("/api/skills/:id", async (req, res) => {
+    const skill = await storage.getSkill(req.params.id);
+    if (!skill) return res.status(404).json({ error: "Skill not found" });
+    res.json(skill);
+  });
+
+  app.post("/api/skills", async (req, res) => {
+    try {
+      const data = insertSkillSchema.parse(req.body);
+      const skill = await storage.createSkill(data);
+      res.status(201).json(skill);
+    } catch (e: any) {
+      if (e instanceof ZodError) return res.status(400).json({ error: e.errors });
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.patch("/api/skills/:id", async (req, res) => {
+    try {
+      const patchSchema = insertSkillSchema.partial();
+      const data = patchSchema.parse(req.body);
+      const updated = await storage.updateSkill(req.params.id, data);
+      if (!updated) return res.status(404).json({ error: "Skill not found" });
+      res.json(updated);
+    } catch (e: any) {
+      if (e instanceof ZodError) return res.status(400).json({ error: e.errors });
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/skills/:id", async (req, res) => {
+    await storage.deleteSkill(req.params.id);
+    res.json({ success: true });
   });
 
   // Start the job worker

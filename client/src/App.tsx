@@ -66,6 +66,7 @@ import MarketplacePublishers from "@/pages/marketplace-publishers";
 import McpApps from "@/pages/mcp-apps";
 import OntologyExplorer from "@/pages/ontology";
 import PolicyEngine from "@/pages/policy-engine";
+import SkillCatalog from "@/pages/skills";
 
 function DashboardRouter() {
   return (
@@ -114,6 +115,7 @@ function DashboardRouter() {
       <Route path="/integrations/mcp-apps" component={McpApps} />
       <Route path="/integrations/mcp-servers" component={McpServers} />
       <Route path="/integrations" component={Integrations} />
+      <Route path="/skills" component={SkillCatalog} />
       <Route path="/ontology" component={OntologyExplorer} />
       <Route path="/admin" component={Admin} />
       <Route component={NotFound} />

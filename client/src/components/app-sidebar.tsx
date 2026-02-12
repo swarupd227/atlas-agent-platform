@@ -23,6 +23,7 @@ import {
   AppWindow,
   BookOpen,
   Gavel,
+  Layers,
 } from "lucide-react";
 import {
   Sidebar,
@@ -55,6 +56,7 @@ export function AppSidebar() {
     { title: "Evaluations", url: "/evals", icon: FlaskConical },
     { title: "Deployments", url: "/deployments", icon: Rocket },
     { title: "Monitor", url: "/monitor", icon: Activity },
+    { title: "Skills", url: "/skills", icon: Layers },
     { title: "Ontology", url: "/ontology", icon: BookOpen },
   ];
 
