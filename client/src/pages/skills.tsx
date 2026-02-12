@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { Skill } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
@@ -35,9 +36,7 @@ import {
   Loader2,
   Plus,
   AlertTriangle,
-  Lightbulb,
   Target,
-  Settings,
   Plug,
   BookOpen,
   Link2,
@@ -76,7 +75,6 @@ function ScoreBar({ score }: { score: number }) {
 
 export default function SkillCatalog() {
   const { toast } = useToast();
-  const enrichRef = useRef<HTMLDivElement>(null);
   const [search, setSearch] = useState("");
   const [industryFilter, setIndustryFilter] = useState("all");
   const [domainFilter, setDomainFilter] = useState("all");
@@ -89,7 +87,7 @@ export default function SkillCatalog() {
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
 
   const [aiEnhancingSkill, setAiEnhancingSkill] = useState<string | null>(null);
-  const [aiEnhanceResult, setAiEnhanceResult] = useState<{ skillId: string; skillName: string; enriched: any } | null>(null);
+  const [sheetEnrichment, setSheetEnrichment] = useState<any>(null);
   const [aiGenerating, setAiGenerating] = useState(false);
   const [generateIndustry, setGenerateIndustry] = useState("financial_services");
   const [generateDomain, setGenerateDomain] = useState("");
@@ -114,9 +112,8 @@ export default function SkillCatalog() {
       const enriched = data.enriched;
       await apiRequest("PATCH", `/api/skills/${skill.id}`, { aiEnrichment: enriched });
       queryClient.invalidateQueries({ queryKey: ["/api/skills"] });
-      setAiEnhanceResult({ skillId: skill.id, skillName: skill.name, enriched });
+      setSheetEnrichment(enriched);
       toast({ title: `AI Enhancement saved for ${skill.name}` });
-      setTimeout(() => enrichRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
     } catch (e: any) {
       toast({ title: "AI enhancement failed", description: e.message, variant: "destructive" });
     } finally {
@@ -478,11 +475,7 @@ export default function SkillCatalog() {
                                     onToggleCompare={() => toggleCompare(skill.id)}
                                     onSelect={() => {
                                       setSelectedSkill(skill);
-                                      if (skill.aiEnrichment) {
-                                        setAiEnhanceResult({ skillId: skill.id, skillName: skill.name, enriched: skill.aiEnrichment });
-                                      } else if (aiEnhanceResult?.skillId !== skill.id) {
-                                        setAiEnhanceResult(null);
-                                      }
+                                      setSheetEnrichment(skill.aiEnrichment || null);
                                     }}
                                     isSelected={selectedSkill?.id === skill.id}
                                     onAiEnhance={() => handleAiEnhanceSkill(skill)}
@@ -501,19 +494,14 @@ export default function SkillCatalog() {
           </div>
         )}
 
-        {selectedSkill && (
-          <SkillDetailPanel skill={selectedSkill} onClose={() => { setSelectedSkill(null); setAiEnhanceResult(null); }} />
-        )}
-
-        {aiEnhanceResult && (
-          <div ref={enrichRef}>
-            <AiEnrichmentPanel
-              enriched={aiEnhanceResult.enriched}
-              skillName={aiEnhanceResult.skillName}
-              onClose={() => setAiEnhanceResult(null)}
-            />
-          </div>
-        )}
+        <SkillDetailSheet
+          skill={selectedSkill}
+          open={!!selectedSkill}
+          onClose={() => { setSelectedSkill(null); setSheetEnrichment(null); }}
+          enrichment={sheetEnrichment}
+          onAiEnhance={() => selectedSkill && handleAiEnhanceSkill(selectedSkill)}
+          isEnhancing={!!selectedSkill && aiEnhancingSkill === selectedSkill.id}
+        />
 
         {showCompare && compareSkills.length >= 2 && (
           <ComparePanel
@@ -646,103 +634,107 @@ function SkillCard({
   );
 }
 
-function SkillDetailPanel({ skill, onClose }: { skill: Skill; onClose: () => void }) {
+function SkillDetailSheet({
+  skill,
+  open,
+  onClose,
+  enrichment,
+  onAiEnhance,
+  isEnhancing,
+}: {
+  skill: Skill | null;
+  open: boolean;
+  onClose: () => void;
+  enrichment: any;
+  onAiEnhance: () => void;
+  isEnhancing: boolean;
+}) {
+  if (!skill) return null;
   const deps = (skill.dependencies as string[] | null) || [];
   const tags = (skill.tags as string[] | null) || [];
   const compat = (skill.agentTypeCompatibility as string[] | null) || [];
   const cfg = INDUSTRY_CONFIG[skill.industry];
+  const hasEnrichment = !!enrichment;
+
+  const enrichSections = [
+    { key: "implementationGuidance", label: "Implementation Guidance", icon: BookOpen },
+    { key: "bestPractices", label: "Best Practices", icon: CheckCircle2 },
+    { key: "riskFactors", label: "Risk Factors", icon: AlertTriangle },
+    { key: "optimizationTips", label: "Optimization Tips", icon: Zap },
+    { key: "relatedSkills", label: "Related Skills", icon: GitBranch },
+    { key: "useCases", label: "Use Cases", icon: Target },
+    { key: "complianceConsiderations", label: "Compliance", icon: Shield },
+    { key: "performanceBenchmarks", label: "Performance Benchmarks", icon: Activity },
+    { key: "integrationPoints", label: "Integration Points", icon: Link2 },
+  ];
 
   return (
-    <Card className="mt-4" data-testid="panel-skill-detail">
-      <CardHeader className="pb-3">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <CardTitle className="text-lg">{skill.name}</CardTitle>
-            <p className="text-sm text-muted-foreground mt-1">{skill.description}</p>
-          </div>
-          <Button variant="ghost" size="icon" onClick={onClose} data-testid="button-close-detail">
-            <X className="w-4 h-4" />
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="space-y-4">
-            <div>
-              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Metadata</h4>
-              <div className="space-y-2 text-sm">
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Industry</span>
-                  <span className="font-medium">{cfg?.label || skill.industry}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Domain</span>
-                  <span className="font-medium">{skill.domain}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Version</span>
-                  <Badge variant="outline" className="text-[10px]">v{skill.version}</Badge>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Author</span>
-                  <span className="font-medium text-xs">{skill.author}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Trust Tier</span>
-                  <Badge className={`text-[10px] no-default-hover-elevate no-default-active-elevate ${TRUST_TIER_STYLES[skill.trustTier] || ""}`}>
-                    {skill.trustTier}
-                  </Badge>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Complexity</span>
-                  <Badge className={`text-[10px] no-default-hover-elevate no-default-active-elevate ${COMPLEXITY_STYLES[skill.complexity] || ""}`}>
-                    {skill.complexity}
-                  </Badge>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Status</span>
-                  <Badge variant={skill.status === "active" ? "default" : "secondary"} className="text-[10px]">
-                    {skill.status}
-                  </Badge>
-                </div>
+    <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
+      <SheetContent className="w-[520px] sm:max-w-[520px] p-0 flex flex-col" data-testid="sheet-skill-detail">
+        <SheetHeader className="p-5 pb-3 border-b shrink-0">
+          <div className="flex items-start justify-between gap-3">
+            <div className="space-y-1 min-w-0">
+              <SheetTitle className="text-lg leading-tight" data-testid="text-sheet-skill-name">{skill.name}</SheetTitle>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <Badge className={`text-[10px] no-default-hover-elevate no-default-active-elevate ${TRUST_TIER_STYLES[skill.trustTier] || ""}`}>
+                  {skill.trustTier === "platform-provided" ? "Platform" : skill.trustTier === "customer-created" ? "Custom" : "Market"}
+                </Badge>
+                <Badge className={`text-[10px] no-default-hover-elevate no-default-active-elevate ${COMPLEXITY_STYLES[skill.complexity] || ""}`}>
+                  {skill.complexity}
+                </Badge>
+                <Badge variant={skill.status === "active" ? "default" : "secondary"} className="text-[10px]">
+                  {skill.status}
+                </Badge>
               </div>
             </div>
           </div>
+        </SheetHeader>
 
-          <div className="space-y-4">
-            <div>
-              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Performance</h4>
-              <div className="space-y-3">
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-sm text-muted-foreground">Quality Score</span>
-                    <span className="text-sm font-semibold">{(skill.performanceScore ?? 0).toFixed(1)}%</span>
-                  </div>
-                  <div className="w-full h-2 rounded-full bg-muted overflow-visible">
-                    <div
-                      className={`h-full rounded-full ${
-                        (skill.performanceScore ?? 0) >= 90
-                          ? "bg-green-500"
-                          : (skill.performanceScore ?? 0) >= 80
-                            ? "bg-yellow-500"
-                            : "bg-red-500"
-                      }`}
-                      style={{ width: `${skill.performanceScore ?? 0}%` }}
-                    />
-                  </div>
-                </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">Active Agents</span>
-                  <span className="font-semibold flex items-center gap-1">
-                    <Zap className="w-3.5 h-3.5 text-amber-500" />
-                    {skill.activationCount}
-                  </span>
-                </div>
+        <ScrollArea className="flex-1">
+          <div className="p-5 space-y-5">
+            <p className="text-sm text-muted-foreground" data-testid="text-sheet-description">{skill.description}</p>
+
+            <div className="space-y-2 text-sm">
+              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Metadata</h4>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+                <span className="text-muted-foreground">Industry</span>
+                <span className="font-medium text-right">{cfg?.label || skill.industry}</span>
+                <span className="text-muted-foreground">Domain</span>
+                <span className="font-medium text-right">{skill.domain}</span>
+                <span className="text-muted-foreground">Version</span>
+                <span className="font-medium text-right">v{skill.version}</span>
+                <span className="text-muted-foreground">Author</span>
+                <span className="font-medium text-right text-xs">{skill.author}</span>
               </div>
             </div>
 
-            <div>
-              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Agent Compatibility</h4>
+            <Separator />
+
+            <div className="space-y-2">
+              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Performance</h4>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-sm text-muted-foreground">Quality Score</span>
+                <span className="text-sm font-semibold">{(skill.performanceScore ?? 0).toFixed(1)}%</span>
+              </div>
+              <div className="w-full h-2 rounded-full bg-muted overflow-visible">
+                <div
+                  className={`h-full rounded-full ${(skill.performanceScore ?? 0) >= 90 ? "bg-green-500" : (skill.performanceScore ?? 0) >= 80 ? "bg-yellow-500" : "bg-red-500"}`}
+                  style={{ width: `${skill.performanceScore ?? 0}%` }}
+                />
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Active Agents</span>
+                <span className="font-semibold flex items-center gap-1">
+                  <Zap className="w-3.5 h-3.5 text-amber-500" />
+                  {skill.activationCount}
+                </span>
+              </div>
+            </div>
+
+            <Separator />
+
+            <div className="space-y-2">
+              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Agent Compatibility</h4>
               <div className="flex items-center gap-1.5 flex-wrap">
                 {compat.map((t) => (
                   <Badge key={t} variant="secondary" className="text-xs">
@@ -754,17 +746,15 @@ function SkillDetailPanel({ skill, onClose }: { skill: Skill; onClose: () => voi
                 ))}
               </div>
             </div>
-          </div>
 
-          <div className="space-y-4">
-            <div>
-              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
-                Dependencies ({deps.length})
-              </h4>
+            <Separator />
+
+            <div className="space-y-2">
+              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Dependencies ({deps.length})</h4>
               <div className="space-y-1">
                 {deps.map((d, i) => (
                   <div key={i} className="flex items-center gap-2 text-xs p-1.5 rounded-md bg-muted/50">
-                    <Shield className="w-3 h-3 text-muted-foreground shrink-0" />
+                    <Plug className="w-3 h-3 text-muted-foreground shrink-0" />
                     <span className="font-mono">{d}</span>
                   </div>
                 ))}
@@ -772,21 +762,95 @@ function SkillDetailPanel({ skill, onClose }: { skill: Skill; onClose: () => voi
             </div>
 
             {tags.length > 0 && (
-              <div>
-                <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Tags</h4>
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  {tags.map((t) => (
-                    <Badge key={t} variant="outline" className="text-[10px]">
-                      #{t}
-                    </Badge>
-                  ))}
+              <>
+                <Separator />
+                <div className="space-y-2">
+                  <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Tags</h4>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {tags.map((t) => (
+                      <Badge key={t} variant="outline" className="text-[10px]">#{t}</Badge>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              </>
             )}
+
+            <Separator />
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                  AI Analysis
+                </h4>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={isEnhancing}
+                  onClick={onAiEnhance}
+                  data-testid="button-sheet-enhance"
+                >
+                  {isEnhancing ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-3 h-3" />
+                  )}
+                  {hasEnrichment ? "Re-Enhance" : "AI Enhance"}
+                </Button>
+              </div>
+
+              {hasEnrichment ? (
+                <div className="space-y-4" data-testid="panel-ai-enrichment">
+                  {enrichment?.overview && (
+                    <p className="text-sm text-muted-foreground" data-testid="text-enrichment-overview">{enrichment.overview}</p>
+                  )}
+                  {enrichment?.detailedAnalysis && (
+                    <p className="text-sm text-muted-foreground" data-testid="text-enrichment-analysis">{enrichment.detailedAnalysis}</p>
+                  )}
+                  {enrichSections.map(({ key, label, icon: Icon }) => {
+                    const data = enrichment?.[key];
+                    if (!data) return null;
+                    let items: string[];
+                    if (Array.isArray(data)) {
+                      items = data.map((d: unknown) => flattenValue(d));
+                    } else if (typeof data === "string") {
+                      items = [data];
+                    } else if (typeof data === "object" && data !== null) {
+                      items = Object.entries(data).map(([k, v]) => `${k}: ${flattenValue(v)}`);
+                    } else {
+                      items = [String(data)];
+                    }
+                    if (items.length === 0) return null;
+                    return (
+                      <div key={key} className="space-y-1.5" data-testid={`section-enrichment-${key}`}>
+                        <div className="flex items-center gap-1.5 text-xs font-medium" data-testid={`text-section-label-${key}`}>
+                          <Icon className="w-3.5 h-3.5" />
+                          {label}
+                        </div>
+                        <ul className="space-y-1 ml-1">
+                          {items.map((item: string, i: number) => (
+                            <li key={i} className="text-xs text-muted-foreground flex items-start gap-1.5" data-testid={`text-enrichment-item-${key}-${i}`}>
+                              <span className="text-muted-foreground/50 mt-0.5 shrink-0">-</span>
+                              <span>{item}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="text-center py-6 text-sm text-muted-foreground" data-testid="text-no-enrichment">
+                  <Sparkles className="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" />
+                  <p>No AI analysis yet.</p>
+                  <p className="text-xs mt-1">Click "AI Enhance" to generate a detailed analysis of this skill.</p>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      </CardContent>
-    </Card>
+        </ScrollArea>
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -908,68 +972,3 @@ function flattenValue(val: unknown): string {
   return String(val);
 }
 
-function AiEnrichmentPanel({ enriched, skillName, onClose }: { enriched: any; skillName: string; onClose: () => void }) {
-  const sections = [
-    { key: "implementationGuidance", label: "Implementation Guidance", icon: BookOpen },
-    { key: "bestPractices", label: "Best Practices", icon: CheckCircle2 },
-    { key: "riskFactors", label: "Risk Factors", icon: AlertTriangle },
-    { key: "optimizationTips", label: "Optimization Tips", icon: Zap },
-    { key: "relatedSkills", label: "Related Skills", icon: GitBranch },
-    { key: "useCases", label: "Use Cases", icon: Target },
-    { key: "complianceConsiderations", label: "Compliance Considerations", icon: Shield },
-    { key: "performanceBenchmarks", label: "Performance Benchmarks", icon: Activity },
-    { key: "integrationPoints", label: "Integration Points", icon: Link2 },
-  ];
-
-  return (
-    <Card className="mt-4" data-testid="panel-ai-enrichment">
-      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-        <div className="flex items-center gap-2">
-          <Sparkles className="w-4 h-4 text-amber-500" />
-          <CardTitle className="text-sm" data-testid="text-enrichment-title">AI Analysis: {skillName}</CardTitle>
-        </div>
-        <Button size="icon" variant="ghost" onClick={onClose} data-testid="button-close-enrichment">
-          <X className="w-4 h-4" />
-        </Button>
-      </CardHeader>
-      <CardContent>
-        {enriched?.detailedAnalysis && (
-          <p className="text-sm text-muted-foreground mb-4" data-testid="text-enrichment-analysis">{enriched.detailedAnalysis}</p>
-        )}
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-          {sections.map(({ key, label, icon: Icon }) => {
-            const data = enriched?.[key];
-            if (!data) return null;
-            let items: string[];
-            if (Array.isArray(data)) {
-              items = data.map((d) => flattenValue(d));
-            } else if (typeof data === "string") {
-              items = [data];
-            } else if (typeof data === "object" && data !== null) {
-              items = Object.entries(data).map(([k, v]) => `${k}: ${flattenValue(v)}`);
-            } else {
-              items = [String(data)];
-            }
-            if (items.length === 0) return null;
-            return (
-              <div key={key} className="space-y-1" data-testid={`section-enrichment-${key}`}>
-                <div className="flex items-center gap-1 text-xs font-medium" data-testid={`text-section-label-${key}`}>
-                  <Icon className="w-3 h-3" />
-                  {label}
-                </div>
-                <ul className="space-y-0.5">
-                  {items.map((item: string, i: number) => (
-                    <li key={i} className="text-xs text-muted-foreground flex items-start gap-1" data-testid={`text-enrichment-item-${key}-${i}`}>
-                      <span className="text-muted-foreground/50 mt-0.5">-</span>
-                      <span>{item}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            );
-          })}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
