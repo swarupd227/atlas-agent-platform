@@ -12,6 +12,11 @@ import {
   Link2,
   Brain,
   GitBranch,
+  Check,
+  XCircle,
+  Shield,
+  AlertTriangle,
+  Lightbulb,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -245,7 +250,17 @@ export default function OntologyExplorer() {
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedConceptId, setSelectedConceptId] = useState<string | null>(null);
-  const [enhancedDescriptions, setEnhancedDescriptions] = useState<Record<string, string>>({});
+  interface EnrichedConcept {
+    enrichedDescription?: string;
+    regulatoryRelevance?: string;
+    agentUseCases?: string[];
+    dataHandlingConsiderations?: string;
+    relatedStandards?: string[];
+    implementationGuidance?: string;
+    riskFactors?: string[];
+  }
+  const [enrichedConcepts, setEnrichedConcepts] = useState<Record<string, EnrichedConcept>>({});
+  const [appliedEnhancements, setAppliedEnhancements] = useState<Set<string>>(new Set());
 
   const ontology = industry && industry.id !== "custom" ? ONTOLOGY_MAP[industry.id] || null : null;
 
@@ -295,9 +310,9 @@ export default function OntologyExplorer() {
       return res.json();
     },
     onSuccess: (data, concept) => {
-      const enhanced = data.enhanced || data.description || data.content || "Enhanced description generated successfully.";
-      setEnhancedDescriptions((prev) => ({ ...prev, [concept.id]: enhanced }));
-      toast({ title: "Concept enhanced", description: `AI enhancement applied to ${concept.label}` });
+      const enriched: EnrichedConcept = data.enriched || {};
+      setEnrichedConcepts((prev) => ({ ...prev, [concept.id]: enriched }));
+      toast({ title: "Concept enriched", description: `AI generated comprehensive enhancement for ${concept.label}` });
     },
     onError: (err: Error) => {
       toast({ title: "Enhancement failed", description: err.message, variant: "destructive" });
@@ -458,7 +473,16 @@ export default function OntologyExplorer() {
                   <h1 className="text-xl font-semibold" data-testid="text-concept-label">{selectedConcept.label}</h1>
                   <Badge variant="secondary" data-testid="badge-concept-category">{selectedConcept.category}</Badge>
                 </div>
-                <p className="text-sm text-muted-foreground" data-testid="text-concept-description">{selectedConcept.description}</p>
+                <p className="text-sm text-muted-foreground" data-testid="text-concept-description">
+                  {appliedEnhancements.has(selectedConcept.id) && enrichedConcepts[selectedConcept.id]?.enrichedDescription
+                    ? enrichedConcepts[selectedConcept.id].enrichedDescription
+                    : selectedConcept.description}
+                </p>
+                {appliedEnhancements.has(selectedConcept.id) && enrichedConcepts[selectedConcept.id]?.enrichedDescription && (
+                  <Badge variant="secondary" className="text-[10px] mt-1" data-testid="badge-ai-enhanced">
+                    <Sparkles className="w-2.5 h-2.5 mr-1" /> AI Enhanced
+                  </Badge>
+                )}
               </div>
 
               <Card data-testid="card-properties">
@@ -586,30 +610,173 @@ export default function OntologyExplorer() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-3">
-                    <Button
-                      onClick={() => enhanceMutation.mutate(selectedConcept)}
-                      disabled={enhanceMutation.isPending}
-                      data-testid="button-ai-enhance"
-                    >
-                      {enhanceMutation.isPending ? (
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      ) : (
-                        <Wand2 className="w-4 h-4 mr-2" />
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Button
+                        onClick={() => enhanceMutation.mutate(selectedConcept)}
+                        disabled={enhanceMutation.isPending}
+                        data-testid="button-ai-enhance"
+                      >
+                        {enhanceMutation.isPending ? (
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        ) : (
+                          <Wand2 className="w-4 h-4 mr-2" />
+                        )}
+                        AI Enhance Concept
+                      </Button>
+                      {appliedEnhancements.has(selectedConcept.id) && (
+                        <Badge variant="secondary" className="text-[10px]" data-testid="badge-enhancement-applied">
+                          <Check className="w-3 h-3 mr-1" />
+                          Applied
+                        </Badge>
                       )}
-                      AI Enhance Description
-                    </Button>
-                    {enhancedDescriptions[selectedConcept.id] && (
-                      <Card className="bg-muted/50" data-testid="card-enhanced-description">
-                        <CardContent className="pt-4">
-                          <div className="text-xs font-medium mb-2 flex items-center gap-1.5">
-                            <Sparkles className="w-3 h-3" />
-                            Enhanced Description
+                    </div>
+
+                    {enrichedConcepts[selectedConcept.id] && (
+                      <div className="space-y-3" data-testid="enrichment-results">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <div className="text-xs font-medium flex items-center gap-1.5">
+                            <Sparkles className="w-3.5 h-3.5 text-primary" />
+                            AI Enrichment Results
                           </div>
-                          <p className="text-sm text-muted-foreground whitespace-pre-wrap" data-testid="text-enhanced-content">
-                            {enhancedDescriptions[selectedConcept.id]}
-                          </p>
-                        </CardContent>
-                      </Card>
+                          <div className="flex items-center gap-1.5">
+                            {!appliedEnhancements.has(selectedConcept.id) && (
+                              <Button
+                                size="sm"
+                                onClick={() => {
+                                  setAppliedEnhancements((prev) => { const next = new Set(Array.from(prev)); next.add(selectedConcept.id); return next; });
+                                  toast({ title: "Enhancement applied", description: `Enrichment saved for ${selectedConcept.label}` });
+                                }}
+                                data-testid="button-apply-enhancement"
+                              >
+                                <Check className="w-3.5 h-3.5 mr-1.5" />
+                                Apply Enhancement
+                              </Button>
+                            )}
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => {
+                                setEnrichedConcepts((prev) => {
+                                  const next = { ...prev };
+                                  delete next[selectedConcept.id];
+                                  return next;
+                                });
+                                setAppliedEnhancements((prev) => {
+                                  const next = new Set(prev);
+                                  next.delete(selectedConcept.id);
+                                  return next;
+                                });
+                              }}
+                              data-testid="button-dismiss-enhancement"
+                            >
+                              <XCircle className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+                        </div>
+
+                        {enrichedConcepts[selectedConcept.id].enrichedDescription && (
+                          <Card className="bg-muted/50" data-testid="card-enriched-description">
+                            <CardContent className="pt-4">
+                              <div className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
+                                <BookOpen className="w-3 h-3" />
+                                Enhanced Description
+                              </div>
+                              <p className="text-sm text-muted-foreground" data-testid="text-enriched-description">
+                                {enrichedConcepts[selectedConcept.id].enrichedDescription}
+                              </p>
+                            </CardContent>
+                          </Card>
+                        )}
+
+                        {enrichedConcepts[selectedConcept.id].agentUseCases && enrichedConcepts[selectedConcept.id].agentUseCases!.length > 0 && (
+                          <Card className="bg-muted/50" data-testid="card-agent-use-cases">
+                            <CardContent className="pt-4">
+                              <div className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
+                                <Brain className="w-3 h-3" />
+                                Agent Use Cases
+                              </div>
+                              <ul className="space-y-1.5">
+                                {enrichedConcepts[selectedConcept.id].agentUseCases!.map((uc, i) => (
+                                  <li key={i} className="text-xs text-muted-foreground flex items-start gap-2" data-testid={`text-use-case-${i}`}>
+                                    <Lightbulb className="w-3 h-3 mt-0.5 shrink-0 text-yellow-500" />
+                                    <span>{uc}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </CardContent>
+                          </Card>
+                        )}
+
+                        {enrichedConcepts[selectedConcept.id].regulatoryRelevance && (
+                          <Card className="bg-muted/50" data-testid="card-regulatory-relevance">
+                            <CardContent className="pt-4">
+                              <div className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
+                                <Shield className="w-3 h-3" />
+                                Regulatory Relevance
+                              </div>
+                              <p className="text-xs text-muted-foreground" data-testid="text-regulatory-relevance">
+                                {enrichedConcepts[selectedConcept.id].regulatoryRelevance}
+                              </p>
+                            </CardContent>
+                          </Card>
+                        )}
+
+                        {enrichedConcepts[selectedConcept.id].riskFactors && enrichedConcepts[selectedConcept.id].riskFactors!.length > 0 && (
+                          <Card className="bg-muted/50" data-testid="card-risk-factors">
+                            <CardContent className="pt-4">
+                              <div className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
+                                <AlertTriangle className="w-3 h-3" />
+                                Risk Factors
+                              </div>
+                              <ul className="space-y-1">
+                                {enrichedConcepts[selectedConcept.id].riskFactors!.map((rf, i) => (
+                                  <li key={i} className="text-xs text-muted-foreground flex items-start gap-2" data-testid={`text-risk-factor-${i}`}>
+                                    <span className="text-destructive mt-0.5 shrink-0">-</span>
+                                    <span>{rf}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </CardContent>
+                          </Card>
+                        )}
+
+                        {enrichedConcepts[selectedConcept.id].relatedStandards && enrichedConcepts[selectedConcept.id].relatedStandards!.length > 0 && (
+                          <Card className="bg-muted/50" data-testid="card-related-standards">
+                            <CardContent className="pt-4">
+                              <div className="text-xs font-semibold mb-1.5">Related Standards</div>
+                              <div className="flex flex-wrap gap-1.5">
+                                {enrichedConcepts[selectedConcept.id].relatedStandards!.map((std, i) => (
+                                  <Badge key={i} variant="outline" className="text-[10px]" data-testid={`badge-standard-${i}`}>
+                                    {std}
+                                  </Badge>
+                                ))}
+                              </div>
+                            </CardContent>
+                          </Card>
+                        )}
+
+                        {enrichedConcepts[selectedConcept.id].dataHandlingConsiderations && (
+                          <Card className="bg-muted/50" data-testid="card-data-handling">
+                            <CardContent className="pt-4">
+                              <div className="text-xs font-semibold mb-1.5">Data Handling Considerations</div>
+                              <p className="text-xs text-muted-foreground" data-testid="text-data-handling">
+                                {enrichedConcepts[selectedConcept.id].dataHandlingConsiderations}
+                              </p>
+                            </CardContent>
+                          </Card>
+                        )}
+
+                        {enrichedConcepts[selectedConcept.id].implementationGuidance && (
+                          <Card className="bg-muted/50" data-testid="card-implementation-guidance">
+                            <CardContent className="pt-4">
+                              <div className="text-xs font-semibold mb-1.5">Implementation Guidance</div>
+                              <p className="text-xs text-muted-foreground" data-testid="text-implementation-guidance">
+                                {enrichedConcepts[selectedConcept.id].implementationGuidance}
+                              </p>
+                            </CardContent>
+                          </Card>
+                        )}
+                      </div>
                     )}
                   </CardContent>
                 </Card>
