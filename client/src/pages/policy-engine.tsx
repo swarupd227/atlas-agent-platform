@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import {
   Shield,
   Search,
@@ -214,6 +214,7 @@ export default function PolicyEngine() {
   const [aiControlsLoading, setAiControlsLoading] = useState(false);
   const [aiEnhancingReg, setAiEnhancingReg] = useState<string | null>(null);
   const [aiRegEnhanceResult, setAiRegEnhanceResult] = useState<{ regId: string; regName: string; enriched: any } | null>(null);
+  const regEnhanceRef = useRef<HTMLDivElement>(null);
 
   async function handleAiGenerateControls(reg: Regulation) {
     setAiControlsLoading(true);
@@ -287,6 +288,10 @@ export default function PolicyEngine() {
       });
       const data = await res.json();
       setAiRegEnhanceResult({ regId: reg.id, regName: reg.name, enriched: data.enriched });
+      toast({ title: `AI Enhancement ready for ${reg.name}`, description: "Scroll down to see the full analysis" });
+      setTimeout(() => {
+        regEnhanceRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 100);
     } catch (e: any) {
       toast({ title: "AI enhancement failed", description: e.message, variant: "destructive" });
     } finally {
@@ -786,7 +791,7 @@ export default function PolicyEngine() {
           )}
 
           {aiRegEnhanceResult && (
-            <Card className="border-primary/30" data-testid="panel-reg-enhancement">
+            <Card ref={regEnhanceRef} className="border-primary/30" data-testid="panel-reg-enhancement">
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <CardTitle className="text-sm flex items-center gap-2">
