@@ -1266,17 +1266,17 @@ export default function Governance() {
       </div>
 
       <Tabs defaultValue="policies" className="flex flex-col gap-4">
-        <TabsList className="w-full justify-start overflow-x-auto">
-          <TabsTrigger value="policies" data-testid="tab-policies">Policy Library</TabsTrigger>
+        <TabsList className="w-full justify-start">
+          <TabsTrigger value="policies" data-testid="tab-policies">Policies</TabsTrigger>
           <TabsTrigger value="enforcement" data-testid="tab-enforcement">Enforcement</TabsTrigger>
-          <TabsTrigger value="audit" data-testid="tab-audit">Audit Trail</TabsTrigger>
-          <TabsTrigger value="compliance" data-testid="tab-compliance">Compliance Reports</TabsTrigger>
-          <TabsTrigger value="exceptions" data-testid="tab-exceptions">Policy Exceptions</TabsTrigger>
-          <TabsTrigger value="tool-access" data-testid="tab-tool-access">Tool Access</TabsTrigger>
-          <TabsTrigger value="ethics" data-testid="tab-ethics">Ethical Boundaries</TabsTrigger>
-          <TabsTrigger value="policy-packs" data-testid="tab-policy-packs">Policy Packs</TabsTrigger>
-          <TabsTrigger value="what-if" data-testid="tab-what-if">What-If Analysis</TabsTrigger>
-          <TabsTrigger value="regulatory" data-testid="tab-regulatory">Regulatory Compliance</TabsTrigger>
+          <TabsTrigger value="audit" data-testid="tab-audit">Audit</TabsTrigger>
+          <TabsTrigger value="compliance" data-testid="tab-compliance">Reports</TabsTrigger>
+          <TabsTrigger value="exceptions" data-testid="tab-exceptions">Exceptions</TabsTrigger>
+          <TabsTrigger value="tool-access" data-testid="tab-tool-access">Tools</TabsTrigger>
+          <TabsTrigger value="ethics" data-testid="tab-ethics">Ethics</TabsTrigger>
+          <TabsTrigger value="policy-packs" data-testid="tab-policy-packs">Packs</TabsTrigger>
+          <TabsTrigger value="what-if" data-testid="tab-what-if">What-If</TabsTrigger>
+          <TabsTrigger value="regulatory" data-testid="tab-regulatory">Regulatory</TabsTrigger>
         </TabsList>
 
         <TabsContent value="policies" className="mt-0 flex flex-col gap-4">
