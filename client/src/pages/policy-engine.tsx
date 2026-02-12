@@ -751,25 +751,23 @@ export default function PolicyEngine() {
                           <><Sparkles className="w-3 h-3 mr-1.5" />AI Enhance</>
                         )}
                       </Button>
-                      {regPolicies.length === 0 && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="flex-1"
-                          disabled={aiGenerating === reg.id}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleAiGeneratePolicies(reg);
-                          }}
-                          data-testid={`button-ai-generate-${reg.id}`}
-                        >
-                          {aiGenerating === reg.id ? (
-                            <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" />Generating...</>
-                          ) : (
-                            <><Sparkles className="w-3 h-3 mr-1.5" />Generate Policies</>
-                          )}
-                        </Button>
-                      )}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="flex-1"
+                        disabled={aiGenerating === reg.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleAiGeneratePolicies(reg);
+                        }}
+                        data-testid={`button-ai-generate-${reg.id}`}
+                      >
+                        {aiGenerating === reg.id ? (
+                          <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" />Generating...</>
+                        ) : (
+                          <><Sparkles className="w-3 h-3 mr-1.5" />{regPolicies.length > 0 ? "Generate More" : "Generate Policies"}</>
+                        )}
+                      </Button>
                     </div>
                   </CardContent>
                 </Card>
