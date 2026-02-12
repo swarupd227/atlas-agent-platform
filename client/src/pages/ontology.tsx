@@ -696,7 +696,7 @@ export default function OntologyExplorer() {
                 const enrichment = getEnrichment(selectedConcept.id);
                 const applied = isApplied(selectedConcept.id);
                 const hasLocal = hasLocalEnrichment(selectedConcept.id);
-                const showEnrichment = enrichment && (hasLocal || applied);
+                const showEnrichment = enrichment && hasLocal;
 
                 return (
                   <PermissionGate action="create_modify_policies">
