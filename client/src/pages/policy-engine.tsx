@@ -678,8 +678,18 @@ export default function PolicyEngine() {
                   key={reg.id}
                   className={`cursor-pointer hover-elevate ${isSelected ? "ring-2 ring-primary" : ""}`}
                   onClick={() => {
-                    setSelectedRegulation(isSelected ? null : reg);
-                    if (!isSelected) setActiveTab("policies");
+                    if (isSelected) {
+                      setSelectedRegulation(null);
+                      setAiRegEnhanceResult(null);
+                    } else {
+                      setSelectedRegulation(reg);
+                      if (aiRegEnhanceResult && aiRegEnhanceResult.regId !== reg.id) {
+                        setAiRegEnhanceResult(null);
+                      }
+                      setTimeout(() => {
+                        regEnhanceRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                      }, 100);
+                    }
                   }}
                   data-testid={`card-regulation-${reg.id}`}
                 >
@@ -790,115 +800,204 @@ export default function PolicyEngine() {
             </Card>
           )}
 
-          {aiRegEnhanceResult && (
-            <Card ref={regEnhanceRef} className="border-primary/30" data-testid="panel-reg-enhancement">
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <CardTitle className="text-sm flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-primary" />
-                    AI Enhancement: {aiRegEnhanceResult.regName}
-                  </CardTitle>
+          {selectedRegulation && (
+            <div ref={regEnhanceRef} data-testid="panel-regulation-detail">
+              <Card className="border-primary/30">
+                <CardHeader className="pb-2">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="space-y-1">
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        <BookOpen className="w-4 h-4 text-primary" />
+                        {selectedRegulation.name}
+                        <Badge
+                          variant={selectedRegulation.enforcementStatus === "active" ? "default" : "secondary"}
+                          className="text-[10px]"
+                        >
+                          {selectedRegulation.enforcementStatus}
+                        </Badge>
+                      </CardTitle>
+                      <p className="text-xs text-muted-foreground">{selectedRegulation.fullName}</p>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => { setSelectedRegulation(selectedRegulation); setActiveTab("policies"); }}
+                        data-testid="button-view-policies"
+                      >
+                        <FileCode className="w-3 h-3 mr-1.5" />
+                        View Policies ({allPolicies.filter(p => p.regulationId === selectedRegulation.id).length})
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => { setSelectedRegulation(selectedRegulation); setActiveTab("compliance"); }}
+                        data-testid="button-view-controls"
+                      >
+                        <Layers className="w-3 h-3 mr-1.5" />
+                        View Controls ({allControls.filter(c => c.regulationId === selectedRegulation.id).length})
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => { setSelectedRegulation(null); setAiRegEnhanceResult(null); }}
+                        data-testid="button-close-reg-detail"
+                      >
+                        <XCircle className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm">
+                  <p className="text-xs text-muted-foreground">{selectedRegulation.description}</p>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {jurisdictionBadge(selectedRegulation.jurisdiction)}
+                    <Badge variant="outline" className="text-[10px]">
+                      <Building2 className="w-3 h-3 mr-1" />
+                      {selectedRegulation.industry.replace(/_/g, " ")}
+                    </Badge>
+                    {selectedRegulation.effectiveDate && (
+                      <Badge variant="outline" className="text-[10px]">
+                        {new Date(selectedRegulation.effectiveDate).toLocaleDateString("en-US", { month: "short", year: "numeric" })}
+                      </Badge>
+                    )}
+                    <Badge variant="outline" className="text-[10px]">v{selectedRegulation.version}</Badge>
+                    {selectedRegulation.sourceUrl && (
+                      <a href={selectedRegulation.sourceUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-primary underline" onClick={(e) => e.stopPropagation()}>
+                        Source
+                      </a>
+                    )}
+                  </div>
+                  {selectedRegulation.modulesAffected && (selectedRegulation.modulesAffected as string[]).length > 0 && (
+                    <div className="flex items-center gap-1 flex-wrap">
+                      <span className="text-[10px] text-muted-foreground mr-1">Modules:</span>
+                      {(selectedRegulation.modulesAffected as string[]).map((m) => (
+                        <Badge key={m} variant="outline" className="text-[9px] px-1.5 py-0">{m}</Badge>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {aiRegEnhanceResult && aiRegEnhanceResult.regId === selectedRegulation.id && (
+                <Card className="mt-3 border-primary/20" data-testid="panel-reg-enhancement">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-primary" />
+                      AI Enhancement Analysis
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4 text-sm">
+                    {aiRegEnhanceResult.enriched.overview && (
+                      <div>
+                        <h4 className="font-medium text-xs text-muted-foreground mb-1">Overview</h4>
+                        <p className="text-sm leading-relaxed">{aiRegEnhanceResult.enriched.overview}</p>
+                      </div>
+                    )}
+
+                    {aiRegEnhanceResult.enriched.keyRequirements?.length > 0 && (
+                      <div>
+                        <h4 className="font-medium text-xs text-muted-foreground mb-2">Key Requirements</h4>
+                        <div className="space-y-2">
+                          {aiRegEnhanceResult.enriched.keyRequirements.map((req: any, i: number) => (
+                            <div key={i} className="border rounded-md p-2.5 space-y-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-medium text-xs">{req.title}</span>
+                                {severityBadge(req.severity)}
+                              </div>
+                              <p className="text-xs text-muted-foreground">{req.description}</p>
+                              {req.implementationSteps?.length > 0 && (
+                                <ul className="text-xs text-muted-foreground space-y-0.5 mt-1">
+                                  {req.implementationSteps.map((step: string, j: number) => (
+                                    <li key={j} className="flex items-start gap-1.5">
+                                      <ArrowRight className="w-3 h-3 mt-0.5 shrink-0 text-primary" />
+                                      {step}
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {aiRegEnhanceResult.enriched.aiAgentImplications?.length > 0 && (
+                      <div>
+                        <h4 className="font-medium text-xs text-muted-foreground mb-1">AI Agent Implications</h4>
+                        <ul className="space-y-1">
+                          {aiRegEnhanceResult.enriched.aiAgentImplications.map((imp: string, i: number) => (
+                            <li key={i} className="text-xs flex items-start gap-1.5">
+                              <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0 text-yellow-500" />
+                              {imp}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {aiRegEnhanceResult.enriched.complianceChecklist?.length > 0 && (
+                      <div>
+                        <h4 className="font-medium text-xs text-muted-foreground mb-2">Compliance Checklist</h4>
+                        <div className="space-y-1">
+                          {aiRegEnhanceResult.enriched.complianceChecklist.map((item: any, i: number) => (
+                            <div key={i} className="flex items-center gap-2 text-xs">
+                              <Badge
+                                variant={item.priority === "must" ? "default" : item.priority === "should" ? "secondary" : "outline"}
+                                className="text-[10px] shrink-0"
+                              >
+                                {item.priority}
+                              </Badge>
+                              <span>{item.item}</span>
+                              <span className="text-muted-foreground ml-auto shrink-0">{item.category}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {aiRegEnhanceResult.enriched.penaltiesAndRisks && (
+                      <div>
+                        <h4 className="font-medium text-xs text-muted-foreground mb-1">Penalties & Risks</h4>
+                        <p className="text-xs text-muted-foreground">{aiRegEnhanceResult.enriched.penaltiesAndRisks}</p>
+                      </div>
+                    )}
+
+                    {aiRegEnhanceResult.enriched.automationOpportunities?.length > 0 && (
+                      <div>
+                        <h4 className="font-medium text-xs text-muted-foreground mb-1">Automation Opportunities</h4>
+                        <ul className="space-y-1">
+                          {aiRegEnhanceResult.enriched.automationOpportunities.map((opp: string, i: number) => (
+                            <li key={i} className="text-xs flex items-start gap-1.5">
+                              <Zap className="w-3 h-3 mt-0.5 shrink-0 text-primary" />
+                              {opp}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+
+              {!aiRegEnhanceResult && (
+                <div className="mt-3 flex items-center justify-center">
                   <Button
                     size="sm"
-                    variant="ghost"
-                    onClick={() => setAiRegEnhanceResult(null)}
-                    data-testid="button-close-reg-enhancement"
+                    variant="outline"
+                    disabled={aiEnhancingReg === selectedRegulation.id}
+                    onClick={() => handleAiEnhanceRegulation(selectedRegulation)}
+                    data-testid="button-ai-enhance-detail"
                   >
-                    <XCircle className="w-4 h-4" />
+                    {aiEnhancingReg === selectedRegulation.id ? (
+                      <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" />Running AI Enhancement...</>
+                    ) : (
+                      <><Sparkles className="w-3 h-3 mr-1.5" />Run AI Enhancement Analysis</>
+                    )}
                   </Button>
                 </div>
-              </CardHeader>
-              <CardContent className="space-y-4 text-sm">
-                {aiRegEnhanceResult.enriched.overview && (
-                  <div>
-                    <h4 className="font-medium text-xs text-muted-foreground mb-1">Overview</h4>
-                    <p className="text-sm leading-relaxed">{aiRegEnhanceResult.enriched.overview}</p>
-                  </div>
-                )}
-
-                {aiRegEnhanceResult.enriched.keyRequirements?.length > 0 && (
-                  <div>
-                    <h4 className="font-medium text-xs text-muted-foreground mb-2">Key Requirements</h4>
-                    <div className="space-y-2">
-                      {aiRegEnhanceResult.enriched.keyRequirements.map((req: any, i: number) => (
-                        <div key={i} className="border rounded-md p-2.5 space-y-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-medium text-xs">{req.title}</span>
-                            {severityBadge(req.severity)}
-                          </div>
-                          <p className="text-xs text-muted-foreground">{req.description}</p>
-                          {req.implementationSteps?.length > 0 && (
-                            <ul className="text-xs text-muted-foreground space-y-0.5 mt-1">
-                              {req.implementationSteps.map((step: string, j: number) => (
-                                <li key={j} className="flex items-start gap-1.5">
-                                  <ArrowRight className="w-3 h-3 mt-0.5 shrink-0 text-primary" />
-                                  {step}
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {aiRegEnhanceResult.enriched.aiAgentImplications?.length > 0 && (
-                  <div>
-                    <h4 className="font-medium text-xs text-muted-foreground mb-1">AI Agent Implications</h4>
-                    <ul className="space-y-1">
-                      {aiRegEnhanceResult.enriched.aiAgentImplications.map((imp: string, i: number) => (
-                        <li key={i} className="text-xs flex items-start gap-1.5">
-                          <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0 text-yellow-500" />
-                          {imp}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                {aiRegEnhanceResult.enriched.complianceChecklist?.length > 0 && (
-                  <div>
-                    <h4 className="font-medium text-xs text-muted-foreground mb-2">Compliance Checklist</h4>
-                    <div className="space-y-1">
-                      {aiRegEnhanceResult.enriched.complianceChecklist.map((item: any, i: number) => (
-                        <div key={i} className="flex items-center gap-2 text-xs">
-                          <Badge
-                            variant={item.priority === "must" ? "default" : item.priority === "should" ? "secondary" : "outline"}
-                            className="text-[10px] shrink-0"
-                          >
-                            {item.priority}
-                          </Badge>
-                          <span>{item.item}</span>
-                          <span className="text-muted-foreground ml-auto shrink-0">{item.category}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {aiRegEnhanceResult.enriched.penaltiesAndRisks && (
-                  <div>
-                    <h4 className="font-medium text-xs text-muted-foreground mb-1">Penalties & Risks</h4>
-                    <p className="text-xs text-muted-foreground">{aiRegEnhanceResult.enriched.penaltiesAndRisks}</p>
-                  </div>
-                )}
-
-                {aiRegEnhanceResult.enriched.automationOpportunities?.length > 0 && (
-                  <div>
-                    <h4 className="font-medium text-xs text-muted-foreground mb-1">Automation Opportunities</h4>
-                    <ul className="space-y-1">
-                      {aiRegEnhanceResult.enriched.automationOpportunities.map((opp: string, i: number) => (
-                        <li key={i} className="text-xs flex items-start gap-1.5">
-                          <Zap className="w-3 h-3 mt-0.5 shrink-0 text-primary" />
-                          {opp}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+              )}
+            </div>
           )}
         </TabsContent>
 
