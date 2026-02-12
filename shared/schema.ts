@@ -1199,4 +1199,86 @@ export const insertMcpAppSessionSchema = createInsertSchema(mcpAppSessions).omit
 export type InsertMcpAppSession = z.infer<typeof insertMcpAppSessionSchema>;
 export type McpAppSession = typeof mcpAppSessions.$inferSelect;
 
+export const regulations = pgTable("regulations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  fullName: text("full_name").notNull(),
+  description: text("description"),
+  jurisdiction: text("jurisdiction").notNull(),
+  industry: text("industry").notNull(),
+  category: text("category").notNull().default("general"),
+  effectiveDate: timestamp("effective_date"),
+  enforcementStatus: text("enforcement_status").notNull().default("active"),
+  modulesAffected: text("modules_affected").array().default(sql`'{}'::text[]`),
+  encodedPolicyCount: integer("encoded_policy_count").default(0),
+  sourceUrl: text("source_url"),
+  version: text("version").default("1.0"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertRegulationSchema = createInsertSchema(regulations).omit({ id: true, createdAt: true });
+export type InsertRegulation = z.infer<typeof insertRegulationSchema>;
+export type Regulation = typeof regulations.$inferSelect;
+
+export const regulatoryPolicies = pgTable("regulatory_policies", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  regulationId: varchar("regulation_id").notNull(),
+  articleRef: text("article_ref").notNull(),
+  title: text("title").notNull(),
+  naturalLanguage: text("natural_language").notNull(),
+  policyLanguage: text("policy_language").notNull().default("rego"),
+  policyCode: text("policy_code").notNull(),
+  enforcementPoint: text("enforcement_point").notNull(),
+  violationAction: text("violation_action").notNull().default("warn"),
+  evidenceRequired: text("evidence_required").array().default(sql`'{}'::text[]`),
+  severity: text("severity").notNull().default("high"),
+  enabled: boolean("enabled").default(true),
+  lastTestedAt: timestamp("last_tested_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertRegulatoryPolicySchema = createInsertSchema(regulatoryPolicies).omit({ id: true, createdAt: true });
+export type InsertRegulatoryPolicy = z.infer<typeof insertRegulatoryPolicySchema>;
+export type RegulatoryPolicy = typeof regulatoryPolicies.$inferSelect;
+
+export const complianceControls = pgTable("compliance_controls", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  regulationId: varchar("regulation_id").notNull(),
+  requirementRef: text("requirement_ref").notNull(),
+  requirementTitle: text("requirement_title").notNull(),
+  almpControl: text("almp_control").notNull(),
+  controlModule: text("control_module").notNull(),
+  evidenceArtifact: text("evidence_artifact").notNull(),
+  coverageStatus: text("coverage_status").notNull().default("full"),
+  gapDescription: text("gap_description"),
+  customerActionRequired: text("customer_action_required"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertComplianceControlSchema = createInsertSchema(complianceControls).omit({ id: true, createdAt: true });
+export type InsertComplianceControl = z.infer<typeof insertComplianceControlSchema>;
+export type ComplianceControl = typeof complianceControls.$inferSelect;
+
+export const regulatoryChanges = pgTable("regulatory_changes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  regulationId: varchar("regulation_id").notNull(),
+  changeTitle: text("change_title").notNull(),
+  changeDescription: text("change_description").notNull(),
+  changeType: text("change_type").notNull().default("amendment"),
+  impactLevel: text("impact_level").notNull().default("medium"),
+  affectedAgentCount: integer("affected_agent_count").default(0),
+  affectedOutcomeCount: integer("affected_outcome_count").default(0),
+  recommendedUpdates: jsonb("recommended_updates"),
+  status: text("status").notNull().default("pending_review"),
+  reviewedBy: text("reviewed_by"),
+  reviewedAt: timestamp("reviewed_at"),
+  effectiveDate: timestamp("effective_date"),
+  detectedAt: timestamp("detected_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertRegulatoryChangeSchema = createInsertSchema(regulatoryChanges).omit({ id: true, createdAt: true });
+export type InsertRegulatoryChange = z.infer<typeof insertRegulatoryChangeSchema>;
+export type RegulatoryChange = typeof regulatoryChanges.$inferSelect;
+
 export * from "./models/chat";

@@ -51,6 +51,10 @@ import {
   insertTrustedPublisherSchema,
   insertMarketplaceInstallRequestSchema,
   insertPlatformSettingSchema,
+  insertRegulationSchema,
+  insertRegulatoryPolicySchema,
+  insertComplianceControlSchema,
+  insertRegulatoryChangeSchema,
 } from "@shared/schema";
 
 const openai = new OpenAI({
@@ -11167,6 +11171,453 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
     } catch (e: any) {
       console.error("TTS error:", e.message);
       res.status(500).json({ message: e.message || "TTS generation failed" });
+    }
+  });
+
+  // Regulatory Policy-as-Code Engine
+  app.get("/api/regulations", async (_req, res) => {
+    const regs = await storage.getRegulations();
+    res.json(regs);
+  });
+
+  app.get("/api/regulations/:id", async (req, res) => {
+    const reg = await storage.getRegulation(req.params.id);
+    if (!reg) return res.status(404).json({ message: "Not found" });
+    res.json(reg);
+  });
+
+  app.post("/api/regulations", async (req, res) => {
+    try {
+      const data = insertRegulationSchema.parse(req.body);
+      const reg = await storage.createRegulation(data);
+      res.status(201).json(reg);
+    } catch (e) { handleZodError(res, e); }
+  });
+
+  app.get("/api/regulatory-policies", async (_req, res) => {
+    const policies = await storage.getRegulatoryPolicies();
+    res.json(policies);
+  });
+
+  app.get("/api/regulations/:id/policies", async (req, res) => {
+    const policies = await storage.getRegulatoryPoliciesByRegulation(req.params.id);
+    res.json(policies);
+  });
+
+  app.get("/api/regulatory-policies/:id", async (req, res) => {
+    const policy = await storage.getRegulatoryPolicy(req.params.id);
+    if (!policy) return res.status(404).json({ message: "Not found" });
+    res.json(policy);
+  });
+
+  app.post("/api/regulatory-policies", async (req, res) => {
+    try {
+      const data = insertRegulatoryPolicySchema.parse(req.body);
+      const policy = await storage.createRegulatoryPolicy(data);
+      res.status(201).json(policy);
+    } catch (e) { handleZodError(res, e); }
+  });
+
+  app.patch("/api/regulatory-policies/:id", async (req, res) => {
+    try {
+      const data = insertRegulatoryPolicySchema.partial().parse(req.body);
+      const updated = await storage.updateRegulatoryPolicy(req.params.id, data);
+      if (!updated) return res.status(404).json({ message: "Not found" });
+      res.json(updated);
+    } catch (e) { handleZodError(res, e); }
+  });
+
+  app.get("/api/compliance-controls", async (_req, res) => {
+    const controls = await storage.getComplianceControls();
+    res.json(controls);
+  });
+
+  app.get("/api/regulations/:id/compliance-controls", async (req, res) => {
+    const controls = await storage.getComplianceControlsByRegulation(req.params.id);
+    res.json(controls);
+  });
+
+  app.post("/api/compliance-controls", async (req, res) => {
+    try {
+      const data = insertComplianceControlSchema.parse(req.body);
+      const control = await storage.createComplianceControl(data);
+      res.status(201).json(control);
+    } catch (e) { handleZodError(res, e); }
+  });
+
+  app.get("/api/regulatory-changes", async (_req, res) => {
+    const changes = await storage.getRegulatoryChanges();
+    res.json(changes);
+  });
+
+  app.get("/api/regulations/:id/changes", async (req, res) => {
+    const changes = await storage.getRegulatoryChangesByRegulation(req.params.id);
+    res.json(changes);
+  });
+
+  app.post("/api/regulatory-changes", async (req, res) => {
+    try {
+      const data = insertRegulatoryChangeSchema.parse(req.body);
+      const change = await storage.createRegulatoryChange(data);
+      res.status(201).json(change);
+    } catch (e) { handleZodError(res, e); }
+  });
+
+  app.patch("/api/regulatory-changes/:id", async (req, res) => {
+    try {
+      const data = insertRegulatoryChangeSchema.partial().parse(req.body);
+      const updated = await storage.updateRegulatoryChange(req.params.id, data);
+      if (!updated) return res.status(404).json({ message: "Not found" });
+      res.json(updated);
+    } catch (e) { handleZodError(res, e); }
+  });
+
+  // Seed endpoint for regulatory data
+  app.post("/api/regulations/seed", async (_req, res) => {
+    try {
+      const existingRegs = await storage.getRegulations();
+      if (existingRegs.length > 0) {
+        return res.json({ message: "Already seeded", count: existingRegs.length });
+      }
+
+      const seedRegulations = [
+        {
+          name: "EU AI Act",
+          fullName: "Regulation (EU) 2024/1689 — Artificial Intelligence Act",
+          description: "Comprehensive EU regulation establishing harmonized rules for AI systems based on risk classification. High-risk AI systems must meet requirements for data quality, documentation, transparency, human oversight, accuracy, robustness, and cybersecurity.",
+          jurisdiction: "EU",
+          industry: "cross_industry",
+          category: "ai_governance",
+          effectiveDate: new Date("2025-08-02"),
+          enforcementStatus: "upcoming" as const,
+          modulesAffected: ["Agent Design", "Deployment", "Monitor", "Audit"],
+          encodedPolicyCount: 47,
+          sourceUrl: "https://eur-lex.europa.eu/eli/reg/2024/1689",
+          version: "1.0",
+        },
+        {
+          name: "GDPR",
+          fullName: "General Data Protection Regulation (EU) 2016/679",
+          description: "EU regulation on data protection and privacy establishing comprehensive rights for data subjects and obligations for data controllers and processors. Applies to all AI agents processing personal data of EU residents.",
+          jurisdiction: "EU",
+          industry: "cross_industry",
+          category: "privacy",
+          effectiveDate: new Date("2018-05-25"),
+          enforcementStatus: "active" as const,
+          modulesAffected: ["Agent Design", "Monitor", "Audit", "Governance"],
+          encodedPolicyCount: 34,
+          sourceUrl: "https://eur-lex.europa.eu/eli/reg/2016/679",
+          version: "2.1",
+        },
+        {
+          name: "HIPAA",
+          fullName: "Health Insurance Portability and Accountability Act",
+          description: "US federal law establishing national standards for the protection of individually identifiable health information (PHI). Requires administrative, physical, and technical safeguards for electronic PHI processed by AI agents.",
+          jurisdiction: "US",
+          industry: "healthcare",
+          category: "privacy",
+          effectiveDate: new Date("1996-08-21"),
+          enforcementStatus: "active" as const,
+          modulesAffected: ["Agent Design", "Deployment", "Monitor", "Audit", "Governance"],
+          encodedPolicyCount: 28,
+          sourceUrl: "https://www.hhs.gov/hipaa",
+          version: "3.0",
+        },
+        {
+          name: "SOX",
+          fullName: "Sarbanes-Oxley Act of 2002",
+          description: "US federal law mandating financial reporting accuracy, internal controls, and corporate accountability. AI agents handling financial data must maintain segregation of duties and immutable audit trails.",
+          jurisdiction: "US",
+          industry: "financial_services",
+          category: "financial",
+          effectiveDate: new Date("2002-07-30"),
+          enforcementStatus: "active" as const,
+          modulesAffected: ["Audit", "Governance", "Monitor"],
+          encodedPolicyCount: 19,
+          sourceUrl: "https://www.sec.gov/about/laws/soa2002.pdf",
+          version: "2.0",
+        },
+        {
+          name: "PCI DSS v4.0",
+          fullName: "Payment Card Industry Data Security Standard v4.0",
+          description: "Global standard for organizations handling payment card data. AI agents processing, storing, or transmitting cardholder data must comply with strict encryption, access control, and monitoring requirements.",
+          jurisdiction: "Global",
+          industry: "retail",
+          category: "security",
+          effectiveDate: new Date("2024-03-31"),
+          enforcementStatus: "active" as const,
+          modulesAffected: ["Agent Design", "Deployment", "Monitor"],
+          encodedPolicyCount: 22,
+          sourceUrl: "https://www.pcisecuritystandards.org",
+          version: "4.0",
+        },
+        {
+          name: "ISO 42001",
+          fullName: "ISO/IEC 42001:2023 — AI Management System",
+          description: "International standard for establishing, implementing, maintaining, and continually improving an AI management system. Provides framework for responsible AI development and deployment across organizations.",
+          jurisdiction: "Global",
+          industry: "cross_industry",
+          category: "ai_governance",
+          effectiveDate: new Date("2023-12-18"),
+          enforcementStatus: "active" as const,
+          modulesAffected: ["Agent Design", "Deployment", "Monitor", "Audit", "Governance"],
+          encodedPolicyCount: 31,
+          sourceUrl: "https://www.iso.org/standard/81230.html",
+          version: "1.0",
+        },
+        {
+          name: "NIST AI RMF",
+          fullName: "NIST AI Risk Management Framework 1.0",
+          description: "US voluntary framework for managing AI risks. Provides taxonomy and methodology for AI risk identification, assessment, and mitigation applicable to all AI agent deployments.",
+          jurisdiction: "US",
+          industry: "cross_industry",
+          category: "ai_governance",
+          effectiveDate: new Date("2023-01-26"),
+          enforcementStatus: "active" as const,
+          modulesAffected: ["Agent Design", "Monitor", "Governance"],
+          encodedPolicyCount: 25,
+          sourceUrl: "https://www.nist.gov/artificial-intelligence/ai-risk-management-framework",
+          version: "1.0",
+        },
+        {
+          name: "MiFID II",
+          fullName: "Markets in Financial Instruments Directive II",
+          description: "EU directive governing financial markets and investment services. AI agents providing investment advice or executing trades must meet best execution, suitability, and transaction reporting requirements.",
+          jurisdiction: "EU",
+          industry: "financial_services",
+          category: "financial",
+          effectiveDate: new Date("2018-01-03"),
+          enforcementStatus: "active" as const,
+          modulesAffected: ["Agent Design", "Monitor", "Audit"],
+          encodedPolicyCount: 18,
+          sourceUrl: "https://eur-lex.europa.eu/eli/dir/2014/65",
+          version: "2.0",
+        },
+        {
+          name: "FDA AI/ML SaMD",
+          fullName: "FDA Framework for AI/ML-Based Software as a Medical Device",
+          description: "US FDA guidance for AI and machine learning-based software as a medical device. Covers predetermined change control plans, real-world performance monitoring, and transparency for AI-driven clinical decision support.",
+          jurisdiction: "US",
+          industry: "healthcare",
+          category: "safety",
+          effectiveDate: new Date("2021-01-12"),
+          enforcementStatus: "active" as const,
+          modulesAffected: ["Agent Design", "Deployment", "Monitor"],
+          encodedPolicyCount: 15,
+          sourceUrl: "https://www.fda.gov/medical-devices/software-medical-device-samd",
+          version: "1.0",
+        },
+        {
+          name: "ISA/IEC 62443",
+          fullName: "ISA/IEC 62443 Industrial Automation and Control Systems Security",
+          description: "International standard series for securing industrial automation and control systems. AI agents in manufacturing must comply with zone/conduit models, security levels, and component requirements.",
+          jurisdiction: "Global",
+          industry: "manufacturing",
+          category: "security",
+          effectiveDate: new Date("2018-06-28"),
+          enforcementStatus: "active" as const,
+          modulesAffected: ["Agent Design", "Deployment", "Governance"],
+          encodedPolicyCount: 20,
+          sourceUrl: "https://www.isa.org/standards-and-publications/isa-standards/isa-iec-62443-series-of-standards",
+          version: "3.0",
+        },
+      ];
+
+      const createdRegs: any[] = [];
+      for (const regData of seedRegulations) {
+        const reg = await storage.createRegulation(regData);
+        createdRegs.push(reg);
+      }
+
+      const euAiActId = createdRegs[0].id;
+      const gdprId = createdRegs[1].id;
+      const hipaaId = createdRegs[2].id;
+
+      const seedPolicies = [
+        {
+          regulationId: euAiActId,
+          articleRef: "Article 6 \u2014 High-Risk AI Systems",
+          title: "High-Risk Classification Check",
+          naturalLanguage: "If an AI agent operates in a domain listed in Annex III (biometrics, critical infrastructure, employment, essential services, law enforcement, migration, justice, democratic processes), it MUST be classified as high-risk and subject to conformity assessment before deployment.",
+          policyLanguage: "rego" as const,
+          policyCode: `package eu_ai_act.article6\n\ndefault allow = false\n\nhigh_risk_domains = {\n  "biometrics", "critical_infrastructure",\n  "employment", "essential_services",\n  "law_enforcement", "migration",\n  "justice", "democratic_processes"\n}\n\nallow {\n  not input.agent.domain in high_risk_domains\n}\n\nallow {\n  input.agent.domain in high_risk_domains\n  input.agent.conformity_assessment == "passed"\n}\n\nviolation[msg] {\n  input.agent.domain in high_risk_domains\n  input.agent.conformity_assessment != "passed"\n  msg := sprintf("Agent '%s' operates in high-risk domain '%s' without conformity assessment", [input.agent.name, input.agent.domain])\n}`,
+          enforcementPoint: "Agent Design > Deploy Gate",
+          violationAction: "block",
+          evidenceRequired: ["conformity_assessment_report", "risk_classification_document", "technical_documentation"],
+          severity: "critical" as const,
+          enabled: true,
+        },
+        {
+          regulationId: euAiActId,
+          articleRef: "Article 9 \u2014 Risk Management System",
+          title: "Continuous Risk Monitoring",
+          naturalLanguage: "High-risk AI systems must implement a continuous risk management system that identifies, analyzes, evaluates, and treats risks throughout the entire lifecycle. Risk management must be updated when significant changes occur.",
+          policyLanguage: "rego" as const,
+          policyCode: `package eu_ai_act.article9\n\ndefault compliant = false\n\ncompliant {\n  input.agent.risk_management.enabled == true\n  input.agent.risk_management.last_assessment_days <= 90\n  count(input.agent.risk_management.identified_risks) > 0\n}\n\nviolation[msg] {\n  not input.agent.risk_management.enabled\n  msg := "Risk management system is not enabled for high-risk AI system"\n}\n\nviolation[msg] {\n  input.agent.risk_management.last_assessment_days > 90\n  msg := sprintf("Risk assessment is overdue by %d days (max 90)", [input.agent.risk_management.last_assessment_days - 90])\n}`,
+          enforcementPoint: "Monitor > Health Dashboard",
+          violationAction: "escalate",
+          evidenceRequired: ["risk_register", "mitigation_plan", "assessment_report"],
+          severity: "high" as const,
+          enabled: true,
+        },
+        {
+          regulationId: euAiActId,
+          articleRef: "Article 13 \u2014 Transparency",
+          title: "Transparency and User Notification",
+          naturalLanguage: "High-risk AI systems must be designed to ensure sufficient transparency for users to interpret outputs. Users must be informed they are interacting with an AI system and provided with instructions for use.",
+          policyLanguage: "rego" as const,
+          policyCode: `package eu_ai_act.article13\n\ndefault compliant = false\n\ncompliant {\n  input.agent.transparency.ai_disclosure == true\n  input.agent.transparency.instructions_provided == true\n  input.agent.transparency.output_interpretability != "none"\n}\n\nviolation[msg] {\n  not input.agent.transparency.ai_disclosure\n  msg := "Agent does not disclose AI nature to users"\n}`,
+          enforcementPoint: "Agent Design > Blueprint Compiler",
+          violationAction: "warn",
+          evidenceRequired: ["disclosure_configuration", "user_instructions_document"],
+          severity: "high" as const,
+          enabled: true,
+        },
+        {
+          regulationId: euAiActId,
+          articleRef: "Article 14 \u2014 Human Oversight",
+          title: "Human Oversight Capability",
+          naturalLanguage: "High-risk AI systems must be designed with appropriate human oversight measures. Human operators must be able to understand capabilities and limitations, monitor operation, interpret outputs, and intervene or override the system.",
+          policyLanguage: "rego" as const,
+          policyCode: `package eu_ai_act.article14\n\ndefault compliant = false\n\ncompliant {\n  input.agent.oversight.human_in_loop_enabled == true\n  input.agent.oversight.override_capability == true\n  input.agent.oversight.monitoring_dashboard == true\n}\n\nviolation[msg] {\n  not input.agent.oversight.human_in_loop_enabled\n  msg := "Human-in-the-loop oversight is not enabled"\n}\n\nviolation[msg] {\n  not input.agent.oversight.override_capability\n  msg := "Human override capability is not available"\n}`,
+          enforcementPoint: "Deployment > Release Gate",
+          violationAction: "block",
+          evidenceRequired: ["oversight_configuration", "operator_training_record", "intervention_logs"],
+          severity: "critical" as const,
+          enabled: true,
+        },
+        {
+          regulationId: gdprId,
+          articleRef: "Article 22 \u2014 Automated Decision-Making",
+          title: "Automated Individual Decision Block",
+          naturalLanguage: "If agent action is classified as 'automated individual decision' AND data subject has not provided explicit consent, THEN block execution AND escalate to Data Protection Officer.",
+          policyLanguage: "rego" as const,
+          policyCode: `package gdpr.article22\n\ndefault allow = false\n\nallow {\n  not input.action.type == "automated_individual_decision"\n}\n\nallow {\n  input.action.type == "automated_individual_decision"\n  input.data_subject.explicit_consent == true\n}\n\nviolation[msg] {\n  input.action.type == "automated_individual_decision"\n  not input.data_subject.explicit_consent\n  msg := "Automated individual decision without explicit consent \u2014 escalate to DPO"\n}`,
+          enforcementPoint: "Agent Runtime > Action Validator",
+          violationAction: "block",
+          evidenceRequired: ["consent_record", "decision_rationale", "dpo_notification"],
+          severity: "critical" as const,
+          enabled: true,
+        },
+        {
+          regulationId: gdprId,
+          articleRef: "Article 17 \u2014 Right to Erasure",
+          title: "Data Erasure Compliance",
+          naturalLanguage: "When a data subject exercises their right to erasure, all personal data processed by agents must be deleted within 30 days. Agent training data derived from personal data must also be addressed.",
+          policyLanguage: "cedar" as const,
+          policyCode: `// Cedar policy for GDPR Article 17\npermit(\n  principal,\n  action == Action::"process_personal_data",\n  resource\n) when {\n  resource.erasure_requested == false\n};\n\nforbid(\n  principal,\n  action == Action::"process_personal_data",\n  resource\n) when {\n  resource.erasure_requested == true\n  resource.erasure_completed == false\n};`,
+          enforcementPoint: "Agent Runtime > Data Access Layer",
+          violationAction: "block",
+          evidenceRequired: ["erasure_request_log", "deletion_confirmation", "training_data_audit"],
+          severity: "high" as const,
+          enabled: true,
+        },
+        {
+          regulationId: hipaaId,
+          articleRef: "\u00A7164.312(a)(1) \u2014 Access Control",
+          title: "PHI Access Control Enforcement",
+          naturalLanguage: "AI agents accessing electronic Protected Health Information (ePHI) must have unique user identification, emergency access procedures, automatic logoff, and encryption/decryption mechanisms.",
+          policyLanguage: "rego" as const,
+          policyCode: `package hipaa.access_control\n\ndefault allow = false\n\nallow {\n  input.agent.authentication.method == "unique_id"\n  input.agent.session.auto_logoff_minutes <= 15\n  input.data.encryption == "AES-256"\n}\n\nviolation[msg] {\n  input.agent.authentication.method != "unique_id"\n  msg := "Agent lacks unique identification for ePHI access"\n}\n\nviolation[msg] {\n  input.agent.session.auto_logoff_minutes > 15\n  msg := sprintf("Auto-logoff timeout (%d min) exceeds HIPAA maximum (15 min)", [input.agent.session.auto_logoff_minutes])\n}`,
+          enforcementPoint: "Agent Design > Security Config",
+          violationAction: "block",
+          evidenceRequired: ["access_control_config", "encryption_certificate", "session_policy"],
+          severity: "critical" as const,
+          enabled: true,
+        },
+      ];
+
+      for (const policyData of seedPolicies) {
+        await storage.createRegulatoryPolicy(policyData);
+      }
+
+      const seedControls = [
+        { regulationId: euAiActId, requirementRef: "Art. 6", requirementTitle: "High-Risk Classification", almpControl: "Agent Risk Tier Assignment", controlModule: "Agent Design", evidenceArtifact: "Risk Classification Report", coverageStatus: "full" as const },
+        { regulationId: euAiActId, requirementRef: "Art. 9", requirementTitle: "Risk Management System", almpControl: "Monitor Health Dashboard + Drift Detection", controlModule: "Monitor", evidenceArtifact: "Risk Assessment Logs", coverageStatus: "full" as const },
+        { regulationId: euAiActId, requirementRef: "Art. 10", requirementTitle: "Data Governance", almpControl: "Data Classification + Redaction Profiles", controlModule: "Governance", evidenceArtifact: "Data Quality Reports", coverageStatus: "partial" as const, gapDescription: "Training data lineage tracking not yet implemented", customerActionRequired: "Maintain external training data registry" },
+        { regulationId: euAiActId, requirementRef: "Art. 11", requirementTitle: "Technical Documentation", almpControl: "Blueprint Studio + Export Wizard", controlModule: "Agent Design", evidenceArtifact: "Blueprint Export Package", coverageStatus: "full" as const },
+        { regulationId: euAiActId, requirementRef: "Art. 12", requirementTitle: "Record-Keeping", almpControl: "Immutable Audit Log + Run Traces", controlModule: "Audit", evidenceArtifact: "Hash-Chained Audit Trail", coverageStatus: "full" as const },
+        { regulationId: euAiActId, requirementRef: "Art. 13", requirementTitle: "Transparency", almpControl: "Agent Disclosure Config + Explainability", controlModule: "Agent Design", evidenceArtifact: "Transparency Configuration", coverageStatus: "partial" as const, gapDescription: "Automated explainability reports not yet available", customerActionRequired: "Provide manual explanations for complex decisions" },
+        { regulationId: euAiActId, requirementRef: "Art. 14", requirementTitle: "Human Oversight", almpControl: "Approval Gates + Human-in-Loop Config", controlModule: "Approvals", evidenceArtifact: "Approval Decision Logs", coverageStatus: "full" as const },
+        { regulationId: euAiActId, requirementRef: "Art. 15", requirementTitle: "Accuracy & Robustness", almpControl: "Eval Studio + Shadow Replay", controlModule: "Monitor", evidenceArtifact: "Eval Run Results + Shadow Comparison", coverageStatus: "full" as const },
+        { regulationId: gdprId, requirementRef: "Art. 22", requirementTitle: "Automated Decision-Making", almpControl: "Policy Engine + Consent Check", controlModule: "Governance", evidenceArtifact: "Consent Records + Decision Logs", coverageStatus: "full" as const },
+        { regulationId: gdprId, requirementRef: "Art. 25", requirementTitle: "Data Protection by Design", almpControl: "Redaction Profiles + Data Classification", controlModule: "Governance", evidenceArtifact: "Privacy Impact Assessment", coverageStatus: "partial" as const, gapDescription: "Automated DPIA generation not available", customerActionRequired: "Conduct manual DPIA for high-risk processing" },
+        { regulationId: gdprId, requirementRef: "Art. 30", requirementTitle: "Records of Processing", almpControl: "Audit Trail + Run Traces", controlModule: "Audit", evidenceArtifact: "Processing Activity Register", coverageStatus: "full" as const },
+        { regulationId: hipaaId, requirementRef: "\u00A7164.312", requirementTitle: "Technical Safeguards", almpControl: "Tool Proxy Control + Encryption", controlModule: "Governance", evidenceArtifact: "Security Configuration Audit", coverageStatus: "full" as const },
+        { regulationId: hipaaId, requirementRef: "\u00A7164.312(b)", requirementTitle: "Audit Controls", almpControl: "Immutable Audit Log", controlModule: "Audit", evidenceArtifact: "Hash-Chained Audit Events", coverageStatus: "full" as const },
+        { regulationId: hipaaId, requirementRef: "\u00A7164.502(b)", requirementTitle: "Minimum Necessary", almpControl: "Data Minimization Policies", controlModule: "Governance", evidenceArtifact: "Data Access Scope Logs", coverageStatus: "partial" as const, gapDescription: "Automated data scope analysis not yet implemented", customerActionRequired: "Configure per-agent data access boundaries" },
+      ];
+
+      for (const control of seedControls) {
+        await storage.createComplianceControl(control);
+      }
+
+      const seedChanges = [
+        {
+          regulationId: euAiActId,
+          changeTitle: "EU AI Act Enforcement Phase 1 \u2014 Prohibited AI Practices",
+          changeDescription: "As of February 2, 2025, the prohibition on unacceptable-risk AI practices takes effect. This includes bans on social scoring systems, real-time biometric identification in public spaces (with exceptions), and manipulation techniques.",
+          changeType: "enforcement_phase" as const,
+          impactLevel: "critical" as const,
+          affectedAgentCount: 12,
+          affectedOutcomeCount: 5,
+          recommendedUpdates: { actions: ["Review all agents for prohibited practices", "Update risk classifications", "Add social scoring detection filters"] },
+          status: "in_progress" as const,
+          effectiveDate: new Date("2025-02-02"),
+        },
+        {
+          regulationId: euAiActId,
+          changeTitle: "EU AI Act Full Enforcement \u2014 High-Risk Requirements",
+          changeDescription: "Full enforcement of requirements for high-risk AI systems begins August 2, 2025. All high-risk agents must have conformity assessments, technical documentation, and quality management systems in place.",
+          changeType: "enforcement_phase" as const,
+          impactLevel: "critical" as const,
+          affectedAgentCount: 8,
+          affectedOutcomeCount: 3,
+          recommendedUpdates: { actions: ["Complete conformity assessments for all high-risk agents", "Prepare technical documentation packages", "Establish quality management system"] },
+          status: "pending_review" as const,
+          effectiveDate: new Date("2025-08-02"),
+        },
+        {
+          regulationId: gdprId,
+          changeTitle: "EDPB Guidelines on AI and Data Protection",
+          changeDescription: "The European Data Protection Board has issued updated guidelines clarifying the application of GDPR to AI systems, including new requirements for legitimate interest assessments and automated decision-making transparency.",
+          changeType: "guidance_update" as const,
+          impactLevel: "high" as const,
+          affectedAgentCount: 15,
+          affectedOutcomeCount: 7,
+          recommendedUpdates: { actions: ["Update consent mechanisms for AI processing", "Add legitimate interest assessment workflows", "Enhance decision explanation capabilities"] },
+          status: "pending_review" as const,
+          effectiveDate: new Date("2025-03-15"),
+        },
+        {
+          regulationId: hipaaId,
+          changeTitle: "HHS Proposed Rule on AI in Healthcare",
+          changeDescription: "The Department of Health and Human Services has proposed new rules specifically addressing AI-generated clinical decision support, requiring additional transparency and validation requirements for AI agents used in patient care.",
+          changeType: "proposed_rule" as const,
+          impactLevel: "high" as const,
+          affectedAgentCount: 6,
+          affectedOutcomeCount: 2,
+          recommendedUpdates: { actions: ["Prepare clinical validation documentation", "Add clinical decision audit trails", "Implement human verification for clinical recommendations"] },
+          status: "pending_review" as const,
+          effectiveDate: new Date("2025-09-01"),
+        },
+      ];
+
+      for (const change of seedChanges) {
+        await storage.createRegulatoryChange(change);
+      }
+
+      const allPolicies = await storage.getRegulatoryPolicies();
+      for (const reg of createdRegs) {
+        const count = allPolicies.filter((p: any) => p.regulationId === reg.id).length;
+        if (count > 0) {
+          await storage.updateRegulation(reg.id, { encodedPolicyCount: count });
+        }
+      }
+
+      res.status(201).json({ message: "Seeded successfully", regulations: createdRegs.length });
+    } catch (err: any) {
+      res.status(500).json({ message: "Seed failed", error: err.message });
     }
   });
 

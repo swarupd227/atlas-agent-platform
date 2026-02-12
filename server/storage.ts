@@ -100,6 +100,14 @@ import {
   type McpAppConsent, type InsertMcpAppConsent,
   mcpAppSessions,
   type McpAppSession, type InsertMcpAppSession,
+  regulations,
+  type Regulation, type InsertRegulation,
+  regulatoryPolicies,
+  type RegulatoryPolicy, type InsertRegulatoryPolicy,
+  complianceControls,
+  type ComplianceControl, type InsertComplianceControl,
+  regulatoryChanges,
+  type RegulatoryChange, type InsertRegulatoryChange,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -407,6 +415,26 @@ export interface IStorage {
   getMcpAppSession(id: string): Promise<McpAppSession | undefined>;
   createMcpAppSession(session: InsertMcpAppSession): Promise<McpAppSession>;
   updateMcpAppSession(id: string, data: Partial<McpAppSession>): Promise<McpAppSession | undefined>;
+
+  getRegulations(): Promise<Regulation[]>;
+  getRegulation(id: string): Promise<Regulation | undefined>;
+  createRegulation(reg: InsertRegulation): Promise<Regulation>;
+  updateRegulation(id: string, data: Partial<Regulation>): Promise<Regulation | undefined>;
+
+  getRegulatoryPolicies(): Promise<RegulatoryPolicy[]>;
+  getRegulatoryPoliciesByRegulation(regulationId: string): Promise<RegulatoryPolicy[]>;
+  getRegulatoryPolicy(id: string): Promise<RegulatoryPolicy | undefined>;
+  createRegulatoryPolicy(policy: InsertRegulatoryPolicy): Promise<RegulatoryPolicy>;
+  updateRegulatoryPolicy(id: string, data: Partial<RegulatoryPolicy>): Promise<RegulatoryPolicy | undefined>;
+
+  getComplianceControls(): Promise<ComplianceControl[]>;
+  getComplianceControlsByRegulation(regulationId: string): Promise<ComplianceControl[]>;
+  createComplianceControl(control: InsertComplianceControl): Promise<ComplianceControl>;
+
+  getRegulatoryChanges(): Promise<RegulatoryChange[]>;
+  getRegulatoryChangesByRegulation(regulationId: string): Promise<RegulatoryChange[]>;
+  createRegulatoryChange(change: InsertRegulatoryChange): Promise<RegulatoryChange>;
+  updateRegulatoryChange(id: string, data: Partial<RegulatoryChange>): Promise<RegulatoryChange | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1564,6 +1592,67 @@ export class DatabaseStorage implements IStorage {
   }
   async updateMcpAppSession(id: string, data: Partial<McpAppSession>) {
     const [updated] = await db.update(mcpAppSessions).set(data).where(eq(mcpAppSessions.id, id)).returning();
+    return updated;
+  }
+
+  async getRegulations() {
+    return db.select().from(regulations);
+  }
+  async getRegulation(id: string) {
+    const [reg] = await db.select().from(regulations).where(eq(regulations.id, id));
+    return reg;
+  }
+  async createRegulation(reg: InsertRegulation) {
+    const [created] = await db.insert(regulations).values(reg).returning();
+    return created;
+  }
+  async updateRegulation(id: string, data: Partial<Regulation>) {
+    const [updated] = await db.update(regulations).set(data).where(eq(regulations.id, id)).returning();
+    return updated;
+  }
+
+  async getRegulatoryPolicies() {
+    return db.select().from(regulatoryPolicies);
+  }
+  async getRegulatoryPoliciesByRegulation(regulationId: string) {
+    return db.select().from(regulatoryPolicies).where(eq(regulatoryPolicies.regulationId, regulationId));
+  }
+  async getRegulatoryPolicy(id: string) {
+    const [policy] = await db.select().from(regulatoryPolicies).where(eq(regulatoryPolicies.id, id));
+    return policy;
+  }
+  async createRegulatoryPolicy(policy: InsertRegulatoryPolicy) {
+    const [created] = await db.insert(regulatoryPolicies).values(policy).returning();
+    return created;
+  }
+  async updateRegulatoryPolicy(id: string, data: Partial<RegulatoryPolicy>) {
+    const [updated] = await db.update(regulatoryPolicies).set(data).where(eq(regulatoryPolicies.id, id)).returning();
+    return updated;
+  }
+
+  async getComplianceControls() {
+    return db.select().from(complianceControls);
+  }
+  async getComplianceControlsByRegulation(regulationId: string) {
+    return db.select().from(complianceControls).where(eq(complianceControls.regulationId, regulationId));
+  }
+  async createComplianceControl(control: InsertComplianceControl) {
+    const [created] = await db.insert(complianceControls).values(control).returning();
+    return created;
+  }
+
+  async getRegulatoryChanges() {
+    return db.select().from(regulatoryChanges);
+  }
+  async getRegulatoryChangesByRegulation(regulationId: string) {
+    return db.select().from(regulatoryChanges).where(eq(regulatoryChanges.regulationId, regulationId));
+  }
+  async createRegulatoryChange(change: InsertRegulatoryChange) {
+    const [created] = await db.insert(regulatoryChanges).values(change).returning();
+    return created;
+  }
+  async updateRegulatoryChange(id: string, data: Partial<RegulatoryChange>) {
+    const [updated] = await db.update(regulatoryChanges).set(data).where(eq(regulatoryChanges.id, id)).returning();
     return updated;
   }
 }
