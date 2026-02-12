@@ -117,6 +117,7 @@ function DashboardRouter() {
       <Route path="/integrations/mcp-servers" component={McpServers} />
       <Route path="/integrations" component={Integrations} />
       <Route path="/skills/studio/:id" component={SkillStudio} />
+      <Route path="/skills/studio" component={SkillStudio} />
       <Route path="/skills" component={SkillCatalog} />
       <Route path="/ontology" component={OntologyExplorer} />
       <Route path="/admin" component={Admin} />

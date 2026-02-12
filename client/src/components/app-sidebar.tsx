@@ -24,6 +24,7 @@ import {
   BookOpen,
   Gavel,
   Layers,
+  Pencil,
 } from "lucide-react";
 import {
   Sidebar,
@@ -56,7 +57,8 @@ export function AppSidebar() {
     { title: "Evaluations", url: "/evals", icon: FlaskConical },
     { title: "Deployments", url: "/deployments", icon: Rocket },
     { title: "Monitor", url: "/monitor", icon: Activity },
-    { title: "Skills", url: "/skills", icon: Layers },
+    { title: "Skills Library", url: "/skills", icon: Layers },
+    { title: "Skill Studio", url: "/skills/studio", icon: Pencil },
     { title: "Ontology", url: "/ontology", icon: BookOpen },
   ];
 
@@ -81,6 +83,8 @@ export function AppSidebar() {
     if (url === "/outcomes") return location === "/outcomes" || (location.startsWith("/outcomes/") && !location.startsWith("/outcomes/discover"));
     if (url === "/outcomes/discover") return location === "/outcomes/discover";
     if (url === "/governance") return location === "/governance";
+    if (url === "/skills") return location === "/skills";
+    if (url === "/skills/studio") return location.startsWith("/skills/studio");
     return location.startsWith(url);
   };
 

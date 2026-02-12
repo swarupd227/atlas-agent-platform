@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useRoute, Link } from "wouter";
+import { useRoute, useLocation, Link } from "wouter";
 import type { Skill, SkillVersion } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -37,6 +37,7 @@ import {
   Shield,
   FileText,
   RotateCcw,
+  Pencil,
 } from "lucide-react";
 
 const SECTION_TEMPLATES: Record<string, string> = {
@@ -177,9 +178,100 @@ function SandboxResultCard({ title, result, loading }: { title: string; result: 
   );
 }
 
+function StudioLanding() {
+  const [, navigate] = useLocation();
+  const { data: skills = [], isLoading } = useQuery<Skill[]>({ queryKey: ["/api/skills"] });
+  const { toast } = useToast();
+  const [creating, setCreating] = useState(false);
+
+  const handleCreate = async () => {
+    setCreating(true);
+    try {
+      const res = await apiRequest("POST", "/api/skills", {
+        name: "New Skill",
+        description: "Describe what this skill does...",
+        industry: "financial_services",
+        domain: "general",
+        author: "studio",
+        version: "1.0.0",
+        complexity: "intermediate",
+        status: "draft",
+        trustTier: "customer-created",
+      });
+      const created = await res.json();
+      queryClient.invalidateQueries({ queryKey: ["/api/skills"] });
+      navigate(`/skills/studio/${created.id}`);
+    } catch (e: any) {
+      toast({ title: "Failed to create skill", description: e.message, variant: "destructive" });
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  return (
+    <ScrollArea className="h-full">
+      <div className="p-6 max-w-5xl mx-auto space-y-6">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div>
+            <h1 className="text-2xl font-bold" data-testid="text-studio-title">Skill Studio</h1>
+            <p className="text-sm text-muted-foreground mt-1">Create, edit, test, and version agent skills</p>
+          </div>
+          <Button onClick={handleCreate} disabled={creating} data-testid="button-create-skill">
+            {creating ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Plus className="w-4 h-4 mr-2" />}
+            Create New Skill
+          </Button>
+        </div>
+        <Separator />
+        {isLoading ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-32" />)}
+          </div>
+        ) : skills.length === 0 ? (
+          <Card>
+            <CardContent className="p-8 text-center">
+              <Pencil className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
+              <p className="text-sm text-muted-foreground">No skills yet. Create your first skill to get started.</p>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {skills.map((s) => (
+              <Link key={s.id} href={`/skills/studio/${s.id}`}>
+                <Card className="cursor-pointer hover-elevate h-full" data-testid={`card-studio-skill-${s.id}`}>
+                  <CardHeader className="pb-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <CardTitle className="text-sm leading-tight">{s.name}</CardTitle>
+                      <Badge variant={s.status === "active" ? "default" : "secondary"} className="text-[10px] shrink-0">{s.status}</Badge>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-xs text-muted-foreground line-clamp-2 mb-2">{s.description}</p>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <Badge variant="outline" className="text-[10px]">v{s.version}</Badge>
+                      <Badge variant="outline" className="text-[10px]">{s.industry?.replace(/_/g, " ")}</Badge>
+                      <Badge variant="outline" className="text-[10px]">{s.complexity}</Badge>
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
+            ))}
+          </div>
+        )}
+      </div>
+    </ScrollArea>
+  );
+}
+
 export default function SkillStudio() {
   const [, params] = useRoute("/skills/studio/:id");
   const id = params?.id;
+
+  if (!id) return <StudioLanding />;
+
+  return <SkillStudioEditor skillId={id} />;
+}
+
+function SkillStudioEditor({ skillId: id }: { skillId: string }) {
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState("editor");
 
