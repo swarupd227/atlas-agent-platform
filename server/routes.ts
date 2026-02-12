@@ -12092,6 +12092,8 @@ Return ONLY a valid JSON object.`
             content: `You are an expert in AI agent skill design and enterprise automation for the ${industry.replace(/_/g, " ")} industry, specifically the ${domain || "general"} domain.
 
 When given an agent skill, produce a comprehensive JSON enrichment with these fields:
+- "enhancedDescription": A polished, professional 2-4 sentence description that improves upon the original. It should be clearer, more specific about capabilities, and highlight the business value. Do NOT just repeat the original - genuinely improve it.
+- "suggestedTags": Array of 4-8 relevant string tags for discoverability (lowercase, hyphenated). Include the most relevant existing tags and add new ones.
 - "overview": A detailed 3-5 sentence analysis of the skill's purpose, value proposition, and enterprise impact
 - "implementationGuidance": Object with { "prerequisites": string[], "setupSteps": string[], "configurationOptions": { "name": string, "description": string, "defaultValue": string }[], "estimatedSetupTime": string }
 - "bestPractices": Array of { "title": string, "description": string, "category": "performance"|"security"|"reliability"|"scalability" }

@@ -110,10 +110,21 @@ export default function SkillCatalog() {
       });
       const data = await res.json();
       const enriched = data.enriched;
-      await apiRequest("PATCH", `/api/skills/${skill.id}`, { aiEnrichment: enriched });
+      const patch: Record<string, any> = { aiEnrichment: enriched };
+      if (enriched.enhancedDescription && enriched.enhancedDescription !== skill.description) {
+        patch.description = enriched.enhancedDescription;
+      }
+      if (enriched.suggestedTags && Array.isArray(enriched.suggestedTags) && enriched.suggestedTags.length > 0) {
+        patch.tags = enriched.suggestedTags;
+      }
+      await apiRequest("PATCH", `/api/skills/${skill.id}`, patch);
       queryClient.invalidateQueries({ queryKey: ["/api/skills"] });
       setSheetEnrichment(enriched);
-      toast({ title: `AI Enhancement saved for ${skill.name}` });
+      const updates: string[] = [];
+      if (patch.description) updates.push("description");
+      if (patch.tags) updates.push("tags");
+      const extra = updates.length > 0 ? ` Updated ${updates.join(" & ")}.` : "";
+      toast({ title: `AI Enhancement saved for ${skill.name}.${extra}` });
     } catch (e: any) {
       toast({ title: "AI enhancement failed", description: e.message, variant: "destructive" });
     } finally {
@@ -692,7 +703,19 @@ function SkillDetailSheet({
 
         <ScrollArea className="flex-1">
           <div className="p-5 space-y-5">
-            <p className="text-sm text-muted-foreground" data-testid="text-sheet-description">{skill.description}</p>
+            <div data-testid="text-sheet-description">
+              {hasEnrichment && enrichment?.enhancedDescription ? (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-1.5">
+                    <Sparkles className="w-3 h-3 text-amber-500 shrink-0" />
+                    <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400 uppercase tracking-wider">AI-Improved Description</span>
+                  </div>
+                  <p className="text-sm text-muted-foreground" data-testid="text-enhanced-description">{skill.description}</p>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">{skill.description}</p>
+              )}
+            </div>
 
             <div className="space-y-2 text-sm">
               <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Metadata</h4>
@@ -765,7 +788,15 @@ function SkillDetailSheet({
               <>
                 <Separator />
                 <div className="space-y-2">
-                  <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Tags</h4>
+                  <div className="flex items-center gap-1.5">
+                    <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Tags</h4>
+                    {hasEnrichment && enrichment?.suggestedTags && (
+                      <span className="flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400">
+                        <Sparkles className="w-2.5 h-2.5" />
+                        AI
+                      </span>
+                    )}
+                  </div>
                   <div className="flex items-center gap-1.5 flex-wrap">
                     {tags.map((t) => (
                       <Badge key={t} variant="outline" className="text-[10px]">#{t}</Badge>
