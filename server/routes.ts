@@ -11907,7 +11907,13 @@ Return ONLY a valid JSON object.`
         }
       }
 
-      res.status(201).json({ message: "Seeded successfully", regulations: createdRegs.length });
+      res.status(201).json({
+        message: "Seeded successfully",
+        regulations: createdRegs.length,
+        policies: seedPolicies.length,
+        controls: seedControls.length,
+        changes: seedChanges.length,
+      });
     } catch (err: any) {
       res.status(500).json({ message: "Seed failed", error: err.message });
     }

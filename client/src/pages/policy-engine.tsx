@@ -181,6 +181,28 @@ export default function PolicyEngine() {
     queryKey: ["/api/regulatory-changes"],
   });
 
+  const [initializingLibrary, setInitializingLibrary] = useState(false);
+
+  async function handleInitializeLibrary() {
+    setInitializingLibrary(true);
+    try {
+      const res = await apiRequest("POST", "/api/regulations/seed");
+      const data = await res.json();
+      queryClient.invalidateQueries({ queryKey: ["/api/regulations"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/regulatory-policies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/compliance-controls"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/regulatory-changes"] });
+      toast({
+        title: "Regulation Library Initialized",
+        description: `Loaded ${data.regulations || 10} regulations, ${data.policies || 7} policies, ${data.controls || 14} compliance controls, and ${data.changes || 4} regulatory changes.`,
+      });
+    } catch (e: any) {
+      toast({ title: "Initialization failed", description: e.message, variant: "destructive" });
+    } finally {
+      setInitializingLibrary(false);
+    }
+  }
+
   const [aiGenerating, setAiGenerating] = useState<string | null>(null);
   const [aiEnhancing, setAiEnhancing] = useState(false);
   const [aiEnhanceResult, setAiEnhanceResult] = useState<any>(null);
@@ -417,6 +439,49 @@ export default function PolicyEngine() {
           ))}
         </div>
         <Skeleton className="h-96" />
+      </div>
+    );
+  }
+
+  if (regulations.length === 0) {
+    return (
+      <div className="p-6 space-y-4" data-testid="page-policy-engine-empty">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <Gavel className="w-6 h-6" />
+            Regulatory Policy-as-Code Engine
+          </h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Encode regulatory requirements as machine-executable policies with OPA Rego and Cedar
+          </p>
+        </div>
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-16 gap-4">
+            <div className="flex items-center justify-center w-16 h-16 rounded-full bg-muted">
+              <Sparkles className="w-8 h-8 text-muted-foreground" />
+            </div>
+            <div className="text-center space-y-2 max-w-lg">
+              <h2 className="text-lg font-semibold">No Regulations Loaded</h2>
+              <p className="text-sm text-muted-foreground">
+                Your regulation library is empty. Initialize it with a curated set of 10 major regulations
+                (EU AI Act, GDPR, HIPAA, SOX, PCI DSS, ISO 42001, NIST AI RMF, MiFID II, FDA AI/ML, ISA 62443),
+                7 executable policies with OPA Rego and Cedar code, 14 compliance controls, and 4 regulatory change trackers.
+              </p>
+            </div>
+            <Button
+              size="lg"
+              onClick={handleInitializeLibrary}
+              disabled={initializingLibrary}
+              data-testid="button-ai-initialize-library"
+            >
+              {initializingLibrary ? (
+                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Initializing Library...</>
+              ) : (
+                <><Sparkles className="w-4 h-4 mr-2" />AI Initialize Regulation Library</>
+              )}
+            </Button>
+          </CardContent>
+        </Card>
       </div>
     );
   }
