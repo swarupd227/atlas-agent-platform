@@ -74,36 +74,39 @@ export function IndustryWorkspaceSelector() {
   };
 
   const DATA_CLASS_OPTIONS: { value: DataClassification; label: string; description: string }[] = [
-    { value: "public", label: "Public", description: "No restrictions on data access" },
-    { value: "internal", label: "Internal", description: "Accessible within organization" },
-    { value: "confidential", label: "Confidential", description: "Limited access, business-sensitive" },
-    { value: "restricted", label: "Restricted", description: "Strictest controls, regulated data" },
+    { value: "public", label: "Public", description: "No restrictions" },
+    { value: "internal", label: "Internal", description: "Within org" },
+    { value: "confidential", label: "Confidential", description: "Business-sensitive" },
+    { value: "restricted", label: "Restricted", description: "Regulated data" },
   ];
+
+  const StepBreadcrumb = ({ current }: { current: WizardStep }) => (
+    <div className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground mb-1">
+      <Badge variant={current === "select" ? "default" : "outline"} className="text-[10px]">1</Badge>
+      <span className={current === "select" ? "font-medium" : ""}>Select</span>
+      <ArrowRight className="h-3 w-3" />
+      <Badge variant={current === "configure" ? "default" : "outline"} className="text-[10px]">2</Badge>
+      <span className={current === "configure" ? "font-medium" : ""}>Configure</span>
+      <ArrowRight className="h-3 w-3" />
+      <Badge variant={current === "review" ? "default" : "outline"} className="text-[10px]">3</Badge>
+      <span className={current === "review" ? "font-medium" : ""}>Review</span>
+    </div>
+  );
 
   return (
     <div className="fixed inset-0 z-[100] bg-background flex flex-col" data-testid="industry-workspace-selector">
-      <div className="flex-1 flex flex-col items-center justify-center p-6 overflow-auto">
-        <div className="max-w-5xl w-full space-y-8">
+      <div className="flex-1 flex flex-col items-center justify-center p-4 overflow-auto">
+        <div className="max-w-5xl w-full space-y-5">
 
           {step === "select" && (
             <>
-              <div className="text-center space-y-3">
-                <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground mb-2">
-                  <Badge variant="default" className="text-[10px]">1</Badge>
-                  <span className="font-medium">Select Industry</span>
-                  <ArrowRight className="h-3 w-3" />
-                  <Badge variant="outline" className="text-[10px]">2</Badge>
-                  <span>Configure</span>
-                  <ArrowRight className="h-3 w-3" />
-                  <Badge variant="outline" className="text-[10px]">3</Badge>
-                  <span>Review</span>
-                </div>
-                <h1 className="text-3xl font-bold tracking-tight" data-testid="text-workspace-title">
+              <div className="text-center space-y-2">
+                <StepBreadcrumb current="select" />
+                <h1 className="text-2xl font-bold tracking-tight" data-testid="text-workspace-title">
                   Select Your Industry Workspace
                 </h1>
-                <p className="text-muted-foreground text-lg max-w-2xl mx-auto">
-                  Choose your industry to activate pre-configured ontologies, regulatory frameworks,
-                  agent skills, and golden templates tailored to your domain.
+                <p className="text-muted-foreground text-sm max-w-2xl mx-auto">
+                  Activate pre-configured ontologies, regulatory frameworks, agent skills, and templates for your domain.
                 </p>
                 <Button
                   variant="ghost"
@@ -112,11 +115,11 @@ export function IndustryWorkspaceSelector() {
                   className="text-muted-foreground"
                   data-testid="button-skip-workspace"
                 >
-                  Skip for now (use default workspace)
+                  Skip for now
                 </Button>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {INDUSTRIES.map((industry) => {
                   const isActive = selectedId === industry.id;
                   const Icon = industry.icon;
@@ -130,52 +133,47 @@ export function IndustryWorkspaceSelector() {
                       data-testid={`card-industry-${industry.id}`}
                     >
                       {isActive && (
-                        <div className="absolute top-3 right-3">
-                          <div className="h-6 w-6 rounded-full bg-primary flex items-center justify-center">
-                            <Check className="h-3.5 w-3.5 text-primary-foreground" />
+                        <div className="absolute top-2.5 right-2.5">
+                          <div className="h-5 w-5 rounded-full bg-primary flex items-center justify-center">
+                            <Check className="h-3 w-3 text-primary-foreground" />
                           </div>
                         </div>
                       )}
-                      <CardContent className="p-5 space-y-4">
-                        <div className="flex items-start gap-3">
+                      <CardContent className="p-4 space-y-2.5">
+                        <div className="flex items-center gap-2.5">
                           <div
-                            className="h-10 w-10 rounded-md flex items-center justify-center shrink-0"
+                            className="h-8 w-8 rounded-md flex items-center justify-center shrink-0"
                             style={{ backgroundColor: industry.color + "20", color: industry.color }}
                           >
-                            <Icon className="h-5 w-5" />
+                            <Icon className="h-4 w-4" />
                           </div>
                           <div className="min-w-0">
                             <h3 className="font-semibold text-sm leading-tight" data-testid={`text-industry-name-${industry.id}`}>
                               {industry.label}
                             </h3>
-                            <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                              {industry.description}
-                            </p>
                           </div>
                         </div>
                         {industry.id !== "custom" ? (
-                          <div className="grid grid-cols-2 gap-2">
-                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                              <BookOpen className="h-3.5 w-3.5 shrink-0" />
+                          <div className="grid grid-cols-2 gap-1">
+                            <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                              <BookOpen className="h-3 w-3 shrink-0" />
                               <span className="truncate">{industry.ontology.split("(")[0].trim()}</span>
                             </div>
-                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                              <Cpu className="h-3.5 w-3.5 shrink-0" />
+                            <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                              <Cpu className="h-3 w-3 shrink-0" />
                               <span>{industry.agentSkills} skills</span>
                             </div>
-                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                              <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
+                            <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                              <ShieldCheck className="h-3 w-3 shrink-0" />
                               <span>{industry.regulatoryFrameworks.length} frameworks</span>
                             </div>
-                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                              <FileText className="h-3.5 w-3.5 shrink-0" />
+                            <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                              <FileText className="h-3 w-3 shrink-0" />
                               <span>{industry.goldenTemplates} templates</span>
                             </div>
                           </div>
                         ) : (
-                          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                            <span>Start with a blank workspace and build your own configuration</span>
-                          </div>
+                          <p className="text-[11px] text-muted-foreground">Start with a blank workspace</p>
                         )}
                       </CardContent>
                     </Card>
@@ -186,11 +184,10 @@ export function IndustryWorkspaceSelector() {
               {selected && (
                 <div className="flex justify-center">
                   <Button
-                    size="lg"
                     onClick={handleContinueToConfig}
                     data-testid="button-continue-workspace"
                   >
-                    {selectedId === "custom" ? "Activate Custom Workspace" : `Configure ${selected.shortLabel} Workspace`}
+                    {selectedId === "custom" ? "Activate Custom Workspace" : `Configure ${selected.shortLabel}`}
                     <ArrowRight className="h-4 w-4 ml-2" />
                   </Button>
                 </div>
@@ -200,185 +197,153 @@ export function IndustryWorkspaceSelector() {
 
           {step === "configure" && selected && (
             <>
-              <div className="text-center space-y-3">
-                <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground mb-2">
-                  <Badge variant="outline" className="text-[10px]">1</Badge>
-                  <span>Select Industry</span>
-                  <ArrowRight className="h-3 w-3" />
-                  <Badge variant="default" className="text-[10px]">2</Badge>
-                  <span className="font-medium">Configure</span>
-                  <ArrowRight className="h-3 w-3" />
-                  <Badge variant="outline" className="text-[10px]">3</Badge>
-                  <span>Review</span>
-                </div>
-                <h1 className="text-3xl font-bold tracking-tight" data-testid="text-configure-title">
-                  Configure {selected.label} Workspace
+              <div className="text-center space-y-1">
+                <StepBreadcrumb current="configure" />
+                <h1 className="text-2xl font-bold tracking-tight" data-testid="text-configure-title">
+                  Configure {selected.label}
                 </h1>
-                <p className="text-muted-foreground max-w-2xl mx-auto">
-                  Specify your sub-vertical, applicable jurisdictions, integration landscape, and data classification defaults.
+                <p className="text-muted-foreground text-sm max-w-xl mx-auto">
+                  Set your sub-verticals, departments, jurisdictions, integrations, and data classification.
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 max-w-4xl mx-auto">
-                <Card data-testid="card-config-subverticals">
-                  <CardContent className="p-5 space-y-3">
-                    <div className="flex items-center gap-2">
-                      <selected.icon className="h-4 w-4" style={{ color: selected.color }} />
-                      <h3 className="font-semibold text-sm">Sub-Vertical</h3>
-                    </div>
-                    <p className="text-xs text-muted-foreground">Select the segments most relevant to your operations.</p>
-                    <div className="flex flex-wrap gap-2">
-                      {selected.subVerticals.map((sv) => {
-                        const active = chosenSubVerticals.includes(sv);
-                        return (
-                          <Badge
-                            key={sv}
-                            variant={active ? "default" : "outline"}
-                            className={`cursor-pointer toggle-elevate ${active ? "toggle-elevated" : ""}`}
-                            onClick={() => toggleItem(chosenSubVerticals, sv, setChosenSubVerticals)}
-                            data-testid={`badge-subvertical-${sv.replace(/[\s\/&]/g, "-").toLowerCase()}`}
-                          >
-                            {active && <Check className="h-3 w-3 mr-1" />}
-                            {sv}
-                          </Badge>
-                        );
-                      })}
-                    </div>
-                  </CardContent>
-                </Card>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-w-5xl mx-auto">
+                <div className="space-y-1.5" data-testid="card-config-subverticals">
+                  <div className="flex items-center gap-1.5">
+                    <selected.icon className="h-3.5 w-3.5" style={{ color: selected.color }} />
+                    <h3 className="font-medium text-xs">Sub-Vertical</h3>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {selected.subVerticals.map((sv) => {
+                      const active = chosenSubVerticals.includes(sv);
+                      return (
+                        <Badge
+                          key={sv}
+                          variant={active ? "default" : "outline"}
+                          className={`cursor-pointer text-[11px] toggle-elevate ${active ? "toggle-elevated" : ""}`}
+                          onClick={() => toggleItem(chosenSubVerticals, sv, setChosenSubVerticals)}
+                          data-testid={`badge-subvertical-${sv.replace(/[\s\/&]/g, "-").toLowerCase()}`}
+                        >
+                          {active && <Check className="h-2.5 w-2.5 mr-0.5" />}
+                          {sv}
+                        </Badge>
+                      );
+                    })}
+                  </div>
+                </div>
 
-                <Card data-testid="card-config-departments">
-                  <CardContent className="p-5 space-y-3">
-                    <div className="flex items-center gap-2">
-                      <Building2 className="h-4 w-4 text-violet-500" />
-                      <h3 className="font-semibold text-sm">Departments</h3>
-                    </div>
-                    <p className="text-xs text-muted-foreground">Select departments that will use AI agents. This determines applicable regulations and policies.</p>
-                    <div className="flex flex-wrap gap-2">
-                      {selected.departments.map((dept) => {
-                        const active = chosenDepartments.includes(dept);
-                        return (
-                          <Badge
-                            key={dept}
-                            variant={active ? "default" : "outline"}
-                            className={`cursor-pointer toggle-elevate ${active ? "toggle-elevated" : ""}`}
-                            onClick={() => toggleItem(chosenDepartments, dept, setChosenDepartments)}
-                            data-testid={`badge-department-${dept.replace(/[\s\/&]/g, "-").toLowerCase()}`}
-                          >
-                            {active && <Check className="h-3 w-3 mr-1" />}
-                            {dept}
-                          </Badge>
-                        );
-                      })}
-                    </div>
-                  </CardContent>
-                </Card>
+                <div className="space-y-1.5" data-testid="card-config-departments">
+                  <div className="flex items-center gap-1.5">
+                    <Building2 className="h-3.5 w-3.5 text-violet-500" />
+                    <h3 className="font-medium text-xs">Departments</h3>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {selected.departments.map((dept) => {
+                      const active = chosenDepartments.includes(dept);
+                      return (
+                        <Badge
+                          key={dept}
+                          variant={active ? "default" : "outline"}
+                          className={`cursor-pointer text-[11px] toggle-elevate ${active ? "toggle-elevated" : ""}`}
+                          onClick={() => toggleItem(chosenDepartments, dept, setChosenDepartments)}
+                          data-testid={`badge-department-${dept.replace(/[\s\/&]/g, "-").toLowerCase()}`}
+                        >
+                          {active && <Check className="h-2.5 w-2.5 mr-0.5" />}
+                          {dept}
+                        </Badge>
+                      );
+                    })}
+                  </div>
+                </div>
 
-                <Card data-testid="card-config-jurisdictions">
-                  <CardContent className="p-5 space-y-3">
-                    <div className="flex items-center gap-2">
-                      <Globe className="h-4 w-4 text-blue-500" />
-                      <h3 className="font-semibold text-sm">Jurisdictions</h3>
-                    </div>
-                    <p className="text-xs text-muted-foreground">Determines which regulatory frameworks are active.</p>
-                    <div className="flex flex-wrap gap-2">
-                      {selected.jurisdictions.map((j) => {
-                        const active = chosenJurisdictions.includes(j);
-                        return (
-                          <Badge
-                            key={j}
-                            variant={active ? "default" : "outline"}
-                            className={`cursor-pointer toggle-elevate ${active ? "toggle-elevated" : ""}`}
-                            onClick={() => toggleItem(chosenJurisdictions, j, setChosenJurisdictions)}
-                            data-testid={`badge-jurisdiction-${j.toLowerCase()}`}
-                          >
-                            {active && <Check className="h-3 w-3 mr-1" />}
-                            {j}
-                          </Badge>
-                        );
-                      })}
-                    </div>
-                  </CardContent>
-                </Card>
+                <div className="space-y-1.5" data-testid="card-config-jurisdictions">
+                  <div className="flex items-center gap-1.5">
+                    <Globe className="h-3.5 w-3.5 text-blue-500" />
+                    <h3 className="font-medium text-xs">Jurisdictions</h3>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {selected.jurisdictions.map((j) => {
+                      const active = chosenJurisdictions.includes(j);
+                      return (
+                        <Badge
+                          key={j}
+                          variant={active ? "default" : "outline"}
+                          className={`cursor-pointer text-[11px] toggle-elevate ${active ? "toggle-elevated" : ""}`}
+                          onClick={() => toggleItem(chosenJurisdictions, j, setChosenJurisdictions)}
+                          data-testid={`badge-jurisdiction-${j.toLowerCase()}`}
+                        >
+                          {active && <Check className="h-2.5 w-2.5 mr-0.5" />}
+                          {j}
+                        </Badge>
+                      );
+                    })}
+                  </div>
+                </div>
 
-                <Card data-testid="card-config-integrations">
-                  <CardContent className="p-5 space-y-3">
-                    <div className="flex items-center gap-2">
-                      <Server className="h-4 w-4 text-orange-500" />
-                      <h3 className="font-semibold text-sm">Integration Landscape</h3>
-                    </div>
-                    <p className="text-xs text-muted-foreground">Select the core systems your organization uses.</p>
-                    <div className="space-y-3">
-                      {Object.entries(integrationCategories).map(([category, systems]) => (
-                        <div key={category} className="space-y-1.5">
-                          <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">{category}</p>
-                          <div className="flex flex-wrap gap-2">
-                            {systems.map((sys) => {
-                              const active = chosenIntegrations.includes(sys.id);
-                              return (
-                                <Badge
-                                  key={sys.id}
-                                  variant={active ? "default" : "outline"}
-                                  className={`cursor-pointer toggle-elevate ${active ? "toggle-elevated" : ""}`}
-                                  onClick={() => toggleItem(chosenIntegrations, sys.id, setChosenIntegrations)}
-                                  data-testid={`badge-integration-${sys.id}`}
-                                >
-                                  {active && <Check className="h-3 w-3 mr-1" />}
-                                  {sys.name}
-                                </Badge>
-                              );
-                            })}
-                          </div>
+                <div className="space-y-1.5 md:col-span-2" data-testid="card-config-integrations">
+                  <div className="flex items-center gap-1.5">
+                    <Server className="h-3.5 w-3.5 text-orange-500" />
+                    <h3 className="font-medium text-xs">Integrations</h3>
+                  </div>
+                  <div className="flex flex-wrap gap-x-4 gap-y-2">
+                    {Object.entries(integrationCategories).map(([category, systems]) => (
+                      <div key={category} className="space-y-1">
+                        <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">{category}</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {systems.map((sys) => {
+                            const active = chosenIntegrations.includes(sys.id);
+                            return (
+                              <Badge
+                                key={sys.id}
+                                variant={active ? "default" : "outline"}
+                                className={`cursor-pointer text-[11px] toggle-elevate ${active ? "toggle-elevated" : ""}`}
+                                onClick={() => toggleItem(chosenIntegrations, sys.id, setChosenIntegrations)}
+                                data-testid={`badge-integration-${sys.id}`}
+                              >
+                                {active && <Check className="h-2.5 w-2.5 mr-0.5" />}
+                                {sys.name}
+                              </Badge>
+                            );
+                          })}
                         </div>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
+                      </div>
+                    ))}
+                  </div>
+                </div>
 
-                <Card data-testid="card-config-data-classification">
-                  <CardContent className="p-5 space-y-3">
-                    <div className="flex items-center gap-2">
-                      <Lock className="h-4 w-4 text-red-500" />
-                      <h3 className="font-semibold text-sm">Data Classification Default</h3>
-                    </div>
-                    <p className="text-xs text-muted-foreground">Set the default classification for new data assets and agent outputs.</p>
-                    <div className="space-y-2">
-                      {DATA_CLASS_OPTIONS.map((opt) => {
-                        const active = dataClassDefault === opt.value;
-                        return (
-                          <div
-                            key={opt.value}
-                            className={`flex items-center gap-3 p-2.5 rounded-md cursor-pointer transition-colors ${
-                              active ? "bg-primary/10 ring-1 ring-primary/30" : "hover-elevate"
-                            }`}
-                            onClick={() => setDataClassDefault(opt.value)}
-                            data-testid={`option-dataclass-${opt.value}`}
-                          >
-                            <div className={`h-4 w-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
-                              active ? "border-primary" : "border-muted-foreground/40"
-                            }`}>
-                              {active && <div className="h-2 w-2 rounded-full bg-primary" />}
-                            </div>
-                            <div>
-                              <p className="text-sm font-medium">{opt.label}</p>
-                              <p className="text-[11px] text-muted-foreground">{opt.description}</p>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </CardContent>
-                </Card>
+                <div className="space-y-1.5" data-testid="card-config-data-classification">
+                  <div className="flex items-center gap-1.5">
+                    <Lock className="h-3.5 w-3.5 text-red-500" />
+                    <h3 className="font-medium text-xs">Data Classification</h3>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {DATA_CLASS_OPTIONS.map((opt) => {
+                      const active = dataClassDefault === opt.value;
+                      return (
+                        <Badge
+                          key={opt.value}
+                          variant={active ? "default" : "outline"}
+                          className={`cursor-pointer text-[11px] toggle-elevate ${active ? "toggle-elevated" : ""}`}
+                          onClick={() => setDataClassDefault(opt.value)}
+                          data-testid={`option-dataclass-${opt.value}`}
+                        >
+                          {active && <Check className="h-2.5 w-2.5 mr-0.5" />}
+                          {opt.label}
+                        </Badge>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
 
               <div className="flex items-center justify-center gap-3">
                 <Button variant="outline" onClick={() => setStep("select")} data-testid="button-back-to-select">
-                  <ArrowLeft className="h-4 w-4 mr-2" />
+                  <ArrowLeft className="h-4 w-4 mr-1" />
                   Back
                 </Button>
-                <Button size="lg" onClick={handleContinueToReview} data-testid="button-continue-to-review">
-                  Review Configuration
-                  <ArrowRight className="h-4 w-4 ml-2" />
+                <Button onClick={handleContinueToReview} data-testid="button-continue-to-review">
+                  Review
+                  <ArrowRight className="h-4 w-4 ml-1" />
                 </Button>
               </div>
             </>
@@ -386,123 +351,114 @@ export function IndustryWorkspaceSelector() {
 
           {step === "review" && selected && (
             <>
-              <div className="text-center space-y-3">
-                <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground mb-2">
-                  <Badge variant="outline" className="text-[10px]">1</Badge>
-                  <span>Select Industry</span>
-                  <ArrowRight className="h-3 w-3" />
-                  <Badge variant="outline" className="text-[10px]">2</Badge>
-                  <span>Configure</span>
-                  <ArrowRight className="h-3 w-3" />
-                  <Badge variant="default" className="text-[10px]">3</Badge>
-                  <span className="font-medium">Review</span>
-                </div>
-                <h1 className="text-3xl font-bold tracking-tight" data-testid="text-review-title">
-                  Review Workspace Configuration
+              <div className="text-center space-y-1">
+                <StepBreadcrumb current="review" />
+                <h1 className="text-2xl font-bold tracking-tight" data-testid="text-review-title">
+                  Review Configuration
                 </h1>
-                <p className="text-muted-foreground max-w-2xl mx-auto">
-                  Confirm your {selected.label} workspace settings. You can adjust these anytime from the header.
+                <p className="text-muted-foreground text-sm max-w-xl mx-auto">
+                  Confirm your {selected.label} workspace. Adjustable anytime from the header.
                 </p>
               </div>
 
               <Card className="max-w-3xl mx-auto" data-testid="card-workspace-review">
-                <CardContent className="p-6 space-y-5">
+                <CardContent className="p-5 space-y-4">
                   <div className="flex items-center gap-3 pb-3 border-b">
                     <div
-                      className="h-10 w-10 rounded-md flex items-center justify-center shrink-0"
+                      className="h-9 w-9 rounded-md flex items-center justify-center shrink-0"
                       style={{ backgroundColor: selected.color + "20", color: selected.color }}
                     >
-                      <selected.icon className="h-5 w-5" />
+                      <selected.icon className="h-4 w-4" />
                     </div>
                     <div>
-                      <h3 className="font-semibold">{selected.label} Workspace</h3>
-                      <p className="text-xs text-muted-foreground">{selected.ontology}</p>
+                      <h3 className="font-semibold text-sm">{selected.label} Workspace</h3>
+                      <p className="text-[11px] text-muted-foreground">{selected.ontology}</p>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                    <div className="space-y-2">
-                      <p className="text-sm font-medium flex items-center gap-1.5">
-                        <selected.icon className="h-3.5 w-3.5" style={{ color: selected.color }} />
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-medium flex items-center gap-1">
+                        <selected.icon className="h-3 w-3" style={{ color: selected.color }} />
                         Sub-Verticals
                       </p>
                       {chosenSubVerticals.length > 0 ? (
-                        <div className="flex flex-wrap gap-1.5">
+                        <div className="flex flex-wrap gap-1">
                           {chosenSubVerticals.map((sv) => (
-                            <Badge key={sv} variant="secondary" className="text-xs">{sv}</Badge>
+                            <Badge key={sv} variant="secondary" className="text-[10px]">{sv}</Badge>
                           ))}
                         </div>
                       ) : (
-                        <p className="text-xs text-muted-foreground">All sub-verticals (none selected)</p>
+                        <p className="text-[11px] text-muted-foreground">All</p>
                       )}
                     </div>
 
-                    <div className="space-y-2">
-                      <p className="text-sm font-medium flex items-center gap-1.5">
-                        <Building2 className="h-3.5 w-3.5 text-violet-500" />
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-medium flex items-center gap-1">
+                        <Building2 className="h-3 w-3 text-violet-500" />
                         Departments
                       </p>
                       {chosenDepartments.length > 0 ? (
-                        <div className="flex flex-wrap gap-1.5">
+                        <div className="flex flex-wrap gap-1">
                           {chosenDepartments.map((dept) => (
-                            <Badge key={dept} variant="secondary" className="text-xs">{dept}</Badge>
+                            <Badge key={dept} variant="secondary" className="text-[10px]">{dept}</Badge>
                           ))}
                         </div>
                       ) : (
-                        <p className="text-xs text-muted-foreground">All departments (none selected)</p>
+                        <p className="text-[11px] text-muted-foreground">All</p>
                       )}
                     </div>
 
-                    <div className="space-y-2">
-                      <p className="text-sm font-medium flex items-center gap-1.5">
-                        <Globe className="h-3.5 w-3.5 text-blue-500" />
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-medium flex items-center gap-1">
+                        <Globe className="h-3 w-3 text-blue-500" />
                         Jurisdictions
                       </p>
                       {chosenJurisdictions.length > 0 ? (
-                        <div className="flex flex-wrap gap-1.5">
+                        <div className="flex flex-wrap gap-1">
                           {chosenJurisdictions.map((j) => (
-                            <Badge key={j} variant="secondary" className="text-xs">{j}</Badge>
+                            <Badge key={j} variant="secondary" className="text-[10px]">{j}</Badge>
                           ))}
                         </div>
                       ) : (
-                        <p className="text-xs text-muted-foreground">All jurisdictions (none selected)</p>
+                        <p className="text-[11px] text-muted-foreground">All</p>
                       )}
                     </div>
 
-                    <div className="space-y-2">
-                      <p className="text-sm font-medium flex items-center gap-1.5">
-                        <Server className="h-3.5 w-3.5 text-orange-500" />
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-medium flex items-center gap-1">
+                        <Server className="h-3 w-3 text-orange-500" />
                         Integrations
                       </p>
                       {chosenIntegrations.length > 0 ? (
-                        <div className="flex flex-wrap gap-1.5">
+                        <div className="flex flex-wrap gap-1">
                           {chosenIntegrations.map((id) => {
                             const sys = selected.integrationSystems.find((s) => s.id === id);
                             return (
-                              <Badge key={id} variant="secondary" className="text-xs">{sys?.name || id}</Badge>
+                              <Badge key={id} variant="secondary" className="text-[10px]">{sys?.name || id}</Badge>
                             );
                           })}
                         </div>
                       ) : (
-                        <p className="text-xs text-muted-foreground">None selected</p>
+                        <p className="text-[11px] text-muted-foreground">None</p>
                       )}
                     </div>
 
-                    <div className="space-y-2">
-                      <p className="text-sm font-medium flex items-center gap-1.5">
-                        <Lock className="h-3.5 w-3.5 text-red-500" />
-                        Data Classification Default
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-medium flex items-center gap-1">
+                        <Lock className="h-3 w-3 text-red-500" />
+                        Data Classification
                       </p>
-                      <Badge variant="outline" className="text-xs capitalize">{dataClassDefault}</Badge>
+                      <Badge variant="outline" className="text-[10px] capitalize">{dataClassDefault}</Badge>
                     </div>
                   </div>
 
                   <div className="flex items-center justify-between gap-3 pt-3 border-t">
-                    <Button variant="outline" onClick={() => setStep("configure")} data-testid="button-back-to-configure">
-                      <ArrowLeft className="h-4 w-4 mr-2" />
+                    <Button variant="outline" size="sm" onClick={() => setStep("configure")} data-testid="button-back-to-configure">
+                      <ArrowLeft className="h-3.5 w-3.5 mr-1" />
                       Adjust
                     </Button>
-                    <Button onClick={handleActivate} data-testid="button-confirm-workspace">
+                    <Button size="sm" onClick={handleActivate} data-testid="button-confirm-workspace">
                       Activate Workspace
                     </Button>
                   </div>
