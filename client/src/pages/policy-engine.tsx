@@ -368,15 +368,16 @@ export default function PolicyEngine() {
 
   async function applyEnhancement(policy: RegulatoryPolicy, enhancement: any) {
     try {
-      await apiRequest("PATCH", `/api/regulatory-policies/${policy.id}`, {
-        policyCode: enhancement.enhancedCode,
+      const updatedFields = {
+        policyCode: enhancement.enhancedCode || policy.policyCode,
         naturalLanguage: enhancement.enhancedNaturalLanguage || policy.naturalLanguage,
         severity: enhancement.suggestedSeverity || policy.severity,
         violationAction: enhancement.suggestedViolationAction || policy.violationAction,
-      });
+      };
+      await apiRequest("PATCH", `/api/regulatory-policies/${policy.id}`, updatedFields);
       queryClient.invalidateQueries({ queryKey: ["/api/regulatory-policies"] });
       setAiEnhanceResult(null);
-      setSelectedPolicy(null);
+      setSelectedPolicy({ ...policy, ...updatedFields });
       toast({ title: "Enhancement applied successfully" });
     } catch (e: any) {
       toast({ title: "Failed to apply enhancement", description: e.message, variant: "destructive" });
