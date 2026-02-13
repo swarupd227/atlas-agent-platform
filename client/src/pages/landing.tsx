@@ -2,10 +2,6 @@ import { useState, lazy, Suspense } from "react";
 import { Link } from "wouter";
 import { ThemeToggle } from "@/components/theme-toggle";
 import {
-  MessageSquare,
-  Network,
-  Library,
-  Plug,
   ArrowRight,
   Play,
   Bot,
@@ -14,6 +10,12 @@ import {
   Zap,
   BarChart3,
   CheckCircle,
+  Brain,
+  BookOpen,
+  Trophy,
+  Layers,
+  Network,
+  SlidersHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -22,24 +24,24 @@ const DemoPlayer = lazy(() => import("@/components/demo-player"));
 
 const features = [
   {
-    icon: MessageSquare,
-    title: "Conversational Design",
-    description: "Define agent behaviors through natural language with AI-assisted Outcome Builder.",
+    icon: Brain,
+    title: "Industry Context Engine",
+    description: "Agents reason within your industry's regulatory, operational, and domain ontology by default.",
+  },
+  {
+    icon: SlidersHorizontal,
+    title: "Adaptive Autonomy",
+    description: "Dynamic oversight calibrated to industry risk, regulatory requirements, and real-time context.",
+  },
+  {
+    icon: Trophy,
+    title: "Golden Repository",
+    description: "Certified templates, evaluation datasets, and pre-validated agent configurations by industry.",
   },
   {
     icon: Network,
-    title: "Multi-Agent Orchestration",
-    description: "Coordinate teams of agents with A2A protocol and graph-based workflows.",
-  },
-  {
-    icon: Library,
-    title: "150+ Agent Templates",
-    description: "Pre-built agent configurations for common enterprise use cases.",
-  },
-  {
-    icon: Plug,
-    title: "Enterprise Integrations",
-    description: "MCP servers, tools, resources, and prompts with governed access controls.",
+    title: "Knowledge Graph",
+    description: "Industry ontologies, entity resolution, and graph-based knowledge retrieval built in.",
   },
 ];
 
@@ -50,30 +52,38 @@ const capabilities = [
     description: "Pay for measurable results, not compute time. Full metering pipeline with tamper-evident invoicing.",
   },
   {
-    icon: Bot,
-    title: "80/20 Autonomous Model",
-    description: "Agents operate 80% autonomously with 20% expert validation for high-risk decisions.",
+    icon: SlidersHorizontal,
+    title: "Adaptive Autonomy Engine",
+    description: "Dynamic, context-aware human oversight replacing static ratios — calibrated to industry risk and regulatory requirements in real time.",
   },
   {
     icon: Shield,
-    title: "Enterprise Governance",
-    description: "Policy enforcement, compliance frameworks (SOC2, EU AI Act, GDPR), and immutable audit trails.",
+    title: "Regulatory Compliance",
+    description: "Policy-as-Code with OPA Rego and Cedar, automated regulatory detection, and industry-specific compliance frameworks.",
   },
   {
     icon: Zap,
-    title: "Self-Healing Loop",
-    description: "Automated incident detection, AI-proposed patches, and deployment with full traceability.",
+    title: "Self-Healing Operations",
+    description: "Industry-aware diagnosis, AI-generated remediation with regulatory guardrails, and closed-loop autonomous recovery.",
   },
   {
     icon: BarChart3,
-    title: "Full Observability",
-    description: "OpenTelemetry traces, MCP span waterfalls, drift detection, and real-time monitoring dashboards.",
+    title: "Industry Observability",
+    description: "OpenTelemetry traces, MCP span waterfalls, industry-specific KPI monitoring, and drift detection calibrated to domain baselines.",
   },
   {
     icon: CheckCircle,
-    title: "Approval Gates",
-    description: "Unified MCP elicitation and expert validation with risk analysis and blast radius evidence.",
+    title: "Context-Aware Approvals",
+    description: "Expert validation gates with blast radius analysis, risk scoring, and approval thresholds that adapt to industry context.",
   },
+];
+
+const industryHighlights = [
+  { name: "Financial Services", examples: "SOX compliance, PCI-DSS, transaction monitoring" },
+  { name: "Healthcare", examples: "HIPAA enforcement, clinical decision support, PHI redaction" },
+  { name: "Manufacturing", examples: "ISO 9001 quality, predictive maintenance, safety protocols" },
+  { name: "Insurance", examples: "ACORD standards, claims automation, actuarial compliance" },
+  { name: "Retail", examples: "PCI compliance, demand forecasting, customer data governance" },
 ];
 
 export default function Landing() {
@@ -115,26 +125,26 @@ export default function Landing() {
           <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-purple-500/5 dark:from-primary/10 dark:to-purple-500/10" />
           <div className="relative max-w-4xl mx-auto px-6 pt-20 pb-16 text-center">
             <h1 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight leading-tight" data-testid="text-hero-headline">
-              Manage Your Agents,{" "}
+              Your Agents,{" "}
               <span className="bg-gradient-to-r from-[hsl(270,80%,60%)] via-[hsl(200,85%,50%)] to-[hsl(170,70%,45%)] bg-clip-text text-transparent">
-                Deliver Outcomes
+                Your Industry Context
               </span>
             </h1>
             <p className="mt-6 text-lg sm:text-xl text-muted-foreground max-w-2xl mx-auto leading-relaxed" data-testid="text-hero-subtitle">
-              Design agents conversationally, orchestrate multi-agent teams,
-              and deploy with enterprise governance — with outcome-based billing
-              and self-healing built-in.
+              The only AI agent platform where agents reason within your industry's
+              regulatory, operational, and domain context by default — with adaptive
+              autonomy calibrated to real-time risk.
             </p>
             <div className="mt-10 flex items-center justify-center gap-4 flex-wrap">
               <Link href="/dashboard">
-                <Button size="lg" className="gap-2 text-base px-8" data-testid="button-get-started">
+                <Button size="lg" className="gap-2" data-testid="button-get-started">
                   Get Started <ArrowRight className="w-4 h-4" />
                 </Button>
               </Link>
               <Button
                 variant="outline"
                 size="lg"
-                className="gap-2 text-base px-8"
+                className="gap-2"
                 onClick={() => setShowDemo(true)}
                 data-testid="button-watch-demo"
               >
@@ -162,11 +172,11 @@ export default function Landing() {
         <section className="max-w-6xl mx-auto px-6 py-20">
           <div className="text-center mb-12">
             <h2 className="text-3xl font-bold tracking-tight" data-testid="text-capabilities-heading">
-              Everything You Need for AI Agent Operations
+              Industry-Native Agent Operations
             </h2>
             <p className="mt-3 text-muted-foreground max-w-2xl mx-auto">
-              From design to deployment to billing — a complete lifecycle platform
-              with governance and observability at every stage.
+              From context engineering to adaptive autonomy to regulatory compliance —
+              every layer is built around your industry's requirements.
             </p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -188,18 +198,41 @@ export default function Landing() {
           </div>
         </section>
 
+        <section className="border-t bg-card/30">
+          <div className="max-w-5xl mx-auto px-6 py-16">
+            <div className="text-center mb-10">
+              <h2 className="text-2xl font-bold tracking-tight" data-testid="text-industries-heading">
+                Built for Regulated Industries
+              </h2>
+              <p className="mt-2 text-sm text-muted-foreground max-w-xl mx-auto">
+                Pre-loaded with industry ontologies, regulatory frameworks, and domain-specific guardrails.
+              </p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+              {industryHighlights.map((ind) => (
+                <Card key={ind.name} data-testid={`card-industry-${ind.name.toLowerCase().replace(/\s+/g, "-")}`}>
+                  <CardContent className="p-4 flex flex-col gap-1.5">
+                    <span className="text-sm font-medium">{ind.name}</span>
+                    <span className="text-xs text-muted-foreground leading-relaxed">{ind.examples}</span>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </div>
+        </section>
+
         <section className="border-t">
           <div className="max-w-4xl mx-auto px-6 py-20 text-center">
             <h2 className="text-3xl font-bold tracking-tight" data-testid="text-cta-heading">
-              Ready to Transform Your AI Operations?
+              Ready to Deploy Agents That Understand Your Industry?
             </h2>
             <p className="mt-3 text-muted-foreground max-w-xl mx-auto">
-              Start managing your agents with enterprise-grade governance,
-              outcome-based billing, and full lifecycle observability.
+              Start with your industry's regulatory context, ontology, and compliance
+              frameworks already built in — not bolted on.
             </p>
             <div className="mt-8 flex items-center justify-center gap-4 flex-wrap">
               <Link href="/dashboard">
-                <Button size="lg" className="gap-2 text-base px-8" data-testid="button-cta-get-started">
+                <Button size="lg" className="gap-2" data-testid="button-cta-get-started">
                   Get Started <ArrowRight className="w-4 h-4" />
                 </Button>
               </Link>
@@ -214,7 +247,7 @@ export default function Landing() {
             <Bot className="w-4 h-4" />
             <span>ALMP - Agent Lifecycle Management Platform</span>
           </div>
-          <div>Built for enterprise AI operations</div>
+          <div>Industry-native AI agent operations</div>
         </div>
       </footer>
     </div>
