@@ -51,7 +51,7 @@ The platform utilizes a modern web stack: React, Vite, Tailwind CSS, shadcn/ui, 
 - **MCP Tool Registry**: Governed inventory of tools with details, schemas, governance fields, and drift detection.
 - **MCP Resources**: Governed knowledge connectors with sensitivity classification, approval gates, and freshness tracking.
 - **MCP Prompt Library**: Imports MCP prompt templates and binds them into blueprints, with domain expert publishing and security admin approval flows.
-- **Ontology Explorer**: Industry knowledge graph browser with concept details, search, and AI-enhanced descriptions.
+- **Ontology Explorer**: Industry knowledge graph browser with concept details, search, and AI-enhanced descriptions. Includes AI-powered ontology generation for industries without seed data (e.g., Insurance) via POST /api/ai/generate-ontology endpoint.
 - **Agent Wizard Ontology Integration**: AI-suggested ontology tags for agent definition.
 - **Data Model**: Comprehensive schema linking incidents, patches, and deployments.
 

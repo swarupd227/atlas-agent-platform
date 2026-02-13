@@ -1935,6 +1935,113 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     }
   });
 
+  app.post("/api/ai/generate-ontology", checkPermission("create_modify_policies"), async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI service not configured" });
+      }
+      const generateSchema = z.object({
+        industryId: z.string().min(1),
+        industryName: z.string().min(1),
+        ontologyName: z.string().optional(),
+      });
+      const parseResult = generateSchema.safeParse(req.body);
+      if (!parseResult.success) {
+        return res.status(400).json({ error: "industryId and industryName are required", details: parseResult.error.issues });
+      }
+      const { industryId, industryName, ontologyName } = parseResult.data;
+
+      const existing = await storage.getOntologyConcepts(industryId);
+      if (existing.length > 0) {
+        return res.status(409).json({ error: "Ontology concepts already exist for this industry. Delete existing concepts before regenerating." });
+      }
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        max_tokens: 8000,
+        messages: [
+          {
+            role: "system",
+            content: `You are a domain ontology expert specializing in ${ontologyName || industryName} knowledge models for enterprise AI agent lifecycle management.
+
+Generate a ${industryName} ontology with 6 categories, each containing 3 concepts. Keep descriptions concise.
+
+Return a JSON object with a "categories" array. Each category has:
+- "name": Category name
+- "concepts": Array of concept objects with:
+  - "label": Concept name
+  - "description": 1-2 sentence description
+  - "properties": Array of 2 property objects with {"name": "camelCase", "type": "string|decimal|date|enum|boolean|integer", "description": "brief"}
+  - "relationships": Array of 1 relationship object with {"type": "related|parent|child|depends_on", "targetLabel": "Another concept label from this ontology", "label": "Brief description"}
+  - "tags": Array of 3 classification tags
+  - "industryRelevance": One sentence
+
+Use real ${industryName} terminology and standards (${ontologyName || "industry frameworks"}).`
+          },
+          {
+            role: "user",
+            content: `Generate a ${ontologyName || industryName} ontology for ${industryName}. Return ONLY valid JSON.`
+          }
+        ],
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) {
+        return res.status(500).json({ error: "No response from AI" });
+      }
+
+      let parsed;
+      try {
+        parsed = JSON.parse(content);
+      } catch (parseErr) {
+        console.error("AI ontology JSON parse error, raw length:", content.length);
+        return res.status(500).json({ error: "AI returned malformed response. Please try again." });
+      }
+      const categories = parsed.categories || [];
+
+      const createdConcepts = [];
+      const conceptLabelToId: Record<string, string> = {};
+
+      for (const cat of categories) {
+        for (const concept of cat.concepts || []) {
+          const id = `${industryId}-${cat.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${concept.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+          conceptLabelToId[concept.label] = id;
+        }
+      }
+
+      for (const cat of categories) {
+        for (const concept of cat.concepts || []) {
+          const id = conceptLabelToId[concept.label];
+          const relationships = (concept.relationships || []).map((r: any) => ({
+            type: r.type,
+            targetId: conceptLabelToId[r.targetLabel] || r.targetLabel,
+            label: r.label,
+          }));
+
+          const created = await storage.createOntologyConcept({
+            id,
+            industryId,
+            ontologyName: ontologyName || industryName,
+            label: concept.label,
+            category: cat.name,
+            description: concept.description,
+            properties: concept.properties || [],
+            relationships,
+            tags: concept.tags || [],
+            industryRelevance: concept.industryRelevance || null,
+          });
+          createdConcepts.push(created);
+        }
+      }
+
+      res.json({ concepts: createdConcepts, count: createdConcepts.length });
+    } catch (e: any) {
+      console.error("AI generate ontology error:", e);
+      res.status(500).json({ error: e.message || "Failed to generate ontology" });
+    }
+  });
+
   app.post("/api/ai/enhance-regulation", checkPermission("create_modify_policies"), async (req, res) => {
     try {
       if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {

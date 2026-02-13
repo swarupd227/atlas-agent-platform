@@ -101,6 +101,12 @@ const AGENT_MAPPING: Record<string, { skills: string[]; agentTypes: string[] }> 
   "Customer Experience": { skills: ["Journey Analysis", "Personalization", "Loyalty Management", "Fraud Detection"], agentTypes: ["Personalization Agent", "Loyalty Agent", "Fraud Agent"] },
   "Pricing": { skills: ["Elasticity Modeling", "Competitive Monitoring", "Markdown Optimization", "Promotion Planning"], agentTypes: ["Pricing Agent", "Competitive Intel Agent", "Promotion Agent"] },
   "Fulfillment": { skills: ["Order Routing", "Pick Optimization", "Returns Processing", "Delivery Management"], agentTypes: ["Fulfillment Agent", "Returns Agent", "Last Mile Agent"] },
+  "Claims Management": { skills: ["FNOL Processing", "Damage Assessment", "Fraud Detection", "Settlement Calculation"], agentTypes: ["Claims Adjuster Agent", "Fraud Detection Agent", "Settlement Agent"] },
+  "Underwriting": { skills: ["Risk Scoring", "Premium Calculation", "Exposure Analysis", "Policy Binding"], agentTypes: ["Underwriting Agent", "Risk Assessment Agent", "Pricing Agent"] },
+  "Policy Administration": { skills: ["Policy Issuance", "Endorsement Processing", "Renewal Management", "Cancellation Handling"], agentTypes: ["Policy Admin Agent", "Renewal Agent", "Endorsement Agent"] },
+  "Reinsurance": { skills: ["Treaty Management", "Cession Calculation", "Recovery Tracking", "Retrocession Analysis"], agentTypes: ["Reinsurance Agent", "Treaty Agent", "Recovery Agent"] },
+  "Actuarial": { skills: ["Loss Reserving", "Experience Rating", "Mortality Analysis", "Catastrophe Modeling"], agentTypes: ["Actuarial Agent", "Reserving Agent", "Catastrophe Model Agent"] },
+  "Distribution": { skills: ["Agent Licensing", "Commission Calculation", "Quote Comparison", "Lead Scoring"], agentTypes: ["Distribution Agent", "Commission Agent", "Quote Agent"] },
 };
 
 const relationshipTypeColors: Record<string, string> = {
@@ -329,6 +335,30 @@ export default function OntologyExplorer() {
     return c ? c.label : id;
   };
 
+  const generateMutation = useMutation({
+    mutationFn: async () => {
+      if (!industry || industry.id === "custom") {
+        throw new Error("No industry selected");
+      }
+      const res = await apiRequest("POST", "/api/ai/generate-ontology", {
+        industryId: industry.id,
+        industryName: industry.label,
+        ontologyName: industry.ontology,
+      });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/ontology/concepts", industryId] });
+      toast({ title: "Ontology generated", description: `Created ${data.count} concepts for ${industry?.label}` });
+    },
+    onError: (err: Error) => {
+      const msg = err.message.includes("409")
+        ? "Ontology concepts already exist for this industry."
+        : err.message || "Failed to generate ontology. Please try again.";
+      toast({ title: "Generation failed", description: msg, variant: "destructive" });
+    },
+  });
+
   if (!industry || industry.id === "custom") {
     return (
       <div className="flex items-center justify-center h-full p-8" data-testid="ontology-no-industry">
@@ -356,16 +386,45 @@ export default function OntologyExplorer() {
     );
   }
 
-  if (concepts.length === 0) {
+  if (concepts.length === 0 && !generateMutation.isPending) {
     return (
       <div className="flex items-center justify-center h-full p-8" data-testid="ontology-unavailable">
-        <Card className="max-w-md w-full">
-          <CardContent className="flex flex-col items-center gap-4 pt-6 text-center">
-            <Network className="w-12 h-12 text-muted-foreground" />
-            <h2 className="text-lg font-semibold">Ontology Unavailable</h2>
-            <p className="text-sm text-muted-foreground">
-              No ontology data is available for the selected industry.
-            </p>
+        <Card className="max-w-lg w-full">
+          <CardContent className="flex flex-col items-center gap-5 pt-8 pb-8 text-center">
+            <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
+              <Sparkles className="w-8 h-8 text-primary" />
+            </div>
+            <div className="space-y-2">
+              <h2 className="text-lg font-semibold" data-testid="text-generate-ontology-title">Generate {industry.ontology || industry.label} Ontology</h2>
+              <p className="text-sm text-muted-foreground max-w-sm">
+                No ontology concepts exist for {industry.label} yet. Use AI to generate a comprehensive domain ontology with categories, concepts, properties, and relationships specific to this industry.
+              </p>
+            </div>
+            <Button
+              onClick={() => generateMutation.mutate()}
+              data-testid="button-generate-ontology"
+            >
+              <Wand2 className="w-4 h-4 mr-2" />
+              Generate with AI
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (generateMutation.isPending) {
+    return (
+      <div className="flex items-center justify-center h-full p-8" data-testid="ontology-generating">
+        <Card className="max-w-lg w-full">
+          <CardContent className="flex flex-col items-center gap-5 pt-8 pb-8 text-center">
+            <Loader2 className="w-10 h-10 animate-spin text-primary" />
+            <div className="space-y-2">
+              <h2 className="text-lg font-semibold">Generating Ontology</h2>
+              <p className="text-sm text-muted-foreground max-w-sm">
+                AI is building a comprehensive {industry.ontology || industry.label} ontology with domain-specific categories, concepts, and relationships. This may take a moment...
+              </p>
+            </div>
           </CardContent>
         </Card>
       </div>
