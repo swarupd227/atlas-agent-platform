@@ -30,6 +30,7 @@ import {
   Scale,
   GitCompare,
   HeartPulse,
+  FileText,
 } from "lucide-react";
 import {
   Sidebar,
@@ -109,6 +110,7 @@ export function AppSidebar() {
         { title: "Monitor", url: "/monitor", icon: Activity },
         { title: "Optimization", url: "/optimization", icon: Zap },
         { title: "Healing Center", url: "/healing-operations", icon: HeartPulse },
+        { title: "Runbooks", url: "/runbook-automation", icon: FileText },
       ],
     },
     {

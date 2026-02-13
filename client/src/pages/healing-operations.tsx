@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -470,6 +471,12 @@ export default function HealingOperations() {
           <h1 className="text-2xl font-bold" data-testid="text-page-title">Healing Operations Center</h1>
           <p className="text-sm text-muted-foreground">Closed-loop autonomous issue detection, diagnosis, and remediation</p>
         </div>
+        <Link href="/runbook-automation">
+          <Button variant="outline" size="sm" data-testid="button-goto-runbooks">
+            <FileCheck className="w-4 h-4 mr-1" />
+            Runbooks
+          </Button>
+        </Link>
       </div>
 
       <div className="flex gap-4" style={{ height: "calc(100vh - 160px)" }}>

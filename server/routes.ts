@@ -14628,6 +14628,294 @@ Respond with JSON:
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  // Runbook CRUD routes
+  app.get("/api/runbooks", async (req, res) => {
+    try {
+      const allRunbooks = await storage.getRunbooks();
+      res.json(allRunbooks);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/runbooks/:id", async (req, res) => {
+    try {
+      const runbook = await storage.getRunbook(req.params.id);
+      if (!runbook) return res.status(404).json({ error: "Not found" });
+      res.json(runbook);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/runbooks", async (req, res) => {
+    try {
+      const runbook = await storage.createRunbook(req.body);
+      res.json(runbook);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.patch("/api/runbooks/:id", async (req, res) => {
+    try {
+      const updated = await storage.updateRunbook(req.params.id, req.body);
+      if (!updated) return res.status(404).json({ error: "Not found" });
+      res.json(updated);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.delete("/api/runbooks/:id", async (req, res) => {
+    try {
+      const result = await storage.deleteRunbook(req.params.id);
+      res.json({ success: result });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/runbooks/seed-prebuilt", async (req, res) => {
+    try {
+      const { industry } = req.body;
+      const prebuiltRunbooks: Record<string, Array<any>> = {
+        financial_services: [
+          {
+            name: "Sanctions List Update Response",
+            description: "If sanctions list update detected, automatically re-screen all active monitoring cases against updated list within 4 hours.",
+            industry: "financial_services",
+            category: "compliance",
+            triggerType: "automatic",
+            triggerConditions: [{ type: "event", event: "sanctions_list_update", source: "regulatory_feed", threshold: "any_update" }],
+            steps: [
+              { id: "1", type: "action", action: "detect_update", label: "Detect sanctions list update from regulatory feed", order: 1 },
+              { id: "2", type: "condition", condition: "update_severity", label: "IF update contains new entities", trueNext: "3", falseNext: "6", order: 2 },
+              { id: "3", type: "action", action: "queue_rescreening", label: "Queue all active monitoring cases for re-screening", order: 3 },
+              { id: "4", type: "approval_gate", label: "Compliance officer approval for batch re-screening", approvalLevel: "confirm_before", order: 4 },
+              { id: "5", type: "action", action: "execute_screening", label: "Execute batch re-screening against updated list", order: 5 },
+              { id: "6", type: "action", action: "generate_report", label: "Generate compliance report with match results", order: 6 },
+            ],
+            approvalGates: [{ stepId: "4", requiredRole: "compliance_officer", autonomyLevel: "confirm_before" }],
+            autonomyLevel: "confirm_before",
+            severity: "high",
+            estimatedDuration: "4 hours",
+            isPreBuilt: true,
+            status: "active",
+          },
+          {
+            name: "Market Regime Change Detection",
+            description: "When market volatility exceeds thresholds, automatically adjust risk models and trading parameters with compliance oversight.",
+            industry: "financial_services",
+            category: "risk_management",
+            triggerType: "automatic",
+            triggerConditions: [{ type: "metric", metric: "vix_index", operator: "greater_than", threshold: 30 }],
+            steps: [
+              { id: "1", type: "action", action: "detect_volatility", label: "Detect market volatility spike above threshold", order: 1 },
+              { id: "2", type: "action", action: "assess_exposure", label: "Assess current portfolio exposure and at-risk positions", order: 2 },
+              { id: "3", type: "approval_gate", label: "Risk manager approval for parameter adjustment", approvalLevel: "confirm_before", order: 3 },
+              { id: "4", type: "action", action: "adjust_parameters", label: "Adjust risk model parameters and trading limits", order: 4 },
+              { id: "5", type: "action", action: "notify_traders", label: "Notify trading desk of updated parameters", order: 5 },
+            ],
+            approvalGates: [{ stepId: "3", requiredRole: "risk_manager", autonomyLevel: "confirm_before" }],
+            autonomyLevel: "confirm_before",
+            severity: "critical",
+            estimatedDuration: "1 hour",
+            isPreBuilt: true,
+            status: "active",
+          },
+        ],
+        healthcare: [
+          {
+            name: "Drug Recall Response Protocol",
+            description: "If drug recall notice received, identify all patients with active prescriptions and notify care coordinators.",
+            industry: "healthcare",
+            category: "patient_safety",
+            triggerType: "automatic",
+            triggerConditions: [{ type: "event", event: "fda_drug_recall", source: "fda_feed", threshold: "any_recall" }],
+            steps: [
+              { id: "1", type: "action", action: "detect_recall", label: "Detect drug recall notice from FDA feed", order: 1 },
+              { id: "2", type: "action", action: "identify_patients", label: "Query EHR for all patients with active prescriptions for recalled drug", order: 2 },
+              { id: "3", type: "condition", condition: "patient_count", label: "IF affected patients > 0", trueNext: "4", falseNext: "7", order: 3 },
+              { id: "4", type: "approval_gate", label: "Clinical safety officer approval for patient notifications", approvalLevel: "expert_approval", order: 4 },
+              { id: "5", type: "action", action: "notify_coordinators", label: "Notify care coordinators with patient lists and alternative medications", order: 5 },
+              { id: "6", type: "action", action: "update_formulary", label: "Update formulary to flag recalled drug", order: 6 },
+              { id: "7", type: "action", action: "audit_log", label: "Generate HIPAA-compliant audit trail of recall response", order: 7 },
+            ],
+            approvalGates: [{ stepId: "4", requiredRole: "clinical_safety_officer", autonomyLevel: "expert_approval" }],
+            autonomyLevel: "expert_approval",
+            severity: "critical",
+            estimatedDuration: "2 hours",
+            isPreBuilt: true,
+            status: "active",
+          },
+          {
+            name: "Clinical Guideline Update",
+            description: "When clinical guidelines are updated, re-evaluate all active treatment plans against new evidence and notify care teams.",
+            industry: "healthcare",
+            category: "clinical_quality",
+            triggerType: "automatic",
+            triggerConditions: [{ type: "event", event: "guideline_update", source: "clinical_registry", threshold: "major_update" }],
+            steps: [
+              { id: "1", type: "action", action: "detect_update", label: "Detect clinical guideline update from registry", order: 1 },
+              { id: "2", type: "action", action: "identify_plans", label: "Identify active treatment plans affected by guideline change", order: 2 },
+              { id: "3", type: "approval_gate", label: "Chief medical officer review of guideline impact", approvalLevel: "expert_approval", order: 3 },
+              { id: "4", type: "action", action: "notify_teams", label: "Notify care teams with updated recommendations", order: 4 },
+              { id: "5", type: "action", action: "update_protocols", label: "Update agent decision protocols to reflect new guidelines", order: 5 },
+            ],
+            approvalGates: [{ stepId: "3", requiredRole: "chief_medical_officer", autonomyLevel: "expert_approval" }],
+            autonomyLevel: "expert_approval",
+            severity: "high",
+            estimatedDuration: "6 hours",
+            isPreBuilt: true,
+            status: "active",
+          },
+        ],
+        manufacturing: [
+          {
+            name: "Predictive Maintenance Trigger",
+            description: "If equipment vibration signature exceeds threshold, schedule predictive maintenance and reduce production rate by 20%.",
+            industry: "manufacturing",
+            category: "equipment_maintenance",
+            triggerType: "automatic",
+            triggerConditions: [{ type: "metric", metric: "vibration_amplitude", operator: "greater_than", threshold: 4.5, unit: "mm/s" }],
+            steps: [
+              { id: "1", type: "action", action: "detect_anomaly", label: "Detect vibration signature exceeding threshold (>4.5 mm/s)", order: 1 },
+              { id: "2", type: "action", action: "analyze_pattern", label: "Analyze vibration pattern for failure mode classification", order: 2 },
+              { id: "3", type: "condition", condition: "failure_probability", label: "IF failure probability > 70%", trueNext: "4", falseNext: "7", order: 3 },
+              { id: "4", type: "action", action: "reduce_rate", label: "Reduce production rate by 20% to prevent catastrophic failure", order: 4 },
+              { id: "5", type: "approval_gate", label: "Plant manager approval for maintenance scheduling", approvalLevel: "confirm_before", order: 5 },
+              { id: "6", type: "action", action: "schedule_maintenance", label: "Schedule predictive maintenance window", order: 6 },
+              { id: "7", type: "action", action: "monitor_continued", label: "Continue enhanced monitoring at 5-minute intervals", order: 7 },
+            ],
+            approvalGates: [{ stepId: "5", requiredRole: "plant_manager", autonomyLevel: "confirm_before" }],
+            autonomyLevel: "confirm_before",
+            severity: "high",
+            estimatedDuration: "30 minutes",
+            isPreBuilt: true,
+            status: "active",
+          },
+          {
+            name: "Quality Control Deviation Response",
+            description: "When product quality metrics fall outside control limits, halt affected batch and initiate root cause analysis.",
+            industry: "manufacturing",
+            category: "quality_control",
+            triggerType: "automatic",
+            triggerConditions: [{ type: "metric", metric: "defect_rate", operator: "greater_than", threshold: 0.02 }],
+            steps: [
+              { id: "1", type: "action", action: "detect_deviation", label: "Detect quality metric outside control limits", order: 1 },
+              { id: "2", type: "action", action: "halt_batch", label: "Quarantine affected production batch", order: 2 },
+              { id: "3", type: "action", action: "root_cause", label: "Initiate automated root cause analysis", order: 3 },
+              { id: "4", type: "approval_gate", label: "Quality engineer approval to resume production", approvalLevel: "confirm_before", order: 4 },
+              { id: "5", type: "action", action: "corrective_action", label: "Apply corrective action and resume production", order: 5 },
+            ],
+            approvalGates: [{ stepId: "4", requiredRole: "quality_engineer", autonomyLevel: "confirm_before" }],
+            autonomyLevel: "confirm_before",
+            severity: "high",
+            estimatedDuration: "2 hours",
+            isPreBuilt: true,
+            status: "active",
+          },
+        ],
+        insurance: [
+          {
+            name: "Catastrophe Event Response",
+            description: "When catastrophe event declared, activate surge claims processing and adjust reserves based on exposure models.",
+            industry: "insurance",
+            category: "claims_management",
+            triggerType: "automatic",
+            triggerConditions: [{ type: "event", event: "catastrophe_declaration", source: "iso_pcs", threshold: "any_declaration" }],
+            steps: [
+              { id: "1", type: "action", action: "detect_event", label: "Detect catastrophe event declaration", order: 1 },
+              { id: "2", type: "action", action: "assess_exposure", label: "Calculate policyholder exposure in affected region", order: 2 },
+              { id: "3", type: "approval_gate", label: "Chief actuary approval for reserve adjustment", approvalLevel: "expert_approval", order: 3 },
+              { id: "4", type: "action", action: "activate_surge", label: "Activate surge claims processing capacity", order: 4 },
+              { id: "5", type: "action", action: "adjust_reserves", label: "Adjust IBNR reserves based on exposure model", order: 5 },
+              { id: "6", type: "action", action: "notify_reinsurers", label: "Notify reinsurance partners of potential claims", order: 6 },
+            ],
+            approvalGates: [{ stepId: "3", requiredRole: "chief_actuary", autonomyLevel: "expert_approval" }],
+            autonomyLevel: "expert_approval",
+            severity: "critical",
+            estimatedDuration: "4 hours",
+            isPreBuilt: true,
+            status: "active",
+          },
+        ],
+        retail: [
+          {
+            name: "Dynamic Pricing Anomaly Response",
+            description: "When pricing engine outputs fall outside acceptable bounds, revert to baseline prices and alert merchandising team.",
+            industry: "retail",
+            category: "pricing",
+            triggerType: "automatic",
+            triggerConditions: [{ type: "metric", metric: "price_deviation", operator: "greater_than", threshold: 0.15 }],
+            steps: [
+              { id: "1", type: "action", action: "detect_anomaly", label: "Detect pricing anomaly exceeding 15% deviation", order: 1 },
+              { id: "2", type: "action", action: "revert_prices", label: "Revert affected SKUs to baseline prices", order: 2 },
+              { id: "3", type: "action", action: "notify_team", label: "Alert merchandising team with anomaly details", order: 3 },
+              { id: "4", type: "approval_gate", label: "Merchandising manager approval for pricing model restart", approvalLevel: "confirm_before", order: 4 },
+              { id: "5", type: "action", action: "diagnose_model", label: "Run pricing model diagnostic and recalibrate", order: 5 },
+            ],
+            approvalGates: [{ stepId: "4", requiredRole: "merchandising_manager", autonomyLevel: "confirm_before" }],
+            autonomyLevel: "confirm_before",
+            severity: "high",
+            estimatedDuration: "1 hour",
+            isPreBuilt: true,
+            status: "active",
+          },
+        ],
+      };
+
+      const industryRunbooks = prebuiltRunbooks[industry] || [];
+      const created = [];
+      for (const rb of industryRunbooks) {
+        const existing = (await storage.getRunbooks()).find(
+          r => r.name === rb.name && r.industry === rb.industry && r.isPreBuilt
+        );
+        if (!existing) {
+          const newRb = await storage.createRunbook(rb);
+          created.push(newRb);
+        }
+      }
+      res.json({ seeded: created.length, runbooks: created });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/ai/generate-runbook", async (req, res) => {
+    try {
+      const { industry, incidentType, description } = req.body;
+      const OpenAI = (await import("openai")).default;
+      const openai = new OpenAI();
+
+      const industryContext: Record<string, string> = {
+        financial_services: "Financial Services (SEC/FINRA regulated, AML/KYC compliance, trading operations)",
+        healthcare: "Healthcare (HIPAA regulated, patient safety, clinical operations, EHR systems)",
+        manufacturing: "Manufacturing (ISO certified, equipment safety, production quality, supply chain)",
+        insurance: "Insurance (state regulated, actuarial requirements, claims processing, underwriting)",
+        retail: "Retail (consumer protection, pricing regulations, inventory management, e-commerce)",
+      };
+
+      const prompt = `Generate a runbook for the ${industryContext[industry] || industry} industry.
+Incident type: ${incidentType}
+Description: ${description}
+
+Generate a JSON response with:
+{
+  "name": "Concise runbook name",
+  "description": "One-sentence description of what this runbook does",
+  "category": "category like compliance, risk_management, patient_safety, etc",
+  "triggerType": "automatic or manual",
+  "triggerConditions": [{"type": "event|metric", "event": "event_name", "metric": "metric_name", "operator": "greater_than|less_than|equals", "threshold": value}],
+  "steps": [{"id": "1", "type": "action|condition|approval_gate", "action": "action_id", "label": "Human readable step description", "condition": "optional_condition", "trueNext": "optional_step_id", "falseNext": "optional_step_id", "approvalLevel": "optional_level", "order": 1}],
+  "approvalGates": [{"stepId": "step_id", "requiredRole": "role_name", "autonomyLevel": "full_auto|log_only|notify_after|confirm_before|expert_approval"}],
+  "autonomyLevel": "confirm_before",
+  "severity": "low|medium|high|critical",
+  "estimatedDuration": "human readable duration"
+}
+
+Include 4-7 steps with at least one approval gate for high-risk actions. Make it industry-specific with proper regulatory considerations.`;
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" },
+      });
+
+      const generated = JSON.parse(response.choices[0]?.message?.content || "{}");
+      res.json(generated);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   // Start the job worker
   startWorker();
 
