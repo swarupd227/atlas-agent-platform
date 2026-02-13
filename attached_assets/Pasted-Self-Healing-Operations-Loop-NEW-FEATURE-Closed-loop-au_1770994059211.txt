@@ -1,0 +1,12 @@
+Self-Healing Operations Loop
+NEW FEATURE — Closed-loop autonomous remediation with industry-aware diagnosis
+
+★ NEW FEATURE: Why This Exists
+Competitors offer detection and alerting; response is always manual. ALMP closes the loop from detection through resolution, with industry context guiding both diagnosis and remediation. A quality defect in manufacturing triggers different diagnostic workflows than a hallucination in clinical documentation.
+
+8.1 Healing Operations Center
+What’s on Screen
+•	Active Healing Pipelines: Each issue visualized as a pipeline: Detected → Diagnosed → Hypothesis → Experiment → Verified → Approved → Deployed → Resolved. Industry-specific diagnosis templates guide the investigation. Financial Services: drift diagnosis checks for regulatory changes, market condition shifts, and counterparty data changes. Healthcare: diagnosis checks for clinical guideline updates, formulary changes, and EHR data quality issues. Manufacturing: diagnosis checks for sensor calibration drift, raw material specification changes, and equipment degradation patterns.
+•	Business Impact Quantification: Every issue shows dollar impact using industry-specific models. Financial: revenue at risk, regulatory fine exposure, client attrition probability. Healthcare: patient safety score impact, reimbursement risk, readmission rate impact. Manufacturing: production downtime cost, quality cost (scrap + rework), and warranty exposure.
+•	AI-Generated Remediation with Industry Guardrails: Proposed fixes constrained by industry regulations. A healthcare fix proposal must pass clinical safety validation before entering experiment phase. A financial services fix must pass regulatory compliance check. Manufacturing fixes must pass safety review for human-adjacent operations.
+•	Experiment Dashboard: A/B experiment for validating remediation. Industry-specific success criteria: clinical equivalence testing for healthcare, regulatory compliance for FSI, quality threshold for manufacturing.
