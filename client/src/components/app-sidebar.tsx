@@ -103,7 +103,6 @@ export function AppSidebar() {
       icon: Eye,
       items: [
         { title: "Deployments", url: "/deployments", icon: Rocket },
-        { title: "Shadow Replay", url: "/shadow-replay", icon: GitCompare },
         { title: "Monitor", url: "/monitor", icon: Activity },
         { title: "Optimization", url: "/optimization", icon: Zap },
       ],
@@ -113,6 +112,7 @@ export function AppSidebar() {
       icon: Shield,
       items: [
         { title: "Governance", url: "/governance", icon: Shield },
+        { title: "Shadow Replay", url: "/shadow-replay", icon: GitCompare },
         { title: "Autonomy Engine", url: "/autonomy-engine", icon: Gauge },
         { title: "Oversight Console", url: "/oversight-console", icon: Scale },
         { title: "Approvals", url: "/approvals", icon: CheckCircle },
