@@ -13432,6 +13432,174 @@ Return a JSON object with:
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  // --- Knowledge Graph AI Endpoints ---
+
+  app.post("/api/ai/resolve-entities", async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI service not configured" });
+      }
+      const { entityA, sourceA, entityB, sourceB, entityType, industry } = req.body;
+      if (!entityA || !entityB) {
+        return res.status(400).json({ error: "entityA and entityB are required" });
+      }
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        max_tokens: 1500,
+        messages: [
+          {
+            role: "system",
+            content: `You are a data quality expert specializing in entity resolution for ${industry || "enterprise"} knowledge graphs. Analyze two entity references and determine if they refer to the same real-world entity.
+
+Return a JSON object with:
+- "isMatch": boolean - whether these entities are the same
+- "confidence": number 0-1 - how confident you are
+- "reasoning": string - 2-3 sentence explanation of why they match or don't
+- "matchingAttributes": array of strings - what attributes suggest a match (e.g., "name similarity", "industry alignment", "acronym expansion")
+- "differentiatingAttributes": array of strings - what attributes suggest they might be different
+- "canonicalName": string - the recommended canonical/official name if they match
+- "category": string - "exact_match" | "alias" | "abbreviation" | "subsidiary" | "related_but_different" | "no_match"`
+          },
+          {
+            role: "user",
+            content: `Analyze whether these two entity references refer to the same real-world entity:
+
+Entity A: "${entityA}" (Source: ${sourceA || "unknown"}, Type: ${entityType || "unknown"})
+Entity B: "${entityB}" (Source: ${sourceB || "unknown"}, Type: ${entityType || "unknown"})
+
+Industry context: ${industry || "general"}
+
+Return ONLY valid JSON.`
+          }
+        ],
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) return res.status(500).json({ error: "No response from AI" });
+      res.json(JSON.parse(content));
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/ai/extract-relationships", async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI service not configured" });
+      }
+      const { text, industry, documentName } = req.body;
+      if (!text) {
+        return res.status(400).json({ error: "text is required" });
+      }
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        max_tokens: 3000,
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert in ${industry || "enterprise"} knowledge graph construction. Extract entities and their relationships from text.
+
+Return a JSON object with:
+- "entities": array of objects with:
+  - "name": string - entity name
+  - "type": "organization" | "person" | "product" | "regulation" | "location"
+  - "description": string - brief description
+- "relationships": array of objects with:
+  - "sourceEntity": string - source entity name (must match an entity name above)
+  - "targetEntity": string - target entity name (must match an entity name above)
+  - "relationshipType": one of: "is-regulated-by", "is-subsidiary-of", "is-managed-by", "reports-to", "is-counterparty-to", "covers-risk", "applies-to", "is-part-of", "supersedes", "depends-on"
+  - "confidence": number 0-1
+  - "extractedText": string - the exact text snippet that supports this relationship
+  - "validFrom": string or null - ISO date if mentioned
+  - "validTo": string or null - ISO date if mentioned
+- "summary": string - brief summary of what was extracted`
+          },
+          {
+            role: "user",
+            content: `Extract entities and relationships from this ${industry || "enterprise"} text:
+
+Document: ${documentName || "Unnamed Document"}
+
+"""
+${text.substring(0, 3000)}
+"""
+
+Return ONLY valid JSON.`
+          }
+        ],
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) return res.status(500).json({ error: "No response from AI" });
+      res.json(JSON.parse(content));
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/ai/knowledge-graph-suggestions", async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI service not configured" });
+      }
+      const { entities, relationships, industry } = req.body;
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        max_tokens: 3000,
+        messages: [
+          {
+            role: "system",
+            content: `You are a knowledge graph quality expert for the ${industry || "enterprise"} industry. Analyze an existing knowledge graph and suggest improvements.
+
+Return a JSON object with:
+- "missingRelationships": array of objects with:
+  - "sourceEntity": string
+  - "targetEntity": string
+  - "suggestedType": string - relationship type
+  - "reason": string - why this relationship likely exists
+  - "confidence": number 0-1
+- "dataGaps": array of objects with:
+  - "area": string - what area is missing data
+  - "description": string - what's missing
+  - "severity": "high" | "medium" | "low"
+  - "suggestedAction": string - how to fix it
+- "qualityIssues": array of objects with:
+  - "issue": string - description of the issue
+  - "affectedEntities": array of strings
+  - "severity": "high" | "medium" | "low"
+  - "recommendation": string
+- "enrichmentOpportunities": array of objects with:
+  - "entity": string - entity name
+  - "suggestion": string - what could be enriched
+  - "source": string - where to find this data
+- "overallScore": number 0-100 - graph completeness/quality score
+- "summary": string - 2-3 sentence summary of graph health`
+          },
+          {
+            role: "user",
+            content: `Analyze this ${industry || "enterprise"} knowledge graph and suggest improvements:
+
+Entities (${(entities || []).length} total):
+${(entities || []).slice(0, 20).map((e: any) => `- ${e.name || e.entityName} (${e.type || e.entityType})`).join("\n")}
+
+Relationships (${(relationships || []).length} total):
+${(relationships || []).slice(0, 20).map((r: any) => `- ${r.sourceEntity} --[${r.relationshipType}]--> ${r.targetEntity}`).join("\n")}
+
+Industry: ${industry || "general"}
+
+Return ONLY valid JSON.`
+          }
+        ],
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) return res.status(500).json({ error: "No response from AI" });
+      res.json(JSON.parse(content));
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   // Start the job worker
   startWorker();
 

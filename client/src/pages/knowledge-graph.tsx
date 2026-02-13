@@ -20,6 +20,7 @@ import {
   Link2, GitBranch, Users, Shield, Loader2, Trash2, Eye,
   ArrowRight, Calendar, Filter, Layers, Sparkles, Network,
   BarChart3, ArrowUpRight, ArrowDownRight, Pencil,
+  Lightbulb, Wand2, BrainCircuit, Zap, Target, TrendingUp,
 } from "lucide-react";
 
 type ConnectorView = {
@@ -302,6 +303,16 @@ export default function KnowledgeGraphIngestion() {
     relationshipType: "", validFrom: "", validTo: "", source: "",
   });
 
+  const [showAiResolve, setShowAiResolve] = useState<ResolutionView | null>(null);
+  const [aiResolveResult, setAiResolveResult] = useState<any>(null);
+  const [showAiExtract, setShowAiExtract] = useState(false);
+  const [aiExtractText, setAiExtractText] = useState("");
+  const [aiExtractDocName, setAiExtractDocName] = useState("");
+  const [aiExtractResult, setAiExtractResult] = useState<any>(null);
+  const [showAiSuggestions, setShowAiSuggestions] = useState(false);
+  const [aiSuggestionsResult, setAiSuggestionsResult] = useState<any>(null);
+  const [showOverview, setShowOverview] = useState(true);
+
   const connectorsQuery = useQuery<ConnectorView[]>({ queryKey: ["/api/knowledge-connectors"] });
   const resolutionsQuery = useQuery<ResolutionView[]>({ queryKey: ["/api/entity-resolutions"] });
   const extractionsQuery = useQuery<ExtractionView[]>({ queryKey: ["/api/relationship-extractions"] });
@@ -374,6 +385,34 @@ export default function KnowledgeGraphIngestion() {
     },
   });
 
+  const aiResolveMut = useMutation({
+    mutationFn: (data: any) => apiRequest("POST", "/api/ai/resolve-entities", data).then(r => r.json()),
+    onSuccess: (data) => {
+      setAiResolveResult(data);
+      toast({ title: "AI analysis complete" });
+    },
+    onError: () => toast({ title: "AI analysis failed", variant: "destructive" }),
+  });
+
+  const aiExtractMut = useMutation({
+    mutationFn: (data: any) => apiRequest("POST", "/api/ai/extract-relationships", data).then(r => r.json()),
+    onSuccess: (data) => {
+      setAiExtractResult(data);
+      toast({ title: `Extracted ${data.entities?.length || 0} entities and ${data.relationships?.length || 0} relationships` });
+    },
+    onError: () => toast({ title: "AI extraction failed", variant: "destructive" }),
+  });
+
+  const aiSuggestionsMut = useMutation({
+    mutationFn: (data: any) => apiRequest("POST", "/api/ai/knowledge-graph-suggestions", data).then(r => r.json()),
+    onSuccess: (data) => {
+      setAiSuggestionsResult(data);
+      setShowAiSuggestions(true);
+      toast({ title: "AI suggestions generated" });
+    },
+    onError: () => toast({ title: "AI analysis failed", variant: "destructive" }),
+  });
+
   const filteredConnectors = useMemo(() => {
     let list = connectors;
     if (searchQuery) {
@@ -436,6 +475,17 @@ export default function KnowledgeGraphIngestion() {
   const pendingResolutions = resolutions.filter((r) => r.resolutionStatus === "pending" || r.resolutionStatus === "review").length;
   const verifiedExtractions = extractions.filter((e) => e.status === "verified").length;
 
+  const graphEntities = useMemo(() => {
+    const fromConnectors = connectors.slice(0, 5).map(c => ({ name: c.name, type: "source" as const }));
+    const fromExtractions = extractions.slice(0, 8).flatMap(e => [
+      { name: e.sourceEntity, type: "entity" as const },
+      { name: e.targetEntity, type: "entity" as const },
+    ]);
+    const unique = new Map<string, { name: string; type: "source" | "entity" }>();
+    [...fromConnectors, ...fromExtractions].forEach(e => { if (!unique.has(e.name)) unique.set(e.name, e); });
+    return Array.from(unique.values()).slice(0, 12);
+  }, [connectors, extractions]);
+
   return (
     <div className="flex flex-col h-full">
       <div className="border-b px-6 py-4 flex items-center justify-between gap-4 flex-wrap">
@@ -444,6 +494,51 @@ export default function KnowledgeGraphIngestion() {
           <p className="text-sm text-muted-foreground">Populate and maintain the knowledge graph with customer-specific data</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            variant="outline"
+            onClick={() => setShowOverview(!showOverview)}
+            data-testid="button-toggle-overview"
+          >
+            <Network className="w-4 h-4 mr-1.5" />
+            {showOverview ? "Hide" : "Show"} Overview
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setAiExtractText("");
+              setAiExtractDocName("");
+              setAiExtractResult(null);
+              setShowAiExtract(true);
+            }}
+            data-testid="button-ai-extract"
+          >
+            <Wand2 className="w-4 h-4 mr-1.5" />AI Extract
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              const entityList = [
+                ...extractions.map(e => ({ name: e.sourceEntity, type: "entity" })),
+                ...extractions.map(e => ({ name: e.targetEntity, type: "entity" })),
+                ...temporalEntries.map(t => ({ name: t.entityName, type: t.entityType })),
+              ];
+              const relList = extractions.map(e => ({
+                sourceEntity: e.sourceEntity,
+                targetEntity: e.targetEntity,
+                relationshipType: e.relationshipType,
+              }));
+              aiSuggestionsMut.mutate({
+                entities: entityList,
+                relationships: relList,
+                industry: industry?.id || "financial_services",
+              });
+            }}
+            disabled={aiSuggestionsMut.isPending}
+            data-testid="button-ai-suggestions"
+          >
+            {aiSuggestionsMut.isPending ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Lightbulb className="w-4 h-4 mr-1.5" />}
+            AI Suggestions
+          </Button>
           <div className="relative">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
@@ -457,44 +552,170 @@ export default function KnowledgeGraphIngestion() {
         </div>
       </div>
 
-      <div className="grid grid-cols-4 gap-4 px-6 py-4 border-b">
-        <Card data-testid="card-stat-entities">
-          <CardContent className="pt-4 pb-3">
-            <div className="flex items-center gap-2">
-              <Layers className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">Entities Ingested</span>
+      {showOverview && (
+        <div className="border-b px-6 py-4">
+          <div className="grid grid-cols-3 gap-4">
+            <Card className="col-span-2" data-testid="card-overview-graph">
+              <CardContent className="pt-4 pb-3">
+                <div className="flex items-center justify-between gap-2 mb-3">
+                  <div className="flex items-center gap-2">
+                    <BrainCircuit className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">Knowledge Graph Overview</span>
+                  </div>
+                  <Badge variant="outline" className="text-xs">
+                    <Zap className="w-3 h-3 mr-1" />Powers agent intelligence
+                  </Badge>
+                </div>
+                <div className="flex gap-4">
+                  <svg viewBox="0 0 320 160" className="flex-1 h-40" data-testid="svg-graph-preview">
+                    {graphEntities.map((entity, i) => {
+                      const angle = (i / graphEntities.length) * Math.PI * 2;
+                      const cx = 160 + Math.cos(angle) * 60;
+                      const cy = 80 + Math.sin(angle) * 55;
+                      const nextIdx = (i + 1) % graphEntities.length;
+                      const nextAngle = (nextIdx / graphEntities.length) * Math.PI * 2;
+                      const nx = 160 + Math.cos(nextAngle) * 60;
+                      const ny = 80 + Math.sin(nextAngle) * 55;
+                      return (
+                        <g key={i}>
+                          {i < graphEntities.length - 1 && (
+                            <line x1={cx} y1={cy} x2={nx} y2={ny} className="stroke-muted-foreground/20" strokeWidth="1" />
+                          )}
+                          {i % 3 === 0 && (
+                            <line x1={cx} y1={cy} x2={160} y2={80} className="stroke-muted-foreground/15" strokeWidth="1" strokeDasharray="3,3" />
+                          )}
+                          <circle
+                            cx={cx} cy={cy} r={entity.type === "source" ? 6 : 4}
+                            className={entity.type === "source" ? "fill-primary/60" : "fill-muted-foreground/40"}
+                          />
+                          <text x={cx} y={cy + (i % 2 === 0 ? -10 : 14)} textAnchor="middle" className="fill-muted-foreground text-[7px]">
+                            {entity.name.length > 16 ? entity.name.slice(0, 14) + "..." : entity.name}
+                          </text>
+                        </g>
+                      );
+                    })}
+                    <circle cx={160} cy={80} r={8} className="fill-primary/30" />
+                    <text x={160} y={84} textAnchor="middle" className="fill-foreground text-[6px] font-medium">KG</text>
+                  </svg>
+                  <div className="space-y-2 w-48 shrink-0">
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      Your knowledge graph connects entities, relationships, and temporal data to give AI agents deep understanding of your organization.
+                    </p>
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs text-muted-foreground">Graph completeness</span>
+                        <span className="text-xs font-medium">{Math.min(100, Math.round((totalEntities / 100000) * 100))}%</span>
+                      </div>
+                      <Progress value={Math.min(100, Math.round((totalEntities / 100000) * 100))} className="h-1.5" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs text-muted-foreground">Resolution rate</span>
+                        <span className="text-xs font-medium">{resolutions.length > 0 ? Math.round(((resolutions.length - pendingResolutions) / resolutions.length) * 100) : 0}%</span>
+                      </div>
+                      <Progress value={resolutions.length > 0 ? Math.round(((resolutions.length - pendingResolutions) / resolutions.length) * 100) : 0} className="h-1.5" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs text-muted-foreground">Extraction verified</span>
+                        <span className="text-xs font-medium">{extractions.length > 0 ? Math.round((verifiedExtractions / extractions.length) * 100) : 0}%</span>
+                      </div>
+                      <Progress value={extractions.length > 0 ? Math.round((verifiedExtractions / extractions.length) * 100) : 0} className="h-1.5" />
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <div className="space-y-2">
+              <Card data-testid="card-stat-entities">
+                <CardContent className="pt-3 pb-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Layers className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-xs text-muted-foreground">Entities</span>
+                    </div>
+                    <p className="text-lg font-bold">{totalEntities.toLocaleString()}</p>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card data-testid="card-stat-relationships">
+                <CardContent className="pt-3 pb-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Network className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-xs text-muted-foreground">Relationships</span>
+                    </div>
+                    <p className="text-lg font-bold">{totalRelationships.toLocaleString()}</p>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card data-testid="card-stat-pending">
+                <CardContent className="pt-3 pb-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-xs text-muted-foreground">Pending</span>
+                    </div>
+                    <p className="text-lg font-bold">{pendingResolutions}</p>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card data-testid="card-stat-verified">
+                <CardContent className="pt-3 pb-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-xs text-muted-foreground">Verified</span>
+                    </div>
+                    <p className="text-lg font-bold">{verifiedExtractions}/{extractions.length}</p>
+                  </div>
+                </CardContent>
+              </Card>
             </div>
-            <p className="text-2xl font-bold mt-1">{totalEntities.toLocaleString()}</p>
-          </CardContent>
-        </Card>
-        <Card data-testid="card-stat-relationships">
-          <CardContent className="pt-4 pb-3">
-            <div className="flex items-center gap-2">
-              <Network className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">Relationships Mapped</span>
-            </div>
-            <p className="text-2xl font-bold mt-1">{totalRelationships.toLocaleString()}</p>
-          </CardContent>
-        </Card>
-        <Card data-testid="card-stat-pending">
-          <CardContent className="pt-4 pb-3">
-            <div className="flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">Pending Resolutions</span>
-            </div>
-            <p className="text-2xl font-bold mt-1">{pendingResolutions}</p>
-          </CardContent>
-        </Card>
-        <Card data-testid="card-stat-verified">
-          <CardContent className="pt-4 pb-3">
-            <div className="flex items-center gap-2">
-              <CheckCircle className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">Verified Extractions</span>
-            </div>
-            <p className="text-2xl font-bold mt-1">{verifiedExtractions}/{extractions.length}</p>
-          </CardContent>
-        </Card>
-      </div>
+          </div>
+        </div>
+      )}
+
+      {!showOverview && (
+        <div className="grid grid-cols-4 gap-4 px-6 py-4 border-b">
+          <Card data-testid="card-stat-entities-compact">
+            <CardContent className="pt-4 pb-3">
+              <div className="flex items-center gap-2">
+                <Layers className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm text-muted-foreground">Entities Ingested</span>
+              </div>
+              <p className="text-2xl font-bold mt-1">{totalEntities.toLocaleString()}</p>
+            </CardContent>
+          </Card>
+          <Card data-testid="card-stat-relationships-compact">
+            <CardContent className="pt-4 pb-3">
+              <div className="flex items-center gap-2">
+                <Network className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm text-muted-foreground">Relationships Mapped</span>
+              </div>
+              <p className="text-2xl font-bold mt-1">{totalRelationships.toLocaleString()}</p>
+            </CardContent>
+          </Card>
+          <Card data-testid="card-stat-pending-compact">
+            <CardContent className="pt-4 pb-3">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm text-muted-foreground">Pending Resolutions</span>
+              </div>
+              <p className="text-2xl font-bold mt-1">{pendingResolutions}</p>
+            </CardContent>
+          </Card>
+          <Card data-testid="card-stat-verified-compact">
+            <CardContent className="pt-4 pb-3">
+              <div className="flex items-center gap-2">
+                <CheckCircle className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm text-muted-foreground">Verified Extractions</span>
+              </div>
+              <p className="text-2xl font-bold mt-1">{verifiedExtractions}/{extractions.length}</p>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       <div className="flex-1 overflow-hidden px-6 py-4">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
@@ -609,10 +830,14 @@ export default function KnowledgeGraphIngestion() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <Badge variant="outline">
                   <AlertTriangle className="w-3 h-3 mr-1" />
                   {pendingResolutions} need review
+                </Badge>
+                <Badge variant="outline">
+                  <BrainCircuit className="w-3 h-3 mr-1" />
+                  AI-assisted resolution available
                 </Badge>
               </div>
             </div>
@@ -656,25 +881,49 @@ export default function KnowledgeGraphIngestion() {
                             <span className="text-xs text-muted-foreground w-10 text-right">{Math.round(res.confidenceScore * 100)}%</span>
                           </div>
                         </div>
-                        {(res.resolutionStatus === "pending" || res.resolutionStatus === "review") && !res.id.startsWith("seed") && (
-                          <div className="flex flex-col gap-1.5 shrink-0">
-                            <Button
-                              size="sm"
-                              onClick={() => updateResolutionMut.mutate({ id: res.id, data: { resolutionStatus: "matched", resolvedBy: "human" } })}
-                              data-testid={`button-match-${res.id}`}
-                            >
-                              <CheckCircle className="w-3 h-3 mr-1" />Match
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => updateResolutionMut.mutate({ id: res.id, data: { resolutionStatus: "rejected", resolvedBy: "human" } })}
-                              data-testid={`button-reject-${res.id}`}
-                            >
-                              <XCircle className="w-3 h-3 mr-1" />Reject
-                            </Button>
-                          </div>
-                        )}
+                        <div className="flex flex-col gap-1.5 shrink-0">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setAiResolveResult(null);
+                              setShowAiResolve(res);
+                              aiResolveMut.mutate({
+                                entityA: res.entityA,
+                                sourceA: res.sourceA,
+                                entityB: res.entityB,
+                                sourceB: res.sourceB,
+                                entityType: res.entityType,
+                                industry: res.industry || industry?.id || "financial_services",
+                              });
+                            }}
+                            disabled={aiResolveMut.isPending}
+                            data-testid={`button-ai-resolve-${res.id}`}
+                          >
+                            {aiResolveMut.isPending && showAiResolve?.id === res.id ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Sparkles className="w-3 h-3 mr-1" />}
+                            AI Resolve
+                          </Button>
+                          {(res.resolutionStatus === "pending" || res.resolutionStatus === "review") && !res.id.startsWith("seed") && (
+                            <>
+                              <Button
+                                size="sm"
+                                onClick={() => updateResolutionMut.mutate({ id: res.id, data: { resolutionStatus: "matched", resolvedBy: "human" } })}
+                                data-testid={`button-match-${res.id}`}
+                              >
+                                <CheckCircle className="w-3 h-3 mr-1" />Match
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => updateResolutionMut.mutate({ id: res.id, data: { resolutionStatus: "rejected", resolvedBy: "human" } })}
+                                data-testid={`button-reject-${res.id}`}
+                              >
+                                <XCircle className="w-3 h-3 mr-1" />Reject
+                              </Button>
+                            </>
+                          )}
+                        </div>
                       </div>
                     </CardContent>
                   </Card>
@@ -707,9 +956,23 @@ export default function KnowledgeGraphIngestion() {
                   <Sparkles className="w-3 h-3 mr-1" />LLM-powered extraction
                 </Badge>
               </div>
-              <Button onClick={() => setShowAddExtraction(true)} data-testid="button-add-extraction">
-                <Plus className="w-4 h-4 mr-1.5" />Add Extraction
-              </Button>
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setAiExtractText("");
+                    setAiExtractDocName("");
+                    setAiExtractResult(null);
+                    setShowAiExtract(true);
+                  }}
+                  data-testid="button-ai-extract-tab"
+                >
+                  <Wand2 className="w-4 h-4 mr-1.5" />AI Extract from Text
+                </Button>
+                <Button onClick={() => setShowAddExtraction(true)} data-testid="button-add-extraction">
+                  <Plus className="w-4 h-4 mr-1.5" />Add Extraction
+                </Button>
+              </div>
             </div>
             <ScrollArea className="h-[calc(100vh-380px)]">
               <div className="space-y-3">
@@ -1169,6 +1432,346 @@ export default function KnowledgeGraphIngestion() {
               </DialogFooter>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!showAiResolve} onOpenChange={() => { setShowAiResolve(null); setAiResolveResult(null); }}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <BrainCircuit className="w-5 h-5" />AI Entity Resolution
+            </DialogTitle>
+          </DialogHeader>
+          {showAiResolve && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 rounded-md bg-muted">
+                  <p className="text-xs text-muted-foreground mb-1">Entity A</p>
+                  <p className="font-medium text-sm">{showAiResolve.entityA}</p>
+                  <p className="text-xs text-muted-foreground mt-1">Source: {showAiResolve.sourceA}</p>
+                </div>
+                <div className="p-3 rounded-md bg-muted">
+                  <p className="text-xs text-muted-foreground mb-1">Entity B</p>
+                  <p className="font-medium text-sm">{showAiResolve.entityB}</p>
+                  <p className="text-xs text-muted-foreground mt-1">Source: {showAiResolve.sourceB}</p>
+                </div>
+              </div>
+
+              {aiResolveMut.isPending && (
+                <div className="flex items-center justify-center gap-2 py-6">
+                  <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+                  <span className="text-sm text-muted-foreground">AI is analyzing these entities...</span>
+                </div>
+              )}
+
+              {aiResolveResult && (
+                <div className="space-y-3" data-testid="ai-resolve-result">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Badge variant={aiResolveResult.isMatch ? "default" : "destructive"}>
+                      {aiResolveResult.isMatch ? <CheckCircle className="w-3 h-3 mr-1" /> : <XCircle className="w-3 h-3 mr-1" />}
+                      {aiResolveResult.isMatch ? "Match" : "No Match"}
+                    </Badge>
+                    <Badge variant="secondary">
+                      {Math.round((aiResolveResult.confidence || 0) * 100)}% confidence
+                    </Badge>
+                    {aiResolveResult.category && (
+                      <Badge variant="outline">{aiResolveResult.category.replace(/_/g, " ")}</Badge>
+                    )}
+                  </div>
+
+                  <div className="p-3 rounded-md border text-sm" data-testid="text-ai-reasoning">
+                    <p className="font-medium text-xs text-muted-foreground mb-1">AI Reasoning</p>
+                    {aiResolveResult.reasoning}
+                  </div>
+
+                  {aiResolveResult.canonicalName && (
+                    <div className="flex items-center gap-2 text-sm">
+                      <Target className="w-4 h-4 text-muted-foreground" />
+                      <span className="text-muted-foreground">Recommended canonical name:</span>
+                      <span className="font-medium">{aiResolveResult.canonicalName}</span>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-3">
+                    {aiResolveResult.matchingAttributes?.length > 0 && (
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-1.5 flex items-center gap-1">
+                          <CheckCircle className="w-3 h-3" />Matching attributes
+                        </p>
+                        <div className="space-y-1">
+                          {aiResolveResult.matchingAttributes.map((a: string, i: number) => (
+                            <Badge key={i} variant="outline" className="mr-1 text-xs">{a}</Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {aiResolveResult.differentiatingAttributes?.length > 0 && (
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-1.5 flex items-center gap-1">
+                          <AlertTriangle className="w-3 h-3" />Differentiating factors
+                        </p>
+                        <div className="space-y-1">
+                          {aiResolveResult.differentiatingAttributes.map((a: string, i: number) => (
+                            <Badge key={i} variant="outline" className="mr-1 text-xs">{a}</Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowAiResolve(null); setAiResolveResult(null); }} data-testid="button-close-ai-resolve">
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showAiExtract} onOpenChange={setShowAiExtract}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Wand2 className="w-5 h-5" />AI Relationship Extraction
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            {!aiExtractResult ? (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  Paste a document or text passage below and AI will automatically extract entities and relationships for your knowledge graph.
+                </p>
+                <div>
+                  <Label>Document Name (optional)</Label>
+                  <Input
+                    value={aiExtractDocName}
+                    onChange={(e) => setAiExtractDocName(e.target.value)}
+                    placeholder="e.g., SEC Filing 10-K FY2025"
+                    data-testid="input-ai-extract-doc-name"
+                  />
+                </div>
+                <div>
+                  <Label>Text to Analyze</Label>
+                  <Textarea
+                    value={aiExtractText}
+                    onChange={(e) => setAiExtractText(e.target.value)}
+                    placeholder="Paste regulatory text, corporate documents, compliance reports, or any industry-relevant content here..."
+                    className="min-h-[200px]"
+                    data-testid="input-ai-extract-text"
+                  />
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-muted-foreground">{aiExtractText.length} characters</span>
+                  <Button
+                    onClick={() => {
+                      if (!aiExtractText.trim()) return toast({ title: "Please paste some text to analyze", variant: "destructive" });
+                      aiExtractMut.mutate({
+                        text: aiExtractText,
+                        documentName: aiExtractDocName || "Unnamed Document",
+                        industry: industry?.id || "financial_services",
+                      });
+                    }}
+                    disabled={aiExtractMut.isPending || !aiExtractText.trim()}
+                    data-testid="button-run-ai-extract"
+                  >
+                    {aiExtractMut.isPending ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1.5" />}
+                    Extract with AI
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <div className="space-y-4" data-testid="ai-extract-results">
+                <p className="text-sm text-muted-foreground">{aiExtractResult.summary}</p>
+
+                {aiExtractResult.entities?.length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-medium mb-2 flex items-center gap-1.5">
+                      <Layers className="w-4 h-4" />Extracted Entities ({aiExtractResult.entities.length})
+                    </h4>
+                    <div className="space-y-1.5">
+                      {aiExtractResult.entities.map((ent: any, i: number) => (
+                        <div key={i} className="flex items-center gap-2 p-2 rounded-md bg-muted">
+                          <Badge variant="outline" className="text-xs shrink-0">{ent.type}</Badge>
+                          <span className="text-sm font-medium">{ent.name}</span>
+                          <span className="text-xs text-muted-foreground flex-1 min-w-0 truncate">{ent.description}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {aiExtractResult.relationships?.length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-medium mb-2 flex items-center gap-1.5">
+                      <GitBranch className="w-4 h-4" />Extracted Relationships ({aiExtractResult.relationships.length})
+                    </h4>
+                    <div className="space-y-2">
+                      {aiExtractResult.relationships.map((rel: any, i: number) => (
+                        <Card key={i}>
+                          <CardContent className="p-3">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-medium">{rel.sourceEntity}</span>
+                              <ArrowRight className="w-3 h-3 text-muted-foreground" />
+                              <Badge variant="outline" className="text-xs">{rel.relationshipType}</Badge>
+                              <ArrowRight className="w-3 h-3 text-muted-foreground" />
+                              <span className="text-sm font-medium">{rel.targetEntity}</span>
+                              <Badge variant="secondary" className="text-xs ml-auto shrink-0">
+                                {Math.round((rel.confidence || 0) * 100)}%
+                              </Badge>
+                            </div>
+                            {rel.extractedText && (
+                              <p className="text-xs text-muted-foreground italic mt-1.5">"{rel.extractedText}"</p>
+                            )}
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <Button
+                  variant="outline"
+                  onClick={() => setAiExtractResult(null)}
+                  data-testid="button-extract-new"
+                >
+                  Extract from another text
+                </Button>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowAiExtract(false); setAiExtractResult(null); }} data-testid="button-close-ai-extract">
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showAiSuggestions} onOpenChange={setShowAiSuggestions}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Lightbulb className="w-5 h-5" />AI Knowledge Graph Suggestions
+            </DialogTitle>
+          </DialogHeader>
+          {aiSuggestionsMut.isPending && (
+            <div className="flex items-center justify-center gap-2 py-8">
+              <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+              <span className="text-sm text-muted-foreground">AI is analyzing your knowledge graph...</span>
+            </div>
+          )}
+          {aiSuggestionsResult && (
+            <ScrollArea className="max-h-[60vh]">
+              <div className="space-y-4 pr-4" data-testid="ai-suggestions-results">
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2">
+                    <TrendingUp className="w-4 h-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">Graph Quality Score</span>
+                  </div>
+                  <Badge variant={
+                    (aiSuggestionsResult.overallScore || 0) >= 80 ? "default" :
+                    (aiSuggestionsResult.overallScore || 0) >= 50 ? "secondary" : "destructive"
+                  }>
+                    {aiSuggestionsResult.overallScore || 0}/100
+                  </Badge>
+                </div>
+
+                {aiSuggestionsResult.summary && (
+                  <p className="text-sm text-muted-foreground" data-testid="text-ai-summary">{aiSuggestionsResult.summary}</p>
+                )}
+
+                {aiSuggestionsResult.missingRelationships?.length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-medium mb-2 flex items-center gap-1.5">
+                      <GitBranch className="w-4 h-4" />Missing Relationships ({aiSuggestionsResult.missingRelationships.length})
+                    </h4>
+                    <div className="space-y-2">
+                      {aiSuggestionsResult.missingRelationships.map((r: any, i: number) => (
+                        <div key={i} className="p-2.5 rounded-md border">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-medium">{r.sourceEntity}</span>
+                            <ArrowRight className="w-3 h-3 text-muted-foreground" />
+                            <Badge variant="outline" className="text-xs">{r.suggestedType}</Badge>
+                            <ArrowRight className="w-3 h-3 text-muted-foreground" />
+                            <span className="text-sm font-medium">{r.targetEntity}</span>
+                            <Badge variant="secondary" className="text-xs ml-auto shrink-0">{Math.round((r.confidence || 0) * 100)}%</Badge>
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-1">{r.reason}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {aiSuggestionsResult.dataGaps?.length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-medium mb-2 flex items-center gap-1.5">
+                      <AlertTriangle className="w-4 h-4" />Data Gaps ({aiSuggestionsResult.dataGaps.length})
+                    </h4>
+                    <div className="space-y-2">
+                      {aiSuggestionsResult.dataGaps.map((g: any, i: number) => (
+                        <div key={i} className="p-2.5 rounded-md border">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-sm font-medium">{g.area}</span>
+                            <Badge variant={g.severity === "high" ? "destructive" : g.severity === "medium" ? "secondary" : "outline"} className="text-xs">
+                              {g.severity}
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-muted-foreground">{g.description}</p>
+                          <p className="text-xs mt-1"><span className="text-muted-foreground">Action:</span> {g.suggestedAction}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {aiSuggestionsResult.qualityIssues?.length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-medium mb-2 flex items-center gap-1.5">
+                      <Shield className="w-4 h-4" />Quality Issues ({aiSuggestionsResult.qualityIssues.length})
+                    </h4>
+                    <div className="space-y-2">
+                      {aiSuggestionsResult.qualityIssues.map((q: any, i: number) => (
+                        <div key={i} className="p-2.5 rounded-md border">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-sm font-medium">{q.issue}</span>
+                            <Badge variant={q.severity === "high" ? "destructive" : q.severity === "medium" ? "secondary" : "outline"} className="text-xs">
+                              {q.severity}
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-muted-foreground">{q.recommendation}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {aiSuggestionsResult.enrichmentOpportunities?.length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-medium mb-2 flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4" />Enrichment Opportunities ({aiSuggestionsResult.enrichmentOpportunities.length})
+                    </h4>
+                    <div className="space-y-2">
+                      {aiSuggestionsResult.enrichmentOpportunities.map((e: any, i: number) => (
+                        <div key={i} className="p-2.5 rounded-md border">
+                          <p className="text-sm font-medium">{e.entity}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">{e.suggestion}</p>
+                          <p className="text-xs mt-0.5"><span className="text-muted-foreground">Source:</span> {e.source}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </ScrollArea>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAiSuggestions(false)} data-testid="button-close-ai-suggestions">
+              Close
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
