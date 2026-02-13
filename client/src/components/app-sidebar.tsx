@@ -26,6 +26,7 @@ import {
   Brain,
   GitBranch,
   Network,
+  Gauge,
 } from "lucide-react";
 import {
   Sidebar,
@@ -109,6 +110,7 @@ export function AppSidebar() {
       icon: Shield,
       items: [
         { title: "Governance", url: "/governance", icon: Shield },
+        { title: "Autonomy Engine", url: "/autonomy-engine", icon: Gauge },
         { title: "Approvals", url: "/approvals", icon: CheckCircle },
         { title: "Audit Trail", url: "/audit-trail", icon: ScrollText },
       ],

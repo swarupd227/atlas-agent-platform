@@ -75,6 +75,7 @@ import ContextStudio from "@/pages/context-studio";
 import MemoryArchitecture from "@/pages/memory-architecture";
 import RagPipeline from "@/pages/rag-pipeline";
 import KnowledgeGraph from "@/pages/knowledge-graph";
+import AutonomyEngine from "@/pages/autonomy-engine";
 
 function DashboardRouter() {
   return (
@@ -135,6 +136,7 @@ function DashboardRouter() {
       <Route path="/memory-architecture" component={MemoryArchitecture} />
       <Route path="/rag-pipeline" component={RagPipeline} />
       <Route path="/knowledge-graph" component={KnowledgeGraph} />
+      <Route path="/autonomy-engine" component={AutonomyEngine} />
       <Route path="/admin" component={Admin} />
       <Route component={NotFound} />
     </Switch>
