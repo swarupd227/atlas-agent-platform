@@ -239,23 +239,51 @@ function extractProposal(content: string): OutcomeProposal | null {
   }
 }
 
-function renderMessageContent(content: string) {
-  const jsonMatch = content.match(/```json\s*[\s\S]*?```/);
-  if (!jsonMatch) return <p className="whitespace-pre-wrap text-sm">{content}</p>;
+function renderMessageContent(content: string, isStreaming?: boolean) {
+  const completedJsonMatch = content.match(/```json\s*[\s\S]*?```/);
 
-  const beforeJson = content.substring(0, jsonMatch.index).trim();
-  const afterJson = content.substring((jsonMatch.index || 0) + jsonMatch[0].length).trim();
+  if (completedJsonMatch) {
+    const beforeJson = content.substring(0, completedJsonMatch.index).trim();
+    const afterJson = content.substring((completedJsonMatch.index || 0) + completedJsonMatch[0].length).trim();
 
-  return (
-    <div className="flex flex-col gap-2">
-      {beforeJson && <p className="whitespace-pre-wrap text-sm">{beforeJson}</p>}
-      <div className="flex items-center gap-2 p-2 rounded-md bg-primary/5 border border-primary/10 flex-wrap">
-        <ClipboardCheck className="w-4 h-4 text-primary shrink-0" />
-        <span className="text-xs font-medium">Outcome proposal generated — see the review panel below</span>
+    return (
+      <div className="flex flex-col gap-2">
+        {beforeJson && <p className="whitespace-pre-wrap text-sm">{beforeJson}</p>}
+        <div className="flex items-center gap-2 p-3 rounded-md bg-primary/10 border border-primary/20 flex-wrap">
+          <CheckCircle className="w-4 h-4 text-primary shrink-0" />
+          <div className="flex flex-col gap-0.5">
+            <span className="text-sm font-medium">Outcome proposal ready</span>
+            <span className="text-xs text-muted-foreground">Review the details in the panel on the right, then click "Create Outcome Contract" when you're satisfied.</span>
+          </div>
+        </div>
+        {afterJson && <p className="whitespace-pre-wrap text-sm">{afterJson}</p>}
       </div>
-      {afterJson && <p className="whitespace-pre-wrap text-sm">{afterJson}</p>}
-    </div>
-  );
+    );
+  }
+
+  const partialFenceMatch = content.match(/`{1,3}(?:j(?:s(?:o(?:n)?)?)?)?$/);
+  const openFenceMatch = content.match(/```json/);
+
+  if (openFenceMatch || partialFenceMatch) {
+    const fenceStart = openFenceMatch
+      ? openFenceMatch.index!
+      : partialFenceMatch
+        ? partialFenceMatch.index!
+        : content.length;
+    const beforeJson = content.substring(0, fenceStart).trim();
+
+    return (
+      <div className="flex flex-col gap-2">
+        {beforeJson && <p className="whitespace-pre-wrap text-sm">{beforeJson}</p>}
+        <div className="flex items-center gap-2 p-3 rounded-md bg-muted border flex-wrap">
+          <Loader2 className="w-4 h-4 animate-spin text-primary shrink-0" />
+          <span className="text-sm text-muted-foreground">Building your outcome proposal...</span>
+        </div>
+      </div>
+    );
+  }
+
+  return <p className="whitespace-pre-wrap text-sm">{content}</p>;
 }
 
 function getEstCost(riskTier: string): string {
@@ -984,7 +1012,7 @@ export default function OutcomeDiscover() {
                     }`}
                     data-testid={`chat-message-${i}`}
                   >
-                    {msg.role === "assistant" ? renderMessageContent(msg.content) : (
+                    {msg.role === "assistant" ? renderMessageContent(msg.content, streaming && i === messages.length - 1) : (
                       <p className="whitespace-pre-wrap text-sm">{msg.content}</p>
                     )}
                   </div>
