@@ -1,0 +1,12 @@
+Adaptive Autonomy Engine
+NEW FEATURE — Dynamic, context-aware human oversight replacing static ratios
+
+★ NEW FEATURE: Why This Exists
+The original ALMP documentation specifies “80% autonomous / 20% human validation.” This static ratio is dangerous: it provides too much autonomy for high-risk decisions and too little for routine ones. OWASP identifies “Overwhelming HITL” as a specific attack where adversaries flood reviewers. The Adaptive Autonomy Engine calibrates oversight to actual risk using industry-specific risk models.
+
+6.1 Autonomy Profile Designer
+What’s on Screen
+•	Risk Dimension Matrix: A visual matrix where business teams configure oversight levels across dimensions. Industry-specific dimensions loaded by default. Financial Services: transaction value thresholds, counterparty risk rating, regulatory classification (MiFID II suitability), market hours sensitivity. Healthcare: clinical impact level (informational vs. diagnostic vs. treatment), patient acuity, PHI exposure scope, off-formulary medication flags. Manufacturing: safety criticality level (human safety, equipment damage, quality impact), production line status (running vs. maintenance), environmental impact classification. Retail: order value, customer lifetime value tier, return/refund authority limits, promotional pricing authority.
+•	Autonomy Spectrum: For each action type, a 5-level spectrum: Full Auto → Log Only → Notify After → Confirm Before → Expert Approval Required. Position adjusts dynamically based on risk dimensions.
+•	Override Calendar: Time-based autonomy overrides. “During quarter-end close (last 5 business days), all financial agent actions above $10K require CFO approval.” “During Joint Commission survey window, all clinical agents require physician sign-off.”
+•	Learning Dashboard: Shows how the autonomy profile should evolve based on approval patterns. “Validators approved 98% of Tier-2 KYC decisions last month. Recommend raising autonomy threshold for this action type.”
