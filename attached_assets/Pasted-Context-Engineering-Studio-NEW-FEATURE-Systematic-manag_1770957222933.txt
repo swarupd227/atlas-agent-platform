@@ -1,0 +1,14 @@
+Context Engineering Studio
+NEW FEATURE — Systematic management of what agents know and when they know it
+
+★ NEW FEATURE: Why This Exists
+Context engineering — the discipline of curating what fills an LLM’s context window — replaces “prompt engineering” as the critical capability for production agents. Anthropic’s research shows a focused 300-token context often outperforms an unfocused 113,000-token context. For industry agents, the right context at the right time (regulatory requirements during compliance checks, clinical guidelines during diagnosis, pricing rules during quoting) is the difference between useful and dangerous.
+
+4.1 Context Architecture Designer
+Screen Description
+A visual designer for defining how industry context flows into agent execution, managing the “attention budget” across competing context demands.
+What’s on Screen
+•	Context Source Inventory: A catalog of all context sources available to agents, categorized as: System Instructions (core agent persona and behavioral rules), Industry Ontology (domain concepts, relationships, and terminology from the Knowledge Graph), Regulatory Context (active policies from the Policy-as-Code engine), Skill Instructions (procedural knowledge from active Agent Skills), Conversation History (prior interactions in the session), Retrieved Knowledge (documents and data from RAG/MCP resources), Tool Descriptions (available MCP tool schemas), and Working Memory (accumulated state from the current task).
+•	Context Priority Matrix: A configurable priority ranking that determines what gets loaded when context window space is limited. Drag-and-drop ordering with capacity visualization. Default for healthcare: Regulatory Context > Patient Safety Guidelines > Clinical Protocols > Conversation History > Tool Descriptions. Default for financial services: Regulatory Context > Risk Policies > Client Suitability Profile > Conversation History > Market Data.
+•	Context Budget Visualizer: A real-time visualization showing how the context window is allocated across sources for a given task type. Shows: total context capacity, allocation per source (bar chart), predicted quality at current allocation, and optimization suggestions. “Reducing Tool Descriptions from 4,200 to 1,800 tokens (by loading only relevant tools) would free 2,400 tokens for Clinical Guidelines, improving diagnostic accuracy by an estimated 8%.”
+•	Context Compilation Preview: For any agent + task combination, show exactly what context would be assembled at runtime. Editable preview where designers can add, remove, or reorder context elements and test the impact on output quality.
