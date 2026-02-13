@@ -1,0 +1,14 @@
+Industry Knowledge Graph
+NEW FEATURE — The semantic backbone grounding agent reasoning in verifiable industry reality
+
+★ NEW FEATURE: Why This Exists
+VentureBeat’s 2025 analysis concluded that “ontology is the real guardrail.” Agents reasoning over a knowledge graph hallucinate less because their outputs can be verified against the graph’s structured data. ALMP’s Knowledge Graph, pre-seeded with industry-standard ontologies (FIBO, SNOMED CT, ISA-95, GS1) and extended with customer-specific entities, becomes the “single source of truth” that agents reason within — not just retrieve from.
+
+5.1 Ontology Explorer
+Screen Description
+A visual interface for browsing, extending, and governing the industry ontology that underpins agent reasoning.
+What’s on Screen
+•	Graph Visualization: Interactive node-edge graph showing ontology concepts and their relationships. Users can zoom, filter by domain, and click any concept to see its properties, relationships, constraints, and linked data. Pre-loaded ontologies: FIBO (Financial Industry Business Ontology — legal entities, contracts, securities, 70+ agent types), SNOMED CT (375,000+ clinical concepts, 1.3M relationships), ISA-95 (manufacturing operations hierarchy), GS1 (product identification and supply chain).
+•	Concept Detail Panel: For each ontology concept: definition, synonyms, parent/child hierarchy, relationships to other concepts, linked regulatory requirements, and usage statistics (how often agents reference this concept in production).
+•	Customer Extension Layer: Customers can add organization-specific concepts on top of the industry ontology. These extensions inherit the ontology’s structure and constraints but represent the customer’s specific entities (their products, their processes, their organizational units). The platform maintains clear separation between industry-standard and customer-specific concepts.
+•	Ontology Health Dashboard: Metrics showing: coverage (what percentage of agent interactions reference ontology concepts), consistency (are agents using ontology-consistent terminology), freshness (when was the ontology last updated), and gap detection (conversations where agents couldn’t find relevant ontology concepts).
