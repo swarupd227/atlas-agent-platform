@@ -138,6 +138,7 @@ import {
   shadowReplaySessions, type ShadowReplaySession, type InsertShadowReplaySession,
   canaryDeployments, type CanaryDeployment, type InsertCanaryDeployment,
   healingPipelines, type HealingPipeline, type InsertHealingPipeline,
+  runbooks, type Runbook, type InsertRunbook,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -583,6 +584,12 @@ export interface IStorage {
   createHealingPipeline(pipeline: InsertHealingPipeline): Promise<HealingPipeline>;
   updateHealingPipeline(id: string, data: Partial<InsertHealingPipeline>): Promise<HealingPipeline | undefined>;
   deleteHealingPipeline(id: string): Promise<boolean>;
+
+  getRunbooks(): Promise<Runbook[]>;
+  getRunbook(id: string): Promise<Runbook | undefined>;
+  createRunbook(runbook: InsertRunbook): Promise<Runbook>;
+  updateRunbook(id: string, data: Partial<InsertRunbook>): Promise<Runbook | undefined>;
+  deleteRunbook(id: string): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2259,6 +2266,30 @@ export class DatabaseStorage implements IStorage {
 
   async deleteHealingPipeline(id: string): Promise<boolean> {
     const result = await db.delete(healingPipelines).where(eq(healingPipelines.id, id));
+    return (result as any).rowCount > 0;
+  }
+
+  async getRunbooks(): Promise<Runbook[]> {
+    return db.select().from(runbooks).orderBy(desc(runbooks.createdAt));
+  }
+
+  async getRunbook(id: string): Promise<Runbook | undefined> {
+    const [runbook] = await db.select().from(runbooks).where(eq(runbooks.id, id));
+    return runbook;
+  }
+
+  async createRunbook(runbook: InsertRunbook): Promise<Runbook> {
+    const [created] = await db.insert(runbooks).values(runbook).returning();
+    return created;
+  }
+
+  async updateRunbook(id: string, data: Partial<InsertRunbook>): Promise<Runbook | undefined> {
+    const [updated] = await db.update(runbooks).set(data).where(eq(runbooks.id, id)).returning();
+    return updated;
+  }
+
+  async deleteRunbook(id: string): Promise<boolean> {
+    const result = await db.delete(runbooks).where(eq(runbooks.id, id));
     return (result as any).rowCount > 0;
   }
 }

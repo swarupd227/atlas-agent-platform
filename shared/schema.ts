@@ -1734,4 +1734,28 @@ export const insertHealingPipelineSchema = createInsertSchema(healingPipelines).
 export type InsertHealingPipeline = z.infer<typeof insertHealingPipelineSchema>;
 export type HealingPipeline = typeof healingPipelines.$inferSelect;
 
+export const runbooks = pgTable("runbooks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  description: text("description"),
+  industry: text("industry").notNull().default("general"),
+  category: text("category").notNull().default("incident_response"),
+  triggerType: text("trigger_type").notNull().default("manual"),
+  triggerConditions: jsonb("trigger_conditions").notNull().default(sql`'[]'::jsonb`),
+  steps: jsonb("steps").notNull().default(sql`'[]'::jsonb`),
+  approvalGates: jsonb("approval_gates").notNull().default(sql`'[]'::jsonb`),
+  autonomyLevel: text("autonomy_level").notNull().default("confirm_before"),
+  status: text("status").notNull().default("draft"),
+  isPreBuilt: boolean("is_pre_built").notNull().default(false),
+  severity: text("severity").notNull().default("medium"),
+  estimatedDuration: text("estimated_duration"),
+  lastTriggered: timestamp("last_triggered"),
+  triggerCount: integer("trigger_count").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertRunbookSchema = createInsertSchema(runbooks).omit({ id: true, createdAt: true });
+export type InsertRunbook = z.infer<typeof insertRunbookSchema>;
+export type Runbook = typeof runbooks.$inferSelect;
+
 export * from "./models/chat";
