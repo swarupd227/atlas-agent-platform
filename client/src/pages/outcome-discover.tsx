@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
@@ -47,6 +47,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { OutcomeContract } from "@shared/schema";
 import { useIndustry } from "@/components/industry-provider";
+import { useSpeechToText } from "@/hooks/use-speech-to-text";
 import type { IndustryId } from "@/components/industry-provider";
 import type { LucideIcon } from "lucide-react";
 
@@ -302,6 +303,14 @@ export default function OutcomeDiscover() {
   const { industry } = useIndustry();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
+
+  const handleVoiceTranscript = useCallback((text: string) => {
+    setInput(prev => prev + text);
+  }, []);
+
+  const voiceInput = useSpeechToText({
+    onTranscript: handleVoiceTranscript,
+  });
   const [streaming, setStreaming] = useState(false);
   const [proposal, setProposal] = useState<OutcomeProposal | null>(null);
   const [checkedItems, setCheckedItems] = useState<Set<number>>(new Set());
@@ -732,29 +741,50 @@ export default function OutcomeDiscover() {
                 ))}
               </div>
 
-              <div className="flex items-center gap-2 w-full max-w-lg">
-                <Textarea
-                  placeholder="Describe your business goal or challenge..."
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      sendMessage();
-                    }
-                  }}
-                  className="resize-none text-sm"
-                  rows={2}
-                  data-testid="input-discover-message"
-                />
-                <Button
-                  size="icon"
-                  onClick={() => sendMessage()}
-                  disabled={!input.trim()}
-                  data-testid="button-send-discover"
-                >
-                  <Send className="w-4 h-4" />
-                </Button>
+              <div className="flex flex-col gap-1 w-full max-w-lg">
+                {voiceInput.isListening && voiceInput.interimText && (
+                  <div className="flex items-center gap-1.5 px-2 py-1">
+                    <span className="relative flex h-2 w-2 shrink-0">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500" />
+                    </span>
+                    <span className="text-xs text-muted-foreground italic truncate">{voiceInput.interimText}</span>
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  <Textarea
+                    placeholder={voiceInput.isListening ? "Listening... speak now" : "Describe your business goal or challenge..."}
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        sendMessage();
+                      }
+                    }}
+                    className="resize-none text-sm"
+                    rows={2}
+                    data-testid="input-discover-message"
+                  />
+                  {voiceInput.isSupported && (
+                    <Button
+                      size="icon"
+                      variant={voiceInput.isListening ? "destructive" : "outline"}
+                      onClick={voiceInput.toggleListening}
+                      data-testid="button-voice-discover"
+                    >
+                      {voiceInput.isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                    </Button>
+                  )}
+                  <Button
+                    size="icon"
+                    onClick={() => sendMessage()}
+                    disabled={!input.trim()}
+                    data-testid="button-send-discover"
+                  >
+                    <Send className="w-4 h-4" />
+                  </Button>
+                </div>
               </div>
             </div>
           </TabsContent>
@@ -1027,23 +1057,45 @@ export default function OutcomeDiscover() {
               <div ref={chatEndRef} />
             </div>
 
-            <div className="border-t p-4 flex items-center gap-2 shrink-0">
-              <Input
-                placeholder="Tell me more about your goals..."
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendMessage()}
-                disabled={streaming}
-                data-testid="input-discover-chat"
-              />
-              <Button
-                size="icon"
-                onClick={() => sendMessage()}
-                disabled={streaming || !input.trim()}
-                data-testid="button-send-discover-chat"
-              >
-                <Send className="w-4 h-4" />
-              </Button>
+            <div className="border-t p-4 flex flex-col gap-1 shrink-0">
+              {voiceInput.isListening && voiceInput.interimText && (
+                <div className="flex items-center gap-1.5 px-2 py-1">
+                  <span className="relative flex h-2 w-2 shrink-0">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500" />
+                  </span>
+                  <span className="text-xs text-muted-foreground italic truncate">{voiceInput.interimText}</span>
+                </div>
+              )}
+              <div className="flex items-center gap-2">
+                <Input
+                  placeholder={voiceInput.isListening ? "Listening... speak now" : "Tell me more about your goals..."}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendMessage()}
+                  disabled={streaming}
+                  data-testid="input-discover-chat"
+                />
+                {voiceInput.isSupported && (
+                  <Button
+                    size="icon"
+                    variant={voiceInput.isListening ? "destructive" : "outline"}
+                    onClick={voiceInput.toggleListening}
+                    disabled={streaming}
+                    data-testid="button-voice-discover-chat"
+                  >
+                    {voiceInput.isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                  </Button>
+                )}
+                <Button
+                  size="icon"
+                  onClick={() => sendMessage()}
+                  disabled={streaming || !input.trim()}
+                  data-testid="button-send-discover-chat"
+                >
+                  <Send className="w-4 h-4" />
+                </Button>
+              </div>
             </div>
           </div>
 
