@@ -210,7 +210,7 @@ export const batch1Templates = [
     name: "Insurance Claims Processor",
     description: "End-to-end insurance claims triage, validation, and settlement estimation. Analyzes claim documents, verifies coverage, detects potential fraud indicators, and calculates settlement amounts based on policy terms and historical data.",
     category: "operations",
-    industry: "financial_services",
+    industry: "insurance",
     tags: ["insurance", "claims", "processing", "settlement", "triage"],
     icon: "scale",
     complexity: "high",

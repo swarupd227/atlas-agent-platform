@@ -20,6 +20,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 const industryOptions = [
   { label: "All", value: "all" },
   { label: "Financial Services", value: "financial_services" },
+  { label: "Insurance", value: "insurance" },
   { label: "Healthcare", value: "healthcare" },
   { label: "Manufacturing", value: "manufacturing" },
   { label: "Retail", value: "retail" },
@@ -27,6 +28,7 @@ const industryOptions = [
 
 const industryLabels: Record<string, string> = {
   financial_services: "Financial Services",
+  insurance: "Insurance",
   healthcare: "Healthcare",
   manufacturing: "Manufacturing",
   retail: "Retail",

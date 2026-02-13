@@ -5,11 +5,13 @@ import {
   Factory,
   ShoppingCart,
   Settings2,
+  Shield,
   type LucideIcon,
 } from "lucide-react";
 
 export type IndustryId =
   | "financial_services"
+  | "insurance"
   | "healthcare"
   | "manufacturing"
   | "retail"
@@ -54,14 +56,14 @@ export const INDUSTRIES: IndustryProfile[] = [
     id: "financial_services",
     label: "Financial Services",
     shortLabel: "FinServ",
-    description: "Banking, insurance, capital markets, and wealth management with pre-loaded FIBO ontology and regulatory frameworks",
+    description: "Banking, capital markets, and wealth management with pre-loaded FIBO ontology and regulatory frameworks",
     icon: Landmark,
     color: "hsl(220 70% 50%)",
     ontology: "FIBO (Financial Industry Business Ontology)",
-    agentSkills: 142,
+    agentSkills: 112,
     regulatoryFrameworks: ["EU AI Act", "MiFID II", "PSD2", "GDPR", "Basel III", "SOX"],
-    goldenTemplates: 28,
-    subVerticals: ["Retail Banking", "Capital Markets", "Insurance", "Wealth Management", "Payments"],
+    goldenTemplates: 22,
+    subVerticals: ["Retail Banking", "Capital Markets", "Wealth Management", "Payments", "Corporate Banking"],
     jurisdictions: ["US", "EU", "UK", "APAC", "Global"],
     integrationSystems: [
       { id: "fis", name: "FIS", category: "Core Banking", description: "Core banking and payment processing platform" },
@@ -70,10 +72,33 @@ export const INDUSTRIES: IndustryProfile[] = [
       { id: "refinitiv", name: "Refinitiv Eikon", category: "Market Data", description: "Financial analysis and market data platform" },
       { id: "murex", name: "Murex", category: "Trading", description: "Capital markets trading and risk management" },
       { id: "calypso", name: "Calypso", category: "Trading", description: "Cross-asset treasury and capital markets platform" },
-      { id: "guidewire", name: "Guidewire", category: "Insurance", description: "Insurance core system platform" },
-      { id: "duck_creek", name: "Duck Creek", category: "Insurance", description: "SaaS insurance platform" },
     ],
     departments: ["Treasury", "Risk Management", "Compliance", "Trading", "Client Services", "Finance & Accounting", "Marketing", "HR", "IT & Operations", "Legal"],
+  },
+  {
+    id: "insurance",
+    label: "Insurance",
+    shortLabel: "Insurance",
+    description: "P&C, life, health, and reinsurance with ACORD standards, Solvency II compliance, and claims automation",
+    icon: Shield,
+    color: "hsl(200 65% 45%)",
+    ontology: "ACORD (Association for Cooperative Operations Research and Development)",
+    agentSkills: 86,
+    regulatoryFrameworks: ["Solvency II", "IFRS 17", "NAIC Model Laws", "GDPR", "EU AI Act", "ORSA"],
+    goldenTemplates: 16,
+    subVerticals: ["Property & Casualty", "Life & Annuities", "Health Insurance", "Reinsurance", "InsurTech"],
+    jurisdictions: ["US", "EU", "UK", "APAC", "Global"],
+    integrationSystems: [
+      { id: "guidewire", name: "Guidewire", category: "Core Insurance", description: "Insurance core system platform for policy, billing, and claims" },
+      { id: "duck_creek", name: "Duck Creek", category: "Core Insurance", description: "SaaS insurance platform for policy and billing" },
+      { id: "majesco", name: "Majesco", category: "Core Insurance", description: "Cloud-based insurance platform for P&C and L&A" },
+      { id: "sapiens", name: "Sapiens", category: "Core Insurance", description: "Insurance software for digital transformation" },
+      { id: "verisk", name: "Verisk Analytics", category: "Data & Analytics", description: "Insurance data analytics, risk assessment, and actuarial modeling" },
+      { id: "lexisnexis_ins", name: "LexisNexis Risk Solutions", category: "Data & Analytics", description: "Risk data and analytics for underwriting and claims" },
+      { id: "shift_technology", name: "Shift Technology", category: "Fraud Detection", description: "AI-powered fraud detection for insurance claims" },
+      { id: "earnix", name: "Earnix", category: "Pricing & Rating", description: "Dynamic pricing and rating engine for insurance products" },
+    ],
+    departments: ["Underwriting", "Claims", "Actuarial", "Policy Administration", "Risk Management", "Compliance & Regulatory", "Finance & Accounting", "Distribution & Sales", "IT & Digital", "Legal"],
   },
   {
     id: "healthcare",
@@ -238,6 +263,20 @@ const INDUSTRY_TERMS: Record<IndustryId, Partial<TerminologyMap>> = {
     evaluation: "Compliance Check",
     evaluations: "Compliance Checks",
   },
+  insurance: {
+    outcomes: "Policy Performance Targets",
+    outcome: "Policy Performance Target",
+    kpis: "Loss Ratios",
+    kpi: "Loss Ratio",
+    incidents: "Claims Events",
+    incident: "Claims Event",
+    outcome_owner: "Book Manager",
+    sla: "Coverage Commitment",
+    drift: "Reserve Variance",
+    remediation: "Claims Adjustment",
+    evaluation: "Actuarial Review",
+    evaluations: "Actuarial Reviews",
+  },
   healthcare: {
     outcomes: "Patient Throughput Targets",
     outcome: "Patient Throughput Target",
@@ -312,6 +351,13 @@ const JURISDICTION_FRAMEWORKS: Record<string, Record<string, string[]>> = {
     APAC: ["MAS Guidelines"],
     Global: [],
   },
+  insurance: {
+    US: ["NAIC Model Laws", "State Insurance Regulations"],
+    EU: ["Solvency II", "IFRS 17", "GDPR", "EU AI Act"],
+    UK: ["PRA Solvency II", "FCA Insurance Conduct"],
+    APAC: ["IRDAI Guidelines", "MAS Insurance Regulations"],
+    Global: ["ORSA"],
+  },
   healthcare: {
     US: ["HIPAA", "HITECH", "FDA AI/ML Guidance"],
     EU: ["EU MDR", "GDPR", "EMA Guidelines"],
@@ -345,6 +391,18 @@ const DEPARTMENT_FRAMEWORKS: Record<string, Record<string, string[]>> = {
     "Finance & Accounting": ["SOX", "Basel III"],
     "Marketing": ["FTC Guidelines", "GDPR"],
     "Legal": ["GDPR", "EU AI Act"],
+  },
+  insurance: {
+    "Underwriting": ["Solvency II", "NAIC Model Laws", "ORSA"],
+    "Claims": ["NAIC Model Laws", "State Insurance Regulations", "IFRS 17"],
+    "Actuarial": ["Solvency II", "IFRS 17", "ORSA"],
+    "Policy Administration": ["NAIC Model Laws", "State Insurance Regulations"],
+    "Risk Management": ["Solvency II", "ORSA", "EU AI Act"],
+    "Compliance & Regulatory": ["Solvency II", "NAIC Model Laws", "GDPR", "EU AI Act"],
+    "Finance & Accounting": ["IFRS 17", "Solvency II"],
+    "Distribution & Sales": ["State Insurance Regulations", "FCA Insurance Conduct"],
+    "IT & Digital": ["GDPR", "EU AI Act"],
+    "Legal": ["GDPR", "NAIC Model Laws"],
   },
   healthcare: {
     "Clinical Operations": ["HIPAA", "FDA AI/ML Guidance", "21 CFR Part 11"],

@@ -201,6 +201,7 @@ const industryLabels: Record<string, string> = {
   cross_industry: "Cross-Industry",
   technology: "Technology",
   financial_services: "Financial Services",
+  insurance: "Insurance",
   healthcare: "Healthcare",
   manufacturing: "Manufacturing",
   retail: "Retail & E-Commerce",
@@ -216,7 +217,7 @@ const allCategories = [
 ];
 
 const allIndustries = [
-  "cross_industry", "technology", "financial_services", "healthcare",
+  "cross_industry", "technology", "financial_services", "insurance", "healthcare",
   "manufacturing", "retail", "education", "pharma", "media_entertainment",
 ];
 
