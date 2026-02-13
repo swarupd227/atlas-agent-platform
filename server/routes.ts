@@ -14009,6 +14009,255 @@ Return ONLY valid JSON.`
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  // Shadow Replay Studio routes
+  app.get("/api/shadow-traces", async (req, res) => {
+    try {
+      const traces = await storage.getShadowTraces();
+      res.json(traces);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/shadow-traces/:id", async (req, res) => {
+    try {
+      const trace = await storage.getShadowTrace(req.params.id);
+      if (!trace) return res.status(404).json({ error: "Not found" });
+      res.json(trace);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/shadow-traces", async (req, res) => {
+    try {
+      const trace = await storage.createShadowTrace(req.body);
+      res.json(trace);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.patch("/api/shadow-traces/:id", async (req, res) => {
+    try {
+      const updated = await storage.updateShadowTrace(req.params.id, req.body);
+      if (!updated) return res.status(404).json({ error: "Not found" });
+      res.json(updated);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.delete("/api/shadow-traces/:id", async (req, res) => {
+    try {
+      const ok = await storage.deleteShadowTrace(req.params.id);
+      if (!ok) return res.status(404).json({ error: "Not found" });
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/shadow-replay-sessions", async (req, res) => {
+    try {
+      const sessions = await storage.getShadowReplaySessions();
+      res.json(sessions);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/shadow-replay-sessions/:id", async (req, res) => {
+    try {
+      const session = await storage.getShadowReplaySession(req.params.id);
+      if (!session) return res.status(404).json({ error: "Not found" });
+      res.json(session);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/shadow-replay-sessions", async (req, res) => {
+    try {
+      const session = await storage.createShadowReplaySession(req.body);
+      res.json(session);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.patch("/api/shadow-replay-sessions/:id", async (req, res) => {
+    try {
+      const updated = await storage.updateShadowReplaySession(req.params.id, req.body);
+      if (!updated) return res.status(404).json({ error: "Not found" });
+      res.json(updated);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.delete("/api/shadow-replay-sessions/:id", async (req, res) => {
+    try {
+      const ok = await storage.deleteShadowReplaySession(req.params.id);
+      if (!ok) return res.status(404).json({ error: "Not found" });
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/ai/generate-shadow-traces", async (req, res) => {
+    try {
+      const { industry, count = 3 } = req.body;
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        messages: [
+          {
+            role: "system",
+            content: `You are an AI agent testing expert generating realistic production trace data for shadow replay testing. Generate traces that represent real agent interactions in production environments.
+
+Return JSON with this structure:
+{
+  "traces": [
+    {
+      "agentName": "string - realistic agent name",
+      "agentVersion": "string - semver like v2.1.3",
+      "scenarioCategory": "string - e.g. KYC Verification, Clinical Triage, Quality Inspection, Claims Processing",
+      "scenarioComplexity": "low|medium|high|extreme",
+      "edgeCaseFrequency": "common|uncommon|rare|novel",
+      "riskLevel": "low|medium|high|critical",
+      "traceInput": {"query": "string", "context": {}, "parameters": {}},
+      "traceOutput": {"response": "string", "actions": [], "confidence": number, "reasoning": "string"},
+      "traceMetadata": {"latency_ms": number, "tokens_used": number, "model": "string", "tools_called": []},
+      "regulatoryContext": [{"regulation": "string", "applicable": boolean, "requirement": "string"}],
+      "duration": number_seconds,
+      "tokenCount": number,
+      "tags": ["string array of relevant tags"]
+    }
+  ]
+}
+
+Generate diverse, realistic traces with varying complexity, risk levels, and edge-case patterns. Include realistic input/output data specific to the industry domain.`
+          },
+          {
+            role: "user",
+            content: `Generate ${Math.min(count, 5)} realistic production traces for the ${industry || "financial_services"} industry. Make them diverse in scenario complexity and risk level. Return ONLY valid JSON.`
+          }
+        ],
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) return res.status(500).json({ error: "No response from AI" });
+      const parsed = JSON.parse(content);
+      const createdTraces = [];
+      for (const t of (parsed.traces || [])) {
+        const trace = await storage.createShadowTrace({
+          industry: industry || "financial_services",
+          agentName: t.agentName,
+          agentVersion: t.agentVersion || "v1.0.0",
+          scenarioCategory: t.scenarioCategory,
+          scenarioComplexity: t.scenarioComplexity || "medium",
+          edgeCaseFrequency: t.edgeCaseFrequency || "rare",
+          riskLevel: t.riskLevel || "medium",
+          traceInput: t.traceInput || {},
+          traceOutput: t.traceOutput || {},
+          traceMetadata: t.traceMetadata || {},
+          regulatoryContext: t.regulatoryContext || [],
+          duration: t.duration || 1.5,
+          tokenCount: t.tokenCount || 500,
+          status: "captured",
+          tags: t.tags || [],
+        } as any);
+        createdTraces.push(trace);
+      }
+      res.json({ traces: createdTraces, count: createdTraces.length });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/ai/shadow-replay-analyze", async (req, res) => {
+    try {
+      const { sessionId, industry } = req.body;
+      const session = await storage.getShadowReplaySession(sessionId);
+      if (!session) return res.status(404).json({ error: "Session not found" });
+
+      const traceIds = (session.traceIds || []) as string[];
+      const traces = [];
+      for (const tid of traceIds) {
+        const t = await storage.getShadowTrace(tid);
+        if (t) traces.push(t);
+      }
+
+      if (traces.length === 0) return res.status(400).json({ error: "No traces found for this session" });
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        messages: [
+          {
+            role: "system",
+            content: `You are an AI agent evaluation expert performing shadow replay analysis. Compare baseline agent outputs with candidate agent outputs using industry-specific rubrics.
+
+For ${industry || "financial_services"} industry, evaluate using these rubrics:
+${industry === "healthcare" ? "- Clinical Accuracy (0-100): Correctness of clinical recommendations\n- Guideline Adherence (0-100): Following established clinical guidelines\n- Patient Safety (0-100): Risk to patient wellbeing\n- Documentation Quality (0-100): Completeness of clinical documentation" :
+industry === "manufacturing" ? "- Safety Compliance (0-100): Adherence to safety standards\n- Quality Accuracy (0-100): Correctness of quality assessments\n- Process Adherence (0-100): Following standard operating procedures\n- Risk Assessment (0-100): Accuracy of risk identification" :
+"- Regulatory Compliance (0-100): Adherence to financial regulations\n- Suitability Assessment (0-100): Appropriateness of recommendations\n- Risk Assessment Accuracy (0-100): Correctness of risk calculations\n- Audit Trail Quality (0-100): Completeness of decision documentation"}
+
+Return JSON with this structure:
+{
+  "replayResults": [
+    {
+      "traceId": "string",
+      "scenarioCategory": "string",
+      "baselineOutput": "string summary",
+      "candidateOutput": "string summary",
+      "verdict": "equivalent|improved|regressed|different_but_acceptable",
+      "rubricScores": {"dimension": score_0_100},
+      "explanation": "string - why this verdict",
+      "complianceStatus": "pass|fail|warning",
+      "complianceDetails": [{"regulation": "string", "status": "pass|fail", "evidence": "string"}]
+    }
+  ],
+  "semanticDiff": {
+    "overallSimilarity": number_0_100,
+    "behaviorChanges": ["string descriptions of behavioral changes"],
+    "regressions": ["string descriptions of any regressions"],
+    "improvements": ["string descriptions of improvements"]
+  },
+  "complianceResults": [
+    {"regulation": "string", "tracesChecked": number, "passed": number, "failed": number, "evidence": ["string"]}
+  ],
+  "aggregateScores": {
+    "overallScore": number_0_100,
+    "rubricAverages": {"dimension": average_score},
+    "recommendation": "approve|review|reject",
+    "summary": "string - 2-3 sentence summary of replay results"
+  }
+}`
+          },
+          {
+            role: "user",
+            content: `Analyze shadow replay for session "${session.name}".
+Candidate version: ${session.candidateAgentVersion}
+Baseline version: ${session.baselineAgentVersion}
+Comparison criteria: ${JSON.stringify(session.comparisonCriteria)}
+
+Traces to replay (${traces.length} total):
+${traces.map((t, i) => `Trace ${i + 1} (${t.id}): ${t.scenarioCategory} [${t.scenarioComplexity} complexity, ${t.riskLevel} risk]
+Input: ${JSON.stringify(t.traceInput)}
+Output: ${JSON.stringify(t.traceOutput)}`).join("\n\n")}
+
+Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid JSON.`
+          }
+        ],
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) return res.status(500).json({ error: "No response from AI" });
+      const analysis = JSON.parse(content);
+
+      const replayResults = analysis.replayResults || [];
+      const passedTraces = replayResults.filter((r: any) => r.verdict === "equivalent" || r.verdict === "improved" || r.verdict === "different_but_acceptable").length;
+      const failedTraces = replayResults.filter((r: any) => r.verdict === "regressed").length;
+      const regressionCount = (analysis.semanticDiff?.regressions || []).length;
+
+      const updated = await storage.updateShadowReplaySession(sessionId, {
+        status: "completed",
+        replayResults: replayResults,
+        semanticDiff: analysis.semanticDiff || {},
+        complianceResults: analysis.complianceResults || [],
+        aggregateScores: analysis.aggregateScores || {},
+        totalTraces: traces.length,
+        passedTraces,
+        failedTraces,
+        regressionCount,
+        completedAt: new Date(),
+      } as any);
+
+      res.json({ session: updated, analysis });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   // Start the job worker
   startWorker();
 

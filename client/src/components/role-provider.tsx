@@ -37,7 +37,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "AD",
     description: "Full platform access, user management, system configuration",
     icon: ShieldCheck,
-    allowedRoutes: ["/dashboard", "/outcomes", "/agents", "/templates", "/blueprints", "/evals", "/golden-datasets", "/deployments", "/monitor", "/governance", "/autonomy-engine", "/oversight-console", "/audit-trail", "/approvals", "/billing", "/optimization", "/improvements", "/improvement-loop", "/integrations", "/admin", "/ontology", "/skills", "/context-studio", "/memory-architecture", "/rag-pipeline", "/knowledge-graph"],
+    allowedRoutes: ["/dashboard", "/outcomes", "/agents", "/templates", "/blueprints", "/evals", "/golden-datasets", "/deployments", "/shadow-replay", "/monitor", "/governance", "/autonomy-engine", "/oversight-console", "/audit-trail", "/approvals", "/billing", "/optimization", "/improvements", "/improvement-loop", "/integrations", "/admin", "/ontology", "/skills", "/context-studio", "/memory-architecture", "/rag-pipeline", "/knowledge-graph"],
   },
   {
     id: "outcome_owner",
@@ -55,7 +55,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "AE",
     description: "Designs blueprints, tools, memory, eval suites",
     icon: Bot,
-    allowedRoutes: ["/dashboard", "/agents", "/templates", "/blueprints", "/evals", "/golden-datasets", "/optimization", "/improvements", "/improvement-loop", "/outcomes", "/integrations", "/deployments", "/ontology", "/skills", "/context-studio", "/memory-architecture", "/rag-pipeline", "/knowledge-graph", "/autonomy-engine", "/oversight-console"],
+    allowedRoutes: ["/dashboard", "/agents", "/templates", "/blueprints", "/evals", "/golden-datasets", "/optimization", "/improvements", "/improvement-loop", "/outcomes", "/integrations", "/deployments", "/shadow-replay", "/ontology", "/skills", "/context-studio", "/memory-architecture", "/rag-pipeline", "/knowledge-graph", "/autonomy-engine", "/oversight-console"],
   },
   {
     id: "ops_sre",
@@ -64,7 +64,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "SR",
     description: "Monitoring, incidents, reliability, rollback, cost controls",
     icon: Activity,
-    allowedRoutes: ["/dashboard", "/deployments", "/monitor", "/agents", "/optimization", "/improvements", "/improvement-loop", "/integrations", "/governance", "/autonomy-engine", "/oversight-console", "/golden-datasets", "/ontology", "/skills", "/context-studio", "/memory-architecture", "/rag-pipeline", "/knowledge-graph"],
+    allowedRoutes: ["/dashboard", "/deployments", "/shadow-replay", "/monitor", "/agents", "/optimization", "/improvements", "/improvement-loop", "/integrations", "/governance", "/autonomy-engine", "/oversight-console", "/golden-datasets", "/ontology", "/skills", "/context-studio", "/memory-architecture", "/rag-pipeline", "/knowledge-graph"],
   },
   {
     id: "compliance_security",
@@ -73,7 +73,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "CS",
     description: "Policy authoring, audit exports, access controls",
     icon: Shield,
-    allowedRoutes: ["/dashboard", "/governance", "/autonomy-engine", "/oversight-console", "/audit-trail", "/approvals", "/admin", "/agents", "/deployments", "/monitor", "/golden-datasets", "/ontology", "/skills", "/context-studio", "/memory-architecture", "/rag-pipeline", "/knowledge-graph"],
+    allowedRoutes: ["/dashboard", "/governance", "/autonomy-engine", "/oversight-console", "/audit-trail", "/approvals", "/admin", "/agents", "/deployments", "/shadow-replay", "/monitor", "/golden-datasets", "/ontology", "/skills", "/context-studio", "/memory-architecture", "/rag-pipeline", "/knowledge-graph"],
   },
   {
     id: "expert_validator",
@@ -82,7 +82,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "EV",
     description: "Approves high-risk changes, exceptions, major releases",
     icon: UserCheck,
-    allowedRoutes: ["/dashboard", "/approvals", "/agents", "/deployments", "/evals", "/golden-datasets", "/governance", "/autonomy-engine", "/oversight-console", "/audit-trail", "/ontology", "/skills", "/context-studio", "/memory-architecture", "/rag-pipeline", "/knowledge-graph"],
+    allowedRoutes: ["/dashboard", "/approvals", "/agents", "/deployments", "/shadow-replay", "/evals", "/golden-datasets", "/governance", "/autonomy-engine", "/oversight-console", "/audit-trail", "/ontology", "/skills", "/context-studio", "/memory-architecture", "/rag-pipeline", "/knowledge-graph"],
   },
   {
     id: "finance",

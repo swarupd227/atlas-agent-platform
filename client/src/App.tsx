@@ -139,6 +139,7 @@ function DashboardRouter() {
       <Route path="/knowledge-graph" component={KnowledgeGraph} />
       <Route path="/autonomy-engine" component={AutonomyEngine} />
       <Route path="/oversight-console" component={OversightConsole} />
+      <Route path="/shadow-replay" component={ShadowReplay} />
       <Route path="/admin" component={Admin} />
       <Route component={NotFound} />
     </Switch>

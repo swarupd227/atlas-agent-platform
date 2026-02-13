@@ -28,6 +28,7 @@ import {
   Network,
   Gauge,
   Scale,
+  GitCompare,
 } from "lucide-react";
 import {
   Sidebar,
@@ -102,6 +103,7 @@ export function AppSidebar() {
       icon: Eye,
       items: [
         { title: "Deployments", url: "/deployments", icon: Rocket },
+        { title: "Shadow Replay", url: "/shadow-replay", icon: GitCompare },
         { title: "Monitor", url: "/monitor", icon: Activity },
         { title: "Optimization", url: "/optimization", icon: Zap },
       ],

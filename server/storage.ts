@@ -134,6 +134,8 @@ import {
   temporalGraphEntries, type TemporalGraphEntry, type InsertTemporalGraphEntry,
   autonomyProfiles, type AutonomyProfile, type InsertAutonomyProfile,
   oversightDecisions, type OversightDecision, type InsertOversightDecision,
+  shadowTraces, type ShadowTrace, type InsertShadowTrace,
+  shadowReplaySessions, type ShadowReplaySession, type InsertShadowReplaySession,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -555,6 +557,18 @@ export interface IStorage {
   createOversightDecision(decision: InsertOversightDecision): Promise<OversightDecision>;
   updateOversightDecision(id: string, data: Partial<InsertOversightDecision>): Promise<OversightDecision | undefined>;
   deleteOversightDecision(id: string): Promise<boolean>;
+
+  getShadowTraces(): Promise<ShadowTrace[]>;
+  getShadowTrace(id: string): Promise<ShadowTrace | undefined>;
+  createShadowTrace(trace: InsertShadowTrace): Promise<ShadowTrace>;
+  updateShadowTrace(id: string, data: Partial<InsertShadowTrace>): Promise<ShadowTrace | undefined>;
+  deleteShadowTrace(id: string): Promise<boolean>;
+
+  getShadowReplaySessions(): Promise<ShadowReplaySession[]>;
+  getShadowReplaySession(id: string): Promise<ShadowReplaySession | undefined>;
+  createShadowReplaySession(session: InsertShadowReplaySession): Promise<ShadowReplaySession>;
+  updateShadowReplaySession(id: string, data: Partial<InsertShadowReplaySession>): Promise<ShadowReplaySession | undefined>;
+  deleteShadowReplaySession(id: string): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2135,6 +2149,54 @@ export class DatabaseStorage implements IStorage {
 
   async deleteOversightDecision(id: string): Promise<boolean> {
     const result = await db.delete(oversightDecisions).where(eq(oversightDecisions.id, id));
+    return (result as any).rowCount > 0;
+  }
+
+  async getShadowTraces(): Promise<ShadowTrace[]> {
+    return db.select().from(shadowTraces).orderBy(desc(shadowTraces.capturedAt));
+  }
+
+  async getShadowTrace(id: string): Promise<ShadowTrace | undefined> {
+    const [trace] = await db.select().from(shadowTraces).where(eq(shadowTraces.id, id));
+    return trace;
+  }
+
+  async createShadowTrace(trace: InsertShadowTrace): Promise<ShadowTrace> {
+    const [created] = await db.insert(shadowTraces).values(trace).returning();
+    return created;
+  }
+
+  async updateShadowTrace(id: string, data: Partial<InsertShadowTrace>): Promise<ShadowTrace | undefined> {
+    const [updated] = await db.update(shadowTraces).set(data).where(eq(shadowTraces.id, id)).returning();
+    return updated;
+  }
+
+  async deleteShadowTrace(id: string): Promise<boolean> {
+    const result = await db.delete(shadowTraces).where(eq(shadowTraces.id, id));
+    return (result as any).rowCount > 0;
+  }
+
+  async getShadowReplaySessions(): Promise<ShadowReplaySession[]> {
+    return db.select().from(shadowReplaySessions).orderBy(desc(shadowReplaySessions.createdAt));
+  }
+
+  async getShadowReplaySession(id: string): Promise<ShadowReplaySession | undefined> {
+    const [session] = await db.select().from(shadowReplaySessions).where(eq(shadowReplaySessions.id, id));
+    return session;
+  }
+
+  async createShadowReplaySession(session: InsertShadowReplaySession): Promise<ShadowReplaySession> {
+    const [created] = await db.insert(shadowReplaySessions).values(session).returning();
+    return created;
+  }
+
+  async updateShadowReplaySession(id: string, data: Partial<InsertShadowReplaySession>): Promise<ShadowReplaySession | undefined> {
+    const [updated] = await db.update(shadowReplaySessions).set(data).where(eq(shadowReplaySessions.id, id)).returning();
+    return updated;
+  }
+
+  async deleteShadowReplaySession(id: string): Promise<boolean> {
+    const result = await db.delete(shadowReplaySessions).where(eq(shadowReplaySessions.id, id));
     return (result as any).rowCount > 0;
   }
 }

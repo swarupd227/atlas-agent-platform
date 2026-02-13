@@ -1625,4 +1625,54 @@ export const insertOversightDecisionSchema = createInsertSchema(oversightDecisio
 export type InsertOversightDecision = z.infer<typeof insertOversightDecisionSchema>;
 export type OversightDecision = typeof oversightDecisions.$inferSelect;
 
+export const shadowTraces = pgTable("shadow_traces", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  industry: text("industry").notNull(),
+  agentId: varchar("agent_id"),
+  agentName: text("agent_name").notNull(),
+  agentVersion: text("agent_version").notNull(),
+  scenarioCategory: text("scenario_category").notNull(),
+  scenarioComplexity: text("scenario_complexity").notNull().default("medium"),
+  edgeCaseFrequency: text("edge_case_frequency").notNull().default("rare"),
+  riskLevel: text("risk_level").notNull().default("medium"),
+  traceInput: jsonb("trace_input").notNull().default(sql`'{}'::jsonb`),
+  traceOutput: jsonb("trace_output").notNull().default(sql`'{}'::jsonb`),
+  traceMetadata: jsonb("trace_metadata").notNull().default(sql`'{}'::jsonb`),
+  regulatoryContext: jsonb("regulatory_context").notNull().default(sql`'[]'::jsonb`),
+  duration: real("duration"),
+  tokenCount: integer("token_count"),
+  status: text("status").notNull().default("captured"),
+  tags: text("tags").array().default(sql`ARRAY[]::text[]`),
+  capturedAt: timestamp("captured_at").defaultNow(),
+});
+
+export const insertShadowTraceSchema = createInsertSchema(shadowTraces).omit({ id: true, capturedAt: true });
+export type InsertShadowTrace = z.infer<typeof insertShadowTraceSchema>;
+export type ShadowTrace = typeof shadowTraces.$inferSelect;
+
+export const shadowReplaySessions = pgTable("shadow_replay_sessions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  industry: text("industry").notNull(),
+  candidateAgentVersion: text("candidate_agent_version").notNull(),
+  baselineAgentVersion: text("baseline_agent_version").notNull(),
+  traceIds: text("trace_ids").array().default(sql`ARRAY[]::text[]`),
+  status: text("status").notNull().default("configured"),
+  comparisonCriteria: jsonb("comparison_criteria").notNull().default(sql`'{}'::jsonb`),
+  replayResults: jsonb("replay_results").notNull().default(sql`'[]'::jsonb`),
+  semanticDiff: jsonb("semantic_diff").notNull().default(sql`'{}'::jsonb`),
+  complianceResults: jsonb("compliance_results").notNull().default(sql`'[]'::jsonb`),
+  aggregateScores: jsonb("aggregate_scores").notNull().default(sql`'{}'::jsonb`),
+  totalTraces: integer("total_traces").notNull().default(0),
+  passedTraces: integer("passed_traces").notNull().default(0),
+  failedTraces: integer("failed_traces").notNull().default(0),
+  regressionCount: integer("regression_count").notNull().default(0),
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertShadowReplaySessionSchema = createInsertSchema(shadowReplaySessions).omit({ id: true, createdAt: true });
+export type InsertShadowReplaySession = z.infer<typeof insertShadowReplaySessionSchema>;
+export type ShadowReplaySession = typeof shadowReplaySessions.$inferSelect;
+
 export * from "./models/chat";
