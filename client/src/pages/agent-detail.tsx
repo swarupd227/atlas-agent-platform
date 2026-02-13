@@ -382,7 +382,14 @@ export default function AgentDetail() {
   const failedTraces = recentTraces.filter((t) => t.status === "failed").length;
   const agentDeployments = allDeployments?.filter(d => d.agentId === agentId) || [];
   const agentApprovals = allApprovals?.filter(a => a.objectId === agentId) || [];
-  const policyBindings = (agent.policyBindings || []) as Array<{ policyId: string; name: string; enforcement: string; description?: string }>;
+  const rawBindings = (Array.isArray(agent.policyBindings) ? agent.policyBindings : []) as Array<any>;
+  const policyBindings = rawBindings.map((b: any) => {
+    if (typeof b === "string") {
+      const matched = allPolicies?.find(p => p.id === b);
+      return { policyId: b, name: matched?.name || b, enforcement: "soft_warn", description: matched?.description || "" };
+    }
+    return { policyId: b.policyId || "", name: b.name || "", enforcement: b.enforcement || "soft_warn", description: b.description };
+  });
 
   const handleExportJSON = () => {
     if (!timeline) return;
@@ -1315,56 +1322,82 @@ export default function AgentDetail() {
             </div>
           </div>
 
-          {blueprintView === "graph" ? (
-            <div className="flex gap-4" data-testid="blueprint-split-view">
-              <div className="flex-[2] min-w-0">
-                <BlueprintWorkflowGraph blueprint={agent.blueprintJson as any} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <Card data-testid="card-node-inspector">
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-sm font-medium">Node Inspector</CardTitle>
-                  </CardHeader>
-                  <CardContent className="flex flex-col gap-4">
-                    <p className="text-xs text-muted-foreground text-center py-4" data-testid="text-node-inspector-placeholder">Click a node to inspect</p>
-                    <Separator />
-                    <div className="flex flex-col gap-3">
-                      <div className="flex flex-col gap-1">
-                        <span className="text-[11px] font-medium text-muted-foreground">Prompt Template</span>
-                        <span className="text-xs text-muted-foreground/60">Select a node to view prompt</span>
-                      </div>
-                      <div className="flex flex-col gap-1">
-                        <span className="text-[11px] font-medium text-muted-foreground">Tool Selection</span>
-                        <span className="text-xs text-muted-foreground/60">Select a node to view tools</span>
-                      </div>
-                      <div className="flex flex-col gap-1">
-                        <span className="text-[11px] font-medium text-muted-foreground">Budgets</span>
-                        <span className="text-xs text-muted-foreground/60">Select a node to view budgets</span>
-                      </div>
-                      <div className="flex flex-col gap-1">
-                        <span className="text-[11px] font-medium text-muted-foreground">Redaction Settings</span>
-                        <span className="text-xs text-muted-foreground/60">Select a node to view redaction</span>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-            </div>
-          ) : (
-            <Card data-testid="card-blueprint-json">
+          {(() => {
+            const bp = agent.blueprintJson as any;
+            return !bp || (Array.isArray(bp) && bp.length === 0) || (typeof bp === "object" && !Array.isArray(bp) && !(bp?.nodes?.length));
+          })() ? (
+            <Card data-testid="card-blueprint-empty">
               <CardContent className="pt-6">
-                <pre className="text-xs font-mono bg-muted/30 p-4 rounded-md overflow-auto max-h-[600px]" data-testid="blueprint-json-view">
-                  <code>{JSON.stringify(agent.blueprintJson, null, 2)}</code>
-                </pre>
+                <div className="flex flex-col items-center gap-3 py-8 text-center">
+                  <div className="flex items-center justify-center w-12 h-12 rounded-md bg-primary/10">
+                    <PenTool className="w-6 h-6 text-primary" />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <h3 className="text-sm font-medium">No blueprint configured yet</h3>
+                    <p className="text-xs text-muted-foreground max-w-sm">This agent doesn't have a workflow blueprint defined. Open the Blueprint Studio to design the agent's workflow graph, configure tools, and set up policies.</p>
+                  </div>
+                  <Link href={`/blueprints?agentId=${agent.id}`}>
+                    <Button size="sm" data-testid="button-open-studio-empty">
+                      <PenTool className="w-3.5 h-3.5 mr-1.5" /> Open Blueprint Studio
+                    </Button>
+                  </Link>
+                </div>
               </CardContent>
             </Card>
-          )}
+          ) : (
+            <>
+              {blueprintView === "graph" ? (
+                <div className="flex gap-4" data-testid="blueprint-split-view">
+                  <div className="flex-[2] min-w-0">
+                    <BlueprintWorkflowGraph blueprint={agent.blueprintJson as any} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <Card data-testid="card-node-inspector">
+                      <CardHeader className="pb-3">
+                        <CardTitle className="text-sm font-medium">Node Inspector</CardTitle>
+                      </CardHeader>
+                      <CardContent className="flex flex-col gap-4">
+                        <p className="text-xs text-muted-foreground text-center py-4" data-testid="text-node-inspector-placeholder">Click a node to inspect</p>
+                        <Separator />
+                        <div className="flex flex-col gap-3">
+                          <div className="flex flex-col gap-1">
+                            <span className="text-[11px] font-medium text-muted-foreground">Prompt Template</span>
+                            <span className="text-xs text-muted-foreground/60">Select a node to view prompt</span>
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <span className="text-[11px] font-medium text-muted-foreground">Tool Selection</span>
+                            <span className="text-xs text-muted-foreground/60">Select a node to view tools</span>
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <span className="text-[11px] font-medium text-muted-foreground">Budgets</span>
+                            <span className="text-xs text-muted-foreground/60">Select a node to view budgets</span>
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <span className="text-[11px] font-medium text-muted-foreground">Redaction Settings</span>
+                            <span className="text-xs text-muted-foreground/60">Select a node to view redaction</span>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                </div>
+              ) : (
+                <Card data-testid="card-blueprint-json">
+                  <CardContent className="pt-6">
+                    <pre className="text-xs font-mono bg-muted/30 p-4 rounded-md overflow-auto max-h-[600px]" data-testid="blueprint-json-view">
+                      <code>{JSON.stringify(agent.blueprintJson, null, 2)}</code>
+                    </pre>
+                  </CardContent>
+                </Card>
+              )}
 
-          <ImplementationGraph
-            agent={agent}
-            toolConnectors={allToolConnectors || []}
-            onGenerateExport={() => { setExportStep("select"); setExportPreview(null); setExportFramework("generic"); setExportDialogOpen(true); }}
-          />
+              <ImplementationGraph
+                agent={agent}
+                toolConnectors={allToolConnectors || []}
+                onGenerateExport={() => { setExportStep("select"); setExportPreview(null); setExportFramework("generic"); setExportDialogOpen(true); }}
+              />
+            </>
+          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4" data-testid="blueprint-config-grid">
             <BlueprintModelConfig agent={agent} />
@@ -2354,7 +2387,7 @@ export default function AgentDetail() {
                           ) : (
                             <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
                           )}
-                          <span className="text-xs font-medium">{binding.name}</span>
+                          <span className="text-xs font-medium">{binding.name || matchedPolicy?.name || binding.policyId}</span>
                           {matchedPolicy && (
                             <>
                               <Badge variant="outline" className="text-[10px]">{matchedPolicy.domain}</Badge>
