@@ -14411,6 +14411,73 @@ Respond in JSON:
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  app.post("/api/healing-pipelines/auto-detect", async (req, res) => {
+    try {
+      const { agentName, agentId, industry, issueType, severity, metric, baseline, current, driftPercent, suiteName, description } = req.body;
+
+      const pipeline = await storage.createHealingPipeline({
+        title: `Auto-detected: ${agentName} ${metric || issueType} issue`,
+        agentName: agentName || "Unknown Agent",
+        industry: industry || "financial_services",
+        severity: severity || "high",
+        issueType: issueType || "drift",
+        issueDescription: description || `${metric} drifted by ${Math.abs(driftPercent || 0).toFixed(1)}% (baseline: ${baseline}, current: ${current}). Suite: ${suiteName || "N/A"}.`,
+        stage: "detected",
+        triggeredBy: "monitoring_system",
+      });
+
+      const industryKey = industry || "financial_services";
+      const diagnosisTemplates: Record<string, any> = {
+        financial_services: {
+          diagnosisChecks: ["Regulatory changes (SEC/FINRA)", "Market condition shifts", "Counterparty data changes", "Model drift from market regime change"],
+          guardrails: ["Must pass regulatory compliance check", "Cannot modify trading logic without compliance review", "Client-facing changes require suitability validation"],
+        },
+        healthcare: {
+          diagnosisChecks: ["Clinical guideline updates", "Formulary changes", "EHR data quality issues", "Patient safety protocol changes"],
+          guardrails: ["Must pass clinical safety validation", "HIPAA compliance required", "Cannot modify clinical decision logic without clinical review"],
+        },
+        manufacturing: {
+          diagnosisChecks: ["Equipment calibration drift", "Sensor accuracy degradation", "Process parameter changes", "Supply chain variation"],
+          guardrails: ["Must pass safety review", "ISO compliance required", "Cannot modify safety-critical logic without engineering review"],
+        },
+        insurance: {
+          diagnosisChecks: ["Regulatory rate filing changes", "Actuarial table updates", "Claims pattern shifts", "Underwriting guideline updates"],
+          guardrails: ["Must pass actuarial review", "State regulatory compliance required", "Cannot modify rate calculations without compliance sign-off"],
+        },
+        retail: {
+          diagnosisChecks: ["Consumer behavior shifts", "Pricing data changes", "Inventory system updates", "Seasonal pattern changes"],
+          guardrails: ["Must pass pricing review", "Consumer protection compliance required", "Cannot modify recommendation logic without A/B validation"],
+        },
+      };
+
+      const template = diagnosisTemplates[industryKey] || diagnosisTemplates.financial_services;
+
+      const updated = await storage.updateHealingPipeline(pipeline.id, {
+        stage: "diagnosed",
+        diagnosisDetails: {
+          rootCause: `Auto-detected ${metric || issueType} issue for ${agentName}. ${metric ? `${metric} drifted by ${Math.abs(driftPercent || 0).toFixed(1)}%` : description || "Performance degradation detected"}.`,
+          diagnosisChecks: template.diagnosisChecks,
+          confidence: severity === "critical" ? 0.92 : severity === "high" ? 0.78 : 0.65,
+          detectedMetric: metric,
+          baseline,
+          current,
+          driftPercent,
+          suiteName,
+          triggeredBy: "auto_detection",
+        },
+        industryGuardrails: template.guardrails.map((g: string) => ({ rule: g, status: "pending" })),
+        businessImpact: {
+          estimatedImpact: severity === "critical" ? 250000 : severity === "high" ? 125000 : 50000,
+          riskLevel: severity === "critical" ? "critical" : severity === "high" ? "high" : "medium",
+          affectedCustomers: severity === "critical" ? 1500 : severity === "high" ? 500 : 100,
+          estimatedDowntime: severity === "critical" ? "4-8 hours" : severity === "high" ? "1-4 hours" : "< 1 hour",
+        },
+      });
+
+      res.json(updated);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   app.post("/api/healing-pipelines", async (req, res) => {
     try {
       const pipeline = await storage.createHealingPipeline(req.body);

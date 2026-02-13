@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import {
   Activity,
   TrendingUp,
@@ -24,6 +24,7 @@ import {
   Eye,
   Ban,
   X,
+  Stethoscope,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -133,6 +134,7 @@ function generateTimeSeriesData(days: number, baseValue: number, variance: numbe
 }
 
 export default function Monitor() {
+  const [, navigate] = useLocation();
   const [policyCheckResult, setPolicyCheckResult] = useState<{
     signal: DriftSignal;
     allowed: boolean;
@@ -166,6 +168,9 @@ export default function Monitor() {
   });
   const { data: policyViolations } = useQuery<PolicyViolation[]>({
     queryKey: ["/api/monitor/policy-violations"],
+  });
+  const { data: healingPipelines } = useQuery<any[]>({
+    queryKey: ["/api/healing-pipelines"],
   });
 
   const { toast } = useToast();
@@ -286,6 +291,33 @@ export default function Monitor() {
     },
     onError: (err: Error) => {
       toast({ title: "Failed to escalate", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const triggerHealingMutation = useMutation({
+    mutationFn: async (signal: DriftSignal) => {
+      const res = await apiRequest("POST", "/api/healing-pipelines/auto-detect", {
+        agentName: signal.agentName,
+        agentId: signal.agentId,
+        industry: "financial_services",
+        issueType: "drift",
+        severity: signal.severity,
+        metric: signal.metric,
+        baseline: signal.baseline,
+        current: signal.current,
+        driftPercent: signal.driftPercent,
+        suiteName: signal.suiteName,
+        description: `${signal.metric === "pass_rate" ? "Pass rate" : signal.metric === "hallucination" ? "Faithfulness" : "Avg latency"} drifted by ${Math.abs(signal.driftPercent).toFixed(1)}% (${signal.severity} severity). Baseline: ${signal.baseline}, Current: ${signal.current}.`,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Healing pipeline created", description: "Auto-detection triggered \u2014 navigating to Healing Operations Center." });
+      queryClient.invalidateQueries({ queryKey: ["/api/healing-pipelines"] });
+      navigate("/healing-operations");
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to trigger healing", description: err.message, variant: "destructive" });
     },
   });
 
@@ -542,6 +574,14 @@ export default function Monitor() {
         description: criticalDrift.length > 0
           ? `Rollback recommended for ${criticalDrift.length} agents with critical degradation \u2014 evidence bundle prepared`
           : "Prepares rollback evidence bundles when critical regressions are confirmed",
+        triggered: criticalDrift.length > 0,
+      },
+      {
+        icon: Stethoscope,
+        title: "Auto-Trigger Self-Healing",
+        description: criticalDrift.length > 0
+          ? `${criticalDrift.length} critical issues detected \u2014 healing pipelines auto-created with industry-aware diagnosis`
+          : "Automatically creates healing pipelines when critical agent issues are detected, with AI-powered diagnosis and industry guardrails",
         triggered: criticalDrift.length > 0,
       },
     ];
@@ -1220,6 +1260,16 @@ export default function Monitor() {
                                   <Wrench className="w-3 h-3 mr-1" />
                                   Remediate
                                 </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => triggerHealingMutation.mutate(signal)}
+                                  disabled={triggerHealingMutation.isPending}
+                                  data-testid={`button-trigger-healing-${signal.id}`}
+                                >
+                                  <Stethoscope className="w-3 h-3 mr-1" />
+                                  Self-Heal
+                                </Button>
                                 {alreadyEscalated ? (
                                   <Badge variant="outline" className="text-[9px] text-amber-600 dark:text-amber-400 border-amber-500/20" data-testid={`badge-escalated-${signal.id}`}>
                                     Escalated
@@ -1290,6 +1340,12 @@ export default function Monitor() {
                       <span className="text-sm font-medium">{agent.name}</span>
                     </div>
                     <StatusBadge status={agent.status} />
+                    {healingPipelines?.some(hp => hp.agentName === agent.name && hp.stage !== "resolved") && (
+                      <Badge variant="outline" className="text-[9px] text-amber-600 dark:text-amber-400 border-amber-500/20 gap-1" data-testid={`badge-healing-active-${agent.id}`}>
+                        <Stethoscope className="w-2.5 h-2.5" />
+                        Healing
+                      </Badge>
+                    )}
                   </div>
                   <div className="grid grid-cols-4 gap-3">
                     <div className="flex flex-col gap-1">
