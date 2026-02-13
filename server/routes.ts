@@ -14345,7 +14345,6 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       const selectedIndustry = industry || deployment?.industry || "financial_services";
       const context = industryContext[selectedIndustry] || industryContext.financial_services;
 
-      const openai = new OpenAI();
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [
@@ -14874,8 +14873,6 @@ Respond with JSON:
   app.post("/api/ai/generate-runbook", async (req, res) => {
     try {
       const { industry, incidentType, description } = req.body;
-      const OpenAI = (await import("openai")).default;
-      const openai = new OpenAI();
 
       const industryContext: Record<string, string> = {
         financial_services: "Financial Services (SEC/FINRA regulated, AML/KYC compliance, trading operations)",
@@ -14919,8 +14916,6 @@ Include 4-7 steps with at least one approval gate for high-risk actions. Make it
   app.post("/api/ai/enhance-runbook", async (req, res) => {
     try {
       const { runbook, enhanceMode } = req.body;
-      const OpenAI = (await import("openai")).default;
-      const openai = new OpenAI();
 
       const industryContext: Record<string, string> = {
         financial_services: "Financial Services (SEC/FINRA regulated, AML/KYC compliance, trading operations)",
