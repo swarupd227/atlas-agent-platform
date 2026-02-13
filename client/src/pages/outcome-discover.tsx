@@ -656,7 +656,7 @@ export default function OutcomeDiscover() {
 
   const totalProcessTime = processSteps.reduce((sum, s) => sum + s.timeMins, 0);
 
-  const allChecked = proposal ? checkedItems.size === proposal.validationChecklist.length : false;
+  const allChecked = proposal ? checkedItems.size === (proposal.validationChecklist?.length || 0) : false;
 
   return (
     <div className="flex flex-col h-full" data-testid="page-outcome-discover">
@@ -1264,35 +1264,37 @@ export default function OutcomeDiscover() {
                   </Card>
                 )}
 
-                <Card>
-                  <CardHeader className="p-3 pb-1">
-                    <CardTitle className="text-xs font-medium text-muted-foreground flex items-center gap-1.5 flex-wrap">
-                      <ClipboardCheck className="w-3.5 h-3.5" />
-                      Validation Checklist
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="p-3 pt-0 flex flex-col gap-1.5">
-                    {proposal.validationChecklist.map((item, i) => (
-                      <label
-                        key={i}
-                        className="flex items-start gap-2 p-1.5 rounded-md cursor-pointer hover-elevate"
-                        data-testid={`check-validation-${i}`}
-                      >
-                        <input
-                          type="checkbox"
-                          className="mt-0.5 accent-primary"
-                          checked={checkedItems.has(i)}
-                          onChange={() => toggleCheckItem(i)}
-                        />
-                        <span className={`text-xs ${checkedItems.has(i) ? "line-through text-muted-foreground" : ""}`}>{item}</span>
-                      </label>
-                    ))}
-                    <div className="mt-1">
-                      <Progress value={(checkedItems.size / proposal.validationChecklist.length) * 100} className="h-1.5" />
-                      <span className="text-[10px] text-muted-foreground">{checkedItems.size}/{proposal.validationChecklist.length} validated</span>
-                    </div>
-                  </CardContent>
-                </Card>
+                {proposal.validationChecklist && proposal.validationChecklist.length > 0 && (
+                  <Card>
+                    <CardHeader className="p-3 pb-1">
+                      <CardTitle className="text-xs font-medium text-muted-foreground flex items-center gap-1.5 flex-wrap">
+                        <ClipboardCheck className="w-3.5 h-3.5" />
+                        Validation Checklist
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-3 pt-0 flex flex-col gap-1.5">
+                      {proposal.validationChecklist.map((item, i) => (
+                        <label
+                          key={i}
+                          className="flex items-start gap-2 p-1.5 rounded-md cursor-pointer hover-elevate"
+                          data-testid={`check-validation-${i}`}
+                        >
+                          <input
+                            type="checkbox"
+                            className="mt-0.5 accent-primary"
+                            checked={checkedItems.has(i)}
+                            onChange={() => toggleCheckItem(i)}
+                          />
+                          <span className={`text-xs ${checkedItems.has(i) ? "line-through text-muted-foreground" : ""}`}>{item}</span>
+                        </label>
+                      ))}
+                      <div className="mt-1">
+                        <Progress value={(checkedItems.size / proposal.validationChecklist.length) * 100} className="h-1.5" />
+                        <span className="text-[10px] text-muted-foreground">{checkedItems.size}/{proposal.validationChecklist.length} validated</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
 
                 <div className="flex flex-col gap-2">
                   <Button
@@ -1311,7 +1313,7 @@ export default function OutcomeDiscover() {
                   <p className="text-[10px] text-center text-muted-foreground">
                     {allChecked
                       ? "All validation items confirmed — ready to create"
-                      : `${proposal.validationChecklist.length - checkedItems.size} validation items remaining (optional)`}
+                      : `${(proposal.validationChecklist?.length || 0) - checkedItems.size} validation items remaining (optional)`}
                   </p>
                 </div>
               </div>
