@@ -133,6 +133,7 @@ import {
   relationshipExtractions, type RelationshipExtraction, type InsertRelationshipExtraction,
   temporalGraphEntries, type TemporalGraphEntry, type InsertTemporalGraphEntry,
   autonomyProfiles, type AutonomyProfile, type InsertAutonomyProfile,
+  oversightDecisions, type OversightDecision, type InsertOversightDecision,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -548,6 +549,12 @@ export interface IStorage {
   createAutonomyProfile(profile: InsertAutonomyProfile): Promise<AutonomyProfile>;
   updateAutonomyProfile(id: string, data: Partial<InsertAutonomyProfile>): Promise<AutonomyProfile | undefined>;
   deleteAutonomyProfile(id: string): Promise<boolean>;
+
+  getOversightDecisions(): Promise<OversightDecision[]>;
+  getOversightDecision(id: string): Promise<OversightDecision | undefined>;
+  createOversightDecision(decision: InsertOversightDecision): Promise<OversightDecision>;
+  updateOversightDecision(id: string, data: Partial<InsertOversightDecision>): Promise<OversightDecision | undefined>;
+  deleteOversightDecision(id: string): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2104,6 +2111,30 @@ export class DatabaseStorage implements IStorage {
 
   async deleteAutonomyProfile(id: string): Promise<boolean> {
     const result = await db.delete(autonomyProfiles).where(eq(autonomyProfiles.id, id));
+    return (result as any).rowCount > 0;
+  }
+
+  async getOversightDecisions(): Promise<OversightDecision[]> {
+    return db.select().from(oversightDecisions).orderBy(desc(oversightDecisions.createdAt));
+  }
+
+  async getOversightDecision(id: string): Promise<OversightDecision | undefined> {
+    const [decision] = await db.select().from(oversightDecisions).where(eq(oversightDecisions.id, id));
+    return decision;
+  }
+
+  async createOversightDecision(decision: InsertOversightDecision): Promise<OversightDecision> {
+    const [created] = await db.insert(oversightDecisions).values(decision).returning();
+    return created;
+  }
+
+  async updateOversightDecision(id: string, data: Partial<InsertOversightDecision>): Promise<OversightDecision | undefined> {
+    const [updated] = await db.update(oversightDecisions).set(data).where(eq(oversightDecisions.id, id)).returning();
+    return updated;
+  }
+
+  async deleteOversightDecision(id: string): Promise<boolean> {
+    const result = await db.delete(oversightDecisions).where(eq(oversightDecisions.id, id));
     return (result as any).rowCount > 0;
   }
 }

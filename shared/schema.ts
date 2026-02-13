@@ -1595,4 +1595,34 @@ export const insertAutonomyProfileSchema = createInsertSchema(autonomyProfiles).
 export type InsertAutonomyProfile = z.infer<typeof insertAutonomyProfileSchema>;
 export type AutonomyProfile = typeof autonomyProfiles.$inferSelect;
 
+export const oversightDecisions = pgTable("oversight_decisions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  agentId: varchar("agent_id"),
+  agentName: text("agent_name").notNull(),
+  actionType: text("action_type").notNull(),
+  actionDescription: text("action_description").notNull(),
+  industry: text("industry").notNull(),
+  status: text("status").notNull().default("pending"),
+  priority: text("priority").notNull().default("medium"),
+  compositeRiskScore: real("composite_risk_score").notNull().default(50),
+  confidence: real("confidence").notNull().default(0.5),
+  reasoningChain: jsonb("reasoning_chain").notNull().default(sql`'[]'::jsonb`),
+  industryContext: jsonb("industry_context").notNull().default(sql`'{}'::jsonb`),
+  regulatoryPolicies: jsonb("regulatory_policies").notNull().default(sql`'[]'::jsonb`),
+  ontologyRefs: jsonb("ontology_refs").notNull().default(sql`'[]'::jsonb`),
+  similarDecisions: jsonb("similar_decisions").notNull().default(sql`'[]'::jsonb`),
+  riskDimensions: jsonb("risk_dimensions").notNull().default(sql`'{}'::jsonb`),
+  requestedAction: jsonb("requested_action").notNull().default(sql`'{}'::jsonb`),
+  resolution: text("resolution"),
+  resolutionNote: text("resolution_note"),
+  resolvedBy: text("resolved_by"),
+  resolvedAt: timestamp("resolved_at"),
+  precedentRule: jsonb("precedent_rule"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertOversightDecisionSchema = createInsertSchema(oversightDecisions).omit({ id: true, createdAt: true });
+export type InsertOversightDecision = z.infer<typeof insertOversightDecisionSchema>;
+export type OversightDecision = typeof oversightDecisions.$inferSelect;
+
 export * from "./models/chat";

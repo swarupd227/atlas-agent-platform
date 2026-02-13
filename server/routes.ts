@@ -68,6 +68,7 @@ import {
   insertRelationshipExtractionSchema,
   insertTemporalGraphEntrySchema,
   insertAutonomyProfileSchema,
+  insertOversightDecisionSchema,
 } from "@shared/schema";
 
 const openai = new OpenAI({
@@ -13641,6 +13642,114 @@ Return ONLY valid JSON.`
       const ok = await storage.deleteAutonomyProfile(req.params.id);
       if (!ok) return res.status(404).json({ error: "Not found" });
       res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Oversight Decisions CRUD
+  app.get("/api/oversight-decisions", async (req, res) => {
+    try {
+      const decisions = await storage.getOversightDecisions();
+      res.json(decisions);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/oversight-decisions/:id", async (req, res) => {
+    try {
+      const decision = await storage.getOversightDecision(req.params.id);
+      if (!decision) return res.status(404).json({ error: "Not found" });
+      res.json(decision);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/oversight-decisions", async (req, res) => {
+    try {
+      const validated = insertOversightDecisionSchema.parse(req.body);
+      const decision = await storage.createOversightDecision(validated);
+      res.json(decision);
+    } catch (e: any) {
+      if (e instanceof ZodError) return res.status(400).json({ error: e.errors });
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.patch("/api/oversight-decisions/:id", async (req, res) => {
+    try {
+      const body = { ...req.body };
+      if (typeof body.resolvedAt === "string") body.resolvedAt = new Date(body.resolvedAt);
+      const validated = insertOversightDecisionSchema.partial().parse(body);
+      const updated = await storage.updateOversightDecision(req.params.id, validated);
+      if (!updated) return res.status(404).json({ error: "Not found" });
+      res.json(updated);
+    } catch (e: any) {
+      if (e instanceof ZodError) return res.status(400).json({ error: e.errors });
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/oversight-decisions/:id", async (req, res) => {
+    try {
+      const ok = await storage.deleteOversightDecision(req.params.id);
+      if (!ok) return res.status(404).json({ error: "Not found" });
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/ai/oversight-context", async (req, res) => {
+    try {
+      const { decision, industry } = req.body;
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        messages: [
+          {
+            role: "system",
+            content: `You are an AI governance expert providing decision context for human oversight of AI agents. Given a pending agent decision, provide rich context including similar historical decisions, risk analysis, and regulatory implications.
+
+Return JSON with this structure:
+{
+  "riskAnalysis": {
+    "compositeScore": number 0-100,
+    "dimensions": [{ "name": "string", "score": number 0-100, "explanation": "string" }],
+    "overallRisk": "low|medium|high|critical"
+  },
+  "similarDecisions": [
+    {
+      "description": "string - what the similar decision was",
+      "outcome": "approved|rejected|modified",
+      "result": "string - what happened after the decision",
+      "similarity": number 0-100,
+      "timeAgo": "string - when it happened"
+    }
+  ],
+  "regulatoryContext": [
+    {
+      "regulation": "string - regulation name",
+      "relevance": "string - why it applies",
+      "requirement": "string - what it requires",
+      "complianceRisk": "low|medium|high"
+    }
+  ],
+  "recommendation": {
+    "action": "approve|reject|escalate|modify",
+    "confidence": number 0-1,
+    "reasoning": "string - why this action is recommended"
+  }
+}`
+          },
+          {
+            role: "user",
+            content: `Provide decision context for this pending AI agent action in the ${industry || "financial_services"} industry.
+
+Decision Details: ${JSON.stringify(decision || {})}
+
+Analyze risk dimensions, find similar past decisions, identify applicable regulations, and provide a recommendation. Return ONLY valid JSON.`
+          }
+        ],
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) return res.status(500).json({ error: "No response from AI" });
+      res.json(JSON.parse(content));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 

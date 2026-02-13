@@ -5111,5 +5111,151 @@ export async function seedDatabase() {
     console.error("Golden dataset seed error (non-fatal):", goldenSeedErr);
   }
 
+  // Seed Oversight Decisions
+  try {
+    const existingOversightDecisions = await storage.getOversightDecisions();
+    if (existingOversightDecisions.length === 0) {
+      const oversightDecisionsSeed = [
+        {
+          agentName: "Transaction Monitor Agent",
+          actionType: "Block Transaction",
+          actionDescription: "Agent detected unusual wire transfer pattern: $2.4M to a newly opened offshore account in a jurisdiction flagged for money laundering. The transaction was initiated outside normal business hours and the beneficiary has no prior relationship with the account holder.",
+          industry: "financial_services",
+          status: "pending",
+          priority: "critical",
+          compositeRiskScore: 92,
+          confidence: 0.87,
+          reasoningChain: [
+            { step: 1, action: "Detected transaction amount exceeds $1M threshold", result: "Flagged for enhanced due diligence" },
+            { step: 2, action: "Cross-referenced beneficiary against sanctions database", result: "No direct match, but jurisdiction flagged" },
+            { step: 3, action: "Analyzed transaction timing and pattern", result: "Anomalous: outside business hours, new beneficiary" },
+            { step: 4, action: "Computed composite risk score", result: "92/100 - requires human oversight" }
+          ],
+          industryContext: { transactionType: "Wire Transfer", amount: "$2,400,000", currency: "USD", beneficiaryJurisdiction: "Cayman Islands", accountAge: "3 days", priorRelationship: "None", businessHours: false },
+          regulatoryPolicies: [
+            { regulation: "BSA/AML", relevance: "Transaction exceeds CTR threshold", requirement: "File CTR and conduct enhanced due diligence", complianceRisk: "high" },
+            { regulation: "OFAC Sanctions", relevance: "Jurisdiction has elevated risk", requirement: "Screen against SDN list", complianceRisk: "medium" }
+          ],
+          ontologyRefs: ["AML Compliance", "Transaction Monitoring", "Wire Transfer Controls"],
+          similarDecisions: [
+            { description: "Similar offshore transfer blocked by reviewer", outcome: "approved", result: "SAR filed, no further action needed", similarity: 85, timeAgo: "2 weeks ago" }
+          ],
+          riskDimensions: { financial: 95, regulatory: 88, reputational: 78, operational: 45 },
+          requestedAction: { type: "block", target: "wire_transfer_TX-2024-8891", fallback: "hold_for_review" },
+        },
+        {
+          agentName: "Clinical Decision Support Agent",
+          actionType: "Recommend Treatment Change",
+          actionDescription: "Based on the patient's latest lab results showing elevated creatinine levels and declining eGFR, the agent recommends switching from metformin to a GLP-1 receptor agonist. This aligns with current KDIGO guidelines for diabetic patients with Stage 3 CKD.",
+          industry: "healthcare",
+          status: "pending",
+          priority: "high",
+          compositeRiskScore: 75,
+          confidence: 0.91,
+          reasoningChain: [
+            { step: 1, action: "Analyzed latest lab results", result: "Creatinine: 1.8 mg/dL, eGFR: 42 mL/min" },
+            { step: 2, action: "Cross-referenced with medication guidelines", result: "Metformin contraindicated at eGFR < 45" },
+            { step: 3, action: "Identified alternative medications", result: "GLP-1 RA recommended per KDIGO 2024" },
+            { step: 4, action: "Checked drug interactions", result: "No contraindications with current medications" }
+          ],
+          industryContext: { patientId: "PT-2024-4421", condition: "Type 2 Diabetes with CKD Stage 3", currentMedication: "Metformin 1000mg BID", proposedMedication: "Semaglutide 0.5mg weekly", clinicalEvidence: "KDIGO 2024 Guidelines Section 4.2" },
+          regulatoryPolicies: [
+            { regulation: "HIPAA", relevance: "Patient data handling", requirement: "Ensure PHI is properly protected", complianceRisk: "low" },
+            { regulation: "FDA Drug Safety", relevance: "Medication change", requirement: "Verify drug safety profile", complianceRisk: "medium" }
+          ],
+          ontologyRefs: ["Clinical Decision Support", "Nephrology", "Diabetes Management"],
+          similarDecisions: [
+            { description: "Similar medication switch for CKD patient approved", outcome: "approved", result: "Patient transitioned successfully, eGFR stabilized", similarity: 91, timeAgo: "1 month ago" }
+          ],
+          riskDimensions: { clinical: 72, regulatory: 35, patient_safety: 80, evidence_quality: 25 },
+          requestedAction: { type: "recommend", target: "treatment_plan_TP-2024-117", fallback: "flag_for_specialist" },
+        },
+        {
+          agentName: "Quality Control Agent",
+          actionType: "Halt Production Line",
+          actionDescription: "Vibration sensor data from CNC Machine #7 shows a 340% increase in harmonic frequency deviation over the past 4 hours. Pattern matches historical data for spindle bearing failure. Continued operation risks catastrophic failure and potential safety hazard.",
+          industry: "manufacturing",
+          status: "pending",
+          priority: "critical",
+          compositeRiskScore: 88,
+          confidence: 0.94,
+          reasoningChain: [
+            { step: 1, action: "Monitored vibration sensor data", result: "340% increase in harmonic deviation detected" },
+            { step: 2, action: "Pattern matched against failure database", result: "95% match with spindle bearing failure pattern" },
+            { step: 3, action: "Estimated time to failure", result: "2-6 hours at current operating conditions" },
+            { step: 4, action: "Assessed safety and production impact", result: "High safety risk, moderate production impact" }
+          ],
+          industryContext: { machineId: "CNC-007", sensorType: "Vibration (accelerometer)", currentReading: "12.4 mm/s", normalRange: "2.8-3.6 mm/s", productionImpact: "Line B - 450 units/hour", estimatedDowntime: "4-8 hours for repair" },
+          regulatoryPolicies: [
+            { regulation: "OSHA 1910.147", relevance: "Equipment safety lockout", requirement: "Lockout/tagout procedures for hazardous energy", complianceRisk: "high" },
+            { regulation: "ISO 9001", relevance: "Quality management", requirement: "Nonconforming output controls", complianceRisk: "medium" }
+          ],
+          ontologyRefs: ["Predictive Maintenance", "Equipment Safety", "Production Quality"],
+          similarDecisions: [],
+          riskDimensions: { safety: 92, quality: 85, production: 65, financial: 58 },
+          requestedAction: { type: "halt", target: "production_line_B", fallback: "reduce_speed_50pct" },
+        },
+        {
+          agentName: "Fraud Detection Agent",
+          actionType: "Flag Account",
+          actionDescription: "Multiple small transactions detected across 12 merchant categories in 3 countries within a 2-hour window. Pattern is consistent with card testing behavior typically seen before large unauthorized purchases.",
+          industry: "financial_services",
+          status: "pending",
+          priority: "medium",
+          compositeRiskScore: 64,
+          confidence: 0.72,
+          reasoningChain: [
+            { step: 1, action: "Detected velocity anomaly", result: "12 transactions in 2 hours across 3 countries" },
+            { step: 2, action: "Classified pattern", result: "Matches card testing behavior (72% confidence)" },
+            { step: 3, action: "Checked account history", result: "Account has prior legitimate international travel" }
+          ],
+          industryContext: { accountId: "ACC-2024-7734", transactionCount: 12, timeWindow: "2 hours", countries: ["US", "UK", "Singapore"], averageAmount: "$4.50", totalAmount: "$54.00" },
+          regulatoryPolicies: [
+            { regulation: "PCI-DSS", relevance: "Card data security", requirement: "Monitor and respond to suspicious activity", complianceRisk: "medium" }
+          ],
+          ontologyRefs: ["Fraud Detection", "Card Testing", "Velocity Checks"],
+          similarDecisions: [
+            { description: "Similar velocity pattern was legitimate travel", outcome: "rejected", result: "Account unflagged after customer confirmation", similarity: 68, timeAgo: "3 days ago" },
+            { description: "Card testing pattern led to $50K unauthorized purchase", outcome: "approved", result: "Prevented $50K loss by early flag", similarity: 74, timeAgo: "1 week ago" }
+          ],
+          riskDimensions: { financial: 55, regulatory: 40, reputational: 30, operational: 25 },
+          requestedAction: { type: "flag", target: "account_ACC-2024-7734", fallback: "monitor_enhanced" },
+        },
+        {
+          agentName: "Claims Processing Agent",
+          actionType: "Auto-Approve Claim",
+          actionDescription: "Routine auto claim for windshield replacement. Damage photos verified by computer vision model (confidence 96%). Policy is active and covers comprehensive glass damage. Estimated repair cost $485 is within policy limits.",
+          industry: "insurance",
+          status: "resolved",
+          priority: "low",
+          compositeRiskScore: 18,
+          confidence: 0.96,
+          reasoningChain: [
+            { step: 1, action: "Verified policy status", result: "Active, comprehensive coverage" },
+            { step: 2, action: "Analyzed damage photos", result: "Windshield crack confirmed (96% confidence)" },
+            { step: 3, action: "Estimated repair cost", result: "$485 - within policy limits" }
+          ],
+          industryContext: { claimId: "CLM-2024-9982", policyType: "Comprehensive Auto", damageType: "Windshield Crack", estimatedCost: "$485", policyLimit: "$5,000", deductible: "$100" },
+          regulatoryPolicies: [],
+          ontologyRefs: ["Claims Processing", "Auto Insurance", "Glass Damage"],
+          similarDecisions: [],
+          riskDimensions: { financial: 12, regulatory: 8, fraud: 15, customer_impact: 5 },
+          requestedAction: { type: "approve", target: "claim_CLM-2024-9982", fallback: "manual_review" },
+          resolution: "approved",
+          resolutionNote: "Routine windshield claim, auto-approved per policy guidelines",
+          resolvedBy: "System Auto-Approval",
+          resolvedAt: new Date(Date.now() - 86400000).toISOString(),
+        },
+      ];
+
+      for (const d of oversightDecisionsSeed) {
+        await storage.createOversightDecision(d as any);
+      }
+      console.log(`Seeded ${oversightDecisionsSeed.length} oversight decisions`);
+    }
+  } catch (oversightSeedErr) {
+    console.error("Oversight seed error (non-fatal):", oversightSeedErr);
+  }
+
   console.log("Database seeded successfully");
 }

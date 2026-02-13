@@ -76,6 +76,7 @@ import MemoryArchitecture from "@/pages/memory-architecture";
 import RagPipeline from "@/pages/rag-pipeline";
 import KnowledgeGraph from "@/pages/knowledge-graph";
 import AutonomyEngine from "@/pages/autonomy-engine";
+import OversightConsole from "@/pages/oversight-console";
 
 function DashboardRouter() {
   return (
@@ -137,6 +138,7 @@ function DashboardRouter() {
       <Route path="/rag-pipeline" component={RagPipeline} />
       <Route path="/knowledge-graph" component={KnowledgeGraph} />
       <Route path="/autonomy-engine" component={AutonomyEngine} />
+      <Route path="/oversight-console" component={OversightConsole} />
       <Route path="/admin" component={Admin} />
       <Route component={NotFound} />
     </Switch>
