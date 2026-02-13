@@ -122,6 +122,8 @@ import {
   type GoldenDataset, type InsertGoldenDataset,
   goldenTestCases,
   type GoldenTestCase, type InsertGoldenTestCase,
+  contextProfiles,
+  type ContextProfile, type InsertContextProfile,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -488,6 +490,12 @@ export interface IStorage {
   createGoldenTestCase(testCase: InsertGoldenTestCase): Promise<GoldenTestCase>;
   updateGoldenTestCase(id: string, data: Partial<GoldenTestCase>): Promise<GoldenTestCase | undefined>;
   deleteGoldenTestCase(id: string): Promise<boolean>;
+
+  getContextProfiles(): Promise<ContextProfile[]>;
+  getContextProfile(id: string): Promise<ContextProfile | undefined>;
+  createContextProfile(profile: InsertContextProfile): Promise<ContextProfile>;
+  updateContextProfile(id: string, data: Partial<InsertContextProfile>): Promise<ContextProfile | undefined>;
+  deleteContextProfile(id: string): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1850,6 +1858,29 @@ export class DatabaseStorage implements IStorage {
       categories[cat]++;
     });
     await db.update(goldenDatasets).set({ testCaseCount: cases.length, scenarioCategories: categories }).where(eq(goldenDatasets.id, datasetId));
+  }
+  async getContextProfiles(): Promise<ContextProfile[]> {
+    return db.select().from(contextProfiles).orderBy(desc(contextProfiles.createdAt));
+  }
+
+  async getContextProfile(id: string): Promise<ContextProfile | undefined> {
+    const [profile] = await db.select().from(contextProfiles).where(eq(contextProfiles.id, id));
+    return profile;
+  }
+
+  async createContextProfile(profile: InsertContextProfile): Promise<ContextProfile> {
+    const [created] = await db.insert(contextProfiles).values(profile).returning();
+    return created;
+  }
+
+  async updateContextProfile(id: string, data: Partial<InsertContextProfile>): Promise<ContextProfile | undefined> {
+    const [updated] = await db.update(contextProfiles).set(data).where(eq(contextProfiles.id, id)).returning();
+    return updated;
+  }
+
+  async deleteContextProfile(id: string): Promise<boolean> {
+    const result = await db.delete(contextProfiles).where(eq(contextProfiles.id, id));
+    return (result as any).rowCount > 0;
   }
 }
 

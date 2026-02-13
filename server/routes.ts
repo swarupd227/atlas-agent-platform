@@ -60,6 +60,7 @@ import {
   insertSkillChainSchema,
   insertGoldenDatasetSchema,
   insertGoldenTestCaseSchema,
+  insertContextProfileSchema,
 } from "@shared/schema";
 
 const openai = new OpenAI({
@@ -12882,6 +12883,79 @@ Return JSON with the enhanced fields: { "name": string, "inputScenario": string,
       console.error("AI enhance golden test case error:", e);
       res.status(500).json({ error: e.message });
     }
+  });
+
+  // ── Context Profiles ──
+  app.get("/api/context-profiles", async (_req, res) => {
+    try {
+      const profiles = await storage.getContextProfiles();
+      res.json(profiles);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/context-profiles/:id", async (req, res) => {
+    try {
+      const profile = await storage.getContextProfile(req.params.id);
+      if (!profile) return res.status(404).json({ error: "Not found" });
+      res.json(profile);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/context-profiles", async (req, res) => {
+    try {
+      const validated = insertContextProfileSchema.parse(req.body);
+      const profile = await storage.createContextProfile(validated);
+      res.status(201).json(profile);
+    } catch (e: any) {
+      if (e instanceof ZodError) return res.status(400).json({ error: e.errors });
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.patch("/api/context-profiles/:id", async (req, res) => {
+    try {
+      const validated = insertContextProfileSchema.partial().parse(req.body);
+      const updated = await storage.updateContextProfile(req.params.id, validated);
+      if (!updated) return res.status(404).json({ error: "Not found" });
+      res.json(updated);
+    } catch (e: any) {
+      if (e instanceof ZodError) return res.status(400).json({ error: e.errors });
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/context-profiles/:id", async (req, res) => {
+    try {
+      const ok = await storage.deleteContextProfile(req.params.id);
+      if (!ok) return res.status(404).json({ error: "Not found" });
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/context-profiles/:id/optimize", async (req, res) => {
+    try {
+      const profile = await storage.getContextProfile(req.params.id);
+      if (!profile) return res.status(404).json({ error: "Not found" });
+      const sources = Array.isArray(profile.sources) ? profile.sources as any[] : [];
+      const total = profile.totalCapacity || 128000;
+      const suggestions: string[] = [];
+      const allocated = sources.reduce((s: number, src: any) => s + (Number(src.tokenAllocation) || 0), 0);
+      if (allocated > total * 0.9) {
+        suggestions.push(`Context window is ${Math.round(allocated / total * 100)}% utilized. Consider reducing lower-priority sources to leave headroom for dynamic content.`);
+      }
+      const toolSrc = sources.find((s: any) => s.category === "Tool Descriptions");
+      if (toolSrc && toolSrc.tokenAllocation > 3000) {
+        suggestions.push(`Reducing Tool Descriptions from ${toolSrc.tokenAllocation.toLocaleString()} to ~1,800 tokens (by loading only relevant tools) would free ${(toolSrc.tokenAllocation - 1800).toLocaleString()} tokens for higher-priority context.`);
+      }
+      const convSrc = sources.find((s: any) => s.category === "Conversation History");
+      if (convSrc && convSrc.tokenAllocation > total * 0.25) {
+        suggestions.push(`Conversation History uses ${Math.round(convSrc.tokenAllocation / total * 100)}% of capacity. Consider summarizing older turns to free tokens for domain context.`);
+      }
+      if (suggestions.length === 0) {
+        suggestions.push("Context allocation looks well-balanced. No immediate optimizations recommended.");
+      }
+      res.json({ suggestions, utilizationPercent: Math.round(allocated / total * 100), allocated, total });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
   // Start the job worker

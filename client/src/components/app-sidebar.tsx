@@ -23,6 +23,7 @@ import {
   Settings,
   Eye,
   Hammer,
+  Brain,
 } from "lucide-react";
 import {
   Sidebar,
@@ -78,6 +79,7 @@ export function AppSidebar() {
         { title: "Blueprints", url: "/blueprints", icon: PenTool },
         { title: "Templates", url: "/templates", icon: Library },
         { title: "Skills", url: "/skills", icon: Layers },
+        { title: "Context Studio", url: "/context-studio", icon: Brain },
       ],
     },
     {

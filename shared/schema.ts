@@ -1445,4 +1445,22 @@ export const insertGoldenTestCaseSchema = createInsertSchema(goldenTestCases).om
 export type InsertGoldenTestCase = z.infer<typeof insertGoldenTestCaseSchema>;
 export type GoldenTestCase = typeof goldenTestCases.$inferSelect;
 
+export const contextProfiles = pgTable("context_profiles", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  description: text("description"),
+  industry: text("industry").notNull(),
+  agentId: varchar("agent_id"),
+  sources: jsonb("sources").notNull().default(sql`'[]'::jsonb`),
+  priorityOrder: jsonb("priority_order").notNull().default(sql`'[]'::jsonb`),
+  budgetAllocations: jsonb("budget_allocations").notNull().default(sql`'{}'::jsonb`),
+  totalCapacity: integer("total_capacity").notNull().default(128000),
+  status: text("status").notNull().default("active"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertContextProfileSchema = createInsertSchema(contextProfiles).omit({ id: true, createdAt: true });
+export type InsertContextProfile = z.infer<typeof insertContextProfileSchema>;
+export type ContextProfile = typeof contextProfiles.$inferSelect;
+
 export * from "./models/chat";
