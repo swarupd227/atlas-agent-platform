@@ -104,6 +104,7 @@ export function AppSidebar() {
       items: [
         { title: "Deployments", url: "/deployments", icon: Rocket },
         { title: "Shadow Replay", url: "/shadow-replay", icon: GitCompare },
+        { title: "Canary Deployment", url: "/canary-deployment", icon: GitBranch },
         { title: "Monitor", url: "/monitor", icon: Activity },
         { title: "Optimization", url: "/optimization", icon: Zap },
       ],

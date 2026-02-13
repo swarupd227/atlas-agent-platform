@@ -1675,4 +1675,34 @@ export const insertShadowReplaySessionSchema = createInsertSchema(shadowReplaySe
 export type InsertShadowReplaySession = z.infer<typeof insertShadowReplaySessionSchema>;
 export type ShadowReplaySession = typeof shadowReplaySessions.$inferSelect;
 
+export const canaryDeployments = pgTable("canary_deployments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  industry: text("industry").notNull(),
+  agentName: text("agent_name").notNull(),
+  candidateVersion: text("candidate_version").notNull(),
+  baselineVersion: text("baseline_version").notNull(),
+  currentTrafficPercent: integer("current_traffic_percent").notNull().default(0),
+  targetTrafficPercent: integer("target_traffic_percent").notNull().default(100),
+  trafficStages: jsonb("traffic_stages").notNull().default(sql`'[1,5,25,50,100]'::jsonb`),
+  industrySafetyGates: jsonb("industry_safety_gates").notNull().default(sql`'{}'::jsonb`),
+  kpiBaseline: jsonb("kpi_baseline").notNull().default(sql`'{}'::jsonb`),
+  kpiCandidate: jsonb("kpi_candidate").notNull().default(sql`'{}'::jsonb`),
+  promotionRules: jsonb("promotion_rules").notNull().default(sql`'[]'::jsonb`),
+  rollbackRules: jsonb("rollback_rules").notNull().default(sql`'[]'::jsonb`),
+  blastRadius: jsonb("blast_radius").notNull().default(sql`'{}'::jsonb`),
+  status: text("status").notNull().default("configured"),
+  autoPromote: boolean("auto_promote").notNull().default(false),
+  lastPromotedAt: timestamp("last_promoted_at"),
+  incidentCount: integer("incident_count").notNull().default(0),
+  rollbackTriggered: boolean("rollback_triggered").notNull().default(false),
+  rollbackReason: text("rollback_reason"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertCanaryDeploymentSchema = createInsertSchema(canaryDeployments).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertCanaryDeployment = z.infer<typeof insertCanaryDeploymentSchema>;
+export type CanaryDeployment = typeof canaryDeployments.$inferSelect;
+
 export * from "./models/chat";

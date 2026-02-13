@@ -136,6 +136,7 @@ import {
   oversightDecisions, type OversightDecision, type InsertOversightDecision,
   shadowTraces, type ShadowTrace, type InsertShadowTrace,
   shadowReplaySessions, type ShadowReplaySession, type InsertShadowReplaySession,
+  canaryDeployments, type CanaryDeployment, type InsertCanaryDeployment,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -569,6 +570,12 @@ export interface IStorage {
   createShadowReplaySession(session: InsertShadowReplaySession): Promise<ShadowReplaySession>;
   updateShadowReplaySession(id: string, data: Partial<InsertShadowReplaySession>): Promise<ShadowReplaySession | undefined>;
   deleteShadowReplaySession(id: string): Promise<boolean>;
+
+  getCanaryDeployments(): Promise<CanaryDeployment[]>;
+  getCanaryDeployment(id: string): Promise<CanaryDeployment | undefined>;
+  createCanaryDeployment(deployment: InsertCanaryDeployment): Promise<CanaryDeployment>;
+  updateCanaryDeployment(id: string, data: Partial<InsertCanaryDeployment>): Promise<CanaryDeployment | undefined>;
+  deleteCanaryDeployment(id: string): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2197,6 +2204,30 @@ export class DatabaseStorage implements IStorage {
 
   async deleteShadowReplaySession(id: string): Promise<boolean> {
     const result = await db.delete(shadowReplaySessions).where(eq(shadowReplaySessions.id, id));
+    return (result as any).rowCount > 0;
+  }
+
+  async getCanaryDeployments(): Promise<CanaryDeployment[]> {
+    return db.select().from(canaryDeployments).orderBy(desc(canaryDeployments.createdAt));
+  }
+
+  async getCanaryDeployment(id: string): Promise<CanaryDeployment | undefined> {
+    const [deployment] = await db.select().from(canaryDeployments).where(eq(canaryDeployments.id, id));
+    return deployment;
+  }
+
+  async createCanaryDeployment(deployment: InsertCanaryDeployment): Promise<CanaryDeployment> {
+    const [created] = await db.insert(canaryDeployments).values(deployment).returning();
+    return created;
+  }
+
+  async updateCanaryDeployment(id: string, data: Partial<InsertCanaryDeployment>): Promise<CanaryDeployment | undefined> {
+    const [updated] = await db.update(canaryDeployments).set(data).where(eq(canaryDeployments.id, id)).returning();
+    return updated;
+  }
+
+  async deleteCanaryDeployment(id: string): Promise<boolean> {
+    const result = await db.delete(canaryDeployments).where(eq(canaryDeployments.id, id));
     return (result as any).rowCount > 0;
   }
 }

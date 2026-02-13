@@ -14258,6 +14258,143 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  // === Canary Deployment Console Routes ===
+
+  app.get("/api/canary-deployments", async (req, res) => {
+    try {
+      const deployments = await storage.getCanaryDeployments();
+      res.json(deployments);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/canary-deployments/:id", async (req, res) => {
+    try {
+      const deployment = await storage.getCanaryDeployment(req.params.id);
+      if (!deployment) return res.status(404).json({ error: "Not found" });
+      res.json(deployment);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/canary-deployments", async (req, res) => {
+    try {
+      const deployment = await storage.createCanaryDeployment(req.body);
+      res.json(deployment);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.patch("/api/canary-deployments/:id", async (req, res) => {
+    try {
+      const data = { ...req.body };
+      if (data.lastPromotedAt && typeof data.lastPromotedAt === "string") {
+        data.lastPromotedAt = new Date(data.lastPromotedAt);
+      }
+      if (data.completedAt && typeof data.completedAt === "string") {
+        data.completedAt = new Date(data.completedAt);
+      }
+      const updated = await storage.updateCanaryDeployment(req.params.id, data);
+      if (!updated) return res.status(404).json({ error: "Not found" });
+      res.json(updated);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.delete("/api/canary-deployments/:id", async (req, res) => {
+    try {
+      const result = await storage.deleteCanaryDeployment(req.params.id);
+      res.json({ success: result });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/ai/canary-analyze", async (req, res) => {
+    try {
+      const { deploymentId, industry } = req.body;
+      const deployment = deploymentId ? await storage.getCanaryDeployment(deploymentId) : null;
+
+      const industryContext: Record<string, any> = {
+        healthcare: {
+          kpis: ["clinical_accuracy", "guideline_adherence", "patient_satisfaction", "escalation_rate"],
+          safetyThresholds: { max_patient_exposure: 50, rollback_on_safety_event: true },
+          rollbackRules: ["Rollback immediately if any patient safety event occurs", "Rollback if clinical accuracy drops below 95%", "Rollback if guideline adherence rate drops below 98%"],
+          promotionRules: ["Promote only after 24h with zero safety events", "Require clinical accuracy >= 97% for promotion", "Minimum 100 interactions before promotion"],
+        },
+        financial_services: {
+          kpis: ["trade_execution_accuracy", "compliance_violation_rate", "client_suitability_score", "risk_assessment_accuracy"],
+          safetyThresholds: { max_aum_exposure: 1000000, compliance_floor: 99.9 },
+          rollbackRules: ["Rollback if regulatory compliance rate drops below 99.9%", "Rollback if any trade execution error occurs", "Rollback if client suitability score drops below 90%"],
+          promotionRules: ["Promote only after 48h with zero compliance violations", "Require suitability score >= 95% for promotion", "Minimum 500 interactions before promotion"],
+        },
+        manufacturing: {
+          kpis: ["defect_detection_accuracy", "false_positive_rate", "mean_time_to_detection", "safety_compliance_rate"],
+          safetyThresholds: { no_candidate_during_safety_critical: true, max_line_exposure: 2 },
+          rollbackRules: ["Never route to candidate during safety-critical operations", "Rollback if defect detection accuracy drops below 99%", "Rollback if false positive rate exceeds 5%"],
+          promotionRules: ["Promote only after 72h with zero safety incidents", "Require defect detection >= 99.5% for promotion", "Test on non-critical lines first"],
+        },
+        insurance: {
+          kpis: ["claims_accuracy", "fraud_detection_rate", "processing_time", "customer_satisfaction"],
+          safetyThresholds: { max_claim_exposure: 500000, fraud_detection_floor: 95 },
+          rollbackRules: ["Rollback if claims accuracy drops below 98%", "Rollback if fraud detection rate drops below 95%"],
+          promotionRules: ["Promote after 48h with zero claim errors", "Minimum 200 claims processed before promotion"],
+        },
+        retail: {
+          kpis: ["recommendation_accuracy", "conversion_rate", "customer_satisfaction", "inventory_accuracy"],
+          safetyThresholds: { max_revenue_exposure: 100000 },
+          rollbackRules: ["Rollback if conversion rate drops more than 10%", "Rollback if customer satisfaction drops below 4.0"],
+          promotionRules: ["Promote after 24h with stable metrics", "Minimum 1000 interactions before promotion"],
+        },
+      };
+
+      const selectedIndustry = industry || deployment?.industry || "financial_services";
+      const context = industryContext[selectedIndustry] || industryContext.financial_services;
+
+      const openai = new OpenAI();
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert in canary deployment analysis for ${selectedIndustry} AI agents. Analyze the deployment metrics and provide recommendations.`
+          },
+          {
+            role: "user",
+            content: `Analyze this canary deployment and provide KPI metrics, blast radius assessment, and promotion/rollback recommendation.
+
+Industry: ${selectedIndustry}
+Industry KPIs: ${JSON.stringify(context.kpis)}
+Safety Thresholds: ${JSON.stringify(context.safetyThresholds)}
+Current Deployment: ${deployment ? JSON.stringify({ name: deployment.name, currentTraffic: deployment.currentTrafficPercent, status: deployment.status, candidate: deployment.candidateVersion, baseline: deployment.baselineVersion }) : 'New deployment being configured'}
+
+Respond in JSON:
+{
+  "kpiBaseline": { [kpi]: { "value": number, "trend": "up"|"down"|"stable", "unit": string } },
+  "kpiCandidate": { [kpi]: { "value": number, "trend": "up"|"down"|"stable", "unit": string } },
+  "blastRadius": {
+    "customers": number, "interactions": number, "revenue": number, "regulatoryScope": string,
+    "stages": [{ "percent": number, "customers": number, "interactions": number, "revenue": number, "regulatoryScope": string }]
+  },
+  "recommendation": "promote"|"hold"|"rollback",
+  "reasoning": string,
+  "riskScore": number,
+  "safetyGateStatus": [{ "gate": string, "passed": boolean, "detail": string }]
+}`
+          }
+        ],
+        temperature: 0.3,
+        response_format: { type: "json_object" },
+      });
+
+      const analysis = JSON.parse(response.choices[0].message.content || "{}");
+
+      if (deployment) {
+        await storage.updateCanaryDeployment(deployment.id, {
+          kpiBaseline: analysis.kpiBaseline || {},
+          kpiCandidate: analysis.kpiCandidate || {},
+          blastRadius: analysis.blastRadius || {},
+        } as any);
+      }
+
+      res.json({ analysis, industryContext: context });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   // Start the job worker
   startWorker();
 

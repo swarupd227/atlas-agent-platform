@@ -47,6 +47,7 @@ import ApprovalDetail from "@/pages/approval-detail";
 import Blueprints from "@/pages/blueprints";
 import BlueprintDetail from "@/pages/blueprint-detail";
 import ShadowReplay from "@/pages/shadow-replay";
+import CanaryDeployment from "@/pages/canary-deployment";
 import AuditTrail from "@/pages/audit-trail";
 import RunDetail from "@/pages/run-detail";
 import McpServers from "@/pages/mcp-servers";
@@ -140,6 +141,7 @@ function DashboardRouter() {
       <Route path="/autonomy-engine" component={AutonomyEngine} />
       <Route path="/oversight-console" component={OversightConsole} />
       <Route path="/shadow-replay" component={ShadowReplay} />
+      <Route path="/canary-deployment" component={CanaryDeployment} />
       <Route path="/admin" component={Admin} />
       <Route component={NotFound} />
     </Switch>
