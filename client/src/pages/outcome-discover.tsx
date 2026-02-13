@@ -27,6 +27,12 @@ import {
   AlertCircle,
   FileText,
   RefreshCw,
+  BookOpen,
+  Database,
+  DollarSign,
+  ChevronDown,
+  Check,
+  Minus,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -40,6 +46,9 @@ import { Label } from "@/components/ui/label";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { OutcomeContract } from "@shared/schema";
+import { useIndustry } from "@/components/industry-provider";
+import type { IndustryId } from "@/components/industry-provider";
+import type { LucideIcon } from "lucide-react";
 
 interface ProcessFlowStep {
   id: string;
@@ -86,28 +95,137 @@ interface OutcomeProposal {
   validationChecklist: string[];
 }
 
-const STARTER_PROMPTS = [
-  {
-    icon: Target,
-    label: "Reduce customer churn",
-    prompt: "Our customer churn rate is around 8% monthly and we want to bring it down to under 4%. We're a SaaS company with about 2,000 customers.",
-  },
-  {
-    icon: BarChart3,
-    label: "Speed up support resolution",
-    prompt: "Our customer support tickets take an average of 48 hours to resolve. We want to get that under 4 hours for common issues.",
-  },
-  {
-    icon: Workflow,
-    label: "Automate compliance checks",
-    prompt: "We spend about 200 hours per month on manual compliance document reviews. We need to automate this while keeping accuracy above 99%.",
-  },
-  {
-    icon: Lightbulb,
-    label: "Improve lead qualification",
-    prompt: "Our sales team wastes time on unqualified leads. We get about 500 leads a month but only 10% convert. We want to pre-qualify them automatically.",
-  },
-];
+interface StarterPrompt {
+  icon: LucideIcon;
+  label: string;
+  prompt: string;
+}
+
+const INDUSTRY_STARTER_PROMPTS: Record<IndustryId | "null", StarterPrompt[]> = {
+  financial_services: [
+    { icon: Target, label: "Accelerate KYC Onboarding", prompt: "Our KYC onboarding process takes an average of 5 business days. We want to reduce it to under 24 hours while maintaining full regulatory compliance with BSA/AML requirements." },
+    { icon: Shield, label: "Reduce False Positive Alert Rate", prompt: "Our transaction monitoring system generates over 95% false positives. We need to reduce the false positive rate to under 30% while ensuring zero missed true positives for SAR filing." },
+    { icon: BarChart3, label: "Improve Trade Settlement Accuracy", prompt: "Our trade settlement failure rate is 3.2%. We need to bring it below 0.5% and reduce settlement time from T+2 to T+1 for eligible instruments." },
+    { icon: Zap, label: "Automate Regulatory Reporting", prompt: "We spend 400+ hours per quarter on regulatory report preparation for SEC and FINRA. We want to automate data aggregation, validation, and draft generation." },
+  ],
+  healthcare: [
+    { icon: Target, label: "Reduce Prior Auth Turnaround", prompt: "Prior authorization requests take 3-5 business days on average. We want to bring turnaround under 4 hours for standard requests while maintaining clinical accuracy and payer compliance." },
+    { icon: BarChart3, label: "Improve Clinical Documentation", prompt: "Our clinical documentation completeness score is at 72%. We need to improve it to 95%+ to meet CMS quality reporting requirements and reduce claim denials." },
+    { icon: Zap, label: "Accelerate Revenue Cycle", prompt: "Our average days in accounts receivable is 45 days with a 12% denial rate. We want to reduce A/R days to under 30 and denial rate below 5%." },
+    { icon: Shield, label: "Automate Quality Measure Reporting", prompt: "We're manually tracking HEDIS measures and CMS Star ratings across 15 measures. We need automated data collection, gap identification, and intervention recommendations." },
+  ],
+  manufacturing: [
+    { icon: Target, label: "Improve OEE", prompt: "Our Overall Equipment Effectiveness is at 65%. We want to bring it above 85% by reducing unplanned downtime and optimizing changeover processes across 12 production lines." },
+    { icon: BarChart3, label: "Reduce Scrap Rate", prompt: "Our first-pass yield is 91% with a 4.2% scrap rate. We need to achieve 97%+ first-pass yield and reduce scrap below 1.5% to meet ISO 9001 targets." },
+    { icon: Zap, label: "Predictive Maintenance", prompt: "We experience an average of 8 unplanned equipment failures per month, each costing $15K-$50K. We want to predict 90%+ of failures at least 48 hours in advance." },
+    { icon: Shield, label: "Automate Compliance Audits", prompt: "ISO 9001 and industry-specific compliance audits consume 300+ staff hours per quarter. We need automated evidence collection, gap analysis, and corrective action tracking." },
+  ],
+  insurance: [
+    { icon: Target, label: "Accelerate Claims Processing", prompt: "Average claims processing takes 14 days. We want to achieve straight-through processing for 60%+ of standard claims with an average cycle time under 3 days." },
+    { icon: BarChart3, label: "Improve Underwriting Accuracy", prompt: "Our loss ratio is 72% with an expense ratio of 35%. We need to improve risk selection accuracy and reduce the combined ratio below 98%." },
+    { icon: Zap, label: "Automate Policy Administration", prompt: "Policy issuance and endorsement processing requires 45 minutes of manual work per transaction. We want to automate 80%+ of standard policy administration tasks." },
+    { icon: Shield, label: "Regulatory Filing Automation", prompt: "We file with 15 state insurance departments quarterly. Rate filings, form filings, and market conduct reports consume 500+ hours per quarter." },
+  ],
+  retail: [
+    { icon: Target, label: "Optimize Demand Forecasting", prompt: "Our demand forecast accuracy is 68% leading to 15% overstock and 8% stockout rates. We want to achieve 90%+ forecast accuracy and reduce inventory carrying costs by 25%." },
+    { icon: BarChart3, label: "Personalize Customer Experience", prompt: "Our email marketing conversion rate is 1.2% with generic campaigns. We want to achieve 4%+ conversion through personalized recommendations and dynamic content." },
+    { icon: Zap, label: "Automate Vendor Management", prompt: "We manage 200+ vendors with manual PO processing, compliance checks, and performance reviews. We want to automate 75%+ of routine vendor operations." },
+    { icon: Shield, label: "PCI Compliance Automation", prompt: "PCI-DSS compliance monitoring and evidence collection requires 2 FTEs. We need automated scanning, gap detection, and remediation tracking." },
+  ],
+  custom: [
+    { icon: Target, label: "Reduce customer churn", prompt: "Our customer churn rate is around 8% monthly and we want to bring it down to under 4%. We're a SaaS company with about 2,000 customers." },
+    { icon: BarChart3, label: "Speed up support resolution", prompt: "Our customer support tickets take an average of 48 hours to resolve. We want to get that under 4 hours for common issues." },
+    { icon: Workflow, label: "Automate compliance checks", prompt: "We spend about 200 hours per month on manual compliance document reviews. We need to automate this while keeping accuracy above 99%." },
+    { icon: Lightbulb, label: "Improve lead qualification", prompt: "Our sales team wastes time on unqualified leads. We get about 500 leads a month but only 10% convert. We want to pre-qualify them automatically." },
+  ],
+  "null": [
+    { icon: Target, label: "Reduce customer churn", prompt: "Our customer churn rate is around 8% monthly and we want to bring it down to under 4%. We're a SaaS company with about 2,000 customers." },
+    { icon: BarChart3, label: "Speed up support resolution", prompt: "Our customer support tickets take an average of 48 hours to resolve. We want to get that under 4 hours for common issues." },
+    { icon: Workflow, label: "Automate compliance checks", prompt: "We spend about 200 hours per month on manual compliance document reviews. We need to automate this while keeping accuracy above 99%." },
+    { icon: Lightbulb, label: "Improve lead qualification", prompt: "Our sales team wastes time on unqualified leads. We get about 500 leads a month but only 10% convert. We want to pre-qualify them automatically." },
+  ],
+};
+
+interface IndustryKpi {
+  name: string;
+  target: string;
+  benchmark: string;
+}
+
+const INDUSTRY_KPI_LIBRARY: Record<string, IndustryKpi[]> = {
+  financial_services: [
+    { name: "SLA Adherence", target: "99.5%", benchmark: "98.2%" },
+    { name: "False Positive Rate", target: "<30%", benchmark: "45%" },
+    { name: "Straight-Through Processing Rate", target: "85%", benchmark: "72%" },
+    { name: "Customer Onboarding Time", target: "<24h", benchmark: "3.2 days" },
+    { name: "Regulatory Report Accuracy", target: "99.9%", benchmark: "97.5%" },
+  ],
+  healthcare: [
+    { name: "HEDIS Compliance Rate", target: "95%", benchmark: "88%" },
+    { name: "CMS Star Rating", target: "4.5", benchmark: "3.8" },
+    { name: "30-Day Readmission Rate", target: "<10%", benchmark: "14.2%" },
+    { name: "Claim Denial Rate", target: "<5%", benchmark: "11.8%" },
+    { name: "Prior Auth Turnaround", target: "<4h", benchmark: "3.2 days" },
+  ],
+  manufacturing: [
+    { name: "OEE", target: "85%", benchmark: "72%" },
+    { name: "MTBF", target: "720h", benchmark: "480h" },
+    { name: "MTTR", target: "<2h", benchmark: "4.5h" },
+    { name: "First-Pass Yield", target: "97%", benchmark: "91.3%" },
+    { name: "Scrap Rate", target: "<1.5%", benchmark: "4.2%" },
+  ],
+  insurance: [
+    { name: "Claims Cycle Time", target: "<3 days", benchmark: "14 days" },
+    { name: "Loss Ratio", target: "<65%", benchmark: "72%" },
+    { name: "STP Rate", target: "60%", benchmark: "35%" },
+    { name: "Combined Ratio", target: "<98%", benchmark: "107%" },
+    { name: "Policyholder Retention", target: "92%", benchmark: "85%" },
+  ],
+  retail: [
+    { name: "Forecast Accuracy", target: "90%", benchmark: "68%" },
+    { name: "Stockout Rate", target: "<3%", benchmark: "8%" },
+    { name: "Conversion Rate", target: "4%", benchmark: "1.2%" },
+    { name: "Inventory Turnover", target: "12x", benchmark: "8x" },
+    { name: "Customer Lifetime Value", target: "+25%", benchmark: "baseline" },
+  ],
+};
+
+interface RegulatoryConstraint {
+  regulation: string;
+  classification: "Critical" | "High-Risk" | "Medium";
+  requirements: string[];
+  autoApplied: boolean;
+}
+
+const INDUSTRY_REGULATORY_CONSTRAINTS: Record<string, RegulatoryConstraint[]> = {
+  financial_services: [
+    { regulation: "BSA/AML", classification: "High-Risk", requirements: ["Transaction monitoring", "SAR filing automation", "Customer due diligence"], autoApplied: true },
+    { regulation: "SOX Section 404", classification: "Critical", requirements: ["Audit trail immutability", "Access control segregation", "Financial data integrity"], autoApplied: true },
+    { regulation: "PCI-DSS", classification: "High-Risk", requirements: ["Data encryption at rest/transit", "Access logging", "Vulnerability scanning"], autoApplied: true },
+    { regulation: "EU AI Act", classification: "High-Risk", requirements: ["Human oversight capability", "Bias testing", "Transparency documentation"], autoApplied: false },
+  ],
+  healthcare: [
+    { regulation: "HIPAA", classification: "Critical", requirements: ["PHI encryption", "Access audit trails", "Minimum necessary standard"], autoApplied: true },
+    { regulation: "HITECH", classification: "High-Risk", requirements: ["Breach notification", "EHR interoperability", "Meaningful use compliance"], autoApplied: true },
+    { regulation: "FDA 21 CFR Part 11", classification: "High-Risk", requirements: ["Electronic signature validation", "Audit trails", "Data integrity"], autoApplied: false },
+    { regulation: "CMS Conditions of Participation", classification: "Medium", requirements: ["Quality reporting", "Patient safety protocols", "Care coordination"], autoApplied: true },
+  ],
+  manufacturing: [
+    { regulation: "ISO 9001", classification: "High-Risk", requirements: ["Quality management documentation", "Corrective action tracking", "Management review records"], autoApplied: true },
+    { regulation: "OSHA", classification: "Critical", requirements: ["Safety incident reporting", "Hazard communication", "PPE compliance tracking"], autoApplied: true },
+    { regulation: "EPA Regulations", classification: "Medium", requirements: ["Emissions monitoring", "Waste disposal tracking", "Environmental impact reporting"], autoApplied: false },
+  ],
+  insurance: [
+    { regulation: "State Insurance Regulations", classification: "Critical", requirements: ["Rate filing compliance", "Market conduct standards", "Claims handling requirements"], autoApplied: true },
+    { regulation: "NAIC Model Laws", classification: "High-Risk", requirements: ["Solvency monitoring", "Unfair trade practices", "Producer licensing"], autoApplied: true },
+    { regulation: "ACORD Standards", classification: "Medium", requirements: ["Data format compliance", "Transaction standards", "Interoperability requirements"], autoApplied: true },
+  ],
+  retail: [
+    { regulation: "PCI-DSS", classification: "High-Risk", requirements: ["Cardholder data protection", "Network security", "Access control"], autoApplied: true },
+    { regulation: "CCPA/CPRA", classification: "High-Risk", requirements: ["Data subject rights", "Privacy notices", "Opt-out mechanisms"], autoApplied: true },
+    { regulation: "FTC Act", classification: "Medium", requirements: ["Advertising compliance", "Consumer protection", "Data security standards"], autoApplied: false },
+  ],
+};
 
 function extractProposal(content: string): OutcomeProposal | null {
   const jsonMatch = content.match(/```json\s*([\s\S]*?)```/);
@@ -140,9 +258,20 @@ function renderMessageContent(content: string) {
   );
 }
 
+function getEstCost(riskTier: string): string {
+  if (riskTier === "HIGH") return "$0.10-$0.30/run";
+  if (riskTier === "MEDIUM") return "$0.05-$0.15/run";
+  return "$0.01-$0.05/run";
+}
+
+function getMcpConnections(tools: string[]): string[] {
+  return tools.filter(t => /api|system|platform/i.test(t)).slice(0, 2);
+}
+
 export default function OutcomeDiscover() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
+  const { industry } = useIndustry();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -160,10 +289,20 @@ export default function OutcomeDiscover() {
   const [liveTranscript, setLiveTranscript] = useState("");
   const [interimText, setInterimText] = useState("");
   const [analysisFailed, setAnalysisFailed] = useState(false);
+  const [enhancingOutcome, setEnhancingOutcome] = useState(false);
+  const [generatingKpis, setGeneratingKpis] = useState(false);
+  const [detectingRegulations, setDetectingRegulations] = useState(false);
+  const [showKpiBenchmarks, setShowKpiBenchmarks] = useState(false);
+  const [expandedRegulations, setExpandedRegulations] = useState<Set<number>>(new Set());
   const chatEndRef = useRef<HTMLDivElement>(null);
   const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const speechRecognitionRef = useRef<any>(null);
   const pendingChunksRef = useRef<Blob[]>([]);
+
+  const starterPrompts = INDUSTRY_STARTER_PROMPTS[(industry?.id ?? "null") as keyof typeof INDUSTRY_STARTER_PROMPTS] || INDUSTRY_STARTER_PROMPTS["null"];
+
+  const industryKpis = industry && industry.id !== "custom" ? INDUSTRY_KPI_LIBRARY[industry.id] : null;
+  const regulatoryConstraints = industry && industry.id !== "custom" ? INDUSTRY_REGULATORY_CONSTRAINTS[industry.id] : null;
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -215,7 +354,7 @@ export default function OutcomeDiscover() {
       const res = await fetch("/api/ai/outcome-discover", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: newMessages }),
+        body: JSON.stringify({ messages: newMessages, industry: industry || undefined }),
       });
 
       if (!res.ok) throw new Error("Discovery request failed");
@@ -280,6 +419,81 @@ export default function OutcomeDiscover() {
       else next.add(idx);
       return next;
     });
+  }
+
+  function toggleRegulation(idx: number) {
+    setExpandedRegulations((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      return next;
+    });
+  }
+
+  async function handleEnhanceOutcome() {
+    if (!proposal || enhancingOutcome) return;
+    setEnhancingOutcome(true);
+    try {
+      const res = await fetch("/api/ai/enhance-outcome", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ proposal }),
+      });
+      if (!res.ok) throw new Error("Enhancement failed");
+      const data = await res.json();
+      setProposal(data);
+      toast({ title: "Outcome enhanced", description: "AI has improved the outcome contract." });
+    } catch (err: any) {
+      toast({ title: "Enhancement failed", description: err.message || "Could not enhance outcome.", variant: "destructive" });
+    } finally {
+      setEnhancingOutcome(false);
+    }
+  }
+
+  async function handleGenerateKpis() {
+    if (!proposal || generatingKpis) return;
+    setGeneratingKpis(true);
+    try {
+      const res = await fetch("/api/ai/generate-kpis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: proposal.outcomeContract.name,
+          description: proposal.outcomeContract.description,
+          industry: industry?.id || null,
+        }),
+      });
+      if (!res.ok) throw new Error("KPI generation failed");
+      const data = await res.json();
+      setProposal((prev) => prev ? { ...prev, kpis: data.kpis || data } : prev);
+      toast({ title: "KPIs generated", description: "AI has generated success metrics." });
+    } catch (err: any) {
+      toast({ title: "KPI generation failed", description: err.message || "Could not generate KPIs.", variant: "destructive" });
+    } finally {
+      setGeneratingKpis(false);
+    }
+  }
+
+  async function handleDetectRegulations() {
+    if (!proposal || detectingRegulations) return;
+    setDetectingRegulations(true);
+    try {
+      const res = await fetch("/api/ai/regulatory-constraints", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          description: proposal.outcomeContract.description,
+          industry: industry?.id || null,
+        }),
+      });
+      if (!res.ok) throw new Error("Regulatory detection failed");
+      const data = await res.json();
+      toast({ title: "Regulations detected", description: `Found ${data.length || 0} applicable regulations.` });
+    } catch (err: any) {
+      toast({ title: "Detection failed", description: err.message || "Could not detect regulations.", variant: "destructive" });
+    } finally {
+      setDetectingRegulations(false);
+    }
   }
 
   async function startRecording() {
@@ -471,7 +685,7 @@ export default function OutcomeDiscover() {
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full">
-                {STARTER_PROMPTS.map((sp, i) => (
+                {starterPrompts.map((sp, i) => (
                   <Card
                     key={i}
                     className="hover-elevate cursor-pointer"
@@ -817,9 +1031,21 @@ export default function OutcomeDiscover() {
               <div className="p-4 flex flex-col gap-4">
                 <Card>
                   <CardHeader className="p-3 pb-1">
-                    <CardTitle className="text-xs font-medium text-muted-foreground flex items-center gap-1.5 flex-wrap">
-                      <Target className="w-3.5 h-3.5" />
-                      Outcome Contract
+                    <CardTitle className="text-xs font-medium text-muted-foreground flex items-center justify-between gap-1.5 flex-wrap">
+                      <div className="flex items-center gap-1.5">
+                        <Target className="w-3.5 h-3.5" />
+                        Outcome Contract
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleEnhanceOutcome}
+                        disabled={enhancingOutcome}
+                        data-testid="button-ai-enhance-outcome"
+                      >
+                        {enhancingOutcome ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Sparkles className="w-3.5 h-3.5 mr-1" />}
+                        AI Enhance
+                      </Button>
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="p-3 pt-0 flex flex-col gap-2">
@@ -834,9 +1060,21 @@ export default function OutcomeDiscover() {
 
                 <Card>
                   <CardHeader className="p-3 pb-1">
-                    <CardTitle className="text-xs font-medium text-muted-foreground flex items-center gap-1.5 flex-wrap">
-                      <BarChart3 className="w-3.5 h-3.5" />
-                      Success Metrics ({proposal.kpis.length} KPIs)
+                    <CardTitle className="text-xs font-medium text-muted-foreground flex items-center justify-between gap-1.5 flex-wrap">
+                      <div className="flex items-center gap-1.5">
+                        <BarChart3 className="w-3.5 h-3.5" />
+                        Success Metrics ({proposal.kpis.length} KPIs)
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleGenerateKpis}
+                        disabled={generatingKpis}
+                        data-testid="button-ai-generate-kpis"
+                      >
+                        {generatingKpis ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Sparkles className="w-3.5 h-3.5 mr-1" />}
+                        AI Generate KPIs
+                      </Button>
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="p-3 pt-0 flex flex-col gap-2">
@@ -859,6 +1097,42 @@ export default function OutcomeDiscover() {
                   </CardContent>
                 </Card>
 
+                {industryKpis && (
+                  <Card>
+                    <CardHeader className="p-3 pb-1">
+                      <CardTitle
+                        className="text-xs font-medium text-muted-foreground flex items-center justify-between gap-1.5 cursor-pointer flex-wrap"
+                        onClick={() => setShowKpiBenchmarks(!showKpiBenchmarks)}
+                        data-testid="button-toggle-kpi-benchmarks"
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <BookOpen className="w-3.5 h-3.5" />
+                          Industry KPI Benchmarks
+                        </div>
+                        <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showKpiBenchmarks ? "rotate-180" : ""}`} />
+                      </CardTitle>
+                    </CardHeader>
+                    {showKpiBenchmarks && (
+                      <CardContent className="p-3 pt-0 flex flex-col gap-2">
+                        {industryKpis.map((kpi, i) => (
+                          <div key={i} className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/50" data-testid={`industry-kpi-${i}`}>
+                            <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+                              <span className="text-xs font-medium">{kpi.name}</span>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-[10px] text-green-600 dark:text-green-400">Target: {kpi.target}</span>
+                                <span className="text-[10px] text-muted-foreground">Benchmark: {kpi.benchmark}</span>
+                              </div>
+                            </div>
+                            <Button variant="ghost" size="icon" data-testid={`button-add-kpi-${i}`}>
+                              <Plus className="w-3 h-3" />
+                            </Button>
+                          </div>
+                        ))}
+                      </CardContent>
+                    )}
+                  </Card>
+                )}
+
                 <Card>
                   <CardHeader className="p-3 pb-1">
                     <CardTitle className="text-xs font-medium text-muted-foreground flex items-center gap-1.5 flex-wrap">
@@ -867,29 +1141,128 @@ export default function OutcomeDiscover() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="p-3 pt-0 flex flex-col gap-2">
-                    {proposal.proposedAgents.map((agent, i) => (
-                      <div key={i} className="flex flex-col gap-1.5 p-2 rounded-md bg-muted/50" data-testid={`agent-proposal-${i}`}>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-xs font-semibold">{agent.name}</span>
-                          <Badge variant="outline" className="text-[10px]">{agent.autonomyMode}</Badge>
-                        </div>
-                        <span className="text-[11px] text-muted-foreground">{agent.description}</span>
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-[10px] font-medium text-muted-foreground">Workflow:</span>
-                          <div className="flex items-center gap-1 flex-wrap">
-                            {agent.workflowSteps.map((step, j) => (
-                              <span key={j} className="flex items-center gap-0.5">
-                                {j > 0 && <ChevronRight className="w-2.5 h-2.5 text-muted-foreground" />}
-                                <Badge variant="secondary" className="text-[9px]">{step}</Badge>
-                              </span>
-                            ))}
+                    {proposal.proposedAgents.map((agent, i) => {
+                      const skills = agent.tools.slice(0, 3);
+                      const mcpConns = getMcpConnections(agent.tools);
+                      const governanceLabel = industry && industry.id !== "custom"
+                        ? `${industry.label} compliance policies`
+                        : "Standard governance policies";
+                      const estCost = getEstCost(agent.riskTier);
+
+                      return (
+                        <div key={i} className="flex flex-col gap-1.5 p-2 rounded-md bg-muted/50" data-testid={`agent-proposal-${i}`}>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-semibold">{agent.name}</span>
+                            <Badge variant="outline" className="text-[10px]">{agent.autonomyMode}</Badge>
+                          </div>
+                          <span className="text-[11px] text-muted-foreground">{agent.description}</span>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-[10px] font-medium text-muted-foreground">Workflow:</span>
+                            <div className="flex items-center gap-1 flex-wrap">
+                              {agent.workflowSteps.map((step, j) => (
+                                <span key={j} className="flex items-center gap-0.5">
+                                  {j > 0 && <ChevronRight className="w-2.5 h-2.5 text-muted-foreground" />}
+                                  <Badge variant="secondary" className="text-[9px]">{step}</Badge>
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                          <span className="text-[10px] text-green-600 dark:text-green-400">{agent.estimatedImpact}</span>
+                          {skills.length > 0 && (
+                            <div className="flex flex-col gap-0.5">
+                              <span className="text-[10px] font-medium text-muted-foreground">Recommended Skills:</span>
+                              <div className="flex items-center gap-1 flex-wrap">
+                                {skills.map((skill, j) => (
+                                  <Badge key={j} variant="secondary" className="text-[9px]">{skill}</Badge>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {mcpConns.length > 0 && (
+                            <div className="flex flex-col gap-0.5">
+                              <span className="text-[10px] font-medium text-muted-foreground">MCP Connections:</span>
+                              <div className="flex items-center gap-1 flex-wrap">
+                                {mcpConns.map((conn, j) => (
+                                  <Badge key={j} variant="outline" className="text-[9px]">{conn}</Badge>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+                              <Shield className="w-3 h-3" /> Auto-applied: {governanceLabel}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+                              <DollarSign className="w-3 h-3" /> {estCost}
+                            </span>
                           </div>
                         </div>
-                        <span className="text-[10px] text-green-600 dark:text-green-400">{agent.estimatedImpact}</span>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </CardContent>
                 </Card>
+
+                {regulatoryConstraints && (
+                  <Card>
+                    <CardHeader className="p-3 pb-1">
+                      <CardTitle className="text-xs font-medium text-muted-foreground flex items-center justify-between gap-1.5 flex-wrap">
+                        <div className="flex items-center gap-1.5">
+                          <Shield className="w-3.5 h-3.5" />
+                          Regulatory Constraints
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={handleDetectRegulations}
+                          disabled={detectingRegulations}
+                          data-testid="button-ai-detect-regulations"
+                        >
+                          {detectingRegulations ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Sparkles className="w-3.5 h-3.5 mr-1" />}
+                          AI Detect
+                        </Button>
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-3 pt-0 flex flex-col gap-2">
+                      {regulatoryConstraints.map((reg, i) => (
+                        <div key={i} className="flex flex-col gap-1.5 p-2 rounded-md bg-muted/50" data-testid={`regulatory-constraint-${i}`}>
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-xs font-medium">{reg.regulation}</span>
+                              <Badge
+                                variant={reg.classification === "Critical" ? "destructive" : reg.classification === "High-Risk" ? "default" : "outline"}
+                                className="text-[9px]"
+                              >
+                                {reg.classification}
+                              </Badge>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              {reg.autoApplied ? (
+                                <Check className="w-3.5 h-3.5 text-green-600 dark:text-green-400" />
+                              ) : (
+                                <Minus className="w-3.5 h-3.5 text-muted-foreground" />
+                              )}
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => toggleRegulation(i)}
+                                data-testid={`button-toggle-regulation-${i}`}
+                              >
+                                <ChevronDown className={`w-3 h-3 transition-transform ${expandedRegulations.has(i) ? "rotate-180" : ""}`} />
+                              </Button>
+                            </div>
+                          </div>
+                          {expandedRegulations.has(i) && (
+                            <div className="flex flex-col gap-1 pl-2 border-l-2 border-muted ml-1">
+                              {reg.requirements.map((req, j) => (
+                                <span key={j} className="text-[10px] text-muted-foreground">{req}</span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </CardContent>
+                  </Card>
+                )}
 
                 <Card>
                   <CardHeader className="p-3 pb-1">

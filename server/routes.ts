@@ -5248,12 +5248,14 @@ Guidelines:
       if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
         return res.status(503).json({ error: "AI assistant is not configured" });
       }
-      const { messages, discoveryContext } = req.body;
+      const { messages, discoveryContext, industry } = req.body;
 
       const templates = await storage.getAgentTemplates();
       const outcomes = await storage.getOutcomes();
 
-      const systemPrompt = `You are a Business Outcome Discovery Assistant for the ALMP (Agent Lifecycle Management Platform). You help non-technical business users define what they want to achieve, then propose AI agent solutions.
+      const industryContext = industry ? `\n\nIMPORTANT: The user is operating in the "${industry.label}" industry workspace. Tailor all suggestions, KPIs, agent designs, and compliance considerations to this industry. Use industry-standard terminology and reference relevant regulations (${industry.id === 'financial_services' ? 'BSA/AML, SOX, PCI-DSS, EU AI Act' : industry.id === 'healthcare' ? 'HIPAA, HITECH, CMS, FDA 21 CFR Part 11' : industry.id === 'manufacturing' ? 'ISO 9001, OSHA, EPA' : industry.id === 'insurance' ? 'State Insurance Regulations, NAIC, ACORD' : industry.id === 'retail' ? 'PCI-DSS, CCPA/CPRA, FTC Act' : 'general compliance frameworks'}). When proposing agents, include industry-specific skills, MCP connections for industry systems, and note which governance policies will auto-apply.` : '';
+
+      const systemPrompt = `You are a Business Outcome Discovery Assistant for the ALMP (Agent Lifecycle Management Platform). You help non-technical business users define what they want to achieve, then propose AI agent solutions.${industryContext}
 
 Your role is to:
 1. LISTEN to business problems described in plain language (e.g., "our customer churn is too high", "support tickets take too long")
@@ -5349,6 +5351,97 @@ Guidelines:
       } else {
         res.status(500).json({ error: "Discovery assistant failed" });
       }
+    }
+  });
+
+  app.post("/api/ai/enhance-outcome", async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI is not configured" });
+      }
+      const { proposal, industry } = req.body;
+      if (!proposal) return res.status(400).json({ error: "No proposal provided" });
+
+      const industryNote = industry ? `The user operates in the "${industry.label}" industry. Use industry-standard terminology, reference relevant regulations, and ensure the outcome aligns with ${industry.label} best practices.` : '';
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1-mini",
+        messages: [
+          {
+            role: "system",
+            content: `You are an AI outcome contract enhancer. Given an outcome proposal, improve its name, description, risk assessment, and pricing to be more precise, measurable, and industry-appropriate. ${industryNote} Return a JSON object with the same structure as the input outcomeContract (name, description, riskTier, pricingModel, pricePerUnit, riskThreshold, maxDriftPercent). Only return the JSON, no markdown.`,
+          },
+          { role: "user", content: JSON.stringify(proposal.outcomeContract) },
+        ],
+        max_completion_tokens: 1000,
+        response_format: { type: "json_object" },
+      });
+
+      const enhanced = JSON.parse(response.choices[0]?.message?.content || "{}");
+      res.json(enhanced);
+    } catch (error) {
+      console.error("Enhance outcome error:", error);
+      res.status(500).json({ error: "Failed to enhance outcome" });
+    }
+  });
+
+  app.post("/api/ai/generate-kpis", async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI is not configured" });
+      }
+      const { outcomeName, outcomeDescription, industry, existingKpis } = req.body;
+
+      const industryNote = industry ? `The user operates in the "${industry.label}" industry. Use industry-standard KPIs, benchmarks, and measurement methods specific to ${industry.label}. Reference standards like ${industry.id === 'financial_services' ? 'SLA adherence, STP rates, false positive rates' : industry.id === 'healthcare' ? 'HEDIS measures, CMS Star ratings, readmission rates' : industry.id === 'manufacturing' ? 'OEE, MTBF, MTTR, first-pass yield' : industry.id === 'insurance' ? 'loss ratio, combined ratio, claims cycle time' : industry.id === 'retail' ? 'forecast accuracy, conversion rate, inventory turnover' : 'industry-standard metrics'}.` : '';
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1-mini",
+        messages: [
+          {
+            role: "system",
+            content: `You are an AI KPI generator for outcome contracts. Given an outcome name and description, generate 3-5 highly specific, measurable KPIs. ${industryNote} Return a JSON object with a "kpis" array where each KPI has: name (string), target (number), unit (string like %, count, $, minutes), measurement (string describing how to measure), currentBaseline (number or null). Only return the JSON.`,
+          },
+          { role: "user", content: `Outcome: ${outcomeName}\nDescription: ${outcomeDescription}\nExisting KPIs: ${JSON.stringify(existingKpis || [])}` },
+        ],
+        max_completion_tokens: 1500,
+        response_format: { type: "json_object" },
+      });
+
+      const result = JSON.parse(response.choices[0]?.message?.content || '{"kpis":[]}');
+      res.json(result);
+    } catch (error) {
+      console.error("Generate KPIs error:", error);
+      res.status(500).json({ error: "Failed to generate KPIs" });
+    }
+  });
+
+  app.post("/api/ai/regulatory-constraints", async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI is not configured" });
+      }
+      const { outcomeDescription, industry } = req.body;
+
+      if (!industry) return res.status(400).json({ error: "Industry context required" });
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1-mini",
+        messages: [
+          {
+            role: "system",
+            content: `You are a regulatory compliance analyst. Given a business outcome description and an industry, identify all applicable regulations, classify their risk level, list specific requirements that auto-apply, and flag any high-risk AI Act classifications. Return a JSON object with a "constraints" array where each item has: regulation (string), classification (one of "Critical", "High-Risk", "Medium"), requirements (string array of specific requirements), autoApplied (boolean - true if this should be automatically enforced), rationale (string - brief explanation of why this regulation applies to this outcome).`,
+          },
+          { role: "user", content: `Industry: ${industry.label} (${industry.id})\nOutcome: ${outcomeDescription}` },
+        ],
+        max_completion_tokens: 1500,
+        response_format: { type: "json_object" },
+      });
+
+      const result = JSON.parse(response.choices[0]?.message?.content || '{"constraints":[]}');
+      res.json(result);
+    } catch (error) {
+      console.error("Regulatory constraints error:", error);
+      res.status(500).json({ error: "Failed to detect regulatory constraints" });
     }
   });
 
