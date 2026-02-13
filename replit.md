@@ -30,6 +30,7 @@ The platform utilizes a modern web stack: React, Vite, Tailwind CSS, shadcn/ui, 
 - **Outcome Builder**: Conversational AI for defining goals and drafting outcome contracts.
 - **Role-based Access**: Six switchable personas for tailored access.
 - **Global App Shell**: Provides environment selection, search, command palette, notifications, and role switcher.
+- **Sidebar Navigation**: Organized into 6 collapsible groups (Core, Build, Evaluate, Deploy & Observe, Govern, System) with ~15 top-level items. Sub-pages (Skill Studio, Skill Composer, Policy Engine, Approval Gates, Ops, Self-Heal, MCP Apps, Marketplace, Outcome Builder) are accessed from within their parent pages via buttons/links rather than the sidebar.
 - **Agent Skills Library**: Catalog of composable, versioned skill units with industry-organized browsing, search, filtering, and comparison features.
 - **Industry Workspace Selector**: Global context switch adapting platform terminology and activating regulatory frameworks based on selected industry profiles (Financial Services, Healthcare, Manufacturing, Retail, Custom). Includes a Department Layer for granular framework activation and agent assignment.
 

@@ -55,7 +55,7 @@ import { WhyBadge } from "@/components/why-badge";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { formatDate } from "@/components/shared-utils";
-import { useLocation } from "wouter";
+import { useLocation, Link } from "wouter";
 import type { Patch, Experiment, Agent } from "@shared/schema";
 
 interface TimelineEntry {
@@ -458,19 +458,33 @@ export default function Optimization() {
 
   return (
     <div className="flex flex-col gap-6 p-6" data-testid="page-optimization">
-      <div className="flex flex-col gap-1">
-        <h1
-          className="text-2xl font-semibold tracking-tight"
-          data-testid="text-page-title"
-        >
-          Optimization
-        </h1>
-        <p
-          className="text-sm text-muted-foreground"
-          data-testid="text-page-subtitle"
-        >
-          Autonomous Optimization & Self-Healing Patch Center
-        </p>
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex flex-col gap-1">
+          <h1
+            className="text-2xl font-semibold tracking-tight"
+            data-testid="text-page-title"
+          >
+            Optimization
+          </h1>
+          <p
+            className="text-sm text-muted-foreground"
+            data-testid="text-page-subtitle"
+          >
+            Autonomous Optimization & Self-Healing Patch Center
+          </p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Link href="/improvements">
+            <Button variant="outline" data-testid="button-ops">
+              <Wrench className="w-4 h-4 mr-1.5" /> Ops
+            </Button>
+          </Link>
+          <Link href="/improvement-loop">
+            <Button variant="outline" data-testid="button-self-heal">
+              <RefreshCw className="w-4 h-4 mr-1.5" /> Self-Heal
+            </Button>
+          </Link>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

@@ -37,7 +37,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "AD",
     description: "Full platform access, user management, system configuration",
     icon: ShieldCheck,
-    allowedRoutes: ["/dashboard", "/outcomes", "/outcomes/discover", "/agents", "/templates", "/blueprints", "/evals", "/golden-datasets", "/deployments", "/monitor", "/governance", "/audit-trail", "/approvals", "/billing", "/improvements", "/improvement-loop", "/integrations", "/admin", "/ontology", "/skills"],
+    allowedRoutes: ["/dashboard", "/outcomes", "/agents", "/templates", "/blueprints", "/evals", "/golden-datasets", "/deployments", "/monitor", "/governance", "/audit-trail", "/approvals", "/billing", "/optimization", "/improvements", "/improvement-loop", "/integrations", "/admin", "/ontology", "/skills"],
   },
   {
     id: "outcome_owner",
@@ -46,7 +46,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "OO",
     description: "Defines KPIs, sees ROI, approves outcome contracts",
     icon: Target,
-    allowedRoutes: ["/dashboard", "/outcomes", "/outcomes/discover", "/billing", "/approvals", "/agents", "/monitor", "/golden-datasets", "/ontology", "/skills"],
+    allowedRoutes: ["/dashboard", "/outcomes", "/billing", "/approvals", "/agents", "/monitor", "/golden-datasets", "/ontology", "/skills"],
   },
   {
     id: "agent_engineer",
@@ -55,7 +55,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "AE",
     description: "Designs blueprints, tools, memory, eval suites",
     icon: Bot,
-    allowedRoutes: ["/dashboard", "/agents", "/templates", "/blueprints", "/evals", "/golden-datasets", "/improvements", "/improvement-loop", "/outcomes/discover", "/integrations", "/deployments", "/ontology", "/skills"],
+    allowedRoutes: ["/dashboard", "/agents", "/templates", "/blueprints", "/evals", "/golden-datasets", "/optimization", "/improvements", "/improvement-loop", "/outcomes", "/integrations", "/deployments", "/ontology", "/skills"],
   },
   {
     id: "ops_sre",
@@ -64,7 +64,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "SR",
     description: "Monitoring, incidents, reliability, rollback, cost controls",
     icon: Activity,
-    allowedRoutes: ["/dashboard", "/deployments", "/monitor", "/agents", "/improvements", "/improvement-loop", "/integrations", "/governance", "/golden-datasets", "/ontology", "/skills"],
+    allowedRoutes: ["/dashboard", "/deployments", "/monitor", "/agents", "/optimization", "/improvements", "/improvement-loop", "/integrations", "/governance", "/golden-datasets", "/ontology", "/skills"],
   },
   {
     id: "compliance_security",

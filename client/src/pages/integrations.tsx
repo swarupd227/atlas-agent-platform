@@ -1138,6 +1138,21 @@ export default function Integrations() {
             </CardContent>
           </Link>
         </Card>
+
+        <Card className="hover-elevate" data-testid="card-marketplace-link">
+          <Link href="/integrations/marketplace">
+            <CardContent className="flex items-center gap-4 py-4 cursor-pointer">
+              <div className="flex items-center justify-center w-10 h-10 rounded-md bg-muted shrink-0">
+                <Tag className="w-5 h-5 text-amber-500" />
+              </div>
+              <div className="flex flex-col gap-0.5 flex-1">
+                <span className="text-sm font-medium">Marketplace</span>
+                <span className="text-xs text-muted-foreground">Browse and install community-contributed agents, skills, and integration packages</span>
+              </div>
+              <Badge variant="secondary" className="text-[10px]">Store</Badge>
+            </CardContent>
+          </Link>
+        </Card>
       </div>
 
       <Tabs defaultValue="catalog" data-testid="tabs-integrations">

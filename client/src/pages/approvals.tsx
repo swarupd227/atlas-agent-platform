@@ -639,11 +639,18 @@ export default function Approvals() {
 
   return (
     <div className="flex flex-col gap-6 p-6" data-testid="page-approvals">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Approval Queue</h1>
-        <p className="text-sm text-muted-foreground">
-          Expert validation console - the 20% supervision layer
-        </p>
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-2xl font-semibold tracking-tight">Approval Queue</h1>
+          <p className="text-sm text-muted-foreground">
+            Expert validation console - the 20% supervision layer
+          </p>
+        </div>
+        <Link href="/approvals/gates">
+          <Button variant="outline" data-testid="button-approval-gates">
+            <Shield className="w-4 h-4 mr-1.5" /> Approval Gates
+          </Button>
+        </Link>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

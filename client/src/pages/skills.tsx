@@ -259,7 +259,17 @@ export default function SkillCatalog() {
               Portable industry expertise encoded as composable, versioned skill units
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Link href="/skills/studio">
+              <Button variant="outline" size="sm" data-testid="button-skill-studio">
+                <Pencil className="w-4 h-4 mr-1" /> Skill Studio
+              </Button>
+            </Link>
+            <Link href="/skills/composer">
+              <Button variant="outline" size="sm" data-testid="button-skill-composer">
+                <Link2 className="w-4 h-4 mr-1" /> Skill Composer
+              </Button>
+            </Link>
             <Badge variant="secondary" className="text-xs" data-testid="badge-total-skills">
               {skills.length} Skills
             </Badge>

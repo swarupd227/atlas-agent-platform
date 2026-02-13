@@ -1,5 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useMemo } from "react";
+import { Link } from "wouter";
 import {
   Shield,
   Plus,
@@ -1189,73 +1190,80 @@ export default function Governance() {
             Policy-as-code, compliance controls, and audit trail
           </p>
         </div>
-        {!policyPerm.allowed ? (
-          <Button disabled title="You do not have permission to create policies" data-testid="button-create-policy">
-            <Plus className="w-4 h-4 mr-1.5" /> New Policy
-          </Button>
-        ) : (
-        <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-          <DialogTrigger asChild>
-            <Button data-testid="button-create-policy">
-              <Plus className="w-4 h-4 mr-1.5" /> New Policy
-              {policyPerm.permission.access === "conditional" && policyPerm.permission.annotation && (
-                <Badge variant="secondary" className="text-[10px] ml-1">{policyPerm.permission.annotation}</Badge>
-              )}
+        <div className="flex items-center gap-2 flex-wrap">
+          <Link href="/governance/policy-engine">
+            <Button variant="outline" data-testid="button-policy-engine">
+              <Scale className="w-4 h-4 mr-1.5" /> Policy Engine
             </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Create Policy</DialogTitle>
-            </DialogHeader>
-            <form
-              className="flex flex-col gap-4"
-              onSubmit={(e) => {
-                e.preventDefault();
-                const fd = new FormData(e.currentTarget);
-                createMutation.mutate({
-                  name: fd.get("name") as string,
-                  domain: fd.get("domain") as string,
-                  description: fd.get("description") as string,
-                  scopeType: fd.get("scopeType") as string,
-                });
-              }}
-            >
-              <div className="flex flex-col gap-2">
-                <Label>Policy Name</Label>
-                <Input name="name" required placeholder="e.g., No PII in Response" data-testid="input-policy-name" />
-              </div>
-              <div className="flex flex-col gap-2">
-                <Label>Description</Label>
-                <Textarea name="description" placeholder="What does this policy enforce?" data-testid="input-policy-description" />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="flex flex-col gap-2">
-                  <Label>Domain</Label>
-                  <select name="domain" className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm" defaultValue="data_handling">
-                    <option value="data_handling">Data Handling</option>
-                    <option value="tool_permissions">Tool Permissions</option>
-                    <option value="logging">Logging/Redaction</option>
-                    <option value="allowed_actions">Allowed Actions</option>
-                    <option value="content_boundaries">Content Boundaries</option>
-                  </select>
-                </div>
-                <div className="flex flex-col gap-2">
-                  <Label>Scope</Label>
-                  <select name="scopeType" className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm" defaultValue="org">
-                    <option value="org">Organization</option>
-                    <option value="outcome">Outcome</option>
-                    <option value="agent">Agent</option>
-                    <option value="env">Environment</option>
-                  </select>
-                </div>
-              </div>
-              <Button type="submit" disabled={createMutation.isPending} data-testid="button-submit-policy">
-                {createMutation.isPending ? "Creating..." : "Create Policy"}
-              </Button>
-            </form>
-          </DialogContent>
-        </Dialog>
-        )}
+          </Link>
+          {!policyPerm.allowed ? (
+            <Button disabled title="You do not have permission to create policies" data-testid="button-create-policy">
+              <Plus className="w-4 h-4 mr-1.5" /> New Policy
+            </Button>
+          ) : (
+            <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+              <DialogTrigger asChild>
+                <Button data-testid="button-create-policy">
+                  <Plus className="w-4 h-4 mr-1.5" /> New Policy
+                  {policyPerm.permission.access === "conditional" && policyPerm.permission.annotation && (
+                    <Badge variant="secondary" className="text-[10px] ml-1">{policyPerm.permission.annotation}</Badge>
+                  )}
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Create Policy</DialogTitle>
+                </DialogHeader>
+                <form
+                  className="flex flex-col gap-4"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const fd = new FormData(e.currentTarget);
+                    createMutation.mutate({
+                      name: fd.get("name") as string,
+                      domain: fd.get("domain") as string,
+                      description: fd.get("description") as string,
+                      scopeType: fd.get("scopeType") as string,
+                    });
+                  }}
+                >
+                  <div className="flex flex-col gap-2">
+                    <Label>Policy Name</Label>
+                    <Input name="name" required placeholder="e.g., No PII in Response" data-testid="input-policy-name" />
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <Label>Description</Label>
+                    <Textarea name="description" placeholder="What does this policy enforce?" data-testid="input-policy-description" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="flex flex-col gap-2">
+                      <Label>Domain</Label>
+                      <select name="domain" className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm" defaultValue="data_handling">
+                        <option value="data_handling">Data Handling</option>
+                        <option value="tool_permissions">Tool Permissions</option>
+                        <option value="logging">Logging/Redaction</option>
+                        <option value="allowed_actions">Allowed Actions</option>
+                        <option value="content_boundaries">Content Boundaries</option>
+                      </select>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <Label>Scope</Label>
+                      <select name="scopeType" className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm" defaultValue="org">
+                        <option value="org">Organization</option>
+                        <option value="outcome">Outcome</option>
+                        <option value="agent">Agent</option>
+                        <option value="env">Environment</option>
+                      </select>
+                    </div>
+                  </div>
+                  <Button type="submit" disabled={createMutation.isPending} data-testid="button-submit-policy">
+                    {createMutation.isPending ? "Creating..." : "Create Policy"}
+                  </Button>
+                </form>
+              </DialogContent>
+            </Dialog>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
