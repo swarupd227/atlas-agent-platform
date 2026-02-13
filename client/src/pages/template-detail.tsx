@@ -470,6 +470,7 @@ export default function TemplateDetail() {
           rollbackTargetVersion: enhanced.rollbackPlan.rollbackTargetVersion || "previous_stable",
         };
       }
+      if (enhanced.complianceCertifications && Array.isArray(enhanced.complianceCertifications)) merged.complianceCertifications = enhanced.complianceCertifications;
       if (enhanced.tags && Array.isArray(enhanced.tags)) merged.tags = enhanced.tags;
       if (enhanced.complexity && ["low","medium","high"].includes(enhanced.complexity)) merged.complexity = enhanced.complexity;
       if (enhanced.defaultRiskTier && ["LOW","MEDIUM","HIGH","CRITICAL"].includes(enhanced.defaultRiskTier)) merged.defaultRiskTier = enhanced.defaultRiskTier;
@@ -1558,6 +1559,90 @@ export default function TemplateDetail() {
                 </CardContent>
               </Card>
 
+              {/* 3b. Permissions */}
+              <Card data-testid="card-permissions">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <Lock className="w-4 h-4 text-primary" /> Permissions
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-2">
+                  {permissions ? (
+                    <>
+                      {(permissions.dataAccess || []).length > 0 && (
+                        <div className="text-xs" data-testid="section-view-data-access">
+                          <span className="text-muted-foreground font-medium">Data Access: </span>
+                          <div className="flex items-center gap-1 mt-1 flex-wrap">
+                            {permissions.dataAccess!.map((a) => (
+                              <Badge key={a} variant="outline" className="text-[10px]" data-testid={`badge-data-access-${a}`}>{a}</Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {(permissions.apiAccess || []).length > 0 && (
+                        <div className="text-xs" data-testid="section-view-api-access">
+                          <span className="text-muted-foreground font-medium">API Access: </span>
+                          <div className="flex items-center gap-1 mt-1 flex-wrap">
+                            {permissions.apiAccess!.map((a) => (
+                              <Badge key={a} variant="outline" className="text-[10px]" data-testid={`badge-api-access-${a}`}>{a}</Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {(permissions.writeAccess || []).length > 0 && (
+                        <div className="text-xs" data-testid="section-view-write-access">
+                          <span className="text-muted-foreground font-medium">Write Access: </span>
+                          <div className="flex items-center gap-1 mt-1 flex-wrap">
+                            {permissions.writeAccess!.map((a) => (
+                              <Badge key={a} variant="outline" className="text-[10px]" data-testid={`badge-write-access-${a}`}>{a}</Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">No permissions configured</p>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* 3c. Memory & RAG */}
+              <Card data-testid="card-memory-rag">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <Brain className="w-4 h-4 text-primary" /> Memory & RAG
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-2">
+                  {memory ? (
+                    <>
+                      <div className="text-xs">
+                        <span className="text-muted-foreground font-medium">Vector Store: </span>
+                        <span data-testid="text-view-vector-store">{memory.vectorStore}</span>
+                      </div>
+                      <div className="text-xs">
+                        <span className="text-muted-foreground font-medium">Retrieval Strategy: </span>
+                        <span data-testid="text-view-retrieval-strategy">{memory.retrievalStrategy}</span>
+                      </div>
+                      <div className="text-xs">
+                        <span className="text-muted-foreground font-medium">Chunk Size: </span>
+                        <span data-testid="text-view-chunk-size">{memory.chunkSize}</span>
+                      </div>
+                      <div className="text-xs">
+                        <span className="text-muted-foreground font-medium">Embedding Model: </span>
+                        <span data-testid="text-view-embedding-model">{memory.embeddingModel}</span>
+                      </div>
+                      <div className="text-xs">
+                        <span className="text-muted-foreground font-medium">Top-K: </span>
+                        <span data-testid="text-view-top-k">{memory.topK}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">No memory / RAG configuration</p>
+                  )}
+                </CardContent>
+              </Card>
+
               {/* 4. Governance Policies */}
               <Card data-testid="card-governance-policies">
                 <CardHeader className="pb-3">
@@ -2292,6 +2377,30 @@ export default function TemplateDetail() {
                         <label className="text-xs text-muted-foreground mb-0.5 block">Top-K</label>
                         <Input type="number" value={rag.topK || 5} onChange={(e) => updateRag("topK", parseInt(e.target.value) || 5)} className="text-sm" data-testid="preview-top-k" />
                       </div>
+                    </div>
+                  </div>
+                );
+              })()}
+              {(() => {
+                const certs = enhancePreview.complianceCertifications;
+                if (!certs || !Array.isArray(certs) || certs.length === 0) return null;
+                return (
+                  <div>
+                    <div className="flex items-center justify-between gap-2 mb-1 flex-wrap">
+                      <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Compliance Certifications ({certs.length})</h4>
+                      <Button size="sm" variant="ghost" onClick={() => { const cert = prompt("Enter certification name:"); if (cert) setEnhancePreview({ ...enhancePreview, complianceCertifications: [...certs, cert] }); }} data-testid="button-add-preview-cert">
+                        <Plus className="w-3 h-3 mr-1" /> Add
+                      </Button>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {certs.map((cert: string, i: number) => (
+                        <Badge key={i} variant="secondary" className="text-[10px] gap-1 pr-1">
+                          {cert}
+                          <button onClick={() => { const updated = certs.filter((_: string, idx: number) => idx !== i); setEnhancePreview({ ...enhancePreview, complianceCertifications: updated }); }} className="ml-0.5 rounded-full" data-testid={`button-remove-preview-cert-${i}`}>
+                            <X className="w-2.5 h-2.5" />
+                          </button>
+                        </Badge>
+                      ))}
                     </div>
                   </div>
                 );

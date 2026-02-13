@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation, Link } from "wouter";
 import type { AgentTemplate } from "@shared/schema";
 import { useIndustry } from "@/components/industry-provider";
@@ -195,8 +195,13 @@ const complexityColors: Record<string, string> = {
 export default function Templates() {
   const { industry } = useIndustry();
   const [searchQuery, setSearchQuery] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [categoryFilter, setCategoryFilter] = useState(() => {
+    const saved = sessionStorage.getItem("templates_category_filter");
+    return saved || "all";
+  });
   const [industryFilter, setIndustryFilter] = useState(() => {
+    const saved = sessionStorage.getItem("templates_industry_filter");
+    if (saved) return saved;
     if (industry && industry.id !== "custom") return industry.id;
     return "all";
   });
@@ -204,6 +209,15 @@ export default function Templates() {
   const [compareTemplates, setCompareTemplates] = useState<AgentTemplate[]>([]);
   const [showComparison, setShowComparison] = useState(false);
   const [, navigate] = useLocation();
+
+  useEffect(() => {
+    sessionStorage.setItem("templates_industry_filter", industryFilter);
+  }, [industryFilter]);
+
+  useEffect(() => {
+    sessionStorage.setItem("templates_category_filter", categoryFilter);
+  }, [categoryFilter]);
+
 
   const { toast } = useToast();
   const [deleteTarget, setDeleteTarget] = useState<AgentTemplate | null>(null);
