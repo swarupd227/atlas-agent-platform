@@ -1479,4 +1479,21 @@ export const insertMemoryProfileSchema = createInsertSchema(memoryProfiles).omit
 export type InsertMemoryProfile = z.infer<typeof insertMemoryProfileSchema>;
 export type MemoryProfile = typeof memoryProfiles.$inferSelect;
 
+export const ragPipelines = pgTable("rag_pipelines", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  industry: text("industry").notNull(),
+  agentId: varchar("agent_id"),
+  knowledgeSources: jsonb("knowledge_sources").notNull().default(sql`'[]'::jsonb`),
+  retrievalStrategies: jsonb("retrieval_strategies").notNull().default(sql`'[]'::jsonb`),
+  chunkStrategies: jsonb("chunk_strategies").notNull().default(sql`'[]'::jsonb`),
+  qualityMetrics: jsonb("quality_metrics").notNull().default(sql`'{}'::jsonb`),
+  status: text("status").notNull().default("active"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertRagPipelineSchema = createInsertSchema(ragPipelines).omit({ id: true, createdAt: true });
+export type InsertRagPipeline = z.infer<typeof insertRagPipelineSchema>;
+export type RagPipeline = typeof ragPipelines.$inferSelect;
+
 export * from "./models/chat";

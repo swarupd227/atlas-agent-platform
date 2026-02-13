@@ -62,6 +62,7 @@ import {
   insertGoldenTestCaseSchema,
   insertContextProfileSchema,
   insertMemoryProfileSchema,
+  insertRagPipelineSchema,
 } from "@shared/schema";
 
 const openai = new OpenAI({
@@ -13159,6 +13160,48 @@ Return a JSON object with:
       console.error("AI suggest memory rules error:", e);
       res.status(500).json({ error: e.message || "Failed to suggest memory rules" });
     }
+  });
+
+  app.get("/api/rag-pipelines", async (_req, res) => {
+    try {
+      const pipelines = await storage.getRagPipelines();
+      res.json(pipelines);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/rag-pipelines/:id", async (req, res) => {
+    try {
+      const pipeline = await storage.getRagPipeline(req.params.id);
+      if (!pipeline) return res.status(404).json({ error: "Not found" });
+      res.json(pipeline);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/rag-pipelines", async (req, res) => {
+    try {
+      const data = insertRagPipelineSchema.parse(req.body);
+      const created = await storage.createRagPipeline(data);
+      res.status(201).json(created);
+    } catch (e: any) {
+      if (e.name === "ZodError") return res.status(400).json({ error: e.errors });
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.patch("/api/rag-pipelines/:id", async (req, res) => {
+    try {
+      const updated = await storage.updateRagPipeline(req.params.id, req.body);
+      if (!updated) return res.status(404).json({ error: "Not found" });
+      res.json(updated);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.delete("/api/rag-pipelines/:id", async (req, res) => {
+    try {
+      const ok = await storage.deleteRagPipeline(req.params.id);
+      if (!ok) return res.status(404).json({ error: "Not found" });
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
   // Start the job worker

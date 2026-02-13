@@ -126,6 +126,8 @@ import {
   type ContextProfile, type InsertContextProfile,
   memoryProfiles,
   type MemoryProfile, type InsertMemoryProfile,
+  ragPipelines,
+  type RagPipeline, type InsertRagPipeline,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -504,6 +506,12 @@ export interface IStorage {
   createMemoryProfile(profile: InsertMemoryProfile): Promise<MemoryProfile>;
   updateMemoryProfile(id: string, data: Partial<InsertMemoryProfile>): Promise<MemoryProfile | undefined>;
   deleteMemoryProfile(id: string): Promise<boolean>;
+
+  getRagPipelines(): Promise<RagPipeline[]>;
+  getRagPipeline(id: string): Promise<RagPipeline | undefined>;
+  createRagPipeline(pipeline: InsertRagPipeline): Promise<RagPipeline>;
+  updateRagPipeline(id: string, data: Partial<InsertRagPipeline>): Promise<RagPipeline | undefined>;
+  deleteRagPipeline(id: string): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1912,6 +1920,30 @@ export class DatabaseStorage implements IStorage {
 
   async deleteMemoryProfile(id: string): Promise<boolean> {
     const result = await db.delete(memoryProfiles).where(eq(memoryProfiles.id, id));
+    return (result as any).rowCount > 0;
+  }
+
+  async getRagPipelines(): Promise<RagPipeline[]> {
+    return db.select().from(ragPipelines).orderBy(desc(ragPipelines.createdAt));
+  }
+
+  async getRagPipeline(id: string): Promise<RagPipeline | undefined> {
+    const [pipeline] = await db.select().from(ragPipelines).where(eq(ragPipelines.id, id));
+    return pipeline;
+  }
+
+  async createRagPipeline(pipeline: InsertRagPipeline): Promise<RagPipeline> {
+    const [created] = await db.insert(ragPipelines).values(pipeline).returning();
+    return created;
+  }
+
+  async updateRagPipeline(id: string, data: Partial<InsertRagPipeline>): Promise<RagPipeline | undefined> {
+    const [updated] = await db.update(ragPipelines).set(data).where(eq(ragPipelines.id, id)).returning();
+    return updated;
+  }
+
+  async deleteRagPipeline(id: string): Promise<boolean> {
+    const result = await db.delete(ragPipelines).where(eq(ragPipelines.id, id));
     return (result as any).rowCount > 0;
   }
 }

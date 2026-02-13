@@ -73,6 +73,7 @@ import GoldenDatasets from "@/pages/golden-datasets";
 import GoldenDatasetDetail from "@/pages/golden-dataset-detail";
 import ContextStudio from "@/pages/context-studio";
 import MemoryArchitecture from "@/pages/memory-architecture";
+import RagPipeline from "@/pages/rag-pipeline";
 
 function DashboardRouter() {
   return (
@@ -131,6 +132,7 @@ function DashboardRouter() {
       <Route path="/ontology" component={OntologyExplorer} />
       <Route path="/context-studio" component={ContextStudio} />
       <Route path="/memory-architecture" component={MemoryArchitecture} />
+      <Route path="/rag-pipeline" component={RagPipeline} />
       <Route path="/admin" component={Admin} />
       <Route component={NotFound} />
     </Switch>
