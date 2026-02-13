@@ -2,7 +2,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute, Link, useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { useState, Fragment } from "react";
+import { useState, Fragment, Component, type ErrorInfo, type ReactNode } from "react";
 import {
   Bot,
   ArrowLeft,
@@ -94,7 +94,44 @@ import type { Agent, RunTrace, EvalSuite, OutcomeContract, ImprovementRecommenda
 import { Wifi, WifiOff, Crown } from "lucide-react";
 
 
-export default function AgentDetail() {
+class AgentDetailErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error: Error | null }> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error("AgentDetail error boundary caught:", error, errorInfo);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex flex-col items-center justify-center h-full gap-4 p-8">
+          <AlertTriangle className="w-10 h-10 text-destructive" />
+          <h2 className="text-lg font-semibold">Something went wrong</h2>
+          <p className="text-sm text-muted-foreground max-w-md text-center">
+            An error occurred while rendering this agent's details. Try refreshing the page.
+          </p>
+          <p className="text-xs text-muted-foreground font-mono bg-muted/30 p-2 rounded-md max-w-lg truncate">
+            {this.state.error?.message}
+          </p>
+          <button
+            className="text-sm text-primary underline"
+            onClick={() => this.setState({ hasError: false, error: null })}
+            data-testid="button-retry-error"
+          >
+            Try again
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function AgentDetailInner() {
   const [, params] = useRoute("/agents/:id");
   const agentId = params?.id;
 
@@ -388,7 +425,9 @@ export default function AgentDetail() {
       const matched = allPolicies?.find(p => p.id === b);
       return { policyId: b, name: matched?.name || b, enforcement: "soft_warn", description: matched?.description || "" };
     }
-    return { policyId: b.policyId || "", name: b.name || "", enforcement: b.enforcement || "soft_warn", description: b.description };
+    const displayName = b.name || b.policyName || "";
+    const enforcement = b.enforcement === "hard" ? "hard_block" : (b.enforcement || "soft_warn");
+    return { policyId: b.policyId || b.policyName || "", name: displayName, enforcement, description: b.description };
   });
 
   const handleExportJSON = () => {
@@ -4915,6 +4954,14 @@ export default function AgentDetail() {
   );
 }
 
+export default function AgentDetail() {
+  return (
+    <AgentDetailErrorBoundary>
+      <AgentDetailInner />
+    </AgentDetailErrorBoundary>
+  );
+}
+
 function BlueprintModelConfig({ agent }: { agent: Agent }) {
   return (
     <Card data-testid="section-model-config">
@@ -5212,6 +5259,10 @@ function BlueprintWorkflowGraph({ blueprint }: { blueprint: any }) {
     audit_log: "bg-gray-500/15 text-gray-600 dark:text-gray-400",
     event_listener: "bg-slate-500/15 text-slate-600 dark:text-slate-400",
     human_review: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400",
+    classifier: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+    router: "bg-orange-500/15 text-orange-600 dark:text-orange-400",
+    llm_call: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+    output_format: "bg-sky-500/15 text-sky-600 dark:text-sky-400",
   };
 
   const orderedNodes: typeof nodes = [];
@@ -5493,7 +5544,15 @@ function BlueprintMemoryRag({ config }: { config: any }) {
 }
 
 function BlueprintPolicyBindings({ bindings }: { bindings: any }) {
-  const policies = (bindings || []) as Array<{ policyId: string; name: string; enforcement: string; description?: string }>;
+  const rawPolicies = (Array.isArray(bindings) ? bindings : []) as Array<any>;
+  const policies = rawPolicies.map((pol: any, i: number) => {
+    if (typeof pol === "string") {
+      return { id: pol, name: pol, enforcement: "soft_warn" as string, description: "" };
+    }
+    const name = pol.name || pol.policyName || pol.policyId || `Policy ${i + 1}`;
+    const enforcement = pol.enforcement === "hard" ? "hard_block" : (pol.enforcement || "soft_warn");
+    return { id: pol.policyId || pol.policyName || `pol-${i}`, name, enforcement, description: pol.description || "" };
+  });
 
   return (
     <Card data-testid="section-policy-bindings">
@@ -5510,7 +5569,7 @@ function BlueprintPolicyBindings({ bindings }: { bindings: any }) {
         {policies.length > 0 ? (
           <div className="space-y-1.5">
             {policies.map((pol) => (
-              <div key={pol.policyId} className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted/30" data-testid={`policy-binding-${pol.policyId}`}>
+              <div key={pol.id} className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted/30" data-testid={`policy-binding-${pol.id}`}>
                 <div className="flex items-center gap-2 min-w-0">
                   {pol.enforcement === "hard_block" ? (
                     <Lock className="w-3.5 h-3.5 text-red-500 shrink-0" />
