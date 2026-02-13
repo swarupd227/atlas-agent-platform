@@ -979,7 +979,7 @@ function SystemStatusSection({ systemStatus, prominent }: { systemStatus: Overvi
 function PlatformHero({ industry, role, config }: { industry: any; role: any; config: RoleWidgetConfig }) {
   return (
     <div className="flex items-center justify-between gap-4 flex-wrap">
-      <div className="flex flex-col gap-1.5">
+      <div className="flex flex-col gap-1">
         <div className="flex items-center gap-2 flex-wrap">
           <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-dashboard-title">
             {config.title}
@@ -991,11 +991,8 @@ function PlatformHero({ industry, role, config }: { industry: any; role: any; co
             </Badge>
           )}
         </div>
-        <p className="text-sm text-muted-foreground max-w-2xl" data-testid="text-dashboard-description">
+        <p className="text-sm text-muted-foreground" data-testid="text-dashboard-description">
           {config.description}
-        </p>
-        <p className="text-xs text-muted-foreground/70 max-w-xl" data-testid="text-platform-tagline">
-          The AI agent platform where agents reason within your industry's regulatory, operational, and domain context by default.
         </p>
       </div>
       <Link href="/outcomes/discover">
