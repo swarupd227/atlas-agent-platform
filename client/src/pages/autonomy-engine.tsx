@@ -189,6 +189,8 @@ export default function AutonomyEngine() {
   const [aiRecommendations, setAiRecommendations] = useState<any>(null);
   const [showEnhancePreview, setShowEnhancePreview] = useState(false);
   const [enhanceResult, setEnhanceResult] = useState<any>(null);
+  const [useAiForCreate, setUseAiForCreate] = useState(false);
+  const [isAiCreating, setIsAiCreating] = useState(false);
 
   const [newOverride, setNewOverride] = useState<Partial<OverrideRule>>({
     name: "",
@@ -391,7 +393,33 @@ export default function AutonomyEngine() {
     ];
   }, [selectedProfile]);
 
-  function handleCreateProfile() {
+  async function handleCreateProfile() {
+    if (useAiForCreate) {
+      setIsAiCreating(true);
+      try {
+        const aiRes = await apiRequest("POST", "/api/ai/generate-autonomy-profile", {
+          industry: industryId,
+          profileName: newProfileName,
+          description: newProfileDesc || "",
+        });
+        const aiData = await aiRes.json();
+        createProfileMut.mutate({
+          name: newProfileName,
+          industry: industryId,
+          description: newProfileDesc || null,
+          riskDimensions: aiData.riskDimensions || [],
+          autonomyLevels: aiData.autonomyLevels || [],
+          overrideRules: aiData.overrideRules || [],
+          learningData: {},
+        });
+      } catch (e: any) {
+        toast({ title: "AI generation failed", description: e.message, variant: "destructive" });
+      } finally {
+        setIsAiCreating(false);
+        setUseAiForCreate(false);
+      }
+      return;
+    }
     const dims = INDUSTRY_RISK_DIMENSIONS[industryId] || INDUSTRY_RISK_DIMENSIONS.financial_services;
     const riskDims = dims.map((d) => ({
       ...d,
@@ -547,7 +575,10 @@ export default function AutonomyEngine() {
           <Badge variant="outline" className="gap-1">
             <Shield className="w-3 h-3" />Risk-calibrated oversight
           </Badge>
-          <Button onClick={() => setShowCreateProfile(true)} data-testid="button-create-profile">
+          <Button variant="outline" onClick={() => { setUseAiForCreate(true); setShowCreateProfile(true); }} data-testid="button-ai-generate-profile">
+            <Sparkles className="w-4 h-4 mr-1.5" />AI Generate Profile
+          </Button>
+          <Button onClick={() => { setUseAiForCreate(false); setShowCreateProfile(true); }} data-testid="button-create-profile">
             <Plus className="w-4 h-4 mr-1.5" />New Profile
           </Button>
         </div>
@@ -651,9 +682,14 @@ export default function AutonomyEngine() {
                   Autonomy profiles define how much independence AI agents get for different action types. 
                   Risk dimensions calibrate oversight to actual risk instead of static ratios.
                 </p>
-                <Button className="mt-4" onClick={() => setShowCreateProfile(true)} data-testid="button-create-profile-empty">
-                  <Plus className="w-4 h-4 mr-1.5" />Create Profile
-                </Button>
+                <div className="flex items-center gap-3 mt-4">
+                  <Button variant="outline" onClick={() => { setUseAiForCreate(true); setShowCreateProfile(true); }} data-testid="button-ai-generate-profile-empty">
+                    <Sparkles className="w-4 h-4 mr-1.5" />AI Generate Profile
+                  </Button>
+                  <Button onClick={() => { setUseAiForCreate(false); setShowCreateProfile(true); }} data-testid="button-create-profile-empty">
+                    <Plus className="w-4 h-4 mr-1.5" />Create Profile
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           ) : (
@@ -1174,12 +1210,26 @@ export default function AutonomyEngine() {
         </div>
       </div>
 
-      <Dialog open={showCreateProfile} onOpenChange={setShowCreateProfile}>
+      <Dialog open={showCreateProfile} onOpenChange={(open) => { setShowCreateProfile(open); if (!open) setUseAiForCreate(false); }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Create Autonomy Profile</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              {useAiForCreate && <Sparkles className="w-5 h-5" />}
+              {useAiForCreate ? "AI Generate Autonomy Profile" : "Create Autonomy Profile"}
+            </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
+            {useAiForCreate && (
+              <div className="p-3 rounded-md border border-primary/20 bg-primary/5" data-testid="ai-generate-banner">
+                <div className="flex items-center gap-2 mb-1">
+                  <Sparkles className="w-4 h-4 text-primary" />
+                  <span className="text-sm font-medium">AI-Powered Generation</span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  AI will generate industry-specific risk dimensions, calibrated autonomy levels, and override rules based on best practices for your industry.
+                </p>
+              </div>
+            )}
             <div>
               <Label>Profile Name</Label>
               <Input
@@ -1194,7 +1244,7 @@ export default function AutonomyEngine() {
               <Textarea
                 value={newProfileDesc}
                 onChange={(e) => setNewProfileDesc(e.target.value)}
-                placeholder="Describe the purpose of this autonomy profile..."
+                placeholder={useAiForCreate ? "Describe your needs and AI will tailor the profile..." : "Describe the purpose of this autonomy profile..."}
                 data-testid="input-profile-description"
               />
             </div>
@@ -1202,16 +1252,32 @@ export default function AutonomyEngine() {
               <Info className="w-4 h-4" />
               <span>Industry: {industryId.replace(/_/g, " ")}</span>
             </div>
+            {!useAiForCreate && (
+              <button
+                onClick={() => setUseAiForCreate(true)}
+                className="w-full p-2.5 rounded-md border border-dashed text-sm text-muted-foreground flex items-center justify-center gap-2 hover-elevate"
+                data-testid="button-toggle-ai-create"
+              >
+                <Sparkles className="w-4 h-4" />
+                Use AI to generate profile content
+              </button>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowCreateProfile(false)}>Cancel</Button>
             <Button
               onClick={handleCreateProfile}
-              disabled={!newProfileName.trim() || createProfileMut.isPending}
+              disabled={!newProfileName.trim() || createProfileMut.isPending || isAiCreating}
               data-testid="button-confirm-create-profile"
             >
-              {createProfileMut.isPending ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Plus className="w-4 h-4 mr-1.5" />}
-              Create
+              {(createProfileMut.isPending || isAiCreating) ? (
+                <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+              ) : useAiForCreate ? (
+                <Sparkles className="w-4 h-4 mr-1.5" />
+              ) : (
+                <Plus className="w-4 h-4 mr-1.5" />
+              )}
+              {isAiCreating ? "Generating..." : useAiForCreate ? "AI Generate" : "Create"}
             </Button>
           </DialogFooter>
         </DialogContent>
