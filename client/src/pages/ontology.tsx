@@ -481,6 +481,9 @@ export default function OntologyExplorer() {
 
   const handleConceptClick = (conceptId: string) => {
     setSelectedConceptId(conceptId);
+    if (viewMode === "graph") {
+      setViewMode("list");
+    }
   };
 
   const handleRelationshipClick = (targetId: string) => {
