@@ -22,6 +22,16 @@ import {
   Wrench,
   Gauge,
   ArrowUpDown,
+  Brain,
+  BookOpen,
+  Trophy,
+  Layers,
+  Network,
+  SlidersHorizontal,
+  Database,
+  Lock,
+  Workflow,
+  Plug,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -180,10 +190,88 @@ interface RoleWidgetConfig {
   systemProminent: boolean;
 }
 
+const PLATFORM_CAPABILITIES = [
+  {
+    title: "Industry Context Engine",
+    description: "Agents reason within your industry's regulatory, operational, and domain context by default",
+    icon: Brain,
+    href: "/ontology",
+    color: "text-violet-600 dark:text-violet-400",
+    bg: "bg-violet-500/10",
+  },
+  {
+    title: "Agent Skills Library",
+    description: "Composable, versioned skill units organized by industry with comparison and composition tools",
+    icon: BookOpen,
+    href: "/skills",
+    color: "text-blue-600 dark:text-blue-400",
+    bg: "bg-blue-500/10",
+  },
+  {
+    title: "Golden Repository",
+    description: "Curated templates, evaluation datasets, and certified agent configurations for rapid deployment",
+    icon: Trophy,
+    href: "/templates",
+    color: "text-amber-600 dark:text-amber-400",
+    bg: "bg-amber-500/10",
+  },
+  {
+    title: "Context Engineering Studio",
+    description: "Systematic management of what agents know and when they know it with token budget optimization",
+    icon: Layers,
+    href: "/context-engineering",
+    color: "text-emerald-600 dark:text-emerald-400",
+    bg: "bg-emerald-500/10",
+  },
+  {
+    title: "Industry Knowledge Graph",
+    description: "Domain ontologies, entity resolution, relationship extraction, and temporal knowledge versioning",
+    icon: Network,
+    href: "/knowledge-graph",
+    color: "text-rose-600 dark:text-rose-400",
+    bg: "bg-rose-500/10",
+  },
+  {
+    title: "Adaptive Autonomy Engine",
+    description: "Dynamic oversight calibrated to industry risk, regulatory requirements, and real-time context",
+    icon: SlidersHorizontal,
+    href: "/autonomy",
+    color: "text-orange-600 dark:text-orange-400",
+    bg: "bg-orange-500/10",
+  },
+];
+
+const TECHNOLOGY_STACK = [
+  {
+    title: "Knowledge Graph",
+    description: "Industry ontologies, entity resolution, and graph-based knowledge retrieval",
+    icon: Database,
+    tags: ["GraphRAG", "Ontology Explorer", "Temporal Versioning"],
+  },
+  {
+    title: "Policy-as-Code Engine",
+    description: "OPA Rego and Cedar policy languages for automated compliance enforcement",
+    icon: Lock,
+    tags: ["OPA Rego", "Cedar", "Regulatory Detection"],
+  },
+  {
+    title: "GraphRAG Pipeline",
+    description: "Industry-aware retrieval combining vector similarity, graph traversal, and hybrid strategies",
+    icon: Workflow,
+    tags: ["Vector Search", "Graph Retrieval", "Hybrid Cascading"],
+  },
+  {
+    title: "MCP + A2A + Agent Skills",
+    description: "Three integration standards for tool access, agent-to-agent delegation, and skill composition",
+    icon: Plug,
+    tags: ["MCP Protocol", "A2A Federation", "Skill Registry"],
+  },
+];
+
 const ROLE_WIDGETS: Record<RoleId, RoleWidgetConfig> = {
   admin: {
     title: "Outcome Portfolio",
-    description: "Agent commitments, value delivery, and business impact",
+    description: "Adaptive autonomy calibrated to industry risk, regulatory requirements, and real-time context",
     showOutcomeCockpit: true,
     showOutcomeHealth: false,
     showAgentsAtRisk: true,
@@ -198,7 +286,7 @@ const ROLE_WIDGETS: Record<RoleId, RoleWidgetConfig> = {
   },
   outcome_owner: {
     title: "Outcome Portfolio",
-    description: "Agent commitments, value delivery, and business impact",
+    description: "Industry-contextualized value delivery and agent commitment tracking",
     showOutcomeCockpit: true,
     showOutcomeHealth: false,
     showAgentsAtRisk: false,
@@ -213,7 +301,7 @@ const ROLE_WIDGETS: Record<RoleId, RoleWidgetConfig> = {
   },
   agent_engineer: {
     title: "Agent Engineer Dashboard",
-    description: "Agent performance and development",
+    description: "Industry-aware agent performance, context engineering, and skill development",
     showOutcomeCockpit: false,
     showOutcomeHealth: true,
     showAgentsAtRisk: true,
@@ -228,7 +316,7 @@ const ROLE_WIDGETS: Record<RoleId, RoleWidgetConfig> = {
   },
   ops_sre: {
     title: "Ops / SRE Dashboard",
-    description: "Operations, reliability, and incidents",
+    description: "Industry-regulated operations, adaptive autonomy monitoring, and incident response",
     showOutcomeCockpit: false,
     showOutcomeHealth: false,
     showAgentsAtRisk: true,
@@ -243,7 +331,7 @@ const ROLE_WIDGETS: Record<RoleId, RoleWidgetConfig> = {
   },
   compliance_security: {
     title: "Compliance / Security Dashboard",
-    description: "Policy enforcement and compliance",
+    description: "Regulatory framework enforcement, policy-as-code governance, and audit compliance",
     showOutcomeCockpit: false,
     showOutcomeHealth: false,
     showAgentsAtRisk: false,
@@ -258,7 +346,7 @@ const ROLE_WIDGETS: Record<RoleId, RoleWidgetConfig> = {
   },
   expert_validator: {
     title: "Expert Validator Dashboard",
-    description: "Pending approvals and high-risk changes",
+    description: "Context-aware approvals calibrated to industry risk and regulatory requirements",
     showOutcomeCockpit: false,
     showOutcomeHealth: false,
     showAgentsAtRisk: true,
@@ -273,7 +361,7 @@ const ROLE_WIDGETS: Record<RoleId, RoleWidgetConfig> = {
   },
   finance: {
     title: "Outcome Portfolio",
-    description: "Value delivery, financial attribution, and revenue tracking",
+    description: "Outcome-driven value delivery, financial attribution, and industry-contextualized revenue",
     showOutcomeCockpit: true,
     showOutcomeHealth: false,
     showAgentsAtRisk: false,
@@ -888,6 +976,89 @@ function SystemStatusSection({ systemStatus, prominent }: { systemStatus: Overvi
   );
 }
 
+function PlatformHero({ industry, role, config }: { industry: any; role: any; config: RoleWidgetConfig }) {
+  return (
+    <div className="flex items-center justify-between gap-4 flex-wrap">
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-center gap-2 flex-wrap">
+          <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-dashboard-title">
+            {config.title}
+          </h1>
+          <Badge variant="outline" className="text-[10px]" data-testid="badge-role-label">{role.label}</Badge>
+          {industry && (
+            <Badge variant="secondary" className="text-[10px]" data-testid="badge-industry-label">
+              {industry.shortLabel}
+            </Badge>
+          )}
+        </div>
+        <p className="text-sm text-muted-foreground max-w-2xl" data-testid="text-dashboard-description">
+          {config.description}
+        </p>
+        <p className="text-xs text-muted-foreground/70 max-w-xl" data-testid="text-platform-tagline">
+          The AI agent platform where agents reason within your industry's regulatory, operational, and domain context by default.
+        </p>
+      </div>
+      <Link href="/outcomes/discover">
+        <Button data-testid="button-discover-cta">
+          <Sparkles className="w-4 h-4 mr-1.5" />
+          Outcome Builder
+        </Button>
+      </Link>
+    </div>
+  );
+}
+
+function KeyCapabilitiesSection() {
+  return (
+    <div className="flex flex-col gap-3" data-testid="section-key-capabilities">
+      <h2 className="text-sm font-medium text-muted-foreground">Key Capabilities</h2>
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+        {PLATFORM_CAPABILITIES.map((cap) => (
+          <Link key={cap.title} href={cap.href}>
+            <Card className="hover-elevate cursor-pointer h-full" data-testid={`card-capability-${cap.title.toLowerCase().replace(/\s+/g, "-")}`}>
+              <CardContent className="p-4 flex gap-3">
+                <div className={`flex items-center justify-center w-9 h-9 rounded-md shrink-0 ${cap.bg}`}>
+                  <cap.icon className={`w-5 h-5 ${cap.color}`} />
+                </div>
+                <div className="flex flex-col gap-0.5 min-w-0">
+                  <span className="text-sm font-medium">{cap.title}</span>
+                  <span className="text-xs text-muted-foreground leading-relaxed">{cap.description}</span>
+                </div>
+              </CardContent>
+            </Card>
+          </Link>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TechnologyStackSection() {
+  return (
+    <div className="flex flex-col gap-3" data-testid="section-technology-stack">
+      <h2 className="text-sm font-medium text-muted-foreground">Technology Stack</h2>
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+        {TECHNOLOGY_STACK.map((tech) => (
+          <Card key={tech.title} data-testid={`card-tech-${tech.title.toLowerCase().replace(/\s+/g, "-")}`}>
+            <CardContent className="p-4 flex flex-col gap-2">
+              <div className="flex items-center gap-2">
+                <tech.icon className="w-4 h-4 text-muted-foreground" />
+                <span className="text-sm font-medium">{tech.title}</span>
+              </div>
+              <span className="text-xs text-muted-foreground leading-relaxed">{tech.description}</span>
+              <div className="flex flex-wrap gap-1 mt-1">
+                {tech.tags.map((tag) => (
+                  <Badge key={tag} variant="outline" className="text-[10px]">{tag}</Badge>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function Overview() {
   const { role } = useRole();
   const { industry } = useIndustry();
@@ -916,20 +1087,17 @@ export default function Overview() {
   if (!hasOutcomes && data.agentsAtRisk.length === 0) {
     return (
       <div className="flex flex-col gap-6 p-6" data-testid="page-overview">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Platform Overview</h1>
-          <p className="text-sm text-muted-foreground">
-            Are we delivering outcomes safely, right now?
-          </p>
-        </div>
-        <div className="flex flex-col items-center justify-center py-20 gap-4" data-testid="empty-state">
+        <PlatformHero industry={industry} role={role} config={config} />
+        <KeyCapabilitiesSection />
+        <TechnologyStackSection />
+        <div className="flex flex-col items-center justify-center py-12 gap-4" data-testid="empty-state">
           <div className="flex items-center justify-center w-14 h-14 rounded-md bg-primary/10">
             <Target className="w-7 h-7 text-primary" />
           </div>
           <div className="text-center flex flex-col gap-1">
-            <p className="text-base font-medium">Create your first Outcome Contract</p>
+            <p className="text-base font-medium">Define Your First Outcome Contract</p>
             <p className="text-sm text-muted-foreground max-w-md">
-              Define business outcomes, bind agents, and start tracking KPI delivery with outcome-driven billing.
+              Bind agents to measurable business outcomes with industry-specific KPIs, adaptive autonomy, and regulatory compliance built in.
             </p>
           </div>
           <Link href="/outcomes/discover">
@@ -948,30 +1116,7 @@ export default function Overview() {
 
   return (
     <div className="flex flex-col gap-6 p-6" data-testid="page-overview">
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-dashboard-title">
-              {config.title}
-            </h1>
-            <Badge variant="outline" className="text-[10px]" data-testid="badge-role-label">{role.label}</Badge>
-              {industry && (
-                <Badge variant="secondary" className="text-[10px]" data-testid="badge-industry-label">
-                  {industry.shortLabel}
-                </Badge>
-              )}
-          </div>
-          <p className="text-sm text-muted-foreground" data-testid="text-dashboard-description">
-            {config.description}
-          </p>
-        </div>
-        <Link href="/outcomes/discover">
-          <Button data-testid="button-discover-cta">
-            <Sparkles className="w-4 h-4 mr-1.5" />
-            Outcome Builder
-          </Button>
-        </Link>
-      </div>
+      <PlatformHero industry={industry} role={role} config={config} />
 
       {config.showOutcomeCockpit && (
         <OutcomeCockpitView data={data} isFinanceRole={role.id === "finance"} />
