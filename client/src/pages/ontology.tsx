@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Search,
@@ -25,6 +25,9 @@ import {
   List,
   Share2,
   FileText,
+  ZoomIn,
+  ZoomOut,
+  RotateCcw,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -740,6 +743,7 @@ export default function OntologyExplorer() {
               categoryColorMap={categoryColorMap}
               selectedConceptId={selectedConceptId}
               onSelectConcept={handleConceptClick}
+              searchQuery={searchQuery}
             />
           ) : !selectedConcept ? (
             <div className="p-8 space-y-6">
@@ -1553,18 +1557,31 @@ function GraphView({
   categoryColorMap,
   selectedConceptId,
   onSelectConcept,
+  searchQuery,
 }: {
   concepts: ConceptView[];
   categoryColorMap: Record<string, string>;
   selectedConceptId: string | null;
   onSelectConcept: (id: string) => void;
+  searchQuery: string;
 }) {
   const width = 900;
   const height = 700;
   const centerX = width / 2;
   const centerY = height / 2;
 
-  const positions = useMemo(() => {
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+  const [hiddenCategories, setHiddenCategories] = useState<Set<string>>(new Set());
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+  const [draggedNodeId, setDraggedNodeId] = useState<string | null>(null);
+  const [dragOffset, setDragOffset] = useState<Record<string, { x: number; y: number }>>({});
+  const didDragRef = useRef(false);
+  const svgRef = useRef<SVGSVGElement>(null);
+
+  const basePositions = useMemo(() => {
     const catGroups: Record<string, ConceptView[]> = {};
     for (const c of concepts) {
       if (!catGroups[c.category]) catGroups[c.category] = [];
@@ -1589,13 +1606,21 @@ function GraphView({
         };
       });
     });
-
     return pos;
   }, [concepts, centerX, centerY, width, height]);
 
+  const positions = useMemo(() => {
+    const merged: Record<string, { x: number; y: number }> = {};
+    for (const [id, pos] of Object.entries(basePositions)) {
+      const offset = dragOffset[id];
+      merged[id] = offset ? { x: pos.x + offset.x, y: pos.y + offset.y } : pos;
+    }
+    return merged;
+  }, [basePositions, dragOffset]);
+
   const edges = useMemo(() => {
     const conceptIds = new Set(concepts.map((c) => c.id));
-    const result: { from: string; to: string }[] = [];
+    const result: { from: string; to: string; type: string; label: string }[] = [];
     const seen = new Set<string>();
     for (const c of concepts) {
       for (const rel of c.relationships) {
@@ -1603,7 +1628,7 @@ function GraphView({
           const key = [c.id, rel.targetId].sort().join("-");
           if (!seen.has(key)) {
             seen.add(key);
-            result.push({ from: c.id, to: rel.targetId });
+            result.push({ from: c.id, to: rel.targetId, type: rel.type, label: rel.label });
           }
         }
       }
@@ -1611,75 +1636,298 @@ function GraphView({
     return result;
   }, [concepts]);
 
+  const connectedIds = useMemo(() => {
+    if (!hoveredNodeId) return new Set<string>();
+    const ids = new Set<string>();
+    ids.add(hoveredNodeId);
+    for (const e of edges) {
+      if (e.from === hoveredNodeId) ids.add(e.to);
+      if (e.to === hoveredNodeId) ids.add(e.from);
+    }
+    return ids;
+  }, [hoveredNodeId, edges]);
+
+  const searchMatchIds = useMemo(() => {
+    if (!searchQuery.trim()) return new Set<string>();
+    const q = searchQuery.toLowerCase();
+    return new Set(
+      concepts
+        .filter(
+          (c) =>
+            c.label.toLowerCase().includes(q) ||
+            c.description.toLowerCase().includes(q) ||
+            c.tags.some((t) => t.toLowerCase().includes(q)) ||
+            c.synonyms.some((s) => s.toLowerCase().includes(q))
+        )
+        .map((c) => c.id)
+    );
+  }, [searchQuery, concepts]);
+
+  const maxUsage = useMemo(() => Math.max(1, ...concepts.map((c) => c.usageCount || 0)), [concepts]);
+
+  const visibleConcepts = useMemo(
+    () => concepts.filter((c) => !hiddenCategories.has(c.category)),
+    [concepts, hiddenCategories]
+  );
+  const visibleIds = useMemo(() => new Set(visibleConcepts.map((c) => c.id)), [visibleConcepts]);
+
+  const toggleCategory = (cat: string) => {
+    setHiddenCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(cat)) next.delete(cat);
+      else next.add(cat);
+      return next;
+    });
+  };
+
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? -0.08 : 0.08;
+    setZoom((prev) => Math.max(0.3, Math.min(3, prev + delta)));
+  }, []);
+
+  const getSvgPoint = useCallback((clientX: number, clientY: number) => {
+    if (!svgRef.current) return { x: clientX, y: clientY };
+    const rect = svgRef.current.getBoundingClientRect();
+    return {
+      x: ((clientX - rect.left) / rect.width) * width,
+      y: ((clientY - rect.top) / rect.height) * height,
+    };
+  }, [width, height]);
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    if ((e.target as Element).closest("[data-node-id]")) return;
+    setIsPanning(true);
+    setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+  }, [pan]);
+
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (draggedNodeId) {
+      didDragRef.current = true;
+      const pt = getSvgPoint(e.clientX, e.clientY);
+      const base = basePositions[draggedNodeId];
+      if (base) {
+        setDragOffset((prev) => ({
+          ...prev,
+          [draggedNodeId]: {
+            x: (pt.x - pan.x) / zoom - base.x,
+            y: (pt.y - pan.y) / zoom - base.y,
+          },
+        }));
+      }
+    } else if (isPanning) {
+      setPan({ x: e.clientX - panStart.x, y: e.clientY - panStart.y });
+    }
+  }, [draggedNodeId, isPanning, panStart, getSvgPoint, basePositions, pan, zoom]);
+
+  const handleMouseUp = useCallback(() => {
+    setIsPanning(false);
+    setDraggedNodeId(null);
+  }, []);
+
+  const handleNodeMouseDown = useCallback((e: React.MouseEvent, conceptId: string) => {
+    e.stopPropagation();
+    didDragRef.current = false;
+    setDraggedNodeId(conceptId);
+  }, []);
+
+  const handleReset = useCallback(() => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+    setDragOffset({});
+    setHiddenCategories(new Set());
+  }, []);
+
   return (
-    <div className="p-4" data-testid="graph-view">
-      <svg
-        width="100%"
-        height={height}
-        viewBox={`0 0 ${width} ${height}`}
-        className="border rounded-md bg-muted/20"
-        data-testid="graph-svg"
-      >
-        {edges.map((edge, i) => {
-          const from = positions[edge.from];
-          const to = positions[edge.to];
-          if (!from || !to) return null;
+    <div className="p-4 space-y-3" data-testid="graph-view">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="text-xs text-muted-foreground">
+          Scroll to zoom | Drag background to pan | Drag nodes to reposition
+        </div>
+        <div className="flex items-center gap-1.5">
+          <Button size="sm" variant="outline" onClick={() => setZoom((z) => Math.min(3, z + 0.2))} data-testid="button-zoom-in">
+            <ZoomIn className="w-3.5 h-3.5" />
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setZoom((z) => Math.max(0.3, z - 0.2))} data-testid="button-zoom-out">
+            <ZoomOut className="w-3.5 h-3.5" />
+          </Button>
+          <Button size="sm" variant="ghost" onClick={handleReset} data-testid="button-graph-reset">
+            <RotateCcw className="w-3.5 h-3.5 mr-1" />
+            Reset
+          </Button>
+        </div>
+      </div>
+      <div className="relative">
+        <svg
+          ref={svgRef}
+          width="100%"
+          height={height}
+          viewBox={`0 0 ${width} ${height}`}
+          className="border rounded-md bg-muted/20 select-none"
+          style={{ cursor: isPanning ? "grabbing" : draggedNodeId ? "grabbing" : "grab" }}
+          onWheel={handleWheel}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
+          data-testid="graph-svg"
+        >
+          <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
+            {edges.map((edge, i) => {
+              const from = positions[edge.from];
+              const to = positions[edge.to];
+              if (!from || !to || !visibleIds.has(edge.from) || !visibleIds.has(edge.to)) return null;
+              const isHighlighted = hoveredNodeId && (connectedIds.has(edge.from) && connectedIds.has(edge.to));
+              const midX = (from.x + to.x) / 2;
+              const midY = (from.y + to.y) / 2;
+              return (
+                <g key={i}>
+                  <line
+                    x1={from.x}
+                    y1={from.y}
+                    x2={to.x}
+                    y2={to.y}
+                    stroke={isHighlighted ? "hsl(var(--primary))" : "currentColor"}
+                    strokeOpacity={isHighlighted ? 0.6 : hoveredNodeId ? 0.06 : 0.15}
+                    strokeWidth={isHighlighted ? 2 : 1}
+                  />
+                  {isHighlighted && (
+                    <text
+                      x={midX}
+                      y={midY - 4}
+                      textAnchor="middle"
+                      className="text-[7px] fill-muted-foreground"
+                      style={{ pointerEvents: "none" }}
+                    >
+                      {edge.type.replace("_", " ")}
+                    </text>
+                  )}
+                </g>
+              );
+            })}
+            {visibleConcepts.map((concept) => {
+              const p = positions[concept.id];
+              if (!p) return null;
+              const isSelected = selectedConceptId === concept.id;
+              const isHovered = hoveredNodeId === concept.id;
+              const isConnected = hoveredNodeId ? connectedIds.has(concept.id) : false;
+              const isSearchMatch = searchMatchIds.has(concept.id);
+              const isDimmed = hoveredNodeId !== null && !isConnected;
+              const color = categoryColorMap[concept.category] || "hsl(210, 50%, 50%)";
+              const isCustomNode = concept.source === "custom-extension";
+              const usageRatio = (concept.usageCount || 0) / maxUsage;
+              const baseR = 14 + usageRatio * 10;
+              const r = isSelected ? baseR + 4 : isHovered ? baseR + 2 : baseR;
+
+              return (
+                <g
+                  key={concept.id}
+                  data-node-id={concept.id}
+                  onMouseDown={(e) => handleNodeMouseDown(e, concept.id)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (!didDragRef.current) onSelectConcept(concept.id);
+                  }}
+                  onMouseEnter={() => setHoveredNodeId(concept.id)}
+                  onMouseLeave={() => setHoveredNodeId(null)}
+                  className="cursor-pointer"
+                  style={{ opacity: isDimmed ? 0.2 : 1, transition: "opacity 0.2s" }}
+                  data-testid={`graph-node-${concept.id}`}
+                >
+                  {isSearchMatch && (
+                    <circle
+                      cx={p.x}
+                      cy={p.y}
+                      r={r + 6}
+                      fill="none"
+                      stroke="hsl(var(--primary))"
+                      strokeWidth={2}
+                      strokeDasharray="3 2"
+                      className="animate-pulse"
+                    />
+                  )}
+                  <circle
+                    cx={p.x}
+                    cy={p.y}
+                    r={r}
+                    fill={color}
+                    fillOpacity={isSelected ? 0.9 : isHovered ? 0.8 : 0.6}
+                    stroke={isSelected ? "hsl(var(--primary))" : isHovered ? "hsl(var(--foreground))" : color}
+                    strokeWidth={isSelected ? 3 : isHovered ? 2 : 1.5}
+                    strokeDasharray={isCustomNode ? "4 2" : undefined}
+                  />
+                  <text
+                    x={p.x}
+                    y={p.y + r + 12}
+                    textAnchor="middle"
+                    className="text-[9px] fill-foreground"
+                    style={{ pointerEvents: "none", fontWeight: isHovered || isSelected ? 600 : 400 }}
+                  >
+                    {concept.label.length > 18 ? concept.label.slice(0, 16) + "..." : concept.label}
+                  </text>
+                </g>
+              );
+            })}
+            {hoveredNodeId && (() => {
+              const concept = concepts.find((c) => c.id === hoveredNodeId);
+              const p = positions[hoveredNodeId];
+              if (!concept || !p) return null;
+              const tooltipW = 200;
+              const tooltipH = 58;
+              let tx = p.x + 24;
+              let ty = p.y - tooltipH / 2;
+              if (tx + tooltipW > width) tx = p.x - tooltipW - 24;
+              if (ty < 10) ty = 10;
+              if (ty + tooltipH > height - 10) ty = height - tooltipH - 10;
+              return (
+                <g style={{ pointerEvents: "none" }}>
+                  <rect
+                    x={tx}
+                    y={ty}
+                    width={tooltipW}
+                    height={tooltipH}
+                    rx={6}
+                    fill="hsl(var(--card))"
+                    stroke="hsl(var(--border))"
+                    strokeWidth={1}
+                  />
+                  <text x={tx + 8} y={ty + 16} className="text-[11px] fill-foreground" style={{ fontWeight: 600 }}>
+                    {concept.label.length > 28 ? concept.label.slice(0, 26) + "..." : concept.label}
+                  </text>
+                  <text x={tx + 8} y={ty + 28} className="text-[9px] fill-muted-foreground">
+                    {concept.category}
+                  </text>
+                  <text x={tx + 8} y={ty + 42} className="text-[8px] fill-muted-foreground">
+                    {concept.description.length > 45 ? concept.description.slice(0, 43) + "..." : concept.description}
+                  </text>
+                  {concept.usageCount > 0 && (
+                    <text x={tx + 8} y={ty + 53} className="text-[8px] fill-muted-foreground">
+                      {concept.usageCount} references
+                    </text>
+                  )}
+                </g>
+              );
+            })()}
+          </g>
+        </svg>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {Object.entries(categoryColorMap).map(([cat, color]) => {
+          const isHidden = hiddenCategories.has(cat);
           return (
-            <line
-              key={i}
-              x1={from.x}
-              y1={from.y}
-              x2={to.x}
-              y2={to.y}
-              stroke="currentColor"
-              strokeOpacity={0.15}
-              strokeWidth={1}
-            />
-          );
-        })}
-        {concepts.map((concept) => {
-          const p = positions[concept.id];
-          if (!p) return null;
-          const isSelected = selectedConceptId === concept.id;
-          const color = categoryColorMap[concept.category] || "hsl(210, 50%, 50%)";
-          const isCustomNode = concept.source === "custom-extension";
-          return (
-            <g
-              key={concept.id}
-              onClick={() => onSelectConcept(concept.id)}
-              className="cursor-pointer"
-              data-testid={`graph-node-${concept.id}`}
+            <button
+              key={cat}
+              onClick={() => toggleCategory(cat)}
+              className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded-md transition-opacity ${
+                isHidden ? "opacity-40 line-through" : "hover-elevate"
+              }`}
+              data-testid={`legend-toggle-${cat.toLowerCase().replace(/\s+/g, "-")}`}
             >
-              <circle
-                cx={p.x}
-                cy={p.y}
-                r={isSelected ? 22 : 16}
-                fill={color}
-                fillOpacity={isSelected ? 0.9 : 0.6}
-                stroke={isSelected ? "hsl(var(--primary))" : color}
-                strokeWidth={isSelected ? 3 : 1.5}
-                strokeDasharray={isCustomNode ? "4 2" : undefined}
-              />
-              <text
-                x={p.x}
-                y={p.y + 28}
-                textAnchor="middle"
-                className="text-[9px] fill-foreground"
-                style={{ pointerEvents: "none" }}
-              >
-                {concept.label.length > 18 ? concept.label.slice(0, 16) + "..." : concept.label}
-              </text>
-            </g>
+              <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
+              <span className="text-muted-foreground">{cat}</span>
+            </button>
           );
         })}
-      </svg>
-      <div className="flex flex-wrap gap-3 mt-3">
-        {Object.entries(categoryColorMap).map(([cat, color]) => (
-          <div key={cat} className="flex items-center gap-1.5 text-xs text-muted-foreground" data-testid={`legend-${cat}`}>
-            <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }} />
-            <span>{cat}</span>
-          </div>
-        ))}
       </div>
     </div>
   );
