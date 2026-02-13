@@ -67,6 +67,7 @@ import {
   insertEntityResolutionSchema,
   insertRelationshipExtractionSchema,
   insertTemporalGraphEntrySchema,
+  insertAutonomyProfileSchema,
 } from "@shared/schema";
 
 const openai = new OpenAI({
@@ -13587,6 +13588,112 @@ Relationships (${(relationships || []).length} total):
 ${(relationships || []).slice(0, 20).map((r: any) => `- ${r.sourceEntity} --[${r.relationshipType}]--> ${r.targetEntity}`).join("\n")}
 
 Industry: ${industry || "general"}
+
+Return ONLY valid JSON.`
+          }
+        ],
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) return res.status(500).json({ error: "No response from AI" });
+      res.json(JSON.parse(content));
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Autonomy Profiles CRUD
+  app.get("/api/autonomy-profiles", async (_req, res) => {
+    try {
+      const profiles = await storage.getAutonomyProfiles();
+      res.json(profiles);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/autonomy-profiles/:id", async (req, res) => {
+    try {
+      const profile = await storage.getAutonomyProfile(req.params.id);
+      if (!profile) return res.status(404).json({ error: "Not found" });
+      res.json(profile);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/autonomy-profiles", async (req, res) => {
+    try {
+      const data = insertAutonomyProfileSchema.parse(req.body);
+      const created = await storage.createAutonomyProfile(data);
+      res.status(201).json(created);
+    } catch (e: any) {
+      if (e.name === "ZodError") return res.status(400).json({ error: e.errors });
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.patch("/api/autonomy-profiles/:id", async (req, res) => {
+    try {
+      const updated = await storage.updateAutonomyProfile(req.params.id, req.body);
+      if (!updated) return res.status(404).json({ error: "Not found" });
+      res.json(updated);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.delete("/api/autonomy-profiles/:id", async (req, res) => {
+    try {
+      const ok = await storage.deleteAutonomyProfile(req.params.id);
+      if (!ok) return res.status(404).json({ error: "Not found" });
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // AI Autonomy Learning Recommendations
+  app.post("/api/ai/autonomy-recommendations", async (req, res) => {
+    try {
+      const { industry, riskDimensions, autonomyLevels, approvalHistory } = req.body;
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        messages: [
+          {
+            role: "system",
+            content: `You are an AI governance expert specializing in adaptive autonomy calibration for AI agent platforms. Analyze approval patterns and risk dimensions to recommend autonomy adjustments.
+
+Return JSON with this structure:
+{
+  "recommendations": [
+    {
+      "actionType": "string - the action type being analyzed",
+      "currentLevel": "string - current autonomy level (full_auto|log_only|notify_after|confirm_before|expert_approval)",
+      "recommendedLevel": "string - recommended autonomy level",
+      "direction": "string - increase|decrease|maintain",
+      "confidence": number 0-1,
+      "reasoning": "string - why this change is recommended",
+      "approvalRate": number 0-100,
+      "sampleSize": number,
+      "riskFactors": ["string - relevant risk factors"]
+    }
+  ],
+  "overallAssessment": "string - summary of the autonomy posture",
+  "riskAlerts": [
+    {
+      "severity": "high|medium|low",
+      "message": "string - risk alert description",
+      "affectedActions": ["string"]
+    }
+  ],
+  "efficiencyGains": {
+    "estimatedTimesSaved": "string - estimated time savings",
+    "reducedApprovals": number,
+    "currentBottlenecks": ["string - current bottleneck descriptions"]
+  }
+}`
+          },
+          {
+            role: "user",
+            content: `Analyze these autonomy settings and recommend adjustments for the ${industry || "general"} industry.
+
+Current Risk Dimensions: ${JSON.stringify(riskDimensions || [])}
+Current Autonomy Levels: ${JSON.stringify(autonomyLevels || [])}
+Recent Approval History: ${JSON.stringify(approvalHistory || { totalDecisions: 250, approvedRate: 87, avgReviewTime: "4.2 hours", topActions: ["data_enrichment", "entity_resolution", "report_generation", "model_retraining", "alert_escalation"] })}
+
+Provide specific, actionable recommendations for calibrating autonomy levels based on the approval patterns and risk dimensions. Consider industry-specific regulations and risk tolerances.
 
 Return ONLY valid JSON.`
           }

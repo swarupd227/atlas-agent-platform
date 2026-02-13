@@ -132,6 +132,7 @@ import {
   entityResolutions, type EntityResolution, type InsertEntityResolution,
   relationshipExtractions, type RelationshipExtraction, type InsertRelationshipExtraction,
   temporalGraphEntries, type TemporalGraphEntry, type InsertTemporalGraphEntry,
+  autonomyProfiles, type AutonomyProfile, type InsertAutonomyProfile,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -541,6 +542,12 @@ export interface IStorage {
   createTemporalGraphEntry(entry: InsertTemporalGraphEntry): Promise<TemporalGraphEntry>;
   updateTemporalGraphEntry(id: string, data: Partial<InsertTemporalGraphEntry>): Promise<TemporalGraphEntry | undefined>;
   deleteTemporalGraphEntry(id: string): Promise<boolean>;
+
+  getAutonomyProfiles(): Promise<AutonomyProfile[]>;
+  getAutonomyProfile(id: string): Promise<AutonomyProfile | undefined>;
+  createAutonomyProfile(profile: InsertAutonomyProfile): Promise<AutonomyProfile>;
+  updateAutonomyProfile(id: string, data: Partial<InsertAutonomyProfile>): Promise<AutonomyProfile | undefined>;
+  deleteAutonomyProfile(id: string): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2073,6 +2080,30 @@ export class DatabaseStorage implements IStorage {
 
   async deleteTemporalGraphEntry(id: string): Promise<boolean> {
     const result = await db.delete(temporalGraphEntries).where(eq(temporalGraphEntries.id, id));
+    return (result as any).rowCount > 0;
+  }
+
+  async getAutonomyProfiles(): Promise<AutonomyProfile[]> {
+    return db.select().from(autonomyProfiles).orderBy(desc(autonomyProfiles.createdAt));
+  }
+
+  async getAutonomyProfile(id: string): Promise<AutonomyProfile | undefined> {
+    const [profile] = await db.select().from(autonomyProfiles).where(eq(autonomyProfiles.id, id));
+    return profile;
+  }
+
+  async createAutonomyProfile(profile: InsertAutonomyProfile): Promise<AutonomyProfile> {
+    const [created] = await db.insert(autonomyProfiles).values(profile).returning();
+    return created;
+  }
+
+  async updateAutonomyProfile(id: string, data: Partial<InsertAutonomyProfile>): Promise<AutonomyProfile | undefined> {
+    const [updated] = await db.update(autonomyProfiles).set(data).where(eq(autonomyProfiles.id, id)).returning();
+    return updated;
+  }
+
+  async deleteAutonomyProfile(id: string): Promise<boolean> {
+    const result = await db.delete(autonomyProfiles).where(eq(autonomyProfiles.id, id));
     return (result as any).rowCount > 0;
   }
 }

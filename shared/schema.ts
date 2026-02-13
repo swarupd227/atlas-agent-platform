@@ -1578,4 +1578,21 @@ export const insertTemporalGraphEntrySchema = createInsertSchema(temporalGraphEn
 export type InsertTemporalGraphEntry = z.infer<typeof insertTemporalGraphEntrySchema>;
 export type TemporalGraphEntry = typeof temporalGraphEntries.$inferSelect;
 
+export const autonomyProfiles = pgTable("autonomy_profiles", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  industry: text("industry").notNull(),
+  description: text("description"),
+  riskDimensions: jsonb("risk_dimensions").notNull().default(sql`'[]'::jsonb`),
+  autonomyLevels: jsonb("autonomy_levels").notNull().default(sql`'[]'::jsonb`),
+  overrideRules: jsonb("override_rules").notNull().default(sql`'[]'::jsonb`),
+  learningData: jsonb("learning_data").notNull().default(sql`'{}'::jsonb`),
+  status: text("status").notNull().default("active"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAutonomyProfileSchema = createInsertSchema(autonomyProfiles).omit({ id: true, createdAt: true });
+export type InsertAutonomyProfile = z.infer<typeof insertAutonomyProfileSchema>;
+export type AutonomyProfile = typeof autonomyProfiles.$inferSelect;
+
 export * from "./models/chat";
