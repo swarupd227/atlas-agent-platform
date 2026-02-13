@@ -13694,6 +13694,75 @@ Return ONLY valid JSON.`
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  app.post("/api/ai/generate-oversight-decisions", async (req, res) => {
+    try {
+      const { industry, count = 3 } = req.body;
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        messages: [
+          {
+            role: "system",
+            content: `You are an AI governance expert generating realistic oversight decision scenarios for AI agent management platforms. Generate decisions that require human review.
+
+Return JSON with this structure:
+{
+  "decisions": [
+    {
+      "agentName": "string - realistic agent name for the industry",
+      "actionType": "string - short action label (e.g. Block Transaction, Recommend Treatment, Halt Production)",
+      "actionDescription": "string - detailed 2-3 sentence description of what the agent wants to do and why",
+      "priority": "critical|high|medium|low",
+      "compositeRiskScore": number 0-100,
+      "confidence": number 0-1,
+      "reasoningChain": [{"step": number, "action": "string", "result": "string"}],
+      "industryContext": {"key": "value pairs relevant to the industry"},
+      "regulatoryPolicies": [{"regulation": "string", "relevance": "string", "requirement": "string", "complianceRisk": "low|medium|high"}],
+      "ontologyRefs": ["string array of relevant domain concepts"],
+      "similarDecisions": [{"description": "string", "outcome": "approved|rejected|modified", "result": "string", "similarity": number 0-100, "timeAgo": "string"}],
+      "riskDimensions": {"dimension_name": number 0-100},
+      "requestedAction": {"type": "string", "target": "string", "fallback": "string"}
+    }
+  ]
+}
+
+Make each decision unique, realistic, and industry-appropriate. Include diverse risk levels and action types. Use real regulation names and realistic agent scenarios.`
+          },
+          {
+            role: "user",
+            content: `Generate ${Math.min(count, 5)} realistic pending oversight decisions for the ${industry || "financial_services"} industry. Make them diverse in risk level and action type. Return ONLY valid JSON.`
+          }
+        ],
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) return res.status(500).json({ error: "No response from AI" });
+      const parsed = JSON.parse(content);
+      const createdDecisions = [];
+      for (const d of (parsed.decisions || [])) {
+        const decision = await storage.createOversightDecision({
+          agentName: d.agentName,
+          actionType: d.actionType,
+          actionDescription: d.actionDescription,
+          industry: industry || "financial_services",
+          status: "pending",
+          priority: d.priority || "medium",
+          compositeRiskScore: d.compositeRiskScore || 50,
+          confidence: d.confidence || 0.5,
+          reasoningChain: d.reasoningChain || [],
+          industryContext: d.industryContext || {},
+          regulatoryPolicies: d.regulatoryPolicies || [],
+          ontologyRefs: d.ontologyRefs || [],
+          similarDecisions: d.similarDecisions || [],
+          riskDimensions: d.riskDimensions || {},
+          requestedAction: d.requestedAction || {},
+        } as any);
+        createdDecisions.push(decision);
+      }
+      res.json({ decisions: createdDecisions, count: createdDecisions.length });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   app.post("/api/ai/oversight-context", async (req, res) => {
     try {
       const { decision, industry } = req.body;

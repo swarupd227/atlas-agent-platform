@@ -15,6 +15,13 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useIndustry } from "@/components/industry-provider";
@@ -47,6 +54,7 @@ import {
   MessageSquare,
   BookOpen,
   GitBranch,
+  Plus,
 } from "lucide-react";
 
 type OversightDecision = {
@@ -148,6 +156,16 @@ export default function OversightConsole() {
   const [actionDialog, setActionDialog] = useState<{ open: boolean; action: string; label: string }>({ open: false, action: "", label: "" });
   const [actionNote, setActionNote] = useState("");
   const [aiAnalysis, setAiAnalysis] = useState<any>(null);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [generateCount, setGenerateCount] = useState(3);
+  const [newDecision, setNewDecision] = useState({
+    agentName: "",
+    actionType: "",
+    actionDescription: "",
+    priority: "medium",
+    compositeRiskScore: 50,
+    confidence: 0.7,
+  });
 
   const { data: decisions = [], isLoading } = useQuery<OversightDecision[]>({
     queryKey: ["/api/oversight-decisions"],
@@ -178,6 +196,55 @@ export default function OversightConsole() {
     },
     onError: (e: any) => toast({ title: "AI analysis failed", description: e.message, variant: "destructive" }),
   });
+
+  const createMutation = useMutation({
+    mutationFn: async (data: any) => {
+      const res = await apiRequest("POST", "/api/oversight-decisions", data);
+      return res.json();
+    },
+    onSuccess: (created) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/oversight-decisions"] });
+      toast({ title: "Decision created", description: `${created.agentName} - ${created.actionType}` });
+      setCreateDialogOpen(false);
+      setNewDecision({ agentName: "", actionType: "", actionDescription: "", priority: "medium", compositeRiskScore: 50, confidence: 0.7 });
+      setSelectedId(created.id);
+    },
+    onError: (e: any) => toast({ title: "Failed to create", description: e.message, variant: "destructive" }),
+  });
+
+  const generateMutation = useMutation({
+    mutationFn: async (data: { industry: string; count: number }) => {
+      const res = await apiRequest("POST", "/api/ai/generate-oversight-decisions", data);
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/oversight-decisions"] });
+      toast({ title: "Decisions generated", description: `${data.count} new decisions added to the queue` });
+    },
+    onError: (e: any) => toast({ title: "Generation failed", description: e.message, variant: "destructive" }),
+  });
+
+  function handleCreateDecision() {
+    createMutation.mutate({
+      ...newDecision,
+      industry: industry?.id || "financial_services",
+      status: "pending",
+      reasoningChain: [],
+      industryContext: {},
+      regulatoryPolicies: [],
+      ontologyRefs: [],
+      similarDecisions: [],
+      riskDimensions: {},
+      requestedAction: {},
+    });
+  }
+
+  function handleGenerateDecisions() {
+    generateMutation.mutate({
+      industry: industry?.id || "financial_services",
+      count: generateCount,
+    });
+  }
 
   const filteredDecisions = useMemo(() => {
     let list = decisions;
@@ -270,6 +337,26 @@ export default function OversightConsole() {
           </Badge>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setCreateDialogOpen(true)}
+            data-testid="button-new-decision"
+          >
+            <Plus className="w-4 h-4 mr-1" />
+            New Decision
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleGenerateDecisions}
+            disabled={generateMutation.isPending}
+            data-testid="button-ai-generate-decisions"
+          >
+            {generateMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1" />}
+            AI Generate
+          </Button>
+          <div className="w-px h-6 bg-border mx-1" />
           <Button
             variant={statusFilter === "all" ? "default" : "outline"}
             size="sm"
@@ -878,6 +965,99 @@ export default function OversightConsole() {
             >
               {resolveMutation.isPending && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
               Confirm
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Create New Oversight Decision</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="create-agent-name">Agent Name</Label>
+              <Input
+                id="create-agent-name"
+                placeholder="e.g. Transaction Monitor Agent"
+                value={newDecision.agentName}
+                onChange={(e) => setNewDecision({ ...newDecision, agentName: e.target.value })}
+                data-testid="input-create-agent-name"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="create-action-type">Action Type</Label>
+              <Input
+                id="create-action-type"
+                placeholder="e.g. Block Transaction, Halt Production"
+                value={newDecision.actionType}
+                onChange={(e) => setNewDecision({ ...newDecision, actionType: e.target.value })}
+                data-testid="input-create-action-type"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="create-description">Description</Label>
+              <Textarea
+                id="create-description"
+                placeholder="Describe what the agent wants to do and why it needs oversight..."
+                value={newDecision.actionDescription}
+                onChange={(e) => setNewDecision({ ...newDecision, actionDescription: e.target.value })}
+                data-testid="input-create-description"
+              />
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-1.5">
+                <Label>Priority</Label>
+                <Select
+                  value={newDecision.priority}
+                  onValueChange={(v) => setNewDecision({ ...newDecision, priority: v })}
+                >
+                  <SelectTrigger data-testid="select-create-priority">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="low">Low</SelectItem>
+                    <SelectItem value="medium">Medium</SelectItem>
+                    <SelectItem value="high">High</SelectItem>
+                    <SelectItem value="critical">Critical</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Risk Score</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={newDecision.compositeRiskScore}
+                  onChange={(e) => setNewDecision({ ...newDecision, compositeRiskScore: Number(e.target.value) })}
+                  data-testid="input-create-risk-score"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Confidence</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={newDecision.confidence}
+                  onChange={(e) => setNewDecision({ ...newDecision, confidence: Number(e.target.value) })}
+                  data-testid="input-create-confidence"
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>Cancel</Button>
+            <Button
+              onClick={handleCreateDecision}
+              disabled={createMutation.isPending || !newDecision.agentName || !newDecision.actionType || !newDecision.actionDescription}
+              data-testid="button-confirm-create"
+            >
+              {createMutation.isPending && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
+              Create Decision
             </Button>
           </DialogFooter>
         </DialogContent>
