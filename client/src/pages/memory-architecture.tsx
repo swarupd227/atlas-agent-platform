@@ -13,9 +13,13 @@ import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useIndustry } from "@/components/industry-provider";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Brain, Clock, Zap, Shield, Wand2, Loader2, Plus, Search, Eye,
   Trash2, Archive, AlertTriangle, Lock, FileText, Database, Server, RefreshCw,
+  Pencil, Check, X,
 } from "lucide-react";
 
 type TierConfig = {
@@ -416,6 +420,11 @@ export default function MemoryArchitecture() {
   const [newPolicyAction, setNewPolicyAction] = useState("Archive");
   const [newPolicyTimeline, setNewPolicyTimeline] = useState("After 30 days");
   const [aiGeneratedRules, setAiGeneratedRules] = useState<IndustryRule[]>([]);
+  const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
+  const [reviewRules, setReviewRules] = useState<(IndustryRule & { selected: boolean })[]>([]);
+  const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<Partial<IndustryRule>>({});
+  const [appliedRules, setAppliedRules] = useState<IndustryRule[]>([]);
   const { toast } = useToast();
   const { industry: currentIndustry } = useIndustry();
 
@@ -464,7 +473,10 @@ export default function MemoryArchitecture() {
         autoActions: (r.autoActions as string[]) || [],
       }));
       setAiGeneratedRules(mapped);
-      toast({ title: "AI rules generated", description: `${mapped.length} rules suggested for ${industryId}` });
+      setReviewRules(mapped.map((r) => ({ ...r, selected: true })));
+      setEditingRuleId(null);
+      setReviewDialogOpen(true);
+      toast({ title: "AI rules generated", description: `${mapped.length} rules ready for review` });
     },
     onError: () => {
       toast({ title: "Generation failed", description: "Could not generate AI rules. Try again later.", variant: "destructive" });
@@ -526,6 +538,57 @@ export default function MemoryArchitecture() {
     setNewPolicyTimeline("After 30 days");
     toast({ title: "Policy added" });
   }
+
+  function startEditRule(rule: IndustryRule & { selected: boolean }) {
+    setEditingRuleId(rule.id);
+    setEditForm({ ...rule });
+  }
+
+  function saveEditRule() {
+    if (!editingRuleId) return;
+    setReviewRules((prev) =>
+      prev.map((r) => r.id === editingRuleId ? { ...r, ...editForm, selected: r.selected } : r)
+    );
+    setEditingRuleId(null);
+    setEditForm({});
+  }
+
+  function cancelEditRule() {
+    setEditingRuleId(null);
+    setEditForm({});
+  }
+
+  function toggleRuleSelected(ruleId: string) {
+    setReviewRules((prev) =>
+      prev.map((r) => r.id === ruleId ? { ...r, selected: !r.selected } : r)
+    );
+  }
+
+  function applySelectedRules() {
+    const selected = reviewRules.filter((r) => r.selected);
+    if (selected.length === 0) {
+      toast({ title: "No rules selected", description: "Select at least one rule to apply.", variant: "destructive" });
+      return;
+    }
+    const newRules: IndustryRule[] = selected.map(({ selected: _sel, ...rest }) => ({
+      ...rest,
+      id: `applied-${Date.now()}-${rest.id}`,
+    }));
+    setAppliedRules((prev) => [...prev, ...newRules]);
+    setReviewDialogOpen(false);
+    setReviewRules([]);
+    setAiGeneratedRules([]);
+    toast({ title: "Rules applied", description: `${newRules.length} rule${newRules.length > 1 ? "s" : ""} added to your governance rules` });
+  }
+
+  function removeAppliedRule(ruleId: string) {
+    setAppliedRules((prev) => prev.filter((r) => r.id !== ruleId));
+    toast({ title: "Rule removed" });
+  }
+
+  const allRules = useMemo(() => {
+    return [...industryRules, ...appliedRules];
+  }, [industryRules, appliedRules]);
 
   return (
     <div className="flex flex-col gap-6 p-6" data-testid="page-memory-architecture">
@@ -702,80 +765,212 @@ export default function MemoryArchitecture() {
             </div>
 
             <div className="flex flex-col gap-3">
-              {industryRules.map((rule) => (
-                <Card key={rule.id} className="hover-elevate" data-testid={`card-rule-${rule.id}`}>
-                  <CardContent className="p-4 flex flex-col gap-3">
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <h3 className="font-medium" data-testid={`text-rule-name-${rule.id}`}>{rule.name}</h3>
-                        <Badge variant="secondary" data-testid={`badge-rule-tier-${rule.id}`}>{rule.tier}</Badge>
-                        <Badge variant="outline" data-testid={`badge-rule-regulation-${rule.id}`}>{rule.regulation}</Badge>
-                      </div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {rule.encrypted && (
-                          <Shield className="w-4 h-4 text-green-500" data-testid={`icon-rule-encrypted-${rule.id}`} />
-                        )}
-                        <Badge variant="secondary" data-testid={`badge-rule-retention-${rule.id}`}>
-                          {rule.retentionDays > 0 ? `${rule.retentionDays} days` : "Session only"}
-                        </Badge>
-                      </div>
-                    </div>
-                    <p className="text-sm text-muted-foreground" data-testid={`text-rule-desc-${rule.id}`}>
-                      {rule.description}
-                    </p>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <Badge variant="outline" data-testid={`badge-rule-access-${rule.id}`}>
-                        <Lock className="w-3 h-3 mr-1" />
-                        {rule.accessControl}
-                      </Badge>
-                      {rule.autoActions.map((action) => (
-                        <Badge key={action} variant="secondary" className="text-xs" data-testid={`badge-rule-action-${rule.id}-${action}`}>
-                          {action}
-                        </Badge>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-
-            {aiGeneratedRules.length > 0 && (
-              <div className="flex flex-col gap-3">
-                <div className="flex items-center gap-2">
-                  <Wand2 className="w-4 h-4 text-muted-foreground" />
-                  <h3 className="text-base font-medium" data-testid="text-ai-rules-heading">AI-Generated Rules</h3>
-                </div>
-                {aiGeneratedRules.map((rule) => (
-                  <Card key={rule.id} className="hover-elevate" data-testid={`card-ai-rule-${rule.id}`}>
+              {allRules.map((rule) => {
+                const isApplied = rule.id.startsWith("applied-");
+                return (
+                  <Card key={rule.id} className="hover-elevate" data-testid={`card-rule-${rule.id}`}>
                     <CardContent className="p-4 flex flex-col gap-3">
                       <div className="flex items-center justify-between gap-2 flex-wrap">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <h3 className="font-medium" data-testid={`text-ai-rule-name-${rule.id}`}>{rule.name}</h3>
-                          <Badge variant="secondary">{rule.tier}</Badge>
-                          <Badge variant="outline">{rule.regulation}</Badge>
+                          <h3 className="font-medium" data-testid={`text-rule-name-${rule.id}`}>{rule.name}</h3>
+                          <Badge variant="secondary" data-testid={`badge-rule-tier-${rule.id}`}>{rule.tier}</Badge>
+                          <Badge variant="outline" data-testid={`badge-rule-regulation-${rule.id}`}>{rule.regulation}</Badge>
+                          {isApplied && (
+                            <Badge variant="secondary" className="text-xs" data-testid={`badge-rule-ai-${rule.id}`}>
+                              <Wand2 className="w-3 h-3 mr-1" />
+                              AI Generated
+                            </Badge>
+                          )}
                         </div>
                         <div className="flex items-center gap-2 flex-wrap">
-                          {rule.encrypted && <Shield className="w-4 h-4 text-green-500" />}
-                          <Badge variant="secondary">
+                          {rule.encrypted && (
+                            <Shield className="w-4 h-4 text-green-500" data-testid={`icon-rule-encrypted-${rule.id}`} />
+                          )}
+                          <Badge variant="secondary" data-testid={`badge-rule-retention-${rule.id}`}>
                             {rule.retentionDays > 0 ? `${rule.retentionDays} days` : "Session only"}
                           </Badge>
+                          {isApplied && (
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              onClick={() => removeAppliedRule(rule.id)}
+                              data-testid={`button-remove-rule-${rule.id}`}
+                            >
+                              <X className="w-4 h-4" />
+                            </Button>
+                          )}
                         </div>
                       </div>
-                      <p className="text-sm text-muted-foreground">{rule.description}</p>
+                      <p className="text-sm text-muted-foreground" data-testid={`text-rule-desc-${rule.id}`}>
+                        {rule.description}
+                      </p>
                       <div className="flex items-center gap-2 flex-wrap">
-                        <Badge variant="outline">
+                        <Badge variant="outline" data-testid={`badge-rule-access-${rule.id}`}>
                           <Lock className="w-3 h-3 mr-1" />
                           {rule.accessControl}
                         </Badge>
                         {rule.autoActions.map((action) => (
-                          <Badge key={action} variant="secondary" className="text-xs">{action}</Badge>
+                          <Badge key={action} variant="secondary" className="text-xs" data-testid={`badge-rule-action-${rule.id}-${action}`}>
+                            {action}
+                          </Badge>
                         ))}
                       </div>
                     </CardContent>
                   </Card>
-                ))}
-              </div>
-            )}
+                );
+              })}
+            </div>
+
+            <Dialog open={reviewDialogOpen} onOpenChange={setReviewDialogOpen}>
+              <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
+                <DialogHeader>
+                  <DialogTitle>Review AI-Generated Rules</DialogTitle>
+                  <p className="text-sm text-muted-foreground">
+                    Select and edit rules before applying them to your governance configuration.
+                  </p>
+                </DialogHeader>
+                <ScrollArea className="flex-1 pr-4">
+                  <div className="flex flex-col gap-3">
+                    {reviewRules.map((rule) => (
+                      <Card key={rule.id} data-testid={`card-review-rule-${rule.id}`}>
+                        <CardContent className="p-4 flex flex-col gap-3">
+                          {editingRuleId === rule.id ? (
+                            <div className="flex flex-col gap-3">
+                              <div className="grid grid-cols-2 gap-3">
+                                <div className="flex flex-col gap-1.5">
+                                  <Label className="text-xs">Rule Name</Label>
+                                  <Input
+                                    value={editForm.name || ""}
+                                    onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
+                                    data-testid={`input-edit-name-${rule.id}`}
+                                  />
+                                </div>
+                                <div className="flex flex-col gap-1.5">
+                                  <Label className="text-xs">Tier</Label>
+                                  <Select value={editForm.tier || ""} onValueChange={(v) => setEditForm((f) => ({ ...f, tier: v }))}>
+                                    <SelectTrigger data-testid={`select-edit-tier-${rule.id}`}>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="Working Memory">Working Memory</SelectItem>
+                                      <SelectItem value="Episodic Memory">Episodic Memory</SelectItem>
+                                      <SelectItem value="Semantic Memory">Semantic Memory</SelectItem>
+                                      <SelectItem value="All Tiers">All Tiers</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              </div>
+                              <div className="flex flex-col gap-1.5">
+                                <Label className="text-xs">Description</Label>
+                                <Textarea
+                                  value={editForm.description || ""}
+                                  onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))}
+                                  className="text-sm resize-none"
+                                  rows={2}
+                                  data-testid={`input-edit-desc-${rule.id}`}
+                                />
+                              </div>
+                              <div className="grid grid-cols-3 gap-3">
+                                <div className="flex flex-col gap-1.5">
+                                  <Label className="text-xs">Regulation</Label>
+                                  <Input
+                                    value={editForm.regulation || ""}
+                                    onChange={(e) => setEditForm((f) => ({ ...f, regulation: e.target.value }))}
+                                    data-testid={`input-edit-regulation-${rule.id}`}
+                                  />
+                                </div>
+                                <div className="flex flex-col gap-1.5">
+                                  <Label className="text-xs">Retention (days)</Label>
+                                  <Input
+                                    type="number"
+                                    value={editForm.retentionDays || 0}
+                                    onChange={(e) => setEditForm((f) => ({ ...f, retentionDays: parseInt(e.target.value) || 0 }))}
+                                    data-testid={`input-edit-retention-${rule.id}`}
+                                  />
+                                </div>
+                                <div className="flex flex-col gap-1.5">
+                                  <Label className="text-xs">Access Control</Label>
+                                  <Select value={editForm.accessControl || ""} onValueChange={(v) => setEditForm((f) => ({ ...f, accessControl: v }))}>
+                                    <SelectTrigger data-testid={`select-edit-access-${rule.id}`}>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="Standard">Standard</SelectItem>
+                                      <SelectItem value="Role-based">Role-based</SelectItem>
+                                      <SelectItem value="Restricted">Restricted</SelectItem>
+                                      <SelectItem value="Need-to-know">Need-to-know</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2 justify-end">
+                                <Button size="sm" variant="ghost" onClick={cancelEditRule} data-testid={`button-cancel-edit-${rule.id}`}>
+                                  Cancel
+                                </Button>
+                                <Button size="sm" onClick={saveEditRule} data-testid={`button-save-edit-${rule.id}`}>
+                                  <Check className="w-3.5 h-3.5 mr-1" />
+                                  Save
+                                </Button>
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <Checkbox
+                                    checked={rule.selected}
+                                    onCheckedChange={() => toggleRuleSelected(rule.id)}
+                                    data-testid={`checkbox-rule-${rule.id}`}
+                                  />
+                                  <h3 className="font-medium">{rule.name}</h3>
+                                  <Badge variant="secondary">{rule.tier}</Badge>
+                                  <Badge variant="outline">{rule.regulation}</Badge>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <Button size="icon" variant="ghost" onClick={() => startEditRule(rule)} data-testid={`button-edit-rule-${rule.id}`}>
+                                    <Pencil className="w-3.5 h-3.5" />
+                                  </Button>
+                                </div>
+                              </div>
+                              <p className="text-sm text-muted-foreground ml-8">{rule.description}</p>
+                              <div className="flex items-center gap-2 flex-wrap ml-8">
+                                <Badge variant="secondary">
+                                  {rule.retentionDays > 0 ? `${rule.retentionDays} days` : "Session only"}
+                                </Badge>
+                                <Badge variant="outline">
+                                  <Lock className="w-3 h-3 mr-1" />
+                                  {rule.accessControl}
+                                </Badge>
+                                {rule.encrypted && (
+                                  <Badge variant="secondary">
+                                    <Shield className="w-3 h-3 mr-1" />
+                                    Encrypted
+                                  </Badge>
+                                )}
+                              </div>
+                            </>
+                          )}
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                </ScrollArea>
+                <DialogFooter className="flex items-center justify-between gap-2 flex-wrap">
+                  <p className="text-sm text-muted-foreground">
+                    {reviewRules.filter((r) => r.selected).length} of {reviewRules.length} rules selected
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" onClick={() => setReviewDialogOpen(false)} data-testid="button-cancel-review">
+                      Cancel
+                    </Button>
+                    <Button onClick={applySelectedRules} data-testid="button-apply-rules">
+                      <Check className="w-4 h-4 mr-1.5" />
+                      Apply Selected Rules
+                    </Button>
+                  </div>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </div>
         </TabsContent>
 
