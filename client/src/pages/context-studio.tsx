@@ -520,56 +520,54 @@ export default function ContextStudioPage() {
                 if (catSources.length === 0) return null;
                 const Icon = CATEGORY_ICONS[cat];
                 return (
-                  <div key={cat} className="flex flex-col gap-2">
-                    <div className="flex items-center gap-2">
-                      <Icon className="w-4 h-4 text-muted-foreground" />
-                      <h3 className="text-sm font-medium">{cat}</h3>
+                  <Card key={cat}>
+                    <CardHeader className="flex flex-row items-center gap-2 space-y-0 pb-2">
+                      <Icon className="w-4 h-4 text-primary shrink-0" />
+                      <CardTitle className="text-sm font-medium">{cat}</CardTitle>
                       <Badge variant="outline" className="text-[10px]">{catSources.length}</Badge>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    </CardHeader>
+                    <CardContent className="flex flex-col gap-2">
                       {catSources.map((source) => (
-                        <Card key={source.id} data-testid={`card-source-${source.id}`}>
-                          <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-                            <CardTitle className="text-sm font-medium truncate">{source.name}</CardTitle>
-                            <div className="flex items-center gap-2 shrink-0">
-                              <Badge variant="outline" className="text-[10px]">
-                                {source.refreshStrategy}
-                              </Badge>
-                              <Switch
-                                checked={source.enabled}
-                                onCheckedChange={() => toggleSourceEnabled(source.id)}
-                                data-testid={`switch-source-${source.id}`}
-                              />
-                            </div>
-                          </CardHeader>
-                          <CardContent className="flex flex-col gap-3">
-                            <p className="text-xs text-muted-foreground line-clamp-2">{source.description}</p>
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <Label className="text-xs">Tokens:</Label>
-                              <Input
-                                type="number"
-                                className="w-24"
-                                value={source.tokenAllocation}
-                                onChange={(e) => updateSourceTokens(source.id, parseInt(e.target.value) || 0)}
-                                data-testid={`input-tokens-${source.id}`}
-                              />
-                              <span className="text-xs text-muted-foreground">/ {source.maxTokens.toLocaleString()}</span>
-                            </div>
-                            <div className="flex items-center justify-end">
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                onClick={() => removeSource(source.id)}
-                                data-testid={`button-remove-source-${source.id}`}
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </Button>
-                            </div>
-                          </CardContent>
-                        </Card>
+                        <div
+                          key={source.id}
+                          className="flex items-center gap-4 p-3 rounded-md bg-muted/40"
+                          data-testid={`card-source-${source.id}`}
+                        >
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium truncate">{source.name}</p>
+                            <p className="text-xs text-muted-foreground line-clamp-1">{source.description}</p>
+                          </div>
+                          <Badge variant="outline" className="text-[10px] shrink-0">
+                            {source.refreshStrategy}
+                          </Badge>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <Label className="text-xs text-muted-foreground">Tokens:</Label>
+                            <Input
+                              type="number"
+                              className="w-24"
+                              value={source.tokenAllocation}
+                              onChange={(e) => updateSourceTokens(source.id, parseInt(e.target.value) || 0)}
+                              data-testid={`input-tokens-${source.id}`}
+                            />
+                            <span className="text-xs text-muted-foreground">/ {source.maxTokens.toLocaleString()}</span>
+                          </div>
+                          <Switch
+                            checked={source.enabled}
+                            onCheckedChange={() => toggleSourceEnabled(source.id)}
+                            data-testid={`switch-source-${source.id}`}
+                          />
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            onClick={() => removeSource(source.id)}
+                            data-testid={`button-remove-source-${source.id}`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
                       ))}
-                    </div>
-                  </div>
+                    </CardContent>
+                  </Card>
                 );
               })}
             </div>
