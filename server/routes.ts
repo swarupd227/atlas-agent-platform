@@ -14916,6 +14916,66 @@ Include 4-7 steps with at least one approval gate for high-risk actions. Make it
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  app.post("/api/ai/enhance-runbook", async (req, res) => {
+    try {
+      const { runbook, enhanceMode } = req.body;
+      const OpenAI = (await import("openai")).default;
+      const openai = new OpenAI();
+
+      const industryContext: Record<string, string> = {
+        financial_services: "Financial Services (SEC/FINRA regulated, AML/KYC compliance, trading operations)",
+        healthcare: "Healthcare (HIPAA regulated, patient safety, clinical operations, EHR systems)",
+        manufacturing: "Manufacturing (ISO certified, equipment safety, production quality, supply chain)",
+        insurance: "Insurance (state regulated, actuarial requirements, claims processing, underwriting)",
+        retail: "Retail (consumer protection, pricing regulations, inventory management, e-commerce)",
+      };
+
+      const modeInstructions: Record<string, string> = {
+        full: `Enhance the entire runbook: improve steps (add missing ones, refine labels, add conditions/branches), add proper approval gates for high-risk actions, suggest better trigger conditions, and improve the description. Keep existing steps where they are good but refine them.`,
+        steps: `Focus on enhancing only the steps: add missing steps, improve step labels to be more specific, add condition branches where appropriate, ensure proper ordering, and add approval gates for any high-risk actions. Return the full enhanced steps array.`,
+        triggers: `Focus on enhancing only the trigger conditions: suggest additional triggers that would be relevant for this type of runbook in the ${runbook.industry} industry. Include both event-based and metric-based triggers with appropriate thresholds.`,
+        approvals: `Focus on enhancing only the approval gates: analyze the steps and identify which ones need approval gates based on risk level and industry regulations. Suggest appropriate roles and autonomy levels.`,
+      };
+
+      const prompt = `You are enhancing an existing runbook for the ${industryContext[runbook.industry] || runbook.industry} industry.
+
+Current runbook:
+- Name: ${runbook.name}
+- Description: ${runbook.description}
+- Category: ${runbook.category}
+- Severity: ${runbook.severity}
+- Current steps: ${JSON.stringify(runbook.steps || [])}
+- Current triggers: ${JSON.stringify(runbook.triggerConditions || [])}
+- Current approval gates: ${JSON.stringify(runbook.approvalGates || [])}
+
+Enhancement mode: ${enhanceMode || "full"}
+${modeInstructions[enhanceMode || "full"]}
+
+Return a JSON object with the enhanced fields:
+{
+  "description": "Enhanced description",
+  "steps": [{"id": "1", "type": "action|condition|approval_gate", "action": "action_id", "label": "Descriptive step label", "condition": "optional", "trueNext": "optional_step_id", "falseNext": "optional_step_id", "approvalLevel": "optional", "order": 1}],
+  "triggerConditions": [{"type": "event|metric", "event": "event_name", "metric": "metric_name", "operator": "greater_than|less_than|equals", "threshold": value}],
+  "approvalGates": [{"stepId": "step_id", "requiredRole": "role_name", "autonomyLevel": "full_auto|log_only|notify_after|confirm_before|expert_approval"}],
+  "autonomyLevel": "recommended_overall_level",
+  "estimatedDuration": "estimated_duration",
+  "severity": "low|medium|high|critical",
+  "enhancementSummary": "Brief summary of what was enhanced"
+}
+
+Include 5-8 steps with at least one approval gate. Make steps industry-specific with proper regulatory language.`;
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" },
+      });
+
+      const enhanced = JSON.parse(response.choices[0]?.message?.content || "{}");
+      res.json(enhanced);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   // Start the job worker
   startWorker();
 

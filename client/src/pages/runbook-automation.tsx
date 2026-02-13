@@ -323,6 +323,65 @@ export default function RunbookAutomation() {
     onError: (e: any) => toast({ title: "AI generation failed", description: e.message, variant: "destructive" }),
   });
 
+  const aiEnhanceMutation = useMutation({
+    mutationFn: async (data: { runbookId: string; runbook: any; enhanceMode: string }) => {
+      const res = await apiRequest("POST", "/api/ai/enhance-runbook", { runbook: data.runbook, enhanceMode: data.enhanceMode });
+      return res.json();
+    },
+    onSuccess: (enhanced, variables) => {
+      const targetId = variables.runbookId;
+      const mode = variables.enhanceMode;
+      const updateData: any = {};
+
+      if (mode === "full" || mode === "steps") {
+        if (enhanced.steps?.length) updateData.steps = enhanced.steps;
+      }
+      if (mode === "full" || mode === "triggers") {
+        if (enhanced.triggerConditions?.length) updateData.triggerConditions = enhanced.triggerConditions;
+      }
+      if (mode === "full" || mode === "approvals") {
+        if (enhanced.approvalGates?.length) updateData.approvalGates = enhanced.approvalGates;
+      }
+      if (mode === "full") {
+        if (enhanced.description) updateData.description = enhanced.description;
+        if (enhanced.autonomyLevel) updateData.autonomyLevel = enhanced.autonomyLevel;
+        if (enhanced.estimatedDuration) updateData.estimatedDuration = enhanced.estimatedDuration;
+        if (enhanced.severity) updateData.severity = enhanced.severity;
+      }
+
+      if (Object.keys(updateData).length === 0) {
+        toast({ title: "No changes", description: "AI did not suggest any enhancements for this mode" });
+        return;
+      }
+
+      updateMutation.mutate({ id: targetId, data: updateData });
+      toast({
+        title: "AI enhancement applied",
+        description: enhanced.enhancementSummary || `Runbook ${mode} enhanced successfully`,
+      });
+    },
+    onError: (e: any) => toast({ title: "AI enhancement failed", description: e.message, variant: "destructive" }),
+  });
+
+  function handleAiEnhance(mode: string) {
+    if (!selected) return;
+    const targetId = selected.id;
+    aiEnhanceMutation.mutate({
+      runbookId: targetId,
+      runbook: {
+        name: selected.name,
+        description: selected.description,
+        industry: selected.industry,
+        category: selected.category,
+        severity: selected.severity,
+        steps: selected.steps,
+        triggerConditions: selected.triggerConditions,
+        approvalGates: selected.approvalGates,
+      },
+      enhanceMode: mode,
+    });
+  }
+
   const filteredRunbooks = useMemo(() => {
     let list = runbooks;
     if (industryFilter !== "all") {
@@ -595,10 +654,20 @@ export default function RunbookAutomation() {
           {selected && (
             <div className="space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
+                <div className="flex-1 min-w-0">
                   <h2 className="text-xl font-semibold" data-testid="text-selected-runbook-name">{selected.name}</h2>
                   <p className="text-sm text-muted-foreground">{selected.description}</p>
                 </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleAiEnhance("full")}
+                  disabled={aiEnhanceMutation.isPending}
+                  data-testid="button-ai-enhance-full"
+                >
+                  {aiEnhanceMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1" />}
+                  AI Enhance
+                </Button>
               </div>
 
               <Tabs value={detailTab} onValueChange={setDetailTab}>
@@ -792,16 +861,28 @@ export default function RunbookAutomation() {
                           )}
                         </div>
                       ))}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setAddStepOpen(true)}
-                        className="w-full"
-                        data-testid="button-add-step"
-                      >
-                        <Plus className="w-4 h-4 mr-1" />
-                        Add Step
-                      </Button>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setAddStepOpen(true)}
+                          className="flex-1"
+                          data-testid="button-add-step"
+                        >
+                          <Plus className="w-4 h-4 mr-1" />
+                          Add Step
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleAiEnhance("steps")}
+                          disabled={aiEnhanceMutation.isPending}
+                          data-testid="button-ai-generate-steps"
+                        >
+                          {aiEnhanceMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1" />}
+                          AI Generate Steps
+                        </Button>
+                      </div>
                     </CardContent>
                   </Card>
                 </TabsContent>
@@ -866,6 +947,18 @@ export default function RunbookAutomation() {
                           ))}
                         </div>
                       </div>
+
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleAiEnhance("approvals")}
+                        disabled={aiEnhanceMutation.isPending}
+                        className="w-full"
+                        data-testid="button-ai-enhance-approvals"
+                      >
+                        {aiEnhanceMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1" />}
+                        AI Enhance Approval Gates
+                      </Button>
                     </CardContent>
                   </Card>
                 </TabsContent>
@@ -904,16 +997,28 @@ export default function RunbookAutomation() {
                           </div>
                         </div>
                       ))}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setAddTriggerOpen(true)}
-                        className="w-full"
-                        data-testid="button-add-trigger"
-                      >
-                        <Plus className="w-4 h-4 mr-1" />
-                        Add Trigger Condition
-                      </Button>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setAddTriggerOpen(true)}
+                          className="flex-1"
+                          data-testid="button-add-trigger"
+                        >
+                          <Plus className="w-4 h-4 mr-1" />
+                          Add Trigger Condition
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleAiEnhance("triggers")}
+                          disabled={aiEnhanceMutation.isPending}
+                          data-testid="button-ai-enhance-triggers"
+                        >
+                          {aiEnhanceMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1" />}
+                          AI Suggest Triggers
+                        </Button>
+                      </div>
                     </CardContent>
                   </Card>
                 </TabsContent>
