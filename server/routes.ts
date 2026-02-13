@@ -63,6 +63,10 @@ import {
   insertContextProfileSchema,
   insertMemoryProfileSchema,
   insertRagPipelineSchema,
+  insertKnowledgeConnectorSchema,
+  insertEntityResolutionSchema,
+  insertRelationshipExtractionSchema,
+  insertTemporalGraphEntrySchema,
 } from "@shared/schema";
 
 const openai = new OpenAI({
@@ -13255,6 +13259,174 @@ Return a JSON object with:
   app.delete("/api/rag-pipelines/:id", async (req, res) => {
     try {
       const ok = await storage.deleteRagPipeline(req.params.id);
+      if (!ok) return res.status(404).json({ error: "Not found" });
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/knowledge-connectors", async (_req, res) => {
+    try {
+      const connectors = await storage.getKnowledgeConnectors();
+      res.json(connectors);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/knowledge-connectors/:id", async (req, res) => {
+    try {
+      const connector = await storage.getKnowledgeConnector(req.params.id);
+      if (!connector) return res.status(404).json({ error: "Not found" });
+      res.json(connector);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/knowledge-connectors", async (req, res) => {
+    try {
+      const data = insertKnowledgeConnectorSchema.parse(req.body);
+      const created = await storage.createKnowledgeConnector(data);
+      res.status(201).json(created);
+    } catch (e: any) {
+      if (e.name === "ZodError") return res.status(400).json({ error: e.errors });
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.patch("/api/knowledge-connectors/:id", async (req, res) => {
+    try {
+      const updated = await storage.updateKnowledgeConnector(req.params.id, req.body);
+      if (!updated) return res.status(404).json({ error: "Not found" });
+      res.json(updated);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.delete("/api/knowledge-connectors/:id", async (req, res) => {
+    try {
+      const ok = await storage.deleteKnowledgeConnector(req.params.id);
+      if (!ok) return res.status(404).json({ error: "Not found" });
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/entity-resolutions", async (_req, res) => {
+    try {
+      const resolutions = await storage.getEntityResolutions();
+      res.json(resolutions);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/entity-resolutions/:id", async (req, res) => {
+    try {
+      const resolution = await storage.getEntityResolution(req.params.id);
+      if (!resolution) return res.status(404).json({ error: "Not found" });
+      res.json(resolution);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/entity-resolutions", async (req, res) => {
+    try {
+      const data = insertEntityResolutionSchema.parse(req.body);
+      const created = await storage.createEntityResolution(data);
+      res.status(201).json(created);
+    } catch (e: any) {
+      if (e.name === "ZodError") return res.status(400).json({ error: e.errors });
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.patch("/api/entity-resolutions/:id", async (req, res) => {
+    try {
+      const updated = await storage.updateEntityResolution(req.params.id, req.body);
+      if (!updated) return res.status(404).json({ error: "Not found" });
+      res.json(updated);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.delete("/api/entity-resolutions/:id", async (req, res) => {
+    try {
+      const ok = await storage.deleteEntityResolution(req.params.id);
+      if (!ok) return res.status(404).json({ error: "Not found" });
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/relationship-extractions", async (_req, res) => {
+    try {
+      const extractions = await storage.getRelationshipExtractions();
+      res.json(extractions);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/relationship-extractions/:id", async (req, res) => {
+    try {
+      const extraction = await storage.getRelationshipExtraction(req.params.id);
+      if (!extraction) return res.status(404).json({ error: "Not found" });
+      res.json(extraction);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/relationship-extractions", async (req, res) => {
+    try {
+      const data = insertRelationshipExtractionSchema.parse(req.body);
+      const created = await storage.createRelationshipExtraction(data);
+      res.status(201).json(created);
+    } catch (e: any) {
+      if (e.name === "ZodError") return res.status(400).json({ error: e.errors });
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.patch("/api/relationship-extractions/:id", async (req, res) => {
+    try {
+      const updated = await storage.updateRelationshipExtraction(req.params.id, req.body);
+      if (!updated) return res.status(404).json({ error: "Not found" });
+      res.json(updated);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.delete("/api/relationship-extractions/:id", async (req, res) => {
+    try {
+      const ok = await storage.deleteRelationshipExtraction(req.params.id);
+      if (!ok) return res.status(404).json({ error: "Not found" });
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/temporal-graph-entries", async (_req, res) => {
+    try {
+      const entries = await storage.getTemporalGraphEntries();
+      res.json(entries);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/temporal-graph-entries/:id", async (req, res) => {
+    try {
+      const entry = await storage.getTemporalGraphEntry(req.params.id);
+      if (!entry) return res.status(404).json({ error: "Not found" });
+      res.json(entry);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/temporal-graph-entries", async (req, res) => {
+    try {
+      const data = insertTemporalGraphEntrySchema.parse(req.body);
+      const created = await storage.createTemporalGraphEntry(data);
+      res.status(201).json(created);
+    } catch (e: any) {
+      if (e.name === "ZodError") return res.status(400).json({ error: e.errors });
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.patch("/api/temporal-graph-entries/:id", async (req, res) => {
+    try {
+      const updated = await storage.updateTemporalGraphEntry(req.params.id, req.body);
+      if (!updated) return res.status(404).json({ error: "Not found" });
+      res.json(updated);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.delete("/api/temporal-graph-entries/:id", async (req, res) => {
+    try {
+      const ok = await storage.deleteTemporalGraphEntry(req.params.id);
       if (!ok) return res.status(404).json({ error: "Not found" });
       res.json({ success: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }

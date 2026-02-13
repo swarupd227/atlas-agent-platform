@@ -128,6 +128,10 @@ import {
   type MemoryProfile, type InsertMemoryProfile,
   ragPipelines,
   type RagPipeline, type InsertRagPipeline,
+  knowledgeConnectors, type KnowledgeConnector, type InsertKnowledgeConnector,
+  entityResolutions, type EntityResolution, type InsertEntityResolution,
+  relationshipExtractions, type RelationshipExtraction, type InsertRelationshipExtraction,
+  temporalGraphEntries, type TemporalGraphEntry, type InsertTemporalGraphEntry,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -513,6 +517,30 @@ export interface IStorage {
   createRagPipeline(pipeline: InsertRagPipeline): Promise<RagPipeline>;
   updateRagPipeline(id: string, data: Partial<InsertRagPipeline>): Promise<RagPipeline | undefined>;
   deleteRagPipeline(id: string): Promise<boolean>;
+
+  getKnowledgeConnectors(): Promise<KnowledgeConnector[]>;
+  getKnowledgeConnector(id: string): Promise<KnowledgeConnector | undefined>;
+  createKnowledgeConnector(connector: InsertKnowledgeConnector): Promise<KnowledgeConnector>;
+  updateKnowledgeConnector(id: string, data: Partial<InsertKnowledgeConnector>): Promise<KnowledgeConnector | undefined>;
+  deleteKnowledgeConnector(id: string): Promise<boolean>;
+
+  getEntityResolutions(): Promise<EntityResolution[]>;
+  getEntityResolution(id: string): Promise<EntityResolution | undefined>;
+  createEntityResolution(resolution: InsertEntityResolution): Promise<EntityResolution>;
+  updateEntityResolution(id: string, data: Partial<InsertEntityResolution>): Promise<EntityResolution | undefined>;
+  deleteEntityResolution(id: string): Promise<boolean>;
+
+  getRelationshipExtractions(): Promise<RelationshipExtraction[]>;
+  getRelationshipExtraction(id: string): Promise<RelationshipExtraction | undefined>;
+  createRelationshipExtraction(extraction: InsertRelationshipExtraction): Promise<RelationshipExtraction>;
+  updateRelationshipExtraction(id: string, data: Partial<InsertRelationshipExtraction>): Promise<RelationshipExtraction | undefined>;
+  deleteRelationshipExtraction(id: string): Promise<boolean>;
+
+  getTemporalGraphEntries(): Promise<TemporalGraphEntry[]>;
+  getTemporalGraphEntry(id: string): Promise<TemporalGraphEntry | undefined>;
+  createTemporalGraphEntry(entry: InsertTemporalGraphEntry): Promise<TemporalGraphEntry>;
+  updateTemporalGraphEntry(id: string, data: Partial<InsertTemporalGraphEntry>): Promise<TemporalGraphEntry | undefined>;
+  deleteTemporalGraphEntry(id: string): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1949,6 +1977,102 @@ export class DatabaseStorage implements IStorage {
 
   async deleteRagPipeline(id: string): Promise<boolean> {
     const result = await db.delete(ragPipelines).where(eq(ragPipelines.id, id));
+    return (result as any).rowCount > 0;
+  }
+
+  async getKnowledgeConnectors(): Promise<KnowledgeConnector[]> {
+    return db.select().from(knowledgeConnectors).orderBy(desc(knowledgeConnectors.createdAt));
+  }
+
+  async getKnowledgeConnector(id: string): Promise<KnowledgeConnector | undefined> {
+    const [connector] = await db.select().from(knowledgeConnectors).where(eq(knowledgeConnectors.id, id));
+    return connector;
+  }
+
+  async createKnowledgeConnector(connector: InsertKnowledgeConnector): Promise<KnowledgeConnector> {
+    const [created] = await db.insert(knowledgeConnectors).values(connector).returning();
+    return created;
+  }
+
+  async updateKnowledgeConnector(id: string, data: Partial<InsertKnowledgeConnector>): Promise<KnowledgeConnector | undefined> {
+    const [updated] = await db.update(knowledgeConnectors).set(data).where(eq(knowledgeConnectors.id, id)).returning();
+    return updated;
+  }
+
+  async deleteKnowledgeConnector(id: string): Promise<boolean> {
+    const result = await db.delete(knowledgeConnectors).where(eq(knowledgeConnectors.id, id));
+    return (result as any).rowCount > 0;
+  }
+
+  async getEntityResolutions(): Promise<EntityResolution[]> {
+    return db.select().from(entityResolutions).orderBy(desc(entityResolutions.createdAt));
+  }
+
+  async getEntityResolution(id: string): Promise<EntityResolution | undefined> {
+    const [resolution] = await db.select().from(entityResolutions).where(eq(entityResolutions.id, id));
+    return resolution;
+  }
+
+  async createEntityResolution(resolution: InsertEntityResolution): Promise<EntityResolution> {
+    const [created] = await db.insert(entityResolutions).values(resolution).returning();
+    return created;
+  }
+
+  async updateEntityResolution(id: string, data: Partial<InsertEntityResolution>): Promise<EntityResolution | undefined> {
+    const [updated] = await db.update(entityResolutions).set(data).where(eq(entityResolutions.id, id)).returning();
+    return updated;
+  }
+
+  async deleteEntityResolution(id: string): Promise<boolean> {
+    const result = await db.delete(entityResolutions).where(eq(entityResolutions.id, id));
+    return (result as any).rowCount > 0;
+  }
+
+  async getRelationshipExtractions(): Promise<RelationshipExtraction[]> {
+    return db.select().from(relationshipExtractions).orderBy(desc(relationshipExtractions.createdAt));
+  }
+
+  async getRelationshipExtraction(id: string): Promise<RelationshipExtraction | undefined> {
+    const [extraction] = await db.select().from(relationshipExtractions).where(eq(relationshipExtractions.id, id));
+    return extraction;
+  }
+
+  async createRelationshipExtraction(extraction: InsertRelationshipExtraction): Promise<RelationshipExtraction> {
+    const [created] = await db.insert(relationshipExtractions).values(extraction).returning();
+    return created;
+  }
+
+  async updateRelationshipExtraction(id: string, data: Partial<InsertRelationshipExtraction>): Promise<RelationshipExtraction | undefined> {
+    const [updated] = await db.update(relationshipExtractions).set(data).where(eq(relationshipExtractions.id, id)).returning();
+    return updated;
+  }
+
+  async deleteRelationshipExtraction(id: string): Promise<boolean> {
+    const result = await db.delete(relationshipExtractions).where(eq(relationshipExtractions.id, id));
+    return (result as any).rowCount > 0;
+  }
+
+  async getTemporalGraphEntries(): Promise<TemporalGraphEntry[]> {
+    return db.select().from(temporalGraphEntries).orderBy(desc(temporalGraphEntries.createdAt));
+  }
+
+  async getTemporalGraphEntry(id: string): Promise<TemporalGraphEntry | undefined> {
+    const [entry] = await db.select().from(temporalGraphEntries).where(eq(temporalGraphEntries.id, id));
+    return entry;
+  }
+
+  async createTemporalGraphEntry(entry: InsertTemporalGraphEntry): Promise<TemporalGraphEntry> {
+    const [created] = await db.insert(temporalGraphEntries).values(entry).returning();
+    return created;
+  }
+
+  async updateTemporalGraphEntry(id: string, data: Partial<InsertTemporalGraphEntry>): Promise<TemporalGraphEntry | undefined> {
+    const [updated] = await db.update(temporalGraphEntries).set(data).where(eq(temporalGraphEntries.id, id)).returning();
+    return updated;
+  }
+
+  async deleteTemporalGraphEntry(id: string): Promise<boolean> {
+    const result = await db.delete(temporalGraphEntries).where(eq(temporalGraphEntries.id, id));
     return (result as any).rowCount > 0;
   }
 }

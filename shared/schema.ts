@@ -1500,4 +1500,82 @@ export const insertRagPipelineSchema = createInsertSchema(ragPipelines).omit({ i
 export type InsertRagPipeline = z.infer<typeof insertRagPipelineSchema>;
 export type RagPipeline = typeof ragPipelines.$inferSelect;
 
+export const knowledgeConnectors = pgTable("knowledge_connectors", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  sourceType: text("source_type").notNull(),
+  description: text("description"),
+  industry: text("industry").notNull(),
+  connectionConfig: jsonb("connection_config").notNull().default(sql`'{}'::jsonb`),
+  entitiesIngested: integer("entities_ingested").notNull().default(0),
+  relationshipsMapped: integer("relationships_mapped").notNull().default(0),
+  lastSyncAt: timestamp("last_sync_at"),
+  syncStatus: text("sync_status").notNull().default("idle"),
+  qualityMetrics: jsonb("quality_metrics").notNull().default(sql`'{}'::jsonb`),
+  errorMessage: text("error_message"),
+  status: text("status").notNull().default("active"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertKnowledgeConnectorSchema = createInsertSchema(knowledgeConnectors).omit({ id: true, createdAt: true });
+export type InsertKnowledgeConnector = z.infer<typeof insertKnowledgeConnectorSchema>;
+export type KnowledgeConnector = typeof knowledgeConnectors.$inferSelect;
+
+export const entityResolutions = pgTable("entity_resolutions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  entityA: text("entity_a").notNull(),
+  sourceA: text("source_a").notNull(),
+  entityB: text("entity_b").notNull(),
+  sourceB: text("source_b").notNull(),
+  entityType: text("entity_type").notNull(),
+  confidenceScore: real("confidence_score").notNull().default(0),
+  resolutionStatus: text("resolution_status").notNull().default("pending"),
+  resolvedBy: text("resolved_by"),
+  industry: text("industry").notNull(),
+  metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertEntityResolutionSchema = createInsertSchema(entityResolutions).omit({ id: true, createdAt: true });
+export type InsertEntityResolution = z.infer<typeof insertEntityResolutionSchema>;
+export type EntityResolution = typeof entityResolutions.$inferSelect;
+
+export const relationshipExtractions = pgTable("relationship_extractions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  sourceDocument: text("source_document").notNull(),
+  sourceEntity: text("source_entity").notNull(),
+  targetEntity: text("target_entity").notNull(),
+  relationshipType: text("relationship_type").notNull(),
+  confidence: real("confidence").notNull().default(0),
+  extractedText: text("extracted_text"),
+  validFrom: timestamp("valid_from"),
+  validTo: timestamp("valid_to"),
+  status: text("status").notNull().default("extracted"),
+  industry: text("industry").notNull(),
+  metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertRelationshipExtractionSchema = createInsertSchema(relationshipExtractions).omit({ id: true, createdAt: true });
+export type InsertRelationshipExtraction = z.infer<typeof insertRelationshipExtractionSchema>;
+export type RelationshipExtraction = typeof relationshipExtractions.$inferSelect;
+
+export const temporalGraphEntries = pgTable("temporal_graph_entries", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  entityName: text("entity_name").notNull(),
+  entityType: text("entity_type").notNull(),
+  relatedEntity: text("related_entity"),
+  relationshipType: text("relationship_type"),
+  validFrom: timestamp("valid_from").notNull(),
+  validTo: timestamp("valid_to"),
+  properties: jsonb("properties").notNull().default(sql`'{}'::jsonb`),
+  source: text("source"),
+  industry: text("industry").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertTemporalGraphEntrySchema = createInsertSchema(temporalGraphEntries).omit({ id: true, createdAt: true });
+export type InsertTemporalGraphEntry = z.infer<typeof insertTemporalGraphEntrySchema>;
+export type TemporalGraphEntry = typeof temporalGraphEntries.$inferSelect;
+
 export * from "./models/chat";
