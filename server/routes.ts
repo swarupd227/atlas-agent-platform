@@ -12132,11 +12132,67 @@ Return ONLY a valid JSON object.`
     }
   });
 
+  app.post("/api/ontology/concepts", checkPermission("create_modify_policies"), async (req, res) => {
+    try {
+      const bodySchema = z.object({
+        id: z.string().min(1),
+        industryId: z.string().min(1),
+        ontologyName: z.string().optional(),
+        label: z.string().min(1),
+        category: z.string().min(1),
+        description: z.string().min(1),
+        properties: z.array(z.any()).optional(),
+        relationships: z.array(z.any()).optional(),
+        tags: z.array(z.string()).optional(),
+        synonyms: z.array(z.string()).optional(),
+        source: z.enum(["industry-standard", "custom-extension"]).optional(),
+        linkedRegulations: z.array(z.any()).optional(),
+      });
+      const parseResult = bodySchema.safeParse(req.body);
+      if (!parseResult.success) {
+        return res.status(400).json({ message: "Validation failed", errors: parseResult.error.errors });
+      }
+      const data = parseResult.data;
+      const concept = await storage.createOntologyConcept({
+        id: data.id,
+        industryId: data.industryId,
+        ontologyName: data.ontologyName || "Custom",
+        label: data.label,
+        category: data.category,
+        description: data.description,
+        properties: data.properties || [],
+        relationships: data.relationships || [],
+        tags: data.tags || [],
+        synonyms: data.synonyms || [],
+        source: data.source || "custom-extension",
+        linkedRegulations: data.linkedRegulations || [],
+      });
+      res.status(201).json(concept);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.put("/api/ontology/concepts/:id", async (req, res) => {
     try {
       const updated = await storage.updateOntologyConcept(req.params.id, req.body);
       if (!updated) return res.status(404).json({ message: "Concept not found" });
       res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.delete("/api/ontology/concepts/:id", checkPermission("create_modify_policies"), async (req, res) => {
+    try {
+      const concept = await storage.getOntologyConcept(req.params.id);
+      if (!concept) return res.status(404).json({ message: "Concept not found" });
+      if (concept.source !== "custom-extension") {
+        return res.status(403).json({ message: "Only custom extension concepts can be deleted" });
+      }
+      const deleted = await storage.deleteOntologyConcept(req.params.id);
+      if (!deleted) return res.status(404).json({ message: "Concept not found" });
+      res.json({ message: "Concept deleted" });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

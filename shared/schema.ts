@@ -1297,7 +1297,11 @@ export const ontologyConcepts = pgTable("ontology_concepts", {
   properties: jsonb("properties").notNull().default(sql`'[]'::jsonb`),
   relationships: jsonb("relationships").notNull().default(sql`'[]'::jsonb`),
   tags: text("tags").array().default(sql`'{}'::text[]`),
+  synonyms: text("synonyms").array().default(sql`'{}'::text[]`),
   industryRelevance: text("industry_relevance"),
+  source: text("source").notNull().default("industry-standard"),
+  usageCount: integer("usage_count").notNull().default(0),
+  linkedRegulations: jsonb("linked_regulations").default(sql`'[]'::jsonb`),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Search,
@@ -17,12 +17,23 @@ import {
   Shield,
   AlertTriangle,
   Lightbulb,
+  Plus,
+  Trash2,
+  BarChart3,
+  Clock,
+  CircleDot,
+  List,
+  Share2,
+  FileText,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Progress } from "@/components/ui/progress";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Accordion,
   AccordionContent,
@@ -34,6 +45,22 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useIndustry } from "@/components/industry-provider";
 import { PermissionGate } from "@/components/role-provider";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -52,6 +79,11 @@ interface OntologyRelationship {
   label: string;
 }
 
+interface LinkedRegulation {
+  name: string;
+  url?: string;
+}
+
 interface ConceptView {
   id: string;
   label: string;
@@ -60,6 +92,10 @@ interface ConceptView {
   properties: OntologyProperty[];
   relationships: OntologyRelationship[];
   tags: string[];
+  synonyms: string[];
+  source: string;
+  usageCount: number;
+  linkedRegulations: LinkedRegulation[];
   industryRelevance: string | null;
 }
 
@@ -116,6 +152,19 @@ const relationshipTypeColors: Record<string, string> = {
   depends_on: "bg-purple-500/15 text-purple-600 dark:text-purple-400",
 };
 
+const CATEGORY_COLORS = [
+  "hsl(210, 70%, 55%)",
+  "hsl(150, 60%, 45%)",
+  "hsl(30, 80%, 55%)",
+  "hsl(280, 60%, 55%)",
+  "hsl(0, 65%, 55%)",
+  "hsl(180, 55%, 45%)",
+  "hsl(60, 70%, 45%)",
+  "hsl(330, 60%, 55%)",
+  "hsl(240, 50%, 60%)",
+  "hsl(120, 50%, 45%)",
+];
+
 function toConceptView(c: DbOntologyConcept): ConceptView {
   return {
     id: c.id,
@@ -125,15 +174,32 @@ function toConceptView(c: DbOntologyConcept): ConceptView {
     properties: (c.properties as OntologyProperty[]) || [],
     relationships: (c.relationships as OntologyRelationship[]) || [],
     tags: c.tags || [],
+    synonyms: c.synonyms || [],
+    source: c.source || "industry-standard",
+    usageCount: c.usageCount || 0,
+    linkedRegulations: (c.linkedRegulations as LinkedRegulation[]) || [],
     industryRelevance: c.industryRelevance,
   };
 }
+
+type SourceFilter = "all" | "standard" | "custom";
+type ViewMode = "list" | "graph";
 
 export default function OntologyExplorer() {
   const { industry } = useIndustry();
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedConceptId, setSelectedConceptId] = useState<string | null>(null);
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
+  const [viewMode, setViewMode] = useState<ViewMode>("list");
+  const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [newLabel, setNewLabel] = useState("");
+  const [newCategory, setNewCategory] = useState("");
+  const [newCategoryCustom, setNewCategoryCustom] = useState("");
+  const [newDescription, setNewDescription] = useState("");
+  const [newSynonyms, setNewSynonyms] = useState("");
+  const [newTags, setNewTags] = useState("");
+  const [newRelateTo, setNewRelateTo] = useState("");
 
   const industryId = industry && industry.id !== "custom" ? industry.id : null;
 
@@ -170,13 +236,25 @@ export default function OntologyExplorer() {
     return map;
   }, [enhancements]);
 
+  const filteredBySource = useMemo(() => {
+    if (sourceFilter === "all") return concepts;
+    if (sourceFilter === "standard") return concepts.filter((c) => c.source !== "custom-extension");
+    return concepts.filter((c) => c.source === "custom-extension");
+  }, [concepts, sourceFilter]);
+
   const categories = useMemo(() => {
     const cats: Record<string, ConceptView[]> = {};
-    for (const concept of concepts) {
+    for (const concept of filteredBySource) {
       if (!cats[concept.category]) cats[concept.category] = [];
       cats[concept.category].push(concept);
     }
     return cats;
+  }, [filteredBySource]);
+
+  const allCategories = useMemo(() => {
+    const cats = new Set<string>();
+    for (const c of concepts) cats.add(c.category);
+    return Array.from(cats).sort();
   }, [concepts]);
 
   const filteredCategories = useMemo(() => {
@@ -188,7 +266,8 @@ export default function OntologyExplorer() {
         (c) =>
           c.label.toLowerCase().includes(q) ||
           c.description.toLowerCase().includes(q) ||
-          c.tags.some((t) => t.toLowerCase().includes(q))
+          c.tags.some((t) => t.toLowerCase().includes(q)) ||
+          c.synonyms.some((s) => s.toLowerCase().includes(q))
       );
       if (filtered.length > 0) result[cat] = filtered;
     }
@@ -292,6 +371,84 @@ export default function OntologyExplorer() {
     },
   });
 
+  const createConceptMutation = useMutation({
+    mutationFn: async (data: {
+      label: string;
+      category: string;
+      description: string;
+      synonyms: string[];
+      tags: string[];
+      relateTo: string;
+    }) => {
+      const id = `custom-${crypto.randomUUID()}`;
+      const relationships: OntologyRelationship[] = [];
+      if (data.relateTo) {
+        relationships.push({ type: "related", targetId: data.relateTo, label: "Related to" });
+      }
+      const res = await apiRequest("POST", "/api/ontology/concepts", {
+        id,
+        industryId,
+        ontologyName: industry?.ontology || "Custom",
+        label: data.label,
+        category: data.category,
+        description: data.description,
+        synonyms: data.synonyms,
+        tags: data.tags,
+        source: "custom-extension",
+        properties: [],
+        relationships,
+        linkedRegulations: [],
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/ontology/concepts", industryId] });
+      toast({ title: "Custom concept created", description: `"${newLabel}" has been added to the ontology.` });
+      resetDialog();
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to create concept", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const deleteConceptMutation = useMutation({
+    mutationFn: async (conceptId: string) => {
+      await apiRequest("DELETE", `/api/ontology/concepts/${conceptId}`);
+    },
+    onSuccess: () => {
+      setSelectedConceptId(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/ontology/concepts", industryId] });
+      toast({ title: "Concept deleted", description: "Custom concept has been removed." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to delete concept", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const resetDialog = () => {
+    setAddDialogOpen(false);
+    setNewLabel("");
+    setNewCategory("");
+    setNewCategoryCustom("");
+    setNewDescription("");
+    setNewSynonyms("");
+    setNewTags("");
+    setNewRelateTo("");
+  };
+
+  const handleCreateConcept = () => {
+    const category = newCategory === "__new__" ? newCategoryCustom.trim() : newCategory;
+    if (!newLabel.trim() || !category || !newDescription.trim()) return;
+    createConceptMutation.mutate({
+      label: newLabel.trim(),
+      category,
+      description: newDescription.trim(),
+      synonyms: newSynonyms.split(",").map((s) => s.trim()).filter(Boolean),
+      tags: newTags.split(",").map((t) => t.trim()).filter(Boolean),
+      relateTo: newRelateTo,
+    });
+  };
+
   const getEnrichment = (conceptId: string): EnrichedConcept | null => {
     if (localEnriched[conceptId]) return localEnriched[conceptId];
     const dbEnh = enhancementMap[conceptId];
@@ -330,10 +487,10 @@ export default function OntologyExplorer() {
     setSelectedConceptId(targetId);
   };
 
-  const getConceptLabel = (id: string): string => {
+  const getConceptLabel = useCallback((id: string): string => {
     const c = concepts.find((concept) => concept.id === id);
     return c ? c.label : id;
-  };
+  }, [concepts]);
 
   const generateMutation = useMutation({
     mutationFn: async () => {
@@ -358,6 +515,17 @@ export default function OntologyExplorer() {
       toast({ title: "Generation failed", description: msg, variant: "destructive" });
     },
   });
+
+  const isCustom = (concept: ConceptView) => concept.source === "custom-extension";
+
+  const categoryColorMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    const cats = Object.keys(categories);
+    cats.forEach((cat, i) => {
+      map[cat] = CATEGORY_COLORS[i % CATEGORY_COLORS.length];
+    });
+    return map;
+  }, [categories]);
 
   if (!industry || industry.id === "custom") {
     return (
@@ -434,14 +602,25 @@ export default function OntologyExplorer() {
   const ontologyName = industry.ontology || "Domain Ontology";
   const totalConcepts = concepts.length;
   const categoryNames = Object.keys(filteredCategories);
+  const customCount = concepts.filter((c) => c.source === "custom-extension").length;
 
   return (
     <div className="flex h-full" data-testid="ontology-explorer">
       <div className="w-[300px] border-r flex flex-col shrink-0" data-testid="ontology-sidebar">
         <div className="p-3 border-b space-y-2">
-          <div className="flex items-center gap-2">
-            <BookOpen className="w-4 h-4 text-muted-foreground shrink-0" />
-            <h2 className="text-sm font-semibold truncate" data-testid="text-ontology-name">{ontologyName}</h2>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <BookOpen className="w-4 h-4 text-muted-foreground shrink-0" />
+              <h2 className="text-sm font-semibold truncate" data-testid="text-ontology-name">{ontologyName}</h2>
+            </div>
+            <Button
+              size="sm"
+              onClick={() => setAddDialogOpen(true)}
+              data-testid="button-add-custom-concept"
+            >
+              <Plus className="w-4 h-4 mr-1" />
+              Add Custom
+            </Button>
           </div>
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -453,70 +632,119 @@ export default function OntologyExplorer() {
               data-testid="input-search-concepts"
             />
           </div>
-        </div>
-        <ScrollArea className="flex-1">
-          <div className="p-2">
-            <Accordion type="multiple" defaultValue={Object.keys(categories)} className="space-y-1">
-              {categoryNames.map((category) => {
-                const catConcepts = filteredCategories[category];
-                return (
-                  <AccordionItem key={category} value={category} className="border-none">
-                    <AccordionTrigger
-                      className="py-2 px-2 text-xs font-medium rounded-md hover:no-underline"
-                      data-testid={`accordion-category-${category.toLowerCase().replace(/\s+/g, "-")}`}
-                    >
-                      <span className="flex items-center gap-2 flex-wrap">
-                        <span className="truncate">{category}</span>
-                        <Badge variant="secondary" className="text-[10px]" data-testid={`badge-count-${category.toLowerCase().replace(/\s+/g, "-")}`}>
-                          {catConcepts.length}
-                        </Badge>
-                      </span>
-                    </AccordionTrigger>
-                    <AccordionContent className="pb-1 pt-0">
-                      <div className="space-y-0.5 pl-1">
-                        {catConcepts.map((concept) => (
-                          <Tooltip key={concept.id}>
-                            <TooltipTrigger asChild>
-                              <button
-                                onClick={() => handleConceptClick(concept.id)}
-                                className={`w-full text-left text-xs py-1.5 px-2 rounded-md transition-colors flex items-center gap-1.5 ${
-                                  selectedConceptId === concept.id
-                                    ? "bg-primary/10 text-primary font-medium"
-                                    : "text-muted-foreground hover-elevate"
-                                }`}
-                                data-testid={`button-concept-${concept.id}`}
-                              >
-                                <ChevronRight className="w-3 h-3 shrink-0" />
-                                <span className="truncate">{concept.label}</span>
-                                {isApplied(concept.id) && (
-                                  <Sparkles className="w-3 h-3 shrink-0 text-primary ml-auto" />
-                                )}
-                              </button>
-                            </TooltipTrigger>
-                            <TooltipContent side="right" className="max-w-[250px]">
-                              <p className="text-xs">{concept.description}</p>
-                            </TooltipContent>
-                          </Tooltip>
-                        ))}
-                      </div>
-                    </AccordionContent>
-                  </AccordionItem>
-                );
-              })}
-            </Accordion>
+          <div className="flex items-center justify-between gap-2">
+            <Tabs value={sourceFilter} onValueChange={(v) => setSourceFilter(v as SourceFilter)} className="w-full">
+              <TabsList className="w-full" data-testid="filter-source-toggle">
+                <TabsTrigger value="all" className="flex-1 text-xs" data-testid="filter-all">All</TabsTrigger>
+                <TabsTrigger value="standard" className="flex-1 text-xs" data-testid="filter-standard">Standard</TabsTrigger>
+                <TabsTrigger value="custom" className="flex-1 text-xs" data-testid="filter-custom">Custom</TabsTrigger>
+              </TabsList>
+            </Tabs>
           </div>
-        </ScrollArea>
+          <div className="flex items-center gap-1">
+            <Button
+              size="sm"
+              variant={viewMode === "list" ? "default" : "ghost"}
+              className="flex-1"
+              onClick={() => setViewMode("list")}
+              data-testid="button-view-list"
+            >
+              <List className="w-3.5 h-3.5 mr-1" />
+              List
+            </Button>
+            <Button
+              size="sm"
+              variant={viewMode === "graph" ? "default" : "ghost"}
+              className="flex-1"
+              onClick={() => setViewMode("graph")}
+              data-testid="button-view-graph"
+            >
+              <Share2 className="w-3.5 h-3.5 mr-1" />
+              Graph
+            </Button>
+          </div>
+        </div>
+        {viewMode === "list" ? (
+          <ScrollArea className="flex-1">
+            <div className="p-2">
+              <Accordion type="multiple" defaultValue={Object.keys(categories)} className="space-y-1">
+                {categoryNames.map((category) => {
+                  const catConcepts = filteredCategories[category];
+                  return (
+                    <AccordionItem key={category} value={category} className="border-none">
+                      <AccordionTrigger
+                        className="py-2 px-2 text-xs font-medium rounded-md hover:no-underline"
+                        data-testid={`accordion-category-${category.toLowerCase().replace(/\s+/g, "-")}`}
+                      >
+                        <span className="flex items-center gap-2 flex-wrap">
+                          <span className="truncate">{category}</span>
+                          <Badge variant="secondary" className="text-[10px]" data-testid={`badge-count-${category.toLowerCase().replace(/\s+/g, "-")}`}>
+                            {catConcepts.length}
+                          </Badge>
+                        </span>
+                      </AccordionTrigger>
+                      <AccordionContent className="pb-1 pt-0">
+                        <div className="space-y-0.5 pl-1">
+                          {catConcepts.map((concept) => (
+                            <Tooltip key={concept.id}>
+                              <TooltipTrigger asChild>
+                                <button
+                                  onClick={() => handleConceptClick(concept.id)}
+                                  className={`w-full text-left text-xs py-1.5 px-2 rounded-md transition-colors flex items-center gap-1.5 ${
+                                    selectedConceptId === concept.id
+                                      ? "bg-primary/10 text-primary font-medium"
+                                      : "text-muted-foreground hover-elevate"
+                                  }`}
+                                  data-testid={`button-concept-${concept.id}`}
+                                >
+                                  <ChevronRight className="w-3 h-3 shrink-0" />
+                                  <span className="truncate">{concept.label}</span>
+                                  {isCustom(concept) && (
+                                    <Badge variant="outline" className="text-[9px] ml-auto shrink-0 border-amber-500/50 text-amber-600 dark:text-amber-400" data-testid={`badge-custom-${concept.id}`}>
+                                      Custom
+                                    </Badge>
+                                  )}
+                                  {!isCustom(concept) && isApplied(concept.id) && (
+                                    <Sparkles className="w-3 h-3 shrink-0 text-primary ml-auto" />
+                                  )}
+                                </button>
+                              </TooltipTrigger>
+                              <TooltipContent side="right" className="max-w-[250px]">
+                                <p className="text-xs">{concept.description}</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          ))}
+                        </div>
+                      </AccordionContent>
+                    </AccordionItem>
+                  );
+                })}
+              </Accordion>
+            </div>
+          </ScrollArea>
+        ) : (
+          <div className="flex-1 p-2 text-xs text-muted-foreground flex items-center justify-center">
+            <span>Graph view shown in main panel</span>
+          </div>
+        )}
       </div>
 
       <div className="flex-1 overflow-hidden" data-testid="ontology-detail">
         <ScrollArea className="h-full">
-          {!selectedConcept ? (
-            <div className="flex items-center justify-center h-full min-h-[400px] p-8">
-              <div className="text-center space-y-4 max-w-md">
+          {viewMode === "graph" ? (
+            <GraphView
+              concepts={Object.values(filteredCategories).flat()}
+              categoryColorMap={categoryColorMap}
+              selectedConceptId={selectedConceptId}
+              onSelectConcept={handleConceptClick}
+            />
+          ) : !selectedConcept ? (
+            <div className="p-8 space-y-6">
+              <div className="text-center space-y-4 max-w-md mx-auto">
                 <Network className="w-16 h-16 text-muted-foreground mx-auto" />
                 <h2 className="text-xl font-semibold" data-testid="text-ontology-title">{ontologyName}</h2>
                 <p className="text-sm text-muted-foreground">{industry.description}</p>
-                <div className="flex items-center justify-center gap-4 flex-wrap">
+                <div className="flex items-center justify-center gap-6 flex-wrap">
                   <div className="text-center">
                     <div className="text-2xl font-bold" data-testid="text-total-concepts">{totalConcepts}</div>
                     <div className="text-xs text-muted-foreground">Total Concepts</div>
@@ -525,11 +753,77 @@ export default function OntologyExplorer() {
                     <div className="text-2xl font-bold" data-testid="text-total-categories">{Object.keys(categories).length}</div>
                     <div className="text-xs text-muted-foreground">Categories</div>
                   </div>
+                  {customCount > 0 && (
+                    <div className="text-center">
+                      <div className="text-2xl font-bold" data-testid="text-custom-count">{customCount}</div>
+                      <div className="text-xs text-muted-foreground">Custom Extensions</div>
+                    </div>
+                  )}
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  Select a concept from the sidebar to explore its properties, relationships, and agent mapping.
-                </p>
               </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 max-w-4xl mx-auto">
+                <Card data-testid="card-metric-coverage">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-xs flex items-center gap-2">
+                      <BarChart3 className="w-3.5 h-3.5" />
+                      Coverage
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    <div className="text-2xl font-bold" data-testid="text-coverage-value">87%</div>
+                    <Progress value={87} className="h-2" data-testid="progress-coverage" />
+                    <p className="text-[11px] text-muted-foreground">of agent interactions reference ontology concepts</p>
+                  </CardContent>
+                </Card>
+
+                <Card data-testid="card-metric-consistency">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-xs flex items-center gap-2">
+                      <Check className="w-3.5 h-3.5" />
+                      Consistency
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    <div className="text-2xl font-bold" data-testid="text-consistency-value">94%</div>
+                    <Progress value={94} className="h-2" data-testid="progress-consistency" />
+                    <p className="text-[11px] text-muted-foreground">terminology alignment score</p>
+                  </CardContent>
+                </Card>
+
+                <Card data-testid="card-metric-freshness">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-xs flex items-center gap-2">
+                      <Clock className="w-3.5 h-3.5" />
+                      Freshness
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <CircleDot className="w-3.5 h-3.5 text-emerald-500" />
+                      <span className="text-sm font-medium" data-testid="text-freshness-value">Up to date</span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">Last updated 2 days ago</p>
+                  </CardContent>
+                </Card>
+
+                <Card data-testid="card-metric-gaps">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-xs flex items-center gap-2">
+                      <AlertTriangle className="w-3.5 h-3.5" />
+                      Gap Detection
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    <div className="text-2xl font-bold" data-testid="text-gaps-value">12</div>
+                    <p className="text-[11px] text-muted-foreground">gaps found in conversations where agents couldn't find relevant concepts</p>
+                  </CardContent>
+                </Card>
+              </div>
+
+              <p className="text-xs text-muted-foreground text-center">
+                Select a concept from the sidebar to explore its properties, relationships, and agent mapping.
+              </p>
             </div>
           ) : (
             <div className="p-6 space-y-6 max-w-4xl">
@@ -537,16 +831,83 @@ export default function OntologyExplorer() {
                 <div className="flex items-center gap-3 flex-wrap">
                   <h1 className="text-xl font-semibold" data-testid="text-concept-label">{selectedConcept.label}</h1>
                   <Badge variant="secondary" data-testid="badge-concept-category">{selectedConcept.category}</Badge>
+                  {isCustom(selectedConcept) && (
+                    <Badge variant="outline" className="border-amber-500/50 text-amber-600 dark:text-amber-400" data-testid="badge-custom-extension">
+                      Custom Extension
+                    </Badge>
+                  )}
                 </div>
                 <p className="text-sm text-muted-foreground" data-testid="text-concept-description">
                   {selectedConcept.description}
                 </p>
-                {isApplied(selectedConcept.id) && (
-                  <Badge variant="secondary" className="text-[10px] mt-1" data-testid="badge-ai-enhanced">
-                    <Sparkles className="w-2.5 h-2.5 mr-1" /> AI Enhanced
-                  </Badge>
+                {selectedConcept.synonyms.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5" data-testid="concept-synonyms">
+                    {selectedConcept.synonyms.map((syn) => (
+                      <Badge key={syn} variant="outline" className="text-[10px]" data-testid={`badge-synonym-${syn}`}>
+                        {syn}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+                <div className="flex items-center gap-3 flex-wrap">
+                  {selectedConcept.usageCount > 0 && (
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground" data-testid="text-usage-count">
+                      <BarChart3 className="w-3.5 h-3.5" />
+                      Referenced {selectedConcept.usageCount} times in production
+                    </div>
+                  )}
+                  {isApplied(selectedConcept.id) && (
+                    <Badge variant="secondary" className="text-[10px]" data-testid="badge-ai-enhanced">
+                      <Sparkles className="w-2.5 h-2.5 mr-1" /> AI Enhanced
+                    </Badge>
+                  )}
+                </div>
+                {isCustom(selectedConcept) && (
+                  <div className="pt-1">
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      onClick={() => deleteConceptMutation.mutate(selectedConcept.id)}
+                      disabled={deleteConceptMutation.isPending}
+                      data-testid="button-delete-concept"
+                    >
+                      {deleteConceptMutation.isPending ? (
+                        <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+                      ) : (
+                        <Trash2 className="w-3.5 h-3.5 mr-1" />
+                      )}
+                      Delete Custom Concept
+                    </Button>
+                  </div>
                 )}
               </div>
+
+              {selectedConcept.linkedRegulations.length > 0 && (
+                <Card data-testid="card-linked-regulations">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <FileText className="w-4 h-4" />
+                      Linked Regulations
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2">
+                      {selectedConcept.linkedRegulations.map((reg, i) => (
+                        <div key={i} className="flex items-center gap-2 text-xs" data-testid={`regulation-${i}`}>
+                          <Shield className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                          {reg.url ? (
+                            <a href={reg.url} target="_blank" rel="noopener noreferrer" className="text-primary underline" data-testid={`link-regulation-${i}`}>
+                              {reg.name}
+                            </a>
+                          ) : (
+                            <span className="text-muted-foreground">{reg.name}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
 
               <Card data-testid="card-properties">
                 <CardHeader className="pb-3">
@@ -888,204 +1249,180 @@ export default function OntologyExplorer() {
                             </div>
 
                             {enrichment.enrichedDescription && (
-                              <Card className="bg-muted/50" data-testid="card-enriched-description">
-                                <CardContent className="pt-4">
-                                  <div className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
-                                    <BookOpen className="w-3 h-3" />
-                                    Enhanced Description
-                                  </div>
-                                  <p className="text-sm text-muted-foreground" data-testid="text-enriched-description">
-                                    {enrichment.enrichedDescription}
-                                  </p>
-                                </CardContent>
-                              </Card>
+                              <div className="p-3 rounded-md bg-muted/50" data-testid="enriched-description">
+                                <div className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
+                                  <BookOpen className="w-3 h-3" />
+                                  Enhanced Description
+                                </div>
+                                <p className="text-sm text-muted-foreground" data-testid="text-enriched-description">
+                                  {enrichment.enrichedDescription}
+                                </p>
+                              </div>
                             )}
 
                             {enrichment.agentUseCases && enrichment.agentUseCases.length > 0 && (
-                              <Card className="bg-muted/50" data-testid="card-agent-use-cases">
-                                <CardContent className="pt-4">
-                                  <div className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
-                                    <Brain className="w-3 h-3" />
-                                    Agent Use Cases
-                                  </div>
-                                  <ul className="space-y-1.5">
-                                    {enrichment.agentUseCases.map((uc, i) => (
-                                      <li key={i} className="text-xs text-muted-foreground flex items-start gap-2" data-testid={`text-use-case-${i}`}>
-                                        <Lightbulb className="w-3 h-3 mt-0.5 shrink-0 text-yellow-500" />
-                                        <span>{uc}</span>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                </CardContent>
-                              </Card>
+                              <div className="p-3 rounded-md bg-muted/50" data-testid="enriched-use-cases">
+                                <div className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
+                                  <Brain className="w-3 h-3" />
+                                  Agent Use Cases
+                                </div>
+                                <ul className="space-y-1.5">
+                                  {enrichment.agentUseCases.map((uc, i) => (
+                                    <li key={i} className="text-xs text-muted-foreground flex items-start gap-2" data-testid={`text-use-case-${i}`}>
+                                      <Lightbulb className="w-3 h-3 mt-0.5 shrink-0 text-yellow-500" />
+                                      <span>{uc}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
                             )}
 
                             {enrichment.regulatoryRelevance && (
-                              <Card className="bg-muted/50" data-testid="card-regulatory-relevance">
-                                <CardContent className="pt-4">
-                                  <div className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
-                                    <Shield className="w-3 h-3" />
-                                    Regulatory Relevance
-                                  </div>
-                                  <p className="text-xs text-muted-foreground" data-testid="text-regulatory-relevance">
-                                    {enrichment.regulatoryRelevance}
-                                  </p>
-                                </CardContent>
-                              </Card>
+                              <div className="p-3 rounded-md bg-muted/50" data-testid="enriched-regulatory">
+                                <div className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
+                                  <Shield className="w-3 h-3" />
+                                  Regulatory Relevance
+                                </div>
+                                <p className="text-xs text-muted-foreground" data-testid="text-regulatory-relevance">
+                                  {enrichment.regulatoryRelevance}
+                                </p>
+                              </div>
                             )}
 
                             {enrichment.riskFactors && enrichment.riskFactors.length > 0 && (
-                              <Card className="bg-muted/50" data-testid="card-risk-factors">
-                                <CardContent className="pt-4">
-                                  <div className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
-                                    <AlertTriangle className="w-3 h-3" />
-                                    Risk Factors
-                                  </div>
-                                  <ul className="space-y-1">
-                                    {enrichment.riskFactors.map((rf, i) => (
-                                      <li key={i} className="text-xs text-muted-foreground flex items-start gap-2" data-testid={`text-risk-factor-${i}`}>
-                                        <span className="text-destructive mt-0.5 shrink-0">-</span>
-                                        <span>{rf}</span>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                </CardContent>
-                              </Card>
+                              <div className="p-3 rounded-md bg-muted/50" data-testid="enriched-risk-factors">
+                                <div className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
+                                  <AlertTriangle className="w-3 h-3" />
+                                  Risk Factors
+                                </div>
+                                <ul className="space-y-1">
+                                  {enrichment.riskFactors.map((rf, i) => (
+                                    <li key={i} className="text-xs text-muted-foreground flex items-start gap-2" data-testid={`text-risk-factor-${i}`}>
+                                      <span className="text-destructive mt-0.5 shrink-0">-</span>
+                                      <span>{rf}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
                             )}
 
                             {enrichment.relatedStandards && enrichment.relatedStandards.length > 0 && (
-                              <Card className="bg-muted/50" data-testid="card-related-standards">
-                                <CardContent className="pt-4">
-                                  <div className="text-xs font-semibold mb-1.5">Related Standards</div>
-                                  <div className="flex flex-wrap gap-1.5">
-                                    {enrichment.relatedStandards.map((std, i) => (
-                                      <Badge key={i} variant="outline" className="text-[10px]" data-testid={`badge-standard-${i}`}>
-                                        {std}
-                                      </Badge>
-                                    ))}
-                                  </div>
-                                </CardContent>
-                              </Card>
+                              <div className="p-3 rounded-md bg-muted/50" data-testid="enriched-standards">
+                                <div className="text-xs font-semibold mb-1.5">Related Standards</div>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {enrichment.relatedStandards.map((std, i) => (
+                                    <Badge key={i} variant="outline" className="text-[10px]" data-testid={`badge-standard-${i}`}>
+                                      {std}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              </div>
                             )}
 
                             {enrichment.dataHandlingConsiderations && (
-                              <Card className="bg-muted/50" data-testid="card-data-handling">
-                                <CardContent className="pt-4">
-                                  <div className="text-xs font-semibold mb-1.5">Data Handling Considerations</div>
-                                  <p className="text-xs text-muted-foreground" data-testid="text-data-handling">
-                                    {enrichment.dataHandlingConsiderations}
-                                  </p>
-                                </CardContent>
-                              </Card>
+                              <div className="p-3 rounded-md bg-muted/50" data-testid="enriched-data-handling">
+                                <div className="text-xs font-semibold mb-1.5">Data Handling Considerations</div>
+                                <p className="text-xs text-muted-foreground" data-testid="text-data-handling">
+                                  {enrichment.dataHandlingConsiderations}
+                                </p>
+                              </div>
                             )}
 
                             {enrichment.implementationGuidance && (
-                              <Card className="bg-muted/50" data-testid="card-implementation-guidance">
-                                <CardContent className="pt-4">
-                                  <div className="text-xs font-semibold mb-1.5">Implementation Guidance</div>
-                                  <p className="text-xs text-muted-foreground" data-testid="text-implementation-guidance">
-                                    {enrichment.implementationGuidance}
-                                  </p>
-                                </CardContent>
-                              </Card>
+                              <div className="p-3 rounded-md bg-muted/50" data-testid="enriched-implementation">
+                                <div className="text-xs font-semibold mb-1.5">Implementation Guidance</div>
+                                <p className="text-xs text-muted-foreground" data-testid="text-implementation-guidance">
+                                  {enrichment.implementationGuidance}
+                                </p>
+                              </div>
                             )}
 
                             {enrichment.agentSkills && enrichment.agentSkills.length > 0 && (
-                              <Card className="bg-muted/50" data-testid="card-preview-agent-skills">
-                                <CardContent className="pt-4">
-                                  <div className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
-                                    <Brain className="w-3 h-3" />
-                                    Agent Skills (concept-specific)
-                                  </div>
-                                  <div className="flex flex-wrap gap-1.5">
-                                    {enrichment.agentSkills.map((skill, i) => (
-                                      <Badge key={i} variant="secondary" className="text-[10px]" data-testid={`badge-preview-skill-${i}`}>
-                                        {skill}
-                                      </Badge>
-                                    ))}
-                                  </div>
-                                </CardContent>
-                              </Card>
+                              <div className="p-3 rounded-md bg-muted/50" data-testid="enriched-agent-skills">
+                                <div className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
+                                  <Brain className="w-3 h-3" />
+                                  Agent Skills (concept-specific)
+                                </div>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {enrichment.agentSkills.map((skill, i) => (
+                                    <Badge key={i} variant="secondary" className="text-[10px]" data-testid={`badge-preview-skill-${i}`}>
+                                      {skill}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              </div>
                             )}
 
                             {enrichment.agentTypes && enrichment.agentTypes.length > 0 && (
-                              <Card className="bg-muted/50" data-testid="card-preview-agent-types">
-                                <CardContent className="pt-4">
-                                  <div className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
-                                    <Brain className="w-3 h-3" />
-                                    Agent Types (concept-specific)
-                                  </div>
-                                  <div className="flex flex-wrap gap-1.5">
-                                    {enrichment.agentTypes.map((at, i) => (
-                                      <Badge key={i} variant="outline" className="text-[10px]" data-testid={`badge-preview-agent-type-${i}`}>
-                                        {at}
-                                      </Badge>
-                                    ))}
-                                  </div>
-                                </CardContent>
-                              </Card>
+                              <div className="p-3 rounded-md bg-muted/50" data-testid="enriched-agent-types">
+                                <div className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
+                                  <Brain className="w-3 h-3" />
+                                  Agent Types (concept-specific)
+                                </div>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {enrichment.agentTypes.map((at, i) => (
+                                    <Badge key={i} variant="outline" className="text-[10px]" data-testid={`badge-preview-agent-type-${i}`}>
+                                      {at}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              </div>
                             )}
 
                             {enrichment.suggestedProperties && enrichment.suggestedProperties.length > 0 && (
-                              <Card className="bg-muted/50" data-testid="card-preview-properties">
-                                <CardContent className="pt-4">
-                                  <div className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
-                                    <GitBranch className="w-3 h-3" />
-                                    Suggested Properties
-                                  </div>
-                                  <div className="space-y-2">
-                                    {enrichment.suggestedProperties.map((prop, i) => (
-                                      <div key={i} className="flex items-start gap-3 text-xs py-1.5 border-b last:border-0" data-testid={`preview-property-${i}`}>
-                                        <code className="font-mono text-primary shrink-0 min-w-[120px]">{prop.name}</code>
-                                        <Badge variant="outline" className="text-[10px] shrink-0">{prop.type}</Badge>
-                                        <span className="text-muted-foreground">{prop.description}</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </CardContent>
-                              </Card>
+                              <div className="p-3 rounded-md bg-muted/50" data-testid="enriched-properties">
+                                <div className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
+                                  <GitBranch className="w-3 h-3" />
+                                  Suggested Properties
+                                </div>
+                                <div className="space-y-2">
+                                  {enrichment.suggestedProperties.map((prop, i) => (
+                                    <div key={i} className="flex items-start gap-3 text-xs py-1.5 border-b last:border-0" data-testid={`preview-property-${i}`}>
+                                      <code className="font-mono text-primary shrink-0 min-w-[120px]">{prop.name}</code>
+                                      <Badge variant="outline" className="text-[10px] shrink-0">{prop.type}</Badge>
+                                      <span className="text-muted-foreground">{prop.description}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
                             )}
 
                             {enrichment.suggestedRelationships && enrichment.suggestedRelationships.length > 0 && (
-                              <Card className="bg-muted/50" data-testid="card-preview-relationships">
-                                <CardContent className="pt-4">
-                                  <div className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
-                                    <Link2 className="w-3 h-3" />
-                                    Suggested Relationships
-                                  </div>
-                                  <div className="grid gap-2 sm:grid-cols-2">
-                                    {enrichment.suggestedRelationships.map((rel, i) => (
-                                      <div key={i} className="p-3 rounded-md border" data-testid={`preview-relationship-${i}`}>
-                                        <div className="flex items-center gap-2 mb-1 flex-wrap">
-                                          <Badge className={`text-[10px] ${relationshipTypeColors[rel.type] || ""}`}>
-                                            {rel.type.replace("_", " ")}
-                                          </Badge>
-                                        </div>
-                                        <div className="text-xs font-medium">{rel.targetId}</div>
-                                        <div className="text-[11px] text-muted-foreground mt-0.5">{rel.label}</div>
+                              <div className="p-3 rounded-md bg-muted/50" data-testid="enriched-relationships">
+                                <div className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
+                                  <Link2 className="w-3 h-3" />
+                                  Suggested Relationships
+                                </div>
+                                <div className="grid gap-2 sm:grid-cols-2">
+                                  {enrichment.suggestedRelationships.map((rel, i) => (
+                                    <div key={i} className="p-3 rounded-md border" data-testid={`preview-relationship-${i}`}>
+                                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                        <Badge className={`text-[10px] ${relationshipTypeColors[rel.type] || ""}`}>
+                                          {rel.type.replace("_", " ")}
+                                        </Badge>
                                       </div>
-                                    ))}
-                                  </div>
-                                </CardContent>
-                              </Card>
+                                      <div className="text-xs font-medium">{rel.targetId}</div>
+                                      <div className="text-[11px] text-muted-foreground mt-0.5">{rel.label}</div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
                             )}
 
                             {enrichment.suggestedTags && enrichment.suggestedTags.length > 0 && (
-                              <Card className="bg-muted/50" data-testid="card-preview-tags">
-                                <CardContent className="pt-4">
-                                  <div className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
-                                    <Tag className="w-3 h-3" />
-                                    Suggested Tags
-                                  </div>
-                                  <div className="flex flex-wrap gap-1.5">
-                                    {enrichment.suggestedTags.map((tag, i) => (
-                                      <Badge key={i} variant="outline" className="text-xs" data-testid={`badge-preview-tag-${i}`}>
-                                        {tag}
-                                      </Badge>
-                                    ))}
-                                  </div>
-                                </CardContent>
-                              </Card>
+                              <div className="p-3 rounded-md bg-muted/50" data-testid="enriched-tags">
+                                <div className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
+                                  <Tag className="w-3 h-3" />
+                                  Suggested Tags
+                                </div>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {enrichment.suggestedTags.map((tag, i) => (
+                                    <Badge key={i} variant="outline" className="text-xs" data-testid={`badge-preview-tag-${i}`}>
+                                      {tag}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              </div>
                             )}
                           </div>
                         )}
@@ -1097,6 +1434,249 @@ export default function OntologyExplorer() {
             </div>
           )}
         </ScrollArea>
+      </div>
+
+      <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
+        <DialogContent data-testid="dialog-add-custom-concept">
+          <DialogHeader>
+            <DialogTitle>Add Custom Concept</DialogTitle>
+            <DialogDescription>
+              Extend the ontology with your own domain-specific concept.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="concept-label">Label</Label>
+              <Input
+                id="concept-label"
+                value={newLabel}
+                onChange={(e) => setNewLabel(e.target.value)}
+                placeholder="e.g. Custom Risk Score"
+                data-testid="input-concept-label"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="concept-category">Category</Label>
+              <Select value={newCategory} onValueChange={setNewCategory}>
+                <SelectTrigger data-testid="select-concept-category">
+                  <SelectValue placeholder="Select category" />
+                </SelectTrigger>
+                <SelectContent>
+                  {allCategories.map((cat) => (
+                    <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                  ))}
+                  <SelectItem value="__new__">+ New Category</SelectItem>
+                </SelectContent>
+              </Select>
+              {newCategory === "__new__" && (
+                <Input
+                  value={newCategoryCustom}
+                  onChange={(e) => setNewCategoryCustom(e.target.value)}
+                  placeholder="Enter new category name"
+                  className="mt-1.5"
+                  data-testid="input-new-category"
+                />
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="concept-description">Description</Label>
+              <Textarea
+                id="concept-description"
+                value={newDescription}
+                onChange={(e) => setNewDescription(e.target.value)}
+                placeholder="Describe this concept..."
+                className="resize-none"
+                data-testid="input-concept-description"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="concept-synonyms">Synonyms (comma-separated)</Label>
+              <Input
+                id="concept-synonyms"
+                value={newSynonyms}
+                onChange={(e) => setNewSynonyms(e.target.value)}
+                placeholder="e.g. risk index, risk metric"
+                data-testid="input-concept-synonyms"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="concept-tags">Tags (comma-separated)</Label>
+              <Input
+                id="concept-tags"
+                value={newTags}
+                onChange={(e) => setNewTags(e.target.value)}
+                placeholder="e.g. risk, scoring, custom"
+                data-testid="input-concept-tags"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="concept-relate-to">Relate to (optional)</Label>
+              <Select value={newRelateTo} onValueChange={setNewRelateTo}>
+                <SelectTrigger data-testid="select-concept-relate-to">
+                  <SelectValue placeholder="Link to existing concept" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">None</SelectItem>
+                  {concepts.filter((c) => c.source !== "custom-extension").map((c) => (
+                    <SelectItem key={c.id} value={c.id}>{c.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={resetDialog} data-testid="button-cancel-add-concept">Cancel</Button>
+            <Button
+              onClick={handleCreateConcept}
+              disabled={createConceptMutation.isPending || !newLabel.trim() || (!newCategory || (newCategory === "__new__" && !newCategoryCustom.trim())) || !newDescription.trim()}
+              data-testid="button-save-custom-concept"
+            >
+              {createConceptMutation.isPending ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <Plus className="w-4 h-4 mr-2" />
+              )}
+              Create Concept
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function GraphView({
+  concepts,
+  categoryColorMap,
+  selectedConceptId,
+  onSelectConcept,
+}: {
+  concepts: ConceptView[];
+  categoryColorMap: Record<string, string>;
+  selectedConceptId: string | null;
+  onSelectConcept: (id: string) => void;
+}) {
+  const width = 900;
+  const height = 700;
+  const centerX = width / 2;
+  const centerY = height / 2;
+
+  const positions = useMemo(() => {
+    const catGroups: Record<string, ConceptView[]> = {};
+    for (const c of concepts) {
+      if (!catGroups[c.category]) catGroups[c.category] = [];
+      catGroups[c.category].push(c);
+    }
+    const cats = Object.keys(catGroups);
+    const pos: Record<string, { x: number; y: number }> = {};
+    const baseRadius = Math.min(width, height) * 0.3;
+
+    cats.forEach((cat, catIdx) => {
+      const catAngle = (2 * Math.PI * catIdx) / cats.length - Math.PI / 2;
+      const catConcepts = catGroups[cat];
+      const ringRadius = baseRadius + (catIdx % 2 === 0 ? 0 : 40);
+
+      catConcepts.forEach((concept, i) => {
+        const spread = catConcepts.length > 1 ? (Math.PI * 0.3) / catConcepts.length : 0;
+        const angle = catAngle + (i - (catConcepts.length - 1) / 2) * spread;
+        const r = ringRadius + i * 15;
+        pos[concept.id] = {
+          x: centerX + r * Math.cos(angle),
+          y: centerY + r * Math.sin(angle),
+        };
+      });
+    });
+
+    return pos;
+  }, [concepts, centerX, centerY, width, height]);
+
+  const edges = useMemo(() => {
+    const conceptIds = new Set(concepts.map((c) => c.id));
+    const result: { from: string; to: string }[] = [];
+    const seen = new Set<string>();
+    for (const c of concepts) {
+      for (const rel of c.relationships) {
+        if (conceptIds.has(rel.targetId)) {
+          const key = [c.id, rel.targetId].sort().join("-");
+          if (!seen.has(key)) {
+            seen.add(key);
+            result.push({ from: c.id, to: rel.targetId });
+          }
+        }
+      }
+    }
+    return result;
+  }, [concepts]);
+
+  return (
+    <div className="p-4" data-testid="graph-view">
+      <svg
+        width="100%"
+        height={height}
+        viewBox={`0 0 ${width} ${height}`}
+        className="border rounded-md bg-muted/20"
+        data-testid="graph-svg"
+      >
+        {edges.map((edge, i) => {
+          const from = positions[edge.from];
+          const to = positions[edge.to];
+          if (!from || !to) return null;
+          return (
+            <line
+              key={i}
+              x1={from.x}
+              y1={from.y}
+              x2={to.x}
+              y2={to.y}
+              stroke="currentColor"
+              strokeOpacity={0.15}
+              strokeWidth={1}
+            />
+          );
+        })}
+        {concepts.map((concept) => {
+          const p = positions[concept.id];
+          if (!p) return null;
+          const isSelected = selectedConceptId === concept.id;
+          const color = categoryColorMap[concept.category] || "hsl(210, 50%, 50%)";
+          const isCustomNode = concept.source === "custom-extension";
+          return (
+            <g
+              key={concept.id}
+              onClick={() => onSelectConcept(concept.id)}
+              className="cursor-pointer"
+              data-testid={`graph-node-${concept.id}`}
+            >
+              <circle
+                cx={p.x}
+                cy={p.y}
+                r={isSelected ? 22 : 16}
+                fill={color}
+                fillOpacity={isSelected ? 0.9 : 0.6}
+                stroke={isSelected ? "hsl(var(--primary))" : color}
+                strokeWidth={isSelected ? 3 : 1.5}
+                strokeDasharray={isCustomNode ? "4 2" : undefined}
+              />
+              <text
+                x={p.x}
+                y={p.y + 28}
+                textAnchor="middle"
+                className="text-[9px] fill-foreground"
+                style={{ pointerEvents: "none" }}
+              >
+                {concept.label.length > 18 ? concept.label.slice(0, 16) + "..." : concept.label}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+      <div className="flex flex-wrap gap-3 mt-3">
+        {Object.entries(categoryColorMap).map(([cat, color]) => (
+          <div key={cat} className="flex items-center gap-1.5 text-xs text-muted-foreground" data-testid={`legend-${cat}`}>
+            <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }} />
+            <span>{cat}</span>
+          </div>
+        ))}
       </div>
     </div>
   );

@@ -460,6 +460,7 @@ export interface IStorage {
   getOntologyConcept(id: string): Promise<OntologyConcept | undefined>;
   createOntologyConcept(concept: InsertOntologyConcept): Promise<OntologyConcept>;
   updateOntologyConcept(id: string, data: Partial<OntologyConcept>): Promise<OntologyConcept | undefined>;
+  deleteOntologyConcept(id: string): Promise<boolean>;
 
   getOntologyEnhancement(conceptId: string): Promise<OntologyEnhancement | undefined>;
   getOntologyEnhancements(conceptIds: string[]): Promise<OntologyEnhancement[]>;
@@ -1747,6 +1748,10 @@ export class DatabaseStorage implements IStorage {
   async updateOntologyConcept(id: string, data: Partial<OntologyConcept>) {
     const [updated] = await db.update(ontologyConcepts).set(data).where(eq(ontologyConcepts.id, id)).returning();
     return updated;
+  }
+  async deleteOntologyConcept(id: string) {
+    const result = await db.delete(ontologyConcepts).where(eq(ontologyConcepts.id, id)).returning();
+    return result.length > 0;
   }
 
   async getOntologyEnhancement(conceptId: string) {
