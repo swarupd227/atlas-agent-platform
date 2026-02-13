@@ -2679,7 +2679,7 @@ function AgentDetailInner() {
                     <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
                       <CardTitle className="text-base">Connectivity</CardTitle>
                       {(() => {
-                        const StatusIcon = statusIcons[ra.connectivityStatus] || HelpCircle;
+                        const StatusIcon = statusIcons[ra.connectivityStatus as string] || HelpCircle;
                         return <StatusIcon className={`h-5 w-5 ${ra.connectivityStatus === "online" ? "text-green-500" : ra.connectivityStatus === "offline" ? "text-red-500" : "text-yellow-500"}`} />;
                       })()}
                     </CardHeader>
@@ -2690,7 +2690,7 @@ function AgentDetailInner() {
                       </div>
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-sm text-muted-foreground">Trust Tier</span>
-                        <span className={`text-sm font-medium ${trustColors[ra.trustTier] || ""}`} data-testid="text-a2a-trust">{ra.trustTier}</span>
+                        <span className={`text-sm font-medium ${trustColors[ra.trustTier as string] || ""}`} data-testid="text-a2a-trust">{ra.trustTier}</span>
                       </div>
                       {ra.agentCardUrl && (
                         <div className="flex items-center justify-between gap-2">
@@ -2718,14 +2718,14 @@ function AgentDetailInner() {
                     </CardContent>
                   </Card>
 
-                  {ra.agentCard && (
+                  {ra.agentCardData && (
                     <Card className="md:col-span-2">
                       <CardHeader className="pb-2">
                         <CardTitle className="text-base">Agent Card Details</CardTitle>
                       </CardHeader>
                       <CardContent>
                         <pre className="text-xs bg-muted p-3 rounded-md overflow-auto max-h-64" data-testid="pre-a2a-card">
-                          {JSON.stringify(ra.agentCard, null, 2)}
+                          {JSON.stringify(ra.agentCardData, null, 2)}
                         </pre>
                       </CardContent>
                     </Card>
@@ -2753,7 +2753,8 @@ function AgentDetailInner() {
                   <div className="flex flex-col gap-2" data-testid="list-team-members">
                     {teamMembers.map((tm) => {
                       const memberAgent = allAgents?.find(a => a.id === tm.memberAgentId);
-                      const roleIcon = tm.memberRole === "lead" ? Crown : tm.memberRole === "observer" ? Eye : Users;
+                      const memberRole = tm.role || "member";
+                      const roleIcon = memberRole === "lead" ? Crown : memberRole === "observer" ? Eye : Users;
                       const RoleIcon = roleIcon;
                       return (
                         <div key={tm.id} className="flex items-center justify-between gap-2 p-3 rounded-md border" data-testid={`row-team-member-${tm.id}`}>
@@ -2764,7 +2765,7 @@ function AgentDetailInner() {
                               {memberAgent && <p className="text-xs text-muted-foreground">{memberAgent.agentType} agent</p>}
                             </div>
                           </div>
-                          <Badge variant="secondary" data-testid={`badge-role-${tm.id}`}>{tm.memberRole}</Badge>
+                          <Badge variant="secondary" data-testid={`badge-role-${tm.id}`}>{memberRole}</Badge>
                         </div>
                       );
                     })}
@@ -5327,8 +5328,27 @@ function BlueprintWorkflowGraph({ blueprint }: { blueprint: any }) {
 }
 
 function BlueprintToolsPermissions({ tools, permissions }: { tools: any; permissions: any }) {
-  const toolList = (tools || []) as Array<{ name: string; type: string; description: string; rateLimit?: string; timeout?: number }>;
-  const perms = permissions as { allowedActions?: string[]; deniedActions?: string[]; escalationTriggers?: string[]; maxTokenBudget?: number; maxCostPerRun?: number; requireHumanApproval?: string[] } | null;
+  const rawTools = (Array.isArray(tools) ? tools : []) as Array<any>;
+  const toolList = rawTools.map((t: any) => ({
+    name: t.name || "Unknown",
+    type: t.type || "",
+    description: t.description || "",
+    rateLimit: t.rateLimit,
+    timeout: t.timeout,
+    permissions: Array.isArray(t.permissions) ? t.permissions : [],
+  }));
+  const rawPerms = (permissions && typeof permissions === "object" && !Array.isArray(permissions)) ? permissions as any : null;
+  const perms = rawPerms ? {
+    allowedActions: Array.isArray(rawPerms.allowedActions) ? rawPerms.allowedActions : [],
+    deniedActions: Array.isArray(rawPerms.deniedActions) ? rawPerms.deniedActions : [],
+    escalationTriggers: Array.isArray(rawPerms.escalationTriggers) ? rawPerms.escalationTriggers : [],
+    maxTokenBudget: rawPerms.maxTokenBudget,
+    maxCostPerRun: rawPerms.maxCostPerRun,
+    requireHumanApproval: Array.isArray(rawPerms.requireHumanApproval) ? rawPerms.requireHumanApproval : [],
+    dataAccess: Array.isArray(rawPerms.dataAccess) ? rawPerms.dataAccess : [],
+    writeAccess: Array.isArray(rawPerms.writeAccess) ? rawPerms.writeAccess : [],
+    apiAccess: Array.isArray(rawPerms.apiAccess) ? rawPerms.apiAccess : [],
+  } : null;
 
   return (
     <Card data-testid="section-tools-permissions">
@@ -5349,14 +5369,17 @@ function BlueprintToolsPermissions({ tools, permissions }: { tools: any; permiss
               {toolList.map((tool) => (
                 <div key={tool.name} className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted/30" data-testid={`tool-row-${tool.name}`}>
                   <div className="flex items-center gap-2 min-w-0">
-                    <Badge variant="outline" className={`text-[10px] shrink-0 ${tool.type === "write" ? "bg-amber-500/15 text-amber-600 dark:text-amber-400" : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"}`}>
-                      {tool.type}
-                    </Badge>
+                    {tool.type && (
+                      <Badge variant="outline" className={`text-[10px] shrink-0 ${tool.type === "write" ? "bg-amber-500/15 text-amber-600 dark:text-amber-400" : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"}`}>
+                        {tool.type}
+                      </Badge>
+                    )}
                     <span className="text-xs font-mono font-medium truncate">{tool.name}</span>
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
                     {tool.rateLimit && <span className="text-[10px] text-muted-foreground">{tool.rateLimit}</span>}
                     {tool.timeout && <span className="text-[10px] text-muted-foreground">{tool.timeout}ms</span>}
+                    {tool.permissions.length > 0 && <span className="text-[10px] text-muted-foreground">{tool.permissions.length} perms</span>}
                   </div>
                 </div>
               ))}
@@ -5374,7 +5397,7 @@ function BlueprintToolsPermissions({ tools, permissions }: { tools: any; permiss
                   <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Allowed Actions</span>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
-                  {perms.allowedActions?.map((a) => (
+                  {perms.allowedActions?.map((a: string) => (
                     <Badge key={a} variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" data-testid={`permission-allowed-${a}`}>{a.replace(/_/g, " ")}</Badge>
                   ))}
                 </div>
@@ -5385,7 +5408,7 @@ function BlueprintToolsPermissions({ tools, permissions }: { tools: any; permiss
                   <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Denied Actions</span>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
-                  {perms.deniedActions?.map((a) => (
+                  {perms.deniedActions?.map((a: string) => (
                     <Badge key={a} variant="outline" className="text-[10px] bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20" data-testid={`permission-denied-${a}`}>{a.replace(/_/g, " ")}</Badge>
                   ))}
                 </div>
@@ -5398,7 +5421,7 @@ function BlueprintToolsPermissions({ tools, permissions }: { tools: any; permiss
                   <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Escalation Triggers</span>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
-                  {perms.escalationTriggers.map((t) => (
+                  {perms.escalationTriggers.map((t: string) => (
                     <Badge key={t} variant="outline" className="text-[10px] bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20">{t.replace(/_/g, " ")}</Badge>
                   ))}
                 </div>
@@ -5411,7 +5434,7 @@ function BlueprintToolsPermissions({ tools, permissions }: { tools: any; permiss
                   <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Require Human Approval</span>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
-                  {perms.requireHumanApproval.map((a) => (
+                  {perms.requireHumanApproval.map((a: string) => (
                     <Badge key={a} variant="outline" className="text-[10px] bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20">{a.replace(/_/g, " ")}</Badge>
                   ))}
                 </div>
@@ -5431,6 +5454,45 @@ function BlueprintToolsPermissions({ tools, permissions }: { tools: any; permiss
                 </div>
               )}
             </div>
+            {perms.dataAccess.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-1.5">
+                  <Database className="w-3 h-3 text-cyan-500" />
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Data Access</span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {perms.dataAccess.map((a: string) => (
+                    <Badge key={a} variant="outline" className="text-[10px] bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border-cyan-500/20">{a.replace(/_/g, " ")}</Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+            {perms.writeAccess.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-1.5">
+                  <Lock className="w-3 h-3 text-amber-500" />
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Write Access</span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {perms.writeAccess.map((a: string) => (
+                    <Badge key={a} variant="outline" className="text-[10px] bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20">{a.replace(/_/g, " ")}</Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+            {perms.apiAccess.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-1.5">
+                  <Zap className="w-3 h-3 text-violet-500" />
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">API Access</span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {perms.apiAccess.map((a: string) => (
+                    <Badge key={a} variant="outline" className="text-[10px] bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20">{a.replace(/_/g, " ")}</Badge>
+                  ))}
+                </div>
+              </div>
+            )}
           </>
         )}
 
@@ -5461,11 +5523,28 @@ function BlueprintMemoryRag({ config }: { config: any }) {
     );
   }
 
-  const cfg = config as {
-    embeddingModel?: string; chunkStrategy?: string; chunkSize?: number; chunkOverlap?: number;
-    vectorStore?: string; citationsRequired?: boolean; maxRetrievedChunks?: number; similarityThreshold?: number;
-    sources?: Array<{ id: string; name: string; type: string; docCount: number; lastSynced?: string }>;
+  const raw = config as any;
+  const cfg = {
+    embeddingModel: raw.embeddingModel || "",
+    chunkStrategy: raw.chunkStrategy || raw.retrievalStrategy || "",
+    chunkSize: raw.chunkSize || 0,
+    chunkOverlap: raw.chunkOverlap || 0,
+    vectorStore: raw.vectorStore || "",
+    citationsRequired: raw.citationsRequired || false,
+    maxRetrievedChunks: raw.maxRetrievedChunks || raw.topK || 0,
+    similarityThreshold: raw.similarityThreshold || 0,
+    sources: Array.isArray(raw.sources) ? raw.sources : [],
   };
+
+  const configEntries = [
+    cfg.embeddingModel && { label: "Embedding Model", value: cfg.embeddingModel, mono: true },
+    cfg.chunkStrategy && { label: "Retrieval Strategy", value: cfg.chunkStrategy },
+    cfg.chunkSize > 0 && { label: cfg.chunkOverlap > 0 ? "Chunk Size / Overlap" : "Chunk Size", value: cfg.chunkOverlap > 0 ? `${cfg.chunkSize} / ${cfg.chunkOverlap}` : String(cfg.chunkSize) },
+    cfg.vectorStore && { label: "Vector Store", value: cfg.vectorStore },
+    cfg.maxRetrievedChunks > 0 && { label: "Max Chunks / Top K", value: String(cfg.maxRetrievedChunks) },
+    cfg.similarityThreshold > 0 && { label: "Similarity Threshold", value: String(cfg.similarityThreshold) },
+    { label: "Citations", value: cfg.citationsRequired ? "Required" : "Optional" },
+  ].filter(Boolean) as Array<{ label: string; value: string; mono?: boolean }>;
 
   return (
     <Card data-testid="section-memory-rag">
@@ -5479,55 +5558,31 @@ function BlueprintMemoryRag({ config }: { config: any }) {
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <div className="flex flex-col gap-0.5">
-            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Embedding Model</span>
-            <span className="text-xs font-medium font-mono" data-testid="text-embedding-model">{cfg.embeddingModel}</span>
-          </div>
-          <div className="flex flex-col gap-0.5">
-            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Chunk Strategy</span>
-            <span className="text-sm font-medium capitalize">{cfg.chunkStrategy}</span>
-          </div>
-          <div className="flex flex-col gap-0.5">
-            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Chunk Size / Overlap</span>
-            <span className="text-sm font-medium">{cfg.chunkSize} / {cfg.chunkOverlap}</span>
-          </div>
-          <div className="flex flex-col gap-0.5">
-            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Vector Store</span>
-            <span className="text-sm font-medium">{cfg.vectorStore}</span>
-          </div>
-        </div>
-        <div className="grid grid-cols-3 gap-4">
-          <div className="flex flex-col gap-0.5">
-            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Max Chunks</span>
-            <span className="text-sm font-medium">{cfg.maxRetrievedChunks}</span>
-          </div>
-          <div className="flex flex-col gap-0.5">
-            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Similarity Threshold</span>
-            <span className="text-sm font-medium">{cfg.similarityThreshold}</span>
-          </div>
-          <div className="flex flex-col gap-0.5">
-            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Citations</span>
-            <span className="text-sm font-medium">{cfg.citationsRequired ? "Required" : "Optional"}</span>
-          </div>
+          {configEntries.map((entry) => (
+            <div key={entry.label} className="flex flex-col gap-0.5">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">{entry.label}</span>
+              <span className={`text-sm font-medium ${entry.mono ? "font-mono text-xs" : ""} capitalize`} data-testid={`text-rag-${entry.label.toLowerCase().replace(/\s+/g, "-")}`}>{entry.value}</span>
+            </div>
+          ))}
         </div>
 
-        {cfg.sources && cfg.sources.length > 0 && (
+        {cfg.sources.length > 0 && (
           <>
             <Separator />
             <div className="space-y-2">
               <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Data Sources</span>
               <div className="space-y-1.5">
-                {cfg.sources.map((src) => (
-                  <div key={src.id} className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted/30" data-testid={`rag-source-${src.id}`}>
+                {cfg.sources.map((src: any, i: number) => (
+                  <div key={src.id || `src-${i}`} className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted/30" data-testid={`rag-source-${src.id || i}`}>
                     <div className="flex items-center gap-2 min-w-0">
                       <BookOpen className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                       <div className="flex flex-col min-w-0">
-                        <span className="text-xs font-medium truncate">{src.name}</span>
-                        <span className="text-[10px] text-muted-foreground">{src.type.replace(/_/g, " ")}</span>
+                        <span className="text-xs font-medium truncate">{src.name || `Source ${i + 1}`}</span>
+                        {src.type && <span className="text-[10px] text-muted-foreground">{src.type.replace(/_/g, " ")}</span>}
                       </div>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
-                      <span className="text-[10px] text-muted-foreground">{src.docCount.toLocaleString()} docs</span>
+                      {src.docCount != null && <span className="text-[10px] text-muted-foreground">{src.docCount.toLocaleString()} docs</span>}
                       {src.lastSynced && (
                         <span className="text-[10px] text-muted-foreground">{new Date(src.lastSynced).toLocaleDateString()}</span>
                       )}
@@ -5596,10 +5651,16 @@ function BlueprintPolicyBindings({ bindings }: { bindings: any }) {
 }
 
 function BlueprintEvalBindings({ bindings }: { bindings: any }) {
-  const evals = (bindings || []) as Array<{
-    suiteId: string; name: string; type: string; passThreshold: number;
-    schedule: string; lastRun?: string; lastPassRate?: number;
-  }>;
+  const rawEvals = (Array.isArray(bindings) ? bindings : []) as Array<any>;
+  const evals = rawEvals.map((ev: any, i: number) => ({
+    suiteId: ev.suiteId || ev.suiteName || `eval-${i}`,
+    name: ev.name || ev.suiteName || `Eval Suite ${i + 1}`,
+    type: ev.type || "",
+    passThreshold: ev.passThreshold ?? 0,
+    schedule: ev.schedule || "",
+    lastRun: ev.lastRun,
+    lastPassRate: ev.lastPassRate,
+  }));
 
   return (
     <Card data-testid="section-eval-bindings">
@@ -5616,19 +5677,23 @@ function BlueprintEvalBindings({ bindings }: { bindings: any }) {
         {evals.length > 0 ? (
           <div className="space-y-1.5">
             {evals.map((ev) => {
-              const passing = ev.lastPassRate != null && ev.lastPassRate >= ev.passThreshold;
+              const passing = ev.lastPassRate != null && ev.passThreshold > 0 && ev.lastPassRate >= ev.passThreshold;
               return (
                 <div key={ev.suiteId} className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted/30" data-testid={`eval-binding-${ev.suiteId}`}>
                   <div className="flex items-center gap-2 min-w-0">
-                    {passing ? (
-                      <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                    {ev.lastPassRate != null ? (
+                      passing ? (
+                        <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                      ) : (
+                        <XCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />
+                      )
                     ) : (
-                      <XCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />
+                      <FlaskConical className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                     )}
                     <div className="flex flex-col min-w-0">
                       <span className="text-xs font-medium truncate">{ev.name}</span>
                       <span className="text-[10px] text-muted-foreground">
-                        {ev.type.replace(/_/g, " ")} | {ev.schedule} | threshold: {(ev.passThreshold * 100).toFixed(0)}%
+                        {[ev.type && ev.type.replace(/_/g, " "), ev.schedule, ev.passThreshold > 0 && `threshold: ${(ev.passThreshold * 100).toFixed(0)}%`].filter(Boolean).join(" | ")}
                       </span>
                     </div>
                   </div>
@@ -5673,11 +5738,17 @@ function BlueprintRollbackPlan({ plan }: { plan: any }) {
     );
   }
 
-  const rb = plan as {
-    previousVersion: string; rollbackStrategy: string; healthCheckInterval: string;
-    rollbackApprover: string; lastRollbackAt: string | null;
-    autoRollbackTriggers?: Array<{ metric: string; operator: string; threshold: number; window: string }>;
-    canaryConfig?: { startPercent: number; stepPercent: number; stepInterval: string; maxPercent: number };
+  const raw = plan as any;
+  const rb = {
+    previousVersion: raw.previousVersion || "",
+    rollbackStrategy: raw.rollbackStrategy || "",
+    healthCheckInterval: raw.healthCheckInterval || "",
+    rollbackApprover: raw.rollbackApprover || "",
+    lastRollbackAt: raw.lastRollbackAt || null,
+    autoRollbackTriggers: Array.isArray(raw.autoRollbackTriggers) ? raw.autoRollbackTriggers : [],
+    canaryConfig: raw.canaryConfig || null,
+    shadowModeDuration: raw.shadowModeDuration || "",
+    canarySteps: Array.isArray(raw.canarySteps) ? raw.canarySteps : [],
   };
 
   return (
@@ -5692,22 +5763,38 @@ function BlueprintRollbackPlan({ plan }: { plan: any }) {
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <div className="flex flex-col gap-0.5">
-            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Previous Version</span>
-            <span className="text-sm font-medium font-mono" data-testid="text-rollback-version">v{rb.previousVersion}</span>
-          </div>
+          {rb.previousVersion && (
+            <div className="flex flex-col gap-0.5">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Previous Version</span>
+              <span className="text-sm font-medium font-mono" data-testid="text-rollback-version">v{rb.previousVersion}</span>
+            </div>
+          )}
           <div className="flex flex-col gap-0.5">
             <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Strategy</span>
-            <span className="text-sm font-medium capitalize">{rb.rollbackStrategy.replace(/_/g, " ")}</span>
+            <span className="text-sm font-medium capitalize">{(rb.rollbackStrategy || "N/A").replace(/_/g, " ")}</span>
           </div>
           <div className="flex flex-col gap-0.5">
             <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Health Check</span>
-            <span className="text-sm font-medium">{rb.healthCheckInterval}</span>
+            <span className="text-sm font-medium">{rb.healthCheckInterval || "N/A"}</span>
           </div>
-          <div className="flex flex-col gap-0.5">
-            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Approver</span>
-            <span className="text-sm font-medium capitalize">{rb.rollbackApprover.replace(/_/g, " ")}</span>
-          </div>
+          {rb.rollbackApprover && (
+            <div className="flex flex-col gap-0.5">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Approver</span>
+              <span className="text-sm font-medium capitalize">{rb.rollbackApprover.replace(/_/g, " ")}</span>
+            </div>
+          )}
+          {rb.shadowModeDuration && (
+            <div className="flex flex-col gap-0.5">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Shadow Mode</span>
+              <span className="text-sm font-medium">{rb.shadowModeDuration}</span>
+            </div>
+          )}
+          {rb.canarySteps.length > 0 && (
+            <div className="flex flex-col gap-0.5">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Canary Steps</span>
+              <span className="text-sm font-medium">{rb.canarySteps.join("% → ")}%</span>
+            </div>
+          )}
         </div>
 
         {rb.lastRollbackAt && (
@@ -5723,7 +5810,7 @@ function BlueprintRollbackPlan({ plan }: { plan: any }) {
             <div className="space-y-2">
               <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Auto-Rollback Triggers</span>
               <div className="space-y-1.5">
-                {rb.autoRollbackTriggers.map((trigger, i) => (
+                {rb.autoRollbackTriggers.map((trigger: any, i: number) => (
                   <div key={i} className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted/30" data-testid={`rollback-trigger-${i}`}>
                     <div className="flex items-center gap-2">
                       <Gauge className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
