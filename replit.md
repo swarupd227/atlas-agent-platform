@@ -52,6 +52,7 @@ The platform utilizes a modern web stack: React, Vite, Tailwind CSS, shadcn/ui, 
 - **MCP Resources**: Governed knowledge connectors with sensitivity classification, approval gates, and freshness tracking.
 - **MCP Prompt Library**: Imports MCP prompt templates and binds them into blueprints, with domain expert publishing and security admin approval flows.
 - **Ontology Explorer**: Industry knowledge graph browser with concept details, search, and AI-enhanced descriptions. Includes AI-powered ontology generation for industries without seed data (e.g., Insurance) via POST /api/ai/generate-ontology endpoint.
+- **Memory Architecture Manager**: Defines how agents manage long-term and working memory with industry-specific retention and governance rules. Features 4 panels: Memory Tier Configuration (Working/Episodic/Semantic), Industry-Specific Memory Rules (Healthcare/HIPAA, Financial Services/PCI-DSS, Insurance/ACORD, Manufacturing/ISO 9001, Retail/PCI), Memory Inspection Console (view agent memories across tiers), and Forgetting Policies (GDPR erasure, retention expiry, competitive quarantine). Persisted via memory_profiles table. AI-powered rule generation via POST /api/ai/suggest-memory-rules.
 - **Agent Wizard Ontology Integration**: AI-suggested ontology tags for agent definition.
 - **Data Model**: Comprehensive schema linking incidents, patches, and deployments.
 

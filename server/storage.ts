@@ -124,6 +124,8 @@ import {
   type GoldenTestCase, type InsertGoldenTestCase,
   contextProfiles,
   type ContextProfile, type InsertContextProfile,
+  memoryProfiles,
+  type MemoryProfile, type InsertMemoryProfile,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -496,6 +498,12 @@ export interface IStorage {
   createContextProfile(profile: InsertContextProfile): Promise<ContextProfile>;
   updateContextProfile(id: string, data: Partial<InsertContextProfile>): Promise<ContextProfile | undefined>;
   deleteContextProfile(id: string): Promise<boolean>;
+
+  getMemoryProfiles(): Promise<MemoryProfile[]>;
+  getMemoryProfile(id: string): Promise<MemoryProfile | undefined>;
+  createMemoryProfile(profile: InsertMemoryProfile): Promise<MemoryProfile>;
+  updateMemoryProfile(id: string, data: Partial<InsertMemoryProfile>): Promise<MemoryProfile | undefined>;
+  deleteMemoryProfile(id: string): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1880,6 +1888,30 @@ export class DatabaseStorage implements IStorage {
 
   async deleteContextProfile(id: string): Promise<boolean> {
     const result = await db.delete(contextProfiles).where(eq(contextProfiles.id, id));
+    return (result as any).rowCount > 0;
+  }
+
+  async getMemoryProfiles(): Promise<MemoryProfile[]> {
+    return db.select().from(memoryProfiles).orderBy(desc(memoryProfiles.createdAt));
+  }
+
+  async getMemoryProfile(id: string): Promise<MemoryProfile | undefined> {
+    const [profile] = await db.select().from(memoryProfiles).where(eq(memoryProfiles.id, id));
+    return profile;
+  }
+
+  async createMemoryProfile(profile: InsertMemoryProfile): Promise<MemoryProfile> {
+    const [created] = await db.insert(memoryProfiles).values(profile).returning();
+    return created;
+  }
+
+  async updateMemoryProfile(id: string, data: Partial<InsertMemoryProfile>): Promise<MemoryProfile | undefined> {
+    const [updated] = await db.update(memoryProfiles).set(data).where(eq(memoryProfiles.id, id)).returning();
+    return updated;
+  }
+
+  async deleteMemoryProfile(id: string): Promise<boolean> {
+    const result = await db.delete(memoryProfiles).where(eq(memoryProfiles.id, id));
     return (result as any).rowCount > 0;
   }
 }

@@ -61,6 +61,7 @@ import {
   insertGoldenDatasetSchema,
   insertGoldenTestCaseSchema,
   insertContextProfileSchema,
+  insertMemoryProfileSchema,
 } from "@shared/schema";
 
 const openai = new OpenAI({
@@ -13063,6 +13064,101 @@ Return JSON with the enhanced fields: { "name": string, "inputScenario": string,
       }
       res.json({ suggestions, utilizationPercent: Math.round(allocated / total * 100), allocated, total });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/memory-profiles", async (_req, res) => {
+    try {
+      const profiles = await storage.getMemoryProfiles();
+      res.json(profiles);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/memory-profiles/:id", async (req, res) => {
+    try {
+      const profile = await storage.getMemoryProfile(req.params.id);
+      if (!profile) return res.status(404).json({ error: "Not found" });
+      res.json(profile);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/memory-profiles", async (req, res) => {
+    try {
+      const validated = insertMemoryProfileSchema.parse(req.body);
+      const profile = await storage.createMemoryProfile(validated);
+      res.status(201).json(profile);
+    } catch (e: any) {
+      if (e instanceof ZodError) return res.status(400).json({ error: e.errors });
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.patch("/api/memory-profiles/:id", async (req, res) => {
+    try {
+      const validated = insertMemoryProfileSchema.partial().parse(req.body);
+      const updated = await storage.updateMemoryProfile(req.params.id, validated);
+      if (!updated) return res.status(404).json({ error: "Not found" });
+      res.json(updated);
+    } catch (e: any) {
+      if (e instanceof ZodError) return res.status(400).json({ error: e.errors });
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/memory-profiles/:id", async (req, res) => {
+    try {
+      const ok = await storage.deleteMemoryProfile(req.params.id);
+      if (!ok) return res.status(404).json({ error: "Not found" });
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/ai/suggest-memory-rules", async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI service not configured" });
+      }
+      const { industry, tier } = req.body;
+      if (!industry) {
+        return res.status(400).json({ error: "industry is required" });
+      }
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        max_tokens: 2000,
+        messages: [
+          {
+            role: "system",
+            content: `You are a compliance and data governance expert for the ${industry} industry. Generate memory governance rules for AI agents.
+
+Return a JSON object with:
+- "rules": Array of rule objects, each with:
+  - "name": Rule name
+  - "description": Brief description
+  - "tier": Which memory tier this applies to ("working", "episodic", or "semantic")
+  - "regulation": Relevant regulation or standard
+  - "retentionDays": Number of days to retain (-1 for indefinite)
+  - "encryptionRequired": boolean
+  - "accessControl": "open" | "restricted" | "audit-required"
+  - "autoActions": Array of automatic actions (e.g., "encrypt", "redact", "purge", "archive")`
+          },
+          {
+            role: "user",
+            content: `Generate ${tier ? `${tier} tier` : "all tier"} memory governance rules for ${industry} industry AI agents. Return ONLY valid JSON.`
+          }
+        ],
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) return res.status(500).json({ error: "No response from AI" });
+
+      let parsed;
+      try { parsed = JSON.parse(content); } catch { return res.status(500).json({ error: "AI returned malformed response" }); }
+      res.json(parsed);
+    } catch (e: any) {
+      console.error("AI suggest memory rules error:", e);
+      res.status(500).json({ error: e.message || "Failed to suggest memory rules" });
+    }
   });
 
   // Start the job worker

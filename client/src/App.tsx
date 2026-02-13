@@ -72,6 +72,7 @@ import SkillComposer from "@/pages/skill-composer";
 import GoldenDatasets from "@/pages/golden-datasets";
 import GoldenDatasetDetail from "@/pages/golden-dataset-detail";
 import ContextStudio from "@/pages/context-studio";
+import MemoryArchitecture from "@/pages/memory-architecture";
 
 function DashboardRouter() {
   return (
@@ -129,6 +130,7 @@ function DashboardRouter() {
       <Route path="/skills" component={SkillCatalog} />
       <Route path="/ontology" component={OntologyExplorer} />
       <Route path="/context-studio" component={ContextStudio} />
+      <Route path="/memory-architecture" component={MemoryArchitecture} />
       <Route path="/admin" component={Admin} />
       <Route component={NotFound} />
     </Switch>

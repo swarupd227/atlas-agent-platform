@@ -80,6 +80,7 @@ export function AppSidebar() {
         { title: "Templates", url: "/templates", icon: Library },
         { title: "Skills", url: "/skills", icon: Layers },
         { title: "Context Studio", url: "/context-studio", icon: Brain },
+        { title: "Memory Manager", url: "/memory-architecture", icon: Database },
       ],
     },
     {

@@ -1463,4 +1463,20 @@ export const insertContextProfileSchema = createInsertSchema(contextProfiles).om
 export type InsertContextProfile = z.infer<typeof insertContextProfileSchema>;
 export type ContextProfile = typeof contextProfiles.$inferSelect;
 
+export const memoryProfiles = pgTable("memory_profiles", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  industry: text("industry").notNull(),
+  agentId: varchar("agent_id"),
+  tierConfigs: jsonb("tier_configs").notNull().default(sql`'[]'::jsonb`),
+  industryRules: jsonb("industry_rules").notNull().default(sql`'[]'::jsonb`),
+  forgettingPolicies: jsonb("forgetting_policies").notNull().default(sql`'[]'::jsonb`),
+  status: text("status").notNull().default("active"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertMemoryProfileSchema = createInsertSchema(memoryProfiles).omit({ id: true, createdAt: true });
+export type InsertMemoryProfile = z.infer<typeof insertMemoryProfileSchema>;
+export type MemoryProfile = typeof memoryProfiles.$inferSelect;
+
 export * from "./models/chat";
