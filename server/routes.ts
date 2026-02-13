@@ -13645,6 +13645,130 @@ Return ONLY valid JSON.`
   });
 
   // AI Autonomy Learning Recommendations
+  app.post("/api/ai/generate-autonomy-profile", async (req, res) => {
+    try {
+      const { industry, profileName, description } = req.body;
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        messages: [
+          {
+            role: "system",
+            content: `You are an AI governance expert specializing in adaptive autonomy calibration. Generate a complete autonomy profile with industry-specific risk dimensions and calibrated autonomy levels.
+
+Return JSON with this structure:
+{
+  "riskDimensions": [
+    {
+      "id": "string - snake_case identifier",
+      "name": "string - human readable name",
+      "description": "string - what this dimension measures",
+      "category": "string - category like Financial, Regulatory, Clinical, Safety, etc.",
+      "weight": number 0-100,
+      "thresholds": { "low": number, "medium": number, "high": number, "critical": number },
+      "oversightLevel": "string - full_auto|log_only|notify_after|confirm_before|expert_approval"
+    }
+  ],
+  "autonomyLevels": [
+    {
+      "actionType": "string - snake_case action id",
+      "actionName": "string - human readable name",
+      "category": "string - category like Data Operations, Analytics, etc.",
+      "level": number 0-4,
+      "levelName": "string - Full Auto|Log Only|Notify After|Confirm Before|Expert Approval",
+      "baseLevel": number 0-4,
+      "riskAdjusted": boolean
+    }
+  ],
+  "overrideRules": [
+    {
+      "id": "string - snake_case id",
+      "name": "string - rule name",
+      "description": "string - when and why this override applies",
+      "startDate": "string - YYYY-MM-DD",
+      "endDate": "string - YYYY-MM-DD",
+      "condition": "string - trigger condition",
+      "overrideLevel": "string - autonomy level during override",
+      "affectedActions": ["string - action type ids"],
+      "active": boolean
+    }
+  ],
+  "summary": "string - brief summary of the generated profile"
+}
+
+Generate 6-8 risk dimensions specific to the industry, 8-12 action types with appropriate autonomy levels, and 2-3 reasonable override rules for common business periods. Levels 0=Full Auto, 1=Log Only, 2=Notify After, 3=Confirm Before, 4=Expert Approval.`
+          },
+          {
+            role: "user",
+            content: `Generate a complete autonomy profile for the "${industry || "financial_services"}" industry.
+Profile name: "${profileName || "Auto-Generated Profile"}"
+Description: "${description || "AI-generated autonomy configuration"}"
+
+Consider industry-specific regulations, risk tolerances, and common business patterns. Generate realistic risk dimensions, well-calibrated autonomy levels for typical agent actions, and sensible override rules.
+
+Return ONLY valid JSON.`
+          }
+        ],
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) return res.status(500).json({ error: "No response from AI" });
+      res.json(JSON.parse(content));
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/ai/enhance-autonomy-profile", async (req, res) => {
+    try {
+      const { industry, riskDimensions, autonomyLevels, overrideRules } = req.body;
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        messages: [
+          {
+            role: "system",
+            content: `You are an AI governance expert specializing in adaptive autonomy optimization. Analyze an existing autonomy profile and suggest enhancements to improve its effectiveness, coverage, and risk calibration.
+
+Return JSON with this structure:
+{
+  "enhancedRiskDimensions": [same structure as input but with improved weights, thresholds, oversight levels, and optionally added/modified dimensions],
+  "enhancedAutonomyLevels": [same structure as input but with optimized levels based on risk analysis],
+  "enhancedOverrideRules": [same structure as input but with improved or additional override rules],
+  "improvements": [
+    {
+      "area": "string - risk_dimensions|autonomy_levels|override_rules",
+      "change": "string - what was changed",
+      "reasoning": "string - why this improvement was made",
+      "impact": "high|medium|low"
+    }
+  ],
+  "coverageScore": { "before": number 0-100, "after": number 0-100 },
+  "riskScore": { "before": number 0-100, "after": number 0-100 },
+  "summary": "string - overall enhancement summary"
+}
+
+Analyze gaps in risk coverage, identify miscalibrated autonomy levels, suggest missing override rules, and optimize weights. Preserve the overall structure but enhance it with better calibration.`
+          },
+          {
+            role: "user",
+            content: `Enhance this autonomy profile for the "${industry || "financial_services"}" industry.
+
+Current Risk Dimensions: ${JSON.stringify(riskDimensions || [])}
+Current Autonomy Levels: ${JSON.stringify(autonomyLevels || [])}
+Current Override Rules: ${JSON.stringify(overrideRules || [])}
+
+Analyze the current configuration and suggest specific enhancements. Identify gaps in risk coverage, miscalibrated autonomy levels, and missing override rules. Provide before/after scores.
+
+Return ONLY valid JSON.`
+          }
+        ],
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) return res.status(500).json({ error: "No response from AI" });
+      res.json(JSON.parse(content));
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   app.post("/api/ai/autonomy-recommendations", async (req, res) => {
     try {
       const { industry, riskDimensions, autonomyLevels, approvalHistory } = req.body;

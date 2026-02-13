@@ -187,6 +187,8 @@ export default function AutonomyEngine() {
   const [searchQuery, setSearchQuery] = useState("");
   const [showAddOverride, setShowAddOverride] = useState(false);
   const [aiRecommendations, setAiRecommendations] = useState<any>(null);
+  const [showEnhancePreview, setShowEnhancePreview] = useState(false);
+  const [enhanceResult, setEnhanceResult] = useState<any>(null);
 
   const [newOverride, setNewOverride] = useState<Partial<OverrideRule>>({
     name: "",
@@ -253,6 +255,74 @@ export default function AutonomyEngine() {
     },
     onError: (e: any) => toast({ title: "AI analysis failed", description: e.message, variant: "destructive" }),
   });
+
+  const aiGenerateMut = useMutation({
+    mutationFn: async (data: any) => {
+      const res = await apiRequest("POST", "/api/ai/generate-autonomy-profile", data);
+      return res.json();
+    },
+    onSuccess: (data) => {
+      if (selectedProfile) {
+        updateProfileMut.mutate({
+          id: selectedProfile.id,
+          data: {
+            riskDimensions: data.riskDimensions || [],
+            autonomyLevels: data.autonomyLevels || [],
+            overrideRules: data.overrideRules || [],
+          },
+        });
+        toast({ title: "AI-generated profile applied", description: data.summary || "Risk dimensions, autonomy levels, and override rules generated" });
+      }
+    },
+    onError: (e: any) => toast({ title: "AI generation failed", description: e.message, variant: "destructive" }),
+  });
+
+  const aiEnhanceMut = useMutation({
+    mutationFn: async (data: any) => {
+      const res = await apiRequest("POST", "/api/ai/enhance-autonomy-profile", data);
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setEnhanceResult(data);
+      setShowEnhancePreview(true);
+      toast({ title: "AI enhancement analysis complete" });
+    },
+    onError: (e: any) => toast({ title: "AI enhancement failed", description: e.message, variant: "destructive" }),
+  });
+
+  function handleAiGenerate() {
+    if (!selectedProfile) return;
+    aiGenerateMut.mutate({
+      industry: industryId,
+      profileName: selectedProfile.name,
+      description: selectedProfile.description || "",
+    });
+  }
+
+  function handleAiEnhance() {
+    if (!selectedProfile) return;
+    aiEnhanceMut.mutate({
+      industry: industryId,
+      riskDimensions,
+      autonomyLevels,
+      overrideRules,
+    });
+  }
+
+  function handleApplyEnhancement() {
+    if (!selectedProfile || !enhanceResult) return;
+    updateProfileMut.mutate({
+      id: selectedProfile.id,
+      data: {
+        riskDimensions: enhanceResult.enhancedRiskDimensions || riskDimensions,
+        autonomyLevels: enhanceResult.enhancedAutonomyLevels || autonomyLevels,
+        overrideRules: enhanceResult.enhancedOverrideRules || overrideRules,
+      },
+    });
+    setShowEnhancePreview(false);
+    setEnhanceResult(null);
+    toast({ title: "AI enhancements applied to profile" });
+  }
 
   const selectedProfile = useMemo(() => {
     return profiles.find((p) => p.id === selectedProfileId) || null;
@@ -597,6 +667,34 @@ export default function AutonomyEngine() {
                     </div>
                     <div className="flex items-center gap-2 flex-wrap">
                       <Badge variant="outline">{selectedProfile.industry.replace(/_/g, " ")}</Badge>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleAiGenerate}
+                        disabled={aiGenerateMut.isPending}
+                        data-testid="button-ai-generate"
+                      >
+                        {aiGenerateMut.isPending ? (
+                          <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                        ) : (
+                          <Sparkles className="w-3.5 h-3.5 mr-1.5" />
+                        )}
+                        AI Generate
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleAiEnhance}
+                        disabled={aiEnhanceMut.isPending}
+                        data-testid="button-ai-enhance"
+                      >
+                        {aiEnhanceMut.isPending ? (
+                          <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                        ) : (
+                          <Sparkles className="w-3.5 h-3.5 mr-1.5" />
+                        )}
+                        AI Enhance
+                      </Button>
                       <Button
                         variant="outline"
                         size="icon"
@@ -1233,6 +1331,83 @@ export default function AutonomyEngine() {
               data-testid="button-confirm-add-override"
             >
               <Plus className="w-4 h-4 mr-1.5" />Add Override
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showEnhancePreview} onOpenChange={setShowEnhancePreview}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5" />AI Enhancement Preview
+            </DialogTitle>
+          </DialogHeader>
+          {enhanceResult && (
+            <div className="space-y-4">
+              {enhanceResult.summary && (
+                <div className="p-3 rounded-md border" data-testid="text-enhance-summary">
+                  <p className="text-xs text-muted-foreground mb-1">Enhancement Summary</p>
+                  <p className="text-sm">{enhanceResult.summary}</p>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-3">
+                {enhanceResult.coverageScore && (
+                  <Card>
+                    <CardContent className="p-3">
+                      <p className="text-xs text-muted-foreground">Coverage Score</p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="text-lg font-bold">{enhanceResult.coverageScore.before}%</span>
+                        <ArrowRight className="w-4 h-4 text-muted-foreground" />
+                        <span className="text-lg font-bold text-green-600 dark:text-green-400">{enhanceResult.coverageScore.after}%</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+                {enhanceResult.riskScore && (
+                  <Card>
+                    <CardContent className="p-3">
+                      <p className="text-xs text-muted-foreground">Risk Score</p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="text-lg font-bold">{enhanceResult.riskScore.before}%</span>
+                        <ArrowRight className="w-4 h-4 text-muted-foreground" />
+                        <span className="text-lg font-bold text-green-600 dark:text-green-400">{enhanceResult.riskScore.after}%</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+
+              {enhanceResult.improvements?.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-medium mb-2 flex items-center gap-1.5">
+                    <TrendingUp className="w-4 h-4" />Improvements ({enhanceResult.improvements.length})
+                  </h4>
+                  <div className="space-y-2">
+                    {enhanceResult.improvements.map((imp: any, i: number) => (
+                      <div key={i} className="p-2.5 rounded-md border" data-testid={`card-improvement-${i}`}>
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          <Badge variant={imp.impact === "high" ? "destructive" : imp.impact === "medium" ? "secondary" : "outline"} className="text-xs">
+                            {imp.impact}
+                          </Badge>
+                          <Badge variant="outline" className="text-xs">{(imp.area || "").replace(/_/g, " ")}</Badge>
+                        </div>
+                        <p className="text-sm font-medium">{imp.change}</p>
+                        <p className="text-xs text-muted-foreground mt-1">{imp.reasoning}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowEnhancePreview(false); setEnhanceResult(null); }}>
+              Dismiss
+            </Button>
+            <Button onClick={handleApplyEnhancement} data-testid="button-apply-enhancement">
+              <CheckCircle className="w-4 h-4 mr-1.5" />Apply Enhancements
             </Button>
           </DialogFooter>
         </DialogContent>
