@@ -25,6 +25,7 @@ import {
   Hammer,
   Brain,
   GitBranch,
+  Network,
 } from "lucide-react";
 import {
   Sidebar,
@@ -83,6 +84,7 @@ export function AppSidebar() {
         { title: "Context Studio", url: "/context-studio", icon: Brain },
         { title: "Memory Manager", url: "/memory-architecture", icon: Database },
         { title: "RAG Pipeline", url: "/rag-pipeline", icon: GitBranch },
+        { title: "Knowledge Graph", url: "/knowledge-graph", icon: Network },
       ],
     },
     {
