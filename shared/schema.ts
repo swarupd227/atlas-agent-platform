@@ -1705,4 +1705,33 @@ export const insertCanaryDeploymentSchema = createInsertSchema(canaryDeployments
 export type InsertCanaryDeployment = z.infer<typeof insertCanaryDeploymentSchema>;
 export type CanaryDeployment = typeof canaryDeployments.$inferSelect;
 
+export const healingPipelines = pgTable("healing_pipelines", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  title: text("title").notNull(),
+  agentId: varchar("agent_id"),
+  agentName: text("agent_name").notNull(),
+  industry: text("industry").notNull().default("general"),
+  severity: text("severity").notNull().default("medium"),
+  stage: text("stage").notNull().default("detected"),
+  issueType: text("issue_type").notNull().default("drift"),
+  issueDescription: text("issue_description"),
+  detectedAt: timestamp("detected_at").defaultNow(),
+  diagnosisTemplate: text("diagnosis_template"),
+  diagnosisDetails: jsonb("diagnosis_details").notNull().default(sql`'{}'::jsonb`),
+  hypothesis: jsonb("hypothesis").notNull().default(sql`'{}'::jsonb`),
+  businessImpact: jsonb("business_impact").notNull().default(sql`'{}'::jsonb`),
+  remediation: jsonb("remediation").notNull().default(sql`'{}'::jsonb`),
+  industryGuardrails: jsonb("industry_guardrails").notNull().default(sql`'[]'::jsonb`),
+  experimentConfig: jsonb("experiment_config").notNull().default(sql`'{}'::jsonb`),
+  experimentResults: jsonb("experiment_results").notNull().default(sql`'{}'::jsonb`),
+  resolution: jsonb("resolution").notNull().default(sql`'{}'::jsonb`),
+  status: text("status").notNull().default("active"),
+  resolvedAt: timestamp("resolved_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertHealingPipelineSchema = createInsertSchema(healingPipelines).omit({ id: true, createdAt: true });
+export type InsertHealingPipeline = z.infer<typeof insertHealingPipelineSchema>;
+export type HealingPipeline = typeof healingPipelines.$inferSelect;
+
 export * from "./models/chat";

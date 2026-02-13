@@ -14395,6 +14395,172 @@ Respond in JSON:
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  // Healing Pipelines CRUD
+  app.get("/api/healing-pipelines", async (req, res) => {
+    try {
+      const pipelines = await storage.getHealingPipelines();
+      res.json(pipelines);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/healing-pipelines/:id", async (req, res) => {
+    try {
+      const pipeline = await storage.getHealingPipeline(req.params.id);
+      if (!pipeline) return res.status(404).json({ error: "Not found" });
+      res.json(pipeline);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/healing-pipelines", async (req, res) => {
+    try {
+      const pipeline = await storage.createHealingPipeline(req.body);
+      res.json(pipeline);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.patch("/api/healing-pipelines/:id", async (req, res) => {
+    try {
+      const data = { ...req.body };
+      if (data.detectedAt && typeof data.detectedAt === "string") {
+        data.detectedAt = new Date(data.detectedAt);
+      }
+      if (data.resolvedAt && typeof data.resolvedAt === "string") {
+        data.resolvedAt = new Date(data.resolvedAt);
+      }
+      const updated = await storage.updateHealingPipeline(req.params.id, data);
+      if (!updated) return res.status(404).json({ error: "Not found" });
+      res.json(updated);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.delete("/api/healing-pipelines/:id", async (req, res) => {
+    try {
+      const result = await storage.deleteHealingPipeline(req.params.id);
+      res.json({ success: result });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/ai/healing-diagnose", async (req, res) => {
+    try {
+      const { pipelineId, industry, issueType, issueDescription, stage } = req.body;
+
+      if (pipelineId) {
+        const pipeline = await storage.getHealingPipeline(pipelineId);
+        if (!pipeline) return res.status(404).json({ error: "Pipeline not found" });
+      }
+
+      const industryDiagnosis: Record<string, any> = {
+        financial_services: {
+          diagnosisChecks: ["Regulatory changes (SEC/FINRA)", "Market condition shifts", "Counterparty data changes", "Model drift from market regime change"],
+          impactModels: { revenueAtRisk: true, regulatoryFineExposure: true, clientAttritionProbability: true },
+          guardrails: ["Must pass regulatory compliance check", "Cannot modify trading logic without compliance review", "Client-facing changes require suitability validation"],
+          successCriteria: "Regulatory compliance maintained, error rate below threshold, no increase in compliance violations"
+        },
+        healthcare: {
+          diagnosisChecks: ["Clinical guideline updates", "Formulary changes", "EHR data quality issues", "Patient safety protocol changes"],
+          impactModels: { patientSafetyScore: true, reimbursementRisk: true, readmissionRateImpact: true },
+          guardrails: ["Must pass clinical safety validation", "HIPAA compliance required", "Cannot modify clinical decision logic without clinical review"],
+          successCriteria: "Clinical equivalence testing passed, patient safety scores maintained, HIPAA compliance verified"
+        },
+        manufacturing: {
+          diagnosisChecks: ["Equipment calibration drift", "Sensor data quality", "Process parameter changes", "Safety system updates"],
+          impactModels: { productionDowntimeCost: true, qualityCost: true, warrantyExposure: true },
+          guardrails: ["Must pass safety review for human-adjacent operations", "Cannot modify safety-critical parameters", "Quality threshold validation required"],
+          successCriteria: "Quality thresholds maintained, safety review passed, production metrics within tolerance"
+        },
+        insurance: {
+          diagnosisChecks: ["Regulatory filing changes", "Actuarial model updates", "Claims pattern shifts", "Underwriting guideline changes"],
+          impactModels: { claimsExposure: true, premiumLeakage: true, regulatoryFineRisk: true },
+          guardrails: ["Must pass actuarial review", "Rate filing compliance required", "Claims handling changes need compliance sign-off"],
+          successCriteria: "Actuarial soundness maintained, regulatory compliance verified, claims accuracy preserved"
+        },
+        retail: {
+          diagnosisChecks: ["Demand pattern changes", "Pricing model drift", "Customer segment shifts", "Supply chain disruptions"],
+          impactModels: { revenueLoss: true, inventoryCost: true, customerChurnRisk: true },
+          guardrails: ["Must pass pricing fairness check", "PCI compliance for payment-related changes", "Customer experience impact assessment required"],
+          successCriteria: "Revenue metrics maintained, customer satisfaction preserved, PCI compliance verified"
+        }
+      };
+
+      const context = industryDiagnosis[industry] || industryDiagnosis.financial_services;
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `You are an AI operations diagnostician for the ${industry} industry. Analyze the issue and provide a structured diagnosis with industry-specific context. Always respond with valid JSON.`
+          },
+          {
+            role: "user",
+            content: `Diagnose this issue and suggest remediation:
+Issue Type: ${issueType}
+Description: ${issueDescription || "Agent performance degradation detected"}
+Current Stage: ${stage || "detected"}
+Industry: ${industry}
+Industry Diagnosis Checks: ${JSON.stringify(context.diagnosisChecks)}
+Industry Guardrails: ${JSON.stringify(context.guardrails)}
+
+Respond with JSON:
+{
+  "diagnosis": {
+    "rootCause": string,
+    "confidence": number (0-100),
+    "affectedComponents": string[],
+    "diagnosisChecksPerformed": [{ "check": string, "result": "pass"|"fail"|"inconclusive", "detail": string }]
+  },
+  "hypothesis": {
+    "description": string,
+    "expectedOutcome": string,
+    "testApproach": string
+  },
+  "businessImpact": {
+    "totalDollarImpact": number,
+    "breakdown": [{ "category": string, "amount": number, "description": string }],
+    "riskLevel": "low"|"medium"|"high"|"critical",
+    "timeToImpact": string
+  },
+  "remediation": {
+    "proposedFix": string,
+    "fixType": "prompt_tweak"|"config_change"|"model_update"|"data_fix"|"rollback",
+    "estimatedResolutionTime": string,
+    "requiresApproval": boolean,
+    "approvalReason": string
+  },
+  "industryGuardrails": [{ "guardrail": string, "status": "pass"|"fail"|"pending", "detail": string }],
+  "experimentConfig": {
+    "name": string,
+    "trafficPercent": number,
+    "successMetric": string,
+    "industrySuccessCriteria": string,
+    "duration": string,
+    "rollbackTrigger": string
+  }
+}`
+          }
+        ],
+        temperature: 0.3,
+        response_format: { type: "json_object" },
+      });
+
+      const analysis = JSON.parse(response.choices[0].message.content || "{}");
+
+      if (pipelineId) {
+        await storage.updateHealingPipeline(pipelineId, {
+          diagnosisDetails: analysis.diagnosis || {},
+          hypothesis: analysis.hypothesis || {},
+          businessImpact: analysis.businessImpact || {},
+          remediation: analysis.remediation || {},
+          industryGuardrails: analysis.industryGuardrails || [],
+          experimentConfig: analysis.experimentConfig || {},
+          stage: "diagnosed",
+        } as any);
+      }
+
+      res.json({ analysis, industryContext: context });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   // Start the job worker
   startWorker();
 

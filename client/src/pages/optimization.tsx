@@ -479,7 +479,7 @@ export default function Optimization() {
               <Wrench className="w-4 h-4 mr-1.5" /> Ops
             </Button>
           </Link>
-          <Link href="/improvement-loop">
+          <Link href="/healing-operations">
             <Button variant="outline" data-testid="button-self-heal">
               <RefreshCw className="w-4 h-4 mr-1.5" /> Self-Heal
             </Button>

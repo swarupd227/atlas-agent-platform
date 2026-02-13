@@ -29,6 +29,7 @@ import {
   Gauge,
   Scale,
   GitCompare,
+  HeartPulse,
 } from "lucide-react";
 import {
   Sidebar,
@@ -107,6 +108,7 @@ export function AppSidebar() {
         { title: "Canary Deployment", url: "/canary-deployment", icon: GitBranch },
         { title: "Monitor", url: "/monitor", icon: Activity },
         { title: "Optimization", url: "/optimization", icon: Zap },
+        { title: "Healing Center", url: "/healing-operations", icon: HeartPulse },
       ],
     },
     {

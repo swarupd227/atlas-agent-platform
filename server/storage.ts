@@ -137,6 +137,7 @@ import {
   shadowTraces, type ShadowTrace, type InsertShadowTrace,
   shadowReplaySessions, type ShadowReplaySession, type InsertShadowReplaySession,
   canaryDeployments, type CanaryDeployment, type InsertCanaryDeployment,
+  healingPipelines, type HealingPipeline, type InsertHealingPipeline,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -576,6 +577,12 @@ export interface IStorage {
   createCanaryDeployment(deployment: InsertCanaryDeployment): Promise<CanaryDeployment>;
   updateCanaryDeployment(id: string, data: Partial<InsertCanaryDeployment>): Promise<CanaryDeployment | undefined>;
   deleteCanaryDeployment(id: string): Promise<boolean>;
+
+  getHealingPipelines(): Promise<HealingPipeline[]>;
+  getHealingPipeline(id: string): Promise<HealingPipeline | undefined>;
+  createHealingPipeline(pipeline: InsertHealingPipeline): Promise<HealingPipeline>;
+  updateHealingPipeline(id: string, data: Partial<InsertHealingPipeline>): Promise<HealingPipeline | undefined>;
+  deleteHealingPipeline(id: string): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2228,6 +2235,30 @@ export class DatabaseStorage implements IStorage {
 
   async deleteCanaryDeployment(id: string): Promise<boolean> {
     const result = await db.delete(canaryDeployments).where(eq(canaryDeployments.id, id));
+    return (result as any).rowCount > 0;
+  }
+
+  async getHealingPipelines(): Promise<HealingPipeline[]> {
+    return db.select().from(healingPipelines).orderBy(desc(healingPipelines.createdAt));
+  }
+
+  async getHealingPipeline(id: string): Promise<HealingPipeline | undefined> {
+    const [pipeline] = await db.select().from(healingPipelines).where(eq(healingPipelines.id, id));
+    return pipeline;
+  }
+
+  async createHealingPipeline(pipeline: InsertHealingPipeline): Promise<HealingPipeline> {
+    const [created] = await db.insert(healingPipelines).values(pipeline).returning();
+    return created;
+  }
+
+  async updateHealingPipeline(id: string, data: Partial<InsertHealingPipeline>): Promise<HealingPipeline | undefined> {
+    const [updated] = await db.update(healingPipelines).set(data).where(eq(healingPipelines.id, id)).returning();
+    return updated;
+  }
+
+  async deleteHealingPipeline(id: string): Promise<boolean> {
+    const result = await db.delete(healingPipelines).where(eq(healingPipelines.id, id));
     return (result as any).rowCount > 0;
   }
 }
