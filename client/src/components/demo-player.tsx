@@ -8,65 +8,83 @@ interface DemoSlide {
   headline: string;
   keywords: string[];
   narration: string;
+  isOpening?: boolean;
   isClosing?: boolean;
 }
 
 const DEMO_SLIDES: DemoSlide[] = [
   {
     image: "/demo-screenshots/01-overview.png",
-    title: "Command Center",
-    headline: "Total Visibility. Instant Intelligence.",
-    keywords: ["Platform Health", "KPI Tracking", "Agent Fleet Status"],
+    title: "Nous Agent Orchestrator",
+    headline: "Your Industry. Your Agents. Your Context.",
+    keywords: ["Industry-Native AI", "Autonomous Operations", "Compliance-First"],
     narration:
-      "Welcome to Nous Agent Orchestrator — the only AI agent platform built around your industry's context. Your command center delivers instant visibility into platform health, KPI progress, and agent fleet status across every environment. One dashboard. Complete operational intelligence.",
+      "Every enterprise is racing to deploy AI agents. But here's the problem nobody talks about: building an agent takes a week. Running it safely in production — with compliance, governance, and reliability — takes months. And when it breaks at 3 AM? That's when the real cost hits. Nous Agent Orchestrator solves this. It's the only platform where AI agents understand your industry from the first login, deploy from battle-tested templates in hours, and heal themselves when something goes wrong — with a full audit trail that satisfies your compliance team. Let me show you what this looks like for a real SaaS company running autonomous customer support.",
+    isOpening: true,
   },
   {
-    image: "/demo-screenshots/02-agents.png",
-    title: "Agent Registry",
-    headline: "80% Autonomous. 20% Expert Validated.",
-    keywords: ["Multi-Agent Teams", "Industry Context", "Adaptive Autonomy"],
+    image: "/demo-screenshots/01-overview.png",
+    title: "Industry Workspace Selector",
+    headline: "The Platform Speaks Your Industry.",
+    keywords: ["Industry Context Engine", "Auto-Activated Compliance", "Domain Knowledge"],
     narration:
-      "Your entire agent fleet, organized by industry context. The Agent Registry supports single agents, coordinated teams, and remote A2A agents — each operating with adaptive autonomy calibrated to your industry's risk profile. Build agents that reason within your regulatory and operational framework by default.",
+      "The very first thing Nous Agent Orchestrator asks is: what's your industry? This isn't a settings page — it's an intelligence layer. When NovaBill selected Technology / SaaS, the platform auto-loaded 35 industry-specific agent skills, activated 38 SOC 2 controls, turned on GDPR and CCPA policies, and configured industry-standard terminology throughout the entire interface. No other platform does this. On AWS Bedrock, you start with a blank canvas. On LangChain, you start with code. On Nous, you start with your industry already understood.",
   },
   {
     image: "/demo-screenshots/08-outcomes.png",
-    title: "Outcome Contracts",
-    headline: "Define Success. Measure What Matters.",
-    keywords: ["KPI Contracts", "SLA Tracking", "Measurable Results"],
+    title: "Outcome Portfolio Dashboard",
+    headline: "Business Results. Not AI Metrics.",
+    keywords: ["KPI Tracking", "Revenue & Margins", "Industry Benchmarks"],
     narration:
-      "Define success on your terms with outcome contracts. Set KPIs, SLAs, and targets tied to measurable business results. Every agent's performance is tracked against the outcomes that matter to your organization — ensuring accountability and continuous improvement.",
+      "This is the Outcome Dashboard — the first screen every user sees after login. Notice: no model names, no token counts, no infrastructure metrics. Business results. NovaBill's support agent is resolving 73% of tickets autonomously, at an average of 2.4 minutes per resolution, with a 4.3 customer satisfaction score. All three KPIs are green. The margin is 84% — that's $112,000 in revenue at $18,000 cost this quarter. And the benchmark line tells NovaBill they're performing in the 82nd percentile compared to other SaaS companies on the platform. That's intelligence no standalone agent builder can offer.",
   },
   {
-    image: "/demo-screenshots/03-deployments.png",
-    title: "Industry-Governed Deployments",
-    headline: "Compliance-First. Zero Deployment Anxiety.",
-    keywords: ["Mandatory Pipeline Stages", "Auto-Rollback", "Evidence Packages"],
+    image: "/demo-screenshots/02-agents.png",
+    title: "Golden Template Gallery",
+    headline: "Deploy in Hours. Not Months.",
+    keywords: ["Battle-Tested Templates", "73 Deployments", "Complete Solutions"],
     narration:
-      "Deploy with confidence using industry-governed deployment pipelines. Healthcare gets clinical safety review and HIPAA attestation. Financial services gets regulatory compliance and suitability testing. Every deployment generates an evidence package for regulatory conformity — with auto-rollback triggers that activate on industry-specific safety events.",
+      "This is the Golden Repository — think of it as an app store for production-ready agents. NovaBill chose this L1 Support template. 73 companies have deployed it before them, which means the skills, the test cases, and the deployment pipeline have been refined across dozens of real-world environments. Look at what comes inside: the agent blueprint, eight industry-specific skills like Billing Inquiry and Escalation Decision, pre-wired connections to Zendesk and Stripe, SOC 2 governance baked in, 420 evaluation test cases, and a complete deployment pipeline with shadow replay and canary stages. NovaBill connected their systems and had a working agent in shadow testing within 3 hours.",
   },
   {
     image: "/demo-screenshots/04-monitor.png",
-    title: "Live Observability",
-    headline: "From First Token to Final Outcome.",
-    keywords: ["OpenTelemetry", "Drift Detection", "MCP Trace Waterfalls"],
+    title: "Agent Cockpit — Live Trace",
+    headline: "Watch the Agent Think and Act.",
+    keywords: ["Real-Time Traces", "MCP Tool Calls", "$0.018 Per Resolution"],
     narration:
-      "Real-time monitoring powered by OpenTelemetry with industry-calibrated baselines. Track every agent run, detect drift instantly, and drill into MCP trace waterfalls. Full observability with industry-specific KPI monitoring from the first token to the final outcome.",
-  },
-  {
-    image: "/demo-screenshots/05-governance.png",
-    title: "Certified Compliance",
-    headline: "Governance That Enables. Not Blocks.",
-    keywords: ["Policy-as-Code", "EU AI Act", "Immutable Audit Trails"],
-    narration:
-      "Enterprise-grade compliance woven into every layer. Policy-as-Code enforcement with OPA Rego and Cedar, SOC 2 and EU AI Act conformity frameworks, and immutable hash-chained audit trails. Five industry profiles — healthcare, financial services, manufacturing, insurance, and retail — each with pre-loaded regulatory frameworks.",
+      "Here's the agent working in real time. A customer can't export invoices. Watch the steps: classified the intent in under a second, activated the right skill, searched the knowledge base, pulled the customer's browser info from the help desk, identified a known Chrome issue, and sent the fix — 4.2 seconds, cost: less than two cents. Look at the governance sidebar. The agent detected an email address in the ticket and auto-redacted it from our logs. SOC 2 and GDPR compliance checks passed automatically. And notice the context budget at the bottom — the platform curates exactly 24,000 tokens of relevant knowledge for this task, not a bloated 128K dump. Focused context, better answers.",
   },
   {
     image: "/demo-screenshots/07-approvals.png",
-    title: "Approval Gates",
-    headline: "The 20% That Makes the 80% Work.",
-    keywords: ["Blast Radius Analysis", "Risk Scoring", "One-Click Decisions"],
+    title: "Adaptive Autonomy Console",
+    headline: "It Knows When to Ask a Human.",
+    keywords: ["Risk-Based Escalation", "Approve & Teach", "Earned Trust"],
     narration:
-      "Expert validation gates where it matters most. Every approval comes with blast radius analysis, configuration diffs, and risk scoring calibrated to industry context. One-click decisions backed by evidence keep your agents moving safely through the pipeline.",
+      "Remember on the last screen, the PDF export question was auto-approved because it was low risk — just an informational response. This is different. A customer wants a $2,400 refund. The agent did all the work: verified the seats, checked the billing history, calculated the policy-eligible refund of $864, and prepared a counter-offer. But it stopped. Two rules triggered: amount exceeds $100, and the customer is asking for more than policy allows. The agent did 95% of the work. A human makes the judgment call. And see that Approve and Teach button? If the validator approves and clicks that, the platform learns: next time a similar case comes in, handle it autonomously. That's how NovaBill went from 85% to 91% autonomy in two months — not by removing guardrails, but by the system earning trust one decision at a time.",
+  },
+  {
+    image: "/demo-screenshots/03-deployments.png",
+    title: "Self-Healing Pipeline",
+    headline: "The Platform Fixes Itself.",
+    keywords: ["2-Hour Resolution", "Zero Humans", "$340K Protected"],
+    narration:
+      "Tuesday, 3 AM. Nobody is awake. The platform detects the resolution rate for billing questions has dropped from 73% to 58%. In 7 minutes, it diagnoses the root cause: NovaBill pushed a routine billing system update that renamed two API fields. By 3:31, the platform has written a fix — a 12-line update to the Billing Inquiry skill. But here's what makes this different from a hotfix: the platform doesn't just deploy. It validates. Shadow replay against 420 test cases: 99.5% pass rate. Then 5% of live tickets as a canary: 96% resolution versus 57% in the control group. Then 25%. Then full deployment. By 5:15 AM, fully restored. Two hours. Zero humans. $340,000 in quarterly revenue protected.",
+  },
+  {
+    image: "/demo-screenshots/05-governance.png",
+    title: "Shadow Replay & Canary Results",
+    headline: "Every Fix Is Validated Before Deploy.",
+    keywords: ["420 Test Cases", "99.5% Pass Rate", "Evidence-Based Deployment"],
+    narration:
+      "This is the evidence behind the autonomous deployment. 420 test cases from our golden evaluation dataset — refined across 73 deployments. The billing dispute category — the one that was broken — now passes at 100%. Every other category: 100%. The only flags are two pre-existing adversarial edge cases, not regressions. And look at the canary results: side by side, the patched version resolved tickets at 96% versus 57% for the broken version. This isn't hope-based deployment. This is evidence-based deployment. Same rigor as traditional software CI/CD, applied to AI agents for the first time.",
+  },
+  {
+    image: "/demo-screenshots/06-billing.png",
+    title: "Compliance & Audit Trail",
+    headline: "Full Governance. Automatically.",
+    keywords: ["SHA-256 Hash Chain", "SOC 2 Type II", "One-Click Export"],
+    narration:
+      "Every action the platform took — detection, diagnosis, fix, validation, deployment — is in this audit trail. 34 events, each cryptographically hash-chained so they're tamper-proof. Each event is tagged with the SOC 2 controls it provides evidence for. And on the right: a one-click compliance report. 38 SOC 2 controls, 36 fully evidenced with artifacts generated automatically from platform operations. When NovaBill's auditor asks what happened to your AI system on February 4th, this is the answer — no scrambling, no screenshots, no interviews. The platform generates compliance evidence as a byproduct of doing its job.",
   },
   {
     image: "/demo-screenshots/01-overview.png",
@@ -74,7 +92,7 @@ const DEMO_SLIDES: DemoSlide[] = [
     headline: "Your Agents. Your Industry. Your Context.",
     keywords: ["Industry-Native", "Regulation-Ready", "Enterprise-Grade"],
     narration:
-      "That's Nous Agent Orchestrator — the platform where AI agents don't just execute, they reason within your industry's regulatory, operational, and domain context. From healthcare to financial services, manufacturing to insurance and retail — every agent is built compliant, deployed safe, and monitored with industry intelligence. Ready to orchestrate your future? Let's get started.",
+      "Let me bring this together. In eight screens, you've seen a platform that understands your industry from the first login, deploys production-ready agents in hours from battle-tested templates, shows business results not infrastructure metrics, knows when to act and when to ask a human, detects issues, heals itself, and validates the fix through the same safety pipeline as any human-authored change, and generates a tamper-proof, SOC 2-compliant audit trail as a byproduct of doing its job. For NovaBill, that meant $972,000 in annualized cost savings, 84% margins on outcome revenue, and $340,000 in quarterly revenue protected while everyone slept. That's Nous Agent Orchestrator. Not just a platform to build agents — but the platform to run them in production, safely, at scale, in your industry.",
     isClosing: true,
   },
 ];
@@ -569,9 +587,11 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
     setIsPlaying(!isPlaying);
   };
 
-  const isClosingSlide = slide.isClosing && !transitioning;
+  const isCinematicSlide = (slide.isOpening || slide.isClosing) && !transitioning;
   const isLastSlide = currentSlide === DEMO_SLIDES.length - 1;
   const demoFinished = isLastSlide && !isPlaying && progress >= 99;
+
+  const contentSlideNumber = slide.isOpening ? null : slide.isClosing ? null : currentSlide;
 
   return (
     <div className="fixed inset-0 z-[9999] bg-black flex flex-col" data-testid="demo-player">
@@ -592,14 +612,20 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
           0% { transform: scale(1); }
           100% { transform: scale(1.04); }
         }
-        @keyframes closingPulse {
+        @keyframes cinematicPulse {
           0%, 100% { opacity: 0.7; }
           50% { opacity: 1; }
         }
-        @keyframes closingGradient {
+        @keyframes cinematicGradient {
           0% { background-position: 0% 50%; }
           50% { background-position: 100% 50%; }
           100% { background-position: 0% 50%; }
+        }
+        @keyframes particleFloat {
+          0% { transform: translateY(0) translateX(0); opacity: 0; }
+          10% { opacity: 0.6; }
+          90% { opacity: 0.6; }
+          100% { transform: translateY(-100vh) translateX(20px); opacity: 0; }
         }
         .slide-headline {
           animation: slideInUp 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards;
@@ -615,18 +641,23 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
         .slide-image-active {
           animation: kenBurns 15s ease-out forwards;
         }
-        .closing-headline {
+        .cinematic-headline {
           animation: slideInUp 1s cubic-bezier(0.16, 1, 0.3, 1) forwards;
           background: linear-gradient(135deg, #60a5fa, #a78bfa, #60a5fa);
           background-size: 200% 200%;
-          animation: slideInUp 1s cubic-bezier(0.16, 1, 0.3, 1) forwards, closingGradient 4s ease infinite;
+          animation: slideInUp 1s cubic-bezier(0.16, 1, 0.3, 1) forwards, cinematicGradient 4s ease infinite;
           -webkit-background-clip: text;
           -webkit-text-fill-color: transparent;
           background-clip: text;
         }
-        .closing-cta {
+        .cinematic-cta {
           animation: fadeInScale 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
           animation-delay: 1.5s;
+          opacity: 0;
+        }
+        .cinematic-subtitle {
+          animation: fadeInScale 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+          animation-delay: 0.5s;
           opacity: 0;
         }
       `}</style>
@@ -665,23 +696,48 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
       <div className="flex-1 relative overflow-hidden flex items-center justify-center bg-gradient-to-br from-gray-950 via-black to-gray-900">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-blue-900/10 via-transparent to-purple-900/10" />
 
-        {isClosingSlide ? (
+        {isCinematicSlide ? (
           <div className="relative w-full max-w-6xl mx-auto px-8">
             <div className="relative rounded-lg overflow-hidden shadow-2xl shadow-blue-500/10 border border-white/5">
               <img
                 src={slide.image}
                 alt={slide.title}
                 className="w-full h-auto slide-image-active"
-                style={{ filter: "brightness(0.25) blur(2px)" }}
+                style={{ filter: "brightness(0.15) blur(4px)" }}
                 data-testid="img-demo-slide"
               />
+
+              <div className="absolute inset-0" style={{ zIndex: 2 }}>
+                {[...Array(12)].map((_, i) => (
+                  <div
+                    key={i}
+                    className="absolute rounded-full bg-blue-400/20"
+                    style={{
+                      width: `${2 + Math.random() * 3}px`,
+                      height: `${2 + Math.random() * 3}px`,
+                      left: `${5 + Math.random() * 90}%`,
+                      bottom: `-5%`,
+                      animation: `particleFloat ${8 + Math.random() * 12}s linear infinite`,
+                      animationDelay: `${Math.random() * 8}s`,
+                    }}
+                  />
+                ))}
+              </div>
+
               <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-8" style={{ zIndex: 3 }}>
                 {headlineVisible && (
                   <div className="mb-6">
+                    {slide.isOpening && (
+                      <div className="cinematic-subtitle mb-6">
+                        <span className="text-white/50 text-base tracking-[0.3em] uppercase font-light">
+                          Introducing
+                        </span>
+                      </div>
+                    )}
                     <span className="inline-block text-sm font-bold uppercase tracking-[0.25em] text-blue-400/80 mb-4 slide-headline">
                       {slide.title}
                     </span>
-                    <h2 className="closing-headline text-4xl sm:text-5xl md:text-6xl font-bold leading-tight" data-testid="text-demo-headline">
+                    <h2 className="cinematic-headline text-4xl sm:text-5xl md:text-6xl font-bold leading-tight" data-testid="text-demo-headline">
                       {slide.headline}
                     </h2>
                   </div>
@@ -720,7 +776,7 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
                 </p>
 
                 {demoFinished && (
-                  <div className="closing-cta mt-8">
+                  <div className="cinematic-cta mt-8">
                     <Button
                       size="lg"
                       className="gap-2 text-base px-8"
@@ -774,7 +830,7 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
                 {headlineVisible && !transitioning && (
                   <div className="slide-headline mb-3">
                     <span className="inline-block text-xs font-bold uppercase tracking-[0.2em] text-blue-400/90 mb-2">
-                      {slide.title}
+                      {contentSlideNumber !== null ? `${contentSlideNumber} of 8` : ""} {slide.title}
                     </span>
                     <h3 className="text-white text-2xl sm:text-3xl font-bold leading-tight" data-testid="text-demo-headline">
                       {slide.headline}
@@ -877,26 +933,37 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
         </div>
 
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
-          {DEMO_SLIDES.map((s, i) => (
-            <button
-              key={i}
-              onClick={() => goToSlide(i)}
-              className={`shrink-0 rounded overflow-hidden border-2 transition-all duration-300 ${
-                i === currentSlide
-                  ? "border-blue-500 opacity-100 scale-105"
-                  : i < currentSlide
-                    ? "border-blue-500/30 opacity-60"
-                    : "border-transparent opacity-40 hover:opacity-70"
-              }`}
-              data-testid={`button-demo-thumb-${i}`}
-            >
-              <img
-                src={s.image}
-                alt={s.title}
-                className="w-20 h-12 object-cover object-top"
-              />
-            </button>
-          ))}
+          {DEMO_SLIDES.map((s, i) => {
+            const isThumbCinematic = s.isOpening || s.isClosing;
+            return (
+              <button
+                key={i}
+                onClick={() => goToSlide(i)}
+                className={`shrink-0 rounded overflow-hidden border-2 transition-all duration-300 ${
+                  i === currentSlide
+                    ? "border-blue-500 opacity-100 scale-105"
+                    : i < currentSlide
+                      ? "border-blue-500/30 opacity-60"
+                      : "border-transparent opacity-40 hover:opacity-70"
+                }`}
+                data-testid={`button-demo-thumb-${i}`}
+              >
+                {isThumbCinematic ? (
+                  <div className="w-20 h-12 bg-gradient-to-br from-gray-900 via-blue-950 to-gray-900 flex items-center justify-center">
+                    <span className="text-[8px] font-bold text-blue-400/80 uppercase tracking-wider">
+                      {s.isOpening ? "Intro" : "Closing"}
+                    </span>
+                  </div>
+                ) : (
+                  <img
+                    src={s.image}
+                    alt={s.title}
+                    className="w-20 h-12 object-cover object-top"
+                  />
+                )}
+              </button>
+            );
+          })}
         </div>
       </div>
     </div>
