@@ -729,6 +729,7 @@ export default function OutcomeDetail() {
   const estimatedRevenue = billableEventsCount * (outcome.pricePerUnit || 0);
 
   async function generateCustomerReport() {
+    if (!outcome) return;
     setReportGenerating(true);
     try {
       const res = await apiRequest("POST", "/api/ai/customer-value-report", {
@@ -750,7 +751,7 @@ export default function OutcomeDetail() {
         agents: boundAgents.map(a => ({ name: a.name, type: a.agentType, successRate: a.successRate, healthScore: a.healthScore })),
         revenue: {
           pricePerUnit: outcome.pricePerUnit,
-          billingModel: outcome.billingModel,
+          billingModel: (outcome as any).billingModel || outcome.pricingModel,
           estimatedRevenue,
         },
         regulatoryFrameworks: industry?.regulatoryFrameworks || [],
@@ -765,7 +766,7 @@ export default function OutcomeDetail() {
   }
 
   function downloadReport() {
-    if (!reportContent) return;
+    if (!reportContent || !outcome) return;
     const blob = new Blob([reportContent], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -2131,6 +2132,68 @@ export default function OutcomeDetail() {
           )}
         </TabsContent>
       </Tabs>
+
+      <Dialog open={reportOpen} onOpenChange={setReportOpen}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="w-5 h-5" />
+              Customer Value Report
+            </DialogTitle>
+          </DialogHeader>
+          {!reportContent ? (
+            <div className="flex flex-col items-center justify-center py-12 gap-4">
+              <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center">
+                <Sparkles className="w-7 h-7 text-primary" />
+              </div>
+              <div className="text-center flex flex-col gap-1">
+                <h3 className="text-base font-semibold">Generate Value Report</h3>
+                <p className="text-sm text-muted-foreground max-w-md">
+                  Create a customer-facing report summarizing KPI performance, agent contributions, and business impact using {industry?.label || "industry"} terminology.
+                </p>
+              </div>
+              <Button onClick={generateCustomerReport} disabled={reportGenerating} data-testid="button-generate-report">
+                {reportGenerating ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                    Generating report...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4 mr-1.5" />
+                    Generate Report
+                  </>
+                )}
+              </Button>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-4">
+              <div className="prose prose-sm dark:prose-invert max-w-none" data-testid="report-content">
+                {reportContent.split("\n").map((line: string, i: number) => {
+                  if (line.startsWith("# ")) return <h2 key={i} className="text-lg font-semibold mt-4 mb-2">{line.slice(2)}</h2>;
+                  if (line.startsWith("## ")) return <h3 key={i} className="text-base font-semibold mt-3 mb-1">{line.slice(3)}</h3>;
+                  if (line.startsWith("### ")) return <h4 key={i} className="text-sm font-semibold mt-2 mb-1">{line.slice(4)}</h4>;
+                  if (line.startsWith("- ")) return <li key={i} className="text-sm text-muted-foreground ml-4">{line.slice(2)}</li>;
+                  if (line.startsWith("**") && line.endsWith("**")) return <p key={i} className="text-sm font-semibold">{line.slice(2, -2)}</p>;
+                  if (line.trim() === "") return <div key={i} className="h-2" />;
+                  return <p key={i} className="text-sm text-muted-foreground">{line}</p>;
+                })}
+              </div>
+              <div className="flex items-center gap-2 flex-wrap border-t pt-4">
+                <Button variant="outline" size="sm" onClick={downloadReport} data-testid="button-download-report">
+                  <Download className="w-3.5 h-3.5 mr-1.5" /> Download PDF
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => { navigator.clipboard.writeText(reportContent); toast({ title: "Report copied to clipboard" }); }} data-testid="button-copy-report">
+                  Copy to Clipboard
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => { setReportContent(null); }} data-testid="button-regenerate-report">
+                  <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Regenerate
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -2385,67 +2448,6 @@ function AuditTab({
         </>
       )}
 
-      <Dialog open={reportOpen} onOpenChange={setReportOpen}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <FileText className="w-5 h-5" />
-              Customer Value Report
-            </DialogTitle>
-          </DialogHeader>
-          {!reportContent ? (
-            <div className="flex flex-col items-center justify-center py-12 gap-4">
-              <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center">
-                <Sparkles className="w-7 h-7 text-primary" />
-              </div>
-              <div className="text-center flex flex-col gap-1">
-                <h3 className="text-base font-semibold">Generate Value Report</h3>
-                <p className="text-sm text-muted-foreground max-w-md">
-                  Create a customer-facing report summarizing KPI performance, agent contributions, and business impact using {industry?.label || "industry"} terminology.
-                </p>
-              </div>
-              <Button onClick={generateCustomerReport} disabled={reportGenerating} data-testid="button-generate-report">
-                {reportGenerating ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
-                    Generating report...
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-4 h-4 mr-1.5" />
-                    Generate Report
-                  </>
-                )}
-              </Button>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-4">
-              <div className="prose prose-sm dark:prose-invert max-w-none" data-testid="report-content">
-                {reportContent.split("\n").map((line, i) => {
-                  if (line.startsWith("# ")) return <h2 key={i} className="text-lg font-semibold mt-4 mb-2">{line.slice(2)}</h2>;
-                  if (line.startsWith("## ")) return <h3 key={i} className="text-base font-semibold mt-3 mb-1">{line.slice(3)}</h3>;
-                  if (line.startsWith("### ")) return <h4 key={i} className="text-sm font-semibold mt-2 mb-1">{line.slice(4)}</h4>;
-                  if (line.startsWith("- ")) return <li key={i} className="text-sm text-muted-foreground ml-4">{line.slice(2)}</li>;
-                  if (line.startsWith("**") && line.endsWith("**")) return <p key={i} className="text-sm font-semibold">{line.slice(2, -2)}</p>;
-                  if (line.trim() === "") return <div key={i} className="h-2" />;
-                  return <p key={i} className="text-sm text-muted-foreground">{line}</p>;
-                })}
-              </div>
-              <div className="flex items-center gap-2 flex-wrap border-t pt-4">
-                <Button variant="outline" size="sm" onClick={downloadReport} data-testid="button-download-report">
-                  <Download className="w-3.5 h-3.5 mr-1.5" /> Download PDF
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => { navigator.clipboard.writeText(reportContent); toast({ title: "Report copied to clipboard" }); }} data-testid="button-copy-report">
-                  Copy to Clipboard
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => { setReportContent(null); }} data-testid="button-regenerate-report">
-                  <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Regenerate
-                </Button>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
     </>
   );
 }
