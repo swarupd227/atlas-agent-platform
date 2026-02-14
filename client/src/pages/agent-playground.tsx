@@ -9,6 +9,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import {
   ArrowLeft,
@@ -35,6 +36,8 @@ import {
   ChevronUp,
   ShieldAlert,
   Target,
+  Globe,
+  ExternalLink,
 } from "lucide-react";
 import type { Agent } from "@shared/schema";
 
@@ -75,10 +78,16 @@ interface ApprovalRequired {
   details: string;
 }
 
+interface Citation {
+  url: string;
+  title: string;
+}
+
 interface ParsedSegment {
   type: "text" | "risk_assessment" | "decision" | "approval_required";
   content: string;
   data?: RiskAssessment | Decision | ApprovalRequired;
+  citations?: Citation[];
 }
 
 function parseStructuredBlocks(text: string): ParsedSegment[] {
@@ -123,6 +132,37 @@ export default function AgentPlayground() {
 
   const { data: agent, isLoading: agentLoading } = useQuery<Agent>({
     queryKey: ["/api/agents", agentId],
+  });
+
+  const hasWebSearch = Array.isArray(agent?.toolsConfig) &&
+    (agent.toolsConfig as Array<{ name?: string; type?: string }>).some(
+      (t) => t.name === "web_search" && t.type === "builtin"
+    );
+
+  const toggleWebSearch = useMutation({
+    mutationFn: async (enable: boolean) => {
+      const currentTools = Array.isArray(agent?.toolsConfig)
+        ? (agent.toolsConfig as Array<{ name?: string; type?: string; description?: string }>)
+        : [];
+      const withoutWebSearch = currentTools.filter((t) => t.name !== "web_search");
+      const newTools = enable
+        ? [...withoutWebSearch, { name: "web_search", type: "builtin", description: "Search the web for real-time information, news, and data" }]
+        : withoutWebSearch;
+      const res = await apiRequest("PATCH", `/api/agents/${agentId}`, { toolsConfig: newTools });
+      return res.json();
+    },
+    onSuccess: (_: unknown, enabled: boolean) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId] });
+      toast({
+        title: enabled ? "Web Search enabled" : "Web Search disabled",
+        description: enabled
+          ? "The agent can now search the web for real-time information."
+          : "The agent will no longer search the web.",
+      });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to update", description: err.message, variant: "destructive" });
+    },
   });
 
   const { data: sessions = [], isLoading: sessionsLoading } = useQuery<PlaygroundSession[]>({
@@ -360,6 +400,12 @@ export default function AgentPlayground() {
             <h2 className="text-sm font-semibold truncate" data-testid="text-agent-name">{agent.name}</h2>
             <p className="text-xs text-muted-foreground truncate">{agent.description || "Agent Playground"}</p>
           </div>
+          {hasWebSearch && (
+            <Badge variant="outline" className="text-green-600 dark:text-green-400" data-testid="badge-web-search">
+              <Globe className="h-3 w-3 mr-1" />
+              Web Search
+            </Badge>
+          )}
           <Badge variant="outline" className={riskColor(agent.riskTier)} data-testid="badge-risk-tier">
             <Shield className="h-3 w-3 mr-1" />
             {agent.riskTier}
@@ -481,6 +527,27 @@ export default function AgentPlayground() {
               Agent Configuration
             </h3>
             <Separator />
+
+            <ConfigSection title="Web Search" icon={<Globe className="h-3.5 w-3.5" />}>
+              <div className="flex items-center justify-between gap-2">
+                <div className="space-y-0.5">
+                  <p className="text-xs text-foreground font-medium">Live Web Access</p>
+                  <p className="text-[10px] text-muted-foreground">Search the internet for real-time data</p>
+                </div>
+                <Switch
+                  checked={hasWebSearch}
+                  onCheckedChange={(checked) => toggleWebSearch.mutate(checked)}
+                  disabled={toggleWebSearch.isPending}
+                  data-testid="switch-web-search"
+                />
+              </div>
+              {hasWebSearch && (
+                <Badge variant="outline" className="text-[10px] text-green-600 dark:text-green-400 mt-1">
+                  <Globe className="h-2.5 w-2.5 mr-1" />
+                  Active
+                </Badge>
+              )}
+            </ConfigSection>
 
             <ConfigSection title="Model" icon={<Bot className="h-3.5 w-3.5" />}>
               <p className="text-xs text-muted-foreground">{agent.modelProvider || "openai"} / {agent.modelName || "gpt-4.1"}</p>
@@ -802,7 +869,9 @@ function MessageBubble({
                 isUser ? "bg-primary text-primary-foreground" : "bg-muted"
               }`}
             >
-              <div className="whitespace-pre-wrap break-words">{seg.content}</div>
+              <div className="whitespace-pre-wrap break-words">
+                <RenderTextWithLinks text={seg.content} isUser={isUser} />
+              </div>
             </div>
           );
         })}
@@ -812,6 +881,37 @@ function MessageBubble({
       </div>
     </div>
   );
+}
+
+function RenderTextWithLinks({ text, isUser }: { text: string; isUser: boolean }) {
+  const parts = text.split(/(\[([^\]]+)\]\(([^)]+)\))/g);
+  const elements: React.ReactNode[] = [];
+  let i = 0;
+  while (i < parts.length) {
+    if (i + 3 < parts.length && parts[i + 1] && parts[i + 1].startsWith("[")) {
+      if (parts[i]) elements.push(parts[i]);
+      elements.push(
+        <a
+          key={i}
+          href={parts[i + 3]}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={`inline-flex items-center gap-0.5 underline underline-offset-2 ${
+            isUser ? "text-primary-foreground/90 hover:text-primary-foreground" : "text-primary hover:text-primary/80"
+          }`}
+          data-testid="link-citation"
+        >
+          {parts[i + 2]}
+          <ExternalLink className="h-3 w-3 inline shrink-0" />
+        </a>
+      );
+      i += 4;
+    } else {
+      if (parts[i]) elements.push(parts[i]);
+      i++;
+    }
+  }
+  return <>{elements}</>;
 }
 
 function ConfigSection({

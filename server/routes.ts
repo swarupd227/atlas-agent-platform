@@ -15194,31 +15194,90 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
 
       const systemPrompt = buildAgentSystemPrompt(agent);
 
-      const chatMsgs: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
-        { role: "system", content: systemPrompt },
-        ...existingMsgs.map(m => ({
-          role: m.role as "user" | "assistant",
-          content: m.content,
-        })),
-      ];
+      const agentTools = Array.isArray(agent.toolsConfig)
+        ? (agent.toolsConfig as Array<{ name?: string; type?: string }>)
+        : [];
+      const webSearchEnabled = agentTools.some(t => t.name === "web_search" && t.type === "builtin");
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
 
-      const stream = await openai.chat.completions.create({
-        model: agent.modelName || "gpt-4.1",
-        messages: chatMsgs,
-        stream: true,
-        max_completion_tokens: 4096,
-      });
-
       let fullResponse = "";
-      for await (const chunk of stream) {
-        const c = chunk.choices[0]?.delta?.content || "";
-        if (c) {
-          fullResponse += c;
-          res.write(`data: ${JSON.stringify({ content: c })}\n\n`);
+
+      if (webSearchEnabled) {
+        const inputMessages: Array<{ role: "developer" | "user" | "assistant"; content: string }> = [
+          { role: "developer", content: systemPrompt },
+          ...existingMsgs.map(m => ({
+            role: m.role as "user" | "assistant",
+            content: m.content,
+          })),
+        ];
+
+        const stream = await openai.responses.create({
+          model: agent.modelName || "gpt-4.1",
+          input: inputMessages,
+          tools: [{ type: "web_search_preview" as any }],
+          stream: true,
+        } as any);
+
+        const citations: Array<{ url: string; title: string }> = [];
+
+        for await (const event of stream as any) {
+          if (event.type === "response.output_text.delta") {
+            const delta = event.delta || "";
+            if (delta) {
+              fullResponse += delta;
+              res.write(`data: ${JSON.stringify({ content: delta })}\n\n`);
+            }
+          }
+          if (event.type === "response.completed") {
+            const output = event.response?.output;
+            if (Array.isArray(output)) {
+              for (const item of output) {
+                if (item.type === "message" && Array.isArray(item.content)) {
+                  for (const block of item.content) {
+                    if (block.type === "output_text" && Array.isArray(block.annotations)) {
+                      for (const ann of block.annotations) {
+                        if (ann.type === "url_citation" && ann.url) {
+                          citations.push({ url: ann.url, title: ann.title || ann.url });
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        if (citations.length > 0) {
+          const citationBlock = "\n\n---\n**Sources:**\n" + citations.map((c, i) => `${i + 1}. [${c.title}](${c.url})`).join("\n");
+          fullResponse += citationBlock;
+          res.write(`data: ${JSON.stringify({ content: citationBlock })}\n\n`);
+        }
+      } else {
+        const chatMsgs: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+          { role: "system", content: systemPrompt },
+          ...existingMsgs.map(m => ({
+            role: m.role as "user" | "assistant",
+            content: m.content,
+          })),
+        ];
+
+        const stream = await openai.chat.completions.create({
+          model: agent.modelName || "gpt-4.1",
+          messages: chatMsgs,
+          stream: true,
+          max_completion_tokens: 4096,
+        });
+
+        for await (const chunk of stream) {
+          const c = chunk.choices[0]?.delta?.content || "";
+          if (c) {
+            fullResponse += c;
+            res.write(`data: ${JSON.stringify({ content: c })}\n\n`);
+          }
         }
       }
 
