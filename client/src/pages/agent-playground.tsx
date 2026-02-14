@@ -582,10 +582,15 @@ export default function AgentPlayground() {
               <Shield className="h-3 w-3 mr-1" />
               {agent.riskTier}
             </Badge>
-            <Badge variant="secondary" data-testid="badge-autonomy">
-              <Zap className="h-3 w-3 mr-1" />
-              {agent.autonomyMode}
-            </Badge>
+            <Button
+              variant={compareMode ? "default" : "outline"}
+              size="sm"
+              onClick={() => setCompareMode(!compareMode)}
+              data-testid="button-compare-mode"
+            >
+              <Columns2 className="h-3.5 w-3.5 mr-1" />
+              Compare
+            </Button>
           </div>
         </div>
 
@@ -761,129 +766,6 @@ export default function AgentPlayground() {
             </h3>
             <Separator />
 
-            <ConfigSection title="Active Context" icon={<BookOpen className="h-3.5 w-3.5" />}>
-              <div className="space-y-2">
-                <div>
-                  <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-0.5">Autonomy Behavior</p>
-                  <p className="text-xs text-foreground">
-                    {AUTONOMY_DESCRIPTIONS[agent.autonomyMode] || agent.autonomyMode}
-                  </p>
-                </div>
-
-                {compliance.length > 0 && (
-                  <div>
-                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Compliance Framework</p>
-                    <div className="space-y-1">
-                      {compliance.map((tag, i) => (
-                        <div key={i} className="flex items-center gap-1.5">
-                          <Badge variant="outline" className="text-[10px]" data-testid={`badge-compliance-${tag}`}>{tag}</Badge>
-                          <span className="text-[10px] text-muted-foreground">{COMPLIANCE_DESCRIPTIONS[tag] || tag}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {policies.length > 0 && (
-                  <div>
-                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Policy Enforcement</p>
-                    <div className="space-y-1.5">
-                      {policies.map((p, i) => {
-                        const isHard = (p.enforcement || "").toUpperCase().includes("HARD");
-                        return (
-                          <div key={i} className="space-y-0.5" data-testid={`policy-item-${i}`}>
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-xs font-medium text-foreground">{p.policyName || `Policy ${i + 1}`}</span>
-                              <Badge
-                                variant={isHard ? "destructive" : "secondary"}
-                                className={`text-[9px] ${!isHard ? "text-yellow-700 dark:text-yellow-400" : ""}`}
-                              >
-                                {isHard ? "HARD BLOCK" : "SOFT WARN"}
-                              </Badge>
-                            </div>
-                            {p.description && (
-                              <p className="text-[10px] text-muted-foreground">{p.description}</p>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {ontologyTags && typeof ontologyTags === "object" && Object.keys(ontologyTags).length > 0 && (() => {
-                  const ont = ontologyTags as Record<string, unknown>;
-                  return (
-                    <div className="space-y-1.5">
-                      <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Domain Knowledge</p>
-                      {ont.domain ? (
-                        <p className="text-xs font-medium text-foreground" data-testid="badge-ontology-domain">
-                          {String(ont.domain)}
-                        </p>
-                      ) : null}
-                      {Object.entries(ont)
-                        .filter(([key]) => key !== "domain")
-                        .map(([key, value], i) => (
-                          <div key={i}>
-                            <p className="text-[10px] text-muted-foreground capitalize mb-0.5">{key.replace(/([A-Z])/g, " $1").trim()}</p>
-                            <div className="flex flex-wrap gap-1" data-testid={`badge-ontology-${key}`}>
-                              {Array.isArray(value) ? value.map((item: unknown, j: number) => (
-                                <Badge key={j} variant="secondary" className="text-[9px] no-default-hover-elevate no-default-active-elevate">
-                                  {String(item)}
-                                </Badge>
-                              )) : (
-                                <Badge variant="secondary" className="text-[9px] no-default-hover-elevate no-default-active-elevate">
-                                  {String(value)}
-                                </Badge>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                    </div>
-                  );
-                })()}
-
-                {!hasContextActive && !ontologyTags && (
-                  <p className="text-[10px] text-muted-foreground italic">No industry context configured</p>
-                )}
-              </div>
-            </ConfigSection>
-
-            <ConfigSection title="Web Search" icon={<Globe className="h-3.5 w-3.5" />}>
-              <div className="flex items-center justify-between gap-2">
-                <div className="space-y-0.5">
-                  <p className="text-xs text-foreground font-medium">Live Web Access</p>
-                  <p className="text-[10px] text-muted-foreground">Search the internet for real-time data</p>
-                </div>
-                <Switch
-                  checked={hasWebSearch}
-                  onCheckedChange={(checked) => toggleWebSearch.mutate(checked)}
-                  disabled={toggleWebSearch.isPending}
-                  data-testid="switch-web-search"
-                />
-              </div>
-              {hasWebSearch && (
-                <Badge variant="outline" className="text-[10px] text-green-600 dark:text-green-400 mt-1">
-                  <Globe className="h-2.5 w-2.5 mr-1" />
-                  Active
-                </Badge>
-              )}
-            </ConfigSection>
-
-            <ConfigSection title="Compare Mode" icon={<Columns2 className="h-3.5 w-3.5" />}>
-              <div className="flex items-center justify-between gap-2">
-                <div className="space-y-0.5">
-                  <p className="text-xs text-foreground font-medium">Compare with Generic AI</p>
-                  <p className="text-[10px] text-muted-foreground">Side-by-side contextualized vs generic</p>
-                </div>
-                <Switch
-                  checked={compareMode}
-                  onCheckedChange={setCompareMode}
-                  data-testid="switch-compare-mode"
-                />
-              </div>
-            </ConfigSection>
-
             <ConfigSection title="Model" icon={<Bot className="h-3.5 w-3.5" />}>
               <p className="text-xs text-muted-foreground">{agent.modelProvider || "openai"} / {agent.modelName || "gpt-4.1"}</p>
             </ConfigSection>
@@ -893,6 +775,21 @@ export default function AgentPlayground() {
                 <Badge variant="outline" className={riskColor(agent.riskTier)}>{agent.riskTier}</Badge>
                 <Badge variant="secondary">{agent.autonomyMode}</Badge>
               </div>
+              <p className="text-[10px] text-muted-foreground mt-1">
+                {AUTONOMY_DESCRIPTIONS[agent.autonomyMode] || agent.autonomyMode}
+              </p>
+            </ConfigSection>
+
+            <ConfigSection title="Web Search" icon={<Globe className="h-3.5 w-3.5" />}>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs text-foreground">Live Web Access</p>
+                <Switch
+                  checked={hasWebSearch}
+                  onCheckedChange={(checked) => toggleWebSearch.mutate(checked)}
+                  disabled={toggleWebSearch.isPending}
+                  data-testid="switch-web-search"
+                />
+              </div>
             </ConfigSection>
 
             {tools.length > 0 && (
@@ -901,7 +798,9 @@ export default function AgentPlayground() {
                   {tools.map((t, i) => (
                     <div key={i} className="text-xs">
                       <span className="font-medium text-foreground">{t.name || `Tool ${i + 1}`}</span>
-                      {t.description && <span className="text-muted-foreground ml-1">- {t.description}</span>}
+                      {t.description && (
+                        <p className="text-[10px] text-muted-foreground">{t.description}</p>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -910,9 +809,14 @@ export default function AgentPlayground() {
 
             {compliance.length > 0 && (
               <ConfigSection title="Compliance" icon={<Shield className="h-3.5 w-3.5" />}>
-                <div className="flex flex-wrap gap-1">
+                <div className="space-y-1">
                   {compliance.map((tag, i) => (
-                    <Badge key={i} variant="outline" className="text-xs">{tag}</Badge>
+                    <div key={i} data-testid={`badge-compliance-${tag}`}>
+                      <Badge variant="outline">{tag}</Badge>
+                      {COMPLIANCE_DESCRIPTIONS[tag] && (
+                        <p className="text-[10px] text-muted-foreground mt-0.5">{COMPLIANCE_DESCRIPTIONS[tag]}</p>
+                      )}
+                    </div>
                   ))}
                 </div>
               </ConfigSection>
@@ -920,17 +824,57 @@ export default function AgentPlayground() {
 
             {policies.length > 0 && (
               <ConfigSection title={`Policies (${policies.length})`} icon={<AlertTriangle className="h-3.5 w-3.5" />}>
-                <div className="space-y-1">
-                  {policies.map((p, i) => (
-                    <div key={i} className="text-xs flex items-center gap-1">
-                      <ChevronRight className="h-3 w-3 text-muted-foreground shrink-0" />
-                      <span>{p.policyName || `Policy ${i + 1}`}</span>
-                      <Badge variant="secondary" className="text-[10px] ml-auto">{p.enforcement || "soft"}</Badge>
-                    </div>
-                  ))}
+                <div className="space-y-1.5">
+                  {policies.map((p, i) => {
+                    const isHard = (p.enforcement || "").toUpperCase().includes("HARD");
+                    return (
+                      <div key={i} data-testid={`policy-item-${i}`}>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-xs font-medium text-foreground">{p.policyName || `Policy ${i + 1}`}</span>
+                          <Badge variant={isHard ? "destructive" : "secondary"}>
+                            {isHard ? "hard" : "soft"}
+                          </Badge>
+                        </div>
+                        {p.description && (
+                          <p className="text-[10px] text-muted-foreground mt-0.5">{p.description}</p>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </ConfigSection>
             )}
+
+            {ontologyTags && typeof ontologyTags === "object" && Object.keys(ontologyTags).length > 0 && (() => {
+              const ont = ontologyTags as Record<string, unknown>;
+              return (
+                <ConfigSection title="Domain Knowledge" icon={<BookOpen className="h-3.5 w-3.5" />}>
+                  {ont.domain ? (
+                    <p className="text-xs font-medium text-foreground" data-testid="badge-ontology-domain">
+                      {String(ont.domain)}
+                    </p>
+                  ) : null}
+                  {Object.entries(ont)
+                    .filter(([key]) => key !== "domain")
+                    .map(([key, value], i) => (
+                      <div key={i} className="mt-1">
+                        <p className="text-[10px] text-muted-foreground capitalize mb-0.5">{key.replace(/([A-Z])/g, " $1").trim()}</p>
+                        <div className="flex flex-wrap gap-1" data-testid={`badge-ontology-${key}`}>
+                          {Array.isArray(value) ? value.map((item: unknown, j: number) => (
+                            <Badge key={j} variant="secondary" className="no-default-hover-elevate no-default-active-elevate">
+                              {String(item)}
+                            </Badge>
+                          )) : (
+                            <Badge variant="secondary" className="no-default-hover-elevate no-default-active-elevate">
+                              {String(value)}
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                </ConfigSection>
+              );
+            })()}
 
             <ConfigSection title="Version" icon={<Clock className="h-3.5 w-3.5" />}>
               <p className="text-xs text-muted-foreground">v{agent.currentVersion || "1.0.0"}</p>
