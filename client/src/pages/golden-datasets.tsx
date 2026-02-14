@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import type { GoldenDataset } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -14,7 +14,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { Database, Search, TrendingUp, BarChart3, Trophy, ArrowRight, Tag, Calendar, Users, Target, Layers, Sparkles, Filter, Plus, Loader2, Wand2 } from "lucide-react";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { Database, Search, TrendingUp, BarChart3, Trophy, ArrowRight, Tag, Calendar, Users, Target, Layers, Sparkles, Filter, Plus, Loader2, Wand2, Trash2 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
 const industryOptions = [
@@ -67,6 +68,7 @@ export default function GoldenDatasetsPage() {
   const [aiIndustry, setAiIndustry] = useState("financial_services");
   const [aiUseCase, setAiUseCase] = useState("");
   const [aiCount, setAiCount] = useState(5);
+  const [, navigate] = useLocation();
   const { toast } = useToast();
 
   const { data: datasets = [], isLoading } = useQuery<GoldenDataset[]>({ queryKey: ["/api/golden-datasets"] });
@@ -90,6 +92,14 @@ export default function GoldenDatasetsPage() {
       toast({ title: "Dataset generated with AI test cases" });
       setAiGenerateOpen(false);
       setAiUseCase("");
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("DELETE", `/api/golden-datasets/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/golden-datasets"] });
+      toast({ title: "Dataset deleted" });
     },
   });
 
@@ -384,15 +394,51 @@ export default function GoldenDatasetsPage() {
                   const scenarios = dataset.scenarioCategories as Record<string, number> | null;
                   const coveragePercent = (dataset.qualityCoverage || 0) * 100;
                   return (
-                    <Link key={dataset.id} href={`/golden-datasets/${dataset.id}`}>
-                      <Card className="hover-elevate cursor-pointer" data-testid={`card-dataset-${dataset.id}`}>
+                    <div key={dataset.id}>
+                      <Card className="hover-elevate cursor-pointer" data-testid={`card-dataset-${dataset.id}`} onClick={() => navigate(`/golden-datasets/${dataset.id}`)}>
                         <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
                           <CardTitle className="text-sm font-medium truncate" data-testid={`text-dataset-name-${dataset.id}`}>
                             {dataset.name}
                           </CardTitle>
-                          <Badge variant="outline" className="text-[10px] shrink-0" data-testid={`badge-version-${dataset.id}`}>
-                            v{dataset.version}
-                          </Badge>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <Badge variant="outline" className="text-[10px]" data-testid={`badge-version-${dataset.id}`}>
+                              v{dataset.version}
+                            </Badge>
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  onClick={(e) => e.stopPropagation()}
+                                  data-testid={`button-delete-dataset-${dataset.id}`}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5 text-muted-foreground" />
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Delete Dataset</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    This will permanently delete "{dataset.name}" and all its test cases. This action cannot be undone.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel data-testid="button-cancel-delete">Cancel</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      deleteMutation.mutate(dataset.id);
+                                    }}
+                                    className="bg-destructive text-destructive-foreground"
+                                    disabled={deleteMutation.isPending}
+                                    data-testid="button-confirm-delete"
+                                  >
+                                    {deleteMutation.isPending ? "Deleting..." : "Delete"}
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          </div>
                         </CardHeader>
                         <CardContent className="flex flex-col gap-3">
                           <p className="text-xs text-muted-foreground line-clamp-2" data-testid={`text-dataset-desc-${dataset.id}`}>
@@ -461,7 +507,7 @@ export default function GoldenDatasetsPage() {
                           </div>
                         </CardContent>
                       </Card>
-                    </Link>
+                    </div>
                   );
                 })}
               </div>
