@@ -5243,6 +5243,58 @@ Guidelines:
     }
   });
 
+  app.post("/api/ai/customer-value-report", async (req, res) => {
+    try {
+      const { outcomeName, outcomeDescription, industry, industryLabel, kpis, agents, revenue, regulatoryFrameworks } = req.body;
+
+      const kpiSummary = (kpis || []).map((k: any) => {
+        const bmText = k.benchmark ? ` (Industry benchmark: ${k.benchmark.benchmark} ${k.benchmark.unit}, Source: ${k.benchmark.source})` : "";
+        return `- ${k.name}: Current ${k.currentValue} ${k.unit}, Target ${k.target} ${k.unit}, Trend: ${k.trend || "stable"}${bmText}`;
+      }).join("\n");
+
+      const agentSummary = (agents || []).map((a: any) => `- ${a.name} (${a.type}): ${a.successRate}% success, Health ${a.healthScore}`).join("\n");
+
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4.1-mini",
+        messages: [
+          {
+            role: "system",
+            content: `You are a business report writer for the ${industryLabel} industry. Generate a professional customer-facing quarterly value report. Use industry-specific terminology and benchmarks. Format with markdown headers (#, ##, ###), bullet points (-), and bold text (**text**). Include sections for: Executive Summary, KPI Performance vs Industry Benchmarks, Agent Contribution Highlights, Regulatory Compliance Status, Business Impact & ROI, and Recommendations.`
+          },
+          {
+            role: "user",
+            content: `Generate a customer value report for outcome "${outcomeName}".
+
+Description: ${outcomeDescription || "N/A"}
+Industry: ${industryLabel}
+Regulatory Frameworks: ${(regulatoryFrameworks || []).join(", ") || "None specified"}
+
+KPI Performance:
+${kpiSummary || "No KPIs defined"}
+
+Contributing Agents:
+${agentSummary || "No agents assigned"}
+
+Revenue:
+- Billing Model: ${revenue?.billingModel || "N/A"}
+- Price per Unit: $${revenue?.pricePerUnit || 0}
+- Estimated Revenue: $${revenue?.estimatedRevenue || 0}
+
+Generate a comprehensive, professional report suitable for a quarterly business review.`
+          }
+        ],
+        response_format: { type: "text" },
+        max_tokens: 2000,
+      });
+
+      const report = completion.choices[0]?.message?.content || "Failed to generate report.";
+      res.json({ report });
+    } catch (error: any) {
+      console.error("Customer value report error:", error);
+      res.status(500).json({ error: "Failed to generate customer value report" });
+    }
+  });
+
   app.post("/api/ai/outcome-discover", async (req, res) => {
     try {
       if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {

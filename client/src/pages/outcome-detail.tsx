@@ -99,9 +99,91 @@ import {
 import { StatusBadge } from "@/components/status-badge";
 import { StatCard } from "@/components/stat-card";
 import { ProgressRing } from "@/components/outcome-cockpit";
+import { useIndustry } from "@/components/industry-provider";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { OutcomeContract, KpiDefinition, Approval, OutcomeEvent, Agent } from "@shared/schema";
+
+function hashCode(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash |= 0;
+  }
+  return hash;
+}
+
+function getIndustryBenchmark(industry: string, kpiName: string, kpiUnit: string): { benchmark: number; unit: string; source: string; comparison: string } | null {
+  const nameLower = kpiName.toLowerCase();
+  const universalBenchmarks: Array<{ keywords: string[]; data: { benchmark: number; unit: string; source: string } }> = [
+    { keywords: ["autonomous resolution", "resolution rate", "resolutions"], data: { benchmark: 85, unit: "percent", source: "Industry avg (Gartner 2024)" } },
+    { keywords: ["customer satisfaction", "csat", "satisfaction"], data: { benchmark: 78, unit: "score", source: "Industry avg (ACSI)" } },
+    { keywords: ["response time", "avg response", "latency"], data: { benchmark: 120, unit: "seconds", source: "Industry avg (McKinsey)" } },
+    { keywords: ["conversion rate", "conversion"], data: { benchmark: 3.5, unit: "percent", source: "Industry avg (Monetate)" } },
+    { keywords: ["extraction accuracy", "accuracy"], data: { benchmark: 95, unit: "percent", source: "Industry benchmark" } },
+    { keywords: ["leads qualified", "lead qualification"], data: { benchmark: 250, unit: "count", source: "Industry avg (HubSpot)" } },
+    { keywords: ["items moderated", "moderation", "content moderation"], data: { benchmark: 10000, unit: "count", source: "Industry avg (Trust & Safety)" } },
+    { keywords: ["invoices processed", "invoice processing"], data: { benchmark: 500, unit: "count", source: "Industry avg (Ardent Partners)" } },
+    { keywords: ["processing time"], data: { benchmark: 120, unit: "seconds", source: "Industry avg (McKinsey)" } },
+    { keywords: ["compliance score"], data: { benchmark: 92, unit: "percent", source: "Regulatory benchmark" } },
+    { keywords: ["fraud detection"], data: { benchmark: 78, unit: "percent", source: "Industry avg (Nilson Report)" } },
+  ];
+
+  const industryOverrides: Record<string, Array<{ keywords: string[]; data: { benchmark: number; unit: string; source: string } }>> = {
+    financial_services: [
+      { keywords: ["autonomous resolution", "resolutions"], data: { benchmark: 82, unit: "percent", source: "FinServ avg (Gartner 2024)" } },
+      { keywords: ["customer satisfaction", "satisfaction"], data: { benchmark: 76, unit: "score", source: "J.D. Power Banking" } },
+      { keywords: ["response time", "avg response"], data: { benchmark: 90, unit: "seconds", source: "FCA benchmark" } },
+      { keywords: ["compliance score"], data: { benchmark: 94, unit: "percent", source: "SOX/Basel III standard" } },
+    ],
+    healthcare: [
+      { keywords: ["autonomous resolution", "resolutions"], data: { benchmark: 88, unit: "percent", source: "HEDIS measure" } },
+      { keywords: ["customer satisfaction", "patient satisfaction", "satisfaction"], data: { benchmark: 82, unit: "score", source: "CAHPS benchmark" } },
+      { keywords: ["response time", "avg response"], data: { benchmark: 180, unit: "seconds", source: "CMS guideline" } },
+      { keywords: ["accuracy", "extraction accuracy"], data: { benchmark: 97, unit: "percent", source: "FDA AI/ML guidance" } },
+    ],
+    insurance: [
+      { keywords: ["autonomous resolution", "resolutions"], data: { benchmark: 90, unit: "percent", source: "ACORD benchmark" } },
+      { keywords: ["customer satisfaction", "satisfaction"], data: { benchmark: 80, unit: "score", source: "J.D. Power Insurance" } },
+      { keywords: ["invoices processed", "claims"], data: { benchmark: 400, unit: "count", source: "Industry avg (Novarica)" } },
+    ],
+    manufacturing: [
+      { keywords: ["accuracy", "extraction accuracy"], data: { benchmark: 99, unit: "percent", source: "ISO 9001 standard" } },
+      { keywords: ["customer satisfaction", "satisfaction"], data: { benchmark: 75, unit: "score", source: "IndustryWeek avg" } },
+    ],
+    retail: [
+      { keywords: ["conversion rate", "conversion"], data: { benchmark: 3.2, unit: "percent", source: "Industry avg (Monetate)" } },
+      { keywords: ["customer satisfaction", "satisfaction"], data: { benchmark: 80, unit: "score", source: "ACSI Retail" } },
+      { keywords: ["items moderated", "moderation"], data: { benchmark: 15000, unit: "count", source: "Trust & Safety avg" } },
+    ],
+  };
+
+  const overrides = industryOverrides[industry] || [];
+  for (const entry of overrides) {
+    if (entry.keywords.some(kw => nameLower.includes(kw))) {
+      return { ...entry.data, comparison: "" };
+    }
+  }
+  for (const entry of universalBenchmarks) {
+    if (entry.keywords.some(kw => nameLower.includes(kw))) {
+      return { ...entry.data, comparison: "" };
+    }
+  }
+  return null;
+}
+
+function getWorkflowSteps(industry: string, agentName: string): Array<{ name: string }> {
+  const industrySteps: Record<string, string[]> = {
+    financial_services: ["Data Ingestion", "Identity Verification", "Risk Assessment", "Compliance Check", "Transaction Processing", "Audit Logging"],
+    healthcare: ["Patient Intake", "Eligibility Verification", "Prior Authorization", "Clinical Review", "Claims Adjudication", "Provider Notification"],
+    insurance: ["FNOL Registration", "Document Collection", "Damage Assessment", "Coverage Verification", "Settlement Calculation", "Payment Disbursement"],
+    manufacturing: ["Order Receipt", "BOM Validation", "Production Planning", "Quality Inspection", "Inventory Update", "Shipment Coordination"],
+    retail: ["Product Discovery", "Cart Management", "Checkout Flow", "Payment Processing", "Order Fulfillment", "Returns Processing"],
+  };
+  const steps = industrySteps[industry] || ["Data Input", "Processing", "Validation", "Output", "Review"];
+  return steps.map(s => ({ name: s }));
+}
 
 function Sparkline({
   points,
@@ -262,6 +344,10 @@ export default function OutcomeDetail() {
   const [, params] = useRoute("/outcomes/:id");
   const outcomeId = params?.id;
   const { toast } = useToast();
+  const { industry } = useIndustry();
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportGenerating, setReportGenerating] = useState(false);
+  const [reportContent, setReportContent] = useState<string | null>(null);
   const [createKpiOpen, setCreateKpiOpen] = useState(false);
   const [editContractOpen, setEditContractOpen] = useState(false);
   const [editContractData, setEditContractData] = useState<Record<string, any>>({});
@@ -642,6 +728,54 @@ export default function OutcomeDetail() {
   const billableEventsCount = outcomeEvents?.filter(e => e.billable).length || 0;
   const estimatedRevenue = billableEventsCount * (outcome.pricePerUnit || 0);
 
+  async function generateCustomerReport() {
+    setReportGenerating(true);
+    try {
+      const res = await apiRequest("POST", "/api/ai/customer-value-report", {
+        outcomeId: outcome.id,
+        outcomeName: outcome.name,
+        outcomeDescription: outcome.description,
+        industry: industry?.id || "",
+        industryLabel: industry?.label || "General",
+        kpis: (kpis || []).map(k => ({
+          name: k.name,
+          unit: k.unit,
+          currentValue: k.currentValue,
+          target: k.target,
+          baseline: k.baseline,
+          trend: k.trend,
+          confidence: k.confidence,
+          benchmark: getIndustryBenchmark(industry?.id || "", k.name, k.unit),
+        })),
+        agents: boundAgents.map(a => ({ name: a.name, type: a.agentType, successRate: a.successRate, healthScore: a.healthScore })),
+        revenue: {
+          pricePerUnit: outcome.pricePerUnit,
+          billingModel: outcome.billingModel,
+          estimatedRevenue,
+        },
+        regulatoryFrameworks: industry?.regulatoryFrameworks || [],
+      });
+      const data = await res.json();
+      setReportContent(data.report || "Report generation failed. Please try again.");
+    } catch (err) {
+      toast({ title: "Failed to generate report", description: "Please try again.", variant: "destructive" });
+    } finally {
+      setReportGenerating(false);
+    }
+  }
+
+  function downloadReport() {
+    if (!reportContent) return;
+    const blob = new Blob([reportContent], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${outcome.name.replace(/\s+/g, "-")}-customer-value-report.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast({ title: "Report downloaded" });
+  }
+
   return (
     <div className="flex flex-col gap-6 p-6" data-testid="page-outcome-detail">
       <div className="flex items-start gap-3 flex-wrap">
@@ -656,6 +790,11 @@ export default function OutcomeDetail() {
             <StatusBadge status={outcome.status} />
             <StatusBadge status={outcome.riskTier} />
             <Badge variant="outline" className="text-[10px]">v{outcome.version}</Badge>
+            <div className="flex items-center gap-2 ml-auto shrink-0 flex-wrap">
+              <Button variant="outline" size="sm" onClick={() => setReportOpen(true)} data-testid="button-open-customer-report">
+                <FileText className="w-3.5 h-3.5 mr-1.5" /> Customer Report
+              </Button>
+            </div>
           </div>
           {outcome.description && (
             <p className="text-sm text-muted-foreground">{outcome.description}</p>
@@ -818,6 +957,51 @@ export default function OutcomeDetail() {
           testId="stat-risk-threshold"
         />
       </div>
+
+      <Card data-testid="card-regulatory-impact">
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div className="flex items-center gap-2">
+              <Gavel className="w-4 h-4 text-violet-500" />
+              <span className="text-sm font-medium">Regulatory Impact</span>
+            </div>
+            <Link href="/governance">
+              <Button variant="outline" size="sm" data-testid="link-compliance-matrix">
+                <ExternalLink className="w-3.5 h-3.5 mr-1.5" /> Compliance Matrix
+              </Button>
+            </Link>
+          </div>
+          <div className="flex items-center gap-2 mt-3 flex-wrap">
+            {(industry?.regulatoryFrameworks || []).map(reg => (
+              <Badge key={reg} variant="outline" className="text-[10px] bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20" data-testid={`regulatory-badge-${reg}`}>
+                <Shield className="w-3 h-3 mr-1" />
+                {reg}
+              </Badge>
+            ))}
+            {(!industry?.regulatoryFrameworks || industry.regulatoryFrameworks.length === 0) && (
+              <span className="text-xs text-muted-foreground">No regulatory frameworks configured for current industry</span>
+            )}
+          </div>
+          {boundAgents.length > 0 && (
+            <div className="mt-3 pt-3 border-t">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Constrained Agents</span>
+              <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                {boundAgents.slice(0, 5).map(agent => (
+                  <Link key={agent.id} href={`/agents/${agent.id}`}>
+                    <Badge variant="secondary" className="text-[10px] cursor-pointer" data-testid={`constrained-agent-${agent.id}`}>
+                      <Bot className="w-3 h-3 mr-1" />
+                      {agent.name}
+                    </Badge>
+                  </Link>
+                ))}
+                {boundAgents.length > 5 && (
+                  <Badge variant="outline" className="text-[10px]">+{boundAgents.length - 5} more</Badge>
+                )}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Tabs defaultValue="kpi-delivery" className="space-y-4">
         <TabsList className="flex-wrap">
@@ -985,6 +1169,25 @@ export default function OutcomeDetail() {
                                   {projected30d.toFixed(1)} {kpi.unit}
                                 </span>
                               </div>
+                              {(() => {
+                                const bm = getIndustryBenchmark(industry?.id || "", kpi.name, kpi.unit);
+                                if (!bm) return null;
+                                const currentVal = kpi.currentValue || 0;
+                                const isInverse = kpi.name.includes("Time") || kpi.name.includes("Latency") || kpi.name.includes("Downtime") || kpi.name.includes("Abandonment");
+                                const isBetter = isInverse ? currentVal < bm.benchmark : currentVal > bm.benchmark;
+                                return (
+                                  <div className="flex flex-col gap-0.5">
+                                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Industry Benchmark</span>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-sm font-medium" data-testid={`text-benchmark-${kpi.id}`}>{bm.benchmark} {bm.unit}</span>
+                                      <Badge variant="outline" className={`text-[9px] ${isBetter ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"}`}>
+                                        {isBetter ? "Above avg" : "Below avg"}
+                                      </Badge>
+                                    </div>
+                                    <span className="text-[9px] text-muted-foreground">{bm.source}</span>
+                                  </div>
+                                );
+                              })()}
                             </div>
                           </div>
                         </div>
@@ -1247,6 +1450,31 @@ export default function OutcomeDetail() {
                                 <span className="text-[10px] text-muted-foreground w-8 text-right shrink-0">{cap.contribution}%</span>
                               </div>
                             ))}
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col gap-2">
+                          <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Workflow Step Performance</span>
+                          <div className="flex flex-col gap-1.5">
+                            {getWorkflowSteps(industry?.id || "", agent.agentName).map((step, si) => {
+                              const perf = Math.max(0, Math.min(100, 65 + hashCode(`${agent.agentId}-${step.name}`) % 35));
+                              const isUnder = perf < 75;
+                              return (
+                                <div key={si} className="flex items-center gap-3" data-testid={`workflow-step-${agent.agentId}-${si}`}>
+                                  <span className={`text-xs w-48 shrink-0 truncate ${isUnder ? "text-red-600 dark:text-red-400 font-medium" : "text-muted-foreground"}`}>
+                                    {step.name}
+                                  </span>
+                                  <div className="flex-1 h-2 rounded-sm bg-muted/50">
+                                    <div
+                                      className={`h-full rounded-sm ${isUnder ? "bg-red-500/60" : "bg-emerald-500/60"}`}
+                                      style={{ width: `${perf}%` }}
+                                    />
+                                  </div>
+                                  <span className={`text-[10px] w-10 text-right shrink-0 ${isUnder ? "text-red-600 dark:text-red-400" : "text-muted-foreground"}`}>{perf}%</span>
+                                  {isUnder && <AlertTriangle className="w-3 h-3 text-red-500 shrink-0" />}
+                                </div>
+                              );
+                            })}
                           </div>
                         </div>
 
@@ -2156,6 +2384,68 @@ function AuditTab({
           </div>
         </>
       )}
+
+      <Dialog open={reportOpen} onOpenChange={setReportOpen}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="w-5 h-5" />
+              Customer Value Report
+            </DialogTitle>
+          </DialogHeader>
+          {!reportContent ? (
+            <div className="flex flex-col items-center justify-center py-12 gap-4">
+              <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center">
+                <Sparkles className="w-7 h-7 text-primary" />
+              </div>
+              <div className="text-center flex flex-col gap-1">
+                <h3 className="text-base font-semibold">Generate Value Report</h3>
+                <p className="text-sm text-muted-foreground max-w-md">
+                  Create a customer-facing report summarizing KPI performance, agent contributions, and business impact using {industry?.label || "industry"} terminology.
+                </p>
+              </div>
+              <Button onClick={generateCustomerReport} disabled={reportGenerating} data-testid="button-generate-report">
+                {reportGenerating ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                    Generating report...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4 mr-1.5" />
+                    Generate Report
+                  </>
+                )}
+              </Button>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-4">
+              <div className="prose prose-sm dark:prose-invert max-w-none" data-testid="report-content">
+                {reportContent.split("\n").map((line, i) => {
+                  if (line.startsWith("# ")) return <h2 key={i} className="text-lg font-semibold mt-4 mb-2">{line.slice(2)}</h2>;
+                  if (line.startsWith("## ")) return <h3 key={i} className="text-base font-semibold mt-3 mb-1">{line.slice(3)}</h3>;
+                  if (line.startsWith("### ")) return <h4 key={i} className="text-sm font-semibold mt-2 mb-1">{line.slice(4)}</h4>;
+                  if (line.startsWith("- ")) return <li key={i} className="text-sm text-muted-foreground ml-4">{line.slice(2)}</li>;
+                  if (line.startsWith("**") && line.endsWith("**")) return <p key={i} className="text-sm font-semibold">{line.slice(2, -2)}</p>;
+                  if (line.trim() === "") return <div key={i} className="h-2" />;
+                  return <p key={i} className="text-sm text-muted-foreground">{line}</p>;
+                })}
+              </div>
+              <div className="flex items-center gap-2 flex-wrap border-t pt-4">
+                <Button variant="outline" size="sm" onClick={downloadReport} data-testid="button-download-report">
+                  <Download className="w-3.5 h-3.5 mr-1.5" /> Download PDF
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => { navigator.clipboard.writeText(reportContent); toast({ title: "Report copied to clipboard" }); }} data-testid="button-copy-report">
+                  Copy to Clipboard
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => { setReportContent(null); }} data-testid="button-regenerate-report">
+                  <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Regenerate
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

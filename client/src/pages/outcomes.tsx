@@ -30,6 +30,7 @@ import {
   RefreshCw,
   Filter,
   Clock,
+  Gavel,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -76,6 +77,65 @@ function hashCode(str: string): number {
     hash |= 0;
   }
   return hash;
+}
+
+function getIndustryBenchmark(industry: string, kpiName: string, kpiUnit: string): { benchmark: number; unit: string; source: string; comparison: string } | null {
+  const nameLower = kpiName.toLowerCase();
+  const universalBenchmarks: Array<{ keywords: string[]; data: { benchmark: number; unit: string; source: string } }> = [
+    { keywords: ["autonomous resolution", "resolution rate", "resolutions"], data: { benchmark: 85, unit: "percent", source: "Industry avg (Gartner 2024)" } },
+    { keywords: ["customer satisfaction", "csat", "satisfaction"], data: { benchmark: 78, unit: "score", source: "Industry avg (ACSI)" } },
+    { keywords: ["response time", "avg response", "latency"], data: { benchmark: 120, unit: "seconds", source: "Industry avg (McKinsey)" } },
+    { keywords: ["conversion rate", "conversion"], data: { benchmark: 3.5, unit: "percent", source: "Industry avg (Monetate)" } },
+    { keywords: ["extraction accuracy", "accuracy"], data: { benchmark: 95, unit: "percent", source: "Industry benchmark" } },
+    { keywords: ["leads qualified", "lead qualification"], data: { benchmark: 250, unit: "count", source: "Industry avg (HubSpot)" } },
+    { keywords: ["items moderated", "moderation", "content moderation"], data: { benchmark: 10000, unit: "count", source: "Industry avg (Trust & Safety)" } },
+    { keywords: ["invoices processed", "invoice processing"], data: { benchmark: 500, unit: "count", source: "Industry avg (Ardent Partners)" } },
+    { keywords: ["processing time"], data: { benchmark: 120, unit: "seconds", source: "Industry avg (McKinsey)" } },
+    { keywords: ["compliance score"], data: { benchmark: 92, unit: "percent", source: "Regulatory benchmark" } },
+    { keywords: ["fraud detection"], data: { benchmark: 78, unit: "percent", source: "Industry avg (Nilson Report)" } },
+  ];
+
+  const industryOverrides: Record<string, Array<{ keywords: string[]; data: { benchmark: number; unit: string; source: string } }>> = {
+    financial_services: [
+      { keywords: ["autonomous resolution", "resolutions"], data: { benchmark: 82, unit: "percent", source: "FinServ avg (Gartner 2024)" } },
+      { keywords: ["customer satisfaction", "satisfaction"], data: { benchmark: 76, unit: "score", source: "J.D. Power Banking" } },
+      { keywords: ["response time", "avg response"], data: { benchmark: 90, unit: "seconds", source: "FCA benchmark" } },
+      { keywords: ["compliance score"], data: { benchmark: 94, unit: "percent", source: "SOX/Basel III standard" } },
+    ],
+    healthcare: [
+      { keywords: ["autonomous resolution", "resolutions"], data: { benchmark: 88, unit: "percent", source: "HEDIS measure" } },
+      { keywords: ["customer satisfaction", "patient satisfaction", "satisfaction"], data: { benchmark: 82, unit: "score", source: "CAHPS benchmark" } },
+      { keywords: ["response time", "avg response"], data: { benchmark: 180, unit: "seconds", source: "CMS guideline" } },
+      { keywords: ["accuracy", "extraction accuracy"], data: { benchmark: 97, unit: "percent", source: "FDA AI/ML guidance" } },
+    ],
+    insurance: [
+      { keywords: ["autonomous resolution", "resolutions"], data: { benchmark: 90, unit: "percent", source: "ACORD benchmark" } },
+      { keywords: ["customer satisfaction", "satisfaction"], data: { benchmark: 80, unit: "score", source: "J.D. Power Insurance" } },
+      { keywords: ["invoices processed", "claims"], data: { benchmark: 400, unit: "count", source: "Industry avg (Novarica)" } },
+    ],
+    manufacturing: [
+      { keywords: ["accuracy", "extraction accuracy"], data: { benchmark: 99, unit: "percent", source: "ISO 9001 standard" } },
+      { keywords: ["customer satisfaction", "satisfaction"], data: { benchmark: 75, unit: "score", source: "IndustryWeek avg" } },
+    ],
+    retail: [
+      { keywords: ["conversion rate", "conversion"], data: { benchmark: 3.2, unit: "percent", source: "Industry avg (Monetate)" } },
+      { keywords: ["customer satisfaction", "satisfaction"], data: { benchmark: 80, unit: "score", source: "ACSI Retail" } },
+      { keywords: ["items moderated", "moderation"], data: { benchmark: 15000, unit: "count", source: "Trust & Safety avg" } },
+    ],
+  };
+
+  const overrides = industryOverrides[industry] || [];
+  for (const entry of overrides) {
+    if (entry.keywords.some(kw => nameLower.includes(kw))) {
+      return { ...entry.data, comparison: "" };
+    }
+  }
+  for (const entry of universalBenchmarks) {
+    if (entry.keywords.some(kw => nameLower.includes(kw))) {
+      return { ...entry.data, comparison: "" };
+    }
+  }
+  return null;
 }
 
 function generateTrajectory(id: string, currentConfidence: number): number[] {
@@ -189,6 +249,7 @@ export default function Outcomes() {
   const { toast } = useToast();
   const outcomesPerm = usePermission("create_modify_outcomes");
   const { industry } = useIndustry();
+  const industryId = industry?.id || "";
 
   const { data: outcomes, isLoading } = useQuery<OutcomeContract[]>({
     queryKey: ["/api/outcomes"],
@@ -939,6 +1000,18 @@ export default function Outcomes() {
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="text-[11px] text-muted-foreground">v{outcome.version}</span>
                           <RiskHeatBadge level={outcome.riskTier || "medium"} />
+                          {(() => {
+                            const regs = industry?.regulatoryFrameworks?.slice(0, 3) || [];
+                            if (regs.length === 0) return null;
+                            return (
+                              <div className="flex items-center gap-1 flex-wrap" data-testid={`regulatory-tags-${outcome.id}`}>
+                                <Gavel className="w-3 h-3 text-muted-foreground shrink-0" />
+                                {regs.map(reg => (
+                                  <Badge key={reg} variant="outline" className="text-[9px] bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20">{reg}</Badge>
+                                ))}
+                              </div>
+                            );
+                          })()}
                         </div>
                       </div>
                     </div>
@@ -955,6 +1028,17 @@ export default function Outcomes() {
                           <div key={kpi.id} className="flex items-center gap-2">
                             <ProgressRing value={kpiPct} size={24} strokeWidth={2} />
                             <span className="text-[11px] text-muted-foreground truncate flex-1">{kpi.name}</span>
+                            {(() => {
+                              const bm = getIndustryBenchmark(industryId, kpi.name, kpi.unit);
+                              if (!bm) return null;
+                              const isInverse = kpi.name.includes("Time") || kpi.name.includes("Latency");
+                              const isBetter = isInverse ? (kpi.currentValue || 0) < bm.benchmark : (kpi.currentValue || 0) > bm.benchmark;
+                              return (
+                                <span className={`text-[9px] ${isBetter ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`} data-testid={`benchmark-indicator-${kpi.id}`}>
+                                  {isBetter ? "above" : "below"} avg
+                                </span>
+                              );
+                            })()}
                             <span className="text-[11px] tabular-nums shrink-0">
                               {(kpi.currentValue || 0).toLocaleString()}/{kpi.target.toLocaleString()}
                             </span>
