@@ -523,6 +523,11 @@ function AgentDetailInner() {
           </Badge>
         ))}
         <div className="flex-1" />
+        <Link href={`/agents/${agentId}/playground`}>
+          <Button variant="outline" size="sm" data-testid="button-open-playground">
+            <MessageSquare className="w-3.5 h-3.5 mr-1.5" /> Playground
+          </Button>
+        </Link>
         <Button variant="outline" size="sm" data-testid="button-run-test">
           <Play className="w-3.5 h-3.5 mr-1.5" /> Run Test
         </Button>

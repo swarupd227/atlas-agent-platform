@@ -80,6 +80,7 @@ import RagPipeline from "@/pages/rag-pipeline";
 import KnowledgeGraph from "@/pages/knowledge-graph";
 import AutonomyEngine from "@/pages/autonomy-engine";
 import OversightConsole from "@/pages/oversight-console";
+import AgentPlayground from "@/pages/agent-playground";
 
 function DashboardRouter() {
   return (
@@ -94,6 +95,7 @@ function DashboardRouter() {
       <Route path="/agents/wizard" component={AgentWizard} />
       <Route path="/agents/teams" component={AgentTeams} />
       <Route path="/agents/remote" component={RemoteAgents} />
+      <Route path="/agents/:id/playground" component={AgentPlayground} />
       <Route path="/agents/:id" component={AgentDetail} />
       <Route path="/blueprints" component={Blueprints} />
       <Route path="/blueprints/:id" component={BlueprintDetail} />

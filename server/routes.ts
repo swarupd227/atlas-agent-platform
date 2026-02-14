@@ -1,6 +1,9 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
+import { db } from "./db";
+import { eq, desc } from "drizzle-orm";
+import { conversations, messages as chatMessages } from "@shared/schema";
 import { z, ZodError } from "zod";
 import { startWorker, jobEvents } from "./worker";
 import OpenAI, { toFile } from "openai";
@@ -15116,8 +15119,178 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  // ═══════════════════════════════════════════════════════════════
+  // AGENT PLAYGROUND - Chat with agents using their stored config
+  // ═══════════════════════════════════════════════════════════════
+
+  app.get("/api/agents/:agentId/playground/sessions", async (req, res) => {
+    try {
+      const { agentId } = req.params;
+      const allConversations = await db.select().from(conversations).where(eq(conversations.agentId, agentId)).orderBy(desc(conversations.createdAt));
+      res.json(allConversations);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/agents/:agentId/playground/sessions", async (req, res) => {
+    try {
+      const { agentId } = req.params;
+      const agent = await storage.getAgent(agentId);
+      if (!agent) return res.status(404).json({ error: "Agent not found" });
+      const [conversation] = await db.insert(conversations).values({
+        title: `${agent.name} - Playground`,
+        agentId,
+      }).returning();
+      res.status(201).json(conversation);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/agents/:agentId/playground/sessions/:sessionId/messages", async (req, res) => {
+    try {
+      const { agentId } = req.params;
+      const sessionId = parseInt(req.params.sessionId);
+      const [session] = await db.select().from(conversations).where(eq(conversations.id, sessionId));
+      if (!session || session.agentId !== agentId) return res.status(404).json({ error: "Session not found" });
+      const msgs = await db.select().from(chatMessages).where(eq(chatMessages.conversationId, sessionId)).orderBy(chatMessages.createdAt);
+      res.json(msgs);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.delete("/api/agents/:agentId/playground/sessions/:sessionId", async (req, res) => {
+    try {
+      const { agentId } = req.params;
+      const sessionId = parseInt(req.params.sessionId);
+      const [session] = await db.select().from(conversations).where(eq(conversations.id, sessionId));
+      if (!session || session.agentId !== agentId) return res.status(404).json({ error: "Session not found" });
+      await db.delete(chatMessages).where(eq(chatMessages.conversationId, sessionId));
+      await db.delete(conversations).where(eq(conversations.id, sessionId));
+      res.status(204).send();
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/agents/:agentId/playground/chat", async (req, res) => {
+    try {
+      const { agentId } = req.params;
+      const { content, sessionId } = req.body;
+
+      if (!content || typeof content !== "string" || !sessionId) {
+        return res.status(400).json({ error: "content (string) and sessionId are required" });
+      }
+
+      const agent = await storage.getAgent(agentId);
+      if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+      const [session] = await db.select().from(conversations).where(eq(conversations.id, sessionId));
+      if (!session || session.agentId !== agentId) return res.status(404).json({ error: "Session not found for this agent" });
+
+      await db.insert(chatMessages).values({
+        conversationId: sessionId,
+        role: "user",
+        content,
+      });
+
+      const existingMsgs = await db.select().from(chatMessages)
+        .where(eq(chatMessages.conversationId, sessionId))
+        .orderBy(chatMessages.createdAt);
+
+      const systemPrompt = buildAgentSystemPrompt(agent);
+
+      const chatMsgs: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+        { role: "system", content: systemPrompt },
+        ...existingMsgs.map(m => ({
+          role: m.role as "user" | "assistant",
+          content: m.content,
+        })),
+      ];
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+
+      const stream = await openai.chat.completions.create({
+        model: agent.modelName || "gpt-4.1",
+        messages: chatMsgs,
+        stream: true,
+        max_completion_tokens: 4096,
+      });
+
+      let fullResponse = "";
+      for await (const chunk of stream) {
+        const c = chunk.choices[0]?.delta?.content || "";
+        if (c) {
+          fullResponse += c;
+          res.write(`data: ${JSON.stringify({ content: c })}\n\n`);
+        }
+      }
+
+      await db.insert(chatMessages).values({
+        conversationId: sessionId,
+        role: "assistant",
+        content: fullResponse,
+      });
+
+      res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+      res.end();
+    } catch (e: any) {
+      console.error("Playground chat error:", e);
+      if (res.headersSent) {
+        res.write(`data: ${JSON.stringify({ error: e.message })}\n\n`);
+        res.end();
+      } else {
+        res.status(500).json({ error: e.message });
+      }
+    }
+  });
+
   // Start the job worker
   startWorker();
 
   return httpServer;
+}
+
+function buildAgentSystemPrompt(agent: any): string {
+  const parts: string[] = [];
+
+  parts.push(`You are "${agent.name}", an AI agent managed on the ALMP platform.`);
+
+  if (agent.description) {
+    parts.push(`\nYour purpose: ${agent.description}`);
+  }
+
+  if (agent.riskTier) {
+    parts.push(`\nRisk tier: ${agent.riskTier}. Autonomy mode: ${agent.autonomyMode || "assisted"}.`);
+  }
+
+  const tools = Array.isArray(agent.toolsConfig) ? agent.toolsConfig as Array<{ name?: string; description?: string }> : [];
+  if (tools.length > 0) {
+    parts.push(`\nYou have access to these tools (simulate their behavior in conversation):`);
+    tools.forEach(t => {
+      parts.push(`- ${t.name}: ${t.description || "No description"}`);
+    });
+  }
+
+  const compliance = Array.isArray(agent.complianceTags) ? agent.complianceTags : [];
+  if (compliance.length > 0) {
+    parts.push(`\nYou must comply with: ${compliance.join(", ")}.`);
+  }
+
+  const policies = Array.isArray(agent.policyBindings) ? agent.policyBindings as Array<{ policyName?: string; enforcement?: string }> : [];
+  if (policies.length > 0) {
+    parts.push(`\nPolicy bindings:`);
+    policies.forEach(p => {
+      parts.push(`- ${p.policyName} (${p.enforcement || "soft"})`);
+    });
+  }
+
+  const bp = agent.blueprintJson && typeof agent.blueprintJson === "object" ? agent.blueprintJson as Record<string, unknown> : {};
+  const nodes = Array.isArray(bp.nodes) ? bp.nodes as Array<{ label?: string; type?: string }> : [];
+  if (nodes.length > 0) {
+    parts.push(`\nYour workflow steps:`);
+    nodes.forEach((n, i) => {
+      parts.push(`${i + 1}. ${n.label || "Step"} (${n.type || "action"})`);
+    });
+  }
+
+  parts.push(`\nRespond helpfully and stay in character. If asked about capabilities you don't have, explain what you would do if those tools were available.`);
+
+  return parts.join("\n");
 }
