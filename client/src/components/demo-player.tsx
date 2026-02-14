@@ -2,106 +2,192 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { X, Play, Pause, SkipForward, SkipBack, Volume2, VolumeX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-const DEMO_SLIDES = [
+interface DemoSlide {
+  image: string;
+  title: string;
+  headline: string;
+  keywords: string[];
+  narration: string;
+}
+
+const DEMO_SLIDES: DemoSlide[] = [
   {
     image: "/demo-screenshots/01-overview.png",
     title: "Command Center",
+    headline: "Total Visibility. Instant Intelligence.",
+    keywords: ["Platform Health", "KPI Tracking", "Agent Fleet Status"],
     narration:
-      "Welcome to ALMP — the future of AI agent operations. Your command center gives you instant visibility into platform health, KPI progress, and agent status. Everything your team needs, in one intelligent dashboard.",
+      "Welcome to ALMP — the only AI agent platform built around your industry's context. Your command center delivers instant visibility into platform health, KPI progress, and agent fleet status across every environment. One dashboard. Complete operational intelligence.",
   },
   {
     image: "/demo-screenshots/08-outcomes.png",
     title: "Outcome Contracts",
+    headline: "Pay for Results. Not Compute.",
+    keywords: ["Outcome-Based Billing", "SLA Tracking", "Measurable ROI"],
     narration:
-      "Define what success looks like with outcome contracts. Set KPIs, SLAs, and pricing models tied to measurable business results. You pay for outcomes, not compute cycles. This is billing, reimagined.",
+      "Define success on your terms with outcome contracts. Set KPIs, SLAs, and pricing models tied to measurable business results — not compute hours. Tamper-evident metering ensures every charge is backed by cryptographic proof. This is AI billing, reimagined for accountability.",
   },
   {
     image: "/demo-screenshots/02-agents.png",
     title: "Agent Registry",
+    headline: "80% Autonomous. 20% Expert Validated.",
+    keywords: ["Multi-Agent Teams", "Industry Context", "Adaptive Autonomy"],
     narration:
-      "Your entire agent fleet at your fingertips. The Agent Registry lets you deploy, monitor, and manage hundreds of AI agents across your organization. Each agent operates eighty percent autonomously, with twenty percent expert validation for critical decisions.",
+      "Your entire agent fleet, organized by industry context. The Agent Registry supports single agents, coordinated teams, and remote A2A agents — each operating with adaptive autonomy calibrated to your industry's risk profile. Build agents that reason within your regulatory and operational framework by default.",
   },
   {
     image: "/demo-screenshots/03-deployments.png",
-    title: "Release Orchestrator",
+    title: "Industry-Governed Deployments",
+    headline: "Compliance-First. Zero Deployment Anxiety.",
+    keywords: ["Mandatory Pipeline Stages", "Auto-Rollback", "Evidence Packages"],
     narration:
-      "Deploy with confidence using shadow testing, canary rollouts, and automated promotion. Our Release Orchestrator eliminates deployment anxiety with built-in safeguards and rollback at every stage.",
+      "Deploy with confidence using industry-governed deployment pipelines. Healthcare gets clinical safety review and HIPAA attestation. Financial services gets regulatory compliance and suitability testing. Every deployment generates an evidence package for regulatory conformity — with auto-rollback triggers that activate on industry-specific safety events.",
   },
   {
     image: "/demo-screenshots/04-monitor.png",
     title: "Live Observability",
+    headline: "From First Token to Final Outcome.",
+    keywords: ["OpenTelemetry", "Drift Detection", "MCP Trace Waterfalls"],
     narration:
-      "Real-time monitoring powered by OpenTelemetry. Track every agent run, detect drift instantly, and drill into MCP trace waterfalls. Full observability from the first token to the final outcome.",
+      "Real-time monitoring powered by OpenTelemetry with industry-calibrated baselines. Track every agent run, detect drift instantly, and drill into MCP trace waterfalls. Full observability with industry-specific KPI monitoring from the first token to the final outcome.",
   },
   {
     image: "/demo-screenshots/05-governance.png",
-    title: "Enterprise Governance",
+    title: "Certified Compliance",
+    headline: "Governance That Enables. Not Blocks.",
+    keywords: ["Policy-as-Code", "EU AI Act", "Immutable Audit Trails"],
     narration:
-      "Enterprise-grade compliance built into every layer. Policy enforcement, SOC 2 and EU AI Act frameworks, immutable audit trails, and automated compliance scoring. Governance that enables, not blocks.",
+      "Enterprise-grade compliance woven into every layer. Policy-as-Code enforcement with OPA Rego and Cedar, SOC 2 and EU AI Act conformity frameworks, and immutable hash-chained audit trails. Five industry profiles — healthcare, financial services, manufacturing, insurance, and retail — each with pre-loaded regulatory frameworks.",
   },
   {
     image: "/demo-screenshots/07-approvals.png",
     title: "Approval Gates",
+    headline: "The 20% That Makes the 80% Work.",
+    keywords: ["Blast Radius Analysis", "Risk Scoring", "One-Click Decisions"],
     narration:
-      "The twenty percent that makes the eighty work. Unified approval gates combine expert validation with MCP elicitation flows. Risk analysis, blast radius evidence, and one-click decisions keep your agents moving safely.",
+      "Expert validation gates where it matters most. Every approval comes with blast radius analysis, configuration diffs, and risk scoring calibrated to industry context. One-click decisions backed by evidence keep your agents moving safely through the pipeline.",
   },
   {
     image: "/demo-screenshots/06-billing.png",
     title: "Outcome Billing",
+    headline: "Every Charge. Cryptographically Proven.",
+    keywords: ["Tamper-Evident", "Invoice-to-Trace", "Outcome Metering"],
     narration:
-      "Transparent, outcome-based billing with tamper-evident metering. Drill from invoice to event to trace. Every charge is backed by cryptographic proof. Welcome to the new standard in AI billing.",
+      "Transparent, outcome-based billing with tamper-evident metering. Drill from invoice to event to trace — every charge cryptographically verified. Welcome to the new standard in AI agent billing, where you only pay for measurable results.",
   },
 ];
 
-const SLIDE_DURATION = 12000;
-const CROSSFADE_DURATION = 700;
+const TRANSITION_DURATION = 900;
+const POST_NARRATION_PAUSE = 1500;
 
-function startAmbientMusic(audioContext: AudioContext): () => void {
+function startJazzyMusic(audioContext: AudioContext): () => void {
   const masterGain = audioContext.createGain();
-  masterGain.gain.value = 0.06;
+  masterGain.gain.value = 0.045;
   masterGain.connect(audioContext.destination);
 
-  const oscillators: OscillatorNode[] = [];
+  const compressor = audioContext.createDynamicsCompressor();
+  compressor.threshold.value = -20;
+  compressor.knee.value = 10;
+  compressor.ratio.value = 4;
+  compressor.connect(masterGain);
 
-  const chords = [
-    [130.81, 164.81, 196.00, 261.63],
-    [146.83, 174.61, 220.00, 293.66],
-    [123.47, 155.56, 185.00, 246.94],
-    [138.59, 164.81, 207.65, 277.18],
+  const reverbConvolver = audioContext.createConvolver();
+  const reverbLength = audioContext.sampleRate * 1.5;
+  const reverbBuffer = audioContext.createBuffer(2, reverbLength, audioContext.sampleRate);
+  for (let ch = 0; ch < 2; ch++) {
+    const data = reverbBuffer.getChannelData(ch);
+    for (let i = 0; i < reverbLength; i++) {
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / reverbLength, 2.5);
+    }
+  }
+  reverbConvolver.buffer = reverbBuffer;
+  const reverbGain = audioContext.createGain();
+  reverbGain.gain.value = 0.15;
+  reverbConvolver.connect(reverbGain);
+  reverbGain.connect(compressor);
+
+  const dryGain = audioContext.createGain();
+  dryGain.gain.value = 0.85;
+  dryGain.connect(compressor);
+
+  const jazzChords = [
+    [130.81, 164.81, 196.00, 246.94, 311.13],
+    [146.83, 185.00, 220.00, 277.18, 349.23],
+    [164.81, 207.65, 246.94, 311.13, 392.00],
+    [123.47, 155.56, 196.00, 233.08, 293.66],
+    [138.59, 174.61, 207.65, 261.63, 329.63],
+    [155.56, 196.00, 246.94, 293.66, 369.99],
+    [116.54, 146.83, 174.61, 220.00, 277.18],
+    [130.81, 164.81, 207.65, 246.94, 311.13],
   ];
 
   let chordIndex = 0;
+  const activeNodes: { osc: OscillatorNode; gain: GainNode }[] = [];
 
   function playChord() {
-    oscillators.forEach((o) => { try { o.stop(); } catch {} });
-    oscillators.length = 0;
+    activeNodes.forEach(({ osc, gain }) => {
+      const now = audioContext.currentTime;
+      gain.gain.setValueAtTime(gain.gain.value, now);
+      gain.gain.linearRampToValueAtTime(0, now + 0.3);
+      setTimeout(() => { try { osc.stop(); } catch {} }, 400);
+    });
+    activeNodes.length = 0;
 
-    const chord = chords[chordIndex % chords.length];
+    const chord = jazzChords[chordIndex % jazzChords.length];
     chordIndex++;
+
+    const types: OscillatorType[] = ["sine", "triangle", "sine", "triangle", "sine"];
+    const volumes = [0.35, 0.25, 0.2, 0.18, 0.12];
 
     chord.forEach((freq, i) => {
       const osc = audioContext.createOscillator();
       const gain = audioContext.createGain();
-      osc.type = i === 0 ? "sine" : "triangle";
+      const detune = (Math.random() - 0.5) * 6;
+
+      osc.type = types[i % types.length];
       osc.frequency.value = freq;
-      gain.gain.setValueAtTime(0, audioContext.currentTime);
-      gain.gain.linearRampToValueAtTime(0.3, audioContext.currentTime + 2);
-      gain.gain.linearRampToValueAtTime(0.15, audioContext.currentTime + 8);
-      gain.gain.linearRampToValueAtTime(0, audioContext.currentTime + 11);
+      osc.detune.value = detune;
+
+      const now = audioContext.currentTime;
+      const attackTime = 0.8 + Math.random() * 0.4;
+      gain.gain.setValueAtTime(0, now);
+      gain.gain.linearRampToValueAtTime(volumes[i], now + attackTime);
+      gain.gain.setValueAtTime(volumes[i], now + attackTime);
+      gain.gain.linearRampToValueAtTime(volumes[i] * 0.6, now + 4);
+      gain.gain.linearRampToValueAtTime(0, now + 7);
+
       osc.connect(gain);
-      gain.connect(masterGain);
-      osc.start();
-      oscillators.push(osc);
+      gain.connect(dryGain);
+      gain.connect(reverbConvolver);
+      osc.start(now);
+      activeNodes.push({ osc, gain });
     });
+
+    const bassOsc = audioContext.createOscillator();
+    const bassGain = audioContext.createGain();
+    bassOsc.type = "sine";
+    bassOsc.frequency.value = chord[0] / 2;
+    const now = audioContext.currentTime;
+    bassGain.gain.setValueAtTime(0, now);
+    bassGain.gain.linearRampToValueAtTime(0.3, now + 0.5);
+    bassGain.gain.linearRampToValueAtTime(0.15, now + 4);
+    bassGain.gain.linearRampToValueAtTime(0, now + 6.5);
+    bassOsc.connect(bassGain);
+    bassGain.connect(dryGain);
+    bassOsc.start(now);
+    activeNodes.push({ osc: bassOsc, gain: bassGain });
   }
 
   playChord();
-  const interval = setInterval(playChord, 10000);
+  const interval = setInterval(playChord, 7000);
 
   return () => {
     clearInterval(interval);
-    oscillators.forEach((o) => { try { o.stop(); } catch {} });
+    activeNodes.forEach(({ osc }) => { try { osc.stop(); } catch {} });
     masterGain.disconnect();
+    compressor.disconnect();
+    reverbGain.disconnect();
+    dryGain.disconnect();
   };
 }
 
@@ -111,15 +197,16 @@ interface DemoPlayerProps {
 
 export default function DemoPlayer({ onClose }: DemoPlayerProps) {
   const [currentSlide, setCurrentSlide] = useState(0);
-  const [displaySlide, setDisplaySlide] = useState(0);
-  const [outgoingSlide, setOutgoingSlide] = useState<number | null>(null);
-  const [crossfadePhase, setCrossfadePhase] = useState<"idle" | "active">("idle");
+  const [prevSlide, setPrevSlide] = useState<number | null>(null);
+  const [transitioning, setTransitioning] = useState(false);
   const [isPlaying, setIsPlaying] = useState(true);
   const [progress, setProgress] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [audioReady, setAudioReady] = useState(false);
   const [musicStarted, setMusicStarted] = useState(false);
+  const [keywordVisible, setKeywordVisible] = useState<boolean[]>([]);
+  const [headlineVisible, setHeadlineVisible] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -127,13 +214,15 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
   const progressIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const slideStartRef = useRef<number>(Date.now());
   const audioCacheRef = useRef<Map<number, string>>(new Map());
-  const crossfadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const transitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const keywordTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const isMutedRef = useRef(isMuted);
+  const narrationEndedRef = useRef(false);
 
   isMutedRef.current = isMuted;
 
-  const slide = DEMO_SLIDES[displaySlide];
-  const outgoingSlideData = outgoingSlide !== null ? DEMO_SLIDES[outgoingSlide] : null;
+  const slide = DEMO_SLIDES[currentSlide];
+  const prevSlideData = prevSlide !== null ? DEMO_SLIDES[prevSlide] : null;
 
   const initMusic = useCallback(() => {
     if (musicStarted) return;
@@ -141,7 +230,7 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
     const ac = new AudioContext();
     audioContextRef.current = ac;
     if (isMutedRef.current) ac.suspend();
-    const cleanup = startAmbientMusic(ac);
+    const cleanup = startJazzyMusic(ac);
     musicCleanupRef.current = cleanup;
   }, [musicStarted]);
 
@@ -169,6 +258,29 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
     }
   }, []);
 
+  const showKeywords = useCallback((slideIndex: number) => {
+    keywordTimersRef.current.forEach(clearTimeout);
+    keywordTimersRef.current = [];
+
+    const kw = DEMO_SLIDES[slideIndex].keywords;
+    setKeywordVisible(new Array(kw.length).fill(false));
+
+    setHeadlineVisible(false);
+    const headlineTimer = setTimeout(() => setHeadlineVisible(true), 400);
+    keywordTimersRef.current.push(headlineTimer);
+
+    kw.forEach((_, i) => {
+      const timer = setTimeout(() => {
+        setKeywordVisible((prev) => {
+          const next = [...prev];
+          next[i] = true;
+          return next;
+        });
+      }, 1200 + i * 600);
+      keywordTimersRef.current.push(timer);
+    });
+  }, []);
+
   const playSlideAudio = useCallback(async (slideIndex: number) => {
     if (audioRef.current) {
       audioRef.current.pause();
@@ -177,6 +289,7 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
 
     setAudioReady(false);
     setIsLoading(true);
+    narrationEndedRef.current = false;
 
     const url = await fetchAudio(slideIndex);
     if (!url) {
@@ -194,6 +307,10 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
       setIsLoading(false);
     }, { once: true });
 
+    audio.addEventListener("ended", () => {
+      narrationEndedRef.current = true;
+    }, { once: true });
+
     audio.addEventListener("error", () => {
       setAudioReady(true);
       setIsLoading(false);
@@ -203,20 +320,25 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
   }, [fetchAudio]);
 
   const changeSlide = useCallback((newIndex: number) => {
-    if (crossfadeTimerRef.current) clearTimeout(crossfadeTimerRef.current);
-    setOutgoingSlide(displaySlide);
-    setDisplaySlide(newIndex);
-    setCurrentSlide(newIndex);
-    slideStartRef.current = Date.now();
-    setProgress(0);
-    requestAnimationFrame(() => {
-      setCrossfadePhase("active");
-    });
-    crossfadeTimerRef.current = setTimeout(() => {
-      setCrossfadePhase("idle");
-      setOutgoingSlide(null);
-    }, CROSSFADE_DURATION);
-  }, [displaySlide]);
+    if (transitioning) return;
+    if (transitionTimerRef.current) clearTimeout(transitionTimerRef.current);
+
+    if (audioRef.current) {
+      audioRef.current.pause();
+    }
+
+    setPrevSlide(currentSlide);
+    setTransitioning(true);
+
+    transitionTimerRef.current = setTimeout(() => {
+      setCurrentSlide(newIndex);
+      setPrevSlide(null);
+      setTransitioning(false);
+      slideStartRef.current = Date.now();
+      setProgress(0);
+      showKeywords(newIndex);
+    }, TRANSITION_DURATION);
+  }, [currentSlide, transitioning, showKeywords]);
 
   useEffect(() => {
     const preloadNext = async () => {
@@ -229,8 +351,14 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
   }, [currentSlide, fetchAudio]);
 
   useEffect(() => {
-    playSlideAudio(currentSlide);
-  }, [currentSlide]);
+    if (!transitioning) {
+      playSlideAudio(currentSlide);
+    }
+  }, [currentSlide, transitioning]);
+
+  useEffect(() => {
+    showKeywords(0);
+  }, []);
 
   useEffect(() => {
     if (audioRef.current) {
@@ -250,19 +378,20 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
       clearInterval(progressIntervalRef.current);
     }
 
-    if (!isPlaying) return;
+    if (!isPlaying || transitioning) return;
 
-    const audioDuration = audioRef.current?.duration
-      ? audioRef.current.duration * 1000 + 2000
-      : SLIDE_DURATION;
-    const totalDuration = Math.max(audioDuration, SLIDE_DURATION);
+    const rawDuration = audioRef.current?.duration;
+    const audioDuration = rawDuration && isFinite(rawDuration)
+      ? rawDuration * 1000 + POST_NARRATION_PAUSE
+      : 14000;
+    const totalDuration = Math.max(audioDuration, 10000);
 
     progressIntervalRef.current = setInterval(() => {
       const elapsed = Date.now() - slideStartRef.current;
       const pct = Math.min((elapsed / totalDuration) * 100, 100);
       setProgress(pct);
 
-      if (pct >= 100) {
+      if (pct >= 100 && narrationEndedRef.current) {
         if (currentSlide < DEMO_SLIDES.length - 1) {
           changeSlide(currentSlide + 1);
         } else {
@@ -276,16 +405,16 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
         clearInterval(progressIntervalRef.current);
       }
     };
-  }, [isPlaying, currentSlide, audioReady, changeSlide]);
+  }, [isPlaying, currentSlide, audioReady, transitioning, changeSlide]);
 
   useEffect(() => {
-    if (isPlaying && audioRef.current && audioReady) {
+    if (isPlaying && audioRef.current && audioReady && !transitioning) {
       initMusic();
       audioRef.current.play().catch(() => {});
     } else if (!isPlaying && audioRef.current) {
       audioRef.current.pause();
     }
-  }, [isPlaying, audioReady, initMusic]);
+  }, [isPlaying, audioReady, transitioning, initMusic]);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -319,11 +448,13 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
       audioCacheRef.current.forEach((url) => URL.revokeObjectURL(url));
       if (musicCleanupRef.current) musicCleanupRef.current();
       if (audioContextRef.current) audioContextRef.current.close().catch(() => {});
-      if (crossfadeTimerRef.current) clearTimeout(crossfadeTimerRef.current);
+      if (transitionTimerRef.current) clearTimeout(transitionTimerRef.current);
+      keywordTimersRef.current.forEach(clearTimeout);
     };
   }, []);
 
   const goToSlide = (index: number) => {
+    if (index === currentSlide) return;
     initMusic();
     changeSlide(index);
     setIsPlaying(true);
@@ -334,8 +465,48 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
     setIsPlaying(!isPlaying);
   };
 
+  const effectiveSlide = transitioning ? currentSlide : currentSlide;
+  const effectiveSlideData = DEMO_SLIDES[effectiveSlide];
+
   return (
     <div className="fixed inset-0 z-[9999] bg-black flex flex-col" data-testid="demo-player">
+      <style>{`
+        @keyframes slideInUp {
+          from { opacity: 0; transform: translateY(24px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes fadeInScale {
+          from { opacity: 0; transform: scale(0.92); }
+          to { opacity: 1; transform: scale(1); }
+        }
+        @keyframes slideInRight {
+          from { opacity: 0; transform: translateX(30px); }
+          to { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes gentleFloat {
+          0%, 100% { transform: translateY(0); }
+          50% { transform: translateY(-3px); }
+        }
+        @keyframes kenBurns {
+          0% { transform: scale(1); }
+          100% { transform: scale(1.04); }
+        }
+        .slide-headline {
+          animation: slideInUp 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+        .slide-keyword {
+          animation: slideInRight 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+        .slide-narration-text {
+          animation: fadeInScale 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+          animation-delay: 0.3s;
+          opacity: 0;
+        }
+        .slide-image-active {
+          animation: kenBurns 15s ease-out forwards;
+        }
+      `}</style>
+
       <div className="flex items-center justify-between gap-4 px-4 py-3 bg-black/80 border-b border-white/10">
         <div className="flex items-center gap-3 flex-wrap">
           <div className="text-white/90 text-sm font-semibold tracking-wide uppercase">
@@ -349,7 +520,7 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
           <Button
             size="icon"
             variant="ghost"
-            className="text-white/70 hover:text-white"
+            className="text-white/70"
             onClick={() => setIsMuted(!isMuted)}
             data-testid="button-demo-mute"
           >
@@ -358,7 +529,7 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
           <Button
             size="icon"
             variant="ghost"
-            className="text-white/70 hover:text-white"
+            className="text-white/70"
             onClick={onClose}
             data-testid="button-demo-close"
           >
@@ -372,36 +543,86 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
 
         <div className="relative w-full max-w-6xl mx-auto px-8">
           <div className="relative rounded-lg overflow-hidden shadow-2xl shadow-blue-500/10 border border-white/5">
-            {outgoingSlideData && (
+            {prevSlideData && transitioning && (
               <img
-                src={outgoingSlideData.image}
-                alt={outgoingSlideData.title}
+                src={prevSlideData.image}
+                alt={prevSlideData.title}
                 className="absolute inset-0 w-full h-full object-cover"
                 style={{
                   zIndex: 1,
-                  opacity: crossfadePhase === "active" ? 0 : 1,
-                  transition: `opacity ${CROSSFADE_DURATION}ms ease-in-out`,
+                  opacity: 0,
+                  transition: `opacity ${TRANSITION_DURATION}ms cubic-bezier(0.4, 0, 0.2, 1)`,
                 }}
               />
             )}
+
             <img
-              src={slide.image}
-              alt={slide.title}
-              className="w-full h-auto relative"
+              key={`slide-${effectiveSlide}`}
+              src={effectiveSlideData.image}
+              alt={effectiveSlideData.title}
+              className={`w-full h-auto relative ${!transitioning ? "slide-image-active" : ""}`}
               style={{
                 zIndex: 2,
-                opacity: outgoingSlide !== null ? (crossfadePhase === "active" ? 1 : 0) : 1,
-                transition: outgoingSlide !== null ? `opacity ${CROSSFADE_DURATION}ms ease-in-out` : undefined,
+                opacity: transitioning ? 0 : 1,
+                transform: transitioning ? "scale(1.06)" : undefined,
+                transition: `opacity ${TRANSITION_DURATION}ms cubic-bezier(0.4, 0, 0.2, 1), transform ${TRANSITION_DURATION}ms cubic-bezier(0.4, 0, 0.2, 1)`,
               }}
               data-testid="img-demo-slide"
             />
-            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent pt-20 pb-6 px-8" style={{ zIndex: 3 }}>
-              <h3 className="text-white text-2xl font-bold mb-2" data-testid="text-demo-title">
-                {slide.title}
-              </h3>
-              <p className="text-white/70 text-sm leading-relaxed max-w-3xl" data-testid="text-demo-narration">
-                {slide.narration}
-              </p>
+
+            <div
+              className="absolute inset-x-0 bottom-0 pt-24 pb-6 px-8"
+              style={{
+                zIndex: 3,
+                background: "linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.85) 30%, rgba(0,0,0,0.5) 60%, transparent 100%)",
+              }}
+            >
+              {headlineVisible && !transitioning && (
+                <div className="slide-headline mb-3">
+                  <span className="inline-block text-xs font-bold uppercase tracking-[0.2em] text-blue-400/90 mb-2">
+                    {slide.title}
+                  </span>
+                  <h3 className="text-white text-2xl sm:text-3xl font-bold leading-tight" data-testid="text-demo-headline">
+                    {slide.headline}
+                  </h3>
+                </div>
+              )}
+
+              {!transitioning && (
+                <div className="flex items-center gap-2 flex-wrap mt-3 mb-3">
+                  {slide.keywords.map((kw, i) => (
+                    <span
+                      key={`${currentSlide}-${i}`}
+                      className="slide-keyword"
+                      style={{
+                        opacity: keywordVisible[i] ? 1 : 0,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "4px",
+                        padding: "3px 10px",
+                        borderRadius: "4px",
+                        background: "rgba(59, 130, 246, 0.2)",
+                        border: "1px solid rgba(59, 130, 246, 0.3)",
+                        color: "rgba(147, 197, 253, 0.95)",
+                        fontSize: "11px",
+                        fontWeight: 600,
+                        letterSpacing: "0.04em",
+                        textTransform: "uppercase" as const,
+                        backdropFilter: "blur(8px)",
+                      }}
+                      data-testid={`badge-keyword-${i}`}
+                    >
+                      {kw}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {!transitioning && (
+                <p className="slide-narration-text text-white/70 text-sm leading-relaxed max-w-3xl" data-testid="text-demo-narration">
+                  {slide.narration}
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -420,7 +641,7 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
             <Button
               size="icon"
               variant="ghost"
-              className="text-white/70 hover:text-white"
+              className="text-white/70"
               onClick={() => currentSlide > 0 && goToSlide(currentSlide - 1)}
               disabled={currentSlide === 0}
               data-testid="button-demo-prev"
@@ -430,7 +651,7 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
             <Button
               size="icon"
               variant="ghost"
-              className="text-white/70 hover:text-white"
+              className="text-white/70"
               onClick={handlePlayPause}
               data-testid="button-demo-play"
             >
@@ -439,7 +660,7 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
             <Button
               size="icon"
               variant="ghost"
-              className="text-white/70 hover:text-white"
+              className="text-white/70"
               onClick={() => currentSlide < DEMO_SLIDES.length - 1 && goToSlide(currentSlide + 1)}
               disabled={currentSlide === DEMO_SLIDES.length - 1}
               data-testid="button-demo-next"
@@ -450,8 +671,11 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
 
           <div className="flex-1 h-1 bg-white/10 rounded-full overflow-hidden">
             <div
-              className="h-full bg-gradient-to-r from-blue-500 to-purple-500 rounded-full transition-all duration-100"
-              style={{ width: `${progress}%` }}
+              className="h-full bg-gradient-to-r from-blue-500 to-purple-500 rounded-full"
+              style={{
+                width: `${progress}%`,
+                transition: "width 100ms linear",
+              }}
               data-testid="bar-demo-progress"
             />
           </div>
@@ -462,10 +686,12 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
             <button
               key={i}
               onClick={() => goToSlide(i)}
-              className={`shrink-0 rounded overflow-hidden border-2 transition-all duration-200 ${
+              className={`shrink-0 rounded overflow-hidden border-2 transition-all duration-300 ${
                 i === currentSlide
                   ? "border-blue-500 opacity-100 scale-105"
-                  : "border-transparent opacity-50 hover:opacity-80"
+                  : i < currentSlide
+                    ? "border-blue-500/30 opacity-60"
+                    : "border-transparent opacity-40 hover:opacity-70"
               }`}
               data-testid={`button-demo-thumb-${i}`}
             >
@@ -478,7 +704,6 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
           ))}
         </div>
       </div>
-
     </div>
   );
 }

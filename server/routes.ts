@@ -11515,14 +11515,14 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
 
   // Demo TTS narration endpoint — restricted to known narration texts only
   const ALLOWED_DEMO_NARRATIONS = new Set([
-    "Welcome to ALMP — the future of AI agent operations. Your command center gives you instant visibility into platform health, KPI progress, and agent status. Everything your team needs, in one intelligent dashboard.",
-    "Define what success looks like with outcome contracts. Set KPIs, SLAs, and pricing models tied to measurable business results. You pay for outcomes, not compute cycles. This is billing, reimagined.",
-    "Your entire agent fleet at your fingertips. The Agent Registry lets you deploy, monitor, and manage hundreds of AI agents across your organization. Each agent operates eighty percent autonomously, with twenty percent expert validation for critical decisions.",
-    "Deploy with confidence using shadow testing, canary rollouts, and automated promotion. Our Release Orchestrator eliminates deployment anxiety with built-in safeguards and rollback at every stage.",
-    "Real-time monitoring powered by OpenTelemetry. Track every agent run, detect drift instantly, and drill into MCP trace waterfalls. Full observability from the first token to the final outcome.",
-    "Enterprise-grade compliance built into every layer. Policy enforcement, SOC 2 and EU AI Act frameworks, immutable audit trails, and automated compliance scoring. Governance that enables, not blocks.",
-    "The twenty percent that makes the eighty work. Unified approval gates combine expert validation with MCP elicitation flows. Risk analysis, blast radius evidence, and one-click decisions keep your agents moving safely.",
-    "Transparent, outcome-based billing with tamper-evident metering. Drill from invoice to event to trace. Every charge is backed by cryptographic proof. Welcome to the new standard in AI billing.",
+    "Welcome to ALMP — the only AI agent platform built around your industry's context. Your command center delivers instant visibility into platform health, KPI progress, and agent fleet status across every environment. One dashboard. Complete operational intelligence.",
+    "Define success on your terms with outcome contracts. Set KPIs, SLAs, and pricing models tied to measurable business results — not compute hours. Tamper-evident metering ensures every charge is backed by cryptographic proof. This is AI billing, reimagined for accountability.",
+    "Your entire agent fleet, organized by industry context. The Agent Registry supports single agents, coordinated teams, and remote A2A agents — each operating with adaptive autonomy calibrated to your industry's risk profile. Build agents that reason within your regulatory and operational framework by default.",
+    "Deploy with confidence using industry-governed deployment pipelines. Healthcare gets clinical safety review and HIPAA attestation. Financial services gets regulatory compliance and suitability testing. Every deployment generates an evidence package for regulatory conformity — with auto-rollback triggers that activate on industry-specific safety events.",
+    "Real-time monitoring powered by OpenTelemetry with industry-calibrated baselines. Track every agent run, detect drift instantly, and drill into MCP trace waterfalls. Full observability with industry-specific KPI monitoring from the first token to the final outcome.",
+    "Enterprise-grade compliance woven into every layer. Policy-as-Code enforcement with OPA Rego and Cedar, SOC 2 and EU AI Act conformity frameworks, and immutable hash-chained audit trails. Five industry profiles — healthcare, financial services, manufacturing, insurance, and retail — each with pre-loaded regulatory frameworks.",
+    "Expert validation gates where it matters most. Every approval comes with blast radius analysis, configuration diffs, and risk scoring calibrated to industry context. One-click decisions backed by evidence keep your agents moving safely through the pipeline.",
+    "Transparent, outcome-based billing with tamper-evident metering. Drill from invoice to event to trace — every charge cryptographically verified. Welcome to the new standard in AI agent billing, where you only pay for measurable results.",
   ]);
 
   const demoTtsCache = new Map<string, Buffer>();
