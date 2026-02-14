@@ -38,8 +38,30 @@ import {
   Target,
   Globe,
   ExternalLink,
+  BookOpen,
+  Columns2,
+  Sparkles,
 } from "lucide-react";
 import type { Agent } from "@shared/schema";
+
+const COMPLIANCE_DESCRIPTIONS: Record<string, string> = {
+  TILA: "Truth in Lending Act",
+  ECOA: "Equal Credit Opportunity Act",
+  FCRA: "Fair Credit Reporting Act",
+  HMDA: "Home Mortgage Disclosure Act",
+  SOC2: "SOC 2 Trust Services",
+  GDPR: "Data Protection (EU)",
+  "PII-Handler": "PII Protection Protocol",
+  DOT: "Transportation Regulations",
+  IATA: "Aviation Standards",
+};
+
+const AUTONOMY_DESCRIPTIONS: Record<string, string> = {
+  manual: "All actions require explicit human approval before execution",
+  assisted: "Agent suggests actions but waits for human confirmation",
+  supervised: "Agent acts autonomously with human oversight and intervention capability",
+  autonomous: "Agent operates independently with full decision-making authority",
+};
 
 interface PlaygroundSession {
   id: number;
@@ -83,6 +105,12 @@ interface Citation {
   title: string;
 }
 
+interface CitationAnnotation {
+  url: string;
+  title: string;
+  tags: string[];
+}
+
 interface ParsedSegment {
   type: "text" | "risk_assessment" | "decision" | "approval_required";
   content: string;
@@ -118,6 +146,16 @@ function parseStructuredBlocks(text: string): ParsedSegment[] {
   return segments.length > 0 ? segments : [{ type: "text", content: text }];
 }
 
+function extractCitationsFromText(text: string): Citation[] {
+  const citations: Citation[] = [];
+  const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
+  let m;
+  while ((m = linkRegex.exec(text)) !== null) {
+    citations.push({ title: m[1], url: m[2] });
+  }
+  return citations;
+}
+
 export default function AgentPlayground() {
   const { id: agentId } = useParams<{ id: string }>();
   const { toast } = useToast();
@@ -127,7 +165,12 @@ export default function AgentPlayground() {
   const [streamingContent, setStreamingContent] = useState("");
   const [pendingUserMsg, setPendingUserMsg] = useState<string | null>(null);
   const [showConfig, setShowConfig] = useState(false);
+  const [compareMode, setCompareMode] = useState(false);
+  const [genericStreamingContent, setGenericStreamingContent] = useState("");
+  const [genericMessages, setGenericMessages] = useState<Array<{ role: string; content: string }>>([]);
+  const [annotatedCitations, setAnnotatedCitations] = useState<CitationAnnotation[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const genericMessagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const { data: agent, isLoading: agentLoading } = useQuery<Agent>({
@@ -183,6 +226,8 @@ export default function AgentPlayground() {
     onSuccess: (data: PlaygroundSession) => {
       queryClient.invalidateQueries({ queryKey: [`/api/agents/${agentId}/playground/sessions`] });
       setActiveSessionId(data.id);
+      setGenericMessages([]);
+      setAnnotatedCitations([]);
     },
     onError: (err: Error) => {
       toast({ title: "Failed to create session", description: err.message, variant: "destructive" });
@@ -197,6 +242,8 @@ export default function AgentPlayground() {
       queryClient.invalidateQueries({ queryKey: [`/api/agents/${agentId}/playground/sessions`] });
       if (activeSessionId === sessionId) {
         setActiveSessionId(null);
+        setGenericMessages([]);
+        setAnnotatedCitations([]);
       }
     },
   });
@@ -205,6 +252,10 @@ export default function AgentPlayground() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamingContent]);
 
+  useEffect(() => {
+    genericMessagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [genericMessages, genericStreamingContent]);
+
   const sendMessage = useCallback(async (overrideContent?: string) => {
     const msgToSend = overrideContent || inputValue.trim();
     if (!msgToSend || !activeSessionId || isStreaming) return;
@@ -212,15 +263,24 @@ export default function AgentPlayground() {
     setPendingUserMsg(msgToSend);
     setIsStreaming(true);
     setStreamingContent("");
+    setGenericStreamingContent("");
 
-    try {
-      const response = await fetch(`/api/agents/${agentId}/playground/chat`, {
+    const compliance = Array.isArray(agent?.complianceTags) ? agent.complianceTags : [];
+    const policies = Array.isArray(agent?.policyBindings) ? agent.policyBindings : [];
+    const hasComplianceContext = compliance.length > 0 || policies.length > 0;
+
+    const streamResponse = async (
+      url: string,
+      body: object,
+      onChunk: (accumulated: string) => void
+    ): Promise<string> => {
+      const response = await fetch(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "X-Role": localStorage.getItem("almp-role") || "admin",
         },
-        body: JSON.stringify({ content: msgToSend, sessionId: activeSessionId }),
+        body: JSON.stringify(body),
       });
 
       if (!response.ok) {
@@ -245,7 +305,7 @@ export default function AgentPlayground() {
               const payload = JSON.parse(line.slice(6));
               if (payload.content) {
                 accumulated += payload.content;
-                setStreamingContent(accumulated);
+                onChunk(accumulated);
               }
               if (payload.error) {
                 toast({ title: "Error", description: payload.error, variant: "destructive" });
@@ -255,17 +315,72 @@ export default function AgentPlayground() {
         }
       }
 
+      return accumulated;
+    };
+
+    try {
+      const contextualizedPromise = streamResponse(
+        `/api/agents/${agentId}/playground/chat`,
+        { content: msgToSend, sessionId: activeSessionId },
+        (acc) => setStreamingContent(acc)
+      );
+
+      let genericPromise: Promise<string> | null = null;
+      if (compareMode) {
+        genericPromise = streamResponse(
+          `/api/agents/${agentId}/playground/chat-generic`,
+          { content: msgToSend, sessionId: activeSessionId },
+          (acc) => setGenericStreamingContent(acc)
+        );
+      }
+
+      const results = await Promise.all(
+        [contextualizedPromise, genericPromise].filter(Boolean) as Promise<string>[]
+      );
+      const contextualizedResult = results[0] || "";
+
+      if (compareMode && results[1] !== undefined) {
+        setGenericMessages((prev) => [
+          ...prev,
+          { role: "user", content: msgToSend },
+          { role: "assistant", content: results[1] },
+        ]);
+      }
+
       queryClient.invalidateQueries({
         queryKey: [`/api/agents/${agentId}/playground/sessions/${activeSessionId}/messages`],
       });
+
+      if (hasWebSearch && hasComplianceContext && contextualizedResult) {
+        const citations = extractCitationsFromText(contextualizedResult);
+        if (citations.length > 0) {
+          try {
+            const annotRes = await fetch(`/api/agents/${agentId}/playground/chat-annotate-citations`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Role": localStorage.getItem("almp-role") || "admin",
+              },
+              body: JSON.stringify({ citations }),
+            });
+            if (annotRes.ok) {
+              const annotData = await annotRes.json();
+              if (annotData.annotations) {
+                setAnnotatedCitations((prev) => [...prev, ...annotData.annotations]);
+              }
+            }
+          } catch {}
+        }
+      }
     } catch (err: any) {
       toast({ title: "Chat error", description: err.message, variant: "destructive" });
     } finally {
       setIsStreaming(false);
       setStreamingContent("");
+      setGenericStreamingContent("");
       setPendingUserMsg(null);
     }
-  }, [inputValue, activeSessionId, isStreaming, agentId, toast]);
+  }, [inputValue, activeSessionId, isStreaming, agentId, toast, compareMode, hasWebSearch, agent]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -316,7 +431,60 @@ export default function AgentPlayground() {
 
   const tools = Array.isArray(agent.toolsConfig) ? (agent.toolsConfig as Array<{ name?: string; description?: string }>) : [];
   const compliance = Array.isArray(agent.complianceTags) ? agent.complianceTags : [];
-  const policies = Array.isArray(agent.policyBindings) ? (agent.policyBindings as Array<{ policyName?: string; enforcement?: string }>) : [];
+  const policies = Array.isArray(agent.policyBindings) ? (agent.policyBindings as Array<{ policyName?: string; enforcement?: string; description?: string }>) : [];
+  const ontologyTags = agent.ontologyTags as Record<string, unknown> | null;
+  const hasContextActive = compliance.length > 0 || policies.length > 0;
+
+  const renderChatMessages = (
+    msgList: Array<{ id?: number; role: string; content: string }>,
+    streaming: boolean,
+    streamContent: string,
+    endRef: React.RefObject<HTMLDivElement>
+  ) => (
+    <div className="space-y-4 max-w-3xl mx-auto">
+      {msgList.length === 0 && !streaming && (
+        <div className="text-center py-12 text-muted-foreground">
+          <Bot className="h-10 w-10 mx-auto mb-3 opacity-40" />
+          <p className="text-sm">Send a message to start the conversation</p>
+        </div>
+      )}
+
+      {msgList.map((msg, idx) => (
+        <MessageBubble
+          key={msg.id || `generic-${idx}`}
+          role={msg.role}
+          content={msg.content}
+          agentName={agent.name}
+          onApproval={handleApprovalAction}
+          isStreaming={false}
+          canInteract={!isStreaming}
+          annotations={annotatedCitations}
+        />
+      ))}
+
+      {pendingUserMsg && (
+        <MessageBubble role="user" content={pendingUserMsg} agentName={agent.name} onApproval={handleApprovalAction} canInteract={false} annotations={[]} />
+      )}
+
+      {streaming && streamContent && (
+        <MessageBubble role="assistant" content={streamContent} agentName={agent.name} isStreaming onApproval={handleApprovalAction} canInteract={false} annotations={[]} />
+      )}
+
+      {streaming && !streamContent && (
+        <div className="flex gap-3">
+          <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+            <Bot className="h-4 w-4 text-primary" />
+          </div>
+          <div className="flex items-center gap-2 text-muted-foreground text-sm">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Thinking...
+          </div>
+        </div>
+      )}
+
+      <div ref={endRef} />
+    </div>
+  );
 
   return (
     <div className="flex h-full" data-testid="agent-playground">
@@ -394,12 +562,18 @@ export default function AgentPlayground() {
       </div>
 
       <div className="flex flex-1 flex-col min-w-0">
-        <div className="flex items-center gap-3 px-4 py-2 border-b">
+        <div className="flex items-center gap-3 px-4 py-2 border-b flex-wrap">
           <Bot className="h-5 w-5 text-primary" />
           <div className="flex-1 min-w-0">
             <h2 className="text-sm font-semibold truncate" data-testid="text-agent-name">{agent.name}</h2>
             <p className="text-xs text-muted-foreground truncate">{agent.description || "Agent Playground"}</p>
           </div>
+          {hasContextActive && (
+            <Badge variant="outline" className="text-purple-600 dark:text-purple-400" data-testid="badge-context-active">
+              <Sparkles className="h-3 w-3 mr-1" />
+              Context Active
+            </Badge>
+          )}
           {hasWebSearch && (
             <Badge variant="outline" className="text-green-600 dark:text-green-400" data-testid="badge-web-search">
               <Globe className="h-3 w-3 mr-1" />
@@ -435,6 +609,65 @@ export default function AgentPlayground() {
               Start New Session
             </Button>
           </div>
+        ) : compareMode ? (
+          <>
+            <div className="flex flex-1 min-h-0">
+              <div className="flex-1 flex flex-col min-w-0" data-testid="panel-contextualized">
+                <div className="px-3 py-1.5 border-b bg-muted/30 flex items-center gap-2">
+                  <Bot className="h-3.5 w-3.5 text-primary" />
+                  <span className="text-xs font-medium truncate">{agent.name}</span>
+                  <Badge variant="outline" className="text-[10px] text-purple-600 dark:text-purple-400">Contextualized</Badge>
+                </div>
+                <ScrollArea className="flex-1 px-4 py-3">
+                  {messagesLoading ? (
+                    <div className="space-y-4">
+                      {Array.from({ length: 3 }).map((_, i) => (
+                        <div key={i} className={`flex gap-3 ${i % 2 === 0 ? "" : "justify-end"}`}>
+                          <Skeleton className="h-16 w-3/4 rounded-lg" />
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    renderChatMessages(messages, isStreaming, streamingContent, messagesEndRef)
+                  )}
+                </ScrollArea>
+              </div>
+              <Separator orientation="vertical" />
+              <div className="flex-1 flex flex-col min-w-0" data-testid="panel-generic">
+                <div className="px-3 py-1.5 border-b bg-muted/30 flex items-center gap-2">
+                  <Bot className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="text-xs font-medium">Generic AI</span>
+                  <Badge variant="secondary" className="text-[10px]">No Context</Badge>
+                </div>
+                <ScrollArea className="flex-1 px-4 py-3">
+                  {renderChatMessages(genericMessages, isStreaming, genericStreamingContent, genericMessagesEndRef)}
+                </ScrollArea>
+              </div>
+            </div>
+            <div className="border-t px-4 py-3">
+              <div className="max-w-3xl mx-auto flex gap-2">
+                <Textarea
+                  ref={textareaRef}
+                  placeholder={`Message ${agent.name}...`}
+                  value={inputValue}
+                  onChange={(e) => setInputValue(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  disabled={isStreaming}
+                  className="min-h-[44px] max-h-[120px] resize-none"
+                  rows={1}
+                  data-testid="input-chat-message"
+                />
+                <Button
+                  onClick={() => sendMessage()}
+                  disabled={!inputValue.trim() || isStreaming}
+                  size="icon"
+                  data-testid="button-send-message"
+                >
+                  {isStreaming ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                </Button>
+              </div>
+            </div>
+          </>
         ) : (
           <>
             <ScrollArea className="flex-1 px-4 py-3">
@@ -464,15 +697,16 @@ export default function AgentPlayground() {
                       onApproval={handleApprovalAction}
                       isStreaming={false}
                       canInteract={!isStreaming}
+                      annotations={annotatedCitations}
                     />
                   ))}
 
                   {pendingUserMsg && (
-                    <MessageBubble role="user" content={pendingUserMsg} agentName={agent.name} onApproval={handleApprovalAction} canInteract={false} />
+                    <MessageBubble role="user" content={pendingUserMsg} agentName={agent.name} onApproval={handleApprovalAction} canInteract={false} annotations={[]} />
                   )}
 
                   {isStreaming && streamingContent && (
-                    <MessageBubble role="assistant" content={streamingContent} agentName={agent.name} isStreaming onApproval={handleApprovalAction} canInteract={false} />
+                    <MessageBubble role="assistant" content={streamingContent} agentName={agent.name} isStreaming onApproval={handleApprovalAction} canInteract={false} annotations={[]} />
                   )}
 
                   {isStreaming && !streamingContent && (
@@ -528,6 +762,75 @@ export default function AgentPlayground() {
             </h3>
             <Separator />
 
+            <ConfigSection title="Active Context" icon={<BookOpen className="h-3.5 w-3.5" />}>
+              <div className="space-y-2">
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-0.5">Autonomy Behavior</p>
+                  <p className="text-xs text-foreground">
+                    {AUTONOMY_DESCRIPTIONS[agent.autonomyMode] || agent.autonomyMode}
+                  </p>
+                </div>
+
+                {compliance.length > 0 && (
+                  <div>
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Compliance Framework</p>
+                    <div className="space-y-1">
+                      {compliance.map((tag, i) => (
+                        <div key={i} className="flex items-center gap-1.5">
+                          <Badge variant="outline" className="text-[10px]" data-testid={`badge-compliance-${tag}`}>{tag}</Badge>
+                          <span className="text-[10px] text-muted-foreground">{COMPLIANCE_DESCRIPTIONS[tag] || tag}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {policies.length > 0 && (
+                  <div>
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Policy Enforcement</p>
+                    <div className="space-y-1.5">
+                      {policies.map((p, i) => {
+                        const isHard = (p.enforcement || "").toUpperCase().includes("HARD");
+                        return (
+                          <div key={i} className="space-y-0.5" data-testid={`policy-item-${i}`}>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs font-medium text-foreground">{p.policyName || `Policy ${i + 1}`}</span>
+                              <Badge
+                                variant={isHard ? "destructive" : "secondary"}
+                                className={`text-[9px] ${!isHard ? "text-yellow-700 dark:text-yellow-400" : ""}`}
+                              >
+                                {isHard ? "HARD BLOCK" : "SOFT WARN"}
+                              </Badge>
+                            </div>
+                            {p.description && (
+                              <p className="text-[10px] text-muted-foreground">{p.description}</p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {ontologyTags && typeof ontologyTags === "object" && Object.keys(ontologyTags).length > 0 && (
+                  <div>
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Ontology Tags</p>
+                    <div className="flex flex-wrap gap-1">
+                      {Object.entries(ontologyTags).map(([key, value], i) => (
+                        <Badge key={i} variant="outline" className="text-[10px]" data-testid={`badge-ontology-${key}`}>
+                          {key}: {String(value)}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {!hasContextActive && !ontologyTags && (
+                  <p className="text-[10px] text-muted-foreground italic">No industry context configured</p>
+                )}
+              </div>
+            </ConfigSection>
+
             <ConfigSection title="Web Search" icon={<Globe className="h-3.5 w-3.5" />}>
               <div className="flex items-center justify-between gap-2">
                 <div className="space-y-0.5">
@@ -547,6 +850,20 @@ export default function AgentPlayground() {
                   Active
                 </Badge>
               )}
+            </ConfigSection>
+
+            <ConfigSection title="Compare Mode" icon={<Columns2 className="h-3.5 w-3.5" />}>
+              <div className="flex items-center justify-between gap-2">
+                <div className="space-y-0.5">
+                  <p className="text-xs text-foreground font-medium">Compare with Generic AI</p>
+                  <p className="text-[10px] text-muted-foreground">Side-by-side contextualized vs generic</p>
+                </div>
+                <Switch
+                  checked={compareMode}
+                  onCheckedChange={setCompareMode}
+                  data-testid="switch-compare-mode"
+                />
+              </div>
             </ConfigSection>
 
             <ConfigSection title="Model" icon={<Bot className="h-3.5 w-3.5" />}>
@@ -831,6 +1148,7 @@ function MessageBubble({
   isStreaming,
   onApproval,
   canInteract,
+  annotations,
 }: {
   role: string;
   content: string;
@@ -838,6 +1156,7 @@ function MessageBubble({
   isStreaming?: boolean;
   onApproval: (action: string, approved: boolean) => void;
   canInteract: boolean;
+  annotations: CitationAnnotation[];
 }) {
   const isUser = role === "user";
   const segments = isUser ? [{ type: "text" as const, content }] : parseStructuredBlocks(content);
@@ -870,7 +1189,7 @@ function MessageBubble({
               }`}
             >
               <div className="whitespace-pre-wrap break-words">
-                <RenderTextWithLinks text={seg.content} isUser={isUser} />
+                <RenderTextWithLinks text={seg.content} isUser={isUser} annotations={annotations} />
               </div>
             </div>
           );
@@ -883,27 +1202,40 @@ function MessageBubble({
   );
 }
 
-function RenderTextWithLinks({ text, isUser }: { text: string; isUser: boolean }) {
+function RenderTextWithLinks({ text, isUser, annotations }: { text: string; isUser: boolean; annotations: CitationAnnotation[] }) {
   const parts = text.split(/(\[([^\]]+)\]\(([^)]+)\))/g);
   const elements: React.ReactNode[] = [];
   let i = 0;
   while (i < parts.length) {
     if (i + 3 < parts.length && parts[i + 1] && parts[i + 1].startsWith("[")) {
       if (parts[i]) elements.push(parts[i]);
+      const linkUrl = parts[i + 3];
+      const linkTitle = parts[i + 2];
+      const annotation = annotations.find((a) => a.url === linkUrl);
       elements.push(
-        <a
-          key={i}
-          href={parts[i + 3]}
-          target="_blank"
-          rel="noopener noreferrer"
-          className={`inline-flex items-center gap-0.5 underline underline-offset-2 ${
-            isUser ? "text-primary-foreground/90 hover:text-primary-foreground" : "text-primary hover:text-primary/80"
-          }`}
-          data-testid="link-citation"
-        >
-          {parts[i + 2]}
-          <ExternalLink className="h-3 w-3 inline shrink-0" />
-        </a>
+        <span key={i} className="inline">
+          <a
+            href={linkUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`inline-flex items-center gap-0.5 underline underline-offset-2 ${
+              isUser ? "text-primary-foreground/90 hover:text-primary-foreground" : "text-primary hover:text-primary/80"
+            }`}
+            data-testid="link-citation"
+          >
+            {linkTitle}
+            <ExternalLink className="h-3 w-3 inline shrink-0" />
+          </a>
+          {annotation && annotation.tags && annotation.tags.length > 0 && (
+            <span className="inline-flex gap-0.5 ml-1">
+              {annotation.tags.map((tag, ti) => (
+                <Badge key={ti} variant="outline" className="text-[9px] py-0 px-1" data-testid="badge-citation-tag">
+                  {tag}
+                </Badge>
+              ))}
+            </span>
+          )}
+        </span>
       );
       i += 4;
     } else {

@@ -15300,56 +15300,309 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
     }
   });
 
+  app.post("/api/agents/:agentId/playground/chat-generic", async (req, res) => {
+    try {
+      const { agentId } = req.params;
+      const { content, sessionId } = req.body;
+
+      if (!content || typeof content !== "string") {
+        return res.status(400).json({ error: "content (string) is required" });
+      }
+
+      const agent = await storage.getAgent(agentId);
+      if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+      const existingMsgs = sessionId
+        ? await db.select().from(chatMessages)
+            .where(eq(chatMessages.conversationId, sessionId))
+            .orderBy(chatMessages.createdAt)
+        : [];
+
+      const genericPrompt = buildAgentSystemPrompt(agent, { generic: true });
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+
+      let fullResponse = "";
+
+      const chatMsgs: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+        { role: "system", content: genericPrompt },
+        ...existingMsgs.map(m => ({
+          role: m.role as "user" | "assistant",
+          content: m.content,
+        })),
+        { role: "user" as const, content },
+      ];
+
+      const stream = await openai.chat.completions.create({
+        model: agent.modelName || "gpt-4.1",
+        messages: chatMsgs,
+        stream: true,
+        max_completion_tokens: 4096,
+      });
+
+      for await (const chunk of stream) {
+        const c = chunk.choices[0]?.delta?.content || "";
+        if (c) {
+          fullResponse += c;
+          res.write(`data: ${JSON.stringify({ content: c })}\n\n`);
+        }
+      }
+
+      res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+      res.end();
+    } catch (e: any) {
+      console.error("Generic chat error:", e);
+      if (res.headersSent) {
+        res.write(`data: ${JSON.stringify({ error: e.message })}\n\n`);
+        res.end();
+      } else {
+        res.status(500).json({ error: e.message });
+      }
+    }
+  });
+
+  app.post("/api/agents/:agentId/playground/chat-annotate-citations", async (req, res) => {
+    try {
+      const { agentId } = req.params;
+      const { citations } = req.body;
+
+      if (!Array.isArray(citations) || citations.length === 0) {
+        return res.json({ annotations: [] });
+      }
+
+      const agent = await storage.getAgent(agentId);
+      if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+      const compliance = Array.isArray(agent.complianceTags) ? agent.complianceTags : [];
+      const policies = Array.isArray(agent.policyBindings)
+        ? (agent.policyBindings as Array<{ policyName?: string; name?: string; description?: string }>)
+        : [];
+
+      if (compliance.length === 0 && policies.length === 0) {
+        return res.json({ annotations: citations.map((c: any) => ({ ...c, tags: [] })) });
+      }
+
+      const frameworks = [
+        ...compliance.map((t: string) => t),
+        ...policies.map(p => p.policyName || p.name || ""),
+      ].filter(Boolean);
+
+      const prompt = `Given these regulatory frameworks: ${frameworks.join(", ")}
+
+And these web search citations:
+${citations.map((c: any, i: number) => `${i + 1}. "${c.title}" (${c.url})`).join("\n")}
+
+For each citation, determine which regulatory frameworks (if any) it is relevant to. Return ONLY a JSON array where each element has:
+- index: the 0-based index
+- tags: array of relevant framework names from the list above (empty array if none match)
+
+Return ONLY valid JSON array, no explanation.`;
+
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4.1-mini",
+        messages: [{ role: "user", content: prompt }],
+        max_completion_tokens: 1024,
+        temperature: 0.1,
+      });
+
+      const content = completion.choices[0]?.message?.content || "[]";
+      let parsed: any[] = [];
+      try {
+        const cleaned = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+        parsed = JSON.parse(cleaned);
+      } catch {
+        const arrayMatch = content.match(/\[[\s\S]*\]/);
+        if (arrayMatch) {
+          try { parsed = JSON.parse(arrayMatch[0]); } catch { /* fallback */ }
+        }
+      }
+
+      const annotated = citations.map((c: any, i: number) => {
+        const match = parsed.find((p: any) => p.index === i);
+        return { ...c, tags: match?.tags || [] };
+      });
+
+      res.json({ annotations: annotated });
+    } catch (e: any) {
+      console.error("Citation annotation error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Start the job worker
   startWorker();
 
   return httpServer;
 }
 
-function buildAgentSystemPrompt(agent: any): string {
+function buildAgentSystemPrompt(agent: any, options?: { generic?: boolean }): string {
   const parts: string[] = [];
+  const isGeneric = options?.generic === true;
 
-  parts.push(`You are "${agent.name}", an AI agent managed on the ALMP platform.`);
+  if (isGeneric) {
+    parts.push(`You are a helpful AI assistant. Answer the user's question directly and helpfully. Do not reference any specific regulations, compliance frameworks, policies, or industry context unless the user explicitly mentions them. Give a general-purpose answer.`);
+    parts.push(`\n\nIMPORTANT — STRUCTURED OUTPUT INSTRUCTIONS:
+When you perform analysis, assessments, or make decisions, you MUST embed structured blocks in your response using fenced code blocks with special labels. The UI will parse these and render them as rich visual cards. Always include these blocks alongside your natural language explanation.
+
+Available structured block types:
+
+1. RISK ASSESSMENT — Use when evaluating risk, scoring applications, assessing threats, or rating anything:
+\`\`\`risk_assessment
+{
+  "title": "Brief title of what is being assessed",
+  "score": 0-100,
+  "level": "low" | "medium" | "high" | "critical",
+  "factors": [
+    {"name": "Factor name", "impact": "positive" | "negative" | "neutral", "detail": "One sentence explanation"}
+  ]
+}
+\`\`\`
+
+2. DECISION — Use when you reach a conclusion, recommendation, or verdict:
+\`\`\`decision
+{
+  "title": "Brief title of the decision",
+  "outcome": "approved" | "rejected" | "review_required" | "escalated",
+  "confidence": 0-100,
+  "reasoning": ["Reason 1", "Reason 2", "Reason 3"],
+  "conditions": ["Any conditions or caveats, if applicable"]
+}
+\`\`\`
+
+3. APPROVAL REQUIRED — Use when risk is HIGH or CRITICAL:
+\`\`\`approval_required
+{
+  "action": "What action needs approval",
+  "risk_level": "low" | "medium" | "high" | "critical",
+  "reason": "Why human approval is needed",
+  "details": "Additional context for the reviewer"
+}
+\`\`\`
+
+RULES:
+- Always use these blocks when performing assessments or making decisions.
+- The JSON inside blocks must be valid JSON.`);
+    return parts.join("\n");
+  }
+
+  parts.push(`You are "${agent.name}", an AI agent managed on the ALMP (Agent Lifecycle Management Platform).`);
+  parts.push(`\nUNLIKE a generic AI assistant, you operate within a specific INDUSTRY CONTEXT with regulatory guardrails, policy enforcement, and domain ontology. Every response you give MUST reflect this context. This is what makes you different from ChatGPT or any generic LLM.`);
 
   if (agent.description) {
     parts.push(`\nYour purpose: ${agent.description}`);
   }
 
   if (agent.riskTier) {
-    parts.push(`\nRisk tier: ${agent.riskTier}. Autonomy mode: ${agent.autonomyMode || "assisted"}.`);
-  }
-
-  const tools = Array.isArray(agent.toolsConfig) ? agent.toolsConfig as Array<{ name?: string; description?: string }> : [];
-  if (tools.length > 0) {
-    parts.push(`\nYou have access to these tools (simulate their behavior in conversation):`);
-    tools.forEach(t => {
-      parts.push(`- ${t.name}: ${t.description || "No description"}`);
-    });
+    const autonomyMode = agent.autonomyMode || "assisted";
+    parts.push(`\n## OPERATIONAL PARAMETERS`);
+    parts.push(`- Risk Tier: ${agent.riskTier}`);
+    parts.push(`- Autonomy Mode: ${autonomyMode}`);
+    const autonomyInstructions: Record<string, string> = {
+      manual: "You CANNOT take any action without explicit human approval. Always present options and wait for approval before proceeding.",
+      assisted: "You can perform routine, low-risk actions autonomously but MUST request human approval for medium or high-risk decisions. Always explain your reasoning.",
+      supervised: "You can operate semi-autonomously but a human supervisor reviews your outputs. Flag any decision that touches policy boundaries or high-risk factors for explicit sign-off.",
+      autonomous: "You can operate with high autonomy on routine tasks, but MUST still respect hard-block policies and escalation rules. Self-audit your decisions against policy constraints.",
+    };
+    parts.push(`- Behavioral Rule: ${autonomyInstructions[autonomyMode] || autonomyInstructions.assisted}`);
   }
 
   const compliance = Array.isArray(agent.complianceTags) ? agent.complianceTags : [];
   if (compliance.length > 0) {
-    parts.push(`\nYou must comply with: ${compliance.join(", ")}.`);
+    parts.push(`\n## REGULATORY COMPLIANCE FRAMEWORK`);
+    parts.push(`You are bound by the following regulations and MUST actively reference them in your analysis:`);
+    const regulationDescriptions: Record<string, string> = {
+      TILA: "Truth in Lending Act — Requires clear disclosure of loan terms, APR, and total costs to borrowers. You must ensure all rate/cost information is transparently communicated.",
+      ECOA: "Equal Credit Opportunity Act — Prohibits discrimination in lending. You must NEVER consider race, religion, national origin, sex, marital status, or age (except as permitted) in credit decisions.",
+      FCRA: "Fair Credit Reporting Act — Governs use of consumer credit information. You must ensure credit data is used only for permissible purposes and applicants are notified of adverse actions based on credit reports.",
+      HMDA: "Home Mortgage Disclosure Act — Requires collection and reporting of mortgage lending data. You must track and report relevant demographic and geographic data for compliance.",
+      SOC2: "SOC 2 Compliance — You must protect data confidentiality, ensure processing integrity, and maintain availability. All operations should follow the trust services criteria.",
+      GDPR: "General Data Protection Regulation — You must minimize personal data collection, ensure data portability, honor right-to-erasure requests, and never process personal data without lawful basis.",
+      "PII-Handler": "PII Handling Protocol — You must identify, protect, and redact Personally Identifiable Information. Never expose PII in logs, responses, or unprotected channels.",
+      HIPAA: "Health Insurance Portability and Accountability Act — You must protect all Protected Health Information (PHI) and ensure minimum necessary access.",
+      "PCI-DSS": "Payment Card Industry Data Security Standard — You must never store, process, or transmit cardholder data without proper controls.",
+      DOT: "Department of Transportation regulations — You must reference applicable travel safety regulations and consumer protection rules.",
+      TSA: "Transportation Security Administration — You must be aware of security-related travel requirements and restrictions.",
+      IATA: "International Air Transport Association standards — Reference applicable booking, ticketing, and passenger rights guidelines.",
+    };
+    compliance.forEach((tag: string) => {
+      const desc = regulationDescriptions[tag];
+      if (desc) {
+        parts.push(`- **${tag}**: ${desc}`);
+      } else {
+        parts.push(`- **${tag}**: You must comply with this regulation in all responses and decisions.`);
+      }
+    });
+    parts.push(`\nWhen analyzing data or making recommendations, EXPLICITLY cite which regulation(s) inform your reasoning. For example: "Under ECOA, this factor cannot be considered..." or "Per TILA requirements, the APR must be disclosed as..."`);
   }
 
-  const policies = Array.isArray(agent.policyBindings) ? agent.policyBindings as Array<{ policyName?: string; enforcement?: string }> : [];
+  const policies = Array.isArray(agent.policyBindings) ? agent.policyBindings as Array<{ policyName?: string; name?: string; description?: string; enforcement?: string }> : [];
   if (policies.length > 0) {
-    parts.push(`\nPolicy bindings:`);
+    parts.push(`\n## ACTIVE POLICY ENFORCEMENT`);
+    parts.push(`The following policies are bound to you and enforce behavioral constraints:`);
     policies.forEach(p => {
-      parts.push(`- ${p.policyName} (${p.enforcement || "soft"})`);
+      const name = p.policyName || p.name || "Unnamed Policy";
+      const enforcement = (p.enforcement || "soft").toUpperCase();
+      const desc = p.description || "";
+      if (enforcement === "HARD" || enforcement === "HARD_BLOCK") {
+        parts.push(`- 🛑 [HARD BLOCK] ${name}: ${desc || "Violation will halt the action immediately. You CANNOT bypass this."}`);
+      } else {
+        parts.push(`- ⚠️ [SOFT WARN] ${name}: ${desc || "Violations are logged and flagged but do not block execution."}`);
+      }
+    });
+    parts.push(`\nFor HARD BLOCK policies: If your response would violate any of these, you MUST stop and trigger an approval_required block instead of proceeding.`);
+    parts.push(`For SOFT WARN policies: You may proceed but must acknowledge the policy consideration in your response.`);
+  }
+
+  const ontologyTags = agent.ontologyTags && typeof agent.ontologyTags === "object" ? agent.ontologyTags : null;
+  if (ontologyTags) {
+    parts.push(`\n## DOMAIN ONTOLOGY`);
+    parts.push(`You reason using the following industry knowledge graph concepts:`);
+    if (Array.isArray(ontologyTags)) {
+      ontologyTags.forEach((tag: any) => {
+        if (typeof tag === "string") {
+          parts.push(`- ${tag}`);
+        } else if (tag.concept && tag.category) {
+          parts.push(`- ${tag.concept} (${tag.category}): ${tag.description || ""}`);
+        }
+      });
+    } else if (typeof ontologyTags === "object") {
+      Object.entries(ontologyTags).forEach(([key, val]) => {
+        if (typeof val === "string") {
+          parts.push(`- ${key}: ${val}`);
+        } else if (Array.isArray(val)) {
+          parts.push(`- ${key}: ${val.join(", ")}`);
+        }
+      });
+    }
+    parts.push(`\nUse these domain concepts in your analysis. Reference specific ontology terms when they are relevant to the user's question.`);
+  }
+
+  const tools = Array.isArray(agent.toolsConfig) ? agent.toolsConfig as Array<{ name?: string; description?: string }> : [];
+  if (tools.length > 0) {
+    parts.push(`\n## TOOLS`);
+    parts.push(`You have access to these tools (simulate their behavior in conversation):`);
+    tools.forEach(t => {
+      parts.push(`- ${t.name}: ${t.description || "No description"}`);
     });
   }
 
   const bp = agent.blueprintJson && typeof agent.blueprintJson === "object" ? agent.blueprintJson as Record<string, unknown> : {};
   const nodes = Array.isArray(bp.nodes) ? bp.nodes as Array<{ label?: string; type?: string }> : [];
   if (nodes.length > 0) {
-    parts.push(`\nYour workflow steps:`);
+    parts.push(`\n## WORKFLOW STEPS`);
     nodes.forEach((n, i) => {
       parts.push(`${i + 1}. ${n.label || "Step"} (${n.type || "action"})`);
     });
   }
 
-  parts.push(`\nRespond helpfully and stay in character. If asked about capabilities you don't have, explain what you would do if those tools were available.`);
+  parts.push(`\n## BEHAVIORAL GUIDELINES`);
+  parts.push(`- Respond helpfully and stay in character as "${agent.name}".`);
+  parts.push(`- ALWAYS ground your responses in your configured industry context, compliance frameworks, and policies.`);
+  parts.push(`- When searching the web, interpret and filter results through your regulatory and domain lens — do not just relay raw information.`);
+  parts.push(`- If asked about capabilities you don't have, explain what you would do if those tools were available.`);
+  parts.push(`- Cite specific regulations, policies, or ontology concepts by name when they are relevant.`);
 
   parts.push(`
 
