@@ -22,6 +22,10 @@ import {
   ChevronLeft,
   FileCode,
   Download,
+  Factory,
+  ClipboardCheck,
+  FileCheck,
+  AlertOctagon,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -48,6 +52,8 @@ import { usePermission, PermissionGate } from "@/components/role-provider";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Deployment, Agent, Approval, EvalSuite } from "@shared/schema";
+import { mandatoryPipelineStages, industryRollbackTriggers, evidencePackageItems, getIndustryFromAgent, industryLabels, type IndustryId, type DeploymentStageRecord, type DeploymentEvidenceRecord } from "@/lib/industry-deployment-pipeline";
+import { useIndustry } from "@/components/industry-provider";
 
 const envColors: Record<string, string> = {
   staging: "bg-purple-500/10 text-purple-600 dark:text-purple-400",
@@ -1093,6 +1099,8 @@ export default function Deployments() {
     queryKey: ["/api/eval-suites"],
   });
 
+  const { industry: activeIndustry } = useIndustry();
+
   const createMutation = useMutation({
     mutationFn: async (data: Record<string, any>) => {
       const res = await apiRequest("POST", "/api/deployments", data);
@@ -1213,6 +1221,154 @@ export default function Deployments() {
         />
       </div>
 
+      {(() => {
+        const validIndustries: IndustryId[] = ["healthcare", "financial_services", "manufacturing", "insurance", "retail"];
+        const detectedIndustry = activeIndustry && validIndustries.includes(activeIndustry.id as IndustryId) ? (activeIndustry.id as IndustryId) : null;
+
+        return (
+          <Card data-testid="industry-pipeline-card">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <Factory className="w-4 h-4 text-muted-foreground" />
+                  <CardTitle className="text-sm font-medium">Industry Deployment Pipeline</CardTitle>
+                </div>
+                {detectedIndustry && (
+                  <Badge variant="outline" className="text-[10px]" data-testid="badge-pipeline-industry">
+                    {industryLabels[detectedIndustry]}
+                  </Badge>
+                )}
+              </div>
+            </CardHeader>
+            <CardContent>
+              {!detectedIndustry ? (
+                <div className="flex items-center gap-2 p-4 rounded-md bg-muted/20" data-testid="pipeline-no-industry">
+                  <Factory className="w-4 h-4 text-muted-foreground shrink-0" />
+                  <span className="text-xs text-muted-foreground">
+                    Select an industry workspace to view mandatory deployment pipeline stages.
+                  </span>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4" data-testid="pipeline-panels">
+                  <div className="flex flex-col gap-3 bg-muted/30 rounded-md p-3" data-testid="panel-pipeline-stages">
+                    <div className="flex items-center gap-1.5">
+                      <ClipboardCheck className="w-3.5 h-3.5 text-muted-foreground" />
+                      <span className="text-xs font-medium">Pipeline Stages</span>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      {mandatoryPipelineStages[detectedIndustry].map((stage) => (
+                        <div key={stage.id} className="flex flex-col gap-1.5 p-2.5 rounded-md bg-background/50" data-testid={`pipeline-stage-${stage.id}`}>
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary/10 text-[10px] font-semibold text-primary shrink-0" data-testid={`stage-order-${stage.id}`}>
+                                {stage.order}
+                              </span>
+                              <span className="text-xs font-medium truncate" data-testid={`stage-name-${stage.id}`}>{stage.name}</span>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              {stage.mandatory && (
+                                <Badge variant="destructive" className="text-[10px]" data-testid={`badge-mandatory-${stage.id}`}>
+                                  Mandatory
+                                </Badge>
+                              )}
+                              <Badge variant="outline" className="text-[10px]" data-testid={`badge-attestation-${stage.id}`}>
+                                {stage.attestationType}
+                              </Badge>
+                            </div>
+                          </div>
+                          <span className="text-[10px] text-muted-foreground" data-testid={`stage-desc-${stage.id}`}>{stage.description}</span>
+                          <div className="flex items-center gap-1 flex-wrap">
+                            {stage.requiredArtifacts.map((artifact) => (
+                              <Badge key={artifact} variant="secondary" className="text-[9px]" data-testid={`badge-artifact-${stage.id}-${artifact}`}>
+                                {artifact.replace(/_/g, " ")}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-3 bg-muted/30 rounded-md p-3" data-testid="panel-rollback-triggers">
+                    <div className="flex items-center gap-1.5">
+                      <AlertOctagon className="w-3.5 h-3.5 text-muted-foreground" />
+                      <span className="text-xs font-medium">Rollback Triggers</span>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      {industryRollbackTriggers[detectedIndustry].map((trigger) => {
+                        const severityColor = trigger.severity === "critical"
+                          ? "bg-red-500/10 text-red-600 dark:text-red-400"
+                          : trigger.severity === "high"
+                            ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                            : "bg-blue-500/10 text-blue-600 dark:text-blue-400";
+                        const conditionLabel = trigger.condition === "any_event"
+                          ? "Any Event"
+                          : trigger.condition === "below"
+                            ? `Below ${trigger.threshold}${trigger.unit || ""}`
+                            : `Above ${trigger.threshold}${trigger.unit || ""}`;
+                        return (
+                          <div key={trigger.id} className="flex flex-col gap-1.5 p-2.5 rounded-md bg-background/50" data-testid={`rollback-trigger-${trigger.id}`}>
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs font-medium truncate" data-testid={`trigger-name-${trigger.id}`}>{trigger.name}</span>
+                              <Badge variant="outline" className={`text-[10px] ${severityColor}`} data-testid={`badge-severity-${trigger.id}`}>
+                                {trigger.severity}
+                              </Badge>
+                            </div>
+                            <span className="text-[10px] text-muted-foreground" data-testid={`trigger-desc-${trigger.id}`}>{trigger.description}</span>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <Badge variant="outline" className="text-[10px]" data-testid={`badge-condition-${trigger.id}`}>
+                                {conditionLabel}
+                              </Badge>
+                              {trigger.autoRollback && (
+                                <Badge variant="destructive" className="text-[10px]" data-testid={`badge-auto-rollback-${trigger.id}`}>
+                                  Auto-Rollback
+                                </Badge>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-3 bg-muted/30 rounded-md p-3" data-testid="panel-evidence-package">
+                    <div className="flex items-center gap-1.5">
+                      <FileCheck className="w-3.5 h-3.5 text-muted-foreground" />
+                      <span className="text-xs font-medium">Evidence Package</span>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      {evidencePackageItems[detectedIndustry].map((item) => (
+                        <div key={item.id} className="flex flex-col gap-1 p-2.5 rounded-md bg-background/50" data-testid={`evidence-item-${item.id}`}>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-medium truncate" data-testid={`evidence-name-${item.id}`}>{item.name}</span>
+                            {item.required && (
+                              <Badge variant="destructive" className="text-[10px]" data-testid={`badge-required-${item.id}`}>
+                                Required
+                              </Badge>
+                            )}
+                          </div>
+                          <span className="text-[10px] text-muted-foreground" data-testid={`evidence-desc-${item.id}`}>{item.description}</span>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {item.regulation && (
+                              <Badge variant="outline" className="text-[10px]" data-testid={`badge-regulation-${item.id}`}>
+                                {item.regulation}
+                              </Badge>
+                            )}
+                            <Badge variant="secondary" className="text-[9px]" data-testid={`badge-source-${item.id}`}>
+                              {item.source.replace(/_/g, " ")}
+                            </Badge>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        );
+      })()}
+
       <FreezeCenter agents={agents || []} deployments={allDeploys} />
 
       <Card>
@@ -1250,6 +1406,37 @@ export default function Deployments() {
                   {dep.environment}
                 </Badge>
                 <StatusBadge status={dep.status} />
+                {(() => {
+                  const stages = (dep as any).pipelineStages as any[] | undefined;
+                  if (stages && stages.length > 0) {
+                    const completed = stages.filter((s: any) => s.status === "completed").length;
+                    const total = stages.length;
+                    const allDone = completed === total;
+                    return (
+                      <Badge
+                        variant="outline"
+                        className={`text-[10px] ${allDone ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-amber-500/10 text-amber-600 dark:text-amber-400"}`}
+                        data-testid={`badge-pipeline-status-${dep.id}`}
+                      >
+                        Pipeline {completed}/{total}
+                      </Badge>
+                    );
+                  }
+                  return null;
+                })()}
+                {(() => {
+                  const evidence = (dep as any).evidencePackage as any[] | undefined;
+                  if (evidence && evidence.length > 0) {
+                    const collected = evidence.filter((e: any) => e.collected).length;
+                    const total = evidence.length;
+                    return (
+                      <Badge variant="outline" className="text-[10px]" data-testid={`badge-evidence-status-${dep.id}`}>
+                        Evidence {collected}/{total}
+                      </Badge>
+                    );
+                  }
+                  return null;
+                })()}
                 <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
               </div>
             </div>

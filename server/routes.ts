@@ -1297,6 +1297,83 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/deployments/:id/initialize-pipeline", async (req, res) => {
+    try {
+      const deployment = await storage.getDeployment(req.params.id);
+      if (!deployment) return res.status(404).json({ message: "Deployment not found" });
+      const { industry, stages, rollbackTriggers, evidenceItems } = req.body;
+      const stageRecords = (stages || []).map((s: any) => ({
+        stageId: s.id,
+        status: "pending",
+        artifacts: [],
+      }));
+      const evidenceRecords = (evidenceItems || []).map((e: any) => ({
+        itemId: e.id,
+        collected: false,
+      }));
+      const updated = await storage.updateDeployment(req.params.id, {
+        industry: industry || null,
+        pipelineStages: stageRecords,
+        industryRollbackTriggers: rollbackTriggers || [],
+        evidencePackage: evidenceRecords,
+        pipelineComplete: false,
+      });
+      res.json(updated);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.post("/api/deployments/:id/advance-stage", async (req, res) => {
+    try {
+      const deployment = await storage.getDeployment(req.params.id);
+      if (!deployment) return res.status(404).json({ message: "Deployment not found" });
+      const { stageId, status, attestation, completedBy } = req.body;
+      if (!stageId || !status) return res.status(400).json({ message: "stageId and status are required" });
+      const stages = (deployment.pipelineStages as any[]) || [];
+      const idx = stages.findIndex((s: any) => s.stageId === stageId);
+      if (idx === -1) return res.status(404).json({ message: "Stage not found" });
+      stages[idx] = {
+        ...stages[idx],
+        status,
+        ...(status === "completed" ? { completedAt: new Date().toISOString(), completedBy: completedBy || "system", attestation } : {}),
+      };
+      const allComplete = stages.every((s: any) => s.status === "completed" || s.status === "skipped");
+      const updated = await storage.updateDeployment(req.params.id, {
+        pipelineStages: stages,
+        pipelineComplete: allComplete,
+      });
+      res.json(updated);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.post("/api/deployments/:id/collect-evidence", async (req, res) => {
+    try {
+      const deployment = await storage.getDeployment(req.params.id);
+      if (!deployment) return res.status(404).json({ message: "Deployment not found" });
+      const { itemId, sourceLink, summary } = req.body;
+      if (!itemId) return res.status(400).json({ message: "itemId is required" });
+      const evidence = (deployment.evidencePackage as any[]) || [];
+      const idx = evidence.findIndex((e: any) => e.itemId === itemId);
+      if (idx === -1) return res.status(404).json({ message: "Evidence item not found" });
+      evidence[idx] = {
+        ...evidence[idx],
+        collected: true,
+        collectedAt: new Date().toISOString(),
+        sourceLink: sourceLink || null,
+        summary: summary || null,
+      };
+      const updated = await storage.updateDeployment(req.params.id, {
+        evidencePackage: evidence,
+      });
+      res.json(updated);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
   app.post("/api/deployments/:id/promote", async (req, res) => {
     try {
       const source = await storage.getDeployment(req.params.id);

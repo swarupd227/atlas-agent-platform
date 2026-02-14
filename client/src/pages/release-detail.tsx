@@ -25,7 +25,14 @@ import {
   BarChart3,
   ArrowUpRight,
   ShieldCheck,
+  Factory,
+  ClipboardCheck,
+  FileCheck,
+  AlertOctagon,
+  Circle,
+  CheckCircle2,
 } from "lucide-react";
+import { mandatoryPipelineStages, industryRollbackTriggers, evidencePackageItems, industryLabels, type IndustryId, type DeploymentStageRecord, type DeploymentEvidenceRecord, getPipelineCompletion, getEvidenceCompletion } from "@/lib/industry-deployment-pipeline";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -41,6 +48,8 @@ import {
 } from "@/components/ui/dialog";
 import { StatusBadge } from "@/components/status-badge";
 import { BlastRadius } from "@/components/blast-radius";
+import { useIndustry } from "@/components/industry-provider";
+import { getIndustryFromAgent } from "@/lib/industry-deployment-pipeline";
 import { InfoRow, formatDate, formatHash } from "@/components/shared-utils";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -697,6 +706,7 @@ export default function ReleaseDetail() {
   const [, params] = useRoute("/deployments/:id");
   const [, navigate] = useLocation();
   const { toast } = useToast();
+  const { industry: activeIndustry } = useIndustry();
   const id = params?.id;
   const [promoteOpen, setPromoteOpen] = useState(false);
 
@@ -762,6 +772,48 @@ export default function ReleaseDetail() {
     },
   });
 
+  const initPipelineMutation = useMutation({
+    mutationFn: async (data: any) => {
+      const res = await apiRequest("POST", `/api/deployments/${id}/initialize-pipeline`, data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deployments", id] });
+      toast({ title: "Pipeline initialized", description: "Industry deployment pipeline has been configured." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to initialize pipeline", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const advanceStageMutation = useMutation({
+    mutationFn: async (data: { stageId: string; status: string; attestation?: string; completedBy?: string }) => {
+      const res = await apiRequest("POST", `/api/deployments/${id}/advance-stage`, data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deployments", id] });
+      toast({ title: "Stage updated" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to update stage", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const collectEvidenceMutation = useMutation({
+    mutationFn: async (data: { itemId: string; sourceLink?: string; summary?: string }) => {
+      const res = await apiRequest("POST", `/api/deployments/${id}/collect-evidence`, data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deployments", id] });
+      toast({ title: "Evidence collected" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to collect evidence", description: err.message, variant: "destructive" });
+    },
+  });
+
   if (isLoading) {
     return (
       <div className="flex flex-col gap-6 p-6">
@@ -791,6 +843,19 @@ export default function ReleaseDetail() {
     deployment.status !== "promoted";
   const canRollback = deployment.status === "deployed" || deployment.status === "canary" || deployment.status === "active";
   const isShadow = deployment.rolloutStrategy === "shadow";
+  const validIndustries: IndustryId[] = ["healthcare", "financial_services", "manufacturing", "insurance", "retail"];
+  const fromDeployment = deployment.industry as string | null;
+  const fromWorkspace = activeIndustry?.id as string | null;
+  const rawIndustry = fromDeployment || fromWorkspace || null;
+  const detectedIndustry = rawIndustry && validIndustries.includes(rawIndustry as IndustryId) ? rawIndustry as IndustryId : null;
+  const stages = detectedIndustry ? mandatoryPipelineStages[detectedIndustry] || [] : [];
+  const stageRecords = (deployment.pipelineStages as DeploymentStageRecord[]) || [];
+  const evidenceRecords = (deployment.evidencePackage as DeploymentEvidenceRecord[]) || [];
+  const rollbackTrigs = detectedIndustry ? industryRollbackTriggers[detectedIndustry] || [] : [];
+  const evidenceItems = detectedIndustry ? evidencePackageItems[detectedIndustry] || [] : [];
+  const pipelineProgress = getPipelineCompletion(stageRecords, stages);
+  const evidenceProgress = getEvidenceCompletion(evidenceRecords, evidenceItems);
+  const pipelineBlocked = deployment.pipelineComplete === false && stageRecords.length > 0;
 
   return (
     <div className="flex flex-col gap-6 p-6" data-testid="page-release-detail">
@@ -832,13 +897,21 @@ export default function ReleaseDetail() {
             </Button>
           )}
           {canPromote && (
-            <Button
-              onClick={() => setPromoteOpen(true)}
-              data-testid="button-promote"
-            >
-              <ArrowRight className="w-4 h-4 mr-1.5" />
-              Promote to {envOrder[envOrder.indexOf(deployment.environment) + 1]}
-            </Button>
+            <div className="flex items-center gap-2">
+              {pipelineBlocked && (
+                <span className="text-xs text-amber-600 dark:text-amber-400" data-testid="text-pipeline-block-warning">
+                  Complete all mandatory pipeline stages before promoting
+                </span>
+              )}
+              <Button
+                onClick={() => setPromoteOpen(true)}
+                disabled={pipelineBlocked}
+                data-testid="button-promote"
+              >
+                <ArrowRight className="w-4 h-4 mr-1.5" />
+                Promote to {envOrder[envOrder.indexOf(deployment.environment) + 1]}
+              </Button>
+            </div>
           )}
           {canRollback && (
             <Button
@@ -862,6 +935,242 @@ export default function ReleaseDetail() {
         <FallbackRouting deployment={deployment} allDeployments={allDeployments || []} />
         <PromotionHistory deployment={deployment} allDeployments={allDeployments || []} />
       </div>
+
+      {detectedIndustry && (
+        <Card data-testid="section-industry-pipeline">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-2">
+                <Factory className="w-4 h-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Industry Deployment Pipeline</CardTitle>
+              </div>
+              <Badge variant="outline" className="text-[11px]" data-testid="badge-industry">
+                {industryLabels[detectedIndustry]}
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-muted-foreground">Pipeline Progress</span>
+                <span className="text-sm font-semibold" data-testid="text-pipeline-percent">{pipelineProgress.percent}%</span>
+              </div>
+              <Progress value={pipelineProgress.percent} className="h-2" />
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[11px] text-muted-foreground">{pipelineProgress.completed}/{pipelineProgress.total} stages completed</span>
+                {pipelineProgress.mandatoryComplete && (
+                  <Badge variant="outline" className="text-[10px] text-emerald-600 dark:text-emerald-400 bg-emerald-500/10">
+                    All mandatory complete
+                  </Badge>
+                )}
+              </div>
+            </div>
+
+            {stageRecords.length === 0 ? (
+              <div className="flex flex-col items-center gap-3 py-4">
+                <p className="text-xs text-muted-foreground text-center">Pipeline not initialized for this deployment.</p>
+                <Button
+                  onClick={() => initPipelineMutation.mutate({ industry: detectedIndustry, stages, rollbackTriggers: rollbackTrigs, evidenceItems })}
+                  disabled={initPipelineMutation.isPending}
+                  data-testid="button-init-pipeline"
+                >
+                  <ClipboardCheck className="w-4 h-4 mr-1.5" />
+                  {initPipelineMutation.isPending ? "Initializing..." : "Initialize Pipeline"}
+                </Button>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-0">
+                {stages.map((stage) => {
+                  const record = stageRecords.find(r => r.stageId === stage.id);
+                  const status = record?.status || "pending";
+                  return (
+                    <div key={stage.id} className="flex items-start gap-3" data-testid={`pipeline-stage-${stage.id}`}>
+                      <div className="flex flex-col items-center shrink-0">
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 ${
+                          status === "completed" ? "border-emerald-500 bg-emerald-500/10" :
+                          status === "in_progress" ? "border-amber-500 bg-amber-500/10" :
+                          "border-muted-foreground/30 bg-muted/30"
+                        }`}>
+                          {status === "completed" ? (
+                            <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                          ) : status === "in_progress" ? (
+                            <Circle className="w-4 h-4 text-amber-500" />
+                          ) : (
+                            <span className="text-xs font-medium text-muted-foreground">{stage.order}</span>
+                          )}
+                        </div>
+                        {stage.order < stages.length && (
+                          <div className="w-0.5 h-8 bg-muted-foreground/20" />
+                        )}
+                      </div>
+                      <div className="flex-1 pb-3">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-medium" data-testid={`text-stage-name-${stage.id}`}>{stage.name}</span>
+                            {stage.mandatory && (
+                              <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400 bg-amber-500/10">
+                                Mandatory
+                              </Badge>
+                            )}
+                          </div>
+                          <Badge variant="outline" className={`text-[10px] ${
+                            status === "completed" ? "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10" :
+                            status === "in_progress" ? "text-amber-600 dark:text-amber-400 bg-amber-500/10" :
+                            ""
+                          }`} data-testid={`badge-stage-status-${stage.id}`}>
+                            {status === "completed" ? "Completed" : status === "in_progress" ? "In Progress" : "Pending"}
+                          </Badge>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">{stage.description}</p>
+                        {status === "pending" && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="mt-2"
+                            onClick={() => advanceStageMutation.mutate({ stageId: stage.id, status: "in_progress" })}
+                            disabled={advanceStageMutation.isPending}
+                            data-testid={`button-start-stage-${stage.id}`}
+                          >
+                            Start
+                          </Button>
+                        )}
+                        {status === "in_progress" && (
+                          <Button
+                            size="sm"
+                            className="mt-2"
+                            onClick={() => advanceStageMutation.mutate({ stageId: stage.id, status: "completed", completedBy: "Admin" })}
+                            disabled={advanceStageMutation.isPending}
+                            data-testid={`button-complete-stage-${stage.id}`}
+                          >
+                            Complete
+                          </Button>
+                        )}
+                        {status === "completed" && record && (
+                          <div className="flex items-center gap-2 mt-1 flex-wrap">
+                            {record.completedAt && (
+                              <span className="text-[10px] text-muted-foreground">Completed {formatDate(record.completedAt)}</span>
+                            )}
+                            {record.completedBy && (
+                              <span className="text-[10px] text-muted-foreground">by {record.completedBy}</span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {detectedIndustry && (
+        <Card data-testid="section-evidence-package">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-2">
+                <FileCheck className="w-4 h-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Deployment Evidence Package</CardTitle>
+              </div>
+              <Badge variant="outline" className="text-[10px]" data-testid="badge-evidence-count">
+                {evidenceProgress.collected}/{evidenceProgress.total} collected
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-muted-foreground">Evidence Completion</span>
+                <span className="text-sm font-semibold" data-testid="text-evidence-percent">{evidenceProgress.percent}%</span>
+              </div>
+              <Progress value={evidenceProgress.percent} className="h-2" />
+            </div>
+
+            <div className="flex flex-col gap-2">
+              {evidenceItems.map((item) => {
+                const record = evidenceRecords.find(r => r.itemId === item.id);
+                const collected = record?.collected || false;
+                return (
+                  <div key={item.id} className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted/30" data-testid={`evidence-item-${item.id}`}>
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      {collected ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                      ) : (
+                        <Circle className="w-4 h-4 text-muted-foreground shrink-0" />
+                      )}
+                      <div className="flex flex-col min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-medium" data-testid={`text-evidence-name-${item.id}`}>{item.name}</span>
+                          {item.regulation && (
+                            <Badge variant="outline" className="text-[10px] text-blue-600 dark:text-blue-400 bg-blue-500/10">
+                              {item.regulation}
+                            </Badge>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-muted-foreground">{item.description}</span>
+                        <span className="text-[10px] text-muted-foreground">Source: {item.source}</span>
+                        {collected && record?.collectedAt && (
+                          <span className="text-[10px] text-emerald-600 dark:text-emerald-400">Collected {formatDate(record.collectedAt)}</span>
+                        )}
+                      </div>
+                    </div>
+                    {!collected && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => collectEvidenceMutation.mutate({ itemId: item.id })}
+                        disabled={collectEvidenceMutation.isPending}
+                        data-testid={`button-collect-evidence-${item.id}`}
+                      >
+                        Collect
+                      </Button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {detectedIndustry && rollbackTrigs.length > 0 && (
+        <Card data-testid="section-industry-rollback-triggers">
+          <CardHeader className="pb-3">
+            <div className="flex items-center gap-2">
+              <AlertOctagon className="w-4 h-4 text-muted-foreground" />
+              <CardTitle className="text-sm font-medium">Industry Rollback Triggers</CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-2">
+            {rollbackTrigs.map((trigger) => (
+              <div key={trigger.id} className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted/30" data-testid={`industry-trigger-${trigger.id}`}>
+                <div className="flex flex-col min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-medium" data-testid={`text-trigger-name-${trigger.id}`}>{trigger.name}</span>
+                    <Badge variant="outline" className={`text-[10px] ${
+                      trigger.severity === "critical" ? "text-red-600 dark:text-red-400 bg-red-500/10" :
+                      trigger.severity === "high" ? "text-amber-600 dark:text-amber-400 bg-amber-500/10" :
+                      "text-blue-600 dark:text-blue-400 bg-blue-500/10"
+                    }`} data-testid={`badge-trigger-severity-${trigger.id}`}>
+                      {trigger.severity}
+                    </Badge>
+                    {trigger.autoRollback && (
+                      <Badge variant="outline" className="text-[10px] text-red-600 dark:text-red-400 bg-red-500/10">
+                        Auto-Rollback
+                      </Badge>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-muted-foreground mt-0.5">{trigger.description}</span>
+                  <span className="text-[10px] text-muted-foreground font-mono">
+                    {trigger.metric} {trigger.condition} {trigger.threshold != null ? `${trigger.threshold}${trigger.unit || ""}` : ""}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       {canPromote && deployment && (
         <PromoteDialog
