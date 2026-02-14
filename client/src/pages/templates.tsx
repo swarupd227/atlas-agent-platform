@@ -88,6 +88,7 @@ import {
   ExternalLink,
   DollarSign,
   Columns3,
+  Network,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -152,6 +153,7 @@ const iconMap: Record<string, LucideIcon> = {
   users: Users,
   wrench: Wrench,
   zap: Zap,
+  network: Network,
 };
 
 const categoryLabels: Record<string, string> = {
@@ -171,6 +173,7 @@ const categoryLabels: Record<string, string> = {
   supply_chain: "Supply Chain",
   quality: "Quality Assurance",
   general: "General",
+  team_workflow: "Team Workflow",
 };
 
 const industryLabels: Record<string, string> = {
@@ -205,6 +208,10 @@ export default function Templates() {
     if (industry && industry.id !== "custom") return industry.id;
     return "all";
   });
+  const [typeFilter, setTypeFilter] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("type") === "team" ? "team" : "all";
+  });
   const [selectedTemplate, setSelectedTemplate] = useState<AgentTemplate | null>(null);
   const [compareTemplates, setCompareTemplates] = useState<AgentTemplate[]>([]);
   const [showComparison, setShowComparison] = useState(false);
@@ -224,6 +231,27 @@ export default function Templates() {
 
   const { data: templates, isLoading } = useQuery<AgentTemplate[]>({
     queryKey: ["/api/agent-templates"],
+  });
+
+  const deployTeamMutation = useMutation({
+    mutationFn: async (template: AgentTemplate) => {
+      return apiRequest("POST", "/api/agents", {
+        name: template.name,
+        description: template.description,
+        agentType: "team",
+        status: "active",
+        riskTier: template.defaultRiskTier || "MEDIUM",
+        autonomyMode: template.defaultAutonomyMode || "assisted",
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
+      toast({ title: "Team deployed", description: "Team agent created and added to the registry." });
+      navigate("/agents/teams");
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to deploy team", description: err.message, variant: "destructive" });
+    },
   });
 
   const deleteMutation = useMutation({
@@ -249,7 +277,9 @@ export default function Templates() {
       (t.tags || []).some((tag) => tag.toLowerCase().includes(searchQuery.toLowerCase()));
     const matchesCategory = categoryFilter === "all" || t.category === categoryFilter;
     const matchesIndustry = industryFilter === "all" || t.industry === industryFilter;
-    return matchesSearch && matchesCategory && matchesIndustry;
+    const matchesType = typeFilter === "all" || 
+      (typeFilter === "team" ? t.category === "team_workflow" : t.category !== "team_workflow");
+    return matchesSearch && matchesCategory && matchesIndustry && matchesType;
   });
 
   const recommendedTemplates = templates?.filter((t) => {
@@ -299,6 +329,16 @@ export default function Templates() {
             data-testid="input-search-templates"
           />
         </div>
+        <Select value={typeFilter} onValueChange={setTypeFilter}>
+          <SelectTrigger className="w-40" data-testid="select-type-filter">
+            <SelectValue placeholder="All Types" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Types</SelectItem>
+            <SelectItem value="single">Single Agent</SelectItem>
+            <SelectItem value="team">Team Workflow</SelectItem>
+          </SelectContent>
+        </Select>
         <Select value={categoryFilter} onValueChange={setCategoryFilter}>
           <SelectTrigger className="w-48" data-testid="select-category-filter">
             <SelectValue placeholder="All Categories" />
@@ -418,6 +458,7 @@ export default function Templates() {
                   setSearchQuery("");
                   setCategoryFilter("all");
                   setIndustryFilter("all");
+                  setTypeFilter("all");
                 }}
                 data-testid="button-clear-filters"
               >
@@ -475,6 +516,29 @@ export default function Templates() {
                         )}
                       </div>
                     )}
+                    {(() => {
+                      const bp = template.blueprintJson as any;
+                      if (bp?.templateType === "team" && bp?.agents?.length > 0) {
+                        return (
+                          <div className="flex items-center gap-1 flex-wrap" data-testid={`pipeline-preview-${template.id}`}>
+                            {bp.agents.slice(0, 4).map((agent: any, idx: number) => (
+                              <div key={agent.name} className="flex items-center gap-1">
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary whitespace-nowrap">
+                                  {agent.name}
+                                </span>
+                                {idx < Math.min(bp.agents.length, 4) - 1 && (
+                                  <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0" />
+                                )}
+                              </div>
+                            ))}
+                            {bp.agents.length > 4 && (
+                              <span className="text-[10px] text-muted-foreground">+{bp.agents.length - 4} more</span>
+                            )}
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()}
                     {(template.tags || []).length > 0 && (
                       <div className="flex items-center gap-1 flex-wrap">
                         {(template.tags || []).slice(0, 3).map((tag) => (
@@ -563,7 +627,15 @@ export default function Templates() {
           <div className="lg:col-span-1">
             <TemplateDetail
               template={selectedTemplate}
-              onUseTemplate={() => navigate(`/agents/wizard?templateId=${selectedTemplate.id}`)}
+              onUseTemplate={() => {
+                const bp = selectedTemplate.blueprintJson as any;
+                if (bp?.templateType === "team") {
+                  deployTeamMutation.mutate(selectedTemplate);
+                } else {
+                  navigate(`/agents/wizard?templateId=${selectedTemplate.id}`);
+                }
+              }}
+              isDeploying={deployTeamMutation.isPending}
               onClose={() => setSelectedTemplate(null)}
             />
           </div>
@@ -739,10 +811,12 @@ export default function Templates() {
 function TemplateDetail({
   template,
   onUseTemplate,
+  isDeploying,
   onClose,
 }: {
   template: AgentTemplate;
   onUseTemplate: () => void;
+  isDeploying?: boolean;
   onClose: () => void;
 }) {
   const IconComponent = iconMap[template.icon || "bot"] || Bot;
@@ -933,14 +1007,70 @@ function TemplateDetail({
             );
           })()}
 
+          {(() => {
+            const bp = template.blueprintJson as any;
+            if (bp?.templateType === "team" && bp?.agents?.length > 0) {
+              return (
+                <div className="border-t pt-3 flex flex-col gap-2" data-testid="section-team-pipeline">
+                  <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                    <Network className="w-3.5 h-3.5" />
+                    Team Pipeline ({bp.agents.length} agents)
+                  </h3>
+                  {bp.handoffPattern && (
+                    <Badge variant="outline" className="text-[9px] w-fit">
+                      {bp.handoffPattern} handoff
+                    </Badge>
+                  )}
+                  <div className="flex flex-col gap-1.5">
+                    {bp.agents.map((agent: any, idx: number) => (
+                      <div key={agent.name} className="flex items-start gap-2">
+                        <div className="flex flex-col items-center gap-0.5 shrink-0">
+                          <div className="w-5 h-5 rounded-full bg-primary/10 flex items-center justify-center">
+                            <span className="text-[9px] font-medium text-primary">{idx + 1}</span>
+                          </div>
+                          {idx < bp.agents.length - 1 && (
+                            <div className="w-px h-4 bg-border" />
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <span className="text-xs font-medium">{agent.name}</span>
+                          {agent.role && (
+                            <span className="text-[10px] text-muted-foreground ml-1.5">({agent.role})</span>
+                          )}
+                          {agent.skills?.length > 0 && (
+                            <div className="flex items-center gap-1 flex-wrap mt-0.5">
+                              {agent.skills.slice(0, 3).map((skill: string) => (
+                                <span key={skill} className="text-[9px] text-muted-foreground bg-muted px-1 py-0.5 rounded">
+                                  {skill}
+                                </span>
+                              ))}
+                              {agent.skills.length > 3 && (
+                                <span className="text-[9px] text-muted-foreground">+{agent.skills.length - 3}</span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            }
+            return null;
+          })()}
+
           <div className="border-t pt-4 flex flex-col gap-2">
             <Button
               onClick={onUseTemplate}
               className="w-full"
+              disabled={isDeploying}
               data-testid="button-use-template"
             >
-              Use This Template
-              <ArrowRight className="w-4 h-4 ml-1.5" />
+              {isDeploying ? "Deploying..." : (() => {
+                const bp = template.blueprintJson as any;
+                return bp?.templateType === "team" ? "Deploy as Team" : "Use This Template";
+              })()}
+              {!isDeploying && <ArrowRight className="w-4 h-4 ml-1.5" />}
             </Button>
             <Button
               variant="outline"

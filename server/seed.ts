@@ -15,6 +15,7 @@ import {
 import { storage } from "./storage";
 import { batch1Templates } from "./templates-batch1";
 import { batch2Templates } from "./templates-batch2";
+import { teamTemplates } from "./templates-team";
 
 export async function seedDatabase() {
   try {
@@ -3516,7 +3517,7 @@ export async function seedDatabase() {
   await db.insert(billingDisputes).values(disputeData);
 
   // Agent Templates (80 templates across 8 industries)
-  const allTemplates = [...batch1Templates, ...batch2Templates];
+  const allTemplates = [...batch1Templates, ...batch2Templates, ...teamTemplates];
   for (let i = 0; i < allTemplates.length; i += 10) {
     await db.insert(agentTemplates).values(allTemplates.slice(i, i + 10) as any);
   }

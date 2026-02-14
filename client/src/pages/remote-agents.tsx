@@ -286,7 +286,7 @@ export default function RemoteAgents() {
               {filtered?.map((remote) => {
                 const agent = agentMap.get(remote.agentId || "");
                 const trustConfig = TRUST_TIER_CONFIG[remote.trustTier || "basic"];
-                const connConfig = CONNECTIVITY_CONFIG[remote.connectivityStatus || "unknown"];
+                const connConfig = CONNECTIVITY_CONFIG[remote.connectivityStatus || "unknown"] || CONNECTIVITY_CONFIG["unknown"];
                 const ConnIcon = connConfig.icon;
                 const cardData = remote.agentCardData as any;
                 const provider = remote.providerInfo as any;
