@@ -78,8 +78,8 @@ const iconMap: Record<string, LucideIcon> = {
 };
 
 const STEPS = [
-  { number: 0, label: "Start" },
-  { number: 1, label: "Define Agent" },
+  { number: 0, label: "Define Agent" },
+  { number: 1, label: "Start Path" },
   { number: 2, label: "Configure Tools" },
   { number: 3, label: "Governance" },
   { number: 4, label: "Memory & Context" },
@@ -673,7 +673,7 @@ export default function AgentWizard() {
         applyTemplate(template);
         setCreationPath("template");
         setSelectedTemplateId(templateId);
-        setCurrentStep(1);
+        setCurrentStep(2);
       }
     }
   }, [searchParams, templates]);
@@ -744,7 +744,14 @@ export default function AgentWizard() {
         templates: slimTemplates,
       });
       const data = await res.json();
-      setTemplateMatches(data.matches || []);
+      const rawMatches = data.matches || [];
+      const seen = new Set<string>();
+      const dedupedMatches = rawMatches.filter((m: any) => {
+        if (seen.has(m.templateId)) return false;
+        seen.add(m.templateId);
+        return true;
+      });
+      setTemplateMatches(dedupedMatches);
     } catch {
       toast({ title: "Template matching failed", description: "Could not analyze templates. You can still select manually.", variant: "destructive" });
     } finally {
@@ -849,16 +856,16 @@ export default function AgentWizard() {
       runAiMatching();
     } else if (path === "ai") {
       setAiPanelOpen(true);
-      setCurrentStep(1);
+      setCurrentStep(2);
     } else if (path === "manual") {
-      setCurrentStep(1);
+      setCurrentStep(2);
     }
   }
 
   function handleSelectTemplate(template: AgentTemplate) {
     setSelectedTemplateId(template.id);
     applyTemplate(template);
-    setCurrentStep(1);
+    setCurrentStep(2);
   }
 
   const stepLabels: Record<string, string> = {
@@ -1012,7 +1019,7 @@ export default function AgentWizard() {
           <h1 className="text-2xl font-semibold tracking-tight">Industry-Contextualized Agent Builder</h1>
           <p className="text-sm text-muted-foreground">Build industry-aware agents with pre-loaded regulatory context and golden templates</p>
         </div>
-        {currentStep >= 2 && (
+        {currentStep >= 1 && (
           <Button
             variant="outline"
             onClick={() => setAiPanelOpen(true)}
@@ -1061,6 +1068,9 @@ export default function AgentWizard() {
 
       <div className="min-h-[400px]">
         {currentStep === 0 && (
+          <Step1IndustryDefine state={wizardState} updateState={updateState} outcomes={outcomes} outcomeLockedFromUrl={outcomeLockedFromUrl} />
+        )}
+        {currentStep === 1 && (
           <Step0GoldenTemplate
             creationPath={creationPath}
             onChoosePath={handleChoosePath}
@@ -1073,9 +1083,6 @@ export default function AgentWizard() {
             onRunMatching={runAiMatching}
             wizardState={wizardState}
           />
-        )}
-        {currentStep === 1 && (
-          <Step1IndustryDefine state={wizardState} updateState={updateState} outcomes={outcomes} outcomeLockedFromUrl={outcomeLockedFromUrl} />
         )}
         {currentStep === 2 && (
           <Step2IndustryTools state={wizardState} updateState={updateState} />
@@ -1106,11 +1113,7 @@ export default function AgentWizard() {
         <Button
           variant="outline"
           onClick={() => {
-            if (currentStep === 1 && creationPath === "template" && !selectedTemplateId) {
-              setCurrentStep(0);
-            } else {
-              setCurrentStep((s) => Math.max(0, s - 1));
-            }
+            setCurrentStep((s) => Math.max(0, s - 1));
           }}
           disabled={currentStep === 0}
           data-testid="button-back-step"
@@ -1123,7 +1126,7 @@ export default function AgentWizard() {
             onClick={() => {
               setCurrentStep((s) => Math.min(7, s + 1));
             }}
-            disabled={currentStep === 1 && !wizardState.name}
+            disabled={currentStep === 0 && !wizardState.name}
             data-testid="button-next-step"
           >
             Next

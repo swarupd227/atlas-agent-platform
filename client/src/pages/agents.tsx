@@ -336,7 +336,7 @@ export default function Agents() {
   if (error) return <ErrorState message="Failed to load agents" onRetry={() => refetch()} />;
 
   return (
-    <div className="flex flex-col gap-6 p-6" data-testid="page-agents">
+    <div className="flex flex-col gap-6 p-6 overflow-x-hidden" data-testid="page-agents">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex flex-col gap-1">
           <h1 className="text-2xl font-semibold tracking-tight">Agent Registry</h1>
