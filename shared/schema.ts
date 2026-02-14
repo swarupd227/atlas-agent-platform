@@ -183,6 +183,8 @@ export const evalSuites = pgTable("eval_suites", {
   coverageTags: text("coverage_tags").array(),
   environmentThresholds: jsonb("environment_thresholds"),
   schedule: text("schedule"),
+  industry: text("industry"),
+  goldenDatasetId: varchar("golden_dataset_id"),
 });
 
 export const insertEvalSuiteSchema = createInsertSchema(evalSuites).omit({ id: true });
@@ -412,6 +414,11 @@ export const evalTestCases = pgTable("eval_test_cases", {
   tags: text("tags").array(),
   weight: real("weight").default(1),
   status: text("status").default("active"),
+  origin: text("origin").default("custom"),
+  regulationRef: text("regulation_ref"),
+  industryCategory: text("industry_category"),
+  severity: text("severity"),
+  locked: boolean("locked").default(false),
 });
 
 export const insertEvalTestCaseSchema = createInsertSchema(evalTestCases).omit({ id: true });
