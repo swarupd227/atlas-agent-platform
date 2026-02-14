@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import {
   Bot,
   Plus,
@@ -23,6 +23,9 @@ import {
   Users,
   Globe,
   Network,
+  ArrowUpDown,
+  CircleDot,
+  Minus,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -59,15 +62,90 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { StatCard } from "@/components/stat-card";
 import { OutcomeKpiStrip } from "@/components/outcome-kpi-strip";
 import { StatusBadge } from "@/components/status-badge";
 import { ErrorState } from "@/components/error-state";
 import { usePermission, PermissionGate, useRole } from "@/components/role-provider";
+import { useIndustry } from "@/components/industry-provider";
 import { Link } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { Agent, OutcomeContract, Approval } from "@shared/schema";
+
+type SortBy = "name" | "revenue" | "margin" | "roi" | "health" | "safety";
+
+const EU_AI_ACT_MAP: Record<string, { label: string; className: string }> = {
+  CRITICAL: { label: "Unacceptable Risk", className: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20" },
+  HIGH: { label: "High Risk", className: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20" },
+  MEDIUM: { label: "Limited Risk", className: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/20" },
+  LOW: { label: "Minimal Risk", className: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" },
+};
+
+function getIndustryDomain(agent: Agent): string {
+  if (agent.department) return agent.department;
+  const tags = agent.ontologyTags as Record<string, unknown> | string[] | null;
+  if (tags && Array.isArray(tags) && tags.length > 0) return String(tags[0]);
+  if (tags && typeof tags === "object" && !Array.isArray(tags)) {
+    const keys = Object.keys(tags);
+    if (keys.length > 0) return keys[0];
+  }
+  return "General";
+}
+
+function getOntologyCount(agent: Agent): number {
+  const tags = agent.ontologyTags as Record<string, unknown> | string[] | null;
+  if (!tags) return 0;
+  if (Array.isArray(tags)) return tags.length;
+  if (typeof tags === "object") return Object.keys(tags).length;
+  return 0;
+}
+
+function getEvalCoverage(agent: Agent): number {
+  const bindings = agent.evalBindings as Record<string, unknown> | unknown[] | null;
+  if (!bindings) return 0;
+  if (Array.isArray(bindings)) {
+    if (bindings.length === 0) return 0;
+    return Math.min(100, bindings.length * 25);
+  }
+  if (typeof bindings === "object") {
+    const keys = Object.keys(bindings);
+    if (keys.length === 0) return 0;
+    return Math.min(100, keys.length * 25);
+  }
+  return 0;
+}
+
+function getPipelineStatus(agent: Agent): "passed" | "partial" | "none" {
+  if (agent.environment === "prod") return "passed";
+  if (agent.environment === "pilot" || agent.environment === "staging") return "partial";
+  return "none";
+}
+
+function computeSafetyScore(agent: Agent, lastApproval: Approval | undefined): number {
+  let score = 0;
+  const pipeline = getPipelineStatus(agent);
+  if (pipeline === "passed") score += 35;
+  else if (pipeline === "partial") score += 15;
+  const evalCov = getEvalCoverage(agent);
+  score += (evalCov / 100) * 35;
+  const tags = (agent.complianceTags as string[]) || [];
+  if (tags.length > 0) score += 15;
+  if (lastApproval && lastApproval.status === "approved") score += 15;
+  return Math.min(100, Math.round(score));
+}
+
+function getDaysSinceCompliance(lastApproval: Approval | undefined): number | null {
+  if (!lastApproval?.decidedAt) return null;
+  const d = new Date(lastApproval.decidedAt);
+  const now = new Date();
+  return Math.floor((now.getTime() - d.getTime()) / (1000 * 60 * 60 * 24));
+}
 
 type BulkAction = "regression_eval" | "freeze_deployments" | "rotate_secrets" | "export_audit";
 
@@ -82,6 +160,7 @@ export default function Agents() {
   const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkAction, setBulkAction] = useState<BulkAction | null>(null);
+  const [sortBy, setSortBy] = useState<SortBy>("name");
 
   const [filterOutcome, setFilterOutcome] = useState<string>("all");
   const [filterEnv, setFilterEnv] = useState<string>("all");
@@ -93,6 +172,7 @@ export default function Agents() {
 
   const { toast } = useToast();
   const { role } = useRole();
+  const { industry } = useIndustry();
   const blueprintPerm = usePermission("create_modify_blueprints");
   const auditPerm = usePermission("export_audit_bundle");
   const billingPerm = usePermission("billing_invoices");
@@ -157,6 +237,44 @@ export default function Agents() {
       .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
     return agentApprovals[0];
   }
+
+  const sorted = useMemo(() => {
+    if (!filtered) return filtered;
+    const arr = [...filtered];
+    switch (sortBy) {
+      case "revenue":
+        arr.sort((a, b) => (b.monthlyRevenue || 0) - (a.monthlyRevenue || 0));
+        break;
+      case "margin":
+        arr.sort((a, b) => ((b.monthlyRevenue || 0) - (b.monthlyCost || 0)) - ((a.monthlyRevenue || 0) - (a.monthlyCost || 0)));
+        break;
+      case "roi": {
+        const roiVal = (ag: Agent) => {
+          const cost = ag.monthlyCost || 0;
+          if (cost === 0) return 0;
+          return ((ag.monthlyRevenue || 0) - cost) / cost * 100;
+        };
+        arr.sort((a, b) => roiVal(b) - roiVal(a));
+        break;
+      }
+      case "health":
+        arr.sort((a, b) => (b.healthScore || 0) - (a.healthScore || 0));
+        break;
+      case "safety": {
+        arr.sort((a, b) => {
+          const safetyA = computeSafetyScore(a, getLastApproval(a.id));
+          const safetyB = computeSafetyScore(b, getLastApproval(b.id));
+          return safetyB - safetyA;
+        });
+        break;
+      }
+      case "name":
+      default:
+        arr.sort((a, b) => a.name.localeCompare(b.name));
+        break;
+    }
+    return arr;
+  }, [filtered, sortBy, approvals]);
 
   function clearFilters() {
     setFilterOutcome("all");
@@ -281,6 +399,21 @@ export default function Agents() {
             data-testid="input-search-agents"
           />
         </div>
+
+        <Select value={sortBy} onValueChange={(v) => setSortBy(v as SortBy)}>
+          <SelectTrigger className="w-[150px]" data-testid="sort-by">
+            <ArrowUpDown className="w-3.5 h-3.5 mr-1.5 shrink-0" />
+            <SelectValue placeholder="Sort by" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="name">Name</SelectItem>
+            <SelectItem value="revenue">Revenue</SelectItem>
+            <SelectItem value="margin">Margin</SelectItem>
+            <SelectItem value="roi">ROI</SelectItem>
+            <SelectItem value="health">Health</SelectItem>
+            <SelectItem value="safety">Safety</SelectItem>
+          </SelectContent>
+        </Select>
 
         <Select value={filterOutcome} onValueChange={setFilterOutcome}>
           <SelectTrigger className="w-[160px]" data-testid="filter-outcome">
@@ -420,20 +553,38 @@ export default function Agents() {
                   />
                 </TableHead>
                 <TableHead>Agent</TableHead>
+                <TableHead>Industry Profile</TableHead>
                 <TableHead>Outcome</TableHead>
                 <TableHead>Version</TableHead>
                 {canSeeHealth && <TableHead>Health</TableHead>}
+                {canSeeHealth && <TableHead>Safety Score</TableHead>}
                 <TableHead>Mode</TableHead>
                 {canSeeIncidents && <TableHead>Last Incident / Approval</TableHead>}
-                {canSeeCostRevenue && <TableHead className="text-right">Monthly Cost / Revenue</TableHead>}
+                {canSeeCostRevenue && <TableHead className="text-right">P&L</TableHead>}
                 <TableHead></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered?.map((agent) => {
+              {sorted?.map((agent) => {
                 const outcome = outcomes?.find((o) => o.id === agent.outcomeId);
                 const lastApproval = getLastApproval(agent.id);
                 const healthColor = (agent.healthScore || 0) >= 90 ? "text-emerald-600 dark:text-emerald-400" : (agent.healthScore || 0) >= 70 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
+                const domain = getIndustryDomain(agent);
+                const euRisk = EU_AI_ACT_MAP[agent.riskTier] || EU_AI_ACT_MAP["MEDIUM"];
+                const compTags = (agent.complianceTags as string[]) || [];
+                const shownTags = compTags.slice(0, 3);
+                const extraTags = compTags.length - 3;
+                const ontologyCount = getOntologyCount(agent);
+                const revenue = agent.monthlyRevenue || 0;
+                const cost = agent.monthlyCost || 0;
+                const margin = revenue - cost;
+                const roi = cost > 0 ? ((revenue - cost) / cost * 100) : 0;
+                const marginColor = margin >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400";
+                const pipeline = getPipelineStatus(agent);
+                const evalCov = getEvalCoverage(agent);
+                const safetyScore = computeSafetyScore(agent, lastApproval);
+                const daysSinceComp = getDaysSinceCompliance(lastApproval);
+                const safetyColor = safetyScore >= 80 ? "text-emerald-600 dark:text-emerald-400" : safetyScore >= 50 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
 
                 return (
                   <TableRow key={agent.id} data-testid={`row-agent-${agent.id}`} className={selectedIds.has(agent.id) ? "bg-primary/5" : ""}>
@@ -466,6 +617,38 @@ export default function Agents() {
                           </div>
                         </div>
                       </Link>
+                    </TableCell>
+                    <TableCell data-testid={`industry-profile-${agent.id}`}>
+                      <div className="flex flex-col gap-1 max-w-[180px]">
+                        <Badge variant="outline" className="text-[10px] w-fit bg-primary/5 border-primary/15">{domain}</Badge>
+                        <Badge variant="outline" className={`text-[10px] w-fit border ${euRisk.className}`} data-testid={`eu-risk-${agent.id}`}>{euRisk.label}</Badge>
+                        {shownTags.length > 0 && (
+                          <div className="flex items-center gap-1 flex-wrap" data-testid={`compliance-tags-${agent.id}`}>
+                            {shownTags.map(tag => (
+                              <Badge key={tag} variant="secondary" className="text-[10px]">{tag}</Badge>
+                            ))}
+                            {extraTags > 0 && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span className="text-[10px] text-muted-foreground cursor-default" data-testid={`compliance-more-${agent.id}`}>+{extraTags} more</span>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <div className="flex flex-col gap-0.5">
+                                    {compTags.slice(3).map(t => (
+                                      <span key={t} className="text-xs">{t}</span>
+                                    ))}
+                                  </div>
+                                </TooltipContent>
+                              </Tooltip>
+                            )}
+                          </div>
+                        )}
+                        {ontologyCount > 0 && (
+                          <span className="text-[10px] text-muted-foreground flex items-center gap-1" data-testid={`ontology-count-${agent.id}`}>
+                            <Network className="w-3 h-3" /> KG: {ontologyCount} domain{ontologyCount !== 1 ? "s" : ""}
+                          </span>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell>
                       <span className="text-xs text-muted-foreground">{outcome?.name || "\u2014"}</span>
@@ -508,6 +691,48 @@ export default function Agents() {
                         </Popover>
                       </TableCell>
                     )}
+                    {canSeeHealth && (
+                      <TableCell data-testid={`safety-score-${agent.id}`}>
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <button className="flex items-center gap-2 cursor-pointer" data-testid={`safety-detail-${agent.id}`}>
+                              <div className="relative flex items-center justify-center w-8 h-8 shrink-0">
+                                <svg viewBox="0 0 36 36" className="w-8 h-8 -rotate-90">
+                                  <circle cx="18" cy="18" r="14" fill="none" stroke="currentColor" strokeWidth="3" className="text-muted/30" />
+                                  <circle cx="18" cy="18" r="14" fill="none" strokeWidth="3" strokeDasharray={`${safetyScore * 0.88} 88`} strokeLinecap="round" className={safetyScore >= 80 ? "stroke-emerald-500" : safetyScore >= 50 ? "stroke-amber-500" : "stroke-red-500"} />
+                                </svg>
+                                <span className={`absolute text-[9px] font-semibold ${safetyColor}`}>{safetyScore}</span>
+                              </div>
+                            </button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-56 p-3" align="start">
+                            <div className="flex flex-col gap-2">
+                              <span className="text-xs font-medium">Safety Score Breakdown</span>
+                              <div className="flex flex-col gap-1.5">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[11px] text-muted-foreground flex items-center gap-1">
+                                    {pipeline === "passed" ? <CheckCircle className="w-3 h-3 text-emerald-500" /> : pipeline === "partial" ? <CircleDot className="w-3 h-3 text-amber-500" /> : <Minus className="w-3 h-3 text-muted-foreground" />}
+                                    Pipeline
+                                  </span>
+                                  <span className="text-[11px] font-medium">{pipeline === "passed" ? "Passed" : pipeline === "partial" ? "Partial" : "None"}</span>
+                                </div>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[11px] text-muted-foreground">Eval Coverage</span>
+                                  <div className="flex items-center gap-1.5">
+                                    <Progress value={evalCov} className="h-1 w-10" />
+                                    <span className="text-[11px] font-medium">{evalCov}%</span>
+                                  </div>
+                                </div>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[11px] text-muted-foreground">Since Compliance</span>
+                                  <span className="text-[11px] font-medium">{daysSinceComp !== null ? `${daysSinceComp}d` : "N/A"}</span>
+                                </div>
+                              </div>
+                            </div>
+                          </PopoverContent>
+                        </Popover>
+                      </TableCell>
+                    )}
                     <TableCell>
                       <StatusBadge status={agent.autonomyMode} />
                     </TableCell>
@@ -536,19 +761,46 @@ export default function Agents() {
                       </TableCell>
                     )}
                     {canSeeCostRevenue && (
-                      <TableCell className="text-right">
-                        <div className="flex flex-col items-end gap-0.5">
-                          <span className="text-sm font-medium">${(agent.monthlyCost || 0).toLocaleString()}</span>
-                          <span className="text-[11px] text-muted-foreground">
-                            {(agent.monthlyRevenue || 0) > 0 ? (
-                              <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-0.5">
-                                <TrendingUp className="w-3 h-3" />${(agent.monthlyRevenue || 0).toLocaleString()}
+                      <TableCell className="text-right" data-testid={`pnl-${agent.id}`}>
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <button className="flex flex-col items-end gap-0.5 cursor-pointer" data-testid={`pnl-detail-${agent.id}`}>
+                              <span className={`text-sm font-medium ${marginColor}`}>
+                                {margin >= 0 ? "+" : ""}${Math.abs(margin).toLocaleString()}
                               </span>
-                            ) : (
-                              "\u2014"
-                            )}
-                          </span>
-                        </div>
+                              <span className="text-[11px] text-muted-foreground">
+                                ROI: <span className={marginColor}>{roi.toFixed(0)}%</span>
+                              </span>
+                            </button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-56 p-3" align="end">
+                            <div className="flex flex-col gap-2">
+                              <span className="text-xs font-medium">P&L Details</span>
+                              <div className="flex flex-col gap-1.5">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[11px] text-muted-foreground flex items-center gap-1"><TrendingUp className="w-3 h-3" /> Revenue</span>
+                                  <span className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">${revenue.toLocaleString()}</span>
+                                </div>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[11px] text-muted-foreground flex items-center gap-1"><DollarSign className="w-3 h-3" /> Cost</span>
+                                  <span className="text-[11px] font-medium">${cost.toLocaleString()}</span>
+                                </div>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[11px] text-muted-foreground">Margin</span>
+                                  <span className={`text-[11px] font-medium ${marginColor}`}>{margin >= 0 ? "+" : ""}${Math.abs(margin).toLocaleString()}</span>
+                                </div>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[11px] text-muted-foreground">ROI</span>
+                                  <span className={`text-[11px] font-medium ${marginColor}`}>{roi.toFixed(1)}%</span>
+                                </div>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[11px] text-muted-foreground">Cost/Run</span>
+                                  <span className="text-[11px] font-medium">${agent.costPerRun?.toFixed(3)}</span>
+                                </div>
+                              </div>
+                            </div>
+                          </PopoverContent>
+                        </Popover>
                       </TableCell>
                     )}
                     <TableCell>
