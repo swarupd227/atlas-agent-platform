@@ -8,6 +8,7 @@ interface DemoSlide {
   headline: string;
   keywords: string[];
   narration: string;
+  isClosing?: boolean;
 }
 
 const DEMO_SLIDES: DemoSlide[] = [
@@ -17,15 +18,7 @@ const DEMO_SLIDES: DemoSlide[] = [
     headline: "Total Visibility. Instant Intelligence.",
     keywords: ["Platform Health", "KPI Tracking", "Agent Fleet Status"],
     narration:
-      "Welcome to ALMP — the only AI agent platform built around your industry's context. Your command center delivers instant visibility into platform health, KPI progress, and agent fleet status across every environment. One dashboard. Complete operational intelligence.",
-  },
-  {
-    image: "/demo-screenshots/08-outcomes.png",
-    title: "Outcome Contracts",
-    headline: "Pay for Results. Not Compute.",
-    keywords: ["Outcome-Based Billing", "SLA Tracking", "Measurable ROI"],
-    narration:
-      "Define success on your terms with outcome contracts. Set KPIs, SLAs, and pricing models tied to measurable business results — not compute hours. Tamper-evident metering ensures every charge is backed by cryptographic proof. This is AI billing, reimagined for accountability.",
+      "Welcome to Nous Agent Orchestrator — the only AI agent platform built around your industry's context. Your command center delivers instant visibility into platform health, KPI progress, and agent fleet status across every environment. One dashboard. Complete operational intelligence.",
   },
   {
     image: "/demo-screenshots/02-agents.png",
@@ -34,6 +27,14 @@ const DEMO_SLIDES: DemoSlide[] = [
     keywords: ["Multi-Agent Teams", "Industry Context", "Adaptive Autonomy"],
     narration:
       "Your entire agent fleet, organized by industry context. The Agent Registry supports single agents, coordinated teams, and remote A2A agents — each operating with adaptive autonomy calibrated to your industry's risk profile. Build agents that reason within your regulatory and operational framework by default.",
+  },
+  {
+    image: "/demo-screenshots/08-outcomes.png",
+    title: "Outcome Contracts",
+    headline: "Define Success. Measure What Matters.",
+    keywords: ["KPI Contracts", "SLA Tracking", "Measurable Results"],
+    narration:
+      "Define success on your terms with outcome contracts. Set KPIs, SLAs, and targets tied to measurable business results. Every agent's performance is tracked against the outcomes that matter to your organization — ensuring accountability and continuous improvement.",
   },
   {
     image: "/demo-screenshots/03-deployments.png",
@@ -68,47 +69,54 @@ const DEMO_SLIDES: DemoSlide[] = [
       "Expert validation gates where it matters most. Every approval comes with blast radius analysis, configuration diffs, and risk scoring calibrated to industry context. One-click decisions backed by evidence keep your agents moving safely through the pipeline.",
   },
   {
-    image: "/demo-screenshots/06-billing.png",
-    title: "Outcome Billing",
-    headline: "Every Charge. Cryptographically Proven.",
-    keywords: ["Tamper-Evident", "Invoice-to-Trace", "Outcome Metering"],
+    image: "/demo-screenshots/01-overview.png",
+    title: "Nous Agent Orchestrator",
+    headline: "Your Agents. Your Industry. Your Context.",
+    keywords: ["Industry-Native", "Regulation-Ready", "Enterprise-Grade"],
     narration:
-      "Transparent, outcome-based billing with tamper-evident metering. Drill from invoice to event to trace — every charge cryptographically verified. Welcome to the new standard in AI agent billing, where you only pay for measurable results.",
+      "That's Nous Agent Orchestrator — the platform where AI agents don't just execute, they reason within your industry's regulatory, operational, and domain context. From healthcare to financial services, manufacturing to insurance and retail — every agent is built compliant, deployed safe, and monitored with industry intelligence. Ready to orchestrate your future? Let's get started.",
+    isClosing: true,
   },
 ];
 
 const TRANSITION_DURATION = 900;
 const POST_NARRATION_PAUSE = 1500;
 
-function startJazzyMusic(audioContext: AudioContext): () => void {
+function startBeatsMusic(audioContext: AudioContext): () => void {
   const masterGain = audioContext.createGain();
-  masterGain.gain.value = 0.045;
+  masterGain.gain.value = 0.08;
   masterGain.connect(audioContext.destination);
 
   const compressor = audioContext.createDynamicsCompressor();
-  compressor.threshold.value = -20;
-  compressor.knee.value = 10;
-  compressor.ratio.value = 4;
+  compressor.threshold.value = -18;
+  compressor.knee.value = 8;
+  compressor.ratio.value = 6;
+  compressor.attack.value = 0.003;
+  compressor.release.value = 0.15;
   compressor.connect(masterGain);
 
   const reverbConvolver = audioContext.createConvolver();
-  const reverbLength = audioContext.sampleRate * 1.5;
+  const reverbLength = audioContext.sampleRate * 1.2;
   const reverbBuffer = audioContext.createBuffer(2, reverbLength, audioContext.sampleRate);
   for (let ch = 0; ch < 2; ch++) {
     const data = reverbBuffer.getChannelData(ch);
     for (let i = 0; i < reverbLength; i++) {
-      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / reverbLength, 2.5);
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / reverbLength, 3);
     }
   }
   reverbConvolver.buffer = reverbBuffer;
   const reverbGain = audioContext.createGain();
-  reverbGain.gain.value = 0.15;
+  reverbGain.gain.value = 0.12;
   reverbConvolver.connect(reverbGain);
   reverbGain.connect(compressor);
 
   const dryGain = audioContext.createGain();
-  dryGain.gain.value = 0.85;
+  dryGain.gain.value = 0.88;
   dryGain.connect(compressor);
+
+  const bpm = 90;
+  const beatDuration = 60 / bpm;
+  const barDuration = beatDuration * 4;
 
   const jazzChords = [
     [130.81, 164.81, 196.00, 246.94, 311.13],
@@ -123,13 +131,106 @@ function startJazzyMusic(audioContext: AudioContext): () => void {
 
   let chordIndex = 0;
   const activeNodes: { osc: OscillatorNode; gain: GainNode }[] = [];
+  let beatIntervalId: ReturnType<typeof setInterval> | null = null;
+  let barIntervalId: ReturnType<typeof setInterval> | null = null;
+
+  function playKick(time: number) {
+    const osc = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(150, time);
+    osc.frequency.exponentialRampToValueAtTime(40, time + 0.12);
+    gain.gain.setValueAtTime(0.5, time);
+    gain.gain.exponentialRampToValueAtTime(0.001, time + 0.3);
+    osc.connect(gain);
+    gain.connect(dryGain);
+    osc.start(time);
+    osc.stop(time + 0.35);
+  }
+
+  function playHihat(time: number, accent: boolean) {
+    const bufferSize = audioContext.sampleRate * 0.05;
+    const buffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 4);
+    }
+    const source = audioContext.createBufferSource();
+    source.buffer = buffer;
+    const hihatGain = audioContext.createGain();
+    const vol = accent ? 0.18 : 0.08;
+    hihatGain.gain.setValueAtTime(vol, time);
+    hihatGain.gain.exponentialRampToValueAtTime(0.001, time + (accent ? 0.08 : 0.04));
+
+    const hihatFilter = audioContext.createBiquadFilter();
+    hihatFilter.type = "highpass";
+    hihatFilter.frequency.value = 7000;
+    source.connect(hihatFilter);
+    hihatFilter.connect(hihatGain);
+    hihatGain.connect(dryGain);
+    hihatGain.connect(reverbConvolver);
+    source.start(time);
+  }
+
+  function playSnare(time: number) {
+    const osc = audioContext.createOscillator();
+    const oscGain = audioContext.createGain();
+    osc.type = "triangle";
+    osc.frequency.value = 180;
+    oscGain.gain.setValueAtTime(0.25, time);
+    oscGain.gain.exponentialRampToValueAtTime(0.001, time + 0.15);
+    osc.connect(oscGain);
+    oscGain.connect(dryGain);
+    osc.start(time);
+    osc.stop(time + 0.2);
+
+    const noiseLen = audioContext.sampleRate * 0.08;
+    const noiseBuf = audioContext.createBuffer(1, noiseLen, audioContext.sampleRate);
+    const nd = noiseBuf.getChannelData(0);
+    for (let i = 0; i < noiseLen; i++) {
+      nd[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / noiseLen, 2);
+    }
+    const noiseSrc = audioContext.createBufferSource();
+    noiseSrc.buffer = noiseBuf;
+    const noiseGain = audioContext.createGain();
+    noiseGain.gain.setValueAtTime(0.15, time);
+    noiseGain.gain.exponentialRampToValueAtTime(0.001, time + 0.12);
+
+    const snareFilter = audioContext.createBiquadFilter();
+    snareFilter.type = "highpass";
+    snareFilter.frequency.value = 2000;
+    noiseSrc.connect(snareFilter);
+    snareFilter.connect(noiseGain);
+    noiseGain.connect(dryGain);
+    noiseSrc.start(time);
+  }
+
+  let beatCount = 0;
+  function scheduleBeat() {
+    const now = audioContext.currentTime;
+    const beatInBar = beatCount % 4;
+
+    if (beatInBar === 0) {
+      playKick(now);
+    } else if (beatInBar === 2) {
+      playSnare(now);
+    }
+
+    playHihat(now, beatInBar === 0 || beatInBar === 2);
+
+    if (beatInBar === 1 || beatInBar === 3) {
+      playHihat(now + beatDuration * 0.5, false);
+    }
+
+    beatCount++;
+  }
 
   function playChord() {
     activeNodes.forEach(({ osc, gain }) => {
       const now = audioContext.currentTime;
       gain.gain.setValueAtTime(gain.gain.value, now);
-      gain.gain.linearRampToValueAtTime(0, now + 0.3);
-      setTimeout(() => { try { osc.stop(); } catch {} }, 400);
+      gain.gain.linearRampToValueAtTime(0, now + 0.4);
+      setTimeout(() => { try { osc.stop(); } catch {} }, 500);
     });
     activeNodes.length = 0;
 
@@ -137,24 +238,23 @@ function startJazzyMusic(audioContext: AudioContext): () => void {
     chordIndex++;
 
     const types: OscillatorType[] = ["sine", "triangle", "sine", "triangle", "sine"];
-    const volumes = [0.35, 0.25, 0.2, 0.18, 0.12];
+    const volumes = [0.3, 0.22, 0.18, 0.15, 0.1];
 
     chord.forEach((freq, i) => {
       const osc = audioContext.createOscillator();
       const gain = audioContext.createGain();
-      const detune = (Math.random() - 0.5) * 6;
+      const detune = (Math.random() - 0.5) * 8;
 
       osc.type = types[i % types.length];
       osc.frequency.value = freq;
       osc.detune.value = detune;
 
       const now = audioContext.currentTime;
-      const attackTime = 0.8 + Math.random() * 0.4;
+      const attackTime = 0.4 + Math.random() * 0.3;
       gain.gain.setValueAtTime(0, now);
       gain.gain.linearRampToValueAtTime(volumes[i], now + attackTime);
-      gain.gain.setValueAtTime(volumes[i], now + attackTime);
-      gain.gain.linearRampToValueAtTime(volumes[i] * 0.6, now + 4);
-      gain.gain.linearRampToValueAtTime(0, now + 7);
+      gain.gain.linearRampToValueAtTime(volumes[i] * 0.7, now + barDuration * 0.6);
+      gain.gain.linearRampToValueAtTime(0, now + barDuration * 0.95);
 
       osc.connect(gain);
       gain.connect(dryGain);
@@ -169,9 +269,9 @@ function startJazzyMusic(audioContext: AudioContext): () => void {
     bassOsc.frequency.value = chord[0] / 2;
     const now = audioContext.currentTime;
     bassGain.gain.setValueAtTime(0, now);
-    bassGain.gain.linearRampToValueAtTime(0.3, now + 0.5);
-    bassGain.gain.linearRampToValueAtTime(0.15, now + 4);
-    bassGain.gain.linearRampToValueAtTime(0, now + 6.5);
+    bassGain.gain.linearRampToValueAtTime(0.35, now + 0.3);
+    bassGain.gain.linearRampToValueAtTime(0.2, now + barDuration * 0.5);
+    bassGain.gain.linearRampToValueAtTime(0, now + barDuration * 0.9);
     bassOsc.connect(bassGain);
     bassGain.connect(dryGain);
     bassOsc.start(now);
@@ -179,10 +279,14 @@ function startJazzyMusic(audioContext: AudioContext): () => void {
   }
 
   playChord();
-  const interval = setInterval(playChord, 7000);
+  scheduleBeat();
+
+  beatIntervalId = setInterval(scheduleBeat, beatDuration * 1000);
+  barIntervalId = setInterval(playChord, barDuration * 1000);
 
   return () => {
-    clearInterval(interval);
+    if (beatIntervalId) clearInterval(beatIntervalId);
+    if (barIntervalId) clearInterval(barIntervalId);
     activeNodes.forEach(({ osc }) => { try { osc.stop(); } catch {} });
     masterGain.disconnect();
     compressor.disconnect();
@@ -230,7 +334,7 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
     const ac = new AudioContext();
     audioContextRef.current = ac;
     if (isMutedRef.current) ac.suspend();
-    const cleanup = startJazzyMusic(ac);
+    const cleanup = startBeatsMusic(ac);
     musicCleanupRef.current = cleanup;
   }, [musicStarted]);
 
@@ -465,8 +569,9 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
     setIsPlaying(!isPlaying);
   };
 
-  const effectiveSlide = transitioning ? currentSlide : currentSlide;
-  const effectiveSlideData = DEMO_SLIDES[effectiveSlide];
+  const isClosingSlide = slide.isClosing && !transitioning;
+  const isLastSlide = currentSlide === DEMO_SLIDES.length - 1;
+  const demoFinished = isLastSlide && !isPlaying && progress >= 99;
 
   return (
     <div className="fixed inset-0 z-[9999] bg-black flex flex-col" data-testid="demo-player">
@@ -483,13 +588,18 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
           from { opacity: 0; transform: translateX(30px); }
           to { opacity: 1; transform: translateX(0); }
         }
-        @keyframes gentleFloat {
-          0%, 100% { transform: translateY(0); }
-          50% { transform: translateY(-3px); }
-        }
         @keyframes kenBurns {
           0% { transform: scale(1); }
           100% { transform: scale(1.04); }
+        }
+        @keyframes closingPulse {
+          0%, 100% { opacity: 0.7; }
+          50% { opacity: 1; }
+        }
+        @keyframes closingGradient {
+          0% { background-position: 0% 50%; }
+          50% { background-position: 100% 50%; }
+          100% { background-position: 0% 50%; }
         }
         .slide-headline {
           animation: slideInUp 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards;
@@ -505,12 +615,26 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
         .slide-image-active {
           animation: kenBurns 15s ease-out forwards;
         }
+        .closing-headline {
+          animation: slideInUp 1s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+          background: linear-gradient(135deg, #60a5fa, #a78bfa, #60a5fa);
+          background-size: 200% 200%;
+          animation: slideInUp 1s cubic-bezier(0.16, 1, 0.3, 1) forwards, closingGradient 4s ease infinite;
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+          background-clip: text;
+        }
+        .closing-cta {
+          animation: fadeInScale 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+          animation-delay: 1.5s;
+          opacity: 0;
+        }
       `}</style>
 
       <div className="flex items-center justify-between gap-4 px-4 py-3 bg-black/80 border-b border-white/10">
         <div className="flex items-center gap-3 flex-wrap">
           <div className="text-white/90 text-sm font-semibold tracking-wide uppercase">
-            ALMP Platform Demo
+            Nous Agent Orchestrator
           </div>
           <div className="text-white/40 text-xs">
             {currentSlide + 1} / {DEMO_SLIDES.length}
@@ -541,55 +665,29 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
       <div className="flex-1 relative overflow-hidden flex items-center justify-center bg-gradient-to-br from-gray-950 via-black to-gray-900">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-blue-900/10 via-transparent to-purple-900/10" />
 
-        <div className="relative w-full max-w-6xl mx-auto px-8">
-          <div className="relative rounded-lg overflow-hidden shadow-2xl shadow-blue-500/10 border border-white/5">
-            {prevSlideData && transitioning && (
+        {isClosingSlide ? (
+          <div className="relative w-full max-w-6xl mx-auto px-8">
+            <div className="relative rounded-lg overflow-hidden shadow-2xl shadow-blue-500/10 border border-white/5">
               <img
-                src={prevSlideData.image}
-                alt={prevSlideData.title}
-                className="absolute inset-0 w-full h-full object-cover"
-                style={{
-                  zIndex: 1,
-                  opacity: 0,
-                  transition: `opacity ${TRANSITION_DURATION}ms cubic-bezier(0.4, 0, 0.2, 1)`,
-                }}
+                src={slide.image}
+                alt={slide.title}
+                className="w-full h-auto slide-image-active"
+                style={{ filter: "brightness(0.25) blur(2px)" }}
+                data-testid="img-demo-slide"
               />
-            )}
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-8" style={{ zIndex: 3 }}>
+                {headlineVisible && (
+                  <div className="mb-6">
+                    <span className="inline-block text-sm font-bold uppercase tracking-[0.25em] text-blue-400/80 mb-4 slide-headline">
+                      {slide.title}
+                    </span>
+                    <h2 className="closing-headline text-4xl sm:text-5xl md:text-6xl font-bold leading-tight" data-testid="text-demo-headline">
+                      {slide.headline}
+                    </h2>
+                  </div>
+                )}
 
-            <img
-              key={`slide-${effectiveSlide}`}
-              src={effectiveSlideData.image}
-              alt={effectiveSlideData.title}
-              className={`w-full h-auto relative ${!transitioning ? "slide-image-active" : ""}`}
-              style={{
-                zIndex: 2,
-                opacity: transitioning ? 0 : 1,
-                transform: transitioning ? "scale(1.06)" : undefined,
-                transition: `opacity ${TRANSITION_DURATION}ms cubic-bezier(0.4, 0, 0.2, 1), transform ${TRANSITION_DURATION}ms cubic-bezier(0.4, 0, 0.2, 1)`,
-              }}
-              data-testid="img-demo-slide"
-            />
-
-            <div
-              className="absolute inset-x-0 bottom-0 pt-24 pb-6 px-8"
-              style={{
-                zIndex: 3,
-                background: "linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.85) 30%, rgba(0,0,0,0.5) 60%, transparent 100%)",
-              }}
-            >
-              {headlineVisible && !transitioning && (
-                <div className="slide-headline mb-3">
-                  <span className="inline-block text-xs font-bold uppercase tracking-[0.2em] text-blue-400/90 mb-2">
-                    {slide.title}
-                  </span>
-                  <h3 className="text-white text-2xl sm:text-3xl font-bold leading-tight" data-testid="text-demo-headline">
-                    {slide.headline}
-                  </h3>
-                </div>
-              )}
-
-              {!transitioning && (
-                <div className="flex items-center gap-2 flex-wrap mt-3 mb-3">
+                <div className="flex items-center gap-2 flex-wrap justify-center mt-4 mb-6">
                   {slide.keywords.map((kw, i) => (
                     <span
                       key={`${currentSlide}-${i}`}
@@ -599,14 +697,14 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
                         display: "inline-flex",
                         alignItems: "center",
                         gap: "4px",
-                        padding: "3px 10px",
-                        borderRadius: "4px",
-                        background: "rgba(59, 130, 246, 0.2)",
+                        padding: "5px 14px",
+                        borderRadius: "6px",
+                        background: "rgba(59, 130, 246, 0.15)",
                         border: "1px solid rgba(59, 130, 246, 0.3)",
                         color: "rgba(147, 197, 253, 0.95)",
-                        fontSize: "11px",
+                        fontSize: "12px",
                         fontWeight: 600,
-                        letterSpacing: "0.04em",
+                        letterSpacing: "0.06em",
                         textTransform: "uppercase" as const,
                         backdropFilter: "blur(8px)",
                       }}
@@ -616,16 +714,113 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
                     </span>
                   ))}
                 </div>
-              )}
 
-              {!transitioning && (
-                <p className="slide-narration-text text-white/70 text-sm leading-relaxed max-w-3xl" data-testid="text-demo-narration">
+                <p className="slide-narration-text text-white/60 text-sm leading-relaxed max-w-2xl" data-testid="text-demo-narration">
                   {slide.narration}
                 </p>
-              )}
+
+                {demoFinished && (
+                  <div className="closing-cta mt-8">
+                    <Button
+                      size="lg"
+                      className="gap-2 text-base px-8"
+                      onClick={onClose}
+                      data-testid="button-demo-get-started"
+                    >
+                      Get Started
+                    </Button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
-        </div>
+        ) : (
+          <div className="relative w-full max-w-6xl mx-auto px-8">
+            <div className="relative rounded-lg overflow-hidden shadow-2xl shadow-blue-500/10 border border-white/5">
+              {prevSlideData && transitioning && (
+                <img
+                  src={prevSlideData.image}
+                  alt={prevSlideData.title}
+                  className="absolute inset-0 w-full h-full object-cover"
+                  style={{
+                    zIndex: 1,
+                    opacity: 0,
+                    transition: `opacity ${TRANSITION_DURATION}ms cubic-bezier(0.4, 0, 0.2, 1)`,
+                  }}
+                />
+              )}
+
+              <img
+                key={`slide-${currentSlide}`}
+                src={slide.image}
+                alt={slide.title}
+                className={`w-full h-auto relative ${!transitioning ? "slide-image-active" : ""}`}
+                style={{
+                  zIndex: 2,
+                  opacity: transitioning ? 0 : 1,
+                  transform: transitioning ? "scale(1.06)" : undefined,
+                  transition: `opacity ${TRANSITION_DURATION}ms cubic-bezier(0.4, 0, 0.2, 1), transform ${TRANSITION_DURATION}ms cubic-bezier(0.4, 0, 0.2, 1)`,
+                }}
+                data-testid="img-demo-slide"
+              />
+
+              <div
+                className="absolute inset-x-0 bottom-0 pt-24 pb-6 px-8"
+                style={{
+                  zIndex: 3,
+                  background: "linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.85) 30%, rgba(0,0,0,0.5) 60%, transparent 100%)",
+                }}
+              >
+                {headlineVisible && !transitioning && (
+                  <div className="slide-headline mb-3">
+                    <span className="inline-block text-xs font-bold uppercase tracking-[0.2em] text-blue-400/90 mb-2">
+                      {slide.title}
+                    </span>
+                    <h3 className="text-white text-2xl sm:text-3xl font-bold leading-tight" data-testid="text-demo-headline">
+                      {slide.headline}
+                    </h3>
+                  </div>
+                )}
+
+                {!transitioning && (
+                  <div className="flex items-center gap-2 flex-wrap mt-3 mb-3">
+                    {slide.keywords.map((kw, i) => (
+                      <span
+                        key={`${currentSlide}-${i}`}
+                        className="slide-keyword"
+                        style={{
+                          opacity: keywordVisible[i] ? 1 : 0,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px",
+                          padding: "3px 10px",
+                          borderRadius: "4px",
+                          background: "rgba(59, 130, 246, 0.2)",
+                          border: "1px solid rgba(59, 130, 246, 0.3)",
+                          color: "rgba(147, 197, 253, 0.95)",
+                          fontSize: "11px",
+                          fontWeight: 600,
+                          letterSpacing: "0.04em",
+                          textTransform: "uppercase" as const,
+                          backdropFilter: "blur(8px)",
+                        }}
+                        data-testid={`badge-keyword-${i}`}
+                      >
+                        {kw}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {!transitioning && (
+                  <p className="slide-narration-text text-white/70 text-sm leading-relaxed max-w-3xl" data-testid="text-demo-narration">
+                    {slide.narration}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {isLoading && (
           <div className="absolute top-4 right-4 flex items-center gap-2 bg-black/60 rounded-full px-3 py-1.5 text-xs text-white/60">

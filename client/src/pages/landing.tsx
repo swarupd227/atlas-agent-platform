@@ -106,8 +106,8 @@ export default function Landing() {
             <Bot className="w-5 h-5 text-primary-foreground" />
           </div>
           <div>
-            <div className="text-sm font-semibold leading-tight" data-testid="text-brand-name">ALMP</div>
-            <div className="text-xs text-muted-foreground leading-tight">Agent Lifecycle Management</div>
+            <div className="text-sm font-semibold leading-tight" data-testid="text-brand-name">Nous</div>
+            <div className="text-xs text-muted-foreground leading-tight">Agent Orchestrator</div>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -245,7 +245,7 @@ export default function Landing() {
         <div className="max-w-6xl mx-auto px-6 py-8 flex items-center justify-between gap-4 flex-wrap text-sm text-muted-foreground">
           <div className="flex items-center gap-2">
             <Bot className="w-4 h-4" />
-            <span>ALMP - Agent Lifecycle Management Platform</span>
+            <span>Nous Agent Orchestrator</span>
           </div>
           <div>Industry-native AI agent operations</div>
         </div>
