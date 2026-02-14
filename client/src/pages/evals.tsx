@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
-import type { EvalSuite, EvalRun, Agent } from "@shared/schema";
+import type { EvalSuite, EvalRun, Agent, GoldenDataset } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,8 +12,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   FlaskConical, Search, TrendingUp, TrendingDown, Bot,
   ArrowRight, Calendar, Tag, BarChart3, AlertTriangle, CheckCircle,
-  Clock, Loader2, Shield, ShieldAlert, Bug, Play,
+  Clock, Loader2, Shield, ShieldAlert, Bug, Play, Factory, DollarSign, Lock, BookOpen,
 } from "lucide-react";
+import {
+  industryLabels, kpiDimensions, regulatoryTemplates, industryScorers,
+  computeRegressionImpact, getIndustryFromTags, type IndustryId,
+} from "@/lib/industry-assurance";
 
 function hashCode(s: string): number {
   let h = 0;
@@ -106,6 +110,7 @@ export default function Evals() {
   const { data: suites, isLoading: suitesLoading } = useQuery<EvalSuite[]>({ queryKey: ["/api/eval-suites"] });
   const { data: agents, isLoading: agentsLoading } = useQuery<Agent[]>({ queryKey: ["/api/agents"] });
   const { data: allRuns } = useQuery<EvalRun[]>({ queryKey: ["/api/eval-runs"] });
+  const { data: goldenDatasets } = useQuery<GoldenDataset[]>({ queryKey: ["/api/golden-datasets"] });
   const isLoading = suitesLoading || agentsLoading;
 
   const agentMap = useMemo(() => {
@@ -211,6 +216,79 @@ export default function Evals() {
     });
   }, [suites]);
 
+  const industryAssurance = useMemo(() => {
+    if (!suites) return null;
+
+    const industries = new Map<IndustryId, number>();
+    suites.forEach((s) => {
+      const ind = (s as any).industry as IndustryId | null;
+      const fromTags = ind || getIndustryFromTags(s.coverageTags);
+      if (fromTags) industries.set(fromTags, (industries.get(fromTags) || 0) + 1);
+    });
+    const primaryIndustry: IndustryId | null = industries.size > 0
+      ? Array.from(industries.entries()).sort((a, b) => b[1] - a[1])[0][0]
+      : null;
+
+    const linkedDatasets = goldenDatasets?.filter((gd) => {
+      return suites.some((s) => (s as any).goldenDatasetId === gd.id);
+    }) || [];
+    const totalDatasets = goldenDatasets?.length || 0;
+    const linkedPct = totalDatasets > 0 ? Math.round((linkedDatasets.length / totalDatasets) * 100) : 0;
+
+    const allTags = new Set<string>();
+    suites.forEach((s) => (s.coverageTags || []).forEach((t) => allTags.add(t.toLowerCase())));
+
+    const industryKpis = primaryIndustry ? kpiDimensions.filter((k) => k.industry === primaryIndustry) : [];
+    const coveredKpis = industryKpis.filter((k) => {
+      const kLower = k.label.toLowerCase().split(" ");
+      return kLower.some((word) => {
+        return Array.from(allTags).some((tag) => tag.includes(word));
+      });
+    });
+    const uncoveredKpis = industryKpis.filter((k) => !coveredKpis.includes(k));
+    const kpiCovPct = industryKpis.length > 0 ? Math.round((coveredKpis.length / industryKpis.length) * 100) : 0;
+
+    const regulatoryTemplatesForIndustry = primaryIndustry
+      ? regulatoryTemplates.filter((t) => t.industry === primaryIndustry)
+      : [];
+    const scorersForIndustry = primaryIndustry
+      ? industryScorers.filter((s) => s.industry === primaryIndustry)
+      : [];
+
+    const customCount = suites.filter((s) => {
+      const ind = (s as any).industry || getIndustryFromTags(s.coverageTags);
+      return !ind;
+    }).length;
+    const customPct = suites.length > 0 ? Math.round((customCount / suites.length) * 100) : 0;
+
+    const industryRegressions = recentRegressions.map((reg) => {
+      const ind = (reg.suite as any).industry as IndustryId | null || getIndustryFromTags(reg.suite.coverageTags);
+      const impact = ind ? computeRegressionImpact(
+        reg.suite.name,
+        reg.suite.coverageTags,
+        reg.delta,
+        ind,
+        reg.suite.totalCases || 0
+      ) : null;
+      return { ...reg, industry: ind, impact };
+    }).filter((r) => r.impact);
+
+    return {
+      primaryIndustry,
+      industries,
+      linkedDatasets,
+      totalDatasets,
+      linkedPct,
+      kpiCovPct,
+      coveredKpis,
+      uncoveredKpis,
+      regulatoryTemplatesForIndustry,
+      scorersForIndustry,
+      customPct,
+      industryRegressions,
+    };
+  }, [suites, goldenDatasets, recentRegressions]);
+
   if (isLoading) return (
     <div className="flex flex-col gap-6 p-6" data-testid="page-evals-loading">
       <Skeleton className="h-8 w-48" />
@@ -290,6 +368,10 @@ export default function Evals() {
           <TabsTrigger value="coverage" data-testid="tab-coverage" className="gap-1.5">
             <Shield className="w-3.5 h-3.5" />
             Coverage Map
+          </TabsTrigger>
+          <TabsTrigger value="industry-assurance" data-testid="tab-industry-assurance" className="gap-1.5">
+            <Factory className="w-3.5 h-3.5" />
+            Industry Assurance
           </TabsTrigger>
         </TabsList>
 
@@ -672,6 +754,235 @@ export default function Evals() {
                 })()}
               </CardContent>
             </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="industry-assurance" className="mt-0">
+          <div className="flex flex-col gap-4">
+            {!industryAssurance ? (
+              <Card>
+                <CardContent className="py-12 text-center">
+                  <Factory className="w-10 h-10 text-muted-foreground/30 mx-auto mb-2" />
+                  <p className="text-sm text-muted-foreground">Loading industry assurance data...</p>
+                </CardContent>
+              </Card>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4" data-testid="assurance-stats">
+                  <Card>
+                    <CardContent className="p-4 flex flex-col gap-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs text-muted-foreground">Golden Dataset Coverage</span>
+                        <Badge variant="outline" className="text-[10px]">
+                          {industryAssurance.linkedDatasets.length}/{industryAssurance.totalDatasets}
+                        </Badge>
+                      </div>
+                      <span className="text-2xl font-semibold" data-testid="stat-golden-coverage">
+                        {industryAssurance.linkedPct}%
+                      </span>
+                      <Progress value={industryAssurance.linkedPct} className="h-2" />
+                      <span className="text-[10px] text-muted-foreground">
+                        {industryAssurance.linkedDatasets.length} of {industryAssurance.totalDatasets} datasets linked to eval suites
+                      </span>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="p-4 flex flex-col gap-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs text-muted-foreground">KPI Dimension Coverage</span>
+                        <Badge variant="outline" className="text-[10px]">
+                          {industryAssurance.coveredKpis.length}/{industryAssurance.coveredKpis.length + industryAssurance.uncoveredKpis.length}
+                        </Badge>
+                      </div>
+                      <span className="text-2xl font-semibold" data-testid="stat-kpi-coverage">
+                        {industryAssurance.kpiCovPct}%
+                      </span>
+                      <Progress value={industryAssurance.kpiCovPct} className="h-2" />
+                      <span className="text-[10px] text-muted-foreground">
+                        {industryAssurance.uncoveredKpis.length > 0
+                          ? `${industryAssurance.uncoveredKpis.length} KPI dimension${industryAssurance.uncoveredKpis.length !== 1 ? "s" : ""} with no test coverage`
+                          : "All KPI dimensions have test coverage"}
+                      </span>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="p-4 flex flex-col gap-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs text-muted-foreground">Custom Test Cases</span>
+                        <Badge variant="outline" className="text-[10px]">
+                          {industryAssurance.customPct}% custom
+                        </Badge>
+                      </div>
+                      <span className="text-2xl font-semibold" data-testid="stat-custom-pct">
+                        {industryAssurance.customPct}%
+                      </span>
+                      <Progress value={industryAssurance.customPct} className="h-2" />
+                      <span className="text-[10px] text-muted-foreground">
+                        Suites without industry-specific tagging
+                      </span>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {industryAssurance.primaryIndustry && (
+                  <Card>
+                    <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-3">
+                      <div className="flex items-center gap-2">
+                        <BookOpen className="w-4 h-4 text-muted-foreground" />
+                        <CardTitle className="text-sm font-medium">KPI Dimension Analysis</CardTitle>
+                      </div>
+                      <Badge variant="outline" className="text-[10px]">
+                        {industryLabels[industryAssurance.primaryIndustry]}
+                      </Badge>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="flex flex-col gap-3">
+                        {[...industryAssurance.coveredKpis, ...industryAssurance.uncoveredKpis].map((kpi) => {
+                          const covered = industryAssurance.coveredKpis.includes(kpi);
+                          return (
+                            <div key={kpi.id} className={`flex items-center gap-3 p-3 rounded-md border ${covered ? "border-emerald-500/20 bg-emerald-500/5" : "border-amber-500/20 bg-amber-500/5"}`} data-testid={`kpi-dim-${kpi.id}`}>
+                              <div className={`w-8 h-8 rounded-md flex items-center justify-center shrink-0 ${covered ? "bg-emerald-500/10" : "bg-amber-500/10"}`}>
+                                {covered ? (
+                                  <CheckCircle className="w-4 h-4 text-emerald-500" />
+                                ) : (
+                                  <AlertTriangle className="w-4 h-4 text-amber-500" />
+                                )}
+                              </div>
+                              <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+                                <span className="text-sm font-medium" data-testid={`text-kpi-label-${kpi.id}`}>{kpi.label}</span>
+                                <span className="text-[10px] text-muted-foreground">{kpi.description}</span>
+                              </div>
+                              <Badge variant="outline" className={`text-[10px] shrink-0 ${covered ? "text-emerald-600 dark:text-emerald-400 border-emerald-500/30" : "text-amber-600 dark:text-amber-400 border-amber-500/30"}`}>
+                                {covered ? "Covered" : "No Coverage"}
+                              </Badge>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {industryAssurance.regulatoryTemplatesForIndustry.length > 0 && (
+                  <Card>
+                    <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-3">
+                      <div className="flex items-center gap-2">
+                        <Lock className="w-4 h-4 text-muted-foreground" />
+                        <CardTitle className="text-sm font-medium">Mandatory Regulatory Test Cases</CardTitle>
+                      </div>
+                      <Badge variant="outline" className="text-[10px]">
+                        {industryAssurance.regulatoryTemplatesForIndustry.length} templates
+                      </Badge>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="flex flex-col gap-2">
+                        {industryAssurance.regulatoryTemplatesForIndustry.map((tmpl) => (
+                          <div key={tmpl.id} className="flex items-center gap-3 p-3 rounded-md border" data-testid={`reg-template-${tmpl.id}`}>
+                            <div className="w-8 h-8 rounded-md flex items-center justify-center shrink-0 bg-blue-500/10">
+                              <Shield className="w-4 h-4 text-blue-500" />
+                            </div>
+                            <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-sm font-medium">{tmpl.name}</span>
+                                <Badge variant="outline" className="text-[9px] bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20">
+                                  {tmpl.regulation} {tmpl.section}
+                                </Badge>
+                              </div>
+                              <span className="text-[10px] text-muted-foreground">{tmpl.description}</span>
+                            </div>
+                            <Lock className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {industryAssurance.industryRegressions.length > 0 && (
+                  <Card>
+                    <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-3">
+                      <div className="flex items-center gap-2">
+                        <DollarSign className="w-4 h-4 text-red-500" />
+                        <CardTitle className="text-sm font-medium">Regression Impact (Industry Terms)</CardTitle>
+                      </div>
+                      <Badge variant="outline" className="text-[10px] bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20">
+                        {industryAssurance.industryRegressions.length} impactful
+                      </Badge>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="flex flex-col gap-3">
+                        {industryAssurance.industryRegressions.map((reg, idx) => (
+                          <Link key={reg.suite.id} href={`/evals/${reg.suite.id}`}>
+                            <div className="flex flex-col gap-2 p-3 rounded-md border border-red-500/20 bg-red-500/5 hover-elevate cursor-pointer" data-testid={`impact-regression-${idx}`}>
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-sm font-medium">{reg.suite.name}</span>
+                                  {reg.industry && (
+                                    <Badge variant="outline" className="text-[9px]">
+                                      {industryLabels[reg.industry]}
+                                    </Badge>
+                                  )}
+                                </div>
+                                <span className="text-sm font-bold text-red-600 dark:text-red-400">
+                                  {(reg.delta * 100).toFixed(1)}%
+                                </span>
+                              </div>
+                              <p className="text-xs text-muted-foreground" data-testid={`text-impact-${idx}`}>
+                                {reg.impact}
+                              </p>
+                            </div>
+                          </Link>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {industryAssurance.scorersForIndustry.length > 0 && (
+                  <Card>
+                    <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-3">
+                      <div className="flex items-center gap-2">
+                        <FlaskConical className="w-4 h-4 text-muted-foreground" />
+                        <CardTitle className="text-sm font-medium">Available Industry Scorers</CardTitle>
+                      </div>
+                      <Badge variant="outline" className="text-[10px]">
+                        {industryAssurance.scorersForIndustry.length} scorers
+                      </Badge>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {industryAssurance.scorersForIndustry.map((scorer) => (
+                          <div key={scorer.id} className="flex items-start gap-3 p-3 rounded-md border" data-testid={`scorer-${scorer.id}`}>
+                            <div className="w-8 h-8 rounded-md flex items-center justify-center shrink-0 bg-primary/10">
+                              <FlaskConical className="w-4 h-4 text-primary" />
+                            </div>
+                            <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-sm font-medium">{scorer.name}</span>
+                                <Badge variant="outline" className="text-[9px]">weight: {scorer.weight}</Badge>
+                              </div>
+                              <span className="text-[10px] text-muted-foreground">{scorer.description}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {!industryAssurance.primaryIndustry && (
+                  <Card>
+                    <CardContent className="py-12 text-center">
+                      <Factory className="w-10 h-10 text-muted-foreground/30 mx-auto mb-2" />
+                      <p className="text-sm text-muted-foreground" data-testid="text-no-industry">No industry context detected</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Add industry tags (healthcare, financial, manufacturing) to your eval suites or set the industry field to enable industry-specific assurance.
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
+              </>
+            )}
           </div>
         </TabsContent>
       </Tabs>

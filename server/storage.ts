@@ -217,6 +217,7 @@ export interface IStorage {
   updateEvalSuite(id: string, data: Partial<EvalSuite>): Promise<EvalSuite | undefined>;
 
   getEvalTestCases(suiteId: string): Promise<EvalTestCase[]>;
+  getEvalTestCase(id: string): Promise<EvalTestCase | undefined>;
   createEvalTestCase(testCase: InsertEvalTestCase): Promise<EvalTestCase>;
 
   getEvalRuns(suiteId: string): Promise<EvalRun[]>;
@@ -890,6 +891,11 @@ export class DatabaseStorage implements IStorage {
 
   async getEvalTestCases(suiteId: string) {
     return db.select().from(evalTestCases).where(eq(evalTestCases.suiteId, suiteId));
+  }
+
+  async getEvalTestCase(id: string) {
+    const [tc] = await db.select().from(evalTestCases).where(eq(evalTestCases.id, id));
+    return tc;
   }
 
   async createEvalTestCase(testCase: InsertEvalTestCase) {

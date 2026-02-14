@@ -3624,8 +3624,41 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
   });
 
   app.delete("/api/eval-test-cases/:id", async (req, res) => {
+    const tc = await storage.getEvalTestCase(req.params.id);
+    if (tc?.locked || tc?.origin === "regulatory") {
+      return res.status(403).json({ error: "Cannot delete mandatory regulatory test case" });
+    }
     await storage.deleteEvalTestCase(req.params.id);
     res.status(204).send();
+  });
+
+  app.post("/api/evals/:id/seed-regulatory", async (req, res) => {
+    const { templates } = req.body;
+    if (!Array.isArray(templates) || templates.length === 0) {
+      return res.status(400).json({ error: "templates array is required" });
+    }
+    const suite = await storage.getEvalSuite(req.params.id);
+    if (!suite) return res.status(404).json({ error: "Suite not found" });
+
+    const created = [];
+    for (const tmpl of templates) {
+      const tc = await storage.createEvalTestCase({
+        suiteId: suite.id,
+        name: `[${tmpl.regulation} ${tmpl.section}] ${tmpl.name}`,
+        inputData: { scenario: tmpl.inputScenario },
+        expectedOutput: { behavior: tmpl.expectedBehavior },
+        tags: tmpl.tags || ["regulatory"],
+        weight: 2,
+        status: "active",
+        origin: "regulatory",
+        regulationRef: `${tmpl.regulation} ${tmpl.section}`,
+        industryCategory: tmpl.industry,
+        severity: "critical",
+        locked: true,
+      });
+      created.push(tc);
+    }
+    res.json(created);
   });
 
   app.put("/api/evals/:id", async (req, res) => {

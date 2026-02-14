@@ -39,7 +39,12 @@ import {
   ExternalLink,
   Sparkles,
   Loader2,
+  Factory,
+  Lock,
+  BookOpen,
+  Zap,
 } from "lucide-react";
+import { industryLabels, kpiDimensions, regulatoryTemplates, industryScorers, productionEdgeCases, computeRegressionImpact, getIndustryFromTags, type IndustryId } from "@/lib/industry-assurance";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -119,6 +124,7 @@ const tabItems = [
   { key: "red-team", label: "Red-Team Coverage", icon: ShieldAlert, testId: "tab-red-team" },
   { key: "regression-diff", label: "Regression Diff", icon: GitCompare, testId: "tab-regression-diff" },
   { key: "outcome-correlation", label: "Outcome Correlation", icon: BarChart3, testId: "tab-outcome-correlation" },
+  { key: "industry-assurance", label: "Industry Assurance", icon: Factory, testId: "tab-industry-assurance" },
 ];
 
 type ScorerEntry = { id: string; type: string; name: string; weight: number; params: Record<string, unknown> };
@@ -309,6 +315,19 @@ export default function EvalDetail() {
     },
     onError: (error: Error) => {
       toast({ title: "Failed to generate cases", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const seedRegulatoryMutation = useMutation({
+    mutationFn: async (templates: typeof regulatoryTemplates) => {
+      await apiRequest("POST", `/api/evals/${id}/seed-regulatory`, { templates });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/evals", id, "test-cases"] });
+      toast({ title: "Regulatory test cases added", description: "Mandatory regulatory test cases have been seeded." });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to seed regulatory cases", description: error.message, variant: "destructive" });
     },
   });
 
@@ -559,14 +578,16 @@ export default function EvalDetail() {
                         <StatusBadge status={tc.status || "active"} />
                       </TableCell>
                       <TableCell>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          data-testid={`button-delete-tc-${tc.id}`}
-                          onClick={() => setDeleteTcId(tc.id)}
-                        >
-                          <Trash2 className="w-3.5 h-3.5 text-muted-foreground" />
-                        </Button>
+                        {!(tc.locked === true || tc.origin === "regulatory") && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            data-testid={`button-delete-tc-${tc.id}`}
+                            onClick={() => setDeleteTcId(tc.id)}
+                          >
+                            <Trash2 className="w-3.5 h-3.5 text-muted-foreground" />
+                          </Button>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -1734,6 +1755,229 @@ export default function EvalDetail() {
             })()}
           </CardContent>
         </Card>
+      </TabsContent>
+
+      <TabsContent value="industry-assurance" className="mt-0">
+        {(() => {
+          const detectedIndustry = (suite.industry as IndustryId | null) || getIndustryFromTags(suite.coverageTags);
+          const regulatoryCases = (testCases || []).filter((tc) => tc.origin === "regulatory" || tc.locked === true);
+          const industryTemplates = regulatoryTemplates.filter((t) => t.industry === detectedIndustry);
+          const existingRegNames = new Set(regulatoryCases.map((tc) => tc.name));
+          const unseededTemplates = industryTemplates.filter((t) => !existingRegNames.has(t.name));
+          const industryScorersList = industryScorers.filter((s) => s.industry === detectedIndustry);
+          const industryEdgeCases = productionEdgeCases.filter((ec) => ec.industry === detectedIndustry);
+          const previousRun = sortedRuns[1];
+          const regressionDelta = latestRun && previousRun
+            ? (latestRun.passRate || 0) - (previousRun.passRate || 0)
+            : 0;
+          const regressionNarrative = detectedIndustry && regressionDelta < 0
+            ? computeRegressionImpact(suite.name, suite.coverageTags, regressionDelta, detectedIndustry, testCases?.length || 0)
+            : null;
+
+          return (
+            <div className="flex flex-col gap-6">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <Factory className="w-5 h-5 text-muted-foreground" />
+                  <h2 className="text-lg font-semibold" data-testid="text-industry-assurance-title">Industry Assurance</h2>
+                  {detectedIndustry && (
+                    <Badge variant="outline" data-testid="badge-detected-industry">{industryLabels[detectedIndustry]}</Badge>
+                  )}
+                </div>
+              </div>
+
+              <Card data-testid="panel-golden-dataset">
+                <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-3">
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <BookOpen className="w-4 h-4 text-muted-foreground" />
+                    Golden Dataset Baseline
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {suite.goldenDatasetId ? (
+                    <div className="flex items-center gap-3">
+                      <Badge variant="outline" data-testid="badge-golden-dataset-id">{suite.goldenDatasetId}</Badge>
+                      <Link href={`/golden-datasets/${suite.goldenDatasetId}`}>
+                        <Button variant="outline" size="sm" data-testid="button-view-golden-dataset">
+                          <ExternalLink className="w-3.5 h-3.5 mr-1.5" /> View Dataset
+                        </Button>
+                      </Link>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground" data-testid="text-no-golden-dataset">No golden dataset linked to this suite.</p>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card data-testid="panel-regulatory-cases">
+                <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-3">
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <Shield className="w-4 h-4 text-muted-foreground" />
+                    Regulatory Test Cases
+                  </CardTitle>
+                  {detectedIndustry && unseededTemplates.length > 0 && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      data-testid="button-seed-regulatory"
+                      onClick={() => seedRegulatoryMutation.mutate(unseededTemplates)}
+                      disabled={seedRegulatoryMutation.isPending}
+                    >
+                      {seedRegulatoryMutation.isPending ? (
+                        <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Seeding...</>
+                      ) : (
+                        <><Plus className="w-3.5 h-3.5 mr-1.5" /> Seed {unseededTemplates.length} Regulatory Cases</>
+                      )}
+                    </Button>
+                  )}
+                </CardHeader>
+                <CardContent>
+                  {regulatoryCases.length === 0 ? (
+                    <p className="text-sm text-muted-foreground" data-testid="text-no-regulatory-cases">No regulatory test cases found.</p>
+                  ) : (
+                    <div className="flex flex-col gap-3">
+                      {regulatoryCases.map((tc) => (
+                        <div key={tc.id} className="flex items-center justify-between gap-3 p-3 rounded-md border" data-testid={`regulatory-case-${tc.id}`}>
+                          <div className="flex items-center gap-3 min-w-0 flex-1">
+                            <Lock className="w-4 h-4 text-muted-foreground shrink-0" />
+                            <div className="flex flex-col gap-0.5 min-w-0">
+                              <span className="text-sm font-medium" data-testid={`text-reg-case-name-${tc.id}`}>{tc.name}</span>
+                              {tc.regulationRef && (
+                                <span className="text-xs text-muted-foreground" data-testid={`text-reg-ref-${tc.id}`}>{tc.regulationRef}</span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <Badge variant="outline" className="text-[10px] bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20" data-testid={`badge-mandatory-${tc.id}`}>Mandatory</Badge>
+                            <span className="text-[10px] text-muted-foreground">Cannot be deleted</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card data-testid="panel-industry-scorers">
+                <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-3">
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <Gauge className="w-4 h-4 text-muted-foreground" />
+                    Industry-Specific Scorers
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {industryScorersList.length === 0 ? (
+                    <p className="text-sm text-muted-foreground" data-testid="text-no-industry-scorers">
+                      {detectedIndustry ? "No industry-specific scorers available." : "No industry detected for this suite."}
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {industryScorersList.map((scorer) => {
+                        const isActive = scorerConfig.some((s) => s.type === scorer.type);
+                        return (
+                          <div key={scorer.id} className="flex flex-col gap-2 p-4 rounded-md border" data-testid={`industry-scorer-${scorer.id}`}>
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-sm font-medium" data-testid={`text-scorer-name-${scorer.id}`}>{scorer.name}</span>
+                              {isActive ? (
+                                <Badge variant="outline" className="text-[10px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" data-testid={`badge-scorer-active-${scorer.id}`}>Active</Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-[10px]" data-testid={`badge-scorer-inactive-${scorer.id}`}>Not Configured</Badge>
+                              )}
+                            </div>
+                            <p className="text-xs text-muted-foreground" data-testid={`text-scorer-desc-${scorer.id}`}>{scorer.description}</p>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] text-muted-foreground">Weight: {scorer.weight}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card data-testid="panel-production-edge-cases">
+                <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-3">
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-muted-foreground" />
+                    Production Edge Cases
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {industryEdgeCases.length === 0 ? (
+                    <p className="text-sm text-muted-foreground" data-testid="text-no-edge-cases">
+                      {detectedIndustry ? "No production edge cases for this industry." : "No industry detected for this suite."}
+                    </p>
+                  ) : (
+                    <div className="flex flex-col gap-3">
+                      {industryEdgeCases.map((ec) => {
+                        const severityClasses: Record<string, string> = {
+                          critical: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20",
+                          high: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20",
+                          medium: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/20",
+                          low: "bg-muted text-muted-foreground border-muted",
+                        };
+                        return (
+                          <div key={ec.id} className="flex items-start justify-between gap-3 p-3 rounded-md border" data-testid={`edge-case-${ec.id}`}>
+                            <div className="flex flex-col gap-1 min-w-0 flex-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-sm font-medium" data-testid={`text-edge-case-title-${ec.id}`}>{ec.title}</span>
+                                <Badge variant="outline" className={`text-[10px] ${severityClasses[ec.severity] || ""}`} data-testid={`badge-severity-${ec.id}`}>{ec.severity}</Badge>
+                              </div>
+                              <p className="text-xs text-muted-foreground" data-testid={`text-edge-case-desc-${ec.id}`}>{ec.description}</p>
+                              <span className="text-[10px] text-muted-foreground" data-testid={`text-edge-case-occurrences-${ec.id}`}>{ec.occurrences} occurrences</span>
+                            </div>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              data-testid={`button-add-edge-case-${ec.id}`}
+                              onClick={() => {
+                                setTcName(ec.title);
+                                setTcInputData(JSON.stringify(ec.inputData, null, 2));
+                                setTcExpectedOutput(JSON.stringify(ec.expectedOutput, null, 2));
+                                setTcTags(ec.tags.join(", "));
+                                setTcWeight("1");
+                                setAddTcOpen(true);
+                              }}
+                            >
+                              <Plus className="w-3.5 h-3.5 mr-1.5" /> Add to Suite
+                            </Button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card data-testid="panel-regression-impact">
+                <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-3">
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <TrendingDown className="w-4 h-4 text-muted-foreground" />
+                    Regression Impact
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {regressionNarrative ? (
+                    <div className="flex items-start gap-3 p-4 rounded-md border border-red-500/20 bg-red-500/5" data-testid="regression-impact-narrative">
+                      <DollarSign className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+                      <div className="flex flex-col gap-1">
+                        <span className="text-sm font-medium text-red-600 dark:text-red-400" data-testid="text-regression-delta">
+                          Pass rate dropped {(Math.abs(regressionDelta) * 100).toFixed(1)}% from last run
+                        </span>
+                        <p className="text-sm" data-testid="text-regression-narrative">{regressionNarrative}</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground" data-testid="text-no-regression">
+                      {!latestRun ? "No runs available." : !previousRun ? "Only one run available \u2014 no regression comparison possible." : "No regression detected. Pass rate is stable or improving."}
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          );
+        })()}
       </TabsContent>
       </Tabs>
 
