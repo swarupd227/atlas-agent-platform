@@ -25,7 +25,7 @@ const DEMO_SLIDES: DemoSlide[] = [
       "Self-healing with full audit trails",
     ],
     narration:
-      "Every enterprise wants AI agents. But running them safely — with compliance, governance, and reliability — takes months. Nous Agent Orchestrator changes that. Agents understand your industry from login, deploy from battle-tested templates in hours, and heal themselves when something breaks — with a full audit trail. Let me show you what this looks like.",
+      "Every enterprise wants AI agents. But running them safely — with compliance, governance, and reliability — takes months. Nawse Agent Orchestrator changes that. Agents understand your industry from login, deploy from battle-tested templates in hours, and heal themselves when something breaks — with a full audit trail. Let me show you what this looks like.",
     isOpening: true,
   },
   {
@@ -39,7 +39,7 @@ const DEMO_SLIDES: DemoSlide[] = [
       "GDPR and CCPA policies turned on by default",
     ],
     narration:
-      "The first thing Nous asks is: what's your industry? When NovaBill selected SaaS, the platform auto-loaded 35 agent skills, activated 38 SOC 2 controls, and turned on GDPR and CCPA policies. On other platforms, you start with a blank canvas. On Nous, you start with your industry already understood.",
+      "The first thing Nawse asks is: what's your industry? When NovaBill selected SaaS, the platform auto-loaded 35 agent skills, activated 38 SOC 2 controls, and turned on GDPR and CCPA policies. On other platforms, you start with a blank canvas. On Nawse, you start with your industry already understood.",
   },
   {
     image: "/demo-screenshots/08-outcomes.png",
@@ -143,7 +143,7 @@ const DEMO_SLIDES: DemoSlide[] = [
       "$340K quarterly revenue protected while everyone slept",
     ],
     narration:
-      "In eight screens: a platform that understands your industry, deploys agents in hours, shows business results, knows when to ask a human, heals itself, validates every fix, and generates a tamper-proof audit trail — automatically. For NovaBill: $972,000 in cost savings, 84% margins, and $340,000 protected while everyone slept. That's Nous Agent Orchestrator.",
+      "In eight screens: a platform that understands your industry, deploys agents in hours, shows business results, knows when to ask a human, heals itself, validates every fix, and generates a tamper-proof audit trail — automatically. For NovaBill: $972,000 in cost savings, 84% margins, and $340,000 protected while everyone slept. That's Nawse Agent Orchestrator.",
     isClosing: true,
   },
 ];
@@ -151,149 +151,284 @@ const DEMO_SLIDES: DemoSlide[] = [
 const TRANSITION_DURATION = 900;
 const POST_NARRATION_PAUSE = 1500;
 
-function startAmbientMusic(audioContext: AudioContext): () => void {
+function startRockMusic(audioContext: AudioContext): () => void {
   const masterGain = audioContext.createGain();
-  masterGain.gain.value = 0.06;
+  masterGain.gain.value = 0.35;
   masterGain.connect(audioContext.destination);
 
+  const compressor = audioContext.createDynamicsCompressor();
+  compressor.threshold.value = -12;
+  compressor.knee.value = 4;
+  compressor.ratio.value = 8;
+  compressor.attack.value = 0.002;
+  compressor.release.value = 0.1;
+  compressor.connect(masterGain);
+
   const reverbConvolver = audioContext.createConvolver();
-  const reverbLength = audioContext.sampleRate * 3;
+  const reverbLength = audioContext.sampleRate * 0.8;
   const reverbBuffer = audioContext.createBuffer(2, reverbLength, audioContext.sampleRate);
   for (let ch = 0; ch < 2; ch++) {
     const data = reverbBuffer.getChannelData(ch);
     for (let i = 0; i < reverbLength; i++) {
-      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / reverbLength, 2.5);
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / reverbLength, 3);
     }
   }
   reverbConvolver.buffer = reverbBuffer;
-  reverbConvolver.connect(masterGain);
+  const reverbGain = audioContext.createGain();
+  reverbGain.gain.value = 0.15;
+  reverbConvolver.connect(reverbGain);
+  reverbGain.connect(compressor);
 
   const dryGain = audioContext.createGain();
-  dryGain.gain.value = 0.3;
-  dryGain.connect(masterGain);
+  dryGain.gain.value = 0.85;
+  dryGain.connect(compressor);
 
-  const wetGain = audioContext.createGain();
-  wetGain.gain.value = 0.7;
-  wetGain.connect(reverbConvolver);
+  const bpm = 120;
+  const beatDuration = 60 / bpm;
+  const barDuration = beatDuration * 4;
 
-  const padNotes = [
-    [130.81, 196.00, 261.63, 329.63],
-    [146.83, 220.00, 293.66, 349.23],
-    [164.81, 246.94, 329.63, 392.00],
-    [123.47, 185.00, 246.94, 311.13],
-    [138.59, 207.65, 277.18, 349.23],
-    [155.56, 233.08, 311.13, 369.99],
+  const powerChords = [
+    [82.41, 123.47, 164.81],
+    [92.50, 138.59, 185.00],
+    [73.42, 110.00, 146.83],
+    [98.00, 146.83, 196.00],
+    [87.31, 130.81, 174.61],
+    [77.78, 116.54, 155.56],
+    [82.41, 123.47, 164.81],
+    [110.00, 164.81, 220.00],
   ];
 
   let chordIndex = 0;
-  const activeOscs: { osc: OscillatorNode; gain: GainNode }[] = [];
-  let chordInterval: ReturnType<typeof setInterval> | null = null;
-  let shimmerInterval: ReturnType<typeof setInterval> | null = null;
+  let beatCount = 0;
+  const activeNodes: { osc: OscillatorNode; gain: GainNode }[] = [];
+  let beatIntervalId: ReturnType<typeof setInterval> | null = null;
+  let barIntervalId: ReturnType<typeof setInterval> | null = null;
 
-  const chordDuration = 8000;
+  function playKick(time: number) {
+    const osc = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(180, time);
+    osc.frequency.exponentialRampToValueAtTime(35, time + 0.1);
+    gain.gain.setValueAtTime(0.9, time);
+    gain.gain.exponentialRampToValueAtTime(0.001, time + 0.35);
+    osc.connect(gain);
+    gain.connect(dryGain);
+    osc.start(time);
+    osc.stop(time + 0.4);
 
-  function playPad() {
-    activeOscs.forEach(({ osc, gain }) => {
+    const click = audioContext.createOscillator();
+    const clickGain = audioContext.createGain();
+    click.type = "square";
+    click.frequency.value = 1200;
+    clickGain.gain.setValueAtTime(0.3, time);
+    clickGain.gain.exponentialRampToValueAtTime(0.001, time + 0.02);
+    click.connect(clickGain);
+    clickGain.connect(dryGain);
+    click.start(time);
+    click.stop(time + 0.05);
+  }
+
+  function playSnare(time: number) {
+    const osc = audioContext.createOscillator();
+    const oscGain = audioContext.createGain();
+    osc.type = "triangle";
+    osc.frequency.value = 200;
+    oscGain.gain.setValueAtTime(0.5, time);
+    oscGain.gain.exponentialRampToValueAtTime(0.001, time + 0.12);
+    osc.connect(oscGain);
+    oscGain.connect(dryGain);
+    oscGain.connect(reverbConvolver);
+    osc.start(time);
+    osc.stop(time + 0.15);
+
+    const noiseLen = audioContext.sampleRate * 0.12;
+    const noiseBuf = audioContext.createBuffer(1, noiseLen, audioContext.sampleRate);
+    const nd = noiseBuf.getChannelData(0);
+    for (let i = 0; i < noiseLen; i++) {
+      nd[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / noiseLen, 1.5);
+    }
+    const noiseSrc = audioContext.createBufferSource();
+    noiseSrc.buffer = noiseBuf;
+    const noiseGain = audioContext.createGain();
+    noiseGain.gain.setValueAtTime(0.4, time);
+    noiseGain.gain.exponentialRampToValueAtTime(0.001, time + 0.15);
+
+    const snareFilter = audioContext.createBiquadFilter();
+    snareFilter.type = "highpass";
+    snareFilter.frequency.value = 1500;
+    noiseSrc.connect(snareFilter);
+    snareFilter.connect(noiseGain);
+    noiseGain.connect(dryGain);
+    noiseGain.connect(reverbConvolver);
+    noiseSrc.start(time);
+  }
+
+  function playHihat(time: number, open: boolean) {
+    const bufferSize = audioContext.sampleRate * (open ? 0.15 : 0.04);
+    const buffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, open ? 2 : 5);
+    }
+    const source = audioContext.createBufferSource();
+    source.buffer = buffer;
+    const hihatGain = audioContext.createGain();
+    hihatGain.gain.setValueAtTime(open ? 0.25 : 0.18, time);
+    hihatGain.gain.exponentialRampToValueAtTime(0.001, time + (open ? 0.15 : 0.04));
+
+    const hihatFilter = audioContext.createBiquadFilter();
+    hihatFilter.type = "highpass";
+    hihatFilter.frequency.value = 6000;
+    source.connect(hihatFilter);
+    hihatFilter.connect(hihatGain);
+    hihatGain.connect(dryGain);
+    source.start(time);
+  }
+
+  function playCrash(time: number) {
+    const bufferSize = audioContext.sampleRate * 0.8;
+    const buffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 1.5);
+    }
+    const source = audioContext.createBufferSource();
+    source.buffer = buffer;
+    const crashGain = audioContext.createGain();
+    crashGain.gain.setValueAtTime(0.3, time);
+    crashGain.gain.exponentialRampToValueAtTime(0.001, time + 0.8);
+
+    const crashFilter = audioContext.createBiquadFilter();
+    crashFilter.type = "bandpass";
+    crashFilter.frequency.value = 5000;
+    crashFilter.Q.value = 0.5;
+    source.connect(crashFilter);
+    crashFilter.connect(crashGain);
+    crashGain.connect(dryGain);
+    crashGain.connect(reverbConvolver);
+    source.start(time);
+  }
+
+  function scheduleBeat() {
+    const now = audioContext.currentTime;
+    const beatInBar = beatCount % 8;
+
+    if (beatInBar === 0) {
+      playKick(now);
+      playCrash(now);
+    } else if (beatInBar === 4) {
+      playKick(now);
+    } else if (beatInBar === 2 || beatInBar === 6) {
+      playSnare(now);
+    }
+
+    if (beatInBar === 3 || beatInBar === 7) {
+      playKick(now);
+    }
+
+    const isOpen = beatInBar === 1 || beatInBar === 5;
+    playHihat(now, isOpen);
+
+    if (beatInBar % 2 === 0) {
+      playHihat(now + beatDuration * 0.5, false);
+    }
+
+    beatCount++;
+  }
+
+  function playPowerChord() {
+    activeNodes.forEach(({ osc, gain }) => {
       const now = audioContext.currentTime;
       gain.gain.setValueAtTime(gain.gain.value, now);
-      gain.gain.linearRampToValueAtTime(0, now + 2);
-      setTimeout(() => { try { osc.stop(); } catch {} }, 2500);
+      gain.gain.linearRampToValueAtTime(0, now + 0.3);
+      setTimeout(() => { try { osc.stop(); } catch {} }, 400);
     });
-    activeOscs.length = 0;
+    activeNodes.length = 0;
 
-    const chord = padNotes[chordIndex % padNotes.length];
+    const chord = powerChords[chordIndex % powerChords.length];
     chordIndex++;
     const now = audioContext.currentTime;
 
     chord.forEach((freq, i) => {
       const osc = audioContext.createOscillator();
       const gain = audioContext.createGain();
-
-      osc.type = "sine";
+      osc.type = "sawtooth";
       osc.frequency.value = freq;
-      osc.detune.value = (Math.random() - 0.5) * 6;
+      osc.detune.value = (Math.random() - 0.5) * 15;
 
-      const vol = 0.15 - i * 0.02;
-      const attack = 2.5 + Math.random() * 1.5;
+      const distortion = audioContext.createWaveShaper();
+      const curve = new Float32Array(256);
+      for (let j = 0; j < 256; j++) {
+        const x = (j / 128) - 1;
+        curve[j] = Math.tanh(x * 2.5);
+      }
+      distortion.curve = curve;
+
+      const vol = [0.22, 0.18, 0.14][i] || 0.12;
       gain.gain.setValueAtTime(0, now);
-      gain.gain.linearRampToValueAtTime(vol, now + attack);
-      gain.gain.setValueAtTime(vol, now + (chordDuration / 1000) * 0.6);
-      gain.gain.linearRampToValueAtTime(0, now + (chordDuration / 1000) * 0.95);
+      gain.gain.linearRampToValueAtTime(vol, now + 0.05);
+      gain.gain.setValueAtTime(vol, now + barDuration * 0.7);
+      gain.gain.linearRampToValueAtTime(vol * 0.4, now + barDuration * 0.95);
 
-      osc.connect(gain);
+      osc.connect(distortion);
+      distortion.connect(gain);
       gain.connect(dryGain);
-      gain.connect(wetGain);
+      gain.connect(reverbConvolver);
       osc.start(now);
-      activeOscs.push({ osc, gain });
+      activeNodes.push({ osc, gain });
 
       const osc2 = audioContext.createOscillator();
       const gain2 = audioContext.createGain();
-      osc2.type = "sine";
-      osc2.frequency.value = freq * 2;
-      osc2.detune.value = (Math.random() - 0.5) * 10;
+      osc2.type = "sawtooth";
+      osc2.frequency.value = freq * 1.005;
+      osc2.detune.value = 8;
       gain2.gain.setValueAtTime(0, now);
-      gain2.gain.linearRampToValueAtTime(vol * 0.15, now + attack + 0.5);
-      gain2.gain.setValueAtTime(vol * 0.15, now + (chordDuration / 1000) * 0.5);
-      gain2.gain.linearRampToValueAtTime(0, now + (chordDuration / 1000) * 0.9);
-      osc2.connect(gain2);
-      gain2.connect(wetGain);
+      gain2.gain.linearRampToValueAtTime(vol * 0.7, now + 0.08);
+      gain2.gain.setValueAtTime(vol * 0.7, now + barDuration * 0.6);
+      gain2.gain.linearRampToValueAtTime(0, now + barDuration * 0.9);
+      osc2.connect(distortion);
+      distortion.connect(gain2);
+      gain2.connect(dryGain);
       osc2.start(now);
-      activeOscs.push({ osc: osc2, gain: gain2 });
+      activeNodes.push({ osc: osc2, gain: gain2 });
     });
 
-    const subOsc = audioContext.createOscillator();
-    const subGain = audioContext.createGain();
-    subOsc.type = "sine";
-    subOsc.frequency.value = chord[0] / 2;
-    subGain.gain.setValueAtTime(0, now);
-    subGain.gain.linearRampToValueAtTime(0.12, now + 3);
-    subGain.gain.setValueAtTime(0.12, now + (chordDuration / 1000) * 0.5);
-    subGain.gain.linearRampToValueAtTime(0, now + (chordDuration / 1000) * 0.9);
-    subOsc.connect(subGain);
-    subGain.connect(dryGain);
-    subOsc.start(now);
-    activeOscs.push({ osc: subOsc, gain: subGain });
+    const bassOsc = audioContext.createOscillator();
+    const bassGain = audioContext.createGain();
+    bassOsc.type = "sawtooth";
+    bassOsc.frequency.value = chord[0] / 2;
+
+    const bassFilter = audioContext.createBiquadFilter();
+    bassFilter.type = "lowpass";
+    bassFilter.frequency.value = 300;
+    bassFilter.Q.value = 2;
+
+    bassGain.gain.setValueAtTime(0, now);
+    bassGain.gain.linearRampToValueAtTime(0.5, now + 0.03);
+    bassGain.gain.setValueAtTime(0.5, now + barDuration * 0.6);
+    bassGain.gain.linearRampToValueAtTime(0.2, now + barDuration * 0.9);
+    bassOsc.connect(bassFilter);
+    bassFilter.connect(bassGain);
+    bassGain.connect(dryGain);
+    bassOsc.start(now);
+    activeNodes.push({ osc: bassOsc, gain: bassGain });
   }
 
-  function playShimmer() {
-    if (Math.random() > 0.4) return;
-    const now = audioContext.currentTime;
-    const chord = padNotes[chordIndex % padNotes.length];
-    const baseFreq = chord[Math.floor(Math.random() * chord.length)];
-    const freq = baseFreq * (Math.random() > 0.5 ? 4 : 2);
+  playPowerChord();
+  scheduleBeat();
 
-    const osc = audioContext.createOscillator();
-    const gain = audioContext.createGain();
-    const filter = audioContext.createBiquadFilter();
-
-    osc.type = "sine";
-    osc.frequency.value = freq;
-    filter.type = "lowpass";
-    filter.frequency.value = 2000;
-    filter.Q.value = 1;
-
-    gain.gain.setValueAtTime(0, now);
-    gain.gain.linearRampToValueAtTime(0.03, now + 0.3);
-    gain.gain.linearRampToValueAtTime(0, now + 2.5);
-
-    osc.connect(filter);
-    filter.connect(gain);
-    gain.connect(wetGain);
-    osc.start(now);
-    osc.stop(now + 3);
-  }
-
-  playPad();
-  chordInterval = setInterval(playPad, chordDuration);
-  shimmerInterval = setInterval(playShimmer, 3000);
+  beatIntervalId = setInterval(scheduleBeat, beatDuration * 1000);
+  barIntervalId = setInterval(playPowerChord, barDuration * 1000);
 
   return () => {
-    if (chordInterval) clearInterval(chordInterval);
-    if (shimmerInterval) clearInterval(shimmerInterval);
-    activeOscs.forEach(({ osc }) => { try { osc.stop(); } catch {} });
+    if (beatIntervalId) clearInterval(beatIntervalId);
+    if (barIntervalId) clearInterval(barIntervalId);
+    activeNodes.forEach(({ osc }) => { try { osc.stop(); } catch {} });
     masterGain.disconnect();
+    compressor.disconnect();
+    reverbGain.disconnect();
     dryGain.disconnect();
-    wetGain.disconnect();
   };
 }
 
@@ -337,7 +472,7 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
     const ac = new AudioContext();
     audioContextRef.current = ac;
     if (isMutedRef.current) ac.suspend();
-    const cleanup = startAmbientMusic(ac);
+    const cleanup = startRockMusic(ac);
     musicCleanupRef.current = cleanup;
   }, [musicStarted]);
 
