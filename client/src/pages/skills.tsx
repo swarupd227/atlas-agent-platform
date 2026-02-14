@@ -48,6 +48,7 @@ const INDUSTRY_CONFIG: Record<string, { label: string; icon: typeof Building2; c
   financial_services: { label: "Financial Services", icon: Briefcase, color: "text-blue-600 dark:text-blue-400" },
   healthcare: { label: "Healthcare", icon: Heart, color: "text-rose-600 dark:text-rose-400" },
   manufacturing: { label: "Manufacturing", icon: Factory, color: "text-amber-600 dark:text-amber-400" },
+  insurance: { label: "Insurance", icon: Shield, color: "text-indigo-600 dark:text-indigo-400" },
   retail: { label: "Retail", icon: ShoppingCart, color: "text-emerald-600 dark:text-emerald-400" },
 };
 
