@@ -561,16 +561,11 @@ export default function AgentPlayground() {
         </div>
       </div>
 
-      <div className="flex flex-1 flex-col min-w-0">
+      <div className="flex flex-1 flex-col min-w-0 overflow-hidden">
         <div className="flex items-center gap-2 px-4 py-2 border-b">
           <Bot className="h-5 w-5 text-primary shrink-0" />
-          <div className="min-w-0 mr-auto">
-            <h2 className="text-sm font-semibold truncate" data-testid="text-agent-name">{agent.name}</h2>
-            {agent.description && (
-              <p className="text-xs text-muted-foreground truncate hidden lg:block">{agent.description}</p>
-            )}
-          </div>
-          <div className="flex items-center gap-1.5 shrink-0">
+          <h2 className="text-sm font-semibold truncate min-w-0" data-testid="text-agent-name">{agent.name}</h2>
+          <div className="flex items-center gap-1.5 shrink-0 ml-auto">
             {hasContextActive && (
               <Badge variant="outline" data-testid="badge-context-active">
                 <Sparkles className="h-3 w-3 mr-1" />
@@ -620,7 +615,7 @@ export default function AgentPlayground() {
                 <div className="px-3 py-1.5 border-b bg-muted/30 flex items-center gap-2">
                   <Bot className="h-3.5 w-3.5 text-primary" />
                   <span className="text-xs font-medium truncate">{agent.name}</span>
-                  <Badge variant="outline" className="text-[10px] text-purple-600 dark:text-purple-400">Contextualized</Badge>
+                  <Badge variant="outline">Contextualized</Badge>
                 </div>
                 <ScrollArea className="flex-1 px-4 py-3">
                   {messagesLoading ? (
@@ -641,7 +636,7 @@ export default function AgentPlayground() {
                 <div className="px-3 py-1.5 border-b bg-muted/30 flex items-center gap-2">
                   <Bot className="h-3.5 w-3.5 text-muted-foreground" />
                   <span className="text-xs font-medium">Generic AI</span>
-                  <Badge variant="secondary" className="text-[10px]">No Context</Badge>
+                  <Badge variant="secondary">No Context</Badge>
                 </div>
                 <ScrollArea className="flex-1 px-4 py-3">
                   {renderChatMessages(genericMessages, isStreaming, genericStreamingContent, genericMessagesEndRef)}
