@@ -7,6 +7,7 @@ interface DemoSlide {
   title: string;
   headline: string;
   keywords: string[];
+  highlights: string[];
   narration: string;
   isOpening?: boolean;
   isClosing?: boolean;
@@ -18,81 +19,131 @@ const DEMO_SLIDES: DemoSlide[] = [
     title: "Nous Agent Orchestrator",
     headline: "Your Industry. Your Agents. Your Context.",
     keywords: ["Industry-Native AI", "Autonomous Operations", "Compliance-First"],
+    highlights: [
+      "Agents that understand your industry from day one",
+      "Deploy from battle-tested templates in hours",
+      "Self-healing with full audit trails",
+    ],
     narration:
-      "Every enterprise is racing to deploy AI agents. But here's the problem nobody talks about: building an agent takes a week. Running it safely in production — with compliance, governance, and reliability — takes months. And when it breaks at 3 AM? That's when the real cost hits. Nous Agent Orchestrator solves this. It's the only platform where AI agents understand your industry from the first login, deploy from battle-tested templates in hours, and heal themselves when something goes wrong — with a full audit trail that satisfies your compliance team. Let me show you what this looks like for a real SaaS company running autonomous customer support.",
+      "Every enterprise wants AI agents. But running them safely — with compliance, governance, and reliability — takes months. Nous Agent Orchestrator changes that. Agents understand your industry from login, deploy from battle-tested templates in hours, and heal themselves when something breaks — with a full audit trail. Let me show you what this looks like.",
     isOpening: true,
   },
   {
     image: "/demo-screenshots/01-overview.png",
-    title: "Industry Workspace Selector",
+    title: "Industry Workspace",
     headline: "The Platform Speaks Your Industry.",
-    keywords: ["Industry Context Engine", "Auto-Activated Compliance", "Domain Knowledge"],
+    keywords: ["Context Engine", "Auto-Compliance", "Domain Knowledge"],
+    highlights: [
+      "35 industry-specific agent skills auto-loaded",
+      "38 SOC 2 controls activated instantly",
+      "GDPR and CCPA policies turned on by default",
+    ],
     narration:
-      "The very first thing Nous Agent Orchestrator asks is: what's your industry? This isn't a settings page — it's an intelligence layer. When NovaBill selected Technology / SaaS, the platform auto-loaded 35 industry-specific agent skills, activated 38 SOC 2 controls, turned on GDPR and CCPA policies, and configured industry-standard terminology throughout the entire interface. No other platform does this. On AWS Bedrock, you start with a blank canvas. On LangChain, you start with code. On Nous, you start with your industry already understood.",
+      "The first thing Nous asks is: what's your industry? When NovaBill selected SaaS, the platform auto-loaded 35 agent skills, activated 38 SOC 2 controls, and turned on GDPR and CCPA policies. On other platforms, you start with a blank canvas. On Nous, you start with your industry already understood.",
   },
   {
     image: "/demo-screenshots/08-outcomes.png",
-    title: "Outcome Portfolio Dashboard",
+    title: "Outcome Dashboard",
     headline: "Business Results. Not AI Metrics.",
-    keywords: ["KPI Tracking", "Revenue & Margins", "Industry Benchmarks"],
+    keywords: ["KPI Tracking", "84% Margins", "82nd Percentile"],
+    highlights: [
+      "73% autonomous resolution rate",
+      "$112K revenue at $18K cost this quarter",
+      "Industry benchmarking across the platform",
+    ],
     narration:
-      "This is the Outcome Dashboard — the first screen every user sees after login. Notice: no model names, no token counts, no infrastructure metrics. Business results. NovaBill's support agent is resolving 73% of tickets autonomously, at an average of 2.4 minutes per resolution, with a 4.3 customer satisfaction score. All three KPIs are green. The margin is 84% — that's $112,000 in revenue at $18,000 cost this quarter. And the benchmark line tells NovaBill they're performing in the 82nd percentile compared to other SaaS companies on the platform. That's intelligence no standalone agent builder can offer.",
+      "The Outcome Dashboard shows business results — not model names or token counts. NovaBill's agent resolves 73% of tickets autonomously at 84% margins. And the benchmark line shows they're in the 82nd percentile compared to other SaaS companies on the platform.",
   },
   {
     image: "/demo-screenshots/02-agents.png",
-    title: "Golden Template Gallery",
+    title: "Golden Templates",
     headline: "Deploy in Hours. Not Months.",
-    keywords: ["Battle-Tested Templates", "73 Deployments", "Complete Solutions"],
+    keywords: ["73 Deployments", "420 Test Cases", "3-Hour Setup"],
+    highlights: [
+      "Production-ready agent templates refined across dozens of companies",
+      "Pre-wired integrations, governance, and test suites included",
+      "NovaBill: shadow testing in under 3 hours",
+    ],
     narration:
-      "This is the Golden Repository — think of it as an app store for production-ready agents. NovaBill chose this L1 Support template. 73 companies have deployed it before them, which means the skills, the test cases, and the deployment pipeline have been refined across dozens of real-world environments. Look at what comes inside: the agent blueprint, eight industry-specific skills like Billing Inquiry and Escalation Decision, pre-wired connections to Zendesk and Stripe, SOC 2 governance baked in, 420 evaluation test cases, and a complete deployment pipeline with shadow replay and canary stages. NovaBill connected their systems and had a working agent in shadow testing within 3 hours.",
+      "The Golden Repository is an app store for production-ready agents. NovaBill's L1 Support template has been deployed by 73 companies — with skills, test cases, and pipelines refined across real-world environments. They connected their systems and were in shadow testing within 3 hours.",
   },
   {
     image: "/demo-screenshots/04-monitor.png",
-    title: "Agent Cockpit — Live Trace",
+    title: "Agent Cockpit",
     headline: "Watch the Agent Think and Act.",
-    keywords: ["Real-Time Traces", "MCP Tool Calls", "$0.018 Per Resolution"],
+    keywords: ["4.2s Resolution", "$0.018 Cost", "Auto-Redaction"],
+    highlights: [
+      "Real-time trace of every agent decision",
+      "Automatic PII redaction for SOC 2 and GDPR",
+      "Curated 24K token context — not a 128K dump",
+    ],
     narration:
-      "Here's the agent working in real time. A customer can't export invoices. Watch the steps: classified the intent in under a second, activated the right skill, searched the knowledge base, pulled the customer's browser info from the help desk, identified a known Chrome issue, and sent the fix — 4.2 seconds, cost: less than two cents. Look at the governance sidebar. The agent detected an email address in the ticket and auto-redacted it from our logs. SOC 2 and GDPR compliance checks passed automatically. And notice the context budget at the bottom — the platform curates exactly 24,000 tokens of relevant knowledge for this task, not a bloated 128K dump. Focused context, better answers.",
+      "Here's the agent working live. A customer can't export invoices — the agent classifies, searches the knowledge base, identifies the issue, and sends the fix. 4.2 seconds, under two cents. It auto-redacts PII from logs and curates exactly 24,000 tokens of relevant context. Focused context, better answers.",
   },
   {
     image: "/demo-screenshots/07-approvals.png",
-    title: "Adaptive Autonomy Console",
+    title: "Adaptive Autonomy",
     headline: "It Knows When to Ask a Human.",
-    keywords: ["Risk-Based Escalation", "Approve & Teach", "Earned Trust"],
+    keywords: ["Risk-Based Escalation", "Approve & Teach", "85% to 91% Autonomy"],
+    highlights: [
+      "Agent does 95% of the work, human makes the judgment call",
+      "Approve & Teach: platform learns from every decision",
+      "NovaBill: 85% to 91% autonomy in two months",
+    ],
     narration:
-      "Remember on the last screen, the PDF export question was auto-approved because it was low risk — just an informational response. This is different. A customer wants a $2,400 refund. The agent did all the work: verified the seats, checked the billing history, calculated the policy-eligible refund of $864, and prepared a counter-offer. But it stopped. Two rules triggered: amount exceeds $100, and the customer is asking for more than policy allows. The agent did 95% of the work. A human makes the judgment call. And see that Approve and Teach button? If the validator approves and clicks that, the platform learns: next time a similar case comes in, handle it autonomously. That's how NovaBill went from 85% to 91% autonomy in two months — not by removing guardrails, but by the system earning trust one decision at a time.",
+      "A customer wants a $2,400 refund. The agent verified the billing, calculated the policy-eligible amount, and prepared a counter-offer — but stopped. The amount exceeds policy limits. A human makes the call. With Approve and Teach, the platform learns from each decision. That's how NovaBill went from 85% to 91% autonomy in two months.",
   },
   {
     image: "/demo-screenshots/03-deployments.png",
     title: "Self-Healing Pipeline",
     headline: "The Platform Fixes Itself.",
-    keywords: ["2-Hour Resolution", "Zero Humans", "$340K Protected"],
+    keywords: ["3 AM Detection", "Zero Humans", "$340K Protected"],
+    highlights: [
+      "Detected resolution rate drop at 3 AM — diagnosed in 7 minutes",
+      "Wrote a fix, validated against 420 test cases, deployed via canary",
+      "Fully restored by 5:15 AM — zero human intervention",
+    ],
     narration:
-      "Tuesday, 3 AM. Nobody is awake. The platform detects the resolution rate for billing questions has dropped from 73% to 58%. In 7 minutes, it diagnoses the root cause: NovaBill pushed a routine billing system update that renamed two API fields. By 3:31, the platform has written a fix — a 12-line update to the Billing Inquiry skill. But here's what makes this different from a hotfix: the platform doesn't just deploy. It validates. Shadow replay against 420 test cases: 99.5% pass rate. Then 5% of live tickets as a canary: 96% resolution versus 57% in the control group. Then 25%. Then full deployment. By 5:15 AM, fully restored. Two hours. Zero humans. $340,000 in quarterly revenue protected.",
+      "Tuesday, 3 AM. Resolution rate drops from 73% to 58%. The platform diagnoses the cause in 7 minutes — a billing API field rename. It writes a fix, validates against 420 test cases, runs a canary at 5%, then 25%, then full deployment. Fully restored by 5:15 AM. Zero humans. $340,000 in quarterly revenue protected.",
   },
   {
     image: "/demo-screenshots/05-governance.png",
-    title: "Shadow Replay & Canary Results",
-    headline: "Every Fix Is Validated Before Deploy.",
-    keywords: ["420 Test Cases", "99.5% Pass Rate", "Evidence-Based Deployment"],
+    title: "Shadow Replay & Canary",
+    headline: "Evidence-Based Deployment.",
+    keywords: ["420 Test Cases", "99.5% Pass Rate", "96% vs 57%"],
+    highlights: [
+      "Golden evaluation dataset refined across 73 deployments",
+      "Canary results: 96% resolution vs 57% for broken version",
+      "Same CI/CD rigor as traditional software, applied to AI agents",
+    ],
     narration:
-      "This is the evidence behind the autonomous deployment. 420 test cases from our golden evaluation dataset — refined across 73 deployments. The billing dispute category — the one that was broken — now passes at 100%. Every other category: 100%. The only flags are two pre-existing adversarial edge cases, not regressions. And look at the canary results: side by side, the patched version resolved tickets at 96% versus 57% for the broken version. This isn't hope-based deployment. This is evidence-based deployment. Same rigor as traditional software CI/CD, applied to AI agents for the first time.",
+      "The evidence behind that autonomous fix: 420 test cases from a golden dataset refined across 73 deployments. The broken category now passes at 100%. Canary results: 96% resolution versus 57% for the broken version. This is evidence-based deployment — same rigor as traditional CI/CD, applied to AI agents.",
   },
   {
     image: "/demo-screenshots/06-billing.png",
-    title: "Compliance & Audit Trail",
+    title: "Compliance & Audit",
     headline: "Full Governance. Automatically.",
     keywords: ["SHA-256 Hash Chain", "SOC 2 Type II", "One-Click Export"],
+    highlights: [
+      "34 tamper-proof events, cryptographically hash-chained",
+      "36 of 38 SOC 2 controls fully evidenced automatically",
+      "One-click compliance report for auditors",
+    ],
     narration:
-      "Every action the platform took — detection, diagnosis, fix, validation, deployment — is in this audit trail. 34 events, each cryptographically hash-chained so they're tamper-proof. Each event is tagged with the SOC 2 controls it provides evidence for. And on the right: a one-click compliance report. 38 SOC 2 controls, 36 fully evidenced with artifacts generated automatically from platform operations. When NovaBill's auditor asks what happened to your AI system on February 4th, this is the answer — no scrambling, no screenshots, no interviews. The platform generates compliance evidence as a byproduct of doing its job.",
+      "Every action — detection, diagnosis, fix, validation, deployment — is in a tamper-proof audit trail. 34 hash-chained events, each tagged with SOC 2 controls. 36 of 38 controls fully evidenced from platform operations. When an auditor asks what happened, this is the answer — generated automatically as a byproduct of doing the job.",
   },
   {
     image: "/demo-screenshots/01-overview.png",
     title: "Nous Agent Orchestrator",
     headline: "Your Agents. Your Industry. Your Context.",
     keywords: ["Industry-Native", "Regulation-Ready", "Enterprise-Grade"],
+    highlights: [
+      "$972K annualized cost savings for NovaBill",
+      "84% margins on outcome revenue",
+      "$340K quarterly revenue protected while everyone slept",
+    ],
     narration:
-      "Let me bring this together. In eight screens, you've seen a platform that understands your industry from the first login, deploys production-ready agents in hours from battle-tested templates, shows business results not infrastructure metrics, knows when to act and when to ask a human, detects issues, heals itself, and validates the fix through the same safety pipeline as any human-authored change, and generates a tamper-proof, SOC 2-compliant audit trail as a byproduct of doing its job. For NovaBill, that meant $972,000 in annualized cost savings, 84% margins on outcome revenue, and $340,000 in quarterly revenue protected while everyone slept. That's Nous Agent Orchestrator. Not just a platform to build agents — but the platform to run them in production, safely, at scale, in your industry.",
+      "In eight screens: a platform that understands your industry, deploys agents in hours, shows business results, knows when to ask a human, heals itself, validates every fix, and generates a tamper-proof audit trail — automatically. For NovaBill: $972,000 in cost savings, 84% margins, and $340,000 protected while everyone slept. That's Nous Agent Orchestrator.",
     isClosing: true,
   },
 ];
@@ -100,216 +151,149 @@ const DEMO_SLIDES: DemoSlide[] = [
 const TRANSITION_DURATION = 900;
 const POST_NARRATION_PAUSE = 1500;
 
-function startBeatsMusic(audioContext: AudioContext): () => void {
+function startAmbientMusic(audioContext: AudioContext): () => void {
   const masterGain = audioContext.createGain();
-  masterGain.gain.value = 0.08;
+  masterGain.gain.value = 0.06;
   masterGain.connect(audioContext.destination);
 
-  const compressor = audioContext.createDynamicsCompressor();
-  compressor.threshold.value = -18;
-  compressor.knee.value = 8;
-  compressor.ratio.value = 6;
-  compressor.attack.value = 0.003;
-  compressor.release.value = 0.15;
-  compressor.connect(masterGain);
-
   const reverbConvolver = audioContext.createConvolver();
-  const reverbLength = audioContext.sampleRate * 1.2;
+  const reverbLength = audioContext.sampleRate * 3;
   const reverbBuffer = audioContext.createBuffer(2, reverbLength, audioContext.sampleRate);
   for (let ch = 0; ch < 2; ch++) {
     const data = reverbBuffer.getChannelData(ch);
     for (let i = 0; i < reverbLength; i++) {
-      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / reverbLength, 3);
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / reverbLength, 2.5);
     }
   }
   reverbConvolver.buffer = reverbBuffer;
-  const reverbGain = audioContext.createGain();
-  reverbGain.gain.value = 0.12;
-  reverbConvolver.connect(reverbGain);
-  reverbGain.connect(compressor);
+  reverbConvolver.connect(masterGain);
 
   const dryGain = audioContext.createGain();
-  dryGain.gain.value = 0.88;
-  dryGain.connect(compressor);
+  dryGain.gain.value = 0.3;
+  dryGain.connect(masterGain);
 
-  const bpm = 90;
-  const beatDuration = 60 / bpm;
-  const barDuration = beatDuration * 4;
+  const wetGain = audioContext.createGain();
+  wetGain.gain.value = 0.7;
+  wetGain.connect(reverbConvolver);
 
-  const jazzChords = [
-    [130.81, 164.81, 196.00, 246.94, 311.13],
-    [146.83, 185.00, 220.00, 277.18, 349.23],
-    [164.81, 207.65, 246.94, 311.13, 392.00],
-    [123.47, 155.56, 196.00, 233.08, 293.66],
-    [138.59, 174.61, 207.65, 261.63, 329.63],
-    [155.56, 196.00, 246.94, 293.66, 369.99],
-    [116.54, 146.83, 174.61, 220.00, 277.18],
-    [130.81, 164.81, 207.65, 246.94, 311.13],
+  const padNotes = [
+    [130.81, 196.00, 261.63, 329.63],
+    [146.83, 220.00, 293.66, 349.23],
+    [164.81, 246.94, 329.63, 392.00],
+    [123.47, 185.00, 246.94, 311.13],
+    [138.59, 207.65, 277.18, 349.23],
+    [155.56, 233.08, 311.13, 369.99],
   ];
 
   let chordIndex = 0;
-  const activeNodes: { osc: OscillatorNode; gain: GainNode }[] = [];
-  let beatIntervalId: ReturnType<typeof setInterval> | null = null;
-  let barIntervalId: ReturnType<typeof setInterval> | null = null;
+  const activeOscs: { osc: OscillatorNode; gain: GainNode }[] = [];
+  let chordInterval: ReturnType<typeof setInterval> | null = null;
+  let shimmerInterval: ReturnType<typeof setInterval> | null = null;
 
-  function playKick(time: number) {
-    const osc = audioContext.createOscillator();
-    const gain = audioContext.createGain();
-    osc.type = "sine";
-    osc.frequency.setValueAtTime(150, time);
-    osc.frequency.exponentialRampToValueAtTime(40, time + 0.12);
-    gain.gain.setValueAtTime(0.5, time);
-    gain.gain.exponentialRampToValueAtTime(0.001, time + 0.3);
-    osc.connect(gain);
-    gain.connect(dryGain);
-    osc.start(time);
-    osc.stop(time + 0.35);
-  }
+  const chordDuration = 8000;
 
-  function playHihat(time: number, accent: boolean) {
-    const bufferSize = audioContext.sampleRate * 0.05;
-    const buffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < bufferSize; i++) {
-      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 4);
-    }
-    const source = audioContext.createBufferSource();
-    source.buffer = buffer;
-    const hihatGain = audioContext.createGain();
-    const vol = accent ? 0.18 : 0.08;
-    hihatGain.gain.setValueAtTime(vol, time);
-    hihatGain.gain.exponentialRampToValueAtTime(0.001, time + (accent ? 0.08 : 0.04));
-
-    const hihatFilter = audioContext.createBiquadFilter();
-    hihatFilter.type = "highpass";
-    hihatFilter.frequency.value = 7000;
-    source.connect(hihatFilter);
-    hihatFilter.connect(hihatGain);
-    hihatGain.connect(dryGain);
-    hihatGain.connect(reverbConvolver);
-    source.start(time);
-  }
-
-  function playSnare(time: number) {
-    const osc = audioContext.createOscillator();
-    const oscGain = audioContext.createGain();
-    osc.type = "triangle";
-    osc.frequency.value = 180;
-    oscGain.gain.setValueAtTime(0.25, time);
-    oscGain.gain.exponentialRampToValueAtTime(0.001, time + 0.15);
-    osc.connect(oscGain);
-    oscGain.connect(dryGain);
-    osc.start(time);
-    osc.stop(time + 0.2);
-
-    const noiseLen = audioContext.sampleRate * 0.08;
-    const noiseBuf = audioContext.createBuffer(1, noiseLen, audioContext.sampleRate);
-    const nd = noiseBuf.getChannelData(0);
-    for (let i = 0; i < noiseLen; i++) {
-      nd[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / noiseLen, 2);
-    }
-    const noiseSrc = audioContext.createBufferSource();
-    noiseSrc.buffer = noiseBuf;
-    const noiseGain = audioContext.createGain();
-    noiseGain.gain.setValueAtTime(0.15, time);
-    noiseGain.gain.exponentialRampToValueAtTime(0.001, time + 0.12);
-
-    const snareFilter = audioContext.createBiquadFilter();
-    snareFilter.type = "highpass";
-    snareFilter.frequency.value = 2000;
-    noiseSrc.connect(snareFilter);
-    snareFilter.connect(noiseGain);
-    noiseGain.connect(dryGain);
-    noiseSrc.start(time);
-  }
-
-  let beatCount = 0;
-  function scheduleBeat() {
-    const now = audioContext.currentTime;
-    const beatInBar = beatCount % 4;
-
-    if (beatInBar === 0) {
-      playKick(now);
-    } else if (beatInBar === 2) {
-      playSnare(now);
-    }
-
-    playHihat(now, beatInBar === 0 || beatInBar === 2);
-
-    if (beatInBar === 1 || beatInBar === 3) {
-      playHihat(now + beatDuration * 0.5, false);
-    }
-
-    beatCount++;
-  }
-
-  function playChord() {
-    activeNodes.forEach(({ osc, gain }) => {
+  function playPad() {
+    activeOscs.forEach(({ osc, gain }) => {
       const now = audioContext.currentTime;
       gain.gain.setValueAtTime(gain.gain.value, now);
-      gain.gain.linearRampToValueAtTime(0, now + 0.4);
-      setTimeout(() => { try { osc.stop(); } catch {} }, 500);
+      gain.gain.linearRampToValueAtTime(0, now + 2);
+      setTimeout(() => { try { osc.stop(); } catch {} }, 2500);
     });
-    activeNodes.length = 0;
+    activeOscs.length = 0;
 
-    const chord = jazzChords[chordIndex % jazzChords.length];
+    const chord = padNotes[chordIndex % padNotes.length];
     chordIndex++;
-
-    const types: OscillatorType[] = ["sine", "triangle", "sine", "triangle", "sine"];
-    const volumes = [0.3, 0.22, 0.18, 0.15, 0.1];
+    const now = audioContext.currentTime;
 
     chord.forEach((freq, i) => {
       const osc = audioContext.createOscillator();
       const gain = audioContext.createGain();
-      const detune = (Math.random() - 0.5) * 8;
 
-      osc.type = types[i % types.length];
+      osc.type = "sine";
       osc.frequency.value = freq;
-      osc.detune.value = detune;
+      osc.detune.value = (Math.random() - 0.5) * 6;
 
-      const now = audioContext.currentTime;
-      const attackTime = 0.4 + Math.random() * 0.3;
+      const vol = 0.15 - i * 0.02;
+      const attack = 2.5 + Math.random() * 1.5;
       gain.gain.setValueAtTime(0, now);
-      gain.gain.linearRampToValueAtTime(volumes[i], now + attackTime);
-      gain.gain.linearRampToValueAtTime(volumes[i] * 0.7, now + barDuration * 0.6);
-      gain.gain.linearRampToValueAtTime(0, now + barDuration * 0.95);
+      gain.gain.linearRampToValueAtTime(vol, now + attack);
+      gain.gain.setValueAtTime(vol, now + (chordDuration / 1000) * 0.6);
+      gain.gain.linearRampToValueAtTime(0, now + (chordDuration / 1000) * 0.95);
 
       osc.connect(gain);
       gain.connect(dryGain);
-      gain.connect(reverbConvolver);
+      gain.connect(wetGain);
       osc.start(now);
-      activeNodes.push({ osc, gain });
+      activeOscs.push({ osc, gain });
+
+      const osc2 = audioContext.createOscillator();
+      const gain2 = audioContext.createGain();
+      osc2.type = "sine";
+      osc2.frequency.value = freq * 2;
+      osc2.detune.value = (Math.random() - 0.5) * 10;
+      gain2.gain.setValueAtTime(0, now);
+      gain2.gain.linearRampToValueAtTime(vol * 0.15, now + attack + 0.5);
+      gain2.gain.setValueAtTime(vol * 0.15, now + (chordDuration / 1000) * 0.5);
+      gain2.gain.linearRampToValueAtTime(0, now + (chordDuration / 1000) * 0.9);
+      osc2.connect(gain2);
+      gain2.connect(wetGain);
+      osc2.start(now);
+      activeOscs.push({ osc: osc2, gain: gain2 });
     });
 
-    const bassOsc = audioContext.createOscillator();
-    const bassGain = audioContext.createGain();
-    bassOsc.type = "sine";
-    bassOsc.frequency.value = chord[0] / 2;
-    const now = audioContext.currentTime;
-    bassGain.gain.setValueAtTime(0, now);
-    bassGain.gain.linearRampToValueAtTime(0.35, now + 0.3);
-    bassGain.gain.linearRampToValueAtTime(0.2, now + barDuration * 0.5);
-    bassGain.gain.linearRampToValueAtTime(0, now + barDuration * 0.9);
-    bassOsc.connect(bassGain);
-    bassGain.connect(dryGain);
-    bassOsc.start(now);
-    activeNodes.push({ osc: bassOsc, gain: bassGain });
+    const subOsc = audioContext.createOscillator();
+    const subGain = audioContext.createGain();
+    subOsc.type = "sine";
+    subOsc.frequency.value = chord[0] / 2;
+    subGain.gain.setValueAtTime(0, now);
+    subGain.gain.linearRampToValueAtTime(0.12, now + 3);
+    subGain.gain.setValueAtTime(0.12, now + (chordDuration / 1000) * 0.5);
+    subGain.gain.linearRampToValueAtTime(0, now + (chordDuration / 1000) * 0.9);
+    subOsc.connect(subGain);
+    subGain.connect(dryGain);
+    subOsc.start(now);
+    activeOscs.push({ osc: subOsc, gain: subGain });
   }
 
-  playChord();
-  scheduleBeat();
+  function playShimmer() {
+    if (Math.random() > 0.4) return;
+    const now = audioContext.currentTime;
+    const chord = padNotes[chordIndex % padNotes.length];
+    const baseFreq = chord[Math.floor(Math.random() * chord.length)];
+    const freq = baseFreq * (Math.random() > 0.5 ? 4 : 2);
 
-  beatIntervalId = setInterval(scheduleBeat, beatDuration * 1000);
-  barIntervalId = setInterval(playChord, barDuration * 1000);
+    const osc = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+    const filter = audioContext.createBiquadFilter();
+
+    osc.type = "sine";
+    osc.frequency.value = freq;
+    filter.type = "lowpass";
+    filter.frequency.value = 2000;
+    filter.Q.value = 1;
+
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(0.03, now + 0.3);
+    gain.gain.linearRampToValueAtTime(0, now + 2.5);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(wetGain);
+    osc.start(now);
+    osc.stop(now + 3);
+  }
+
+  playPad();
+  chordInterval = setInterval(playPad, chordDuration);
+  shimmerInterval = setInterval(playShimmer, 3000);
 
   return () => {
-    if (beatIntervalId) clearInterval(beatIntervalId);
-    if (barIntervalId) clearInterval(barIntervalId);
-    activeNodes.forEach(({ osc }) => { try { osc.stop(); } catch {} });
+    if (chordInterval) clearInterval(chordInterval);
+    if (shimmerInterval) clearInterval(shimmerInterval);
+    activeOscs.forEach(({ osc }) => { try { osc.stop(); } catch {} });
     masterGain.disconnect();
-    compressor.disconnect();
-    reverbGain.disconnect();
     dryGain.disconnect();
+    wetGain.disconnect();
   };
 }
 
@@ -329,6 +313,7 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
   const [musicStarted, setMusicStarted] = useState(false);
   const [keywordVisible, setKeywordVisible] = useState<boolean[]>([]);
   const [headlineVisible, setHeadlineVisible] = useState(false);
+  const [highlightsVisible, setHighlightsVisible] = useState<boolean[]>([]);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -352,7 +337,7 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
     const ac = new AudioContext();
     audioContextRef.current = ac;
     if (isMutedRef.current) ac.suspend();
-    const cleanup = startBeatsMusic(ac);
+    const cleanup = startAmbientMusic(ac);
     musicCleanupRef.current = cleanup;
   }, [musicStarted]);
 
@@ -385,7 +370,9 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
     keywordTimersRef.current = [];
 
     const kw = DEMO_SLIDES[slideIndex].keywords;
+    const hl = DEMO_SLIDES[slideIndex].highlights;
     setKeywordVisible(new Array(kw.length).fill(false));
+    setHighlightsVisible(new Array(hl.length).fill(false));
 
     setHeadlineVisible(false);
     const headlineTimer = setTimeout(() => setHeadlineVisible(true), 400);
@@ -398,7 +385,18 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
           next[i] = true;
           return next;
         });
-      }, 1200 + i * 600);
+      }, 1200 + i * 500);
+      keywordTimersRef.current.push(timer);
+    });
+
+    hl.forEach((_, i) => {
+      const timer = setTimeout(() => {
+        setHighlightsVisible((prev) => {
+          const next = [...prev];
+          next[i] = true;
+          return next;
+        });
+      }, 2000 + i * 700);
       keywordTimersRef.current.push(timer);
     });
   }, []);
@@ -591,7 +589,27 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
   const isLastSlide = currentSlide === DEMO_SLIDES.length - 1;
   const demoFinished = isLastSlide && !isPlaying && progress >= 99;
 
-  const contentSlideNumber = slide.isOpening ? null : slide.isClosing ? null : currentSlide;
+  function renderHighlights(highlights: string[], visible: boolean[]) {
+    return (
+      <div className="flex flex-col gap-2 mt-4">
+        {highlights.map((hl, i) => (
+          <div
+            key={i}
+            className="highlight-item flex items-start gap-2"
+            style={{
+              opacity: visible[i] ? 1 : 0,
+              transform: visible[i] ? "translateX(0)" : "translateX(16px)",
+              transition: "opacity 0.5s ease, transform 0.5s ease",
+            }}
+            data-testid={`text-highlight-${i}`}
+          >
+            <span className="shrink-0 mt-0.5 w-1.5 h-1.5 rounded-full bg-blue-400/70" />
+            <span className="text-white/70 text-sm leading-relaxed">{hl}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-[9999] bg-black flex flex-col" data-testid="demo-player">
@@ -612,10 +630,6 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
           0% { transform: scale(1); }
           100% { transform: scale(1.04); }
         }
-        @keyframes cinematicPulse {
-          0%, 100% { opacity: 0.7; }
-          50% { opacity: 1; }
-        }
         @keyframes cinematicGradient {
           0% { background-position: 0% 50%; }
           50% { background-position: 100% 50%; }
@@ -633,16 +647,10 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
         .slide-keyword {
           animation: slideInRight 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
-        .slide-narration-text {
-          animation: fadeInScale 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-          animation-delay: 0.3s;
-          opacity: 0;
-        }
         .slide-image-active {
           animation: kenBurns 15s ease-out forwards;
         }
         .cinematic-headline {
-          animation: slideInUp 1s cubic-bezier(0.16, 1, 0.3, 1) forwards;
           background: linear-gradient(135deg, #60a5fa, #a78bfa, #60a5fa);
           background-size: 200% 200%;
           animation: slideInUp 1s cubic-bezier(0.16, 1, 0.3, 1) forwards, cinematicGradient 4s ease infinite;
@@ -666,9 +674,6 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
         <div className="flex items-center gap-3 flex-wrap">
           <div className="text-white/90 text-sm font-semibold tracking-wide uppercase">
             Nous Agent Orchestrator
-          </div>
-          <div className="text-white/40 text-xs">
-            {currentSlide + 1} / {DEMO_SLIDES.length}
           </div>
         </div>
         <div className="flex items-center gap-1">
@@ -743,7 +748,7 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
                   </div>
                 )}
 
-                <div className="flex items-center gap-2 flex-wrap justify-center mt-4 mb-6">
+                <div className="flex items-center gap-2 flex-wrap justify-center mt-4 mb-4">
                   {slide.keywords.map((kw, i) => (
                     <span
                       key={`${currentSlide}-${i}`}
@@ -771,9 +776,7 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
                   ))}
                 </div>
 
-                <p className="slide-narration-text text-white/60 text-sm leading-relaxed max-w-2xl" data-testid="text-demo-narration">
-                  {slide.narration}
-                </p>
+                {renderHighlights(slide.highlights, highlightsVisible)}
 
                 {demoFinished && (
                   <div className="cinematic-cta mt-8">
@@ -830,7 +833,7 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
                 {headlineVisible && !transitioning && (
                   <div className="slide-headline mb-3">
                     <span className="inline-block text-xs font-bold uppercase tracking-[0.2em] text-blue-400/90 mb-2">
-                      {contentSlideNumber !== null ? `${contentSlideNumber} of 8` : ""} {slide.title}
+                      {slide.title}
                     </span>
                     <h3 className="text-white text-2xl sm:text-3xl font-bold leading-tight" data-testid="text-demo-headline">
                       {slide.headline}
@@ -839,7 +842,7 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
                 )}
 
                 {!transitioning && (
-                  <div className="flex items-center gap-2 flex-wrap mt-3 mb-3">
+                  <div className="flex items-center gap-2 flex-wrap mt-3 mb-2">
                     {slide.keywords.map((kw, i) => (
                       <span
                         key={`${currentSlide}-${i}`}
@@ -868,11 +871,7 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
                   </div>
                 )}
 
-                {!transitioning && (
-                  <p className="slide-narration-text text-white/70 text-sm leading-relaxed max-w-3xl" data-testid="text-demo-narration">
-                    {slide.narration}
-                  </p>
-                )}
+                {!transitioning && renderHighlights(slide.highlights, highlightsVisible)}
               </div>
             </div>
           </div>
