@@ -48,9 +48,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { Badge } from "@/components/ui/badge";
 import { useRole } from "./role-provider";
-import { useIndustry } from "./industry-provider";
 import { type LucideIcon } from "lucide-react";
 
 interface NavItem {
@@ -69,7 +67,6 @@ interface NavGroup {
 export function AppSidebar() {
   const [location] = useLocation();
   const { role, isRouteAllowed } = useRole();
-  const { industry } = useIndustry();
 
   const coreNav: NavItem[] = [
     { title: "Overview", url: "/dashboard", icon: LayoutDashboard },
@@ -205,28 +202,7 @@ export function AppSidebar() {
           />
         ))}
       </SidebarContent>
-      <SidebarFooter className="p-4 space-y-3">
-        {industry && (
-          <div className="flex items-center gap-2" data-testid="sidebar-industry-indicator">
-            <div
-              className="w-7 h-7 rounded-md flex items-center justify-center shrink-0"
-              style={{ backgroundColor: industry.color + "20", color: industry.color }}
-            >
-              <industry.icon className="w-3.5 h-3.5" />
-            </div>
-            <span className="text-[10px] text-muted-foreground truncate">{industry.shortLabel}</span>
-          </div>
-        )}
-        <div className="flex items-center gap-2" data-testid="sidebar-role-indicator">
-          <div className="w-7 h-7 rounded-md bg-muted flex items-center justify-center">
-            <span className="text-xs font-medium text-muted-foreground" data-testid="text-role-initials">{role.initials}</span>
-          </div>
-          <div className="flex flex-col">
-            <span className="text-xs font-medium text-sidebar-foreground" data-testid="text-role-name">{role.label}</span>
-            <Badge variant="outline" className="text-[10px] w-fit" data-testid="badge-role-type">{role.shortLabel}</Badge>
-          </div>
-        </div>
-      </SidebarFooter>
+      <SidebarFooter />
     </Sidebar>
   );
 }
