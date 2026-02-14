@@ -12,6 +12,13 @@ import {
   Crown,
   Eye,
   Trash2,
+  Workflow,
+  ShieldCheck,
+  Lock,
+  GitBranch,
+  ChevronRight,
+  FileCheck,
+  AlertTriangle,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -48,13 +55,264 @@ import { ErrorState } from "@/components/error-state";
 import { Link } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useIndustry } from "@/components/industry-provider";
 import type { Agent, AgentTeam } from "@shared/schema";
+import type { IndustryId } from "@/components/industry-provider";
+
+interface WorkflowTemplateAgent {
+  name: string;
+  role: string;
+  skills: string[];
+}
+
+interface WorkflowTemplate {
+  id: string;
+  name: string;
+  industry: IndustryId;
+  description: string;
+  agents: WorkflowTemplateAgent[];
+  handoffPattern: "sequential" | "parallel" | "conditional";
+  riskTier: string;
+}
+
+interface GovernanceRule {
+  name: string;
+  description: string;
+  enforcement: "STRICT" | "MODERATE" | "ADVISORY";
+  regulation: string;
+}
+
+interface DataFlowGovernance {
+  industryId: IndustryId;
+  rules: GovernanceRule[];
+}
+
+interface FederationRequirement {
+  name: string;
+  description: string;
+  status: "required" | "recommended" | "optional";
+  documentType: string;
+}
+
+interface A2AFederationTrust {
+  industryId: IndustryId;
+  trustTier: "CERTIFIED" | "VERIFIED" | "STANDARD";
+  requirements: FederationRequirement[];
+}
+
+const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
+  {
+    id: "healthcare-care-coordination",
+    name: "Care Coordination Team",
+    industry: "healthcare",
+    description: "End-to-end patient care coordination from intake through follow-up gap identification.",
+    agents: [
+      { name: "Triage Agent", role: "intake", skills: ["patient-assessment", "priority-classification", "symptom-analysis"] },
+      { name: "Clinical Documentation Agent", role: "documentation", skills: ["medical-coding", "note-generation", "ehr-integration"] },
+      { name: "Prior Auth Agent", role: "authorization", skills: ["insurance-verification", "prior-auth-submission", "approval-tracking"] },
+      { name: "Care Gap Agent", role: "follow-up", skills: ["gap-detection", "patient-outreach", "care-plan-monitoring"] },
+    ],
+    handoffPattern: "sequential",
+    riskTier: "HIGH",
+  },
+  {
+    id: "financial-services-client-onboarding",
+    name: "Client Onboarding Team",
+    industry: "financial_services",
+    description: "Regulated client onboarding from identity verification through compliance sign-off.",
+    agents: [
+      { name: "KYC Agent", role: "verification", skills: ["identity-verification", "document-validation", "sanctions-screening"] },
+      { name: "Suitability Agent", role: "assessment", skills: ["risk-profiling", "investment-suitability", "client-classification"] },
+      { name: "Account Setup Agent", role: "provisioning", skills: ["account-creation", "product-assignment", "access-provisioning"] },
+      { name: "Compliance Review Agent", role: "compliance", skills: ["regulatory-check", "audit-trail", "approval-workflow"] },
+    ],
+    handoffPattern: "sequential",
+    riskTier: "HIGH",
+  },
+  {
+    id: "manufacturing-quality-assurance",
+    name: "Quality Assurance Team",
+    industry: "manufacturing",
+    description: "Closed-loop quality management from defect detection through corrective action verification.",
+    agents: [
+      { name: "Inspection Agent", role: "detection", skills: ["visual-inspection", "measurement-analysis", "defect-classification"] },
+      { name: "Root Cause Agent", role: "analysis", skills: ["root-cause-analysis", "failure-mode-analysis", "trend-detection"] },
+      { name: "Corrective Action Agent", role: "remediation", skills: ["capa-generation", "process-adjustment", "verification-testing"] },
+    ],
+    handoffPattern: "sequential",
+    riskTier: "MEDIUM",
+  },
+  {
+    id: "insurance-claims-processing",
+    name: "Claims Processing Team",
+    industry: "insurance",
+    description: "Automated claims lifecycle from first notice through fraud screening and settlement.",
+    agents: [
+      { name: "FNOL Agent", role: "intake", skills: ["claim-registration", "loss-documentation", "coverage-lookup"] },
+      { name: "Coverage Verification Agent", role: "verification", skills: ["policy-validation", "coverage-determination", "exclusion-check"] },
+      { name: "Adjudication Agent", role: "assessment", skills: ["damage-assessment", "reserve-setting", "settlement-calculation"] },
+      { name: "Fraud Screening Agent", role: "fraud-detection", skills: ["pattern-detection", "anomaly-scoring", "siu-referral"] },
+    ],
+    handoffPattern: "sequential",
+    riskTier: "HIGH",
+  },
+  {
+    id: "retail-order-fulfillment",
+    name: "Order Fulfillment Team",
+    industry: "retail",
+    description: "End-to-end order processing from validation through customer communication.",
+    agents: [
+      { name: "Order Validation Agent", role: "validation", skills: ["order-verification", "payment-validation", "inventory-check"] },
+      { name: "Inventory Agent", role: "inventory", skills: ["stock-allocation", "warehouse-routing", "backorder-management"] },
+      { name: "Fulfillment Agent", role: "fulfillment", skills: ["pick-pack", "shipping-optimization", "carrier-selection"] },
+      { name: "Customer Notification Agent", role: "communication", skills: ["order-updates", "delivery-tracking", "satisfaction-survey"] },
+    ],
+    handoffPattern: "sequential",
+    riskTier: "LOW",
+  },
+];
+
+const DATA_FLOW_GOVERNANCE: DataFlowGovernance[] = [
+  {
+    industryId: "healthcare",
+    rules: [
+      { name: "PHI Minimization", description: "Each agent receives only the PHI it needs to perform its specific function", enforcement: "STRICT", regulation: "HIPAA Privacy Rule" },
+      { name: "Minimum Necessary Standard", description: "Data shared between agents is limited to the minimum necessary for the intended purpose", enforcement: "STRICT", regulation: "HIPAA Privacy Rule" },
+      { name: "De-identification Between Non-Clinical Agents", description: "PHI is de-identified when passed to agents that do not require clinical context", enforcement: "STRICT", regulation: "HIPAA Privacy Rule" },
+      { name: "Audit Trail for All PHI Access", description: "Complete audit log maintained for every agent access to protected health information", enforcement: "STRICT", regulation: "HIPAA Privacy Rule" },
+    ],
+  },
+  {
+    industryId: "financial_services",
+    rules: [
+      { name: "Chinese Wall Enforcement", description: "Strict information barriers between advisory and trading agents to prevent conflicts of interest", enforcement: "STRICT", regulation: "SEC/FINRA" },
+      { name: "Need-to-Know Data Compartmentalization", description: "Agent data access restricted to information required for assigned tasks only", enforcement: "STRICT", regulation: "SEC/FINRA" },
+      { name: "MNPI Barriers", description: "Material non-public information barriers enforced across all agent communications", enforcement: "STRICT", regulation: "SEC/FINRA" },
+      { name: "Client Data Segregation", description: "Complete segregation of client data between agents serving different clients", enforcement: "STRICT", regulation: "SEC/FINRA" },
+    ],
+  },
+  {
+    industryId: "manufacturing",
+    rules: [
+      { name: "OT/IT Data Boundary Enforcement", description: "Operational technology data separated from IT systems with controlled interfaces", enforcement: "MODERATE", regulation: "IEC 62443 / ITAR" },
+      { name: "Safety-Critical Data Isolation", description: "Safety-critical data isolated from general analytics to prevent unauthorized access", enforcement: "MODERATE", regulation: "IEC 62443 / ITAR" },
+      { name: "IP Protection for Process Parameters", description: "Intellectual property and proprietary process parameters encrypted and access-controlled", enforcement: "MODERATE", regulation: "IEC 62443 / ITAR" },
+      { name: "Air-Gap Compliance for Classified Data", description: "Classified manufacturing data maintained in air-gapped environments with no external agent access", enforcement: "MODERATE", regulation: "IEC 62443 / ITAR" },
+    ],
+  },
+  {
+    industryId: "insurance",
+    rules: [
+      { name: "Claims Data Isolation from Underwriting", description: "Claims processing data strictly separated from underwriting decision agents", enforcement: "STRICT", regulation: "State Insurance Laws" },
+      { name: "Anti-Fraud Data Segregation", description: "Fraud detection data and signals segregated from standard claims processing", enforcement: "STRICT", regulation: "State Insurance Laws" },
+      { name: "Policyholder PII Minimization", description: "Policyholder personally identifiable information minimized across agent handoffs", enforcement: "STRICT", regulation: "State Insurance Laws" },
+      { name: "Reinsurance Data Boundaries", description: "Reinsurance data boundaries enforced to prevent data leakage between cedant and reinsurer agents", enforcement: "STRICT", regulation: "State Insurance Laws" },
+    ],
+  },
+  {
+    industryId: "retail",
+    rules: [
+      { name: "PCI Data Scope Minimization", description: "Payment card data scope minimized across agent pipeline to reduce PCI compliance surface", enforcement: "MODERATE", regulation: "PCI DSS / CCPA" },
+      { name: "Customer Behavioral Data Compartmentalization", description: "Customer behavioral and browsing data compartmentalized from transaction processing agents", enforcement: "MODERATE", regulation: "PCI DSS / CCPA" },
+      { name: "Pricing Data Isolation", description: "Internal pricing and margin data isolated from customer-facing agents", enforcement: "MODERATE", regulation: "PCI DSS / CCPA" },
+      { name: "Inventory Data Freshness Enforcement", description: "Inventory data freshness enforced with maximum staleness thresholds between agents", enforcement: "MODERATE", regulation: "PCI DSS / CCPA" },
+    ],
+  },
+];
+
+const A2A_FEDERATION_TRUST: A2AFederationTrust[] = [
+  {
+    industryId: "healthcare",
+    trustTier: "VERIFIED",
+    requirements: [
+      { name: "Business Associate Agreement (BAA)", description: "Legally binding BAA required before any PHI data exchange with external agents", status: "required", documentType: "Legal Agreement" },
+      { name: "HITRUST Certification", description: "HITRUST CSF certification preferred for external agent providers", status: "recommended", documentType: "Certification" },
+      { name: "PHI Data Handling Attestation", description: "Formal attestation of PHI handling practices and safeguards", status: "required", documentType: "Attestation" },
+      { name: "Breach Notification SLA (72h)", description: "72-hour breach notification SLA for any PHI exposure incidents", status: "required", documentType: "SLA" },
+    ],
+  },
+  {
+    industryId: "financial_services",
+    trustTier: "CERTIFIED",
+    requirements: [
+      { name: "Data Processing Agreement", description: "Comprehensive data processing agreement covering all financial data types", status: "required", documentType: "Legal Agreement" },
+      { name: "SOC 2 Type II Certification", description: "SOC 2 Type II audit report required for external agent infrastructure", status: "required", documentType: "Certification" },
+      { name: "Regulatory Reporting Capability", description: "External agents must support regulatory reporting requirements", status: "recommended", documentType: "Technical Specification" },
+      { name: "Financial Data Residency", description: "Financial data residency requirements for cross-border agent federation", status: "required", documentType: "Compliance Document" },
+    ],
+  },
+  {
+    industryId: "manufacturing",
+    trustTier: "VERIFIED",
+    requirements: [
+      { name: "IP Protection Agreement", description: "Intellectual property protection agreement for manufacturing process data", status: "required", documentType: "Legal Agreement" },
+      { name: "Export Control Compliance (ITAR/EAR)", description: "Compliance with ITAR and EAR export control regulations", status: "required", documentType: "Compliance Document" },
+      { name: "On-Premise Deployment Option", description: "On-premise deployment option required for classified manufacturing work", status: "recommended", documentType: "Technical Specification" },
+      { name: "Supply Chain Security Attestation", description: "Supply chain security attestation for hardware and software components", status: "optional", documentType: "Attestation" },
+    ],
+  },
+  {
+    industryId: "insurance",
+    trustTier: "VERIFIED",
+    requirements: [
+      { name: "Data Processing Agreement", description: "Data processing agreement covering policyholder and claims data", status: "required", documentType: "Legal Agreement" },
+      { name: "Actuarial Model Validation", description: "External actuarial models must be validated against industry standards", status: "recommended", documentType: "Validation Report" },
+      { name: "Claims Data Handling Certification", description: "Certification for proper handling and storage of claims data", status: "required", documentType: "Certification" },
+      { name: "State Regulatory Compliance Attestation", description: "Attestation of compliance with applicable state insurance regulations", status: "required", documentType: "Attestation" },
+    ],
+  },
+  {
+    industryId: "retail",
+    trustTier: "STANDARD",
+    requirements: [
+      { name: "Data Processing Agreement", description: "Standard data processing agreement for customer and transaction data", status: "required", documentType: "Legal Agreement" },
+      { name: "PCI Compliance Attestation", description: "PCI DSS compliance attestation for any payment data handling", status: "required", documentType: "Attestation" },
+      { name: "CCPA/GDPR Data Handling Agreement", description: "Data handling agreement covering consumer privacy regulations", status: "recommended", documentType: "Legal Agreement" },
+      { name: "API Rate Limiting SLA", description: "Service level agreement for API rate limiting and availability", status: "optional", documentType: "SLA" },
+    ],
+  },
+];
 
 const ROLE_CONFIG: Record<string, { label: string; icon: typeof Crown }> = {
   lead: { label: "Lead", icon: Crown },
   member: { label: "Member", icon: Users },
   observer: { label: "Observer", icon: Eye },
 };
+
+function EnforcementBadge({ level }: { level: "STRICT" | "MODERATE" | "ADVISORY" }) {
+  const styles = {
+    STRICT: "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20",
+    MODERATE: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+    ADVISORY: "",
+  };
+  return (
+    <Badge variant="outline" className={`text-[10px] ${styles[level]}`} data-testid={`badge-enforcement-${level.toLowerCase()}`}>
+      {level}
+    </Badge>
+  );
+}
+
+function TrustTierBadge({ tier }: { tier: "CERTIFIED" | "VERIFIED" | "STANDARD" }) {
+  const styles = {
+    CERTIFIED: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+    VERIFIED: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20",
+    STANDARD: "",
+  };
+  return (
+    <Badge variant="outline" className={`text-[10px] ${styles[tier]}`} data-testid={`badge-trust-tier-${tier.toLowerCase()}`}>
+      {tier}
+    </Badge>
+  );
+}
+
+function StatusDot({ status }: { status: "required" | "recommended" | "optional" }) {
+  const colors = {
+    required: "bg-red-500",
+    recommended: "bg-amber-500",
+    optional: "bg-emerald-500",
+  };
+  return <span className={`inline-block w-2 h-2 rounded-full shrink-0 ${colors[status]}`} />;
+}
 
 export default function AgentTeams() {
   const [search, setSearch] = useState("");
@@ -66,6 +324,7 @@ export default function AgentTeams() {
   const [addMemberRole, setAddMemberRole] = useState("member");
 
   const { toast } = useToast();
+  const { industry, isSelected } = useIndustry();
 
   const { data: agents, isLoading, error, refetch } = useQuery<Agent[]>({
     queryKey: ["/api/agents"],
@@ -85,13 +344,13 @@ export default function AgentTeams() {
   });
 
   const createTeamMutation = useMutation({
-    mutationFn: async (data: { name: string; description: string }) => {
+    mutationFn: async (data: { name: string; description: string; riskTier?: string }) => {
       return apiRequest("POST", "/api/agents", {
         name: data.name,
         description: data.description,
         agentType: "team",
         status: "active",
-        riskTier: "MEDIUM",
+        riskTier: data.riskTier || "MEDIUM",
         autonomyMode: "assisted",
       });
     },
@@ -136,6 +395,18 @@ export default function AgentTeams() {
     if (search && !a.name.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   });
+
+  const industryTemplates = isSelected && industry
+    ? WORKFLOW_TEMPLATES.filter(t => t.industry === industry.id)
+    : [];
+
+  const industryGovernance = isSelected && industry
+    ? DATA_FLOW_GOVERNANCE.find(g => g.industryId === industry.id)
+    : null;
+
+  const industryFederation = isSelected && industry
+    ? A2A_FEDERATION_TRUST.find(f => f.industryId === industry.id)
+    : null;
 
   if (isLoading) {
     return (
@@ -205,6 +476,138 @@ export default function AgentTeams() {
           />
         </div>
       </div>
+
+      {isSelected && industry && industryTemplates.length > 0 && (
+        <div className="flex flex-col gap-4 overflow-x-hidden" data-testid="section-workflow-templates">
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <Workflow className="w-5 h-5" style={{ color: industry.color }} />
+              <h2 className="text-lg font-semibold tracking-tight" data-testid="heading-workflow-templates">Industry Workflow Templates</h2>
+            </div>
+            <p className="text-sm text-muted-foreground">{industry.label}</p>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {industryTemplates.map((template) => (
+              <Card key={template.id} data-testid={`card-workflow-template-${template.id}`}>
+                <CardHeader className="flex flex-row items-start justify-between gap-2 pb-3">
+                  <div className="flex flex-col gap-1">
+                    <CardTitle className="text-base">{template.name}</CardTitle>
+                    <p className="text-xs text-muted-foreground">{template.description}</p>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+                    <Badge variant="outline" className="text-[10px]" data-testid={`badge-handoff-${template.id}`}>
+                      <GitBranch className="w-3 h-3 mr-0.5" />
+                      {template.handoffPattern}
+                    </Badge>
+                    <Badge variant="outline" className="text-[10px]" data-testid={`badge-risk-${template.id}`}>
+                      {template.riskTier}
+                    </Badge>
+                  </div>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-3">
+                  <div className="flex items-center gap-1 flex-wrap" data-testid={`pipeline-${template.id}`}>
+                    {template.agents.map((agent, idx) => (
+                      <div key={agent.name} className="flex items-center gap-1">
+                        <Badge
+                          variant="outline"
+                          className="text-[10px] whitespace-nowrap"
+                          style={{ borderColor: `${industry.color}40`, color: industry.color }}
+                        >
+                          {agent.name}
+                        </Badge>
+                        {idx < template.agents.length - 1 && (
+                          <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0" />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => createTeamMutation.mutate({ name: template.name, description: template.description, riskTier: template.riskTier })}
+                    disabled={createTeamMutation.isPending}
+                    data-testid={`button-deploy-template-${template.id}`}
+                  >
+                    <ChevronRight className="w-3.5 h-3.5 mr-1" />
+                    Deploy Team
+                  </Button>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {isSelected && industry && industryGovernance && (
+        <div className="flex flex-col gap-4 overflow-x-hidden" data-testid="section-data-flow-governance">
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="w-5 h-5" style={{ color: industry.color }} />
+              <h2 className="text-lg font-semibold tracking-tight" data-testid="heading-data-flow-governance">Inter-Agent Data Flow Governance</h2>
+            </div>
+            <p className="text-sm text-muted-foreground" data-testid="text-governance-subtitle">Rules governing data passed between agents in {industry.label} teams</p>
+          </div>
+          <div className="grid grid-cols-1 gap-4">
+            {industryGovernance.rules.map((rule, idx) => (
+              <Card key={idx} data-testid={`card-governance-rule-${idx}`}>
+                <CardContent className="flex items-start justify-between gap-4 p-4">
+                  <div className="flex flex-col gap-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Lock className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                      <span className="text-sm font-medium" data-testid={`text-rule-name-${idx}`}>{rule.name}</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground" data-testid={`text-rule-description-${idx}`}>{rule.description}</p>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+                    <EnforcementBadge level={rule.enforcement} />
+                    <Badge variant="outline" className="text-[10px]" data-testid={`badge-regulation-${idx}`}>
+                      {rule.regulation}
+                    </Badge>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {isSelected && industry && industryFederation && (
+        <div className="flex flex-col gap-4 overflow-x-hidden" data-testid="section-a2a-federation-trust">
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <Globe className="w-5 h-5" style={{ color: industry.color }} />
+              <h2 className="text-lg font-semibold tracking-tight" data-testid="heading-a2a-federation">A2A Federation Trust Requirements</h2>
+            </div>
+            <p className="text-sm text-muted-foreground" data-testid="text-federation-subtitle">Trust requirements for federating with external agents in {industry.label}</p>
+          </div>
+          <Card data-testid="card-federation-trust">
+            <CardHeader className="flex flex-row items-center gap-2 pb-3">
+              <CardTitle className="text-base">Trust Tier</CardTitle>
+              <TrustTierBadge tier={industryFederation.trustTier} />
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
+              {industryFederation.requirements.map((req, idx) => (
+                <div key={idx} className="flex items-start gap-3 p-3 rounded-md border" data-testid={`requirement-${idx}`}>
+                  <StatusDot status={req.status} />
+                  <div className="flex flex-col gap-1 min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-medium" data-testid={`text-req-name-${idx}`}>{req.name}</span>
+                      <Badge variant="outline" className="text-[10px]" data-testid={`badge-status-${idx}`}>
+                        {req.status}
+                      </Badge>
+                      <Badge variant="outline" className="text-[10px]" data-testid={`badge-doctype-${idx}`}>
+                        <FileCheck className="w-3 h-3 mr-0.5" />
+                        {req.documentType}
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground">{req.description}</p>
+                  </div>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       <Card>
         <CardContent className="p-0">
