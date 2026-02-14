@@ -78,14 +78,14 @@ const iconMap: Record<string, LucideIcon> = {
 };
 
 const STEPS = [
-  { number: 1, label: "Basic Info" },
-  { number: 2, label: "Choose Path" },
-  { number: 3, label: "Model & Tools" },
-  { number: 4, label: "Memory & Workflow" },
-  { number: 5, label: "Guardrails" },
-  { number: 6, label: "Eval Suite" },
-  { number: 7, label: "Rollout Plan" },
-  { number: 8, label: "Review & Create" },
+  { number: 0, label: "Start" },
+  { number: 1, label: "Define Agent" },
+  { number: 2, label: "Configure Tools" },
+  { number: 3, label: "Governance" },
+  { number: 4, label: "Memory & Context" },
+  { number: 5, label: "Eval Suite" },
+  { number: 6, label: "Rollout Plan" },
+  { number: 7, label: "Review & Create" },
 ];
 
 interface ToolConfig {
@@ -200,6 +200,10 @@ interface WizardState {
     rollbackStrategy: string;
     healthCheckInterval: string;
   };
+  industryId: string;
+  contextBudget: Array<{ category: string; pct: number; tokens: number }>;
+  memoryGovernanceRules: Array<{ rule: string; regulation: string; type: string }>;
+  industryAutoApplied: boolean;
 }
 
 interface ChatMessage {
@@ -260,6 +264,10 @@ const defaultWizardState: WizardState = {
     rollbackStrategy: "immediate",
     healthCheckInterval: "5m",
   },
+  industryId: "",
+  contextBudget: [],
+  memoryGovernanceRules: [],
+  industryAutoApplied: false,
 };
 
 const INDUSTRY_PRESETS: Record<string, {
@@ -309,8 +317,216 @@ const INDUSTRY_PRESETS: Record<string, {
   },
 };
 
+const INDUSTRY_CONTEXT_CONFIG: Record<string, {
+  defaultSkills: string[];
+  recommendedModel: { provider: string; model: string; reasoning: string };
+  modelBenchmarks: Array<{ model: string; provider: string; score: number; reasoning: string }>;
+  compliancePrerequisites: string[];
+  mcpTools: ToolConfig[];
+  dataSensitivityClasses: string[];
+  contentFilters: string[];
+  memoryGovernance: Array<{ rule: string; regulation: string; type: string }>;
+  contextBudgetPreset: Array<{ category: string; pct: number; tokens: number }>;
+  costBenchmarks: Record<string, { label: string; low: number; high: number; unit: string }>;
+}> = {
+  financial_services: {
+    defaultSkills: ["KYC Verification", "AML Screening", "Risk Assessment", "Regulatory Reporting", "Trade Reconciliation"],
+    recommendedModel: { provider: "openai", model: "gpt-4.1", reasoning: "Best accuracy for financial document analysis and regulatory compliance" },
+    modelBenchmarks: [
+      { model: "gpt-4.1", provider: "openai", score: 94, reasoning: "Highest accuracy on financial reasoning benchmarks" },
+      { model: "claude-3.5-sonnet", provider: "anthropic", score: 91, reasoning: "Strong compliance text analysis" },
+      { model: "gpt-4o", provider: "openai", score: 87, reasoning: "Good cost/accuracy balance for routine queries" },
+    ],
+    compliancePrerequisites: ["BSA/AML Training Certification", "KYC Policy Acknowledgment", "Data Classification Review", "Model Risk Management (SR 11-7) Review", "Fair Lending Impact Assessment"],
+    mcpTools: [
+      { name: "core_banking_api", description: "Connect to core banking system for account data", permissionScope: "READ", dataClasses: ["financial_data", "pii"], failureModes: ["connection_error", "auth_failure"], rateLimit: "100/min", costPerCall: 0.003, accessTier: "RESTRICTED" },
+      { name: "market_data_feed", description: "Real-time and historical market data access", permissionScope: "READ", dataClasses: ["market_data"], failureModes: ["feed_delay", "data_stale"], rateLimit: "200/min", costPerCall: 0.001, accessTier: "STANDARD" },
+      { name: "regulatory_database", description: "Query regulatory requirements and compliance rules", permissionScope: "READ", dataClasses: ["regulatory_data"], failureModes: ["index_unavailable"], rateLimit: "50/min", costPerCall: 0.002, accessTier: "STANDARD" },
+      { name: "credit_bureau_api", description: "Credit check and scoring through major bureaus", permissionScope: "READ", dataClasses: ["pii", "financial_data", "credit_data"], failureModes: ["bureau_timeout", "consent_missing"], rateLimit: "20/min", costPerCall: 0.05, accessTier: "CRITICAL" },
+      { name: "sanctions_screening", description: "Screen against OFAC, EU, and UN sanctions lists", permissionScope: "READ", dataClasses: ["pii", "sanctions_data"], failureModes: ["list_update_pending"], rateLimit: "100/min", costPerCall: 0.01, accessTier: "RESTRICTED" },
+      { name: "transaction_ledger", description: "Write transaction records to the general ledger", permissionScope: "WRITE", dataClasses: ["financial_data"], failureModes: ["write_conflict", "validation_error"], rateLimit: "30/min", costPerCall: 0.005, accessTier: "CRITICAL", writeAccess: true },
+    ],
+    dataSensitivityClasses: ["PII", "PCI", "Financial Data", "Credit Data", "Sanctions Data"],
+    contentFilters: ["Detect and decline unauthorized financial advice", "Flag potential market manipulation language", "Block unvalidated investment recommendations", "Detect insider trading indicators"],
+    memoryGovernance: [
+      { rule: "Retain BSA/AML records for 5 years minimum", regulation: "BSA/AML", type: "retention" },
+      { rule: "Customer identity records retained for 5 years after account closure", regulation: "CIP", type: "retention" },
+      { rule: "Erase personal data within 30 days of valid GDPR request", regulation: "GDPR", type: "erasure" },
+      { rule: "Transaction logs immutable once committed", regulation: "SOX", type: "immutability" },
+    ],
+    contextBudgetPreset: [
+      { category: "System Instructions", pct: 20, tokens: 1640 },
+      { category: "Industry Ontology", pct: 22, tokens: 1802 },
+      { category: "Regulatory Context", pct: 18, tokens: 1475 },
+      { category: "Skill Instructions", pct: 14, tokens: 1147 },
+      { category: "Conversation History", pct: 10, tokens: 819 },
+      { category: "Retrieved Knowledge", pct: 10, tokens: 819 },
+      { category: "Tool Descriptions", pct: 6, tokens: 490 },
+    ],
+    costBenchmarks: {
+      kyc_verification: { label: "KYC Verification", low: 0.65, high: 1.20, unit: "per verification" },
+      aml_screening: { label: "AML Screening", low: 0.40, high: 0.85, unit: "per screening" },
+      trade_reconciliation: { label: "Trade Reconciliation", low: 0.15, high: 0.45, unit: "per trade" },
+      regulatory_report: { label: "Regulatory Report", low: 2.50, high: 8.00, unit: "per report" },
+    },
+  },
+  healthcare: {
+    defaultSkills: ["Clinical Documentation", "ICD-10 Coding", "Prior Authorization", "Drug Interaction Check", "Patient Triage"],
+    recommendedModel: { provider: "openai", model: "gpt-4.1", reasoning: "Highest accuracy for clinical terminology and medical reasoning" },
+    modelBenchmarks: [
+      { model: "gpt-4.1", provider: "openai", score: 92, reasoning: "Best medical terminology comprehension" },
+      { model: "claude-3.5-sonnet", provider: "anthropic", score: 90, reasoning: "Strong clinical reasoning and safety" },
+      { model: "gemini-1.5-pro", provider: "google", score: 85, reasoning: "Good multimodal for medical imaging support" },
+    ],
+    compliancePrerequisites: ["HIPAA BAA Executed", "PHI Handling Training", "Clinical Validation Protocol", "IRB Review (if research)", "State Medical Privacy Law Review"],
+    mcpTools: [
+      { name: "ehr_connector", description: "Connect to EHR system (Epic, Cerner) for patient records", permissionScope: "READ", dataClasses: ["phi", "clinical_data"], failureModes: ["hl7_parse_error", "auth_failure"], rateLimit: "50/min", costPerCall: 0.005, accessTier: "CRITICAL" },
+      { name: "payer_system", description: "Insurance verification and claims submission", permissionScope: "WRITE", dataClasses: ["phi", "financial_data", "insurance_data"], failureModes: ["claim_rejected", "eligibility_timeout"], rateLimit: "30/min", costPerCall: 0.01, accessTier: "CRITICAL", writeAccess: true },
+      { name: "drug_database", description: "Drug interaction and formulary lookup (First Databank)", permissionScope: "READ", dataClasses: ["clinical_data", "drug_data"], failureModes: ["database_stale"], rateLimit: "100/min", costPerCall: 0.002, accessTier: "STANDARD" },
+      { name: "clinical_guidelines", description: "Evidence-based clinical practice guidelines database", permissionScope: "READ", dataClasses: ["clinical_data"], failureModes: ["guideline_not_found"], rateLimit: "60/min", costPerCall: 0.003, accessTier: "STANDARD" },
+      { name: "lab_results_api", description: "Query laboratory results and reference ranges", permissionScope: "READ", dataClasses: ["phi", "lab_data"], failureModes: ["result_pending"], rateLimit: "80/min", costPerCall: 0.002, accessTier: "RESTRICTED" },
+    ],
+    dataSensitivityClasses: ["PHI", "PII", "Clinical Data", "Genomic Data", "Mental Health Records"],
+    contentFilters: ["Detect and handle mental health crisis indicators", "Block autonomous clinical diagnoses", "Flag adverse event signals for immediate review", "Detect medication safety concerns"],
+    memoryGovernance: [
+      { rule: "Retain medical records for minimum 6 years (varies by state)", regulation: "HIPAA", type: "retention" },
+      { rule: "PHI must be encrypted at rest and in transit", regulation: "HIPAA Security Rule", type: "encryption" },
+      { rule: "Right to access personal health records within 30 days", regulation: "HIPAA", type: "access" },
+      { rule: "Minimum necessary standard for PHI disclosure", regulation: "HIPAA Privacy Rule", type: "access_control" },
+    ],
+    contextBudgetPreset: [
+      { category: "System Instructions", pct: 18, tokens: 1475 },
+      { category: "Industry Ontology", pct: 20, tokens: 1638 },
+      { category: "Regulatory Context", pct: 20, tokens: 1638 },
+      { category: "Skill Instructions", pct: 15, tokens: 1229 },
+      { category: "Conversation History", pct: 10, tokens: 819 },
+      { category: "Retrieved Knowledge", pct: 12, tokens: 983 },
+      { category: "Tool Descriptions", pct: 5, tokens: 410 },
+    ],
+    costBenchmarks: {
+      clinical_summary: { label: "Clinical Summary", low: 0.80, high: 2.50, unit: "per summary" },
+      icd_coding: { label: "ICD-10 Coding", low: 0.30, high: 0.90, unit: "per encounter" },
+      prior_auth: { label: "Prior Authorization", low: 1.50, high: 4.00, unit: "per request" },
+      drug_check: { label: "Drug Interaction Check", low: 0.10, high: 0.35, unit: "per check" },
+    },
+  },
+  manufacturing: {
+    defaultSkills: ["Quality Inspection", "Predictive Maintenance", "SPC Monitoring", "Supply Chain Optimization", "Work Order Management"],
+    recommendedModel: { provider: "openai", model: "gpt-4o", reasoning: "Good balance of speed and accuracy for real-time manufacturing decisions" },
+    modelBenchmarks: [
+      { model: "gpt-4o", provider: "openai", score: 89, reasoning: "Fast inference for real-time quality decisions" },
+      { model: "gpt-4.1", provider: "openai", score: 92, reasoning: "Best root cause analysis accuracy" },
+      { model: "llama-3.1-70b", provider: "custom", score: 84, reasoning: "On-premise deployment for air-gapped facilities" },
+    ],
+    compliancePrerequisites: ["ISO 9001 QMS Audit", "Safety Interlock Review", "ITAR Classification (if defense)", "Environmental Compliance Check"],
+    mcpTools: [
+      { name: "plc_scada_connector", description: "Connect to PLC/SCADA systems for sensor data", permissionScope: "READ", dataClasses: ["operational_data", "sensor_data"], failureModes: ["connection_timeout", "data_latency"], rateLimit: "200/min", costPerCall: 0.001, accessTier: "RESTRICTED" },
+      { name: "mes_system", description: "Manufacturing Execution System for production tracking", permissionScope: "WRITE", dataClasses: ["production_data"], failureModes: ["sync_error"], rateLimit: "50/min", costPerCall: 0.003, accessTier: "RESTRICTED", writeAccess: true },
+      { name: "cmms_maintenance", description: "Maintenance management and work order system", permissionScope: "WRITE", dataClasses: ["maintenance_data", "asset_data"], failureModes: ["scheduling_conflict"], rateLimit: "30/min", costPerCall: 0.005, accessTier: "STANDARD", writeAccess: true },
+      { name: "quality_management", description: "QMS for non-conformance and CAPA tracking", permissionScope: "WRITE", dataClasses: ["quality_data"], failureModes: ["workflow_error"], rateLimit: "40/min", costPerCall: 0.003, accessTier: "STANDARD", writeAccess: true },
+      { name: "erp_connector", description: "ERP system for inventory and procurement data", permissionScope: "READ", dataClasses: ["inventory_data", "financial_data"], failureModes: ["api_timeout"], rateLimit: "60/min", costPerCall: 0.002, accessTier: "STANDARD" },
+    ],
+    dataSensitivityClasses: ["Operational Data", "Trade Secrets", "ITAR Controlled", "Safety Critical"],
+    contentFilters: ["Block safety interlock override commands", "Detect out-of-spec production parameters", "Flag equipment fault patterns"],
+    memoryGovernance: [
+      { rule: "Retain quality records per ISO 9001 (minimum 3 years)", regulation: "ISO 9001", type: "retention" },
+      { rule: "Safety incident records retained for 10 years", regulation: "OSHA", type: "retention" },
+      { rule: "Production batch records retained for product lifecycle", regulation: "GMP", type: "retention" },
+    ],
+    contextBudgetPreset: [
+      { category: "System Instructions", pct: 22, tokens: 1802 },
+      { category: "Industry Ontology", pct: 18, tokens: 1475 },
+      { category: "Regulatory Context", pct: 12, tokens: 983 },
+      { category: "Skill Instructions", pct: 18, tokens: 1475 },
+      { category: "Conversation History", pct: 8, tokens: 655 },
+      { category: "Retrieved Knowledge", pct: 14, tokens: 1147 },
+      { category: "Tool Descriptions", pct: 8, tokens: 655 },
+    ],
+    costBenchmarks: {
+      quality_inspection: { label: "Quality Inspection", low: 0.20, high: 0.60, unit: "per inspection" },
+      predictive_maintenance: { label: "Predictive Maintenance Alert", low: 0.50, high: 1.80, unit: "per alert" },
+      spc_analysis: { label: "SPC Analysis", low: 0.05, high: 0.15, unit: "per data point" },
+    },
+  },
+  insurance: {
+    defaultSkills: ["Claims Processing", "Underwriting Analysis", "Policy Comparison", "Fraud Detection", "Risk Scoring"],
+    recommendedModel: { provider: "anthropic", model: "claude-3.5-sonnet", reasoning: "Excellent document analysis for policy and claims documents" },
+    modelBenchmarks: [
+      { model: "claude-3.5-sonnet", provider: "anthropic", score: 93, reasoning: "Best at long document analysis for policies" },
+      { model: "gpt-4.1", provider: "openai", score: 91, reasoning: "Strong actuarial reasoning" },
+      { model: "gpt-4o", provider: "openai", score: 86, reasoning: "Cost-effective for routine claims" },
+    ],
+    compliancePrerequisites: ["Solvency II Data Quality Review", "GDPR Data Processing Agreement", "Anti-Fraud Protocol Review", "ACORD Data Standard Compliance"],
+    mcpTools: [
+      { name: "policy_admin_system", description: "Policy lifecycle management and endorsements", permissionScope: "WRITE", dataClasses: ["policy_data", "pii"], failureModes: ["endorsement_conflict"], rateLimit: "40/min", costPerCall: 0.005, accessTier: "RESTRICTED", writeAccess: true },
+      { name: "claims_management", description: "Claims intake, adjudication, and payment processing", permissionScope: "WRITE", dataClasses: ["claims_data", "pii", "financial_data"], failureModes: ["adjudication_error"], rateLimit: "30/min", costPerCall: 0.008, accessTier: "CRITICAL", writeAccess: true },
+      { name: "actuarial_models", description: "Risk scoring and premium calculation models", permissionScope: "READ", dataClasses: ["actuarial_data", "risk_data"], failureModes: ["model_stale"], rateLimit: "50/min", costPerCall: 0.01, accessTier: "RESTRICTED" },
+      { name: "fraud_detection", description: "SIU fraud indicator screening and scoring", permissionScope: "READ", dataClasses: ["claims_data", "pii"], failureModes: ["false_positive"], rateLimit: "60/min", costPerCall: 0.005, accessTier: "RESTRICTED" },
+    ],
+    dataSensitivityClasses: ["PII", "Claims Data", "Actuarial Data", "Medical Records (health insurance)"],
+    contentFilters: ["Detect unfair claims denial patterns", "Flag potential bad faith indicators", "Block unauthorized policy modifications"],
+    memoryGovernance: [
+      { rule: "Claims records retained for statute of limitations + 3 years", regulation: "State Insurance Laws", type: "retention" },
+      { rule: "Underwriting records retained for policy lifetime + 7 years", regulation: "NAIC Model Laws", type: "retention" },
+      { rule: "GDPR erasure within 30 days for EU policyholders", regulation: "GDPR", type: "erasure" },
+    ],
+    contextBudgetPreset: [
+      { category: "System Instructions", pct: 20, tokens: 1638 },
+      { category: "Industry Ontology", pct: 20, tokens: 1638 },
+      { category: "Regulatory Context", pct: 18, tokens: 1475 },
+      { category: "Skill Instructions", pct: 14, tokens: 1147 },
+      { category: "Conversation History", pct: 10, tokens: 819 },
+      { category: "Retrieved Knowledge", pct: 12, tokens: 983 },
+      { category: "Tool Descriptions", pct: 6, tokens: 490 },
+    ],
+    costBenchmarks: {
+      claims_processing: { label: "Claims Processing", low: 1.20, high: 3.50, unit: "per claim" },
+      underwriting_analysis: { label: "Underwriting Analysis", low: 2.00, high: 6.00, unit: "per application" },
+      fraud_screening: { label: "Fraud Screening", low: 0.30, high: 0.80, unit: "per claim" },
+    },
+  },
+  retail: {
+    defaultSkills: ["Product Recommendation", "Inventory Optimization", "Customer Sentiment Analysis", "Pricing Strategy", "Returns Processing"],
+    recommendedModel: { provider: "openai", model: "gpt-4o", reasoning: "Fast response times critical for real-time customer interactions" },
+    modelBenchmarks: [
+      { model: "gpt-4o", provider: "openai", score: 90, reasoning: "Best latency for real-time recommendations" },
+      { model: "gpt-4o-mini", provider: "openai", score: 82, reasoning: "Most cost-effective for high-volume queries" },
+      { model: "claude-3.5-sonnet", provider: "anthropic", score: 88, reasoning: "Superior product description generation" },
+    ],
+    compliancePrerequisites: ["PCI DSS Scope Assessment", "CCPA Data Mapping", "Cookie Consent Implementation", "ADA Accessibility Audit"],
+    mcpTools: [
+      { name: "product_catalog", description: "Product information, pricing, and availability", permissionScope: "READ", dataClasses: ["product_data"], failureModes: ["catalog_sync_error"], rateLimit: "200/min", costPerCall: 0.001, accessTier: "OPEN" },
+      { name: "order_management", description: "Order creation, modification, and tracking", permissionScope: "WRITE", dataClasses: ["order_data", "pii", "pci"], failureModes: ["inventory_conflict", "payment_declined"], rateLimit: "50/min", costPerCall: 0.005, accessTier: "RESTRICTED", writeAccess: true },
+      { name: "customer_profile", description: "Customer preferences, history, and loyalty data", permissionScope: "READ", dataClasses: ["pii", "behavioral_data"], failureModes: ["profile_not_found"], rateLimit: "100/min", costPerCall: 0.002, accessTier: "STANDARD" },
+      { name: "inventory_system", description: "Real-time inventory levels across locations", permissionScope: "READ", dataClasses: ["inventory_data"], failureModes: ["count_discrepancy"], rateLimit: "150/min", costPerCall: 0.001, accessTier: "STANDARD" },
+      { name: "payment_processor", description: "Payment tokenization and transaction processing", permissionScope: "WRITE", dataClasses: ["pci", "financial_data"], failureModes: ["payment_declined", "fraud_hold"], rateLimit: "30/min", costPerCall: 0.02, accessTier: "CRITICAL", writeAccess: true },
+    ],
+    dataSensitivityClasses: ["PII", "PCI", "Behavioral Data", "Loyalty Data"],
+    contentFilters: ["Block display of raw payment card data", "Detect price manipulation attempts", "Flag discriminatory pricing patterns"],
+    memoryGovernance: [
+      { rule: "PCI data must not be stored after transaction completion", regulation: "PCI DSS", type: "deletion" },
+      { rule: "Customer data erasure within 45 days of CCPA request", regulation: "CCPA", type: "erasure" },
+      { rule: "Behavioral tracking data retained max 13 months", regulation: "GDPR/ePrivacy", type: "retention" },
+    ],
+    contextBudgetPreset: [
+      { category: "System Instructions", pct: 20, tokens: 1638 },
+      { category: "Industry Ontology", pct: 15, tokens: 1229 },
+      { category: "Regulatory Context", pct: 10, tokens: 819 },
+      { category: "Skill Instructions", pct: 18, tokens: 1475 },
+      { category: "Conversation History", pct: 15, tokens: 1229 },
+      { category: "Retrieved Knowledge", pct: 14, tokens: 1147 },
+      { category: "Tool Descriptions", pct: 8, tokens: 655 },
+    ],
+    costBenchmarks: {
+      product_recommendation: { label: "Product Recommendation", low: 0.02, high: 0.08, unit: "per recommendation" },
+      customer_inquiry: { label: "Customer Inquiry", low: 0.10, high: 0.35, unit: "per inquiry" },
+      returns_processing: { label: "Returns Processing", low: 0.25, high: 0.75, unit: "per return" },
+    },
+  },
+};
+
 export default function AgentWizard() {
-  const [currentStep, setCurrentStep] = useState(1);
+  const [currentStep, setCurrentStep] = useState(0);
   const [wizardState, setWizardState] = useState<WizardState>({ ...defaultWizardState });
   const [creationPath, setCreationPath] = useState<CreationPath>(null);
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
@@ -457,7 +673,7 @@ export default function AgentWizard() {
         applyTemplate(template);
         setCreationPath("template");
         setSelectedTemplateId(templateId);
-        setCurrentStep(3);
+        setCurrentStep(1);
       }
     }
   }, [searchParams, templates]);
@@ -633,16 +849,16 @@ export default function AgentWizard() {
       runAiMatching();
     } else if (path === "ai") {
       setAiPanelOpen(true);
-      setCurrentStep(3);
+      setCurrentStep(1);
     } else if (path === "manual") {
-      setCurrentStep(3);
+      setCurrentStep(1);
     }
   }
 
   function handleSelectTemplate(template: AgentTemplate) {
     setSelectedTemplateId(template.id);
     applyTemplate(template);
-    setCurrentStep(3);
+    setCurrentStep(1);
   }
 
   const stepLabels: Record<string, string> = {
@@ -774,7 +990,7 @@ export default function AgentWizard() {
                   variant="outline"
                   onClick={() => {
                     setJobProgress(null);
-                    setCurrentStep(8);
+                    setCurrentStep(7);
                   }}
                   data-testid="button-back-to-wizard"
                 >
@@ -793,10 +1009,10 @@ export default function AgentWizard() {
     <div className="flex flex-col gap-6 p-6 pb-20" data-testid="page-agent-wizard">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Agent Design Wizard</h1>
-          <p className="text-sm text-muted-foreground">Create a new AI agent step by step</p>
+          <h1 className="text-2xl font-semibold tracking-tight">Industry-Contextualized Agent Builder</h1>
+          <p className="text-sm text-muted-foreground">Build industry-aware agents with pre-loaded regulatory context and golden templates</p>
         </div>
-        {currentStep >= 3 && (
+        {currentStep >= 2 && (
           <Button
             variant="outline"
             onClick={() => setAiPanelOpen(true)}
@@ -844,11 +1060,8 @@ export default function AgentWizard() {
       </div>
 
       <div className="min-h-[400px]">
-        {currentStep === 1 && (
-          <Step1BasicInfo state={wizardState} updateState={updateState} outcomes={outcomes} outcomeLockedFromUrl={outcomeLockedFromUrl} />
-        )}
-        {currentStep === 2 && (
-          <Step2ChoosePath
+        {currentStep === 0 && (
+          <Step0GoldenTemplate
             creationPath={creationPath}
             onChoosePath={handleChoosePath}
             templates={templates}
@@ -861,23 +1074,26 @@ export default function AgentWizard() {
             wizardState={wizardState}
           />
         )}
+        {currentStep === 1 && (
+          <Step1IndustryDefine state={wizardState} updateState={updateState} outcomes={outcomes} outcomeLockedFromUrl={outcomeLockedFromUrl} />
+        )}
+        {currentStep === 2 && (
+          <Step2IndustryTools state={wizardState} updateState={updateState} />
+        )}
         {currentStep === 3 && (
-          <Step3ModelTools state={wizardState} updateState={updateState} />
+          <Step3IndustryGovernance state={wizardState} updateState={updateState} />
         )}
         {currentStep === 4 && (
-          <Step4MemoryWorkflow state={wizardState} updateState={updateState} />
+          <Step4MemoryContext state={wizardState} updateState={updateState} />
         )}
         {currentStep === 5 && (
-          <Step5Guardrails state={wizardState} updateState={updateState} />
-        )}
-        {currentStep === 6 && (
           <Step6EvalSuite state={wizardState} updateState={updateState} />
         )}
-        {currentStep === 7 && (
+        {currentStep === 6 && (
           <Step7RolloutPlan state={wizardState} updateState={updateState} />
         )}
-        {currentStep === 8 && (
-          <Step5Review
+        {currentStep === 7 && (
+          <StepReview
             state={wizardState}
             onCreate={handleCreate}
             isPending={createMutation.isPending}
@@ -890,26 +1106,22 @@ export default function AgentWizard() {
         <Button
           variant="outline"
           onClick={() => {
-            if (currentStep === 3 && creationPath === "template" && !selectedTemplateId) {
-              setCurrentStep(2);
+            if (currentStep === 1 && creationPath === "template" && !selectedTemplateId) {
+              setCurrentStep(0);
             } else {
-              setCurrentStep((s) => Math.max(1, s - 1));
+              setCurrentStep((s) => Math.max(0, s - 1));
             }
           }}
-          disabled={currentStep === 1}
+          disabled={currentStep === 0}
           data-testid="button-back-step"
         >
           <ArrowLeft className="w-4 h-4 mr-1.5" />
           Back
         </Button>
-        {currentStep < 8 ? (
+        {currentStep < 7 ? (
           <Button
             onClick={() => {
-              if (currentStep === 1) {
-                setCurrentStep(2);
-              } else {
-                setCurrentStep((s) => Math.min(8, s + 1));
-              }
+              setCurrentStep((s) => Math.min(7, s + 1));
             }}
             disabled={currentStep === 1 && !wizardState.name}
             data-testid="button-next-step"
@@ -1139,7 +1351,7 @@ function OntologyTagSection({
   );
 }
 
-function Step1BasicInfo({
+function Step1IndustryDefine({
   state,
   updateState,
   outcomes,
@@ -1154,9 +1366,9 @@ function Step1BasicInfo({
   const linkedOutcome = outcomeLockedFromUrl && outcomes ? outcomes.find((o) => o.id === state.outcomeId) : null;
   return (
     <div className="flex flex-col gap-6 max-w-2xl">
-      <h2 className="text-lg font-medium">Basic Information</h2>
+      <h2 className="text-lg font-medium">Define Your Agent</h2>
       <p className="text-sm text-muted-foreground">
-        Tell us about the agent you want to create. This information helps us suggest the best configuration approach.
+        Describe your agent and optionally auto-configure it with industry-specific context, tools, and compliance rules.
       </p>
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-2">
@@ -1218,40 +1430,65 @@ function Step1BasicInfo({
           </div>
         </div>
         {industry && industry.id !== "custom" && INDUSTRY_PRESETS[industry.id] && (
-          <Card data-testid="card-industry-preset">
+          <Card data-testid="card-industry-preset" className={state.industryAutoApplied ? "ring-1 ring-green-500/30" : ""}>
             <CardContent className="p-4">
-              <div className="flex items-center justify-between gap-3 flex-wrap">
-                <div className="flex items-center gap-2 min-w-0">
-                  <industry.icon className="h-4 w-4 shrink-0" style={{ color: industry.color }} />
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium">{INDUSTRY_PRESETS[industry.id].label}</p>
-                    <p className="text-xs text-muted-foreground">
-                      Apply industry-recommended risk tier, autonomy mode, and guardrail defaults
-                    </p>
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <industry.icon className="h-4 w-4 shrink-0" style={{ color: industry.color }} />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium">Auto-Configure for {industry.label}</p>
+                      <p className="text-xs text-muted-foreground">
+                        Apply recommended model, industry MCP tools, compliance guardrails, context budget, and memory governance
+                      </p>
+                    </div>
                   </div>
+                  <Button
+                    size="sm"
+                    variant={state.industryAutoApplied ? "outline" : "default"}
+                    onClick={() => {
+                      const preset = INDUSTRY_PRESETS[industry.id];
+                      const ctx = INDUSTRY_CONTEXT_CONFIG[industry.id];
+                      if (!ctx) return;
+                      const industryTools: ToolConfig[] = ctx.mcpTools.map((t) => ({
+                        ...t,
+                      }));
+                      updateState({
+                        industryId: industry.id,
+                        riskTier: preset.riskTier,
+                        autonomyMode: preset.autonomyMode,
+                        modelName: ctx.recommendedModel.model,
+                        modelProvider: ctx.recommendedModel.provider,
+                        guardrailsConfig: {
+                          ...state.guardrailsConfig,
+                          stopConditions: preset.stopConditions,
+                          escalationTriggers: preset.escalationTriggers,
+                          forbiddenOutputs: preset.forbiddenOutputs,
+                          allowedActions: preset.allowedActions,
+                        },
+                        toolsConfig: [...state.toolsConfig, ...industryTools.filter((t) => !state.toolsConfig.some((existing) => existing.name === t.name))],
+                        contextBudget: ctx.contextBudgetPreset,
+                        memoryGovernanceRules: ctx.memoryGovernance,
+                        industryAutoApplied: true,
+                      });
+                    }}
+                    data-testid="button-auto-configure-industry"
+                  >
+                    <Sparkles className="h-3.5 w-3.5 mr-1.5" />
+                    {state.industryAutoApplied ? "Re-apply Defaults" : "Auto-Configure from Industry"}
+                  </Button>
                 </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    const preset = INDUSTRY_PRESETS[industry.id];
-                    updateState({
-                      riskTier: preset.riskTier,
-                      autonomyMode: preset.autonomyMode,
-                      guardrailsConfig: {
-                        ...state.guardrailsConfig,
-                        stopConditions: preset.stopConditions,
-                        escalationTriggers: preset.escalationTriggers,
-                        forbiddenOutputs: preset.forbiddenOutputs,
-                        allowedActions: preset.allowedActions,
-                      },
-                    });
-                  }}
-                  data-testid="button-apply-industry-preset"
-                >
-                  <Sparkles className="h-3.5 w-3.5 mr-1.5" />
-                  Apply Defaults
-                </Button>
+                {state.industryAutoApplied && (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Badge variant="outline" className="text-[10px] border-green-500/30 text-green-600 dark:text-green-400">
+                      <Check className="w-2.5 h-2.5 mr-1" />
+                      Industry context applied
+                    </Badge>
+                    <Badge variant="outline" className="text-[10px]">{INDUSTRY_CONTEXT_CONFIG[industry.id]?.mcpTools.length || 0} tools</Badge>
+                    <Badge variant="outline" className="text-[10px]">{INDUSTRY_CONTEXT_CONFIG[industry.id]?.memoryGovernance.length || 0} governance rules</Badge>
+                    <Badge variant="outline" className="text-[10px]">{INDUSTRY_CONTEXT_CONFIG[industry.id]?.compliancePrerequisites.length || 0} compliance items</Badge>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -1314,7 +1551,7 @@ function Step1BasicInfo({
   );
 }
 
-function Step2ChoosePath({
+function Step0GoldenTemplate({
   creationPath,
   onChoosePath,
   templates,
@@ -1509,30 +1746,11 @@ function Step2ChoosePath({
 
   return (
     <div className="flex flex-col gap-6 max-w-3xl">
-      <h2 className="text-lg font-medium">How would you like to build your agent?</h2>
+      <h2 className="text-lg font-medium">Start Building Your Agent</h2>
       <p className="text-sm text-muted-foreground">
-        Choose the approach that works best for you. You can always adjust the configuration later.
+        Industry golden templates come pre-loaded with regulatory context, compliance guardrails, and domain-specific tools. Or start from scratch with full control.
       </p>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card
-          className="hover-elevate cursor-pointer"
-          onClick={() => onChoosePath("manual")}
-          data-testid="path-manual"
-        >
-          <CardContent className="p-6 flex flex-col items-center text-center gap-4">
-            <div className="w-14 h-14 rounded-md bg-muted flex items-center justify-center">
-              <Wrench className="w-7 h-7 text-muted-foreground" />
-            </div>
-            <div>
-              <h3 className="font-semibold text-sm">Manual Configuration</h3>
-              <p className="text-xs text-muted-foreground mt-1">
-                Build your agent from scratch with full control over every setting
-              </p>
-            </div>
-            <Badge variant="outline" className="text-[10px]">Full Control</Badge>
-          </CardContent>
-        </Card>
-
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Card
           className="hover-elevate cursor-pointer ring-1 ring-primary/20"
           onClick={() => onChoosePath("template")}
@@ -1543,9 +1761,9 @@ function Step2ChoosePath({
               <Library className="w-7 h-7 text-primary" />
             </div>
             <div>
-              <h3 className="font-semibold text-sm">Use Template</h3>
+              <h3 className="font-semibold text-sm">Start from Industry Golden Template</h3>
               <p className="text-xs text-muted-foreground mt-1">
-                AI suggests the best matching templates based on your agent's description
+                AI matches your requirements to pre-built templates with industry context, compliance rules, and domain tools already configured
               </p>
             </div>
             <Badge className="text-[10px]">Recommended</Badge>
@@ -1554,20 +1772,20 @@ function Step2ChoosePath({
 
         <Card
           className="hover-elevate cursor-pointer"
-          onClick={() => onChoosePath("ai")}
-          data-testid="path-ai"
+          onClick={() => onChoosePath("manual")}
+          data-testid="path-manual"
         >
           <CardContent className="p-6 flex flex-col items-center text-center gap-4">
             <div className="w-14 h-14 rounded-md bg-muted flex items-center justify-center">
-              <Sparkles className="w-7 h-7 text-muted-foreground" />
+              <Wrench className="w-7 h-7 text-muted-foreground" />
             </div>
             <div>
-              <h3 className="font-semibold text-sm">Conversational AI</h3>
+              <h3 className="font-semibold text-sm">Build from Scratch</h3>
               <p className="text-xs text-muted-foreground mt-1">
-                Chat with AI to design your agent through natural conversation
+                Full manual control over every setting. You can still auto-apply industry context later in the wizard.
               </p>
             </div>
-            <Badge variant="outline" className="text-[10px]">AI-Guided</Badge>
+            <Badge variant="outline" className="text-[10px]">Advanced</Badge>
           </CardContent>
         </Card>
       </div>
@@ -1575,7 +1793,7 @@ function Step2ChoosePath({
   );
 }
 
-function Step3ModelTools({
+function Step2IndustryTools({
   state,
   updateState,
 }: {
@@ -1634,6 +1852,19 @@ function Step3ModelTools({
 
   const filteredCatalog = catalogFilter === "all" ? TOOL_CATALOG : TOOL_CATALOG.filter(t => t.accessTier === catalogFilter);
 
+  const { industry } = useIndustry();
+  const industryCtx = industry && industry.id !== "custom" ? INDUSTRY_CONTEXT_CONFIG[industry.id] : null;
+
+  const sensitivityColors: Record<string, string> = {
+    phi: "bg-red-500/10 text-red-700 dark:text-red-400 border-red-500/30",
+    pci: "bg-red-500/10 text-red-700 dark:text-red-400 border-red-500/30",
+    pii: "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30",
+    financial_data: "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30",
+    credit_data: "bg-red-500/10 text-red-700 dark:text-red-400 border-red-500/30",
+    clinical_data: "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30",
+    sanctions_data: "bg-red-500/10 text-red-700 dark:text-red-400 border-red-500/30",
+  };
+
   return (
     <div className="flex flex-col gap-6 max-w-4xl">
       <h2 className="text-lg font-medium">Model & Tools Configuration</h2>
@@ -1668,6 +1899,32 @@ function Step3ModelTools({
               />
             </div>
           </div>
+
+          {industryCtx && (
+            <div className="flex flex-col gap-2 pt-2 border-t">
+              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Industry Model Benchmarks</span>
+              <div className="flex flex-col gap-1.5">
+                {industryCtx.modelBenchmarks.map((bm) => (
+                  <div key={bm.model} className="flex items-center gap-3 p-2 rounded-md border" data-testid={`benchmark-${bm.model}`}>
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <span className="text-xs font-mono font-medium">{bm.model}</span>
+                      <Badge variant="outline" className="text-[9px]">{bm.provider}</Badge>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-24 h-1.5 rounded-full bg-muted overflow-hidden">
+                        <div className="h-full rounded-full bg-primary" style={{ width: `${bm.score}%` }} />
+                      </div>
+                      <span className="text-xs font-medium w-8">{bm.score}%</span>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground max-w-[200px] truncate">{bm.reasoning}</p>
+                    {bm.model === industryCtx.recommendedModel.model && (
+                      <Badge variant="default" className="text-[9px]">Recommended</Badge>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -1731,9 +1988,13 @@ function Step3ModelTools({
                         {tool.writeAccess && <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400"><AlertTriangle className="w-3 h-3" />Write</span>}
                       </div>
                       <div className="flex flex-wrap gap-1">
-                        {tool.dataClasses?.map(dc => (
-                          <Badge key={dc} variant="secondary" className="text-[9px]">{dc}</Badge>
-                        ))}
+                        {tool.dataClasses?.map(dc => {
+                          const scKey = dc.toLowerCase();
+                          const scColor = sensitivityColors[scKey] || "bg-muted text-muted-foreground";
+                          return (
+                            <Badge key={dc} variant="outline" className={`text-[9px] ${scColor}`}>{dc.toUpperCase()}</Badge>
+                          );
+                        })}
                       </div>
                       {isSelected && (
                         <Badge variant="default" className="text-[9px] w-fit">Selected</Badge>
@@ -1809,6 +2070,10 @@ function Step3ModelTools({
         </CardContent>
       </Card>
 
+      {industryCtx && (
+        <CostModelingPanel industryCtx={industryCtx} industryLabel={industry?.label || ""} />
+      )}
+
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-sm font-medium">Permissions</CardTitle>
@@ -1847,6 +2112,79 @@ function Step3ModelTools({
   );
 }
 
+function CostModelingPanel({ industryCtx, industryLabel }: {
+  industryCtx: {
+    costBenchmarks: Record<string, { label: string; low: number; high: number; unit: string }>;
+  };
+  industryLabel: string;
+}) {
+  const benchmarks = Object.entries(industryCtx.costBenchmarks);
+
+  return (
+    <Card data-testid="card-cost-modeling">
+      <CardHeader className="pb-3">
+        <div className="flex items-center gap-2">
+          <DollarSign className="w-4 h-4 text-muted-foreground" />
+          <CardTitle className="text-sm font-medium">Cost Modeling - {industryLabel} Benchmarks</CardTitle>
+        </div>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        <p className="text-xs text-muted-foreground">
+          Estimated per-outcome costs compared to industry benchmarks. These are representative ranges for typical deployments.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {benchmarks.map(([key, bm]) => {
+            const midpoint = (bm.low + bm.high) / 2;
+            const estimatedCost = +(midpoint * (0.85 + Math.random() * 0.3)).toFixed(2);
+            const inRange = estimatedCost >= bm.low && estimatedCost <= bm.high;
+            const belowRange = estimatedCost < bm.low;
+            const statusColor = belowRange
+              ? "text-green-600 dark:text-green-400"
+              : inRange
+                ? "text-blue-600 dark:text-blue-400"
+                : "text-amber-600 dark:text-amber-400";
+            const statusLabel = belowRange ? "Below Range" : inRange ? "In Range" : "Above Range";
+            const statusBg = belowRange
+              ? "bg-green-500/10 border-green-500/30"
+              : inRange
+                ? "bg-blue-500/10 border-blue-500/30"
+                : "bg-amber-500/10 border-amber-500/30";
+
+            return (
+              <div key={key} className="flex flex-col gap-1.5 p-3 rounded-md border" data-testid={`cost-benchmark-${key}`}>
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-xs font-medium">{bm.label}</span>
+                  <Badge variant="outline" className={`text-[9px] ${statusBg} ${statusColor}`}>{statusLabel}</Badge>
+                </div>
+                <div className="flex items-baseline gap-1">
+                  <span className={`text-lg font-semibold ${statusColor}`}>${estimatedCost}</span>
+                  <span className="text-[10px] text-muted-foreground">/ {bm.unit}</span>
+                </div>
+                <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                  <span>Benchmark: ${bm.low.toFixed(2)} - ${bm.high.toFixed(2)}</span>
+                </div>
+                <div className="w-full h-1.5 rounded-full bg-muted relative overflow-hidden">
+                  <div
+                    className="absolute h-full bg-muted-foreground/20 rounded-full"
+                    style={{
+                      left: `${(bm.low / (bm.high * 1.5)) * 100}%`,
+                      width: `${((bm.high - bm.low) / (bm.high * 1.5)) * 100}%`,
+                    }}
+                  />
+                  <div
+                    className={`absolute h-full w-1.5 rounded-full ${belowRange ? "bg-green-500" : inRange ? "bg-blue-500" : "bg-amber-500"}`}
+                    style={{ left: `${Math.min((estimatedCost / (bm.high * 1.5)) * 100, 98)}%` }}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 const NODE_TYPES: { type: string; label: string; icon: LucideIcon; color: string }[] = [
   { type: "trigger", label: "Trigger", icon: Zap, color: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" },
   { type: "llm_call", label: "LLM Call", icon: Sparkles, color: "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20" },
@@ -1864,7 +2202,7 @@ const NODE_TYPES: { type: string; label: string; icon: LucideIcon; color: string
   { type: "output_format", label: "Output Format", icon: FileText, color: "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20" },
 ];
 
-function Step4MemoryWorkflow({
+function Step4MemoryContext({
   state,
   updateState,
 }: {
@@ -1949,9 +2287,88 @@ function Step4MemoryWorkflow({
     retry: "hsl(45, 90%, 50%)",
   };
 
+  const { industry } = useIndustry();
+  const industryCtx = industry && industry.id !== "custom" ? INDUSTRY_CONTEXT_CONFIG[industry.id] : null;
+  const budgetCategories = state.contextBudget.length > 0 ? state.contextBudget : industryCtx?.contextBudgetPreset || [];
+  const totalTokens = budgetCategories.reduce((sum, c) => sum + c.tokens, 0);
+
+  const budgetColors = [
+    "bg-blue-500", "bg-emerald-500", "bg-amber-500", "bg-purple-500",
+    "bg-rose-500", "bg-cyan-500", "bg-slate-500",
+  ];
+
   return (
     <div className="flex flex-col gap-6 max-w-4xl">
-      <h2 className="text-lg font-medium">Memory & Workflow</h2>
+      <h2 className="text-lg font-medium">Memory & Context</h2>
+
+      {budgetCategories.length > 0 && (
+        <Card data-testid="card-context-budget">
+          <CardHeader className="pb-3">
+            <div className="flex items-center gap-2">
+              <Gauge className="w-4 h-4 text-muted-foreground" />
+              <CardTitle className="text-sm font-medium">Context Budget Visualization</CardTitle>
+              <Badge variant="outline" className="text-[10px] ml-auto">{totalTokens.toLocaleString()} tokens total</Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            <div className="flex h-6 rounded-md overflow-hidden border">
+              {budgetCategories.map((cat, i) => (
+                <div
+                  key={cat.category}
+                  className={`${budgetColors[i % budgetColors.length]} transition-all`}
+                  style={{ width: `${cat.pct}%` }}
+                  title={`${cat.category}: ${cat.pct}% (${cat.tokens} tokens)`}
+                />
+              ))}
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              {budgetCategories.map((cat, i) => (
+                <div key={cat.category} className="flex items-center gap-2 p-2 rounded-md border" data-testid={`budget-category-${i}`}>
+                  <div className={`w-2.5 h-2.5 rounded-sm shrink-0 ${budgetColors[i % budgetColors.length]}`} />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[10px] font-medium truncate">{cat.category}</p>
+                    <p className="text-[10px] text-muted-foreground">{cat.pct}% / {cat.tokens} tokens</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {state.memoryGovernanceRules.length > 0 && (
+        <Card data-testid="card-memory-governance">
+          <CardHeader className="pb-3">
+            <div className="flex items-center gap-2">
+              <Shield className="w-4 h-4 text-muted-foreground" />
+              <CardTitle className="text-sm font-medium">Memory Governance Rules</CardTitle>
+              <Badge variant="outline" className="text-[10px]">{state.memoryGovernanceRules.length} rules</Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-2">
+            {state.memoryGovernanceRules.map((rule, i) => {
+              const typeColors: Record<string, string> = {
+                retention: "bg-blue-500/10 text-blue-700 dark:text-blue-400",
+                erasure: "bg-red-500/10 text-red-700 dark:text-red-400",
+                encryption: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+                access: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
+                access_control: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
+                immutability: "bg-purple-500/10 text-purple-700 dark:text-purple-400",
+                deletion: "bg-red-500/10 text-red-700 dark:text-red-400",
+              };
+              return (
+                <div key={i} className="flex items-center gap-3 p-2.5 rounded-md border" data-testid={`governance-rule-${i}`}>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs">{rule.rule}</p>
+                  </div>
+                  <Badge variant="outline" className={`text-[9px] shrink-0 ${typeColors[rule.type] || ""}`}>{rule.type}</Badge>
+                  <Badge variant="outline" className="text-[9px] shrink-0">{rule.regulation}</Badge>
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader className="pb-3">
@@ -2509,7 +2926,7 @@ function StringListCard({
   );
 }
 
-function Step5Guardrails({
+function Step3IndustryGovernance({
   state,
   updateState,
 }: {
@@ -2549,15 +2966,54 @@ function Step5Guardrails({
     });
   }
 
+  const { industry } = useIndustry();
+  const industryCtx = industry && industry.id !== "custom" ? INDUSTRY_CONTEXT_CONFIG[industry.id] : null;
+
   return (
     <div className="flex flex-col gap-6 max-w-2xl">
       <div className="flex items-center gap-2">
         <Shield className="w-5 h-5 text-muted-foreground" />
-        <h2 className="text-lg font-medium">Guardrails</h2>
+        <h2 className="text-lg font-medium">Industry Governance</h2>
       </div>
       <p className="text-sm text-muted-foreground">
-        Configure safety policies, stop conditions, and escalation triggers to control agent behavior.
+        Pre-populated safety policies, compliance prerequisites, and content filters based on your industry context.
       </p>
+
+      {industryCtx && (
+        <>
+          <Card data-testid="card-compliance-prerequisites">
+            <CardHeader className="flex flex-row items-center gap-2 pb-3">
+              <ShieldCheck className="w-4 h-4 text-muted-foreground" />
+              <CardTitle className="text-sm font-medium">Compliance Prerequisites</CardTitle>
+              <Badge variant="outline" className="text-[10px]">{industryCtx.compliancePrerequisites.length} items</Badge>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-2">
+              {industryCtx.compliancePrerequisites.map((item, i) => (
+                <div key={i} className="flex items-center gap-2 p-2 rounded-md border" data-testid={`compliance-prereq-${i}`}>
+                  <Check className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                  <span className="text-xs">{item}</span>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+
+          <Card data-testid="card-content-filters">
+            <CardHeader className="flex flex-row items-center gap-2 pb-3">
+              <Eye className="w-4 h-4 text-muted-foreground" />
+              <CardTitle className="text-sm font-medium">Industry Content Filters</CardTitle>
+              <Badge variant="outline" className="text-[10px]">{industryCtx.contentFilters.length} filters</Badge>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-2">
+              {industryCtx.contentFilters.map((filter, i) => (
+                <div key={i} className="flex items-center gap-2 p-2 rounded-md border" data-testid={`content-filter-${i}`}>
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                  <span className="text-xs">{filter}</span>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        </>
+      )}
 
       <Card>
         <CardHeader className="flex flex-row items-center gap-2 pb-3">
@@ -3154,7 +3610,7 @@ function Step7RolloutPlan({
   );
 }
 
-function Step5Review({
+function StepReview({
   state,
   onCreate,
   isPending,
