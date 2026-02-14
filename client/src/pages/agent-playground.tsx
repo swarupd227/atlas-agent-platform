@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { useParams, Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { Card } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -26,6 +26,15 @@ import {
   Wrench,
   Clock,
   AlertTriangle,
+  CheckCircle,
+  XCircle,
+  Gauge,
+  ThumbsUp,
+  ThumbsDown,
+  ChevronDown,
+  ChevronUp,
+  ShieldAlert,
+  Target,
 } from "lucide-react";
 import type { Agent } from "@shared/schema";
 
@@ -42,6 +51,62 @@ interface ChatMessage {
   role: string;
   content: string;
   createdAt: string;
+}
+
+interface RiskAssessment {
+  title: string;
+  score: number;
+  level: string;
+  factors: Array<{ name: string; impact: string; detail: string }>;
+}
+
+interface Decision {
+  title: string;
+  outcome: string;
+  confidence: number;
+  reasoning: string[];
+  conditions?: string[];
+}
+
+interface ApprovalRequired {
+  action: string;
+  risk_level: string;
+  reason: string;
+  details: string;
+}
+
+interface ParsedSegment {
+  type: "text" | "risk_assessment" | "decision" | "approval_required";
+  content: string;
+  data?: RiskAssessment | Decision | ApprovalRequired;
+}
+
+function parseStructuredBlocks(text: string): ParsedSegment[] {
+  const segments: ParsedSegment[] = [];
+  const blockRegex = /```(risk_assessment|decision|approval_required)\s*\n([\s\S]*?)```/g;
+  let lastIndex = 0;
+  let match;
+
+  while ((match = blockRegex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      const before = text.slice(lastIndex, match.index).trim();
+      if (before) segments.push({ type: "text", content: before });
+    }
+    try {
+      const data = JSON.parse(match[2].trim());
+      segments.push({ type: match[1] as ParsedSegment["type"], content: match[2], data });
+    } catch {
+      segments.push({ type: "text", content: match[0] });
+    }
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < text.length) {
+    const remaining = text.slice(lastIndex).trim();
+    if (remaining) segments.push({ type: "text", content: remaining });
+  }
+
+  return segments.length > 0 ? segments : [{ type: "text", content: text }];
 }
 
 export default function AgentPlayground() {
@@ -100,11 +165,11 @@ export default function AgentPlayground() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamingContent]);
 
-  const sendMessage = useCallback(async () => {
-    if (!inputValue.trim() || !activeSessionId || isStreaming) return;
-    const userMsg = inputValue.trim();
-    setInputValue("");
-    setPendingUserMsg(userMsg);
+  const sendMessage = useCallback(async (overrideContent?: string) => {
+    const msgToSend = overrideContent || inputValue.trim();
+    if (!msgToSend || !activeSessionId || isStreaming) return;
+    if (!overrideContent) setInputValue("");
+    setPendingUserMsg(msgToSend);
     setIsStreaming(true);
     setStreamingContent("");
 
@@ -115,7 +180,7 @@ export default function AgentPlayground() {
           "Content-Type": "application/json",
           "X-Role": localStorage.getItem("almp-role") || "admin",
         },
-        body: JSON.stringify({ content: userMsg, sessionId: activeSessionId }),
+        body: JSON.stringify({ content: msgToSend, sessionId: activeSessionId }),
       });
 
       if (!response.ok) {
@@ -167,6 +232,13 @@ export default function AgentPlayground() {
       e.preventDefault();
       sendMessage();
     }
+  };
+
+  const handleApprovalAction = (action: string, approved: boolean) => {
+    const response = approved
+      ? `APPROVED: I approve the action "${action}". Please proceed.`
+      : `REJECTED: I reject the action "${action}". Do not proceed.`;
+    sendMessage(response);
   };
 
   const riskColor = (tier: string) => {
@@ -338,15 +410,23 @@ export default function AgentPlayground() {
                   )}
 
                   {messages.map((msg) => (
-                    <MessageBubble key={msg.id} role={msg.role} content={msg.content} agentName={agent.name} />
+                    <MessageBubble
+                      key={msg.id}
+                      role={msg.role}
+                      content={msg.content}
+                      agentName={agent.name}
+                      onApproval={handleApprovalAction}
+                      isStreaming={false}
+                      canInteract={!isStreaming}
+                    />
                   ))}
 
                   {pendingUserMsg && (
-                    <MessageBubble role="user" content={pendingUserMsg} agentName={agent.name} />
+                    <MessageBubble role="user" content={pendingUserMsg} agentName={agent.name} onApproval={handleApprovalAction} canInteract={false} />
                   )}
 
                   {isStreaming && streamingContent && (
-                    <MessageBubble role="assistant" content={streamingContent} agentName={agent.name} isStreaming />
+                    <MessageBubble role="assistant" content={streamingContent} agentName={agent.name} isStreaming onApproval={handleApprovalAction} canInteract={false} />
                   )}
 
                   {isStreaming && !streamingContent && (
@@ -380,7 +460,7 @@ export default function AgentPlayground() {
                   data-testid="input-chat-message"
                 />
                 <Button
-                  onClick={sendMessage}
+                  onClick={() => sendMessage()}
                   disabled={!inputValue.trim() || isStreaming}
                   size="icon"
                   data-testid="button-send-message"
@@ -460,18 +540,241 @@ export default function AgentPlayground() {
   );
 }
 
+function RiskGauge({ score, level }: { score: number; level: string }) {
+  const clampedScore = Math.max(0, Math.min(100, score));
+  const rotation = (clampedScore / 100) * 180 - 90;
+  const colorMap: Record<string, string> = {
+    low: "text-green-500",
+    medium: "text-yellow-500",
+    high: "text-orange-500",
+    critical: "text-red-500",
+  };
+  const bgColorMap: Record<string, string> = {
+    low: "from-green-500/20 to-green-500/5",
+    medium: "from-yellow-500/20 to-yellow-500/5",
+    high: "from-orange-500/20 to-orange-500/5",
+    critical: "from-red-500/20 to-red-500/5",
+  };
+  const color = colorMap[level] || colorMap.medium;
+  const bgGradient = bgColorMap[level] || bgColorMap.medium;
+
+  return (
+    <div className={`flex flex-col items-center gap-1 rounded-lg p-3 bg-gradient-to-b ${bgGradient}`} data-testid="risk-gauge">
+      <div className="relative w-24 h-14 overflow-hidden">
+        <svg viewBox="0 0 120 70" className="w-full h-full">
+          <path d="M 10 65 A 50 50 0 0 1 110 65" fill="none" stroke="currentColor" strokeWidth="8" className="text-muted/30" strokeLinecap="round" />
+          <path
+            d="M 10 65 A 50 50 0 0 1 110 65"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="8"
+            className={color}
+            strokeLinecap="round"
+            strokeDasharray={`${clampedScore * 1.57} 157`}
+          />
+          <line
+            x1="60" y1="65" x2="60" y2="25"
+            stroke="currentColor"
+            strokeWidth="2"
+            className={color}
+            transform={`rotate(${rotation}, 60, 65)`}
+          />
+          <circle cx="60" cy="65" r="4" fill="currentColor" className={color} />
+        </svg>
+      </div>
+      <span className={`text-2xl font-bold ${color}`}>{clampedScore}</span>
+      <span className="text-xs text-muted-foreground uppercase tracking-wide">{level} risk</span>
+    </div>
+  );
+}
+
+function RiskAssessmentCard({ data }: { data: RiskAssessment }) {
+  const [expanded, setExpanded] = useState(true);
+  return (
+    <Card className="my-2" data-testid="card-risk-assessment">
+      <CardHeader className="py-2 px-3 flex flex-row items-center gap-2 justify-between">
+        <div className="flex items-center gap-2">
+          <Gauge className="h-4 w-4 text-primary" />
+          <CardTitle className="text-sm">{data.title || "Risk Assessment"}</CardTitle>
+        </div>
+        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setExpanded(!expanded)} data-testid="button-toggle-risk-details">
+          {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+        </Button>
+      </CardHeader>
+      <CardContent className="px-3 pb-3 pt-0">
+        <RiskGauge score={data.score} level={(data.level || "medium").toLowerCase()} />
+        {expanded && data.factors && data.factors.length > 0 && (
+          <div className="mt-3 space-y-1.5">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Risk Factors</p>
+            {data.factors.map((f, i) => {
+              const impactIcon = f.impact === "positive"
+                ? <CheckCircle className="h-3 w-3 text-green-500 shrink-0" />
+                : f.impact === "negative"
+                ? <XCircle className="h-3 w-3 text-red-500 shrink-0" />
+                : <Target className="h-3 w-3 text-muted-foreground shrink-0" />;
+              return (
+                <div key={i} className="flex items-start gap-2 text-xs" data-testid={`risk-factor-${i}`}>
+                  {impactIcon}
+                  <div>
+                    <span className="font-medium text-foreground">{f.name}</span>
+                    <span className="text-muted-foreground ml-1">— {f.detail}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function DecisionCard({ data }: { data: Decision }) {
+  const [expanded, setExpanded] = useState(true);
+  const outcomeConfig: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline"; icon: typeof CheckCircle }> = {
+    approved: { label: "Approved", variant: "default", icon: CheckCircle },
+    rejected: { label: "Rejected", variant: "destructive", icon: XCircle },
+    review_required: { label: "Review Required", variant: "secondary", icon: ShieldAlert },
+    escalated: { label: "Escalated", variant: "outline", icon: AlertTriangle },
+  };
+  const normalizedOutcome = (data.outcome || "review_required").toLowerCase();
+  const config = outcomeConfig[normalizedOutcome] || outcomeConfig.review_required;
+  const OutcomeIcon = config.icon;
+
+  return (
+    <Card className="my-2" data-testid="card-decision">
+      <CardHeader className="py-2 px-3 flex flex-row items-center gap-2 justify-between">
+        <div className="flex items-center gap-2">
+          <OutcomeIcon className="h-4 w-4" />
+          <CardTitle className="text-sm">{data.title || "Decision"}</CardTitle>
+          <Badge variant={config.variant} data-testid="badge-decision-outcome">{config.label}</Badge>
+        </div>
+        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setExpanded(!expanded)} data-testid="button-toggle-decision-details">
+          {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+        </Button>
+      </CardHeader>
+      {expanded && (
+        <CardContent className="px-3 pb-3 pt-0 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">Confidence:</span>
+            <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
+              <div
+                className="h-full rounded-full bg-primary transition-all"
+                style={{ width: `${Math.min(100, data.confidence)}%` }}
+              />
+            </div>
+            <span className="text-xs font-medium">{data.confidence}%</span>
+          </div>
+          {data.reasoning && data.reasoning.length > 0 && (
+            <div className="space-y-1">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Reasoning</p>
+              {data.reasoning.map((r, i) => (
+                <div key={i} className="flex items-start gap-2 text-xs" data-testid={`reasoning-${i}`}>
+                  <ChevronRight className="h-3 w-3 text-muted-foreground shrink-0 mt-0.5" />
+                  <span>{r}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {data.conditions && data.conditions.length > 0 && (
+            <div className="space-y-1">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Conditions</p>
+              {data.conditions.map((c, i) => (
+                <div key={i} className="flex items-start gap-2 text-xs text-yellow-600 dark:text-yellow-400">
+                  <AlertTriangle className="h-3 w-3 shrink-0 mt-0.5" />
+                  <span>{c}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      )}
+    </Card>
+  );
+}
+
+function ApprovalGateCard({
+  data,
+  onApproval,
+  canInteract,
+}: {
+  data: ApprovalRequired;
+  onApproval: (action: string, approved: boolean) => void;
+  canInteract: boolean;
+}) {
+  const normalizedRiskLevel = (data.risk_level || "medium").toLowerCase();
+  const levelBg: Record<string, string> = {
+    low: "bg-green-500/10",
+    medium: "bg-yellow-500/10",
+    high: "bg-orange-500/10",
+    critical: "bg-red-500/10",
+  };
+  const cardBg = levelBg[normalizedRiskLevel] || levelBg.medium;
+
+  return (
+    <Card className={`my-2 ${cardBg}`} data-testid="card-approval-gate">
+      <CardHeader className="py-2 px-3">
+        <div className="flex items-center gap-2">
+          <ShieldAlert className="h-4 w-4 text-yellow-500" />
+          <CardTitle className="text-sm">Human Approval Required</CardTitle>
+          <Badge variant="outline" className="text-xs uppercase">{data.risk_level}</Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="px-3 pb-3 pt-0 space-y-2">
+        <div className="text-sm">
+          <span className="font-medium text-foreground">Action: </span>
+          <span>{data.action}</span>
+        </div>
+        <div className="text-xs text-muted-foreground">{data.reason}</div>
+        {data.details && (
+          <div className="text-xs bg-muted/50 rounded-md p-2">{data.details}</div>
+        )}
+        <div className="flex gap-2 pt-1">
+          <Button
+            size="sm"
+            onClick={() => onApproval(data.action, true)}
+            disabled={!canInteract}
+            className="gap-1"
+            data-testid="button-approve"
+          >
+            <ThumbsUp className="h-3 w-3" />
+            Approve
+          </Button>
+          <Button
+            size="sm"
+            variant="destructive"
+            onClick={() => onApproval(data.action, false)}
+            disabled={!canInteract}
+            className="gap-1"
+            data-testid="button-reject"
+          >
+            <ThumbsDown className="h-3 w-3" />
+            Reject
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function MessageBubble({
   role,
   content,
   agentName,
   isStreaming,
+  onApproval,
+  canInteract,
 }: {
   role: string;
   content: string;
   agentName: string;
   isStreaming?: boolean;
+  onApproval: (action: string, approved: boolean) => void;
+  canInteract: boolean;
 }) {
   const isUser = role === "user";
+  const segments = isUser ? [{ type: "text" as const, content }] : parseStructuredBlocks(content);
+
   return (
     <div className={`flex gap-3 ${isUser ? "flex-row-reverse" : ""}`} data-testid={`message-${role}`}>
       <div
@@ -481,14 +784,28 @@ function MessageBubble({
       >
         {isUser ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4 text-primary" />}
       </div>
-      <div
-        className={`max-w-[75%] rounded-lg px-3 py-2 text-sm leading-relaxed ${
-          isUser
-            ? "bg-primary text-primary-foreground"
-            : "bg-muted"
-        }`}
-      >
-        <div className="whitespace-pre-wrap break-words">{content}</div>
+      <div className={`max-w-[75%] space-y-1 ${isUser ? "items-end" : ""}`}>
+        {segments.map((seg, i) => {
+          if (seg.type === "risk_assessment" && seg.data) {
+            return <RiskAssessmentCard key={i} data={seg.data as RiskAssessment} />;
+          }
+          if (seg.type === "decision" && seg.data) {
+            return <DecisionCard key={i} data={seg.data as Decision} />;
+          }
+          if (seg.type === "approval_required" && seg.data) {
+            return <ApprovalGateCard key={i} data={seg.data as ApprovalRequired} onApproval={onApproval} canInteract={canInteract} />;
+          }
+          return (
+            <div
+              key={i}
+              className={`rounded-lg px-3 py-2 text-sm leading-relaxed ${
+                isUser ? "bg-primary text-primary-foreground" : "bg-muted"
+              }`}
+            >
+              <div className="whitespace-pre-wrap break-words">{seg.content}</div>
+            </div>
+          );
+        })}
         {isStreaming && (
           <span className="inline-block w-1.5 h-4 bg-current opacity-70 animate-pulse ml-0.5 align-text-bottom" />
         )}

@@ -15292,5 +15292,53 @@ function buildAgentSystemPrompt(agent: any): string {
 
   parts.push(`\nRespond helpfully and stay in character. If asked about capabilities you don't have, explain what you would do if those tools were available.`);
 
+  parts.push(`
+
+IMPORTANT — STRUCTURED OUTPUT INSTRUCTIONS:
+When you perform analysis, assessments, or make decisions, you MUST embed structured blocks in your response using fenced code blocks with special labels. The UI will parse these and render them as rich visual cards. Always include these blocks alongside your natural language explanation.
+
+Available structured block types:
+
+1. RISK ASSESSMENT — Use when evaluating risk, scoring applications, assessing threats, or rating anything:
+\`\`\`risk_assessment
+{
+  "title": "Brief title of what is being assessed",
+  "score": 0-100,
+  "level": "low" | "medium" | "high" | "critical",
+  "factors": [
+    {"name": "Factor name", "impact": "positive" | "negative" | "neutral", "detail": "One sentence explanation"}
+  ]
+}
+\`\`\`
+
+2. DECISION — Use when you reach a conclusion, recommendation, or verdict:
+\`\`\`decision
+{
+  "title": "Brief title of the decision",
+  "outcome": "approved" | "rejected" | "review_required" | "escalated",
+  "confidence": 0-100,
+  "reasoning": ["Reason 1", "Reason 2", "Reason 3"],
+  "conditions": ["Any conditions or caveats, if applicable"]
+}
+\`\`\`
+
+3. APPROVAL REQUIRED — Use when your autonomy mode or policies require human sign-off before proceeding. Use this when risk is HIGH or CRITICAL, or when policies mandate human review:
+\`\`\`approval_required
+{
+  "action": "What action needs approval",
+  "risk_level": "low" | "medium" | "high" | "critical",
+  "reason": "Why human approval is needed",
+  "details": "Additional context for the reviewer"
+}
+\`\`\`
+
+RULES:
+- Always use these blocks when performing assessments or making decisions. Do NOT just describe results in plain text.
+- You may include multiple blocks in one response (e.g., a risk_assessment followed by a decision).
+- Include natural language explanation BEFORE and/or AFTER the blocks to provide context.
+- The JSON inside blocks must be valid JSON.
+- For approval_required: use this when the action crosses a policy boundary, involves HIGH/CRITICAL risk, or your autonomy mode is "assisted" or "supervised" and the action has significant impact.
+`);
+
   return parts.join("\n");
 }
