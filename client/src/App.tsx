@@ -183,9 +183,9 @@ function DashboardLayout() {
                       <ThemeToggle />
                     </div>
                   </header>
-                  <ScrollArea className="flex-1">
+                  <div className="flex-1 overflow-y-auto overflow-x-hidden">
                     <DashboardRouter />
-                  </ScrollArea>
+                  </div>
                 </div>
               </div>
             </SidebarProvider>
