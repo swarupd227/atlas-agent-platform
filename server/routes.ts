@@ -15389,14 +15389,19 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
         ...policies.map(p => p.policyName || p.name || ""),
       ].filter(Boolean);
 
-      const prompt = `Given these regulatory frameworks: ${frameworks.join(", ")}
+      const prompt = `Given these regulatory frameworks and compliance tags: ${frameworks.join(", ")}
+
+The agent's compliance tag abbreviations are: ${compliance.join(", ")}
 
 And these web search citations:
 ${citations.map((c: any, i: number) => `${i + 1}. "${c.title}" (${c.url})`).join("\n")}
 
-For each citation, determine which regulatory frameworks (if any) it is relevant to. Return ONLY a JSON array where each element has:
+For each citation, determine which regulatory frameworks (if any) it is relevant to.
+IMPORTANT: Use SHORT abbreviation tags only (2-6 characters), matching the compliance tag abbreviations when possible. Examples: DOT, IATA, PCI-DSS, GDPR, TILA, ECOA, FCRA, HMDA, SOC2. Do NOT use long descriptive names like "Passenger Data Protection" - use abbreviations like "GDPR" or "DOT" instead.
+
+Return ONLY a JSON array where each element has:
 - index: the 0-based index
-- tags: array of relevant framework names from the list above (empty array if none match)
+- tags: array of SHORT abbreviation tags (empty array if none match)
 
 Return ONLY valid JSON array, no explanation.`;
 

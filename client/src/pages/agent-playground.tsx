@@ -562,32 +562,36 @@ export default function AgentPlayground() {
       </div>
 
       <div className="flex flex-1 flex-col min-w-0">
-        <div className="flex items-center gap-3 px-4 py-2 border-b flex-wrap">
-          <Bot className="h-5 w-5 text-primary" />
-          <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 px-4 py-2 border-b">
+          <Bot className="h-5 w-5 text-primary shrink-0" />
+          <div className="min-w-0 mr-auto">
             <h2 className="text-sm font-semibold truncate" data-testid="text-agent-name">{agent.name}</h2>
-            <p className="text-xs text-muted-foreground truncate">{agent.description || "Agent Playground"}</p>
+            {agent.description && (
+              <p className="text-xs text-muted-foreground truncate hidden lg:block">{agent.description}</p>
+            )}
           </div>
-          {hasContextActive && (
-            <Badge variant="outline" className="text-purple-600 dark:text-purple-400" data-testid="badge-context-active">
-              <Sparkles className="h-3 w-3 mr-1" />
-              Context Active
+          <div className="flex items-center gap-1.5 shrink-0">
+            {hasContextActive && (
+              <Badge variant="outline" data-testid="badge-context-active">
+                <Sparkles className="h-3 w-3 mr-1" />
+                Context
+              </Badge>
+            )}
+            {hasWebSearch && (
+              <Badge variant="outline" data-testid="badge-web-search">
+                <Globe className="h-3 w-3 mr-1" />
+                Web
+              </Badge>
+            )}
+            <Badge variant="outline" className={riskColor(agent.riskTier)} data-testid="badge-risk-tier">
+              <Shield className="h-3 w-3 mr-1" />
+              {agent.riskTier}
             </Badge>
-          )}
-          {hasWebSearch && (
-            <Badge variant="outline" className="text-green-600 dark:text-green-400" data-testid="badge-web-search">
-              <Globe className="h-3 w-3 mr-1" />
-              Web Search
+            <Badge variant="secondary" data-testid="badge-autonomy">
+              <Zap className="h-3 w-3 mr-1" />
+              {agent.autonomyMode}
             </Badge>
-          )}
-          <Badge variant="outline" className={riskColor(agent.riskTier)} data-testid="badge-risk-tier">
-            <Shield className="h-3 w-3 mr-1" />
-            {agent.riskTier}
-          </Badge>
-          <Badge variant="secondary" data-testid="badge-autonomy">
-            <Zap className="h-3 w-3 mr-1" />
-            {agent.autonomyMode}
-          </Badge>
+          </div>
         </div>
 
         {!activeSessionId ? (
@@ -812,18 +816,37 @@ export default function AgentPlayground() {
                   </div>
                 )}
 
-                {ontologyTags && typeof ontologyTags === "object" && Object.keys(ontologyTags).length > 0 && (
-                  <div>
-                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Ontology Tags</p>
-                    <div className="flex flex-wrap gap-1">
-                      {Object.entries(ontologyTags).map(([key, value], i) => (
-                        <Badge key={i} variant="outline" className="text-[10px]" data-testid={`badge-ontology-${key}`}>
-                          {key}: {String(value)}
-                        </Badge>
-                      ))}
+                {ontologyTags && typeof ontologyTags === "object" && Object.keys(ontologyTags).length > 0 && (() => {
+                  const ont = ontologyTags as Record<string, unknown>;
+                  return (
+                    <div className="space-y-1.5">
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Domain Knowledge</p>
+                      {ont.domain ? (
+                        <p className="text-xs font-medium text-foreground" data-testid="badge-ontology-domain">
+                          {String(ont.domain)}
+                        </p>
+                      ) : null}
+                      {Object.entries(ont)
+                        .filter(([key]) => key !== "domain")
+                        .map(([key, value], i) => (
+                          <div key={i}>
+                            <p className="text-[10px] text-muted-foreground capitalize mb-0.5">{key.replace(/([A-Z])/g, " $1").trim()}</p>
+                            <div className="flex flex-wrap gap-1" data-testid={`badge-ontology-${key}`}>
+                              {Array.isArray(value) ? value.map((item: unknown, j: number) => (
+                                <Badge key={j} variant="secondary" className="text-[9px] no-default-hover-elevate no-default-active-elevate">
+                                  {String(item)}
+                                </Badge>
+                              )) : (
+                                <Badge variant="secondary" className="text-[9px] no-default-hover-elevate no-default-active-elevate">
+                                  {String(value)}
+                                </Badge>
+                              )}
+                            </div>
+                          </div>
+                        ))}
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
 
                 {!hasContextActive && !ontologyTags && (
                   <p className="text-[10px] text-muted-foreground italic">No industry context configured</p>
@@ -1170,7 +1193,7 @@ function MessageBubble({
       >
         {isUser ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4 text-primary" />}
       </div>
-      <div className={`max-w-[75%] space-y-1 ${isUser ? "items-end" : ""}`}>
+      <div className={`space-y-1 ${isUser ? "max-w-[75%] items-end" : "max-w-[85%]"}`}>
         {segments.map((seg, i) => {
           if (seg.type === "risk_assessment" && seg.data) {
             return <RiskAssessmentCard key={i} data={seg.data as RiskAssessment} />;
@@ -1213,7 +1236,7 @@ function RenderTextWithLinks({ text, isUser, annotations }: { text: string; isUs
       const linkTitle = parts[i + 2];
       const annotation = annotations.find((a) => a.url === linkUrl);
       elements.push(
-        <span key={i} className="inline">
+        <span key={i} className="inline-flex flex-col">
           <a
             href={linkUrl}
             target="_blank"
@@ -1227,9 +1250,9 @@ function RenderTextWithLinks({ text, isUser, annotations }: { text: string; isUs
             <ExternalLink className="h-3 w-3 inline shrink-0" />
           </a>
           {annotation && annotation.tags && annotation.tags.length > 0 && (
-            <span className="inline-flex gap-0.5 ml-1">
+            <span className="flex flex-wrap gap-0.5 mt-0.5">
               {annotation.tags.map((tag, ti) => (
-                <Badge key={ti} variant="outline" className="text-[9px] py-0 px-1" data-testid="badge-citation-tag">
+                <Badge key={ti} variant="secondary" className="text-[9px] no-default-hover-elevate no-default-active-elevate" data-testid="badge-citation-tag">
                   {tag}
                 </Badge>
               ))}
