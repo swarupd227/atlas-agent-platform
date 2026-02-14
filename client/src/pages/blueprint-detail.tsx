@@ -71,7 +71,9 @@ import {
   Brain, Wrench, Database, GitBranch, Split, UserCheck, Shield,
   Plus, Trash2, Save, Play, PenTool, ArrowLeft, AlertTriangle,
   CheckCircle, ChevronDown, ChevronRight, X, MousePointer, Link2, FileText, MessageSquare, Server, Network,
+  Scale, BookMarked, Diff, Globe2, Lock,
 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import TeamGraphEditor from "./team-graph-editor";
 
 type BpNode = { id: string; type: string; label: string; [key: string]: any };
@@ -128,7 +130,7 @@ export default function BlueprintDetail() {
   const [dirty, setDirty] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [edgeMode, setEdgeMode] = useState<string | null>(null);
-  const [rightPanel, setRightPanel] = useState<"properties" | "validation">("properties");
+  const [rightPanel, setRightPanel] = useState<"properties" | "validation" | "changes">("properties");
   const [signDialogOpen, setSignDialogOpen] = useState(false);
   const [signedBy, setSignedBy] = useState("");
   const [blueprintName, setBlueprintName] = useState("");
@@ -142,6 +144,9 @@ export default function BlueprintDetail() {
   const [contextPlan, setContextPlan] = useState<ContextPlanEntry[]>([]);
   const [depsOpen, setDepsOpen] = useState(false);
   const [editorView, setEditorView] = useState<"single" | "team">("single");
+  const [savedSnapshot, setSavedSnapshot] = useState<BpNode[]>([]);
+  const [kgBindings, setKgBindings] = useState<string[]>([]);
+  const [kgBindingsOpen, setKgBindingsOpen] = useState(false);
 
   useEffect(() => {
     if (blueprint) {
@@ -150,6 +155,8 @@ export default function BlueprintDetail() {
       setEdges(bj?.edges || []);
       setBlueprintName(blueprint.name);
       setDirty(false);
+      setSavedSnapshot(bj?.nodes || []);
+      setKgBindings(bj?.kgBindings || []);
       if (blueprint.validationResults) setLocalValidation(blueprint.validationResults as ValidationResults);
       if (bj?.contextSources) setAttachedResourceIds(new Set(bj.contextSources));
       if (bj?.promptBindings) setPromptBindings(bj.promptBindings);
@@ -221,7 +228,7 @@ export default function BlueprintDetail() {
   const saveMutation = useMutation({
     mutationFn: async () => {
       await apiRequest("PATCH", `/api/blueprints/${id}`, {
-        blueprintJson: { nodes, edges, contextSources: Array.from(attachedResourceIds), promptBindings, mcpDependencies, contextPlan },
+        blueprintJson: { nodes, edges, contextSources: Array.from(attachedResourceIds), promptBindings, mcpDependencies, contextPlan, kgBindings },
         name: blueprintName,
       });
     },
@@ -229,6 +236,7 @@ export default function BlueprintDetail() {
       queryClient.invalidateQueries({ queryKey: ["/api/blueprints", id] });
       queryClient.invalidateQueries({ queryKey: ["/api/blueprints"] });
       setDirty(false);
+      setSavedSnapshot([...nodes]);
       toast({ title: "Blueprint saved" });
     },
     onError: (err: Error) => toast({ title: "Save failed", description: err.message, variant: "destructive" }),
@@ -243,9 +251,42 @@ export default function BlueprintDetail() {
       queryClient.invalidateQueries({ queryKey: ["/api/blueprints", id] });
       queryClient.invalidateQueries({ queryKey: ["/api/blueprints"] });
       const vr = data.validationResults as ValidationResults;
-      setLocalValidation(vr);
+      const complianceErrors: ValidationItem[] = [];
+      const complianceWarnings: ValidationItem[] = [];
+      const tags = linkedAgent?.complianceTags as string[] | null | undefined;
+      if (tags && tags.length > 0) {
+        if (tags.includes("HIPAA")) {
+          if (!nodes.some(n => n.type === "schema_validate")) {
+            complianceErrors.push({ type: "compliance", severity: "error", message: "HIPAA \u00A7164.502(b): Blueprint requires a Schema Validate node for PHI redaction." });
+          }
+        }
+        if (tags.includes("PCI-DSS")) {
+          if (!nodes.some(n => n.type === "human_review")) {
+            complianceErrors.push({ type: "compliance", severity: "error", message: "PCI-DSS Req 7: Blueprint requires a Human Review node for access control." });
+          }
+        }
+        if (tags.includes("EU AI Act")) {
+          if (!nodes.some(n => n.type === "human_review")) {
+            complianceErrors.push({ type: "compliance", severity: "error", message: "EU AI Act Article 14: Blueprint requires a Human Review node for human oversight." });
+          }
+        }
+        if (tags.includes("SOC 2")) {
+          nodes.filter(n => n.type === "tool_call").forEach(n => {
+            if (!n.complianceRef) {
+              complianceWarnings.push({ type: "compliance", severity: "warning", message: `SOC 2 CC7.2: Tool call '${n.label}' should have compliance mapping for audit trail.`, nodeId: n.id });
+            }
+          });
+        }
+      }
+      const mergedVr: ValidationResults = {
+        ...vr,
+        passed: vr.passed && complianceErrors.length === 0,
+        errors: [...(vr.errors || []), ...complianceErrors],
+        warnings: [...(vr.warnings || []), ...complianceWarnings],
+      };
+      setLocalValidation(mergedVr);
       setRightPanel("validation");
-      toast({ title: vr.passed ? "Compilation passed" : "Compilation failed", description: `${vr.errors?.length || 0} errors, ${vr.warnings?.length || 0} warnings`, variant: vr.passed ? "default" : "destructive" });
+      toast({ title: mergedVr.passed ? "Compilation passed" : "Compilation failed", description: `${mergedVr.errors?.length || 0} errors, ${mergedVr.warnings?.length || 0} warnings`, variant: mergedVr.passed ? "default" : "destructive" });
     },
     onError: (err: Error) => toast({ title: "Compile failed", description: err.message, variant: "destructive" }),
   });
@@ -447,6 +488,12 @@ export default function BlueprintDetail() {
                             <Icon className="w-4 h-4 text-muted-foreground shrink-0" />
                             <span className="text-sm font-medium flex-1 truncate" data-testid={`text-node-label-${node.id}`}>{node.label}</span>
                             <Badge variant="outline" className="text-[10px] shrink-0">{node.type}</Badge>
+                            {node.complianceRef && (
+                              <div className="flex items-center gap-1 shrink-0" data-testid={`compliance-badge-${node.id}`}>
+                                <Shield className="w-3 h-3 text-emerald-500" />
+                                <span className="text-[9px] text-emerald-600 dark:text-emerald-400">{node.complianceRef.regulation}</span>
+                              </div>
+                            )}
                             {isInvalid && <AlertTriangle className="w-3.5 h-3.5 text-destructive shrink-0" />}
                             <Button
                               variant="ghost"
@@ -474,24 +521,29 @@ export default function BlueprintDetail() {
         </div>
 
         <div className="w-[280px] border-l shrink-0 flex flex-col">
-          {localValidation && (
-            <div className="flex border-b">
-              <button
-                className={`flex-1 p-2 text-xs font-medium text-center ${rightPanel === "properties" ? "border-b-2 border-primary" : "text-muted-foreground"}`}
-                onClick={() => setRightPanel("properties")}
-                data-testid="tab-properties"
-              >
-                Properties
-              </button>
-              <button
-                className={`flex-1 p-2 text-xs font-medium text-center ${rightPanel === "validation" ? "border-b-2 border-primary" : "text-muted-foreground"}`}
-                onClick={() => setRightPanel("validation")}
-                data-testid="tab-validation"
-              >
-                Validation {localValidation.errors?.length ? `(${localValidation.errors.length})` : ""}
-              </button>
-            </div>
-          )}
+          <div className="flex border-b">
+            <button
+              className={`flex-1 p-2 text-xs font-medium text-center ${rightPanel === "properties" ? "border-b-2 border-primary" : "text-muted-foreground"}`}
+              onClick={() => setRightPanel("properties")}
+              data-testid="tab-properties"
+            >
+              Properties
+            </button>
+            <button
+              className={`flex-1 p-2 text-xs font-medium text-center ${rightPanel === "validation" ? "border-b-2 border-primary" : "text-muted-foreground"}`}
+              onClick={() => setRightPanel("validation")}
+              data-testid="tab-validation"
+            >
+              Validation {localValidation?.errors?.length ? `(${localValidation.errors.length})` : ""}
+            </button>
+            <button
+              className={`flex-1 p-2 text-xs font-medium text-center ${rightPanel === "changes" ? "border-b-2 border-primary" : "text-muted-foreground"}`}
+              onClick={() => setRightPanel("changes")}
+              data-testid="tab-changes"
+            >
+              Changes {dirty ? "*" : ""}
+            </button>
+          </div>
 
           <ScrollArea className="flex-1">
             {rightPanel === "properties" ? (
@@ -639,6 +691,45 @@ export default function BlueprintDetail() {
                         </div>
                       </>
                     )}
+                    <div className="border-t pt-3 flex flex-col gap-1.5">
+                      <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                        <Scale className="w-3.5 h-3.5" /> Compliance Mapping
+                      </label>
+                      <select
+                        className="h-8 w-full rounded-md border bg-background px-2 text-xs"
+                        value={selectedNode.complianceRef?.regulation || ""}
+                        onChange={e => {
+                          const reg = e.target.value;
+                          if (!reg) {
+                            updateNode(selectedNode.id, { complianceRef: undefined });
+                          } else {
+                            updateNode(selectedNode.id, { complianceRef: { ...(selectedNode.complianceRef || {}), regulation: reg } });
+                          }
+                        }}
+                        data-testid="select-compliance-regulation"
+                      >
+                        <option value="">None</option>
+                        {["HIPAA", "SOC 2", "EU AI Act", "GDPR", "PCI-DSS", "DOT", "IATA", "SOX", "FCRA", "ECOA", "TILA"].map(r => (
+                          <option key={r} value={r}>{r}</option>
+                        ))}
+                      </select>
+                      {selectedNode.complianceRef?.regulation && (
+                        <>
+                          <Input
+                            value={selectedNode.complianceRef?.section || ""}
+                            onChange={e => updateNode(selectedNode.id, { complianceRef: { ...selectedNode.complianceRef, section: e.target.value } })}
+                            placeholder="e.g. \u00A7164.502(b)"
+                            data-testid="input-compliance-section"
+                          />
+                          <Input
+                            value={selectedNode.complianceRef?.note || ""}
+                            onChange={e => updateNode(selectedNode.id, { complianceRef: { ...selectedNode.complianceRef, note: e.target.value } })}
+                            placeholder="Compliance note"
+                            data-testid="input-compliance-note"
+                          />
+                        </>
+                      )}
+                    </div>
                     <Button variant="destructive" size="sm" onClick={() => deleteNode(selectedNode.id)} data-testid="button-delete-selected-node">
                       <Trash2 className="w-3.5 h-3.5 mr-1.5" /> Delete Node
                     </Button>
@@ -647,7 +738,7 @@ export default function BlueprintDetail() {
                   <p className="text-sm text-muted-foreground text-center py-8" data-testid="text-no-selection">Select a node to edit its properties</p>
                 )}
               </div>
-            ) : (
+            ) : rightPanel === "validation" ? (
               <div className="p-4 flex flex-col gap-3">
                 <div className="flex items-center gap-2 flex-wrap">
                   {localValidation?.passed ? (
@@ -656,7 +747,7 @@ export default function BlueprintDetail() {
                     <AlertTriangle className="w-4 h-4 text-destructive" />
                   )}
                   <span className="text-sm font-medium" data-testid="text-validation-status">
-                    {localValidation?.passed ? "Validation Passed" : "Validation Failed"}
+                    {localValidation?.passed ? "Validation Passed" : localValidation ? "Validation Failed" : "Not compiled yet"}
                   </span>
                 </div>
                 {(localValidation?.errors || []).map((item, i) => (
@@ -668,7 +759,7 @@ export default function BlueprintDetail() {
                   >
                     <AlertTriangle className="w-3.5 h-3.5 text-destructive shrink-0 mt-0.5" />
                     <div className="flex flex-col gap-1 min-w-0">
-                      <Badge variant="outline" className="text-[10px] w-fit text-destructive border-destructive/30">{item.type}</Badge>
+                      <Badge variant="outline" className={`text-[10px] w-fit ${item.type === "compliance" ? "text-purple-600 dark:text-purple-400 border-purple-500/30" : "text-destructive border-destructive/30"}`}>{item.type}</Badge>
                       <span className="text-xs">{item.message}</span>
                     </div>
                   </div>
@@ -682,7 +773,7 @@ export default function BlueprintDetail() {
                   >
                     <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
                     <div className="flex flex-col gap-1 min-w-0">
-                      <Badge variant="outline" className="text-[10px] w-fit text-amber-600 dark:text-amber-400 border-amber-500/30">{item.type}</Badge>
+                      <Badge variant="outline" className={`text-[10px] w-fit ${item.type === "compliance" ? "text-purple-600 dark:text-purple-400 border-purple-500/30" : "text-amber-600 dark:text-amber-400 border-amber-500/30"}`}>{item.type}</Badge>
                       <span className="text-xs">{item.message}</span>
                     </div>
                   </div>
@@ -690,6 +781,91 @@ export default function BlueprintDetail() {
                 {(localValidation?.errors?.length === 0 && localValidation?.warnings?.length === 0) && (
                   <p className="text-xs text-muted-foreground text-center py-4">No issues found</p>
                 )}
+              </div>
+            ) : (
+              <div className="p-4 flex flex-col gap-3" data-testid="panel-changes">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Diff className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-sm font-medium">Diff Review</span>
+                  {dirty && <Badge variant="outline" className="text-[10px]">Unsaved</Badge>}
+                </div>
+                {(() => {
+                  const savedIds = new Set(savedSnapshot.map(n => n.id));
+                  const currentIds = new Set(nodes.map(n => n.id));
+                  const addedNodes = nodes.filter(n => !savedIds.has(n.id));
+                  const removedNodes = savedSnapshot.filter(n => !currentIds.has(n.id));
+                  const modifiedNodes = nodes.filter(n => {
+                    if (!savedIds.has(n.id)) return false;
+                    const saved = savedSnapshot.find(s => s.id === n.id);
+                    if (!saved) return false;
+                    return JSON.stringify(saved) !== JSON.stringify(n);
+                  });
+                  const hasChanges = addedNodes.length > 0 || removedNodes.length > 0 || modifiedNodes.length > 0;
+
+                  if (!hasChanges) {
+                    return <p className="text-xs text-muted-foreground text-center py-6" data-testid="text-no-changes">No changes from saved version</p>;
+                  }
+
+                  return (
+                    <div className="flex flex-col gap-2">
+                      {addedNodes.map(n => (
+                        <div key={`add-${n.id}`} className="flex flex-col gap-1 p-2.5 rounded-md bg-emerald-500/10" data-testid={`change-added-${n.id}`}>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <Badge variant="outline" className="text-[10px] text-emerald-600 dark:text-emerald-400 border-emerald-500/30">Added</Badge>
+                            <span className="text-xs font-medium">{n.label}</span>
+                            <Badge variant="outline" className="text-[9px]">{n.type}</Badge>
+                          </div>
+                          {n.complianceRef && (
+                            <span className="text-[10px] text-emerald-600 dark:text-emerald-400" data-testid={`change-impact-added-${n.id}`}>
+                              Adding '{n.label}' satisfies {n.complianceRef.regulation} {n.complianceRef.section || ""}
+                            </span>
+                          )}
+                          {n.type === "tool_call" && (
+                            <span className="text-[10px] text-muted-foreground" data-testid={`change-note-tool-${n.id}`}>
+                              Note: Adding tool '{n.label}' may require BAA with tool provider if HIPAA-scoped
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                      {removedNodes.map(n => (
+                        <div key={`rem-${n.id}`} className="flex flex-col gap-1 p-2.5 rounded-md bg-destructive/10" data-testid={`change-removed-${n.id}`}>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <Badge variant="outline" className="text-[10px] text-destructive border-destructive/30">Removed</Badge>
+                            <span className="text-xs font-medium">{n.label}</span>
+                            <Badge variant="outline" className="text-[9px]">{n.type}</Badge>
+                          </div>
+                          {n.complianceRef && (
+                            <span className="text-[10px] text-amber-600 dark:text-amber-400" data-testid={`change-impact-removed-${n.id}`}>
+                              Removing '{n.label}' reduces {n.complianceRef.regulation} {n.complianceRef.section || ""} coverage
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                      {modifiedNodes.map(n => {
+                        const saved = savedSnapshot.find(s => s.id === n.id);
+                        return (
+                          <div key={`mod-${n.id}`} className="flex flex-col gap-1 p-2.5 rounded-md bg-blue-500/10" data-testid={`change-modified-${n.id}`}>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <Badge variant="outline" className="text-[10px] text-blue-600 dark:text-blue-400 border-blue-500/30">Modified</Badge>
+                              <span className="text-xs font-medium">{n.label}</span>
+                              <Badge variant="outline" className="text-[9px]">{n.type}</Badge>
+                            </div>
+                            {n.complianceRef && !saved?.complianceRef && (
+                              <span className="text-[10px] text-emerald-600 dark:text-emerald-400">
+                                Adding compliance mapping: {n.complianceRef.regulation} {n.complianceRef.section || ""}
+                              </span>
+                            )}
+                            {!n.complianceRef && saved?.complianceRef && (
+                              <span className="text-[10px] text-amber-600 dark:text-amber-400">
+                                Removed compliance mapping: {saved.complianceRef.regulation} {saved.complianceRef.section || ""}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
               </div>
             )}
 
@@ -890,6 +1066,76 @@ export default function BlueprintDetail() {
                   ) : (
                     <p className="text-xs text-muted-foreground text-center py-3" data-testid="text-no-context-sources">No MCP resources available</p>
                   )}
+                </div>
+              )}
+            </div>
+
+            <div className="border-t mx-4">
+              <button
+                className="flex items-center gap-2 py-3 w-full text-left"
+                onClick={() => setKgBindingsOpen(!kgBindingsOpen)}
+                data-testid="button-toggle-kg-bindings"
+              >
+                {kgBindingsOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                <Globe2 className="w-3.5 h-3.5 text-muted-foreground" />
+                <span className="text-xs font-medium text-muted-foreground">Knowledge Graph Scope ({kgBindings.length})</span>
+              </button>
+              {kgBindingsOpen && (
+                <div className="flex flex-col gap-2 pb-4">
+                  {(() => {
+                    const KG_DOMAINS = [
+                      "Financial Services - Lending",
+                      "Financial Services - Trading",
+                      "Healthcare - Clinical",
+                      "Healthcare - Administrative",
+                      "Travel & Transportation",
+                      "Insurance - Claims",
+                      "Insurance - Underwriting",
+                      "Manufacturing - Quality",
+                      "Retail - Commerce",
+                      "Custom Domain...",
+                    ];
+                    const ontologyTags = (linkedAgent?.ontologyTags as any) || {};
+                    const suggestedDomain = ontologyTags?.domain as string | undefined;
+                    return (
+                      <>
+                        {KG_DOMAINS.map(domain => {
+                          const isChecked = kgBindings.includes(domain);
+                          const isSuggested = suggestedDomain && domain.toLowerCase().includes(suggestedDomain.toLowerCase());
+                          return (
+                            <div
+                              key={domain}
+                              className="flex items-center gap-2 px-1"
+                              data-testid={`kg-domain-${domain.replace(/[^a-zA-Z0-9]/g, "-").toLowerCase()}`}
+                            >
+                              <Checkbox
+                                checked={isChecked}
+                                onCheckedChange={(checked) => {
+                                  if (checked) {
+                                    setKgBindings(prev => [...prev, domain]);
+                                  } else {
+                                    setKgBindings(prev => prev.filter(d => d !== domain));
+                                  }
+                                  setDirty(true);
+                                }}
+                                data-testid={`checkbox-kg-${domain.replace(/[^a-zA-Z0-9]/g, "-").toLowerCase()}`}
+                              />
+                              <span className="text-xs flex-1">{domain}</span>
+                              {isSuggested && (
+                                <Badge variant="outline" className="text-[9px]">suggested</Badge>
+                              )}
+                            </div>
+                          );
+                        })}
+                        <div className="flex items-center gap-1.5 px-1 mt-1">
+                          <Lock className="w-3 h-3 text-muted-foreground shrink-0" />
+                          <span className="text-[10px] text-muted-foreground" data-testid="text-kg-scope-note">
+                            Runtime will enforce that this agent only accesses knowledge graph nodes within declared scope.
+                          </span>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
               )}
             </div>
