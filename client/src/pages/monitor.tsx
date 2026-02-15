@@ -4,6 +4,8 @@ import { Link, useLocation } from "wouter";
 import {
   Activity,
   TrendingUp,
+  TrendingDown,
+  Minus,
   Clock,
   AlertTriangle,
   CheckCircle,
@@ -25,7 +27,12 @@ import {
   Ban,
   X,
   Stethoscope,
+  Bell,
+  Gauge,
+  FileWarning,
+  Loader2,
 } from "lucide-react";
+import { useIndustry } from "@/components/industry-provider";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -120,6 +127,113 @@ interface OutcomeImpact {
   }>;
 }
 
+const INDUSTRY_KPI_MONITORING: Record<string, Array<{ name: string; value: number; target: number; unit: string; trend: "up" | "down" | "stable"; trendValue: string; status: "healthy" | "warning" | "critical"; description: string }>> = {
+  healthcare: [
+    { name: "Clinical Accuracy Trend", value: 97.8, target: 98, unit: "%", trend: "up", trendValue: "+0.4%", status: "warning", description: "Trending toward target; minor gaps in rare condition classification" },
+    { name: "Guideline Adherence Rate", value: 95.1, target: 95, unit: "%", trend: "stable", trendValue: "+0.1%", status: "healthy", description: "Meeting target across all active clinical pathways" },
+    { name: "Patient Satisfaction Proxy", value: 4.4, target: 4.5, unit: "/5", trend: "up", trendValue: "+0.1", status: "warning", description: "Slightly below target; response quality improvements in progress" },
+    { name: "Escalation Rate", value: 6.7, target: 8, unit: "%", trend: "down", trendValue: "-0.5%", status: "healthy", description: "Well within threshold; fewer cases requiring human clinician review" },
+    { name: "PHI Access Patterns", value: 12, target: 15, unit: "accesses/hr", trend: "stable", trendValue: "+0", status: "healthy", description: "Access frequency within HIPAA-compliant bounds" },
+  ],
+  financial_services: [
+    { name: "Transaction Accuracy", value: 99.8, target: 99.9, unit: "%", trend: "stable", trendValue: "+0.0%", status: "warning", description: "Slightly below target; edge cases in cross-border FX transactions" },
+    { name: "Compliance Violation Rate", value: 0.1, target: 0.5, unit: "%", trend: "down", trendValue: "-0.05%", status: "healthy", description: "Well below threshold; strong regulatory adherence" },
+    { name: "False Positive Rate", value: 3.2, target: 5, unit: "%", trend: "down", trendValue: "-0.3%", status: "healthy", description: "AML screening false positives declining with model tuning" },
+    { name: "Customer Suitability Score", value: 94.1, target: 92, unit: "%", trend: "up", trendValue: "+1.2%", status: "healthy", description: "Exceeding target; improved risk profiling accuracy" },
+    { name: "Regulatory Reporting Timeliness", value: 98.5, target: 99, unit: "%", trend: "up", trendValue: "+0.3%", status: "warning", description: "Approaching target; minor delays in quarterly CCAR submissions" },
+  ],
+  manufacturing: [
+    { name: "OEE Contribution", value: 87.3, target: 85, unit: "%", trend: "up", trendValue: "+1.1%", status: "healthy", description: "Exceeding target; agent-driven scheduling optimizations improving throughput" },
+    { name: "Defect Detection Rate", value: 98.3, target: 97, unit: "%", trend: "up", trendValue: "+0.5%", status: "healthy", description: "Vision model catching micro-defects missed by prior version" },
+    { name: "False Alarm Rate", value: 2.1, target: 3, unit: "%", trend: "down", trendValue: "-0.4%", status: "healthy", description: "Below threshold; reduced nuisance alerts on assembly line" },
+    { name: "Mean Time to Detection", value: 3.2, target: 5, unit: "min", trend: "down", trendValue: "-0.3 min", status: "healthy", description: "Faster anomaly detection with updated sensor fusion model" },
+    { name: "Predictive Maintenance Accuracy", value: 91.5, target: 90, unit: "%", trend: "up", trendValue: "+0.8%", status: "healthy", description: "Exceeding target; vibration analysis model improved" },
+  ],
+  insurance: [
+    { name: "Claims Processing Accuracy", value: 96.2, target: 95, unit: "%", trend: "up", trendValue: "+0.6%", status: "healthy", description: "Above target; improved document extraction for auto claims" },
+    { name: "Fraud Detection Rate", value: 91.5, target: 90, unit: "%", trend: "up", trendValue: "+1.0%", status: "healthy", description: "Exceeding target; new behavioral pattern matching active" },
+    { name: "Underwriting Accuracy", value: 94.8, target: 93, unit: "%", trend: "stable", trendValue: "+0.2%", status: "healthy", description: "Strong performance across all lines of business" },
+    { name: "Policy Pricing Precision", value: 97.1, target: 96, unit: "%", trend: "up", trendValue: "+0.4%", status: "healthy", description: "Actuarial model alignment exceeding expectations" },
+    { name: "Loss Ratio Impact", value: -2.3, target: 0, unit: "%", trend: "down", trendValue: "-0.3%", status: "healthy", description: "Favorable impact; agent interventions reducing loss ratios" },
+  ],
+  retail: [
+    { name: "Recommendation Accuracy", value: 82.1, target: 80, unit: "%", trend: "up", trendValue: "+1.5%", status: "healthy", description: "Exceeding target; collaborative filtering improvements live" },
+    { name: "Cart Abandonment Reduction", value: -3.7, target: -5, unit: "%", trend: "down", trendValue: "-0.4%", status: "warning", description: "Progressing toward target; checkout flow optimization ongoing" },
+    { name: "Search Relevance Score", value: 88.3, target: 85, unit: "%", trend: "up", trendValue: "+1.2%", status: "healthy", description: "Exceeding target; semantic search model reranking improved" },
+    { name: "Inventory Prediction Accuracy", value: 95.9, target: 94, unit: "%", trend: "up", trendValue: "+0.7%", status: "healthy", description: "Strong demand forecasting across seasonal categories" },
+    { name: "Customer Lifetime Value Impact", value: 12.40, target: 10, unit: "$", trend: "up", trendValue: "+$1.20", status: "healthy", description: "Exceeding target; personalization driving repeat purchases" },
+  ],
+  technology_saas: [
+    { name: "API Uptime", value: 99.96, target: 99.9, unit: "%", trend: "stable", trendValue: "+0.01%", status: "healthy", description: "Exceeding SLO; zero unplanned outages this period" },
+    { name: "P99 Latency", value: 380, target: 500, unit: "ms", trend: "down", trendValue: "-15ms", status: "healthy", description: "Well within budget; edge caching improvements active" },
+    { name: "Error Rate", value: 0.4, target: 1, unit: "%", trend: "down", trendValue: "-0.1%", status: "healthy", description: "Below threshold; retry logic and circuit breakers effective" },
+    { name: "Throughput", value: 13200, target: 10000, unit: "rps", trend: "up", trendValue: "+800 rps", status: "healthy", description: "Exceeding capacity target; horizontal scaling performing well" },
+    { name: "Incident MTTR", value: 14, target: 20, unit: "min", trend: "down", trendValue: "-2 min", status: "healthy", description: "Below threshold; automated runbooks reducing resolution time" },
+  ],
+};
+
+const INDUSTRY_DRIFT_DIAGNOSIS: Record<string, Array<{ agentName: string; metric: string; driftDescription: string; probableCauses: string[]; severity: "critical" | "high" | "medium"; detectedAt: string }>> = {
+  healthcare: [
+    { agentName: "Clinical Decision Support Agent", metric: "Guideline Adherence", driftDescription: "4.2% decrease in guideline adherence since Feb 10. Clinical pathway recommendations drifting from latest AMA standards.", probableCauses: ["AMA updated CPT billing codes on Feb 8 affecting 23 procedure mappings", "New FDA drug interaction warnings added to formulary requiring updated contraindication checks"], severity: "high", detectedAt: "2026-02-10T14:30:00Z" },
+    { agentName: "Patient Triage Agent", metric: "Escalation Rate", driftDescription: "3.1% increase in unnecessary escalations since Feb 12. More cases being routed to specialists unnecessarily.", probableCauses: ["Updated CDC screening guidelines lowered thresholds for 4 symptom categories", "Seasonal flu surge changed baseline symptom distribution patterns"], severity: "medium", detectedAt: "2026-02-12T09:15:00Z" },
+  ],
+  financial_services: [
+    { agentName: "KYC Verification Agent", metric: "False Positive Rate", driftDescription: "12% increase in false positives since Jan 15. Legitimate customers flagged for enhanced due diligence unnecessarily.", probableCauses: ["OFAC sanctions list update on Jan 14 added 340 new entries with common name patterns", "Customer demographic mix shift in Q1 onboarding cohort skewing risk scores"], severity: "critical", detectedAt: "2026-01-15T08:00:00Z" },
+    { agentName: "Trade Surveillance Agent", metric: "Alert Accuracy", driftDescription: "5.8% decline in alert precision since Feb 1. More benign trading patterns triggering compliance reviews.", probableCauses: ["Volatile market conditions in Q1 generating unusual but legitimate trading patterns", "MiFID II reporting format changes on Jan 28 affecting transaction classification"], severity: "high", detectedAt: "2026-02-01T11:30:00Z" },
+  ],
+  manufacturing: [
+    { agentName: "Quality Inspector Agent", metric: "False Alarm Rate", driftDescription: "8% increase in false alarms since Feb 1. Production line stoppages increasing due to phantom defect detections.", probableCauses: ["New raw material supplier introduced variance in component tolerances beyond training distribution", "Seasonal temperature changes affecting sensor calibration in zones 3-7"], severity: "high", detectedAt: "2026-02-01T06:00:00Z" },
+    { agentName: "Predictive Maintenance Agent", metric: "Prediction Accuracy", driftDescription: "4.5% decline in maintenance prediction accuracy since Feb 8. Unnecessary maintenance cycles being triggered.", probableCauses: ["Firmware update on CNC machines changed vibration signature baselines", "New lubricant supplier altered wear pattern characteristics"], severity: "medium", detectedAt: "2026-02-08T10:45:00Z" },
+  ],
+  insurance: [
+    { agentName: "Claims Adjuster Agent", metric: "Processing Accuracy", driftDescription: "5% decline in processing accuracy since Feb 5. Auto liability claims being misclassified at higher rates.", probableCauses: ["State insurance commissioner updated auto liability coverage minimums effective Feb 1", "New ICD-11 medical coding update affecting injury classification in bodily injury claims"], severity: "high", detectedAt: "2026-02-05T13:20:00Z" },
+    { agentName: "Fraud Detection Agent", metric: "Detection Rate", driftDescription: "3.2% decrease in fraud detection since Feb 10. New fraud patterns emerging in digital claims submissions.", probableCauses: ["Organized fraud ring using AI-generated documentation bypassing existing checks", "Policy change allowing photo-based claims introduced new attack vectors"], severity: "critical", detectedAt: "2026-02-10T16:00:00Z" },
+  ],
+  retail: [
+    { agentName: "Product Recommender Agent", metric: "Recommendation Accuracy", driftDescription: "6% drop in recommendation accuracy since Feb 3. Click-through rates on recommendations declining across channels.", probableCauses: ["Valentine's Day seasonal shift in purchase patterns diverging from historical baselines", "New product catalog import with 450 missing category tags causing misclassification"], severity: "high", detectedAt: "2026-02-03T07:30:00Z" },
+    { agentName: "Dynamic Pricing Agent", metric: "Price Optimization", driftDescription: "4.1% decrease in pricing effectiveness since Feb 7. Competitor price matching becoming less responsive.", probableCauses: ["Three major competitors changed pricing APIs requiring updated scraping patterns", "Supply chain disruptions causing inventory volatility not captured in pricing model"], severity: "medium", detectedAt: "2026-02-07T15:45:00Z" },
+  ],
+  technology_saas: [
+    { agentName: "Incident Triage Agent", metric: "MTTR", driftDescription: "15% increase in MTTR since Feb 8. Incident classification accuracy degrading for new service categories.", probableCauses: ["Kubernetes v1.29 upgrade changed pod scheduling behavior introducing new failure modes", "New microservices added 12 previously unknown error patterns not in training data"], severity: "critical", detectedAt: "2026-02-08T03:15:00Z" },
+    { agentName: "Customer Support Agent", metric: "Resolution Rate", driftDescription: "7.3% decline in first-contact resolution since Feb 11. More tickets being escalated to Tier 2.", probableCauses: ["New product feature release introduced 8 undocumented edge cases", "Knowledge base articles not yet updated for v4.2 API breaking changes"], severity: "high", detectedAt: "2026-02-11T12:00:00Z" },
+  ],
+};
+
+const REGULATORY_ALERTS: Record<string, Array<{ id: string; title: string; body: string; urgency: "critical" | "high" | "medium" | "info"; affectedAgents: number; actionRequired: string; deadline: string; regulation: string; issuedAt: string }>> = {
+  healthcare: [
+    { id: "reg-hc-1", title: "FDA: Updated AI/ML-Based SaMD Guidance", body: "FDA issued updated guidance on AI/ML-based Software as a Medical Device (SaMD) on Feb 5, 2026. Agents providing clinical decision support may require updated conformity assessments under the new predetermined change control plan requirements.", urgency: "critical", affectedAgents: 3, actionRequired: "Submit updated conformity assessments for clinical AI agents", deadline: "March 15, 2026", regulation: "FDA AI/ML SaMD Framework", issuedAt: "2026-02-05T00:00:00Z" },
+    { id: "reg-hc-2", title: "HHS: HIPAA Security Rule Update", body: "HHS published final rule updating HIPAA Security Rule requirements for AI systems processing PHI. New encryption and access logging requirements for automated decision-making systems effective April 1, 2026.", urgency: "high", affectedAgents: 5, actionRequired: "Audit PHI access patterns and update encryption protocols", deadline: "April 1, 2026", regulation: "HIPAA Security Rule", issuedAt: "2026-01-20T00:00:00Z" },
+    { id: "reg-hc-3", title: "CMS: AI Transparency in Medicare Decisions", body: "CMS issued guidance requiring transparency documentation for AI systems used in Medicare coverage determinations. Explainability reports must accompany all automated prior authorization decisions.", urgency: "medium", affectedAgents: 2, actionRequired: "Generate explainability documentation for coverage agents", deadline: "May 1, 2026", regulation: "CMS AI Transparency Guidance", issuedAt: "2026-02-10T00:00:00Z" },
+  ],
+  financial_services: [
+    { id: "reg-fs-1", title: "FINRA: Revised Algorithmic Trading Supervision", body: "FINRA released revised algorithmic trading supervision requirements effective March 1, 2026. All AI-driven trading agents must maintain enhanced audit trails with decision-level explainability and real-time risk limit monitoring.", urgency: "critical", affectedAgents: 2, actionRequired: "Update audit trail systems and add decision explainability", deadline: "March 1, 2026", regulation: "FINRA Rule 3110(b)", issuedAt: "2026-01-15T00:00:00Z" },
+    { id: "reg-fs-2", title: "OCC: Model Risk Management Update", body: "OCC updated SR 11-7 guidance on model risk management to include specific requirements for foundation models and LLM-based agents. Quarterly model validation now required for all Tier 1 agents.", urgency: "high", affectedAgents: 4, actionRequired: "Schedule quarterly model validations for all production agents", deadline: "March 31, 2026", regulation: "OCC SR 11-7", issuedAt: "2026-02-01T00:00:00Z" },
+    { id: "reg-fs-3", title: "SEC: AI-Driven Advisory Disclosure Requirements", body: "SEC adopted amendments requiring registered advisors to disclose use of AI in investment recommendations. Client-facing agents must include AI disclosure statements in all communications.", urgency: "medium", affectedAgents: 3, actionRequired: "Add AI disclosure statements to advisory agent outputs", deadline: "April 15, 2026", regulation: "SEC Investment Advisers Act", issuedAt: "2026-02-08T00:00:00Z" },
+  ],
+  manufacturing: [
+    { id: "reg-mf-1", title: "OSHA: Workplace AI Safety Guidelines Update", body: "OSHA updated workplace AI safety guidelines on Feb 1, 2026. Agents operating near safety-critical equipment must undergo updated risk assessments including human-AI collaboration protocols and emergency stop integration testing.", urgency: "critical", affectedAgents: 4, actionRequired: "Complete updated risk assessments for safety-critical agents", deadline: "March 15, 2026", regulation: "OSHA AI Safety Guidelines", issuedAt: "2026-02-01T00:00:00Z" },
+    { id: "reg-mf-2", title: "ISO: Updated AI Quality Management Standards", body: "ISO published updated 42001 standards for AI management systems in manufacturing. New requirements for continuous monitoring of AI agent performance in quality-critical processes.", urgency: "high", affectedAgents: 3, actionRequired: "Align quality agents with ISO 42001 monitoring requirements", deadline: "April 30, 2026", regulation: "ISO 42001:2026", issuedAt: "2026-01-25T00:00:00Z" },
+    { id: "reg-mf-3", title: "EU: AI Act Annex III High-Risk Classification", body: "EU AI Act Annex III updated to include AI systems in predictive maintenance for critical infrastructure. Affected agents require conformity assessments and CE marking by Q3 2026.", urgency: "medium", affectedAgents: 2, actionRequired: "Begin conformity assessment process for predictive maintenance agents", deadline: "September 1, 2026", regulation: "EU AI Act Annex III", issuedAt: "2026-02-12T00:00:00Z" },
+  ],
+  insurance: [
+    { id: "reg-in-1", title: "NAIC: Model Bulletin on AI in Insurance", body: "NAIC adopted Model Bulletin on the Use of Artificial Intelligence in Insurance effective Feb 10, 2026. All AI agents involved in underwriting, claims, and pricing must have updated fairness testing documentation and bias audit reports.", urgency: "critical", affectedAgents: 5, actionRequired: "Complete fairness testing and bias audits for all insurance agents", deadline: "March 10, 2026", regulation: "NAIC AI Model Bulletin", issuedAt: "2026-02-10T00:00:00Z" },
+    { id: "reg-in-2", title: "State DOI: AI Underwriting Transparency", body: "Multiple state Departments of Insurance issued coordinated requirements for AI underwriting transparency. Agents must provide adverse action explanations compliant with state-specific formats.", urgency: "high", affectedAgents: 3, actionRequired: "Implement state-specific adverse action explanation templates", deadline: "April 1, 2026", regulation: "State Insurance Regulations", issuedAt: "2026-01-28T00:00:00Z" },
+    { id: "reg-in-3", title: "EU: IFRS 17 AI Actuarial Model Requirements", body: "IASB issued supplementary guidance on AI models used for IFRS 17 insurance contract valuations. Actuarial agents must maintain model validation logs and assumption documentation.", urgency: "medium", affectedAgents: 2, actionRequired: "Update actuarial agent documentation for IFRS 17 compliance", deadline: "June 30, 2026", regulation: "IFRS 17 Supplementary Guidance", issuedAt: "2026-02-05T00:00:00Z" },
+    { id: "reg-in-4", title: "IRDAI: AI Claims Processing Standards", body: "IRDAI published draft standards for AI-assisted claims processing in India market. Comments due by March 20, and implementation expected by Q3 2026.", urgency: "info", affectedAgents: 1, actionRequired: "Review draft standards and prepare compliance roadmap", deadline: "March 20, 2026", regulation: "IRDAI AI Standards (Draft)", issuedAt: "2026-02-14T00:00:00Z" },
+  ],
+  retail: [
+    { id: "reg-rt-1", title: "FTC: AI-Powered Pricing Algorithm Enforcement", body: "FTC issued enforcement guidance on AI-powered pricing algorithms on Jan 28, 2026. Dynamic pricing agents must demonstrate non-discriminatory pricing practices and maintain audit trails for all price adjustments.", urgency: "critical", affectedAgents: 2, actionRequired: "Conduct pricing fairness audit and implement transparency logging", deadline: "March 1, 2026", regulation: "FTC AI Pricing Guidelines", issuedAt: "2026-01-28T00:00:00Z" },
+    { id: "reg-rt-2", title: "CCPA/CPRA: Automated Decision-Making Update", body: "California Privacy Protection Agency updated regulations on automated decision-making affecting consumers. Recommendation agents must provide opt-out mechanisms and decision explanations upon request.", urgency: "high", affectedAgents: 3, actionRequired: "Implement opt-out and explanation endpoints for recommendation agents", deadline: "April 1, 2026", regulation: "CCPA/CPRA Automated Decision Rules", issuedAt: "2026-02-03T00:00:00Z" },
+    { id: "reg-rt-3", title: "EU: Digital Services Act AI Transparency", body: "DSA implementing regulations require transparency for AI-driven content recommendations in online marketplaces. Product recommendation agents serving EU users need compliance updates.", urgency: "medium", affectedAgents: 2, actionRequired: "Add DSA-compliant transparency notices to recommendation outputs", deadline: "May 15, 2026", regulation: "EU Digital Services Act", issuedAt: "2026-02-10T00:00:00Z" },
+  ],
+  technology_saas: [
+    { id: "reg-ts-1", title: "EU AI Act: Article 6 High-Risk Classification", body: "EU AI Act Article 6 high-risk classification guidance updated Feb 12, 2026. Customer-facing agents that influence significant decisions require risk assessments, conformity declarations, and ongoing monitoring documentation.", urgency: "critical", affectedAgents: 3, actionRequired: "Complete risk assessments and prepare conformity declarations", deadline: "March 31, 2026", regulation: "EU AI Act Article 6", issuedAt: "2026-02-12T00:00:00Z" },
+    { id: "reg-ts-2", title: "GDPR DPA: Automated Decision-Making Guidelines", body: "European Data Protection Authorities issued coordinated guidelines on automated decision-making by AI agents. Requires DPIA updates for all agents processing personal data with automated outcomes.", urgency: "high", affectedAgents: 4, actionRequired: "Update DPIAs and implement Article 22 safeguards", deadline: "April 15, 2026", regulation: "GDPR Article 22", issuedAt: "2026-02-08T00:00:00Z" },
+    { id: "reg-ts-3", title: "SOC 2: AI System Control Criteria Update", body: "AICPA updated SOC 2 Trust Services Criteria to include specific control objectives for AI and ML systems. Next audit cycle must include AI-specific controls for system availability and processing integrity.", urgency: "medium", affectedAgents: 6, actionRequired: "Map AI controls to updated TSC and prepare audit evidence", deadline: "June 1, 2026", regulation: "SOC 2 Type II (AI Update)", issuedAt: "2026-01-30T00:00:00Z" },
+    { id: "reg-ts-4", title: "FedRAMP: AI Agent Authorization Requirements", body: "FedRAMP PMO released supplemental guidance for AI agent authorization in government cloud environments. Agents serving federal customers need updated security packages.", urgency: "info", affectedAgents: 2, actionRequired: "Review supplemental guidance and update security documentation", deadline: "July 1, 2026", regulation: "FedRAMP AI Supplement", issuedAt: "2026-02-14T00:00:00Z" },
+  ],
+};
+
 function generateTimeSeriesData(days: number, baseValue: number, variance: number, trend: "up" | "down" | "stable" = "stable") {
   return Array.from({ length: days }, (_, i) => {
     const date = new Date();
@@ -134,6 +248,8 @@ function generateTimeSeriesData(days: number, baseValue: number, variance: numbe
 }
 
 export default function Monitor() {
+  const { industry } = useIndustry();
+  const industryId = industry?.id || "financial_services";
   const [, navigate] = useLocation();
   const [policyCheckResult, setPolicyCheckResult] = useState<{
     signal: DriftSignal;
@@ -299,7 +415,7 @@ export default function Monitor() {
       const res = await apiRequest("POST", "/api/healing-pipelines/auto-detect", {
         agentName: signal.agentName,
         agentId: signal.agentId,
-        industry: "financial_services",
+        industry: industryId,
         issueType: "drift",
         severity: signal.severity,
         metric: signal.metric,
@@ -591,9 +707,17 @@ export default function Monitor() {
     <div className="flex flex-col gap-6 p-6" data-testid="page-monitor">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Monitoring</h1>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-2xl font-semibold tracking-tight">Operations Dashboard</h1>
+            {industry && (
+              <Badge variant="outline" className="text-[10px] gap-1" data-testid="badge-industry-context">
+                {(() => { const Icon = industry.icon; return <Icon className="w-3 h-3" />; })()}
+                {industry.label}
+              </Badge>
+            )}
+          </div>
           <p className="text-sm text-muted-foreground">
-            Continuous monitoring, outcome assurance & drift detection
+            Industry-contextualized monitoring, outcome assurance & regulatory compliance
           </p>
         </div>
         <Button variant="outline" size="sm" data-testid="button-refresh-monitor">
@@ -620,6 +744,8 @@ export default function Monitor() {
           <TabsTrigger value="live" data-testid="tab-live">Live Runs</TabsTrigger>
           <TabsTrigger value="drift" data-testid="tab-drift">Drift Detection</TabsTrigger>
           <TabsTrigger value="agent-health" data-testid="tab-agent-health">Agent Health</TabsTrigger>
+          <TabsTrigger value="industry-kpis" data-testid="tab-industry-kpis">Industry KPIs</TabsTrigger>
+          <TabsTrigger value="regulatory-alerts" data-testid="tab-regulatory-alerts">Regulatory Alerts</TabsTrigger>
         </TabsList>
 
         <TabsContent value="outcome-sla" className="mt-0">
@@ -1149,6 +1275,57 @@ export default function Monitor() {
               </CardContent>
             </Card>
 
+            <Card data-testid="industry-drift-diagnosis-panel">
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <CardTitle className="text-sm font-medium">Industry-Contextualized Drift Diagnosis</CardTitle>
+                  <Badge variant="outline" className="text-[10px]">{industry?.label || "Financial Services"}</Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-3">
+                {(INDUSTRY_DRIFT_DIAGNOSIS[industryId] || []).map((diagnosis, idx) => {
+                  const severityColors: Record<string, string> = {
+                    critical: "bg-red-500/5 border-red-500/20",
+                    high: "bg-amber-500/5 border-amber-500/20",
+                    medium: "bg-blue-500/5 border-blue-500/20",
+                  };
+                  const severityIconColors: Record<string, string> = {
+                    critical: "text-red-500",
+                    high: "text-amber-500",
+                    medium: "text-blue-500",
+                  };
+                  return (
+                    <div key={idx} className={`flex items-start gap-3 p-3 rounded-md border ${severityColors[diagnosis.severity] || ""}`} data-testid={`drift-diagnosis-${idx}`}>
+                      <AlertTriangle className={`w-4 h-4 shrink-0 mt-0.5 ${severityIconColors[diagnosis.severity] || "text-muted-foreground"}`} />
+                      <div className="flex flex-col gap-1.5 flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-medium">{diagnosis.agentName}</span>
+                          <Badge variant="outline" className="text-[9px]">{diagnosis.metric}</Badge>
+                          <Badge variant={diagnosis.severity === "critical" ? "destructive" : "outline"} className="text-[9px]">{diagnosis.severity}</Badge>
+                        </div>
+                        <span className="text-[11px] text-muted-foreground">{diagnosis.driftDescription}</span>
+                        <div className="flex flex-col gap-1 mt-1 p-2 rounded-md bg-muted/30">
+                          <span className="text-[10px] font-medium text-muted-foreground">Probable Causes:</span>
+                          {diagnosis.probableCauses.map((cause, cidx) => (
+                            <span key={cidx} className="text-[10px] text-muted-foreground">
+                              {cidx + 1}. {cause}
+                            </span>
+                          ))}
+                        </div>
+                        <span className="text-[10px] text-muted-foreground">Detected: {new Date(diagnosis.detectedAt).toLocaleDateString()}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+                {(!INDUSTRY_DRIFT_DIAGNOSIS[industryId] || INDUSTRY_DRIFT_DIAGNOSIS[industryId].length === 0) && (
+                  <div className="flex items-center gap-3 p-3 rounded-md bg-emerald-500/5 border border-emerald-500/20">
+                    <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />
+                    <span className="text-xs text-muted-foreground">No industry-specific drift diagnoses detected</span>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
             <Card>
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -1328,50 +1505,262 @@ export default function Monitor() {
         </TabsContent>
 
         <TabsContent value="agent-health" className="mt-0">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {agents?.map((agent) => (
-              <Card key={agent.id} className="cursor-pointer hover-elevate" onClick={() => setSelectedAgentId(agent.id)} data-testid={`sla-card-${agent.id}`}>
-                <CardContent className="p-4 flex flex-col gap-3">
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <div className="w-7 h-7 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
-                        <Activity className="w-3.5 h-3.5 text-primary" />
-                      </div>
-                      <span className="text-sm font-medium">{agent.name}</span>
-                    </div>
-                    <StatusBadge status={agent.status} />
-                    {healingPipelines?.some(hp => hp.agentName === agent.name && hp.stage !== "resolved") && (
-                      <Badge variant="outline" className="text-[9px] text-amber-600 dark:text-amber-400 border-amber-500/20 gap-1" data-testid={`badge-healing-active-${agent.id}`}>
-                        <Stethoscope className="w-2.5 h-2.5" />
-                        Healing
+          <div className="flex flex-col gap-4">
+            {(() => {
+              const activePipelines = healingPipelines?.filter(hp => hp.stage !== "resolved") || [];
+              if (activePipelines.length > 0) {
+                const stageCounts: Record<string, number> = {};
+                activePipelines.forEach(hp => {
+                  stageCounts[hp.stage] = (stageCounts[hp.stage] || 0) + 1;
+                });
+                return (
+                  <div className="flex items-center gap-3 p-3 rounded-md bg-amber-500/5 border border-amber-500/20 flex-wrap" data-testid="healing-summary-strip">
+                    <Stethoscope className="w-4 h-4 text-amber-500 shrink-0" />
+                    <span className="text-xs font-medium">{activePipelines.length} active healing pipeline{activePipelines.length > 1 ? "s" : ""}</span>
+                    <span className="text-[10px] text-muted-foreground">|</span>
+                    {Object.entries(stageCounts).map(([stage, count]) => (
+                      <Badge key={stage} variant="outline" className="text-[9px] text-amber-600 dark:text-amber-400 border-amber-500/20">
+                        {count} {stage}
                       </Badge>
-                    )}
+                    ))}
+                    <Link href="/healing-operations">
+                      <Button variant="outline" size="sm" data-testid="button-view-healing-center">
+                        <ArrowUpRight className="w-3 h-3 mr-1" />
+                        Healing Center
+                      </Button>
+                    </Link>
                   </div>
-                  <div className="grid grid-cols-4 gap-3">
-                    <div className="flex flex-col gap-1">
-                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Success</span>
-                      <span className="text-sm font-semibold">{((agent.successRate || 0) * 100).toFixed(1)}%</span>
-                      <Progress value={(agent.successRate || 0) * 100} className="h-1" />
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">P95 Latency</span>
-                      <span className="text-sm font-semibold">{agent.avgLatencyMs}ms</span>
-                      <Progress value={Math.max(0, 100 - ((agent.avgLatencyMs || 0) / 50))} className="h-1" />
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Health</span>
-                      <span className="text-sm font-semibold">{agent.healthScore}%</span>
-                      <Progress value={agent.healthScore || 0} className="h-1" />
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Cost/Run</span>
-                      <span className="text-sm font-semibold">${(agent.costPerRun || 0.08).toFixed(3)}</span>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+                );
+              }
+              return null;
+            })()}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {agents?.map((agent) => {
+                const agentPipelines = healingPipelines?.filter(hp => hp.agentName === agent.name && hp.stage !== "resolved") || [];
+                return (
+                  <Card key={agent.id} className="cursor-pointer hover-elevate" onClick={() => setSelectedAgentId(agent.id)} data-testid={`sla-card-${agent.id}`}>
+                    <CardContent className="p-4 flex flex-col gap-3">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <div className="w-7 h-7 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
+                            <Activity className="w-3.5 h-3.5 text-primary" />
+                          </div>
+                          <span className="text-sm font-medium">{agent.name}</span>
+                        </div>
+                        <StatusBadge status={agent.status} />
+                        {agentPipelines.length > 0 && (
+                          <Badge variant="outline" className="text-[9px] text-amber-600 dark:text-amber-400 border-amber-500/20 gap-1" data-testid={`badge-healing-active-${agent.id}`}>
+                            <Stethoscope className="w-2.5 h-2.5" />
+                            Healing
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-4 gap-3">
+                        <div className="flex flex-col gap-1">
+                          <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Success</span>
+                          <span className="text-sm font-semibold">{((agent.successRate || 0) * 100).toFixed(1)}%</span>
+                          <Progress value={(agent.successRate || 0) * 100} className="h-1" />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <span className="text-[10px] text-muted-foreground uppercase tracking-wider">P95 Latency</span>
+                          <span className="text-sm font-semibold">{agent.avgLatencyMs}ms</span>
+                          <Progress value={Math.max(0, 100 - ((agent.avgLatencyMs || 0) / 50))} className="h-1" />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Health</span>
+                          <span className="text-sm font-semibold">{agent.healthScore}%</span>
+                          <Progress value={agent.healthScore || 0} className="h-1" />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Cost/Run</span>
+                          <span className="text-sm font-semibold">${(agent.costPerRun || 0.08).toFixed(3)}</span>
+                        </div>
+                      </div>
+                      {agentPipelines.length > 0 && (
+                        <div className="flex flex-col gap-2 mt-1 p-3 rounded-md bg-amber-500/5 border border-amber-500/20" data-testid={`healing-inline-${agent.id}`} onClick={(e) => e.stopPropagation()}>
+                          {agentPipelines.map((hp: any) => {
+                            const stageProgress: Record<string, number> = { detecting: 20, diagnosing: 40, remediating: 65, validating: 85, resolved: 100 };
+                            return (
+                              <div key={hp.id} className="flex flex-col gap-1.5">
+                                <div className="flex items-center justify-between gap-2 flex-wrap">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <Loader2 className="w-3 h-3 text-amber-500 animate-spin" />
+                                    <span className="text-[11px] font-medium capitalize">{hp.stage}</span>
+                                    <Badge variant={hp.severity === "critical" ? "destructive" : "outline"} className="text-[9px]">{hp.severity}</Badge>
+                                  </div>
+                                  <Link href="/healing-operations">
+                                    <Button variant="outline" size="sm" className="text-[10px]" data-testid={`button-healing-detail-${hp.id}`}>
+                                      <ArrowUpRight className="w-3 h-3 mr-1" />
+                                      Details
+                                    </Button>
+                                  </Link>
+                                </div>
+                                <Progress value={stageProgress[hp.stage] || 0} className="h-1" />
+                                {hp.diagnosis?.rootCause && (
+                                  <span className="text-[10px] text-muted-foreground">{hp.diagnosis.rootCause}</span>
+                                )}
+                                {hp.description && !hp.diagnosis?.rootCause && (
+                                  <span className="text-[10px] text-muted-foreground">{hp.description}</span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
           </div>
+        </TabsContent>
+
+        <TabsContent value="industry-kpis" className="mt-0">
+          <Card data-testid="industry-kpis-panel">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <Gauge className="w-4 h-4 text-muted-foreground" />
+                  <CardTitle className="text-sm font-medium">Industry KPI Monitoring</CardTitle>
+                </div>
+                <Badge variant="outline" className="text-[10px]">{industry?.label || "Financial Services"}</Badge>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {(INDUSTRY_KPI_MONITORING[industryId] || []).map((kpi, idx) => {
+                  const statusColors: Record<string, string> = {
+                    healthy: "bg-emerald-500/5 border-emerald-500/20",
+                    warning: "bg-amber-500/5 border-amber-500/20",
+                    critical: "bg-red-500/5 border-red-500/20",
+                  };
+                  const statusBadgeColors: Record<string, string> = {
+                    healthy: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+                    warning: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20",
+                    critical: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20",
+                  };
+                  const TrendIcon = kpi.trend === "up" ? TrendingUp : kpi.trend === "down" ? TrendingDown : Minus;
+                  const trendColor = kpi.status === "healthy"
+                    ? "text-emerald-500"
+                    : kpi.status === "warning"
+                      ? "text-amber-500"
+                      : "text-red-500";
+                  const progressValue = kpi.target > 0
+                    ? Math.min(100, Math.abs(kpi.value / kpi.target) * 100)
+                    : 50;
+
+                  return (
+                    <div key={idx} className={`flex flex-col gap-2.5 p-4 rounded-md border ${statusColors[kpi.status] || ""}`} data-testid={`industry-kpi-${idx}`}>
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <span className="text-xs font-medium">{kpi.name}</span>
+                        <Badge variant="outline" className={`text-[9px] border ${statusBadgeColors[kpi.status] || ""}`}>
+                          {kpi.status}
+                        </Badge>
+                      </div>
+                      <div className="flex items-end justify-between gap-2 flex-wrap">
+                        <div className="flex items-baseline gap-1">
+                          <span className="text-xl font-semibold">{kpi.value}</span>
+                          <span className="text-xs text-muted-foreground">{kpi.unit}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <TrendIcon className={`w-3.5 h-3.5 ${trendColor}`} />
+                          <span className={`text-[11px] font-medium ${trendColor}`}>{kpi.trendValue}</span>
+                        </div>
+                      </div>
+                      <Progress value={progressValue} className="h-1.5" />
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <span className="text-[10px] text-muted-foreground">Target: {kpi.target}{kpi.unit}</span>
+                      </div>
+                      <span className="text-[10px] text-muted-foreground">{kpi.description}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              {(!INDUSTRY_KPI_MONITORING[industryId] || INDUSTRY_KPI_MONITORING[industryId].length === 0) && (
+                <p className="text-sm text-muted-foreground py-8 text-center">No industry KPI data available for this industry</p>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="regulatory-alerts" className="mt-0">
+          <Card data-testid="regulatory-alerts-panel">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <FileWarning className="w-4 h-4 text-muted-foreground" />
+                  <CardTitle className="text-sm font-medium">Regulatory Alert Feed</CardTitle>
+                </div>
+                <Badge variant="outline" className="text-[10px]">
+                  {(REGULATORY_ALERTS[industryId] || []).length} alerts
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
+              {(REGULATORY_ALERTS[industryId] || []).map((alert) => {
+                const urgencyColors: Record<string, string> = {
+                  critical: "bg-red-500/5 border-red-500/20",
+                  high: "bg-amber-500/5 border-amber-500/20",
+                  medium: "bg-blue-500/5 border-blue-500/20",
+                  info: "bg-emerald-500/5 border-emerald-500/20",
+                };
+                const urgencyIconColors: Record<string, string> = {
+                  critical: "text-red-500",
+                  high: "text-amber-500",
+                  medium: "text-blue-500",
+                  info: "text-emerald-500",
+                };
+                const urgencyBadgeColors: Record<string, string> = {
+                  critical: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20",
+                  high: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20",
+                  medium: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/20",
+                  info: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+                };
+
+                return (
+                  <div key={alert.id} className={`flex items-start gap-3 p-4 rounded-md border ${urgencyColors[alert.urgency] || ""}`} data-testid={`regulatory-alert-${alert.id}`}>
+                    <Bell className={`w-4 h-4 shrink-0 mt-0.5 ${urgencyIconColors[alert.urgency] || "text-muted-foreground"}`} />
+                    <div className="flex flex-col gap-2 flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-medium">{alert.title}</span>
+                        <Badge variant="outline" className={`text-[9px] border ${urgencyBadgeColors[alert.urgency] || ""}`}>
+                          {alert.urgency}
+                        </Badge>
+                      </div>
+                      <span className="text-[11px] text-muted-foreground">{alert.body}</span>
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <Badge variant="outline" className="text-[9px] gap-1">
+                          <Users className="w-2.5 h-2.5" />
+                          {alert.affectedAgents} agent{alert.affectedAgents > 1 ? "s" : ""} affected
+                        </Badge>
+                        <span className="text-[10px] text-muted-foreground">Deadline: {alert.deadline}</span>
+                        <Badge variant="outline" className="text-[9px]">{alert.regulation}</Badge>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 mt-1 pt-2 border-t border-dashed flex-wrap">
+                        <span className="text-[10px] text-muted-foreground">{alert.actionRequired}</span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <Button variant="outline" size="sm" data-testid={`button-review-alert-${alert.id}`}>
+                            <Eye className="w-3 h-3 mr-1" />
+                            Review
+                          </Button>
+                          <Button variant="outline" size="sm" data-testid={`button-action-alert-${alert.id}`}>
+                            <CheckCircle className="w-3 h-3 mr-1" />
+                            Take Action
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              {(!REGULATORY_ALERTS[industryId] || REGULATORY_ALERTS[industryId].length === 0) && (
+                <div className="flex items-center gap-3 p-3 rounded-md bg-emerald-500/5 border border-emerald-500/20">
+                  <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />
+                  <span className="text-xs text-muted-foreground">No regulatory alerts for this industry</span>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
 
