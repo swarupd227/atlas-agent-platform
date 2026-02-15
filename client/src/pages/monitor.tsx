@@ -736,7 +736,7 @@ export default function Monitor() {
       <OutcomeKpiStrip compact />
 
       <Tabs defaultValue="outcome-sla" className="flex flex-col gap-4">
-        <TabsList className="w-fit flex-wrap">
+        <TabsList className="w-fit flex-wrap h-auto">
           <TabsTrigger value="outcome-sla" data-testid="tab-outcome-sla">Outcome SLA Dashboard</TabsTrigger>
           <TabsTrigger value="slo-heatmap" data-testid="tab-slo-heatmap">SLO Heatmap</TabsTrigger>
           <TabsTrigger value="violations" data-testid="tab-violations">Policy Violations</TabsTrigger>
