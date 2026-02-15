@@ -10009,6 +10009,35 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
     }
   });
 
+  app.post("/api/mcp-servers/:id/tools", async (req, res) => {
+    try {
+      const server = await storage.getMcpServer(req.params.id);
+      if (!server) return res.status(404).json({ message: "MCP server not found" });
+
+      const parsed = insertMcpServerToolSchema.safeParse({
+        ...req.body,
+        serverId: req.params.id,
+      });
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Invalid tool data", errors: parsed.error.flatten().fieldErrors });
+      }
+
+      const tool = await storage.createMcpServerTool(parsed.data);
+
+      await storage.createAuditEvent({
+        action: "mcp_tool.created",
+        objectType: "mcp_server_tool",
+        objectId: tool.id,
+        actorId: "user",
+        details: JSON.stringify({ serverId: req.params.id, toolName: tool.name }),
+      });
+
+      res.status(201).json(tool);
+    } catch (e) {
+      res.status(500).json({ message: "Failed to create MCP server tool" });
+    }
+  });
+
   app.get("/api/mcp-servers/:id/resources", async (req, res) => {
     try {
       const resources = await storage.getMcpServerResources(req.params.id);

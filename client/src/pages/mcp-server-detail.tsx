@@ -10,10 +10,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
+import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import {
   ArrowLeft, Server, Shield, Activity, CheckCircle2, AlertCircle,
   Globe, Terminal, Wrench, FileText, MessageSquare, Lock,
-  RefreshCw, Clock, Zap, Play,
+  RefreshCw, Clock, Zap, Play, Plus,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -138,6 +140,49 @@ export default function McpServerDetail() {
     },
     onError: (err: Error) => {
       toast({ title: "Failed to save auth", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const [addToolOpen, setAddToolOpen] = useState(false);
+  const [newToolName, setNewToolName] = useState("");
+  const [newToolDescription, setNewToolDescription] = useState("");
+  const [newToolInputSchema, setNewToolInputSchema] = useState('{\n  "type": "object",\n  "properties": {},\n  "required": []\n}');
+  const [newToolRisk, setNewToolRisk] = useState("low");
+  const [newToolOwner, setNewToolOwner] = useState("");
+  const [newToolSchemaError, setNewToolSchemaError] = useState<string | null>(null);
+
+  const addToolMutation = useMutation({
+    mutationFn: async () => {
+      let parsedSchema: Record<string, unknown> | null = null;
+      if (newToolInputSchema.trim()) {
+        try {
+          parsedSchema = JSON.parse(newToolInputSchema);
+        } catch {
+          throw new Error("Invalid JSON in input schema");
+        }
+      }
+      return apiRequest("POST", `/api/mcp-servers/${id}/tools`, {
+        name: newToolName,
+        description: newToolDescription || undefined,
+        inputSchema: parsedSchema,
+        riskClassification: newToolRisk,
+        owner: newToolOwner || undefined,
+        enabled: true,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/mcp-servers", id, "tools"] });
+      setAddToolOpen(false);
+      setNewToolName("");
+      setNewToolDescription("");
+      setNewToolInputSchema('{\n  "type": "object",\n  "properties": {},\n  "required": []\n}');
+      setNewToolRisk("low");
+      setNewToolOwner("");
+      setNewToolSchemaError(null);
+      toast({ title: "Tool added", description: "The tool has been added to this MCP server." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to add tool", description: err.message, variant: "destructive" });
     },
   });
 
@@ -453,12 +498,112 @@ export default function McpServerDetail() {
         </TabsContent>
 
         <TabsContent value="tools" className="flex flex-col gap-4 mt-4">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium">Registered Tools</span>
+              {tools && tools.length > 0 && (
+                <Badge variant="secondary" className="text-[10px]">{tools.length}</Badge>
+              )}
+            </div>
+            <Dialog open={addToolOpen} onOpenChange={setAddToolOpen}>
+              <DialogTrigger asChild>
+                <Button size="sm" data-testid="button-add-tool">
+                  <Plus className="w-4 h-4 mr-1.5" /> Add Tool
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-lg">
+                <DialogHeader>
+                  <DialogTitle>Add Tool to MCP Server</DialogTitle>
+                </DialogHeader>
+                <div className="flex flex-col gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <Label>Tool Name *</Label>
+                    <Input
+                      placeholder="e.g. search_documents"
+                      value={newToolName}
+                      onChange={(e) => setNewToolName(e.target.value)}
+                      data-testid="input-tool-name"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label>Description</Label>
+                    <Textarea
+                      placeholder="What does this tool do?"
+                      value={newToolDescription}
+                      onChange={(e) => setNewToolDescription(e.target.value)}
+                      rows={2}
+                      data-testid="input-tool-description"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label>Input Schema (JSON)</Label>
+                    <Textarea
+                      className="font-mono text-xs"
+                      value={newToolInputSchema}
+                      onChange={(e) => {
+                        setNewToolInputSchema(e.target.value);
+                        try {
+                          JSON.parse(e.target.value);
+                          setNewToolSchemaError(null);
+                        } catch (err) {
+                          setNewToolSchemaError("Invalid JSON");
+                        }
+                      }}
+                      rows={6}
+                      data-testid="input-tool-schema"
+                    />
+                    {newToolSchemaError && (
+                      <span className="text-[11px] text-red-500" data-testid="text-schema-error">{newToolSchemaError}</span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="flex flex-col gap-1.5">
+                      <Label>Risk Classification</Label>
+                      <Select value={newToolRisk} onValueChange={setNewToolRisk}>
+                        <SelectTrigger data-testid="select-tool-risk">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="low">Low</SelectItem>
+                          <SelectItem value="medium">Medium</SelectItem>
+                          <SelectItem value="high">High</SelectItem>
+                          <SelectItem value="critical">Critical</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Label>Owner</Label>
+                      <Input
+                        placeholder="e.g. platform-team"
+                        value={newToolOwner}
+                        onChange={(e) => setNewToolOwner(e.target.value)}
+                        data-testid="input-tool-owner"
+                      />
+                    </div>
+                  </div>
+                  <Button
+                    onClick={() => addToolMutation.mutate()}
+                    disabled={!newToolName.trim() || !!newToolSchemaError || addToolMutation.isPending}
+                    data-testid="button-submit-tool"
+                  >
+                    {addToolMutation.isPending ? (
+                      <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" />
+                    ) : (
+                      <Plus className="w-4 h-4 mr-1.5" />
+                    )}
+                    Add Tool
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+          </div>
+
           {!tools || tools.length === 0 ? (
             <Card>
               <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
                 <Wrench className="w-8 h-8 text-muted-foreground" />
                 <p className="text-sm text-muted-foreground" data-testid="text-no-tools">
-                  No tools discovered. Sync catalogs to discover tools.
+                  No tools discovered. Sync catalogs or add tools manually.
                 </p>
               </CardContent>
             </Card>
@@ -467,15 +612,35 @@ export default function McpServerDetail() {
               {tools.map((tool) => (
                 <Card key={tool.id} data-testid={`card-tool-${tool.id}`}>
                   <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-bold" data-testid={`text-tool-name-${tool.id}`}>
-                      {tool.name}
-                    </CardTitle>
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <CardTitle className="text-sm font-bold" data-testid={`text-tool-name-${tool.id}`}>
+                        {tool.name}
+                      </CardTitle>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {tool.riskClassification && (
+                          <Badge
+                            variant={tool.riskClassification === "critical" || tool.riskClassification === "high" ? "destructive" : "outline"}
+                            className="text-[10px]"
+                            data-testid={`badge-tool-risk-${tool.id}`}
+                          >
+                            <Shield className="w-3 h-3 mr-0.5" />
+                            {tool.riskClassification}
+                          </Badge>
+                        )}
+                        <Badge variant={tool.enabled ? "default" : "secondary"} className="text-[10px]" data-testid={`badge-tool-enabled-${tool.id}`}>
+                          {tool.enabled ? "Enabled" : "Disabled"}
+                        </Badge>
+                      </div>
+                    </div>
                   </CardHeader>
                   <CardContent className="flex flex-col gap-2">
                     {tool.description && (
                       <p className="text-xs text-muted-foreground" data-testid={`text-tool-description-${tool.id}`}>
                         {tool.description}
                       </p>
+                    )}
+                    {tool.owner && (
+                      <span className="text-[11px] text-muted-foreground">Owner: {tool.owner}</span>
                     )}
                     {tool.inputSchema ? (
                       <pre className="text-xs font-mono bg-muted/30 rounded-md p-3 overflow-auto max-h-[200px]">
