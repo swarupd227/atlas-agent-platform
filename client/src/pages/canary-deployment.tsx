@@ -1041,6 +1041,7 @@ export default function CanaryDeploymentPage() {
                   <SelectItem value="manufacturing">Manufacturing</SelectItem>
                   <SelectItem value="insurance">Insurance</SelectItem>
                   <SelectItem value="retail">Retail</SelectItem>
+                  <SelectItem value="technology_saas">Technology / SaaS</SelectItem>
                 </SelectContent>
               </Select>
             </div>

@@ -5418,7 +5418,7 @@ Generate a comprehensive, professional report suitable for a quarterly business 
       const templates = await storage.getAgentTemplates();
       const outcomes = await storage.getOutcomes();
 
-      const industryContext = industry ? `\n\nIMPORTANT: The user is operating in the "${industry.label}" industry workspace. Tailor all suggestions, KPIs, agent designs, and compliance considerations to this industry. Use industry-standard terminology and reference relevant regulations (${industry.id === 'financial_services' ? 'BSA/AML, SOX, PCI-DSS, EU AI Act' : industry.id === 'healthcare' ? 'HIPAA, HITECH, CMS, FDA 21 CFR Part 11' : industry.id === 'manufacturing' ? 'ISO 9001, OSHA, EPA' : industry.id === 'insurance' ? 'State Insurance Regulations, NAIC, ACORD' : industry.id === 'retail' ? 'PCI-DSS, CCPA/CPRA, FTC Act' : 'general compliance frameworks'}). When proposing agents, include industry-specific skills, MCP connections for industry systems, and note which governance policies will auto-apply.` : '';
+      const industryContext = industry ? `\n\nIMPORTANT: The user is operating in the "${industry.label}" industry workspace. Tailor all suggestions, KPIs, agent designs, and compliance considerations to this industry. Use industry-standard terminology and reference relevant regulations (${industry.id === 'financial_services' ? 'BSA/AML, SOX, PCI-DSS, EU AI Act' : industry.id === 'healthcare' ? 'HIPAA, HITECH, CMS, FDA 21 CFR Part 11' : industry.id === 'manufacturing' ? 'ISO 9001, OSHA, EPA' : industry.id === 'insurance' ? 'State Insurance Regulations, NAIC, ACORD' : industry.id === 'retail' ? 'PCI-DSS, CCPA/CPRA, FTC Act' : industry.id === 'technology_saas' ? 'SOC 2 Type II, GDPR, CCPA, ISO 27001, FedRAMP' : 'general compliance frameworks'}). When proposing agents, include industry-specific skills, MCP connections for industry systems, and note which governance policies will auto-apply.` : '';
 
       const systemPrompt = `You are a Business Outcome Discovery Assistant for the ALMP (Agent Lifecycle Management Platform). You help non-technical business users define what they want to achieve, then propose AI agent solutions.${industryContext}
 
@@ -15140,6 +15140,7 @@ Respond with JSON:
         manufacturing: "Manufacturing (ISO certified, equipment safety, production quality, supply chain)",
         insurance: "Insurance (state regulated, actuarial requirements, claims processing, underwriting)",
         retail: "Retail (consumer protection, pricing regulations, inventory management, e-commerce)",
+        technology_saas: "Technology / SaaS (SOC 2 certified, GDPR/CCPA compliant, SRE practices, API governance, cloud infrastructure)",
       };
 
       const prompt = `Generate a runbook for the ${industryContext[industry] || industry} industry.
@@ -15183,6 +15184,7 @@ Include 4-7 steps with at least one approval gate for high-risk actions. Make it
         manufacturing: "Manufacturing (ISO certified, equipment safety, production quality, supply chain)",
         insurance: "Insurance (state regulated, actuarial requirements, claims processing, underwriting)",
         retail: "Retail (consumer protection, pricing regulations, inventory management, e-commerce)",
+        technology_saas: "Technology / SaaS (SOC 2 certified, GDPR/CCPA compliant, SRE practices, API governance, cloud infrastructure)",
       };
 
       const modeInstructions: Record<string, string> = {

@@ -682,6 +682,7 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
                         <SelectItem value="healthcare">Healthcare</SelectItem>
                         <SelectItem value="manufacturing">Manufacturing</SelectItem>
                         <SelectItem value="retail">Retail</SelectItem>
+                        <SelectItem value="technology_saas">Technology / SaaS</SelectItem>
                         <SelectItem value="custom">Custom</SelectItem>
                       </SelectContent>
                     </Select>
@@ -840,6 +841,7 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
                       <SelectItem value="healthcare">Healthcare</SelectItem>
                       <SelectItem value="manufacturing">Manufacturing</SelectItem>
                       <SelectItem value="retail">Retail</SelectItem>
+                      <SelectItem value="technology_saas">Technology / SaaS</SelectItem>
                       <SelectItem value="custom">Custom</SelectItem>
                     </SelectContent>
                   </Select>
