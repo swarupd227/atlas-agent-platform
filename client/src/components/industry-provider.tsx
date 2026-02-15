@@ -6,6 +6,7 @@ import {
   ShoppingCart,
   Settings2,
   Shield,
+  Monitor,
   type LucideIcon,
 } from "lucide-react";
 
@@ -15,6 +16,7 @@ export type IndustryId =
   | "healthcare"
   | "manufacturing"
   | "retail"
+  | "technology_saas"
   | "custom";
 
 export type DataClassification = "public" | "internal" | "confidential" | "restricted";
@@ -176,6 +178,31 @@ export const INDUSTRIES: IndustryProfile[] = [
     departments: ["Merchandising", "E-Commerce", "Marketing & Advertising", "Customer Service", "Supply Chain & Fulfillment", "Finance & Accounting", "HR & Training", "IT & Digital", "Loss Prevention", "Legal & Compliance"],
   },
   {
+    id: "technology_saas",
+    label: "Technology / SaaS",
+    shortLabel: "Tech",
+    description: "Software, cloud infrastructure, and SaaS platforms with SOC 2, GDPR, and CCPA compliance built in",
+    icon: Monitor,
+    color: "hsl(250 65% 55%)",
+    ontology: "ITIL / SRE (IT Service Management & Site Reliability)",
+    agentSkills: 104,
+    regulatoryFrameworks: ["SOC 2 Type II", "GDPR", "CCPA/CPRA", "ISO 27001", "HIPAA BAA", "FedRAMP"],
+    goldenTemplates: 20,
+    subVerticals: ["B2B SaaS", "Developer Tools", "Cloud Infrastructure", "FinTech", "HealthTech"],
+    jurisdictions: ["US", "EU", "UK", "APAC", "Global"],
+    integrationSystems: [
+      { id: "zendesk", name: "Zendesk", category: "Customer Support", description: "Customer service and engagement platform" },
+      { id: "stripe_tech", name: "Stripe", category: "Billing & Payments", description: "Payment processing and subscription billing" },
+      { id: "pagerduty", name: "PagerDuty", category: "Incident Management", description: "Digital operations and incident response" },
+      { id: "datadog", name: "Datadog", category: "Observability", description: "Cloud monitoring and security platform" },
+      { id: "salesforce_crm", name: "Salesforce", category: "CRM", description: "Customer relationship management" },
+      { id: "hubspot", name: "HubSpot", category: "CRM & Marketing", description: "Inbound marketing and CRM platform" },
+      { id: "jira", name: "Jira", category: "Project Management", description: "Agile project management and issue tracking" },
+      { id: "github", name: "GitHub", category: "DevOps", description: "Code hosting and CI/CD platform" },
+    ],
+    departments: ["Engineering", "Product", "Customer Success", "Sales", "Marketing", "Finance & Billing", "DevOps / SRE", "Security & Compliance", "People Ops", "Legal"],
+  },
+  {
     id: "custom",
     label: "Custom",
     shortLabel: "Custom",
@@ -318,6 +345,20 @@ const INDUSTRY_TERMS: Record<IndustryId, Partial<TerminologyMap>> = {
     remediation: "Recovery Action",
     evaluation: "Conversion Audit",
     evaluations: "Conversion Audits",
+  },
+  technology_saas: {
+    outcomes: "Service Objectives",
+    outcome: "Service Objective",
+    kpis: "Platform Metrics",
+    kpi: "Platform Metric",
+    incidents: "Incidents",
+    incident: "Incident",
+    outcome_owner: "Service Owner",
+    sla: "SLO",
+    drift: "Regression",
+    remediation: "Hotfix",
+    evaluation: "Release Validation",
+    evaluations: "Release Validations",
   },
   custom: {},
 };
