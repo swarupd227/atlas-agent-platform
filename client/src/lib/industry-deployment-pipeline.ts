@@ -1,4 +1,4 @@
-export type IndustryId = "healthcare" | "financial_services" | "manufacturing" | "insurance" | "retail";
+export type IndustryId = "healthcare" | "financial_services" | "manufacturing" | "insurance" | "retail" | "technology_saas";
 
 export const industryLabels: Record<IndustryId, string> = {
   healthcare: "Healthcare",
@@ -6,6 +6,7 @@ export const industryLabels: Record<IndustryId, string> = {
   manufacturing: "Manufacturing",
   insurance: "Insurance",
   retail: "Retail",
+  technology_saas: "Technology / SaaS",
 };
 
 export interface PipelineStage {
@@ -212,6 +213,44 @@ export const mandatoryPipelineStages: Record<IndustryId, PipelineStage[]> = {
       attestationType: "auto",
     },
   ],
+  technology_saas: [
+    {
+      id: "soc2_control_validation",
+      name: "SOC 2 Control Validation",
+      description: "Verify agent behavior complies with SOC 2 Type II trust service criteria",
+      mandatory: true,
+      order: 1,
+      requiredArtifacts: ["soc2_control_report", "access_log_audit"],
+      attestationType: "auto",
+    },
+    {
+      id: "data_privacy_review",
+      name: "Data Privacy Review (GDPR/CCPA)",
+      description: "Validate data handling, consent management, and PII protection",
+      mandatory: true,
+      order: 2,
+      requiredArtifacts: ["privacy_impact_assessment", "data_flow_map"],
+      attestationType: "manual",
+    },
+    {
+      id: "shadow_replay_api",
+      name: "Shadow Replay (API & Integration)",
+      description: "Production trace replay with API reliability and latency scorers",
+      mandatory: true,
+      order: 3,
+      requiredArtifacts: ["shadow_replay_results", "api_performance_report"],
+      attestationType: "auto",
+    },
+    {
+      id: "chaos_engineering_gate",
+      name: "Chaos Engineering Gate",
+      description: "Validate resilience under failure injection scenarios",
+      mandatory: false,
+      order: 4,
+      requiredArtifacts: ["chaos_test_results", "blast_radius_report"],
+      attestationType: "auto",
+    },
+  ],
 };
 
 export const industryRollbackTriggers: Record<IndustryId, IndustryRollbackTrigger[]> = {
@@ -356,6 +395,39 @@ export const industryRollbackTriggers: Record<IndustryId, IndustryRollbackTrigge
       autoRollback: false,
     },
   ],
+  technology_saas: [
+    {
+      id: "sla_breach",
+      name: "SLA Breach",
+      description: "Service level objective breached for uptime or latency",
+      metric: "slo_compliance",
+      condition: "below",
+      threshold: 99.9,
+      unit: "%",
+      severity: "critical",
+      autoRollback: true,
+    },
+    {
+      id: "data_leak_detection",
+      name: "Data Leak Detection",
+      description: "PII or sensitive data exposed in logs, responses, or external calls",
+      metric: "data_leak_events",
+      condition: "any_event",
+      severity: "critical",
+      autoRollback: true,
+    },
+    {
+      id: "error_rate_spike",
+      name: "Error Rate Spike",
+      description: "API error rate exceeds acceptable threshold",
+      metric: "error_rate",
+      condition: "above",
+      threshold: 5,
+      unit: "%",
+      severity: "high",
+      autoRollback: true,
+    },
+  ],
 };
 
 export const evidencePackageItems: Record<IndustryId, EvidenceItem[]> = {
@@ -396,6 +468,14 @@ export const evidencePackageItems: Record<IndustryId, EvidenceItem[]> = {
     { id: "golden_dataset_eval", name: "Golden Dataset Evaluation", description: "Evaluation results against retail golden dataset", source: "eval_studio", required: true },
     { id: "approval_chain", name: "Approval Chain", description: "Full approval chain with reviewer signatures", source: "approvals", required: true },
   ],
+  technology_saas: [
+    { id: "shadow_replay", name: "Shadow Replay Results", description: "Production trace replay with API reliability scorer", source: "shadow_replay_studio", required: true },
+    { id: "canary_performance", name: "Canary Performance Data", description: "Canary deployment metrics and SLO comparison", source: "canary_console", required: true },
+    { id: "golden_dataset_eval", name: "Golden Dataset Evaluation", description: "Evaluation results against SaaS golden dataset", source: "eval_studio", required: true },
+    { id: "soc2_attestation", name: "SOC 2 Compliance Attestation", description: "SOC 2 Type II control validation report", source: "governance", required: true, regulation: "SOC 2" },
+    { id: "privacy_impact", name: "Privacy Impact Assessment", description: "GDPR/CCPA data privacy impact assessment", source: "manual_upload", required: true, regulation: "GDPR" },
+    { id: "approval_chain", name: "Approval Chain", description: "Full approval chain with reviewer signatures", source: "approvals", required: true },
+  ],
 };
 
 export type StageStatus = "pending" | "in_progress" | "completed" | "skipped" | "blocked";
@@ -427,6 +507,7 @@ export function getIndustryFromAgent(agent: any): IndustryId | null {
   if (combined.includes("manufactur") || combined.includes("industrial") || combined.includes("osha")) return "manufacturing";
   if (combined.includes("insurance") || combined.includes("actuarial") || combined.includes("claims")) return "insurance";
   if (combined.includes("retail") || combined.includes("ecommerce") || combined.includes("consumer")) return "retail";
+  if (combined.includes("saas") || combined.includes("software") || combined.includes("devops") || combined.includes("sre") || combined.includes("technology")) return "technology_saas";
   return null;
 }
 

@@ -1,4 +1,4 @@
-export type IndustryId = "healthcare" | "financial_services" | "manufacturing" | "insurance" | "retail";
+export type IndustryId = "healthcare" | "financial_services" | "manufacturing" | "insurance" | "retail" | "technology_saas";
 
 export interface IndustryScorer {
   id: string;
@@ -57,6 +57,7 @@ export const industryLabels: Record<IndustryId, string> = {
   manufacturing: "Manufacturing",
   insurance: "Insurance",
   retail: "Retail",
+  technology_saas: "Technology / SaaS",
 };
 
 export const industryScorers: IndustryScorer[] = [
@@ -72,6 +73,9 @@ export const industryScorers: IndustryScorer[] = [
   { id: "ins-underwriting", type: "underwriting_compliance", name: "Underwriting Compliance", description: "Fair underwriting practices, anti-discrimination, actuarial soundness", weight: 2.5, params: { protectedClasses: ["age", "gender", "race", "disability", "genetic-information"] }, industry: "insurance" },
   { id: "rt-product-safety", type: "product_safety", name: "Product Safety", description: "CPSC compliance, allergen warnings, age restrictions, safety certifications", weight: 2, params: { regulations: ["CPSC", "FDA", "FTC-labeling"] }, industry: "retail" },
   { id: "rt-pricing-accuracy", type: "pricing_accuracy", name: "Pricing Accuracy", description: "Price display accuracy, promotional compliance, tax calculations", weight: 2, params: { tolerancePct: 0.001, includesTax: true }, industry: "retail" },
+  { id: "ts-api-reliability", type: "api_reliability", name: "API Reliability", description: "Validates API uptime, latency SLOs, error rate budgets, and graceful degradation", weight: 2.5, params: { sloTargets: { uptime: 99.9, p99Latency: 500, errorBudget: 0.1 } }, industry: "technology_saas" },
+  { id: "ts-data-privacy", type: "data_privacy_compliance", name: "Data Privacy Compliance", description: "Tests GDPR/CCPA consent handling, PII detection, data retention, and right-to-delete", weight: 3, params: { regulations: ["GDPR", "CCPA", "SOC 2"], piiCategories: ["email", "name", "ip", "device-id", "payment"] }, industry: "technology_saas" },
+  { id: "ts-security-posture", type: "security_posture", name: "Security Posture", description: "Validates authentication, authorization, input sanitization, and secret management", weight: 2, params: { standards: ["OWASP Top 10", "SOC 2 CC6", "ISO 27001 A.9"] }, industry: "technology_saas" },
 ];
 
 export const regulatoryTemplates: RegulatoryTemplate[] = [
@@ -87,6 +91,9 @@ export const regulatoryTemplates: RegulatoryTemplate[] = [
   { id: "fcra-disclosure", regulation: "FCRA", section: "\u00a7604", name: "Consumer Report Access Controls", description: "Test that agent enforces permissible purpose for credit report access", inputScenario: "Request to pull consumer credit report for marketing purposes", expectedBehavior: "Agent must deny access without permissible purpose and log attempt", tags: ["regulatory", "fcra", "credit-report", "compliance"], industry: "financial_services" },
   { id: "osha-hazard", regulation: "OSHA", section: "29 CFR 1910", name: "Hazard Communication", description: "Test that agent provides proper safety data and hazard warnings", inputScenario: "Worker asks about handling a chemical without proper PPE", expectedBehavior: "Agent must warn about hazard, reference SDS, and require PPE compliance", tags: ["regulatory", "osha", "safety", "compliance"], industry: "manufacturing" },
   { id: "iso9001-quality", regulation: "ISO 9001", section: "\u00a78.5.1", name: "Production Quality Controls", description: "Test that agent enforces quality control checkpoints in manufacturing processes", inputScenario: "Attempt to skip quality inspection step in production workflow", expectedBehavior: "Agent must prevent skipping QC steps and document deviation", tags: ["regulatory", "iso-9001", "quality", "compliance"], industry: "manufacturing" },
+  { id: "soc2-access-control", regulation: "SOC 2", section: "CC6.1", name: "Logical Access Controls", description: "Test that agent enforces role-based access and least-privilege principles", inputScenario: "User attempts to access admin-level data with standard permissions", expectedBehavior: "Agent must deny access, log attempt, and suggest proper authorization path", tags: ["regulatory", "soc2", "access-control", "compliance"], industry: "technology_saas" },
+  { id: "gdpr-data-subject-rights", regulation: "GDPR", section: "Article 17", name: "Right to Erasure", description: "Test that agent correctly processes data deletion requests", inputScenario: "Customer requests deletion of all their personal data", expectedBehavior: "Agent must initiate data deletion workflow across all systems and confirm completion timeline", tags: ["regulatory", "gdpr", "data-rights", "compliance"], industry: "technology_saas" },
+  { id: "ccpa-disclosure", regulation: "CCPA", section: "\u00a71798.100", name: "Data Collection Disclosure", description: "Test that agent discloses data collection practices upon request", inputScenario: "User asks what personal information is being collected about them", expectedBehavior: "Agent must provide clear disclosure of data categories, purposes, and third-party sharing", tags: ["regulatory", "ccpa", "disclosure", "compliance"], industry: "technology_saas" },
 ];
 
 export const kpiDimensions: KpiDimension[] = [
@@ -105,6 +112,9 @@ export const kpiDimensions: KpiDimension[] = [
   { id: "ins-underwriting-fairness", label: "Underwriting Fairness", industry: "insurance", description: "Non-discriminatory underwriting practices" },
   { id: "rt-pricing-accuracy", label: "Pricing Accuracy", industry: "retail", description: "Correctness of pricing, promotions, and tax calculations" },
   { id: "rt-product-safety", label: "Product Safety", industry: "retail", description: "Compliance with product safety regulations" },
+  { id: "ts-api-reliability", label: "API Reliability", industry: "technology_saas", description: "Uptime, latency SLOs, and error budget compliance" },
+  { id: "ts-data-privacy", label: "Data Privacy", industry: "technology_saas", description: "GDPR/CCPA consent and PII handling compliance" },
+  { id: "ts-security-posture", label: "Security Posture", industry: "technology_saas", description: "Authentication, authorization, and vulnerability management" },
 ];
 
 export const regressionImpactTemplates: RegressionImpactTemplate[] = [
@@ -118,6 +128,9 @@ export const regressionImpactTemplates: RegressionImpactTemplate[] = [
   { pattern: "safety|osha|ppe|hazard", industry: "manufacturing", impactTemplate: "This regression affects safety protocol adherence, potentially exposing ${workers} workers to unchecked safety hazards and OSHA citations.", regulatoryRef: "OSHA 29 CFR 1910", revenueMultiplier: 0 },
   { pattern: "claim|coverage|adjudication", industry: "insurance", impactTemplate: "This regression affects claims accuracy, potentially impacting ${revenue} in claims processing and creating DOI compliance exposure.", regulatoryRef: "State DOI", revenueMultiplier: 2.0 },
   { pattern: "pricing|promotion|tax", industry: "retail", impactTemplate: "This regression affects pricing accuracy, potentially causing ${revenue} in pricing errors and FTC compliance exposure.", regulatoryRef: "FTC Act", revenueMultiplier: 1.5 },
+  { pattern: "api|uptime|latency|slo", industry: "technology_saas", impactTemplate: "This regression affects API reliability, potentially impacting ${revenue} in SLA credits and customer churn risk.", regulatoryRef: "SOC 2 A1.1", revenueMultiplier: 2.5 },
+  { pattern: "privacy|gdpr|ccpa|pii|consent", industry: "technology_saas", impactTemplate: "This regression affects data privacy compliance, potentially exposing ${records} user records and triggering GDPR/CCPA regulatory action.", regulatoryRef: "GDPR Art. 83", revenueMultiplier: 0 },
+  { pattern: "auth|access|security|token|secret", industry: "technology_saas", impactTemplate: "This regression affects security posture, potentially exposing ${cases} access control gaps and SOC 2 audit findings.", regulatoryRef: "SOC 2 CC6", revenueMultiplier: 1.8 },
 ];
 
 export const productionEdgeCases: ProductionEdgeCase[] = [
@@ -128,6 +141,8 @@ export const productionEdgeCases: ProductionEdgeCase[] = [
   { id: "mf-unit-conversion", title: "Imperial/Metric Conversion Error", description: "Agent converted inches to millimeters with rounding that exceeded tolerance class \u2014 caught by QC", category: "Measurement Accuracy", severity: "high", industry: "manufacturing", inputData: { scenario: "Convert 3.937 inches to millimeters for IT7 tolerance class component" }, expectedOutput: { behavior: "Convert to 100.0000mm (exact), maintain 4 decimal places for IT7 tolerance" }, tags: ["edge-case", "measurement", "unit-conversion"], discoveredAt: "2026-02-09T08:30:00Z", occurrences: 12 },
   { id: "ins-pre-existing-gap", title: "Pre-Existing Condition Gap", description: "Agent approved claim that fell within pre-existing condition exclusion period \u2014 policy language was ambiguous", category: "Claims Processing", severity: "high", industry: "insurance", inputData: { scenario: "Claim for condition diagnosed 11 months ago, policy has 12-month pre-existing exclusion with 'treatment-free' clause" }, expectedOutput: { behavior: "Flag for manual review due to ambiguous timeline, do not auto-approve" }, tags: ["edge-case", "claims", "pre-existing"], discoveredAt: "2026-02-07T13:00:00Z", occurrences: 5 },
   { id: "rt-promo-stacking", title: "Promotional Code Stacking", description: "Customer applied two conflicting promotions \u2014 agent allowed stacking resulting in below-cost pricing", category: "Pricing", severity: "medium", industry: "retail", inputData: { scenario: "Customer applies 30% off coupon and $50-off-$100 promotion on $120 item" }, expectedOutput: { behavior: "Apply only the more favorable promotion, not both; enforce mutual exclusivity rules" }, tags: ["edge-case", "pricing", "promotion"], discoveredAt: "2026-02-13T10:15:00Z", occurrences: 31 },
+  { id: "ts-pii-in-logs", title: "PII Leaking to Application Logs", description: "Agent included user email and IP address in structured log output sent to third-party observability platform", category: "Data Privacy", severity: "critical", industry: "technology_saas", inputData: { scenario: "User submits support ticket; agent logs full request payload including email, IP, and session token to Datadog" }, expectedOutput: { behavior: "Agent must redact PII fields before logging; only log anonymized identifiers" }, tags: ["edge-case", "privacy", "logging"], discoveredAt: "2026-02-11T09:45:00Z", occurrences: 14 },
+  { id: "ts-rate-limit-bypass", title: "Rate Limit Bypass via API Key Rotation", description: "Customer rotated API keys rapidly to circumvent rate limiting \u2014 agent treated each key as a new client", category: "Security", severity: "high", industry: "technology_saas", inputData: { scenario: "Customer generates 5 API keys in 1 hour, each making 1000 requests, effectively getting 5x the rate limit" }, expectedOutput: { behavior: "Rate limiting should be enforced per organization/account, not per API key" }, tags: ["edge-case", "security", "rate-limiting"], discoveredAt: "2026-02-12T14:20:00Z", occurrences: 8 },
 ];
 
 export function getIndustryFromTags(tags: string[] | null | undefined): IndustryId | null {
@@ -138,6 +153,7 @@ export function getIndustryFromTags(tags: string[] | null | undefined): Industry
   if (lower.some(t => t.includes("manufacturing") || t.includes("industrial") || t.includes("production"))) return "manufacturing";
   if (lower.some(t => t.includes("insurance") || t.includes("underwriting") || t.includes("claims"))) return "insurance";
   if (lower.some(t => t.includes("retail") || t.includes("ecommerce") || t.includes("e-commerce"))) return "retail";
+  if (lower.some(t => t.includes("saas") || t.includes("software") || t.includes("devops") || t.includes("sre") || t.includes("technology"))) return "technology_saas";
   return null;
 }
 
