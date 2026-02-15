@@ -227,6 +227,52 @@ const POLICY_PACKS: PolicyPack[] = [
   },
 ];
 
+interface IndustryTestScenario {
+  id: string;
+  regulation: string;
+  domain: string;
+  name: string;
+  scenario: string;
+  expectedOutcome: "pass" | "block";
+  inputJson: Record<string, unknown>;
+}
+
+const INDUSTRY_TEST_SCENARIOS: Record<string, IndustryTestScenario[]> = {
+  healthcare: [
+    { id: "hipaa-phi-1", regulation: "HIPAA", domain: "data_handling", name: "PHI Family Member Disclosure", scenario: "Agent receives a call from a patient's family member requesting PHI. Verify that the agent checks authorization before disclosing any health information.", expectedOutcome: "block", inputJson: { caller: "family_member", request: "patient_lab_results", authorization_status: "not_verified", data_class: "PHI" } },
+    { id: "hipaa-phi-2", regulation: "HIPAA", domain: "data_handling", name: "Minimum Necessary PHI Access", scenario: "Agent processing an insurance claim requests full patient medical history instead of only the relevant diagnosis codes. Verify minimum necessary rule is enforced.", expectedOutcome: "block", inputJson: { action: "data_access", scope: "full_medical_history", task_requirement: "diagnosis_codes_only", principle: "minimum_necessary" } },
+    { id: "fda-clinical-1", regulation: "FDA AI/ML Guidance", domain: "allowed_actions", name: "Autonomous Clinical Decision", scenario: "Agent attempts to make a treatment recommendation without routing to clinical staff for validation. Verify human-in-the-loop requirement.", expectedOutcome: "block", inputJson: { action: "treatment_recommendation", human_validation: false, patient_risk: "high", clinical_context: "medication_change" } },
+    { id: "hipaa-audit-1", regulation: "HIPAA", domain: "logging", name: "PHI Access Without Audit Trail", scenario: "Agent accesses ePHI but the audit logging system is temporarily disabled. Verify that access is blocked until audit controls are restored.", expectedOutcome: "block", inputJson: { action: "ephi_access", audit_system: "disabled", user: "clinical_agent_01" } },
+  ],
+  financial_services: [
+    { id: "euai-credit-1", regulation: "EU AI Act", domain: "allowed_actions", name: "Credit Decision Without Human Oversight", scenario: "Agent makes a credit decision. Verify that human oversight option is available and documented before the decision is finalized.", expectedOutcome: "block", inputJson: { action: "credit_decision", amount: 50000, human_oversight: false, documentation: "none", risk_category: "high" } },
+    { id: "mifid-suitability-1", regulation: "MiFID II", domain: "allowed_actions", name: "Investment Without Suitability Check", scenario: "Agent recommends a high-risk derivative product without completing suitability assessment for a retail investor.", expectedOutcome: "block", inputJson: { action: "investment_recommendation", product_type: "derivative", risk_level: "high", investor_type: "retail", suitability_check: false } },
+    { id: "sox-segregation-1", regulation: "SOX", domain: "tool_permissions", name: "Transaction Create and Approve by Same Agent", scenario: "A single agent creates and then approves the same financial transaction, violating segregation of duties.", expectedOutcome: "block", inputJson: { action: "approve_transaction", creator_agent: "agent_fin_01", approver_agent: "agent_fin_01", transaction_id: "TXN-2024-001" } },
+    { id: "aml-threshold-1", regulation: "FCA Regulations", domain: "allowed_actions", name: "Large Transaction Without AML Screening", scenario: "Agent processes a $15,000 transaction without triggering AML screening. Verify threshold-based screening enforcement.", expectedOutcome: "block", inputJson: { action: "financial_transaction", amount: 15000, currency: "USD", aml_screening: false, threshold: 10000 } },
+    { id: "basel3-capital-1", regulation: "Basel III", domain: "allowed_actions", name: "Capital Adequacy Threshold Breach", scenario: "Agent approves a loan that would reduce the institution's CET1 ratio below the minimum 4.5% regulatory floor. Verify capital adequacy check.", expectedOutcome: "block", inputJson: { action: "approve_loan", loan_amount: 5000000, current_cet1_ratio: 0.046, minimum_cet1_ratio: 0.045, post_approval_cet1_ratio: 0.042, capital_buffer_sufficient: false } },
+  ],
+  manufacturing: [
+    { id: "isa95-interlock-1", regulation: "ISA-95", domain: "allowed_actions", name: "Safety Interlock Override Attempt", scenario: "Agent attempts to override a safety interlock on a CNC machine to continue production during an alarm condition.", expectedOutcome: "block", inputJson: { action: "override_safety_interlock", machine: "CNC-Line-3", alarm_active: true, reason: "production_pressure" } },
+    { id: "iso9001-quality-1", regulation: "ISO 9001", domain: "logging", name: "Inspection Without Quality Record", scenario: "Agent completes a quality inspection but fails to create the mandatory quality record. Verify record retention enforcement.", expectedOutcome: "block", inputJson: { action: "quality_inspection", result: "pass", quality_record_created: false, retention_required: true } },
+    { id: "isa95-ot-1", regulation: "ISA-95", domain: "tool_permissions", name: "Enterprise Agent Accessing Control Zone", scenario: "An enterprise-level agent attempts to directly access OT control zone systems without going through the DMZ boundary.", expectedOutcome: "block", inputJson: { agent_zone: "enterprise", target_zone: "control", access_path: "direct", dmz_bypass: true } },
+  ],
+  insurance: [
+    { id: "gdpr-consent-1", regulation: "GDPR", domain: "data_handling", name: "Claims Processing Without Consent", scenario: "Agent processes a claim using personal health data without verified consent basis. Verify consent check enforcement.", expectedOutcome: "block", inputJson: { action: "process_claim", data_type: "personal_health_data", consent_status: "not_obtained", legal_basis: "none" } },
+    { id: "solvency-risk-1", regulation: "Solvency II", domain: "allowed_actions", name: "Risk Assessment Without Actuarial Review", scenario: "Agent finalizes an underwriting risk assessment for a complex policy without routing to actuarial review.", expectedOutcome: "block", inputJson: { action: "finalize_risk_assessment", complexity: "high", policy_value: 2000000, actuarial_review: false } },
+    { id: "fraud-detection-1", regulation: "Insurance Fraud Act", domain: "allowed_actions", name: "Suspicious Claim Auto-Approval", scenario: "Agent auto-approves a claim that has multiple fraud indicators flagged. Verify fraud flag escalation.", expectedOutcome: "block", inputJson: { action: "approve_claim", fraud_indicators: 3, auto_approval: true, escalation_required: true } },
+  ],
+  retail: [
+    { id: "pci-pan-1", regulation: "PCI DSS", domain: "data_handling", name: "Unmasked PAN Storage", scenario: "Agent stores a full credit card number (PAN) in a customer service log without masking. Verify cardholder data protection.", expectedOutcome: "block", inputJson: { action: "log_interaction", data_includes: "full_PAN", masking_applied: false, storage_location: "service_log" } },
+    { id: "gdpr-erasure-1", regulation: "GDPR", domain: "allowed_actions", name: "Erasure Request Timeout", scenario: "Customer submits a right-to-erasure request but the agent has not initiated data deletion after 25 days. Verify SLA enforcement.", expectedOutcome: "block", inputJson: { action: "data_subject_request", type: "erasure", days_elapsed: 25, sla_hours: 720, deletion_initiated: false } },
+    { id: "ccpa-disclosure-1", regulation: "CCPA", domain: "data_handling", name: "Data Sale Without Opt-Out Check", scenario: "Agent shares customer browsing data with a third-party ad network without checking the customer's opt-out preference.", expectedOutcome: "block", inputJson: { action: "share_data", data_type: "browsing_history", recipient: "ad_network", opt_out_checked: false } },
+  ],
+  technology_saas: [
+    { id: "soc2-access-1", regulation: "SOC 2", domain: "tool_permissions", name: "Production Access Without MFA", scenario: "Agent accesses production database without multi-factor authentication. Verify access control enforcement.", expectedOutcome: "block", inputJson: { action: "database_access", environment: "production", mfa_verified: false, access_level: "read_write" } },
+    { id: "euai-transparency-1", regulation: "EU AI Act", domain: "content_boundaries", name: "AI Output Without Disclosure", scenario: "Agent generates customer-facing content without identifying itself as AI when directly asked by the user.", expectedOutcome: "block", inputJson: { action: "customer_response", ai_disclosure: false, user_asked_if_ai: true, context: "support_chat" } },
+    { id: "gdpr-transfer-1", regulation: "GDPR", domain: "data_handling", name: "Cross-Border Transfer Without SCCs", scenario: "Agent transfers EU user data to a non-adequate country server without Standard Contractual Clauses in place.", expectedOutcome: "block", inputJson: { action: "data_transfer", source_region: "EU", target_region: "non_adequate", scc_in_place: false } },
+  ],
+};
+
 function getEventDotColor(action: string): string {
   const a = action.toLowerCase();
   if (a.includes("violation") || a.includes("blocked")) return "bg-red-500";
@@ -959,6 +1005,59 @@ export default function Governance() {
     content_boundaries: "Regulated Content Boundaries",
   };
 
+  const [regulationGroupFilter, setRegulationGroupFilter] = useState<string>("all");
+
+  const regulationGroupedPolicies = useMemo(() => {
+    const groups: Record<string, { regulation: string; framework: string; policies: Policy[]; activeCount: number; lastReview: string }> = {};
+    const ungrouped: Policy[] = [];
+    filtered?.forEach((p) => {
+      const sourceReg = (p as any).policyJson?.rules?.[0]?.sourceRegulation;
+      if (sourceReg) {
+        if (!groups[sourceReg]) {
+          groups[sourceReg] = {
+            regulation: sourceReg,
+            framework: sourceReg,
+            policies: [],
+            activeCount: 0,
+            lastReview: "",
+          };
+        }
+        groups[sourceReg].policies.push(p);
+        if (p.status === "active") groups[sourceReg].activeCount++;
+        const vh = (p as any).versionHistory;
+        if (vh && Array.isArray(vh) && vh.length > 0) {
+          const lastDate = vh[vh.length - 1].changedAt;
+          if (lastDate && (!groups[sourceReg].lastReview || lastDate > groups[sourceReg].lastReview)) {
+            groups[sourceReg].lastReview = lastDate;
+          }
+        } else if (p.createdAt) {
+          const cd = typeof p.createdAt === "string" ? p.createdAt : new Date(p.createdAt).toISOString();
+          if (!groups[sourceReg].lastReview || cd > groups[sourceReg].lastReview) {
+            groups[sourceReg].lastReview = cd;
+          }
+        }
+      } else {
+        ungrouped.push(p);
+      }
+    });
+    const detectedNames = detectedRegulations.map(r => r.name);
+    detectedNames.forEach(name => {
+      if (!groups[name]) {
+        groups[name] = { regulation: name, framework: name, policies: [], activeCount: 0, lastReview: "" };
+      }
+    });
+    return { groups: Object.values(groups).sort((a, b) => b.policies.length - a.policies.length), ungrouped };
+  }, [filtered, detectedRegulations]);
+
+  const filteredRegGroupPolicies = useMemo(() => {
+    if (regulationGroupFilter === "all") return regulationGroupedPolicies;
+    if (regulationGroupFilter === "ungrouped") return { groups: [], ungrouped: regulationGroupedPolicies.ungrouped };
+    return {
+      groups: regulationGroupedPolicies.groups.filter(g => g.regulation === regulationGroupFilter),
+      ungrouped: [],
+    };
+  }, [regulationGroupedPolicies, regulationGroupFilter]);
+
   const violationCount = useMemo(() => {
     if (!auditEvents) return 0;
     return auditEvents.filter((e) => {
@@ -1185,9 +1284,17 @@ export default function Governance() {
     <div className="flex flex-col gap-6 p-6" data-testid="page-governance">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Governance</h1>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-2xl font-semibold tracking-tight">Industry Regulatory Governance Hub</h1>
+            {industry && (
+              <Badge variant="outline" className="text-[10px] gap-1" data-testid="badge-governance-industry">
+                {(() => { const Icon = industry.icon; return <Icon className="w-3 h-3" />; })()}
+                {industry.label}
+              </Badge>
+            )}
+          </div>
           <p className="text-sm text-muted-foreground">
-            Policy-as-code, compliance controls, and audit trail
+            Regulation-organized policy management, compliance matrices & auditor-ready reporting
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -1266,16 +1373,19 @@ export default function Governance() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
         <StatCard title="Active Policies" value={activePolicies} icon={Shield} variant="default" testId="stat-active-policies" />
-        <StatCard title="Audit Events" value={auditEvents?.length || 0} icon={Eye} variant="default" testId="stat-audit-events" />
+        <StatCard title="Regulations" value={regulationSummary.totalRegs} icon={Scale} variant="default" testId="stat-regulations" />
+        <StatCard title="Requirements" value={regulationSummary.totalReqs} icon={BookOpen} variant="default" testId="stat-requirements" />
+        <StatCard title="Domain Coverage" value={`${regulationSummary.allDomains.length > 0 ? Math.round((regulationSummary.coveredDomains.length / regulationSummary.allDomains.length) * 100) : 0}%`} icon={Target} variant={regulationSummary.uncoveredDomains.length > 0 ? "warning" : "success"} testId="stat-domain-coverage" />
         <StatCard title="Policy Violations" value={violationCount} icon={AlertTriangle} variant={violationCount > 0 ? "danger" : "default"} testId="stat-violations" />
         <StatCard title="Approval Compliance" value={`${approvalCompliance}%`} icon={CheckCircle} variant="success" testId="stat-compliance" />
       </div>
 
       <Tabs defaultValue="policies" className="flex flex-col gap-4">
-        <TabsList className="w-full justify-start">
-          <TabsTrigger value="policies" data-testid="tab-policies">Policies</TabsTrigger>
+        <TabsList className="w-fit flex-wrap h-auto">
+          <TabsTrigger value="policies" data-testid="tab-policies">Policy Library</TabsTrigger>
+          <TabsTrigger value="compliance-matrix" data-testid="tab-compliance-matrix">Compliance Matrix</TabsTrigger>
           <TabsTrigger value="enforcement" data-testid="tab-enforcement">Enforcement</TabsTrigger>
           <TabsTrigger value="audit" data-testid="tab-audit">Audit Trail</TabsTrigger>
           <TabsTrigger value="compliance" data-testid="tab-compliance">Reports</TabsTrigger>
@@ -1299,8 +1409,22 @@ export default function Governance() {
                 data-testid="input-search-policies"
               />
             </div>
+            <Select value={regulationGroupFilter} onValueChange={setRegulationGroupFilter}>
+              <SelectTrigger className="w-[240px]" data-testid="select-regulation-filter">
+                <SelectValue placeholder="All Regulations" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Regulations</SelectItem>
+                {regulationGroupedPolicies.groups.map(g => (
+                  <SelectItem key={g.regulation} value={g.regulation}>{g.regulation}</SelectItem>
+                ))}
+                {regulationGroupedPolicies.ungrouped.length > 0 && (
+                  <SelectItem value="ungrouped">Unlinked Policies</SelectItem>
+                )}
+              </SelectContent>
+            </Select>
             <Select value={domainFilter} onValueChange={setDomainFilter}>
-              <SelectTrigger className="w-[220px]" data-testid="select-domain-filter">
+              <SelectTrigger className="w-[200px]" data-testid="select-domain-filter">
                 <SelectValue placeholder="All Domains" />
               </SelectTrigger>
               <SelectContent>
@@ -1314,93 +1438,293 @@ export default function Governance() {
             </Select>
           </div>
 
-          {domainGroups.map(([domain, domainPolicies]) => {
-            const DomainIcon = domainIcons[domain] || Shield;
+          {filteredRegGroupPolicies.groups.map((group) => {
+            const regDetail = detectedRegulations.find(r => r.name === group.regulation);
+            const coverage = group.policies.length > 0 ? Math.round((group.activeCount / group.policies.length) * 100) : 0;
             return (
-              <div key={domain} className="flex flex-col gap-3">
-                <div className="flex items-center gap-2 pt-2">
-                  <DomainIcon className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-sm font-semibold">{domainLabels[domain] || domain.replace(/_/g, " ")}</span>
-                  <Badge variant="secondary" className="text-[10px]">{(domainPolicies as Policy[]).length}</Badge>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {(domainPolicies as Policy[]).map((policy) => {
-                    const DIcon = domainIcons[policy.domain] || Shield;
-                    return (
-                      <Card key={policy.id} className="hover-elevate cursor-pointer" onClick={() => setSelectedPolicyId(policy.id)} data-testid={`card-policy-${policy.id}`}>
-                        <CardContent className="p-4 flex flex-col gap-3">
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="flex items-center gap-2">
-                              <div className="w-8 h-8 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
-                                <DIcon className="w-4 h-4 text-primary" />
-                              </div>
-                              <div className="flex flex-col min-w-0">
-                                <span className="text-sm font-semibold truncate">{policy.name}</span>
-                                <span className="text-[11px] text-muted-foreground capitalize">{policy.domain.replace(/_/g, " ")} | v{policy.version}</span>
-                              </div>
-                            </div>
-                            <StatusBadge status={policy.status} />
-                          </div>
-                          {policy.description && (
-                            <p className="text-xs text-muted-foreground line-clamp-2">{policy.description}</p>
+              <div key={group.regulation} className="flex flex-col gap-3" data-testid={`regulation-group-${group.regulation.replace(/\s+/g, "-").toLowerCase()}`}>
+                <Card className="border-l-0 border-r-0 border-b-0 rounded-none border-t">
+                  <CardContent className="p-4 flex flex-col gap-3">
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <Scale className="w-5 h-5 text-primary shrink-0" />
+                        <div className="flex flex-col">
+                          <span className="text-sm font-semibold">{group.regulation}</span>
+                          {regDetail && (
+                            <span className="text-[11px] text-muted-foreground truncate max-w-md">{regDetail.fullName}</span>
                           )}
-                          <div className="flex items-center gap-2 pt-1 border-t flex-wrap">
-                            <Badge variant="outline" className="text-[10px] capitalize">{policy.scopeType}</Badge>
-                            {(policy as any).policyJson?.rules?.[0]?.sourceRegulation && (
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <div className="flex flex-col items-center">
+                          <span className="text-lg font-bold">{group.policies.length}</span>
+                          <span className="text-[10px] text-muted-foreground">Total Policies</span>
+                        </div>
+                        <div className="flex flex-col items-center">
+                          <span className="text-lg font-bold text-emerald-600 dark:text-emerald-400">{group.activeCount}</span>
+                          <span className="text-[10px] text-muted-foreground">Active</span>
+                        </div>
+                        <div className="flex flex-col items-center">
+                          <span className={`text-lg font-bold ${coverage >= 80 ? "text-emerald-600 dark:text-emerald-400" : coverage >= 50 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"}`}>{coverage}%</span>
+                          <span className="text-[10px] text-muted-foreground">Coverage</span>
+                        </div>
+                        <div className="flex flex-col items-center">
+                          <span className="text-[11px] font-medium">{group.lastReview ? new Date(group.lastReview).toLocaleDateString() : "N/A"}</span>
+                          <span className="text-[10px] text-muted-foreground">Last Review</span>
+                        </div>
+                      </div>
+                    </div>
+                    {regDetail && (
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <Badge variant="outline" className={`text-[10px] ${CATEGORY_COLORS[regDetail.category] || ""}`}>{regDetail.category.replace("_", " ")}</Badge>
+                        {regDetail.jurisdictions.map(j => (
+                          <Badge key={j} variant="outline" className="text-[10px]">
+                            <Globe className="w-3 h-3 mr-0.5" />{j}
+                          </Badge>
+                        ))}
+                        <Badge variant="outline" className="text-[10px]">
+                          <FileText className="w-3 h-3 mr-0.5" />{regDetail.requirements.length} requirements
+                        </Badge>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {group.policies.length > 0 ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pl-4">
+                    {group.policies.map((policy) => {
+                      const DIcon = domainIcons[policy.domain] || Shield;
+                      return (
+                        <Card key={policy.id} className="hover-elevate cursor-pointer" onClick={() => setSelectedPolicyId(policy.id)} data-testid={`card-policy-${policy.id}`}>
+                          <CardContent className="p-4 flex flex-col gap-3">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <div className="w-8 h-8 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
+                                  <DIcon className="w-4 h-4 text-primary" />
+                                </div>
+                                <div className="flex flex-col min-w-0">
+                                  <span className="text-sm font-semibold truncate">{policy.name}</span>
+                                  <span className="text-[11px] text-muted-foreground capitalize">{policy.domain.replace(/_/g, " ")} | v{policy.version}</span>
+                                </div>
+                              </div>
+                              <StatusBadge status={policy.status} />
+                            </div>
+                            {policy.description && (
+                              <p className="text-xs text-muted-foreground line-clamp-2">{policy.description}</p>
+                            )}
+                            <div className="flex items-center gap-2 pt-1 border-t flex-wrap">
+                              <Badge variant="outline" className="text-[10px] capitalize">{policy.scopeType}</Badge>
                               <Badge variant="outline" className="text-[10px] gap-1">
                                 <Scale className="w-3 h-3" />
-                                {(policy as any).policyJson.rules[0].sourceRegulation}
+                                {group.regulation}
                               </Badge>
-                            )}
-                            {(policy as any).versionHistory && Array.isArray((policy as any).versionHistory) && (
-                              <Badge variant="secondary" className="text-[10px]">{((policy as any).versionHistory as any[]).length} prior versions</Badge>
-                            )}
-                            <span className="text-[10px] text-muted-foreground ml-auto" data-testid={`text-policy-date-${policy.id}`}>
-                              {(() => {
-                                const vh = (policy as any).versionHistory;
-                                if (vh && Array.isArray(vh) && vh.length > 0) {
-                                  const last = vh[vh.length - 1];
-                                  return `Updated ${last.changedAt ? new Date(last.changedAt).toLocaleDateString() : "N/A"}`;
-                                }
-                                return policy.createdAt ? `Created ${new Date(policy.createdAt).toLocaleDateString()}` : "";
-                              })()}
-                            </span>
-                          </div>
-                          {(policy as any).versionHistory && Array.isArray((policy as any).versionHistory) && ((policy as any).versionHistory as any[]).length > 0 && (
-                            <div className="flex flex-col gap-1">
-                              <button
-                                className="text-[11px] text-muted-foreground underline cursor-pointer text-left"
-                                onClick={() => setExpandedVersions(prev => ({...prev, [policy.id]: !prev[policy.id]}))}
-                                data-testid={`button-version-history-${policy.id}`}
-                              >
-                                {expandedVersions[policy.id] ? "Hide version history" : `Show ${((policy as any).versionHistory as any[]).length} prior versions`}
-                              </button>
-                              {expandedVersions[policy.id] && (
-                                <div className="flex flex-col gap-1 pl-2 border-l-2 border-muted mt-1">
-                                  {((policy as any).versionHistory as any[]).map((vh: any, i: number) => (
-                                    <div key={i} className="text-[11px] text-muted-foreground">
-                                      <span className="font-medium">v{vh.version}</span> - {vh.changedBy || "system"} - {vh.changedAt ? new Date(vh.changedAt).toLocaleDateString() : "N/A"}
-                                      {vh.summary && <span className="ml-1">({vh.summary})</span>}
-                                    </div>
-                                  ))}
-                                </div>
+                              {(policy as any).versionHistory && Array.isArray((policy as any).versionHistory) && (
+                                <Badge variant="secondary" className="text-[10px]">{((policy as any).versionHistory as any[]).length} prior versions</Badge>
                               )}
+                              <span className="text-[10px] text-muted-foreground ml-auto" data-testid={`text-policy-date-${policy.id}`}>
+                                {(() => {
+                                  const vh = (policy as any).versionHistory;
+                                  if (vh && Array.isArray(vh) && vh.length > 0) {
+                                    const last = vh[vh.length - 1];
+                                    return `Updated ${last.changedAt ? new Date(last.changedAt).toLocaleDateString() : "N/A"}`;
+                                  }
+                                  return policy.createdAt ? `Created ${new Date(policy.createdAt).toLocaleDateString()}` : "";
+                                })()}
+                              </span>
                             </div>
-                          )}
-                        </CardContent>
-                      </Card>
-                    );
-                  })}
-                </div>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 pl-4 py-3 text-sm text-muted-foreground">
+                    <AlertTriangle className="w-4 h-4" />
+                    No policies linked to this regulation. Use Policy Packs or Generate Policies to create coverage.
+                  </div>
+                )}
               </div>
             );
           })}
+
+          {filteredRegGroupPolicies.ungrouped.length > 0 && (
+            <div className="flex flex-col gap-3" data-testid="regulation-group-unlinked">
+              <div className="flex items-center gap-2 pt-2 border-t">
+                <FileCode className="w-4 h-4 text-muted-foreground" />
+                <span className="text-sm font-semibold">Unlinked Policies</span>
+                <Badge variant="secondary" className="text-[10px]">{filteredRegGroupPolicies.ungrouped.length}</Badge>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pl-4">
+                {filteredRegGroupPolicies.ungrouped.map((policy) => {
+                  const DIcon = domainIcons[policy.domain] || Shield;
+                  return (
+                    <Card key={policy.id} className="hover-elevate cursor-pointer" onClick={() => setSelectedPolicyId(policy.id)} data-testid={`card-policy-${policy.id}`}>
+                      <CardContent className="p-4 flex flex-col gap-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
+                              <DIcon className="w-4 h-4 text-primary" />
+                            </div>
+                            <div className="flex flex-col min-w-0">
+                              <span className="text-sm font-semibold truncate">{policy.name}</span>
+                              <span className="text-[11px] text-muted-foreground capitalize">{policy.domain.replace(/_/g, " ")} | v{policy.version}</span>
+                            </div>
+                          </div>
+                          <StatusBadge status={policy.status} />
+                        </div>
+                        {policy.description && (
+                          <p className="text-xs text-muted-foreground line-clamp-2">{policy.description}</p>
+                        )}
+                        <div className="flex items-center gap-2 pt-1 border-t flex-wrap">
+                          <Badge variant="outline" className="text-[10px] capitalize">{policy.scopeType}</Badge>
+                          <Badge variant="outline" className="text-[10px] gap-1 bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20">
+                            <AlertTriangle className="w-3 h-3" />
+                            No regulation linked
+                          </Badge>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {filtered?.length === 0 && (
             <div className="flex flex-col items-center justify-center py-12 gap-3">
               <Shield className="w-10 h-10 text-muted-foreground/50" />
               <p className="text-sm text-muted-foreground">No policies found</p>
             </div>
+          )}
+        </TabsContent>
+
+        <TabsContent value="compliance-matrix" className="mt-0 flex flex-col gap-4" data-testid="content-compliance-matrix">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2">
+              <Layers className="w-4 h-4 text-muted-foreground" />
+              <span className="text-sm font-medium">Policy Lineage &mdash; Regulation &rarr; Policy &rarr; Control</span>
+            </div>
+            <Badge variant="outline" className="text-[10px]" data-testid="badge-matrix-count">
+              {detectedRegulations.reduce((sum, r) => sum + r.requirements.length, 0)} traced requirements
+            </Badge>
+          </div>
+
+          {detectedRegulations.length === 0 ? (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-12 gap-4">
+                <Layers className="w-12 h-12 text-muted-foreground" />
+                <div className="text-center">
+                  <h3 className="text-lg font-semibold">No Compliance Matrix Available</h3>
+                  <p className="text-sm text-muted-foreground mt-1 max-w-md">
+                    Select an industry workspace to detect regulatory frameworks and build the compliance traceability matrix.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            detectedRegulations.map((reg) => {
+              const regPolicies = policies?.filter(p => {
+                const src = (p as any).policyJson?.rules?.[0]?.sourceRegulation;
+                return src === reg.name;
+              }) || [];
+              return (
+                <Card key={reg.id} data-testid={`card-matrix-${reg.id}`}>
+                  <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <Scale className="w-4 h-4 text-primary" />
+                      <CardTitle className="text-base">{reg.name}</CardTitle>
+                      <Badge variant="outline" className={`text-[10px] ${CATEGORY_COLORS[reg.category] || ""}`}>{reg.category.replace("_", " ")}</Badge>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline" className="text-[10px]">
+                        {regPolicies.length} policies linked
+                      </Badge>
+                      <Badge variant={regPolicies.length >= reg.requirements.length ? "default" : "outline"} className={`text-[10px] ${regPolicies.length >= reg.requirements.length ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" : "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20"}`}>
+                        {regPolicies.length >= reg.requirements.length ? "Full Coverage" : `${Math.round((regPolicies.length / Math.max(reg.requirements.length, 1)) * 100)}% Coverage`}
+                      </Badge>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="p-0">
+                    <Table data-testid={`table-matrix-${reg.id}`}>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-[140px]">Requirement</TableHead>
+                          <TableHead>Description</TableHead>
+                          <TableHead className="w-[100px]">Severity</TableHead>
+                          <TableHead className="w-[200px]">Implementing Policy</TableHead>
+                          <TableHead className="w-[160px]">ALMP Control</TableHead>
+                          <TableHead className="w-[80px]">Status</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {reg.requirements.map((req) => {
+                          const linkedPolicy = regPolicies.find(p =>
+                            p.name.toLowerCase().includes(req.category.toLowerCase()) ||
+                            p.description?.toLowerCase().includes(req.title.toLowerCase().split(" ").slice(0, 3).join(" "))
+                          ) || regPolicies[0];
+                          const controlType = linkedPolicy
+                            ? ((linkedPolicy as any).policyJson?.rules?.[0]?.type || "enforcement_rule")
+                            : null;
+                          return (
+                            <TableRow key={req.id} data-testid={`row-matrix-${req.id}`}>
+                              <TableCell className="text-xs font-medium">
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="font-mono text-[10px] text-muted-foreground">{req.id.toUpperCase()}</span>
+                                  <span>{req.title}</span>
+                                </div>
+                              </TableCell>
+                              <TableCell className="text-xs text-muted-foreground max-w-xs truncate">{req.description}</TableCell>
+                              <TableCell>
+                                <Badge variant="outline" className={`text-[10px] ${SEVERITY_COLORS[req.severity] || ""}`}>{req.severity}</Badge>
+                              </TableCell>
+                              <TableCell>
+                                {linkedPolicy ? (
+                                  <button
+                                    className="text-xs text-left hover:underline cursor-pointer flex items-center gap-1"
+                                    onClick={() => setSelectedPolicyId(linkedPolicy.id)}
+                                    data-testid={`link-policy-${req.id}`}
+                                  >
+                                    <Shield className="w-3 h-3 text-primary shrink-0" />
+                                    <span className="truncate">{linkedPolicy.name}</span>
+                                  </button>
+                                ) : (
+                                  <span className="text-xs text-muted-foreground flex items-center gap-1">
+                                    <AlertTriangle className="w-3 h-3 text-amber-500" />
+                                    No policy linked
+                                  </span>
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                {controlType ? (
+                                  <Badge variant="outline" className="text-[10px] font-mono">{controlType.replace(/_/g, " ")}</Badge>
+                                ) : (
+                                  <span className="text-[10px] text-muted-foreground">-</span>
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                {linkedPolicy ? (
+                                  <CheckCircle className="w-4 h-4 text-emerald-500" />
+                                ) : (
+                                  <AlertTriangle className="w-4 h-4 text-amber-500" />
+                                )}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                  <CardFooter className="flex items-center justify-between gap-2 p-3 flex-wrap">
+                    <span className="text-[11px] text-muted-foreground">
+                      Evidence artifacts: {regPolicies.length} policy definitions, {regPolicies.filter(p => p.status === "active").length} active enforcements
+                    </span>
+                    <Button variant="outline" size="sm" data-testid={`button-export-matrix-${reg.id}`}>
+                      <Download className="w-3.5 h-3.5 mr-1" /> Export Matrix
+                    </Button>
+                  </CardFooter>
+                </Card>
+              );
+            })
           )}
         </TabsContent>
 
@@ -1832,11 +2156,89 @@ export default function Governance() {
             <StatCard title="Findings with Issues" value={complianceStats.issueFindings} icon={AlertTriangle} variant={complianceStats.issueFindings > 0 ? "warning" : "default"} testId="stat-issue-findings" />
           </div>
 
+          {detectedRegulations.length > 0 && (
+            <Card data-testid="card-one-click-reports">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Sparkles className="w-4 h-4" />
+                  One-Click Compliance Report Generation
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-4">
+                <p className="text-xs text-muted-foreground">
+                  Generate auditor-ready compliance reports per regulatory framework. Each report includes control inventory, evidence artifacts, test results, exception log, and gap analysis with regulation-section cross-references.
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                  {detectedRegulations.map((reg) => {
+                    const regPolicies = policies?.filter(p => (p as any).policyJson?.rules?.[0]?.sourceRegulation === reg.name) || [];
+                    const activePols = regPolicies.filter(p => p.status === "active").length;
+                    const coverage = reg.requirements.length > 0 ? Math.round((regPolicies.length / reg.requirements.length) * 100) : 0;
+                    const gaps = reg.requirements.length - regPolicies.length;
+                    const existingReport = complianceReports?.find(r => r.framework === reg.name || r.framework === reg.id);
+                    return (
+                      <Card key={reg.id} className="hover-elevate" data-testid={`card-generate-report-${reg.id}`}>
+                        <CardContent className="p-3 flex flex-col gap-2">
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <div className="flex items-center gap-1.5">
+                              <Scale className="w-4 h-4 text-primary shrink-0" />
+                              <span className="text-sm font-semibold">{reg.name}</span>
+                            </div>
+                            <Badge variant="outline" className={`text-[10px] ${coverage >= 80 ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" : coverage >= 50 ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20" : "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20"}`}>
+                              {coverage}% coverage
+                            </Badge>
+                          </div>
+                          <div className="grid grid-cols-4 gap-1 text-center">
+                            <div className="flex flex-col">
+                              <span className="text-sm font-bold">{regPolicies.length}</span>
+                              <span className="text-[9px] text-muted-foreground">Policies</span>
+                            </div>
+                            <div className="flex flex-col">
+                              <span className="text-sm font-bold text-emerald-600 dark:text-emerald-400">{activePols}</span>
+                              <span className="text-[9px] text-muted-foreground">Enforcing</span>
+                            </div>
+                            <div className="flex flex-col">
+                              <span className="text-sm font-bold">{reg.requirements.length}</span>
+                              <span className="text-[9px] text-muted-foreground">Controls</span>
+                            </div>
+                            <div className="flex flex-col">
+                              <span className={`text-sm font-bold ${gaps > 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`}>{Math.max(gaps, 0)}</span>
+                              <span className="text-[9px] text-muted-foreground">Gaps</span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 pt-1 flex-wrap">
+                            <Button size="sm" className="flex-1" data-testid={`button-generate-framework-report-${reg.id}`}
+                              onClick={() => toast({ title: "Report Generation Queued", description: `Generating ${reg.name} compliance report with ${reg.requirements.length} controls, evidence artifacts, and gap analysis...` })}
+                            >
+                              <FileText className="w-3.5 h-3.5 mr-1" /> Generate Report
+                            </Button>
+                            {existingReport && (
+                              <Badge variant="outline" className="text-[10px]">
+                                Last: {existingReport.createdAt ? new Date(existingReport.createdAt).toLocaleDateString() : "N/A"}
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1 flex-wrap">
+                            <Badge variant="outline" className="text-[9px]">Control Inventory</Badge>
+                            <Badge variant="outline" className="text-[9px]">Evidence Artifacts</Badge>
+                            <Badge variant="outline" className="text-[9px]">Test Results</Badge>
+                            <Badge variant="outline" className="text-[9px]">Exception Log</Badge>
+                            <Badge variant="outline" className="text-[9px]">Gap Analysis</Badge>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           <div className="flex flex-col gap-4">
             {complianceReports?.map((report) => {
               const findings = (report.findings as Array<{ control: string; title: string; status: string; evidence: string }>) || [];
               const evidencePackage = report.evidencePackage as Record<string, any> | null;
               const isExpanded = expandedFindings[report.id] || false;
+              const regDetail = detectedRegulations.find(r => r.name === report.framework || r.id === report.framework);
               return (
                 <Card key={report.id} data-testid={`card-report-${report.id}`}>
                   <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3 flex-wrap">
@@ -1849,6 +2251,11 @@ export default function Governance() {
                         {report.framework.replace(/_/g, " ")}
                       </Badge>
                       <span className="text-sm font-semibold truncate">{report.title}</span>
+                      {regDetail && (
+                        <Badge variant="outline" className="text-[10px]">
+                          {regDetail.requirements.length} regulation sections
+                        </Badge>
+                      )}
                     </div>
                     <div className="flex items-center gap-2 shrink-0 flex-wrap">
                       <StatusBadge status={report.status} />
@@ -1878,7 +2285,33 @@ export default function Governance() {
                       </div>
                     </div>
                   </CardHeader>
-                  <CardContent className="p-4 pt-0 flex flex-col gap-2">
+                  <CardContent className="p-4 pt-0 flex flex-col gap-3">
+                    {regDetail && (
+                      <div className="flex flex-col gap-2 p-3 rounded-md bg-muted/30" data-testid={`section-report-summary-${report.id}`}>
+                        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-center">
+                          <div className="flex flex-col">
+                            <span className="text-xs font-bold">{regDetail.requirements.length}</span>
+                            <span className="text-[9px] text-muted-foreground">Control Inventory</span>
+                          </div>
+                          <div className="flex flex-col">
+                            <span className="text-xs font-bold">{findings.filter(f => f.status === "pass").length}</span>
+                            <span className="text-[9px] text-muted-foreground">Evidence Collected</span>
+                          </div>
+                          <div className="flex flex-col">
+                            <span className="text-xs font-bold">{findings.length}</span>
+                            <span className="text-[9px] text-muted-foreground">Test Results</span>
+                          </div>
+                          <div className="flex flex-col">
+                            <span className="text-xs font-bold text-amber-600 dark:text-amber-400">{findings.filter(f => f.status === "warning").length}</span>
+                            <span className="text-[9px] text-muted-foreground">Exceptions</span>
+                          </div>
+                          <div className="flex flex-col">
+                            <span className={`text-xs font-bold ${findings.filter(f => f.status === "fail").length > 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`}>{findings.filter(f => f.status === "fail").length}</span>
+                            <span className="text-[9px] text-muted-foreground">Gaps Found</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                     <Button
                       variant="ghost"
                       size="sm"
@@ -1887,19 +2320,29 @@ export default function Governance() {
                       data-testid={`button-toggle-findings-${report.id}`}
                     >
                       {isExpanded ? <ChevronDown className="w-4 h-4 mr-1" /> : <ChevronRight className="w-4 h-4 mr-1" />}
-                      {findings.length} Findings
+                      {findings.length} Findings {regDetail ? `(${regDetail.name} cross-ref)` : ""}
                     </Button>
                     {isExpanded && (
                       <div className="flex flex-col gap-2 ml-2">
                         {findings.map((finding, fi) => {
                           const evidenceKey = `${report.id}-${fi}`;
                           const showEvidence = expandedEvidence[evidenceKey] || false;
+                          const matchedReq = regDetail?.requirements.find(r =>
+                            r.category.toLowerCase() === finding.control.toLowerCase() ||
+                            r.title.toLowerCase().includes(finding.title.toLowerCase().split(" ").slice(0, 2).join(" "))
+                          );
                           return (
                             <div key={fi} className="flex flex-col gap-1 p-2 rounded-md bg-muted/30" data-testid={`finding-${report.id}-${fi}`}>
                               <div className="flex items-center justify-between gap-2 flex-wrap">
                                 <div className="flex items-center gap-2">
                                   <Badge variant="outline" className="text-[10px] font-mono">{finding.control}</Badge>
                                   <span className="text-xs font-medium">{finding.title}</span>
+                                  {matchedReq && (
+                                    <Badge variant="outline" className="text-[9px] gap-0.5">
+                                      <ExternalLink className="w-2.5 h-2.5" />
+                                      {matchedReq.id.toUpperCase()}
+                                    </Badge>
+                                  )}
                                 </div>
                                 <div className="flex items-center gap-1">
                                   {finding.status === "pass" && <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />}
@@ -2750,8 +3193,93 @@ export default function Governance() {
   );
 }
 
+function IndustryTestScenariosSection({ industry, policyDomain, policyFramework, onUseScenario }: {
+  industry: ReturnType<typeof useIndustry>["industry"];
+  policyDomain: string;
+  policyFramework: string;
+  onUseScenario: (scenario: IndustryTestScenario) => void;
+}) {
+  const [expandedJsonIds, setExpandedJsonIds] = useState<Record<string, boolean>>({});
+  const industryId = industry?.id || "financial_services";
+  const scenarios = INDUSTRY_TEST_SCENARIOS[industryId] || [];
+  const relevantScenarios = scenarios.filter(s =>
+    s.domain === policyDomain ||
+    policyFramework.toLowerCase().includes(s.regulation.toLowerCase()) ||
+    s.regulation.toLowerCase().includes(policyFramework.toLowerCase())
+  );
+  const displayScenarios = relevantScenarios.length > 0 ? relevantScenarios : scenarios;
+  if (displayScenarios.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-3 mt-4" data-testid="section-industry-test-scenarios">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-2">
+          <Sparkles className="w-4 h-4 text-primary" />
+          <span className="text-sm font-semibold">Industry Test Scenarios</span>
+          {industry && (
+            <Badge variant="outline" className="text-[10px]">{industry.label}</Badge>
+          )}
+        </div>
+        <span className="text-[11px] text-muted-foreground" data-testid="text-scenario-count">
+          {relevantScenarios.length > 0
+            ? `${relevantScenarios.length} relevant scenarios`
+            : `${displayScenarios.length} available (all industry scenarios)`
+          }
+        </span>
+      </div>
+      <div className="flex flex-col gap-2">
+        {displayScenarios.map((scenario) => {
+          const jsonExpanded = expandedJsonIds[scenario.id] || false;
+          return (
+            <Card key={scenario.id} data-testid={`card-scenario-${scenario.id}`}>
+              <CardContent className="p-3 flex flex-col gap-2">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="text-[10px] gap-1">
+                      <Scale className="w-3 h-3" />{scenario.regulation}
+                    </Badge>
+                    <span className="text-sm font-medium" data-testid={`text-scenario-name-${scenario.id}`}>{scenario.name}</span>
+                  </div>
+                  <Badge variant="outline" className={`text-[10px] ${scenario.expectedOutcome === "block" ? "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20" : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"}`} data-testid={`badge-expected-${scenario.id}`}>
+                    Expected: {scenario.expectedOutcome}
+                  </Badge>
+                </div>
+                <p className="text-xs text-muted-foreground" data-testid={`text-scenario-desc-${scenario.id}`}>{scenario.scenario}</p>
+                <div className="flex items-center gap-2 pt-1 flex-wrap">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onUseScenario(scenario)}
+                    data-testid={`button-use-scenario-${scenario.id}`}
+                  >
+                    <Plus className="w-3.5 h-3.5 mr-1" /> Use as Test Case
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setExpandedJsonIds((prev) => ({ ...prev, [scenario.id]: !prev[scenario.id] }))}
+                    data-testid={`button-view-input-${scenario.id}`}
+                  >
+                    {jsonExpanded ? <ChevronDown className="w-3.5 h-3.5 mr-1" /> : <ChevronRight className="w-3.5 h-3.5 mr-1" />}
+                    View input JSON
+                  </Button>
+                </div>
+                {jsonExpanded && (
+                  <pre className="text-[10px] bg-muted/50 p-2 rounded-md font-mono overflow-x-auto" data-testid={`pre-scenario-json-${scenario.id}`}>
+                    {JSON.stringify(scenario.inputJson, null, 2)}
+                  </pre>
+                )}
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function PolicyDetailDialog({ policyId, open, onOpenChange }: { policyId: string; open: boolean; onOpenChange: (open: boolean) => void }) {
   const { toast } = useToast();
+  const { industry } = useIndustry();
   const { data: policy, isLoading: policyLoading } = useQuery<Policy>({
     queryKey: ['/api/policies', policyId],
     enabled: !!policyId && open,
@@ -3144,6 +3672,19 @@ function PolicyDetailDialog({ policyId, open, onOpenChange }: { policyId: string
             {(!testCases || testCases.length === 0) && (
               <p className="text-sm text-muted-foreground text-center py-6">No test cases found</p>
             )}
+
+            <IndustryTestScenariosSection
+              industry={industry}
+              policyDomain={policy.domain}
+              policyFramework={policy.framework}
+              onUseScenario={(scenario) => {
+                setNewTestName(scenario.name);
+                setNewTestDescription(scenario.scenario);
+                setNewTestExpected(scenario.expectedOutcome);
+                setNewTestInput(JSON.stringify(scenario.inputJson, null, 2));
+                setAddTestOpen(true);
+              }}
+            />
           </TabsContent>
 
           <TabsContent value="simulate" className="mt-4 flex flex-col gap-4">
