@@ -39,6 +39,14 @@ import {
   Globe,
   ExternalLink,
   Building2,
+  Timer,
+  Link2,
+  GitBranch,
+  FileJson,
+  FileSpreadsheet,
+  Activity,
+  ArrowRight,
+  Unlink,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -93,6 +101,291 @@ const domainIcons: Record<string, typeof Shield> = {
   allowed_actions: CheckCircle,
   content_boundaries: AlertTriangle,
 };
+
+interface RetentionRule {
+  regulation: string;
+  retentionYears: number;
+  description: string;
+  eventTypes: string[];
+}
+
+const INDUSTRY_RETENTION_POLICIES: Record<string, RetentionRule[]> = {
+  healthcare: [
+    { regulation: "HIPAA", retentionYears: 6, description: "Protected Health Information access and disclosure records", eventTypes: ["phi_access", "data_access", "create", "update", "delete"] },
+    { regulation: "21 CFR Part 11", retentionYears: 7, description: "Electronic records and signatures for FDA-regulated activities", eventTypes: ["approval", "signature", "validation", "create"] },
+    { regulation: "HITECH Act", retentionYears: 6, description: "Health IT audit trails and breach notification records", eventTypes: ["security_event", "breach", "notification"] },
+  ],
+  financial_services: [
+    { regulation: "BSA/AML", retentionYears: 5, description: "Bank Secrecy Act anti-money laundering transaction records", eventTypes: ["transaction", "screening", "alert", "filing"] },
+    { regulation: "MiFID II", retentionYears: 10, description: "Trade records, order data, and communication records", eventTypes: ["trade", "order", "communication", "execution", "create", "update"] },
+    { regulation: "SOX", retentionYears: 7, description: "Financial reporting and audit workpapers", eventTypes: ["financial_report", "audit", "approval", "create"] },
+    { regulation: "SEC Rule 17g", retentionYears: 10, description: "NRSRO rating action records and methodology disclosures", eventTypes: ["rating_action", "methodology", "disclosure", "committee"] },
+    { regulation: "Dodd-Frank", retentionYears: 5, description: "Swap and derivatives transaction records", eventTypes: ["derivative", "swap", "clearing", "reporting"] },
+  ],
+  insurance: [
+    { regulation: "NAIC Model Audit Rule", retentionYears: 7, description: "Internal audit and actuarial records", eventTypes: ["audit", "actuarial", "valuation", "create"] },
+    { regulation: "Solvency II", retentionYears: 7, description: "Risk management and ORSA documentation", eventTypes: ["risk_assessment", "capital", "orsa", "approval"] },
+    { regulation: "GDPR (Claims)", retentionYears: 6, description: "Claims processing and policyholder data records", eventTypes: ["claim", "policyholder_data", "data_access"] },
+  ],
+  manufacturing: [
+    { regulation: "ISO 9001", retentionYears: 5, description: "Quality management system records", eventTypes: ["quality", "inspection", "nonconformance", "create"] },
+    { regulation: "FDA 21 CFR 820", retentionYears: 7, description: "Device manufacturing and design history records", eventTypes: ["design_control", "production", "validation", "complaint"] },
+    { regulation: "OSHA Records", retentionYears: 5, description: "Occupational safety and health incident records", eventTypes: ["safety_incident", "training", "inspection"] },
+  ],
+  retail: [
+    { regulation: "PCI DSS", retentionYears: 1, description: "Payment card data access and security event logs", eventTypes: ["payment", "card_data", "security_event", "access"] },
+    { regulation: "CCPA/CPRA", retentionYears: 2, description: "Consumer data access requests and opt-out records", eventTypes: ["data_request", "opt_out", "consent", "delete"] },
+    { regulation: "GDPR", retentionYears: 6, description: "Personal data processing activity records", eventTypes: ["data_processing", "consent", "erasure", "access_request"] },
+  ],
+  technology_saas: [
+    { regulation: "SOC 2", retentionYears: 7, description: "Security, availability, and processing integrity evidence", eventTypes: ["security_event", "access", "change", "incident"] },
+    { regulation: "EU AI Act", retentionYears: 10, description: "High-risk AI system lifecycle and conformity records", eventTypes: ["ai_decision", "model_update", "risk_assessment", "validation", "create", "update"] },
+    { regulation: "GDPR", retentionYears: 6, description: "Data processing and subject access request records", eventTypes: ["data_processing", "consent", "erasure", "access_request"] },
+  ],
+};
+
+interface ComplianceFramework {
+  id: string;
+  name: string;
+  shortName: string;
+  industry: string;
+  color: string;
+}
+
+const COMPLIANCE_FRAMEWORKS: ComplianceFramework[] = [
+  { id: "hipaa", name: "HIPAA Privacy & Security", shortName: "HIPAA", industry: "healthcare", color: "bg-blue-500/15 text-blue-600 dark:text-blue-400" },
+  { id: "fda-21cfr", name: "FDA 21 CFR Part 11", shortName: "21 CFR 11", industry: "healthcare", color: "bg-purple-500/15 text-purple-600 dark:text-purple-400" },
+  { id: "hitech", name: "HITECH Act", shortName: "HITECH", industry: "healthcare", color: "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400" },
+  { id: "bsa-aml", name: "BSA/AML Compliance", shortName: "BSA/AML", industry: "financial_services", color: "bg-amber-500/15 text-amber-600 dark:text-amber-400" },
+  { id: "mifid2", name: "MiFID II Records", shortName: "MiFID II", industry: "financial_services", color: "bg-blue-500/15 text-blue-600 dark:text-blue-400" },
+  { id: "sox", name: "SOX Audit Trail", shortName: "SOX", industry: "financial_services", color: "bg-red-500/15 text-red-600 dark:text-red-400" },
+  { id: "sec-17g", name: "SEC Rule 17g NRSRO", shortName: "SEC 17g", industry: "financial_services", color: "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400" },
+  { id: "dodd-frank", name: "Dodd-Frank Title IX", shortName: "Dodd-Frank", industry: "financial_services", color: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" },
+  { id: "naic", name: "NAIC Model Audit Rule", shortName: "NAIC", industry: "insurance", color: "bg-amber-500/15 text-amber-600 dark:text-amber-400" },
+  { id: "solvency2", name: "Solvency II", shortName: "Solvency II", industry: "insurance", color: "bg-blue-500/15 text-blue-600 dark:text-blue-400" },
+  { id: "iso9001", name: "ISO 9001 Quality", shortName: "ISO 9001", industry: "manufacturing", color: "bg-blue-500/15 text-blue-600 dark:text-blue-400" },
+  { id: "fda-820", name: "FDA 21 CFR 820", shortName: "CFR 820", industry: "manufacturing", color: "bg-purple-500/15 text-purple-600 dark:text-purple-400" },
+  { id: "pci-dss", name: "PCI DSS", shortName: "PCI DSS", industry: "retail", color: "bg-red-500/15 text-red-600 dark:text-red-400" },
+  { id: "ccpa", name: "CCPA/CPRA Privacy", shortName: "CCPA", industry: "retail", color: "bg-amber-500/15 text-amber-600 dark:text-amber-400" },
+  { id: "gdpr", name: "GDPR Data Protection", shortName: "GDPR", industry: "retail", color: "bg-blue-500/15 text-blue-600 dark:text-blue-400" },
+  { id: "soc2", name: "SOC 2 Type II", shortName: "SOC 2", industry: "technology_saas", color: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" },
+  { id: "eu-ai-act", name: "EU AI Act", shortName: "EU AI Act", industry: "technology_saas", color: "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400" },
+];
+
+interface RegulatoryExportFormat {
+  id: string;
+  name: string;
+  description: string;
+  fileExtension: string;
+  industry: string;
+  icon: typeof FileJson;
+}
+
+const REGULATORY_EXPORT_FORMATS: RegulatoryExportFormat[] = [
+  { id: "csv", name: "Standard CSV", description: "Comma-separated values for general audit analysis", fileExtension: "csv", industry: "all", icon: FileSpreadsheet },
+  { id: "sar", name: "SAR Filing (FinCEN)", description: "Suspicious Activity Report format for FinCEN filing", fileExtension: "json", industry: "financial_services", icon: FileJson },
+  { id: "xbrl", name: "XBRL Financial Report", description: "eXtensible Business Reporting Language for regulatory reporting", fileExtension: "xml", industry: "financial_services", icon: FileCode },
+  { id: "fhir", name: "FHIR AuditEvent", description: "HL7 FHIR AuditEvent resource for healthcare interoperability", fileExtension: "json", industry: "healthcare", icon: FileJson },
+  { id: "stix", name: "OASIS STIX Bundle", description: "Structured Threat Information eXpression for security incidents", fileExtension: "json", industry: "technology_saas", icon: Shield },
+  { id: "naic-report", name: "NAIC Audit Report", description: "National Association of Insurance Commissioners audit format", fileExtension: "json", industry: "insurance", icon: FileJson },
+];
+
+function getComplianceFrameworksForEvent(event: { action: string; objectType: string; details?: string | null }, industryId: string | null): ComplianceFramework[] {
+  if (!industryId) return [];
+  const available = COMPLIANCE_FRAMEWORKS.filter((f) => f.industry === industryId);
+  const retentionRules = INDUSTRY_RETENTION_POLICIES[industryId] || [];
+  const actionLower = event.action.toLowerCase();
+  const objectLower = event.objectType.toLowerCase();
+  const detailsLower = (event.details || "").toLowerCase();
+  const matched = new Set<string>();
+  for (const rule of retentionRules) {
+    for (const et of rule.eventTypes) {
+      if (actionLower.includes(et) || objectLower.includes(et) || detailsLower.includes(et)) {
+        const fw = available.find((f) => f.name.toLowerCase().includes(rule.regulation.toLowerCase()) || rule.regulation.toLowerCase().includes(f.shortName.toLowerCase()));
+        if (fw) matched.add(fw.id);
+      }
+    }
+  }
+  if (matched.size === 0 && available.length > 0) {
+    matched.add(available[0].id);
+  }
+  return available.filter((f) => matched.has(f.id));
+}
+
+function getRetentionExpiryForEvent(event: { action: string; objectType: string; createdAt?: Date | string | null }, industryId: string | null): { maxYears: number; regulation: string; expiresAt: Date } | null {
+  if (!industryId || !event.createdAt) return null;
+  const rules = INDUSTRY_RETENTION_POLICIES[industryId] || [];
+  if (rules.length === 0) return null;
+  const actionLower = event.action.toLowerCase();
+  const objectLower = event.objectType.toLowerCase();
+  let maxYears = 0;
+  let maxRegulation = rules[0].regulation;
+  for (const rule of rules) {
+    let matches = false;
+    for (const et of rule.eventTypes) {
+      if (actionLower.includes(et) || objectLower.includes(et)) { matches = true; break; }
+    }
+    if (matches && rule.retentionYears > maxYears) {
+      maxYears = rule.retentionYears;
+      maxRegulation = rule.regulation;
+    }
+  }
+  if (maxYears === 0) {
+    maxYears = Math.max(...rules.map((r) => r.retentionYears));
+    maxRegulation = rules.find((r) => r.retentionYears === maxYears)?.regulation || rules[0].regulation;
+  }
+  const created = new Date(event.createdAt);
+  const expiresAt = new Date(created);
+  expiresAt.setFullYear(expiresAt.getFullYear() + maxYears);
+  return { maxYears, regulation: maxRegulation, expiresAt };
+}
+
+interface TraceStep {
+  eventId: string;
+  agentName: string;
+  action: string;
+  objectType: string;
+  objectId: string;
+  timestamp: string;
+  details: string;
+  status: "completed" | "in_progress" | "failed";
+}
+
+function buildTraceFromEvents(events: AuditEvent[], targetCorrelationId: string): TraceStep[] {
+  const correlated = events.filter((e) => e.correlationId === targetCorrelationId);
+  return correlated
+    .sort((a, b) => {
+      const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return tA - tB;
+    })
+    .map((e) => ({
+      eventId: e.id,
+      agentName: e.actorId || e.actorType,
+      action: e.action,
+      objectType: e.objectType,
+      objectId: e.objectId || "",
+      timestamp: e.createdAt ? new Date(e.createdAt).toISOString() : "",
+      details: e.details || "",
+      status: e.action.toLowerCase().includes("fail") || e.action.toLowerCase().includes("error") ? "failed" as const : "completed" as const,
+    }));
+}
+
+function generateRegulatoryExport(events: AuditEvent[], format: string, industryId: string | null): { content: string; mimeType: string; filename: string } {
+  const date = new Date().toISOString().split("T")[0];
+  const records = events.map((e) => ({
+    id: e.id,
+    timestamp: e.createdAt ? new Date(e.createdAt).toISOString() : "",
+    action: e.action,
+    actorType: e.actorType,
+    actorId: e.actorId || "",
+    objectType: e.objectType,
+    objectId: e.objectId || "",
+    details: e.details || "",
+    hash: e.eventHash || "",
+  }));
+
+  switch (format) {
+    case "sar": {
+      const sarReport = {
+        reportType: "SAR",
+        filingInstitution: "Nous Agent Orchestrator",
+        reportDate: new Date().toISOString(),
+        suspiciousActivity: records.filter((r) => r.action.toLowerCase().includes("violation") || r.action.toLowerCase().includes("blocked") || r.action.toLowerCase().includes("alert")),
+        allActivity: records,
+        narrativeSummary: `Automated SAR filing containing ${records.length} audit events for regulatory review.`,
+        fincenFormat: "BSA_E-Filing_v3",
+      };
+      return { content: JSON.stringify(sarReport, null, 2), mimeType: "application/json", filename: `sar-filing-${date}.json` };
+    }
+    case "xbrl": {
+      const xbrl = `<?xml version="1.0" encoding="UTF-8"?>
+<xbrl xmlns="http://www.xbrl.org/2003/instance" xmlns:audit="http://nous.ai/audit/2024">
+  <context id="audit-context">
+    <entity><identifier scheme="http://nous.ai">NousAgentOrchestrator</identifier></entity>
+    <period><startDate>${records[0]?.timestamp?.split("T")[0] || date}</startDate><endDate>${date}</endDate></period>
+  </context>
+${records.map((r) => `  <audit:event contextRef="audit-context">
+    <audit:id>${r.id}</audit:id>
+    <audit:timestamp>${r.timestamp}</audit:timestamp>
+    <audit:action>${r.action}</audit:action>
+    <audit:actor type="${r.actorType}">${r.actorId}</audit:actor>
+    <audit:object type="${r.objectType}">${r.objectId}</audit:object>
+    <audit:details>${r.details.replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c] || c)}</audit:details>
+    <audit:integrity>${r.hash}</audit:integrity>
+  </audit:event>`).join("\n")}
+</xbrl>`;
+      return { content: xbrl, mimeType: "application/xml", filename: `xbrl-audit-${date}.xml` };
+    }
+    case "fhir": {
+      const bundle = {
+        resourceType: "Bundle",
+        type: "collection",
+        timestamp: new Date().toISOString(),
+        entry: records.map((r) => ({
+          resource: {
+            resourceType: "AuditEvent",
+            type: { system: "http://dicom.nema.org/resources/ontology/DCM", code: "110100", display: "Application Activity" },
+            action: r.action.toLowerCase().includes("create") ? "C" : r.action.toLowerCase().includes("update") ? "U" : r.action.toLowerCase().includes("delete") ? "D" : "R",
+            recorded: r.timestamp,
+            outcome: r.action.toLowerCase().includes("fail") ? "4" : "0",
+            agent: [{ type: { text: r.actorType }, who: { display: r.actorId } }],
+            entity: [{ what: { reference: `${r.objectType}/${r.objectId}` }, type: { display: r.objectType } }],
+            source: { observer: { display: "Nous Agent Orchestrator" } },
+          },
+        })),
+      };
+      return { content: JSON.stringify(bundle, null, 2), mimeType: "application/json", filename: `fhir-audit-${date}.json` };
+    }
+    case "stix": {
+      const stixBundle = {
+        type: "bundle",
+        id: `bundle--${crypto.randomUUID?.() || Date.now()}`,
+        objects: records.map((r) => ({
+          type: "observed-data",
+          id: `observed-data--${r.id}`,
+          created: r.timestamp,
+          modified: r.timestamp,
+          first_observed: r.timestamp,
+          last_observed: r.timestamp,
+          number_observed: 1,
+          object_refs: [],
+          extensions: {
+            "extension-definition--audit-event": {
+              action: r.action,
+              actor_type: r.actorType,
+              actor_id: r.actorId,
+              object_type: r.objectType,
+              object_id: r.objectId,
+              details: r.details,
+              integrity_hash: r.hash,
+            },
+          },
+        })),
+      };
+      return { content: JSON.stringify(stixBundle, null, 2), mimeType: "application/json", filename: `stix-audit-${date}.json` };
+    }
+    case "naic-report": {
+      const naicReport = {
+        reportType: "NAIC_Model_Audit",
+        reportingEntity: "Nous Agent Orchestrator",
+        reportDate: new Date().toISOString(),
+        auditPeriod: { start: records[0]?.timestamp || "", end: records[records.length - 1]?.timestamp || "" },
+        totalEvents: records.length,
+        eventCategories: Object.entries(records.reduce((acc, r) => { acc[r.action] = (acc[r.action] || 0) + 1; return acc; }, {} as Record<string, number>)),
+        events: records,
+        attestation: "This report is generated in compliance with NAIC Model Audit Rule requirements.",
+      };
+      return { content: JSON.stringify(naicReport, null, 2), mimeType: "application/json", filename: `naic-audit-${date}.json` };
+    }
+    default: {
+      const headers = ["Date", "Action", "Actor Type", "Actor ID", "Object Type", "Object ID", "Details", "Hash"];
+      const rows = records.map((r) => [r.timestamp, r.action, r.actorType, r.actorId, r.objectType, r.objectId, r.details.replace(/"/g, '""'), r.hash]);
+      const csv = [headers.join(","), ...rows.map((r) => r.map((v) => `"${v}"`).join(","))].join("\n");
+      return { content: csv, mimeType: "text/csv", filename: `audit-events-${date}.csv` };
+    }
+  }
+}
 
 interface PolicyPackPolicy {
   name: string;
@@ -751,6 +1044,10 @@ export default function Governance() {
   const [auditActionFilter, setAuditActionFilter] = useState<string | null>(null);
   const [auditDateFilter, setAuditDateFilter] = useState("all");
   const [expandedEvent, setExpandedEvent] = useState<string | null>(null);
+  const [complianceFilter, setComplianceFilter] = useState<string | null>(null);
+  const [traceViewId, setTraceViewId] = useState<string | null>(null);
+  const [regulatoryExportOpen, setRegulatoryExportOpen] = useState(false);
+  const [selectedExportFormat, setSelectedExportFormat] = useState("csv");
   const [exceptionOpen, setExceptionOpen] = useState(false);
   const [expandedFindings, setExpandedFindings] = useState<Record<string, boolean>>({});
   const [expandedEvidence, setExpandedEvidence] = useState<Record<string, boolean>>({});
@@ -1127,16 +1424,54 @@ export default function Governance() {
       });
     }
 
+    if (complianceFilter) {
+      const industryId = industry?.id || null;
+      events = events.filter((e) => {
+        const frameworks = getComplianceFrameworksForEvent(e, industryId);
+        return frameworks.some((f) => f.id === complianceFilter);
+      });
+    }
+
     return events;
-  }, [auditEvents, auditObjectFilter, auditActionFilter, auditDateFilter]);
+  }, [auditEvents, auditObjectFilter, auditActionFilter, auditDateFilter, complianceFilter, industry]);
 
   const activeFilterCount = useMemo(() => {
     let count = 0;
     if (auditObjectFilter) count++;
     if (auditActionFilter) count++;
     if (auditDateFilter !== "all") count++;
+    if (complianceFilter) count++;
     return count;
-  }, [auditObjectFilter, auditActionFilter, auditDateFilter]);
+  }, [auditObjectFilter, auditActionFilter, auditDateFilter, complianceFilter]);
+
+  const industryRetentionRules = useMemo(() => {
+    if (!industry) return [];
+    return INDUSTRY_RETENTION_POLICIES[industry.id] || [];
+  }, [industry]);
+
+  const maxRetentionYears = useMemo(() => {
+    if (industryRetentionRules.length === 0) return 0;
+    return Math.max(...industryRetentionRules.map((r) => r.retentionYears));
+  }, [industryRetentionRules]);
+
+  const industryComplianceFrameworks = useMemo(() => {
+    if (!industry) return [];
+    return COMPLIANCE_FRAMEWORKS.filter((f) => f.industry === industry.id);
+  }, [industry]);
+
+  const availableExportFormats = useMemo(() => {
+    return REGULATORY_EXPORT_FORMATS.filter((f) => f.industry === "all" || f.industry === industry?.id);
+  }, [industry]);
+
+  const traceSteps = useMemo(() => {
+    if (!traceViewId || !auditEvents) return [];
+    return buildTraceFromEvents(auditEvents, traceViewId);
+  }, [traceViewId, auditEvents]);
+
+  const correlatedEventCount = useMemo(() => {
+    if (!auditEvents) return 0;
+    return auditEvents.filter((e) => e.correlationId).length;
+  }, [auditEvents]);
 
   const enforcementData = useMemo(() => {
     if (!policies || !auditEvents) return [];
@@ -1783,55 +2118,98 @@ export default function Governance() {
         </TabsContent>
 
         <TabsContent value="audit" className="mt-0 flex flex-col gap-4">
-          {integrityCheck && (
-            <Card data-testid="card-integrity-status">
-              <CardContent className="p-4">
-                <div className="flex items-start justify-between gap-4 flex-wrap">
-                  <div className="flex items-center gap-3">
-                    {integrityCheck.valid ? (
-                      <div className="w-10 h-10 rounded-md bg-emerald-500/10 flex items-center justify-center shrink-0">
-                        <ShieldCheck className="w-5 h-5 text-emerald-500" />
-                      </div>
-                    ) : (
-                      <div className="w-10 h-10 rounded-md bg-red-500/10 flex items-center justify-center shrink-0">
-                        <ShieldAlert className="w-5 h-5 text-red-500" />
-                      </div>
-                    )}
-                    <div className="flex flex-col gap-0.5">
-                      <span className="text-sm font-semibold" data-testid="text-integrity-status">
-                        {integrityCheck.valid ? "Chain Verified" : "Chain Broken"}
-                      </span>
-                      <span className="text-[11px] text-muted-foreground">
-                        {integrityCheck.totalEvents} total events, {integrityCheck.verifiedEvents} verified
-                      </span>
-                      {auditEvents && auditEvents.length > 0 && (
-                        <div className="flex items-center gap-2 flex-wrap">
-                          {auditEvents[0]?.eventHash && (
-                            <span className="text-[10px] text-muted-foreground font-mono" data-testid="text-first-hash">
-                              First: {auditEvents[0].eventHash.slice(0, 12)}
-                            </span>
-                          )}
-                          {auditEvents[auditEvents.length - 1]?.eventHash && (
-                            <span className="text-[10px] text-muted-foreground font-mono" data-testid="text-last-hash">
-                              Last: {auditEvents[auditEvents.length - 1].eventHash?.slice(0, 12)}
-                            </span>
-                          )}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {integrityCheck && (
+              <Card data-testid="card-integrity-status">
+                <CardContent className="p-4">
+                  <div className="flex items-start justify-between gap-4 flex-wrap">
+                    <div className="flex items-center gap-3">
+                      {integrityCheck.valid ? (
+                        <div className="w-10 h-10 rounded-md bg-emerald-500/10 flex items-center justify-center shrink-0">
+                          <ShieldCheck className="w-5 h-5 text-emerald-500" />
+                        </div>
+                      ) : (
+                        <div className="w-10 h-10 rounded-md bg-red-500/10 flex items-center justify-center shrink-0">
+                          <ShieldAlert className="w-5 h-5 text-red-500" />
                         </div>
                       )}
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-sm font-semibold" data-testid="text-integrity-status">
+                          {integrityCheck.valid ? "Chain Verified" : "Chain Broken"}
+                        </span>
+                        <span className="text-[11px] text-muted-foreground">
+                          {integrityCheck.totalEvents} total events, {integrityCheck.verifiedEvents} verified
+                        </span>
+                        {auditEvents && auditEvents.length > 0 && (
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {auditEvents[0]?.eventHash && (
+                              <span className="text-[10px] text-muted-foreground font-mono" data-testid="text-first-hash">
+                                First: {auditEvents[0].eventHash.slice(0, 12)}
+                              </span>
+                            )}
+                            {auditEvents[auditEvents.length - 1]?.eventHash && (
+                              <span className="text-[10px] text-muted-foreground font-mono" data-testid="text-last-hash">
+                                Last: {auditEvents[auditEvents.length - 1].eventHash?.slice(0, 12)}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => refetchIntegrity()}
+                      data-testid="button-verify-now"
+                    >
+                      <RefreshCw className="w-4 h-4 mr-1.5" /> Verify Now
+                    </Button>
                   </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => refetchIntegrity()}
-                    data-testid="button-verify-now"
-                  >
-                    <RefreshCw className="w-4 h-4 mr-1.5" /> Verify Now
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          )}
+                </CardContent>
+              </Card>
+            )}
+
+            {industryRetentionRules.length > 0 && (
+              <Card data-testid="card-retention-policy">
+                <CardContent className="p-4">
+                  <div className="flex items-start justify-between gap-4 flex-wrap">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-md bg-blue-500/10 flex items-center justify-center shrink-0">
+                        <Timer className="w-5 h-5 text-blue-500" />
+                      </div>
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-sm font-semibold" data-testid="text-retention-title">
+                          Regulatory Retention Active
+                        </span>
+                        <span className="text-[11px] text-muted-foreground">
+                          Max {maxRetentionYears} years &middot; {industryRetentionRules.length} regulations enforced
+                        </span>
+                        <span className="text-[10px] text-muted-foreground">
+                          Auto-configured from {industry?.label} workspace
+                        </span>
+                      </div>
+                    </div>
+                    <Badge variant="outline" className="text-[10px] shrink-0" data-testid="badge-retention-locked">
+                      <Lock className="w-3 h-3 mr-1" /> Locked
+                    </Badge>
+                  </div>
+                  <div className="flex flex-col gap-2 mt-3">
+                    {industryRetentionRules.map((rule) => (
+                      <div key={rule.regulation} className="flex items-center justify-between gap-2" data-testid={`retention-rule-${rule.regulation.toLowerCase().replace(/\s+/g, "-")}`}>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
+                          <span className="text-[11px] truncate">{rule.regulation}</span>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <Badge variant="secondary" className="text-[10px]">{rule.retentionYears}yr</Badge>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </div>
 
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <div className="flex items-center gap-2 flex-wrap">
@@ -1844,9 +2222,71 @@ export default function Governance() {
               )}
             </div>
             <div className="flex items-center gap-2 flex-wrap">
-              <Button variant="outline" size="sm" onClick={handleExportCsv} data-testid="button-export-csv">
-                <Download className="w-4 h-4 mr-1.5" /> Export CSV
-              </Button>
+              {correlatedEventCount > 0 && (
+                <Badge variant="outline" className="text-[10px]" data-testid="badge-correlated-count">
+                  <Link2 className="w-3 h-3 mr-1" /> {correlatedEventCount} correlated
+                </Badge>
+              )}
+              <Dialog open={regulatoryExportOpen} onOpenChange={setRegulatoryExportOpen}>
+                <DialogTrigger asChild>
+                  <Button variant="outline" size="sm" data-testid="button-regulatory-export">
+                    <Download className="w-4 h-4 mr-1.5" /> Regulatory Export
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-w-lg">
+                  <DialogHeader>
+                    <DialogTitle>Regulatory Export Formats</DialogTitle>
+                  </DialogHeader>
+                  <div className="flex flex-col gap-4">
+                    <p className="text-sm text-muted-foreground">
+                      Export audit data in formats required by specific regulators. Format availability adapts to your industry workspace.
+                    </p>
+                    <div className="flex flex-col gap-2">
+                      {availableExportFormats.map((fmt) => {
+                        const Icon = fmt.icon;
+                        return (
+                          <div
+                            key={fmt.id}
+                            className={`flex items-center gap-3 p-3 rounded-md cursor-pointer toggle-elevate ${selectedExportFormat === fmt.id ? "toggle-elevated border border-primary/30" : "border border-transparent"}`}
+                            onClick={() => setSelectedExportFormat(fmt.id)}
+                            data-testid={`export-format-${fmt.id}`}
+                          >
+                            <div className="w-9 h-9 rounded-md bg-muted flex items-center justify-center shrink-0">
+                              <Icon className="w-4 h-4" />
+                            </div>
+                            <div className="flex flex-col gap-0.5 min-w-0">
+                              <span className="text-sm font-medium">{fmt.name}</span>
+                              <span className="text-[11px] text-muted-foreground">{fmt.description}</span>
+                            </div>
+                            {fmt.industry !== "all" && (
+                              <Badge variant="secondary" className="text-[9px] shrink-0">{fmt.industry.replace("_", " ")}</Badge>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <Button
+                      onClick={() => {
+                        const result = generateRegulatoryExport(filteredAuditEvents, selectedExportFormat, industry?.id || null);
+                        const blob = new Blob([result.content], { type: result.mimeType });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = result.filename;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                        setRegulatoryExportOpen(false);
+                        toast({ title: "Export complete", description: `${filteredAuditEvents.length} events exported as ${result.filename}` });
+                      }}
+                      data-testid="button-download-regulatory"
+                    >
+                      <Download className="w-4 h-4 mr-1.5" /> Download {availableExportFormats.find((f) => f.id === selectedExportFormat)?.name || "Export"}
+                    </Button>
+                  </div>
+                </DialogContent>
+              </Dialog>
               <Dialog open={exportBundleOpen} onOpenChange={setExportBundleOpen}>
                 <DialogTrigger asChild>
                   <Button variant="outline" size="sm" data-testid="button-export-bundle">
@@ -2040,6 +2480,22 @@ export default function Governance() {
                 <SelectItem value="30days" data-testid="select-date-30days">Last 30 Days</SelectItem>
               </SelectContent>
             </Select>
+            {industryComplianceFrameworks.length > 0 && (
+              <Select value={complianceFilter || "all"} onValueChange={(v) => setComplianceFilter(v === "all" ? null : v)}>
+                <SelectTrigger className="w-[180px]" data-testid="select-compliance-filter">
+                  <Shield className="w-4 h-4 mr-1.5 text-muted-foreground shrink-0" />
+                  <SelectValue placeholder="Compliance Evidence" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all" data-testid="select-compliance-all">All Frameworks</SelectItem>
+                  {industryComplianceFrameworks.map((fw) => (
+                    <SelectItem key={fw.id} value={fw.id} data-testid={`select-compliance-${fw.id}`}>
+                      {fw.shortName}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
@@ -2056,6 +2512,60 @@ export default function Governance() {
             ))}
           </div>
 
+          {traceViewId && traceSteps.length > 0 && (
+            <Card data-testid="card-trace-viewer">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between gap-4 mb-3 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <GitBranch className="w-4 h-4 text-primary" />
+                    <span className="text-sm font-semibold">Cross-Agent Trace</span>
+                    <Badge variant="secondary" className="text-[10px]">{traceSteps.length} steps</Badge>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={() => setTraceViewId(null)} data-testid="button-close-trace">
+                    <Unlink className="w-3.5 h-3.5 mr-1" /> Close Trace
+                  </Button>
+                </div>
+                <div className="flex flex-col gap-0">
+                  {traceSteps.map((step, idx) => {
+                    const isLast = idx === traceSteps.length - 1;
+                    return (
+                      <div key={step.eventId} className="flex gap-3" data-testid={`trace-step-${idx}`}>
+                        <div className="flex flex-col items-center shrink-0">
+                          <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-[10px] font-bold ${
+                            step.status === "failed" ? "bg-red-500/15 text-red-600 dark:text-red-400" : "bg-primary/10 text-primary"
+                          }`}>
+                            {idx + 1}
+                          </div>
+                          {!isLast && (
+                            <div className="flex flex-col items-center py-1">
+                              <div className="h-4 border-l-2 border-dashed border-primary/30" />
+                              <ArrowRight className="w-3 h-3 text-primary/50 rotate-90" />
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex flex-col gap-0.5 pb-2 min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <Badge variant="outline" className="text-[10px]">{step.agentName}</Badge>
+                            <span className="text-xs font-medium">{step.action}</span>
+                          </div>
+                          <span className="text-[11px] text-muted-foreground">
+                            {step.objectType}:{step.objectId}
+                          </span>
+                          {step.details && (
+                            <p className="text-[10px] text-muted-foreground/70 truncate">{step.details.slice(0, 120)}</p>
+                          )}
+                          <span className="text-[10px] text-muted-foreground/50">
+                            {step.timestamp ? new Date(step.timestamp).toLocaleString() : ""}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           <Card>
             <CardContent className="p-4">
               {filteredAuditEvents.length > 0 ? (
@@ -2063,6 +2573,8 @@ export default function Governance() {
                   {filteredAuditEvents.map((event, index) => {
                     const isLast = index === filteredAuditEvents.length - 1;
                     const isExpanded = expandedEvent === event.id;
+                    const eventFrameworks = industry ? getComplianceFrameworksForEvent(event, industry.id) : [];
+                    const retentionInfo = getRetentionExpiryForEvent(event, industry?.id || null);
                     return (
                       <div
                         key={event.id}
@@ -2078,7 +2590,7 @@ export default function Governance() {
                           onClick={() => setExpandedEvent(isExpanded ? null : event.id)}
                         >
                           <div className="flex items-center justify-between gap-2 flex-wrap">
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex items-center gap-1.5 flex-wrap">
                               <span className="text-xs font-medium">{event.action}</span>
                               {event.eventHash && (
                                 <Tooltip>
@@ -2090,6 +2602,20 @@ export default function Governance() {
                                   </TooltipContent>
                                 </Tooltip>
                               )}
+                              {event.correlationId && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Link2
+                                      className="w-3 h-3 text-primary cursor-pointer"
+                                      onClick={(e) => { e.stopPropagation(); setTraceViewId(event.correlationId!); }}
+                                      data-testid={`icon-trace-${event.id}`}
+                                    />
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <span className="text-xs">View cross-agent trace</span>
+                                  </TooltipContent>
+                                </Tooltip>
+                              )}
                             </div>
                             <span className="text-[11px] text-muted-foreground shrink-0">
                               {event.createdAt ? new Date(event.createdAt).toLocaleString() : ""}
@@ -2098,6 +2624,30 @@ export default function Governance() {
                           <span className="text-[11px] text-muted-foreground">
                             {event.actorType}:{event.actorId} on {event.objectType}:{event.objectId}
                           </span>
+                          {eventFrameworks.length > 0 && (
+                            <div className="flex items-center gap-1 flex-wrap">
+                              {eventFrameworks.map((fw) => (
+                                <span key={fw.id} className={`inline-flex items-center text-[9px] px-1.5 py-0.5 rounded-sm ${fw.color}`} data-testid={`badge-compliance-${fw.id}-${event.id}`}>
+                                  {fw.shortName}
+                                </span>
+                              ))}
+                              {retentionInfo && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span className="inline-flex items-center text-[9px] px-1.5 py-0.5 rounded-sm bg-muted text-muted-foreground cursor-help">
+                                      <Timer className="w-2.5 h-2.5 mr-0.5" />{retentionInfo.maxYears}yr
+                                    </span>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <div className="flex flex-col gap-0.5">
+                                      <span className="text-xs font-medium">Retained per {retentionInfo.regulation}</span>
+                                      <span className="text-[10px] text-muted-foreground">Expires: {retentionInfo.expiresAt.toLocaleDateString()}</span>
+                                    </div>
+                                  </TooltipContent>
+                                </Tooltip>
+                              )}
+                            </div>
+                          )}
                           {event.details && !isExpanded && (
                             <p className="text-[11px] text-muted-foreground/70 truncate">
                               {event.details.length > 100 ? event.details.slice(0, 100) + "..." : event.details}
@@ -2108,7 +2658,7 @@ export default function Governance() {
                               <p className="text-xs text-muted-foreground whitespace-pre-wrap break-words">
                                 {event.details}
                               </p>
-                              <div>
+                              <div className="flex items-center gap-2 flex-wrap">
                                 <Button
                                   variant="outline"
                                   size="sm"
@@ -2133,6 +2683,17 @@ export default function Governance() {
                                   <Eye className="w-3.5 h-3.5 mr-1" />
                                   View Details
                                 </Button>
+                                {event.correlationId && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={(e) => { e.stopPropagation(); setTraceViewId(event.correlationId!); }}
+                                    data-testid={`button-trace-${event.id}`}
+                                  >
+                                    <GitBranch className="w-3.5 h-3.5 mr-1" />
+                                    View Trace
+                                  </Button>
+                                )}
                               </div>
                             </div>
                           )}
