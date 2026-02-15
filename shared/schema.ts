@@ -257,6 +257,11 @@ export const auditEvents = pgTable("audit_events", {
   sequenceNum: integer("sequence_num"),
   previousHash: text("previous_hash"),
   eventHash: text("event_hash"),
+  complianceFrameworks: jsonb("compliance_frameworks"),
+  retentionPolicy: jsonb("retention_policy"),
+  correlationId: varchar("correlation_id"),
+  traceId: varchar("trace_id"),
+  industryId: text("industry_id"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
