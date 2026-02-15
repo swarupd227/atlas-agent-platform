@@ -1,7 +1,7 @@
 # Nous Agent Orchestrator
 
 ## Overview
-Nous Agent Orchestrator is an AI agent lifecycle management platform focusing on 80% autonomous execution and 20% expert validation. Its core purpose is to embed compliance frameworks, policies, and industry-specific ontologies directly into agent behavior. The platform provides tools for agent creation, deployment, monitoring, and governance, aiming to automate and optimize the AI agent lifecycle across five key industry verticals: Healthcare, Financial Services, Manufacturing, Insurance, and Retail. This differentiation positions it as a platform where AI agents reason within the user's industry context, driving business value and efficient AI operations.
+Nous Agent Orchestrator is an AI agent lifecycle management platform focusing on 80% autonomous execution and 20% expert validation. Its core purpose is to embed compliance frameworks, policies, and industry-specific ontologies directly into agent behavior. The platform provides tools for agent creation, deployment, monitoring, and governance, aiming to automate and optimize the AI agent lifecycle across six key industry verticals: Healthcare, Financial Services (including Credit Rating sub-domain), Manufacturing, Insurance, Retail, and Technology/SaaS. This differentiation positions it as a platform where AI agents reason within the user's industry context, driving business value and efficient AI operations.
 
 ## User Preferences
 I prefer that you ask me before making any major changes to the codebase. When suggesting code, please provide clear explanations for the choices made. I value an iterative development approach, where we can discuss and refine solutions progressively.
