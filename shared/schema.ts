@@ -403,6 +403,7 @@ export const agentTemplates = pgTable("agent_templates", {
   avgKpiDelivery: integer("avg_kpi_delivery").default(0),
   estimatedTimeToProd: text("estimated_time_to_prod").default("2-4 weeks"),
   costProfile: jsonb("cost_profile"),
+  preloadedSkills: jsonb("preloaded_skills").default(sql`'[]'::jsonb`),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

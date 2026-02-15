@@ -6356,10 +6356,28 @@ Active agents: ${JSON.stringify(activeAgents.map(a => ({ id: a.id, name: a.name,
       if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
         return res.status(503).json({ error: "AI enhancement is not configured" });
       }
-      const { template } = req.body;
+      const { template, currentIndustry } = req.body;
       if (!template) {
         return res.status(400).json({ error: "Template data is required" });
       }
+
+      const industryFilter = currentIndustry || template.industry || "cross_industry";
+      const allSkills = await storage.getSkills();
+      const industrySkills = allSkills.filter(s =>
+        s.industry === industryFilter ||
+        s.industry === "general" ||
+        s.industry === "cross_industry"
+      );
+
+      const skillCatalogSummary = industrySkills.map(s => ({
+        id: s.id,
+        name: s.name,
+        domain: s.domain,
+        industry: s.industry,
+        description: s.description,
+        complexity: s.complexity,
+        tags: s.tags || [],
+      }));
 
       const completion = await openai.chat.completions.create({
         model: "gpt-4.1",
@@ -6383,8 +6401,12 @@ Required sections in your JSON response:
 10. "complexity" (string): One of: low, medium, high.
 11. "defaultRiskTier" (string): One of: LOW, MEDIUM, HIGH, CRITICAL.
 12. "defaultAutonomyMode" (string): One of: autonomous, assisted, supervised, manual.
+13. "preloadedSkills" (array of objects with "skillId", "skillName", "domain" fields): Select 3-8 skills from the AVAILABLE SKILL LIBRARY below that are most relevant for this agent's purpose. You MUST ONLY select skills from this list — do NOT invent or fabricate skill names. Each object must have "skillId" (exact ID from the catalog), "skillName" (exact name from the catalog), and "domain" (the skill's domain from the catalog).
 
-IMPORTANT: Preserve the agent's core identity (name, category, industry) but significantly enrich all other fields. If a field already has good content, improve it rather than replacing it entirely. You MUST include ALL 12 sections listed above in your response.
+AVAILABLE SKILL LIBRARY (${industryFilter} industry — select ONLY from these):
+${JSON.stringify(skillCatalogSummary, null, 2)}
+
+IMPORTANT: Preserve the agent's core identity (name, category, industry) but significantly enrich all other fields. If a field already has good content, improve it rather than replacing it entirely. You MUST include ALL 13 sections listed above in your response. For preloadedSkills, you MUST select ONLY from the skill catalog provided above — never invent skill names.
 
 Return a JSON object with all the enhanced template fields. The response must be valid JSON with no markdown wrapping.`
           },
@@ -6410,8 +6432,9 @@ Policy Bindings: ${JSON.stringify(template.policyBindings || [])}
 Eval Bindings: ${JSON.stringify(template.evalBindings || [])}
 Rollback Plan: ${JSON.stringify(template.rollbackPlan || null)}
 Tags: ${JSON.stringify(template.tags || [])}
+Current Industry Context: ${industryFilter}
 
-Enhance this template to be production-ready and comprehensive. Return valid JSON only.`
+Enhance this template to be production-ready and comprehensive. For preloadedSkills, select ONLY from the available skill library provided. Return valid JSON only.`
           }
         ],
         response_format: { type: "json_object" },
@@ -6428,7 +6451,22 @@ Enhance this template to be production-ready and comprehensive. Return valid JSO
         enhanced = jsonMatch ? JSON.parse(jsonMatch[0]) : {};
       }
 
-      res.json({ enhanced, model: "gpt-4.1" });
+      if (enhanced.preloadedSkills && Array.isArray(enhanced.preloadedSkills)) {
+        const validSkillIds = new Set(industrySkills.map(s => s.id));
+        const validSkillNames = new Set(industrySkills.map(s => s.name.toLowerCase()));
+        enhanced.preloadedSkills = enhanced.preloadedSkills.filter((ps: any) =>
+          validSkillIds.has(ps.skillId) || validSkillNames.has((ps.skillName || "").toLowerCase())
+        ).map((ps: any) => {
+          const matchedSkill = industrySkills.find(s => s.id === ps.skillId) ||
+            industrySkills.find(s => s.name.toLowerCase() === (ps.skillName || "").toLowerCase());
+          if (matchedSkill) {
+            return { skillId: matchedSkill.id, skillName: matchedSkill.name, domain: matchedSkill.domain };
+          }
+          return ps;
+        });
+      }
+
+      res.json({ enhanced, model: "gpt-4.1", availableSkillCount: industrySkills.length });
     } catch (e: any) {
       console.error("AI enhance template error:", e);
       res.status(500).json({ error: e.message || "Failed to enhance template" });

@@ -105,6 +105,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useIndustry } from "@/components/industry-provider";
 import type { Skill } from "@shared/schema";
 
 type ToolConfig = { name: string; description: string; permissions?: string[] };
@@ -231,6 +232,7 @@ export default function TemplateDetail() {
   const [, params] = useRoute("/templates/:id");
   const [, navigate] = useLocation();
   const { toast } = useToast();
+  const { industry } = useIndustry();
   const templateId = params?.id;
   const isNew = templateId === "new";
 
@@ -325,6 +327,7 @@ export default function TemplateDetail() {
         policyBindings: policies.map(p => ({ ...p })),
         evalBindings: evals.map(e => ({ ...e })),
         rollbackPlan: rollbackData ? { triggerConditions: [...rollbackData.triggerConditions], rollbackTargetVersion: rollbackData.rollbackTargetVersion } : null,
+        preloadedSkills: Array.isArray(template.preloadedSkills) ? (template.preloadedSkills as any[]).map((s: any) => ({ ...s })) : [],
         newTriggerCondition: "",
       });
     }
@@ -378,7 +381,8 @@ export default function TemplateDetail() {
 
   const enhanceMutation = useMutation({
     mutationFn: async (templateData: Record<string, any>) => {
-      const res = await apiRequest("POST", "/api/ai/enhance-template", { template: templateData });
+      const { _currentIndustry, ...template } = templateData;
+      const res = await apiRequest("POST", "/api/ai/enhance-template", { template, currentIndustry: _currentIndustry });
       return res.json();
     },
     onSuccess: (data: any) => {
@@ -472,6 +476,13 @@ export default function TemplateDetail() {
       }
       if (enhanced.complianceCertifications && Array.isArray(enhanced.complianceCertifications)) merged.complianceCertifications = enhanced.complianceCertifications;
       if (enhanced.tags && Array.isArray(enhanced.tags)) merged.tags = enhanced.tags;
+      if (enhanced.preloadedSkills && Array.isArray(enhanced.preloadedSkills)) {
+        merged.preloadedSkills = enhanced.preloadedSkills.map((s: any) => ({
+          skillId: s.skillId || "",
+          skillName: s.skillName || "",
+          domain: s.domain || "",
+        }));
+      }
       if (enhanced.complexity && ["low","medium","high"].includes(enhanced.complexity)) merged.complexity = enhanced.complexity;
       if (enhanced.defaultRiskTier && ["LOW","MEDIUM","HIGH","CRITICAL"].includes(enhanced.defaultRiskTier)) merged.defaultRiskTier = enhanced.defaultRiskTier;
       if (enhanced.defaultAutonomyMode && ["autonomous","assisted","supervised","manual"].includes(enhanced.defaultAutonomyMode)) merged.defaultAutonomyMode = enhanced.defaultAutonomyMode;
@@ -483,7 +494,7 @@ export default function TemplateDetail() {
   };
 
   const handleEnhance = () => {
-    enhanceMutation.mutate(editData);
+    enhanceMutation.mutate({ ...editData, _currentIndustry: industry?.id });
   };
 
   const startEditing = () => {
@@ -519,6 +530,7 @@ export default function TemplateDetail() {
       policyBindings: policies.map(p => ({ ...p })),
       evalBindings: evals.map(e => ({ ...e })),
       rollbackPlan: rollback ? { triggerConditions: [...rollback.triggerConditions], rollbackTargetVersion: rollback.rollbackTargetVersion } : null,
+      preloadedSkills: Array.isArray(template.preloadedSkills) ? (template.preloadedSkills as any[]).map((s: any) => ({ ...s })) : [],
       newTriggerCondition: "",
     });
     setEditing(true);
@@ -553,6 +565,7 @@ export default function TemplateDetail() {
       policyBindings: editData.policyBindings,
       evalBindings: editData.evalBindings,
       rollbackPlan: editData.rollbackPlan,
+      preloadedSkills: editData.preloadedSkills || [],
     };
 
     if (isNew) {
@@ -1509,19 +1522,33 @@ export default function TemplateDetail() {
                 <CardContent className="flex flex-col gap-2">
                   <div className="text-xs text-muted-foreground font-medium">Pre-loaded Industry Skills</div>
                   <div className="flex items-center gap-1.5 flex-wrap">
-                    <Badge variant="secondary" className="text-[10px]">{categoryLabels[displayTemplate?.category || "general"] || displayTemplate?.category}</Badge>
-                    <Badge variant="secondary" className="text-[10px]">{industryLabels[displayTemplate?.industry || "cross_industry"] || displayTemplate?.industry}</Badge>
+                    <Badge variant="secondary" className="text-[10px]" data-testid="badge-skill-category">{categoryLabels[displayTemplate?.category || "general"] || displayTemplate?.category}</Badge>
+                    <Badge variant="secondary" className="text-[10px]" data-testid="badge-skill-industry">{industryLabels[displayTemplate?.industry || "cross_industry"] || displayTemplate?.industry}</Badge>
                   </div>
-                  {(displayTemplate?.tags || []).length > 0 && (
-                    <div className="flex items-center gap-1.5 flex-wrap mt-1">
-                      {(displayTemplate?.tags || []).map((t) => (
-                        <Badge key={t} variant="outline" className="text-[10px]">{t}</Badge>
-                      ))}
-                    </div>
-                  )}
-                  {(displayTemplate?.tags || []).length === 0 && (
-                    <p className="text-xs text-muted-foreground">No additional skill tags</p>
-                  )}
+                  {(() => {
+                    const preloaded = Array.isArray(displayTemplate?.preloadedSkills) ? (displayTemplate.preloadedSkills as Array<{ skillId: string; skillName: string; domain: string }>) : [];
+                    if (preloaded.length > 0) {
+                      return (
+                        <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                          {preloaded.map((s) => (
+                            <Badge key={s.skillId || s.skillName} variant="outline" className="text-[10px] gap-1" data-testid={`badge-skill-${s.skillId || s.skillName}`}>
+                              <Zap className="w-2.5 h-2.5" />{s.skillName}
+                            </Badge>
+                          ))}
+                        </div>
+                      );
+                    }
+                    if ((displayTemplate?.tags || []).length > 0) {
+                      return (
+                        <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                          {(displayTemplate?.tags || []).map((t) => (
+                            <Badge key={t} variant="outline" className="text-[10px]" data-testid={`badge-tag-${t}`}>{t}</Badge>
+                          ))}
+                        </div>
+                      );
+                    }
+                    return <p className="text-xs text-muted-foreground">No skills loaded</p>;
+                  })()}
                 </CardContent>
               </Card>
 
@@ -2488,6 +2515,23 @@ export default function TemplateDetail() {
                         <Plus className="w-3 h-3 mr-1" /> Add Condition
                       </Button>
                     </div>
+                  </div>
+                </div>
+              )}
+              {enhancePreview.preloadedSkills && Array.isArray(enhancePreview.preloadedSkills) && enhancePreview.preloadedSkills.length > 0 && (
+                <div>
+                  <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Pre-loaded Skills (from {industry?.label || "Industry"} Library)</h4>
+                  <div className="flex flex-wrap gap-1.5">
+                    {enhancePreview.preloadedSkills.map((s: any, i: number) => (
+                      <Badge key={i} variant="outline" className="text-[10px] gap-1 pr-1" data-testid={`badge-preview-skill-${i}`}>
+                        <Zap className="w-2.5 h-2.5" />
+                        {s.skillName}
+                        {s.domain && <span className="text-muted-foreground ml-0.5">({s.domain})</span>}
+                        <button onClick={() => { const skills = enhancePreview.preloadedSkills.filter((_: any, idx: number) => idx !== i); setEnhancePreview({ ...enhancePreview, preloadedSkills: skills }); }} className="ml-0.5 rounded-full" data-testid={`button-remove-preview-skill-${i}`}>
+                          <X className="w-2.5 h-2.5" />
+                        </button>
+                      </Badge>
+                    ))}
                   </div>
                 </div>
               )}
