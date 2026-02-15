@@ -124,6 +124,12 @@ const INDUSTRY_SAFETY_GATES: Record<string, Array<{ label: string; passed: boole
     { label: "Payment processing unaffected", passed: true },
     { label: "Inventory sync maintained", passed: false },
   ],
+  technology_saas: [
+    { label: "SLO compliance: 99.9% uptime", passed: true },
+    { label: "API error rate below 0.5%", passed: true },
+    { label: "No PII exposure in logs", passed: true },
+    { label: "P99 latency within budget", passed: false },
+  ],
 };
 
 const INDUSTRY_KPIS: Record<string, Array<{ name: string; baseline: number; candidate: number; unit: string; higherIsBetter: boolean }>> = {
@@ -157,6 +163,12 @@ const INDUSTRY_KPIS: Record<string, Array<{ name: string; baseline: number; cand
     { name: "Search Relevance Score", baseline: 85.7, candidate: 88.3, unit: "%", higherIsBetter: true },
     { name: "Inventory Prediction Error", baseline: 5.3, candidate: 4.1, unit: "%", higherIsBetter: false },
   ],
+  technology_saas: [
+    { name: "API Uptime", baseline: 99.92, candidate: 99.96, unit: "%", higherIsBetter: true },
+    { name: "P99 Latency", baseline: 420, candidate: 380, unit: "ms", higherIsBetter: false },
+    { name: "Error Rate", baseline: 0.8, candidate: 0.4, unit: "%", higherIsBetter: false },
+    { name: "Throughput", baseline: 12500, candidate: 13200, unit: "rps", higherIsBetter: true },
+  ],
 };
 
 const INDUSTRY_PROMOTION_RULES: Record<string, string[]> = {
@@ -184,6 +196,11 @@ const INDUSTRY_PROMOTION_RULES: Record<string, string[]> = {
     "Conversion rate within 2% of baseline",
     "No payment processing errors",
     "Customer satisfaction stable",
+  ],
+  technology_saas: [
+    "SLO compliance above 99.9% for 4 hours",
+    "Zero PII exposure events",
+    "Error budget consumed < 25%",
   ],
 };
 
@@ -213,6 +230,11 @@ const INDUSTRY_ROLLBACK_RULES: Record<string, string[]> = {
     "Payment failure rate > 0.5%",
     "Inventory sync failure detected",
   ],
+  technology_saas: [
+    "Error rate exceeds 2% for 10 minutes",
+    "P99 latency exceeds 1000ms",
+    "Data leak event detected",
+  ],
 };
 
 const INDUSTRY_BLAST_RADIUS: Record<string, { warnings: string[]; metrics: { customers: number; interactions: number; revenue: string; regulatory: string } }> = {
@@ -235,6 +257,10 @@ const INDUSTRY_BLAST_RADIUS: Record<string, { warnings: string[]; metrics: { cus
   retail: {
     warnings: ["PCI DSS scope expands at 25%+", "Customer PII exposure increases at 50%+"],
     metrics: { customers: 15000, interactions: 120000, revenue: "$3.2M", regulatory: "PCI DSS, CCPA" },
+  },
+  technology_saas: {
+    warnings: ["SOC 2 audit scope widens at 25%+", "Multi-tenant data isolation at risk at 50%+"],
+    metrics: { customers: 8500, interactions: 250000, revenue: "$6.4M", regulatory: "SOC 2, GDPR" },
   },
 };
 

@@ -54,6 +54,7 @@ const INDUSTRY_FILTERS = [
   { key: "manufacturing", label: "Manufacturing" },
   { key: "insurance", label: "Insurance" },
   { key: "retail", label: "Retail" },
+  { key: "technology_saas", label: "Tech / SaaS" },
 ];
 
 const STATUS_FILTERS = [
@@ -97,6 +98,7 @@ function getIndustryColor(ind: string) {
     case "manufacturing": return "bg-amber-500/15 text-amber-700 dark:text-amber-400";
     case "insurance": return "bg-violet-500/15 text-violet-700 dark:text-violet-400";
     case "retail": return "bg-rose-500/15 text-rose-700 dark:text-rose-400";
+    case "technology_saas": return "bg-indigo-500/15 text-indigo-700 dark:text-indigo-400";
     default: return "";
   }
 }

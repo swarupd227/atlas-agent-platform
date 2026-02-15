@@ -124,6 +124,7 @@ function getIndustryColor(ind: string) {
     case "manufacturing": return "bg-amber-500/15 text-amber-700 dark:text-amber-400";
     case "insurance": return "bg-cyan-500/15 text-cyan-700 dark:text-cyan-400";
     case "retail": return "bg-violet-500/15 text-violet-700 dark:text-violet-400";
+    case "technology_saas": return "bg-indigo-500/15 text-indigo-700 dark:text-indigo-400";
     default: return "";
   }
 }
