@@ -39,6 +39,7 @@ The Nous Agent Orchestrator is built on a modern web stack: React, Vite, Tailwin
 - **Agent Skills Library**: A catalog of composable, versioned skill units with industry-organized browsing, search, and AI enhancement/generation capabilities for all five industries.
 - **Context Engineering Studio**: Manages how agents acquire and utilize context, featuring context source inventory, priority matrix, and budget visualizer.
 - **Industry Workspace Selector**: Global context switch adapting platform terminology and regulatory frameworks based on selected industry profiles.
+- **Multi-Agent Pipeline Orchestrator**: Visual workflow editor for designing and executing multi-agent pipelines with sequential agent stages, approval gates, and AI-simulated scenario execution. Supports creating pipelines, adding agent/gate stages, running scenarios with real-time per-stage progression, and human approval checkpoints.
 
 **Technical Implementations**:
 - **Shadow Replay**: Replays production traces for validation.

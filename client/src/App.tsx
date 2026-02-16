@@ -81,6 +81,7 @@ import KnowledgeGraph from "@/pages/knowledge-graph";
 import AutonomyEngine from "@/pages/autonomy-engine";
 import OversightConsole from "@/pages/oversight-console";
 import AgentPlayground from "@/pages/agent-playground";
+import Pipelines from "@/pages/pipelines";
 
 function DashboardRouter() {
   return (
@@ -146,6 +147,7 @@ function DashboardRouter() {
       <Route path="/oversight-console" component={OversightConsole} />
       <Route path="/shadow-replay" component={ShadowReplay} />
       <Route path="/canary-deployment" component={CanaryDeployment} />
+      <Route path="/pipelines" component={Pipelines} />
       <Route path="/healing-operations" component={HealingOperations} />
       <Route path="/runbook-automation" component={RunbookAutomation} />
       <Route path="/admin" component={Admin} />

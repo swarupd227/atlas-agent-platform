@@ -31,6 +31,7 @@ import {
   GitCompare,
   HeartPulse,
   FileText,
+  Workflow,
 } from "lucide-react";
 import {
   Sidebar,
@@ -80,6 +81,7 @@ export function AppSidebar() {
       icon: Hammer,
       defaultOpen: true,
       items: [
+        { title: "Pipelines", url: "/pipelines", icon: Workflow },
         { title: "Blueprints", url: "/blueprints", icon: PenTool },
         { title: "Templates", url: "/templates", icon: Library },
         { title: "Skills", url: "/skills", icon: Layers },

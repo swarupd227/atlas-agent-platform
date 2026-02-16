@@ -140,6 +140,8 @@ import {
   healingPipelines, type HealingPipeline, type InsertHealingPipeline,
   runbooks, type Runbook, type InsertRunbook,
   agentMcpServers, type AgentMcpServer, type InsertAgentMcpServer,
+  agentPipelines, type AgentPipeline, type InsertAgentPipeline,
+  pipelineRuns, type PipelineRun, type InsertPipelineRun,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -598,6 +600,17 @@ export interface IStorage {
   createRunbook(runbook: InsertRunbook): Promise<Runbook>;
   updateRunbook(id: string, data: Partial<InsertRunbook>): Promise<Runbook | undefined>;
   deleteRunbook(id: string): Promise<boolean>;
+
+  getAgentPipelines(): Promise<AgentPipeline[]>;
+  getAgentPipeline(id: string): Promise<AgentPipeline | undefined>;
+  createAgentPipeline(pipeline: InsertAgentPipeline): Promise<AgentPipeline>;
+  updateAgentPipeline(id: string, data: Partial<InsertAgentPipeline>): Promise<AgentPipeline | undefined>;
+  deleteAgentPipeline(id: string): Promise<boolean>;
+
+  getPipelineRuns(pipelineId: string): Promise<PipelineRun[]>;
+  getPipelineRun(id: string): Promise<PipelineRun | undefined>;
+  createPipelineRun(run: InsertPipelineRun): Promise<PipelineRun>;
+  updatePipelineRun(id: string, data: Partial<PipelineRun>): Promise<PipelineRun | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2328,6 +2341,49 @@ export class DatabaseStorage implements IStorage {
       and(eq(agentMcpServers.agentId, agentId), eq(agentMcpServers.serverId, serverId))
     );
     return link;
+  }
+
+  async getAgentPipelines(): Promise<AgentPipeline[]> {
+    return db.select().from(agentPipelines).orderBy(desc(agentPipelines.createdAt));
+  }
+
+  async getAgentPipeline(id: string): Promise<AgentPipeline | undefined> {
+    const [pipeline] = await db.select().from(agentPipelines).where(eq(agentPipelines.id, id));
+    return pipeline;
+  }
+
+  async createAgentPipeline(pipeline: InsertAgentPipeline): Promise<AgentPipeline> {
+    const [created] = await db.insert(agentPipelines).values(pipeline).returning();
+    return created;
+  }
+
+  async updateAgentPipeline(id: string, data: Partial<InsertAgentPipeline>): Promise<AgentPipeline | undefined> {
+    const [updated] = await db.update(agentPipelines).set(data).where(eq(agentPipelines.id, id)).returning();
+    return updated;
+  }
+
+  async deleteAgentPipeline(id: string): Promise<boolean> {
+    const result = await db.delete(agentPipelines).where(eq(agentPipelines.id, id));
+    return (result as any).rowCount > 0;
+  }
+
+  async getPipelineRuns(pipelineId: string): Promise<PipelineRun[]> {
+    return db.select().from(pipelineRuns).where(eq(pipelineRuns.pipelineId, pipelineId)).orderBy(desc(pipelineRuns.createdAt));
+  }
+
+  async getPipelineRun(id: string): Promise<PipelineRun | undefined> {
+    const [run] = await db.select().from(pipelineRuns).where(eq(pipelineRuns.id, id));
+    return run;
+  }
+
+  async createPipelineRun(run: InsertPipelineRun): Promise<PipelineRun> {
+    const [created] = await db.insert(pipelineRuns).values(run).returning();
+    return created;
+  }
+
+  async updatePipelineRun(id: string, data: Partial<PipelineRun>): Promise<PipelineRun | undefined> {
+    const [updated] = await db.update(pipelineRuns).set(data).where(eq(pipelineRuns.id, id)).returning();
+    return updated;
   }
 }
 

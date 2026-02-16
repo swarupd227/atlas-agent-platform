@@ -72,6 +72,8 @@ import {
   insertTemporalGraphEntrySchema,
   insertAutonomyProfileSchema,
   insertOversightDecisionSchema,
+  insertAgentPipelineSchema,
+  insertPipelineRunSchema,
 } from "@shared/schema";
 
 const openai = new OpenAI({
@@ -15819,6 +15821,235 @@ Return ONLY valid JSON array, no explanation.`;
       res.json({ annotations: annotated });
     } catch (e: any) {
       console.error("Citation annotation error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── Agent Pipelines ──
+  app.get("/api/pipelines", async (req, res) => {
+    const pipelines = await storage.getAgentPipelines();
+    res.json(pipelines);
+  });
+
+  app.get("/api/pipelines/:id", async (req, res) => {
+    const pipeline = await storage.getAgentPipeline(req.params.id);
+    if (!pipeline) return res.status(404).json({ error: "Pipeline not found" });
+    res.json(pipeline);
+  });
+
+  app.post("/api/pipelines", async (req, res) => {
+    const parsed = insertAgentPipelineSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error });
+    const pipeline = await storage.createAgentPipeline(parsed.data);
+    res.status(201).json(pipeline);
+  });
+
+  app.patch("/api/pipelines/:id", async (req, res) => {
+    const updated = await storage.updateAgentPipeline(req.params.id, req.body);
+    if (!updated) return res.status(404).json({ error: "Pipeline not found" });
+    res.json(updated);
+  });
+
+  app.delete("/api/pipelines/:id", async (req, res) => {
+    const deleted = await storage.deleteAgentPipeline(req.params.id);
+    if (!deleted) return res.status(404).json({ error: "Pipeline not found" });
+    res.json({ success: true });
+  });
+
+  // ── Pipeline Runs ──
+  app.get("/api/pipelines/:id/runs", async (req, res) => {
+    const runs = await storage.getPipelineRuns(req.params.id);
+    res.json(runs);
+  });
+
+  app.get("/api/pipeline-runs/:id", async (req, res) => {
+    const run = await storage.getPipelineRun(req.params.id);
+    if (!run) return res.status(404).json({ error: "Pipeline run not found" });
+    res.json(run);
+  });
+
+  app.post("/api/pipelines/:id/runs", async (req, res) => {
+    const pipeline = await storage.getAgentPipeline(req.params.id);
+    if (!pipeline) return res.status(404).json({ error: "Pipeline not found" });
+    const stages = (pipeline.stages as any[]) || [];
+    if (stages.length === 0) return res.status(400).json({ error: "Pipeline has no stages" });
+    const stageResults = stages.map((s: any, idx: number) => ({
+      stageId: s.id,
+      status: idx === 0 ? (s.stageType === "approval_gate" ? "awaiting_approval" : "running") : "pending",
+      output: null,
+      startedAt: idx === 0 ? new Date().toISOString() : null,
+      completedAt: null,
+    }));
+    const firstStage = stages[0];
+    const run = await storage.createPipelineRun({
+      pipelineId: req.params.id,
+      status: firstStage.stageType === "approval_gate" ? "paused_at_gate" : "running",
+      scenarioInput: req.body.scenarioInput || "",
+      stageResults,
+      currentStageId: firstStage.id,
+      startedAt: new Date(),
+    });
+    res.status(201).json(run);
+  });
+
+  app.patch("/api/pipeline-runs/:id", async (req, res) => {
+    const updated = await storage.updatePipelineRun(req.params.id, req.body);
+    if (!updated) return res.status(404).json({ error: "Pipeline run not found" });
+    res.json(updated);
+  });
+
+  app.post("/api/pipeline-runs/:id/advance", async (req, res) => {
+    const run = await storage.getPipelineRun(req.params.id);
+    if (!run) return res.status(404).json({ error: "Pipeline run not found" });
+    if (run.status !== "running") return res.status(400).json({ error: "Run is not in running state" });
+    const pipeline = await storage.getAgentPipeline(run.pipelineId);
+    if (!pipeline) return res.status(404).json({ error: "Pipeline not found" });
+
+    const stages = (pipeline.stages as any[]) || [];
+    const stageResults = ((run.stageResults as any[]) || []).map(s => ({ ...s }));
+    const currentIdx = stages.findIndex((s: any) => s.id === run.currentStageId);
+
+    if (currentIdx >= 0 && currentIdx < stageResults.length) {
+      stageResults[currentIdx].status = "completed";
+      stageResults[currentIdx].completedAt = new Date().toISOString();
+      stageResults[currentIdx].output = req.body.output || stageResults[currentIdx].output;
+      if (req.body.duration) stageResults[currentIdx].duration = req.body.duration;
+    }
+
+    const nextIdx = currentIdx + 1;
+    if (nextIdx < stages.length) {
+      const nextStage = stages[nextIdx];
+      if (nextStage.stageType === "approval_gate") {
+        stageResults[nextIdx].status = "awaiting_approval";
+        stageResults[nextIdx].startedAt = new Date().toISOString();
+        const updated = await storage.updatePipelineRun(req.params.id, {
+          stageResults,
+          currentStageId: nextStage.id,
+          status: "paused_at_gate",
+        });
+        return res.json(updated);
+      }
+      stageResults[nextIdx].status = "running";
+      stageResults[nextIdx].startedAt = new Date().toISOString();
+      const updated = await storage.updatePipelineRun(req.params.id, {
+        stageResults,
+        currentStageId: nextStage.id,
+        status: "running",
+      });
+      return res.json(updated);
+    }
+
+    const updated = await storage.updatePipelineRun(req.params.id, {
+      stageResults,
+      currentStageId: null,
+      status: "completed",
+      completedAt: new Date(),
+    });
+    res.json(updated);
+  });
+
+  app.post("/api/pipeline-runs/:id/approve", async (req, res) => {
+    const run = await storage.getPipelineRun(req.params.id);
+    if (!run) return res.status(404).json({ error: "Pipeline run not found" });
+    if (run.status !== "paused_at_gate") return res.status(400).json({ error: "Run is not paused at an approval gate" });
+    const pipeline = await storage.getAgentPipeline(run.pipelineId);
+    if (!pipeline) return res.status(404).json({ error: "Pipeline not found" });
+
+    const stages = (pipeline.stages as any[]) || [];
+    const stageResults = ((run.stageResults as any[]) || []).map(s => ({ ...s }));
+    const currentIdx = stages.findIndex((s: any) => s.id === run.currentStageId);
+
+    if (currentIdx >= 0) {
+      stageResults[currentIdx].status = "approved";
+      stageResults[currentIdx].completedAt = new Date().toISOString();
+      stageResults[currentIdx].approvedBy = req.body.approvedBy || "operator";
+    }
+
+    const nextIdx = currentIdx + 1;
+    if (nextIdx < stages.length) {
+      stageResults[nextIdx].status = "running";
+      stageResults[nextIdx].startedAt = new Date().toISOString();
+      const updated = await storage.updatePipelineRun(req.params.id, {
+        stageResults,
+        currentStageId: stages[nextIdx].id,
+        status: "running",
+      });
+      return res.json(updated);
+    }
+
+    const updated = await storage.updatePipelineRun(req.params.id, {
+      stageResults,
+      currentStageId: null,
+      status: "completed",
+      completedAt: new Date(),
+    });
+    res.json(updated);
+  });
+
+  app.post("/api/pipeline-runs/:id/reject", async (req, res) => {
+    const run = await storage.getPipelineRun(req.params.id);
+    if (!run) return res.status(404).json({ error: "Pipeline run not found" });
+    if (run.status !== "paused_at_gate") return res.status(400).json({ error: "Run is not paused at an approval gate" });
+
+    const stageResults = ((run.stageResults as any[]) || []).map(s => ({ ...s }));
+    const currentIdx = stageResults.findIndex((s: any) => s.stageId === run.currentStageId);
+
+    if (currentIdx >= 0) {
+      stageResults[currentIdx].status = "rejected";
+      stageResults[currentIdx].completedAt = new Date().toISOString();
+    }
+
+    const updated = await storage.updatePipelineRun(req.params.id, {
+      stageResults,
+      status: "failed",
+      completedAt: new Date(),
+    });
+    res.json(updated);
+  });
+
+  // ── Pipeline AI: Simulate stage execution ──
+  app.post("/api/pipeline-runs/:id/simulate-stage", async (req, res) => {
+    try {
+      const run = await storage.getPipelineRun(req.params.id);
+      if (!run) return res.status(404).json({ error: "Run not found" });
+      const pipeline = await storage.getAgentPipeline(run.pipelineId);
+      if (!pipeline) return res.status(404).json({ error: "Pipeline not found" });
+
+      const stages = (pipeline.stages as any[]) || [];
+      const currentStage = stages.find((s: any) => s.id === run.currentStageId);
+      if (!currentStage) return res.status(400).json({ error: "No current stage" });
+
+      if (currentStage.stageType === "approval_gate") {
+        return res.json({ output: "Awaiting human approval...", requiresApproval: true });
+      }
+
+      const agent = currentStage.agentId ? await storage.getAgent(currentStage.agentId) : null;
+      const agentName = agent?.name || currentStage.label;
+      const previousResults = ((run.stageResults as any[]) || [])
+        .filter((r: any) => r.status === "completed" || r.status === "approved")
+        .map((r: any) => {
+          const stage = stages.find((s: any) => s.id === r.stageId);
+          return `${stage?.label || r.stageId}: ${r.output || "completed"}`;
+        });
+
+      const systemPrompt = `You are simulating an AI agent named "${agentName}" in a multi-agent pipeline. Your stage is: "${currentStage.label}". ${agent?.description || ""}\n\nYou are part of a pipeline that processes the following scenario. Produce a realistic, concise output for your stage (2-4 paragraphs). Include specific details, metrics, or findings that would be realistic for this agent's role. Format your output clearly.`;
+
+      const userPrompt = `Scenario: ${run.scenarioInput}\n\n${previousResults.length > 0 ? `Previous stage outputs:\n${previousResults.join("\n")}\n\n` : ""}Execute your stage and produce output.`;
+
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        max_tokens: 800,
+        temperature: 0.7,
+      });
+
+      const output = completion.choices[0]?.message?.content || "Stage completed successfully.";
+      res.json({ output, requiresApproval: false });
+    } catch (e: any) {
+      console.error("Pipeline stage simulation error:", e);
       res.status(500).json({ error: e.message });
     }
   });
