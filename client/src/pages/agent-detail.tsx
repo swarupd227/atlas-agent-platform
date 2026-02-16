@@ -90,7 +90,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import type { Agent, RunTrace, EvalSuite, OutcomeContract, ImprovementRecommendation, AutonomousActionLog, AgentVersion, Deployment, Policy, Approval, PolicyException, ToolConnector, RemoteAgent, AgentTeam, Skill } from "@shared/schema";
+import type { Agent, RunTrace, EvalSuite, OutcomeContract, ImprovementRecommendation, AutonomousActionLog, AgentVersion, Deployment, Policy, Approval, PolicyException, ToolConnector, RemoteAgent, AgentTeam, Skill, McpServer, McpServerTool, McpServerResource, AgentMcpServer } from "@shared/schema";
 import { Wifi, WifiOff, Crown, Brain, Sparkles, ShieldAlert, Layers3, BookMarked, Binary, ScrollText, FileCheck } from "lucide-react";
 import { useIndustry } from "@/components/industry-provider";
 
@@ -130,6 +130,111 @@ class AgentDetailErrorBoundary extends Component<{ children: ReactNode }, { hasE
     }
     return this.props.children;
   }
+}
+
+function McpServerLinkCard({ link, server, onUnlink, unlinking }: {
+  link: AgentMcpServer;
+  server?: McpServer;
+  onUnlink: () => void;
+  unlinking: boolean;
+}) {
+  const { data: tools } = useQuery<McpServerTool[]>({
+    queryKey: ["/api/mcp-servers", link.serverId, "tools"],
+    queryFn: async () => {
+      const res = await fetch(`/api/mcp-servers/${link.serverId}/tools`);
+      return res.json();
+    },
+    enabled: !!link.serverId,
+  });
+  const { data: resources } = useQuery<McpServerResource[]>({
+    queryKey: ["/api/mcp-servers", link.serverId, "resources"],
+    queryFn: async () => {
+      const res = await fetch(`/api/mcp-servers/${link.serverId}/resources`);
+      return res.json();
+    },
+    enabled: !!link.serverId,
+  });
+
+  return (
+    <Card data-testid={`card-mcp-link-${link.id}`}>
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2">
+            <Globe className="w-4 h-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-bold" data-testid={`text-mcp-server-name-${link.id}`}>
+              {server?.name || link.serverId}
+            </CardTitle>
+            {server?.status && (
+              <Badge variant={server.status === "verified" ? "default" : "secondary"} className="text-[10px]">
+                {server.status}
+              </Badge>
+            )}
+            {server?.riskTier && (
+              <Badge variant={server.riskTier === "HIGH" || server.riskTier === "CRITICAL" ? "destructive" : "outline"} className="text-[10px]">
+                <Shield className="w-3 h-3 mr-0.5" /> {server.riskTier}
+              </Badge>
+            )}
+          </div>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={onUnlink}
+            disabled={unlinking}
+            data-testid={`button-unlink-mcp-${link.id}`}
+          >
+            <XCircle className="w-4 h-4 mr-1" /> Unlink
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        {server?.url && (
+          <span className="text-xs font-mono text-muted-foreground">{server.url}</span>
+        )}
+
+        {tools && tools.length > 0 && (
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Tools ({tools.length})</span>
+            <div className="flex flex-wrap gap-1.5">
+              {tools.map(t => (
+                <Badge key={t.id} variant="outline" className="text-[10px] font-mono" data-testid={`badge-tool-${t.id}`}>
+                  <Wrench className="w-3 h-3 mr-0.5" />
+                  {t.name}
+                  {t.riskClassification && t.riskClassification !== "low" && (
+                    <span className={`ml-1 ${t.riskClassification === "critical" || t.riskClassification === "high" ? "text-red-500" : "text-yellow-600"}`}>
+                      ({t.riskClassification})
+                    </span>
+                  )}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {resources && resources.length > 0 && (
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Resources ({resources.length})</span>
+            <div className="flex flex-wrap gap-1.5">
+              {resources.map(r => (
+                <Badge key={r.id} variant="outline" className="text-[10px] font-mono" data-testid={`badge-resource-${r.id}`}>
+                  <Database className="w-3 h-3 mr-0.5" />
+                  {r.name}
+                  {r.sensitivityLevel && r.sensitivityLevel !== "public" && (
+                    <span className="ml-1 text-yellow-600">
+                      <Lock className="w-2.5 h-2.5 inline" />
+                    </span>
+                  )}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {(!tools || tools.length === 0) && (!resources || resources.length === 0) && (
+          <p className="text-xs text-muted-foreground">No tools or resources registered on this server yet.</p>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 function AgentDetailInner() {
@@ -209,6 +314,18 @@ function AgentDetailInner() {
   const { data: allSkills } = useQuery<Skill[]>({
     queryKey: ["/api/skills"],
   });
+  const { data: agentMcpLinks } = useQuery<AgentMcpServer[]>({
+    queryKey: ["/api/agents", agentId, "mcp-servers"],
+    queryFn: async () => {
+      if (!agentId) return [];
+      const res = await fetch(`/api/agents/${agentId}/mcp-servers`);
+      return res.json();
+    },
+    enabled: !!agentId,
+  });
+  const { data: allMcpServers } = useQuery<McpServer[]>({
+    queryKey: ["/api/mcp-servers"],
+  });
   const { industry } = useIndustry();
 
   const [, navigate] = useLocation();
@@ -216,6 +333,36 @@ function AgentDetailInner() {
   const deployPerm = usePermission("deploy_staging_pilot");
   const tracesPerm = usePermission("view_traces");
   const approvalPerm = usePermission("approve_changes");
+
+  const [assignMcpOpen, setAssignMcpOpen] = useState(false);
+  const [selectedMcpServerId, setSelectedMcpServerId] = useState("");
+
+  const assignMcpMutation = useMutation({
+    mutationFn: () =>
+      apiRequest("POST", `/api/agents/${agentId}/mcp-servers`, { serverId: selectedMcpServerId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId, "mcp-servers"] });
+      setAssignMcpOpen(false);
+      setSelectedMcpServerId("");
+      toast({ title: "MCP Server linked", description: "The MCP server has been assigned to this agent." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to link MCP server", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const unlinkMcpMutation = useMutation({
+    mutationFn: (linkId: string) =>
+      apiRequest("DELETE", `/api/agents/${agentId}/mcp-servers/${linkId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId, "mcp-servers"] });
+      toast({ title: "MCP Server unlinked", description: "The MCP server has been removed from this agent." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to unlink", description: err.message, variant: "destructive" });
+    },
+  });
+
   const [retireDialogOpen, setRetireDialogOpen] = useState(false);
   const [retireReason, setRetireReason] = useState("");
   const [replacementAgentId, setReplacementAgentId] = useState("");
@@ -577,6 +724,7 @@ function AgentDetailInner() {
           <TabsTrigger value="skills" data-testid="tab-skills">Skills</TabsTrigger>
           <TabsTrigger value="compliance" data-testid="tab-compliance">Compliance</TabsTrigger>
           <TabsTrigger value="context-profile" data-testid="tab-context-profile">Context Profile</TabsTrigger>
+          <TabsTrigger value="mcp-servers" data-testid="tab-mcp-servers">MCP Servers</TabsTrigger>
           {agent.agentType === "remote" && (
             <TabsTrigger value="a2a" data-testid="tab-a2a">A2A Card</TabsTrigger>
           )}
@@ -3291,6 +3439,77 @@ function AgentDetailInner() {
             </Card>
           </TabsContent>
         )}
+
+        <TabsContent value="mcp-servers" className="flex flex-col gap-4 mt-0" data-testid="tab-content-mcp-servers">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium">Linked MCP Servers</span>
+              {agentMcpLinks && agentMcpLinks.length > 0 && (
+                <Badge variant="secondary" className="text-[10px]">{agentMcpLinks.length}</Badge>
+              )}
+            </div>
+            <Dialog open={assignMcpOpen} onOpenChange={setAssignMcpOpen}>
+              <Button size="sm" onClick={() => setAssignMcpOpen(true)} data-testid="button-assign-mcp">
+                <Network className="w-4 h-4 mr-1.5" /> Assign MCP Server
+              </Button>
+              <DialogContent className="max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Assign MCP Server</DialogTitle>
+                  <DialogDescription>Link an MCP server to give this agent access to its tools, resources, and prompts.</DialogDescription>
+                </DialogHeader>
+                <div className="flex flex-col gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <Label>MCP Server</Label>
+                    <Select value={selectedMcpServerId} onValueChange={setSelectedMcpServerId}>
+                      <SelectTrigger data-testid="select-mcp-server">
+                        <SelectValue placeholder="Select an MCP server" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {allMcpServers?.filter(s => !agentMcpLinks?.some(l => l.serverId === s.id)).map(s => (
+                          <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button
+                    onClick={() => assignMcpMutation.mutate()}
+                    disabled={!selectedMcpServerId || assignMcpMutation.isPending}
+                    data-testid="button-confirm-assign-mcp"
+                  >
+                    {assignMcpMutation.isPending ? <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" /> : <Network className="w-4 h-4 mr-1.5" />}
+                    Assign Server
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+          </div>
+
+          {!agentMcpLinks || agentMcpLinks.length === 0 ? (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
+                <Network className="w-8 h-8 text-muted-foreground" />
+                <p className="text-sm text-muted-foreground" data-testid="text-no-mcp-servers">
+                  No MCP servers assigned. Link servers to give this agent access to tools and resources.
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="flex flex-col gap-4">
+              {agentMcpLinks.map((link) => {
+                const server = allMcpServers?.find(s => s.id === link.serverId);
+                return (
+                  <McpServerLinkCard
+                    key={link.id}
+                    link={link}
+                    server={server}
+                    onUnlink={() => unlinkMcpMutation.mutate(link.id)}
+                    unlinking={unlinkMcpMutation.isPending}
+                  />
+                );
+              })}
+            </div>
+          )}
+        </TabsContent>
       </Tabs>
 
       <Dialog open={shadowReplayOpen} onOpenChange={setShadowReplayOpen}>

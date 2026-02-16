@@ -10142,6 +10142,86 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
     }
   });
 
+  app.get("/api/agents/:id/mcp-servers", async (req, res) => {
+    try {
+      const links = await storage.getAgentMcpServers(req.params.id);
+      res.json(links);
+    } catch (e) {
+      res.status(500).json({ message: "Failed to fetch agent MCP server links" });
+    }
+  });
+
+  app.post("/api/agents/:id/mcp-servers", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+
+      const { serverId } = req.body;
+      if (!serverId) return res.status(400).json({ message: "serverId is required" });
+
+      const server = await storage.getMcpServer(serverId);
+      if (!server) return res.status(404).json({ message: "MCP server not found" });
+
+      const existing = await storage.getAgentMcpServerByIds(req.params.id, serverId);
+      if (existing) return res.status(409).json({ message: "MCP server already linked to this agent" });
+
+      const link = await storage.createAgentMcpServer({
+        agentId: req.params.id,
+        serverId,
+        assignedBy: "user",
+      });
+
+      await storage.createAuditEvent({
+        action: "agent.mcp_server_linked",
+        objectType: "agent",
+        objectId: req.params.id,
+        actorId: "user",
+        details: JSON.stringify({ serverId, serverName: server.name }),
+      });
+
+      res.status(201).json(link);
+    } catch (e) {
+      res.status(500).json({ message: "Failed to link MCP server to agent" });
+    }
+  });
+
+  app.delete("/api/agents/:agentId/mcp-servers/:linkId", async (req, res) => {
+    try {
+      const deleted = await storage.deleteAgentMcpServer(req.params.linkId);
+      if (!deleted) return res.status(404).json({ message: "Link not found" });
+
+      await storage.createAuditEvent({
+        action: "agent.mcp_server_unlinked",
+        objectType: "agent",
+        objectId: req.params.agentId,
+        actorId: "user",
+        details: JSON.stringify({ linkId: req.params.linkId }),
+      });
+
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ message: "Failed to unlink MCP server from agent" });
+    }
+  });
+
+  app.get("/api/mcp-tools/by-risk", async (req, res) => {
+    try {
+      const tools = await storage.getAllMcpServerTools();
+      const servers = await storage.getMcpServers();
+      const serverMap = new Map(servers.map(s => [s.id, s]));
+      
+      const enriched = tools.map(t => ({
+        ...t,
+        serverName: serverMap.get(t.serverId)?.name || "Unknown",
+        serverStatus: serverMap.get(t.serverId)?.status || "unknown",
+      }));
+      
+      res.json(enriched);
+    } catch (e) {
+      res.status(500).json({ message: "Failed to fetch tools by risk" });
+    }
+  });
+
   app.get("/api/mcp-servers/:id/auth", async (req, res) => {
     try {
       const auth = await storage.getMcpServerAuth(req.params.id);

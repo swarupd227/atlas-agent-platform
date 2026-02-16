@@ -1776,4 +1776,16 @@ export const insertRunbookSchema = createInsertSchema(runbooks).omit({ id: true,
 export type InsertRunbook = z.infer<typeof insertRunbookSchema>;
 export type Runbook = typeof runbooks.$inferSelect;
 
+export const agentMcpServers = pgTable("agent_mcp_servers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  agentId: varchar("agent_id").notNull(),
+  serverId: varchar("server_id").notNull(),
+  assignedBy: varchar("assigned_by", { length: 255 }),
+  assignedAt: timestamp("assigned_at").defaultNow(),
+});
+
+export const insertAgentMcpServerSchema = createInsertSchema(agentMcpServers).omit({ id: true, assignedAt: true });
+export type InsertAgentMcpServer = z.infer<typeof insertAgentMcpServerSchema>;
+export type AgentMcpServer = typeof agentMcpServers.$inferSelect;
+
 export * from "./models/chat";

@@ -1,4 +1,4 @@
-import { eq, desc, inArray } from "drizzle-orm";
+import { eq, desc, inArray, and } from "drizzle-orm";
 import { createHash } from "crypto";
 import { db } from "./db";
 import {
@@ -139,6 +139,7 @@ import {
   canaryDeployments, type CanaryDeployment, type InsertCanaryDeployment,
   healingPipelines, type HealingPipeline, type InsertHealingPipeline,
   runbooks, type Runbook, type InsertRunbook,
+  agentMcpServers, type AgentMcpServer, type InsertAgentMcpServer,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -378,6 +379,11 @@ export interface IStorage {
   createAgentTeamMember(member: InsertAgentTeam): Promise<AgentTeam>;
   deleteAgentTeamMember(id: string): Promise<boolean>;
   getAgentTeamsByMember(memberAgentId: string): Promise<AgentTeam[]>;
+
+  getAgentMcpServers(agentId: string): Promise<AgentMcpServer[]>;
+  createAgentMcpServer(link: InsertAgentMcpServer): Promise<AgentMcpServer>;
+  deleteAgentMcpServer(id: string): Promise<boolean>;
+  getAgentMcpServerByIds(agentId: string, serverId: string): Promise<AgentMcpServer | undefined>;
 
   getMcpElicitations(): Promise<McpElicitation[]>;
   getMcpElicitation(id: string): Promise<McpElicitation | undefined>;
@@ -2297,6 +2303,27 @@ export class DatabaseStorage implements IStorage {
   async deleteRunbook(id: string): Promise<boolean> {
     const result = await db.delete(runbooks).where(eq(runbooks.id, id));
     return (result as any).rowCount > 0;
+  }
+
+  async getAgentMcpServers(agentId: string): Promise<AgentMcpServer[]> {
+    return db.select().from(agentMcpServers).where(eq(agentMcpServers.agentId, agentId));
+  }
+
+  async createAgentMcpServer(link: InsertAgentMcpServer): Promise<AgentMcpServer> {
+    const [created] = await db.insert(agentMcpServers).values(link).returning();
+    return created;
+  }
+
+  async deleteAgentMcpServer(id: string): Promise<boolean> {
+    const result = await db.delete(agentMcpServers).where(eq(agentMcpServers.id, id));
+    return (result as any).rowCount > 0;
+  }
+
+  async getAgentMcpServerByIds(agentId: string, serverId: string): Promise<AgentMcpServer | undefined> {
+    const [link] = await db.select().from(agentMcpServers).where(
+      and(eq(agentMcpServers.agentId, agentId), eq(agentMcpServers.serverId, serverId))
+    );
+    return link;
   }
 }
 

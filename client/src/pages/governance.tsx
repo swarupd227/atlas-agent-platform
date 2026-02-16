@@ -91,7 +91,7 @@ import { useEvidenceDrawer } from "@/components/evidence-drawer";
 import { usePermission, PermissionGate } from "@/components/role-provider";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { Policy, AuditEvent, Approval, Agent, PolicyException, ComplianceReport, PolicyTestCase } from "@shared/schema";
+import type { Policy, AuditEvent, Approval, Agent, PolicyException, ComplianceReport, PolicyTestCase, McpServerTool } from "@shared/schema";
 import { useIndustry, type IndustryId } from "@/components/industry-provider";
 
 const domainIcons: Record<string, typeof Shield> = {
@@ -1095,6 +1095,9 @@ export default function Governance() {
   const { data: policyExceptions } = useQuery<PolicyException[]>({
     queryKey: ["/api/policy-exceptions"],
   });
+  const { data: toolsByRisk } = useQuery<(McpServerTool & { serverName: string; serverStatus: string })[]>({
+    queryKey: ["/api/mcp-tools/by-risk"],
+  });
 
   const createMutation = useMutation({
     mutationFn: async (data: Record<string, any>) => {
@@ -1726,6 +1729,7 @@ export default function Governance() {
           <TabsTrigger value="compliance" data-testid="tab-compliance">Reports</TabsTrigger>
           <TabsTrigger value="exceptions" data-testid="tab-exceptions">Exceptions</TabsTrigger>
           <TabsTrigger value="tool-access" data-testid="tab-tool-access">Tool Access</TabsTrigger>
+          <TabsTrigger value="tool-risk" data-testid="tab-tool-risk">Tool Risk</TabsTrigger>
           <TabsTrigger value="ethics" data-testid="tab-ethics">Ethics</TabsTrigger>
           <TabsTrigger value="policy-packs" data-testid="tab-policy-packs">Policy Packs</TabsTrigger>
           <TabsTrigger value="what-if" data-testid="tab-what-if">What-If</TabsTrigger>
@@ -3216,6 +3220,146 @@ export default function Governance() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="tool-risk" className="mt-0 flex flex-col gap-4" data-testid="content-tool-risk">
+          {(() => {
+            const riskGroups = { critical: [] as any[], high: [] as any[], medium: [] as any[], low: [] as any[] };
+            (toolsByRisk || []).forEach(t => {
+              const level = (t.riskClassification || "low").toLowerCase();
+              if (level in riskGroups) (riskGroups as any)[level].push(t);
+              else riskGroups.low.push(t);
+            });
+            const riskMeta: { level: string; label: string; color: string; icon: typeof ShieldAlert }[] = [
+              { level: "critical", label: "Critical", color: "text-red-600 border-red-300 bg-red-50 dark:bg-red-950/30 dark:border-red-800", icon: ShieldAlert },
+              { level: "high", label: "High", color: "text-orange-600 border-orange-300 bg-orange-50 dark:bg-orange-950/30 dark:border-orange-800", icon: AlertTriangle },
+              { level: "medium", label: "Medium", color: "text-yellow-600 border-yellow-300 bg-yellow-50 dark:bg-yellow-950/30 dark:border-yellow-800", icon: Shield },
+              { level: "low", label: "Low", color: "text-green-600 border-green-300 bg-green-50 dark:bg-green-950/30 dark:border-green-800", icon: ShieldCheck },
+            ];
+            return (
+              <>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {riskMeta.map(rm => {
+                    const count = (riskGroups as any)[rm.level]?.length || 0;
+                    const RmIcon = rm.icon;
+                    return (
+                      <Card key={rm.level} data-testid={`card-risk-summary-${rm.level}`}>
+                        <CardContent className="p-3 flex items-center gap-3">
+                          <div className={`w-8 h-8 rounded-md flex items-center justify-center shrink-0 ${rm.color}`}>
+                            <RmIcon className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <p className="text-lg font-semibold">{count}</p>
+                            <p className="text-[11px] text-muted-foreground">{rm.label} Risk</p>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+
+                <Card data-testid="card-tool-risk-table">
+                  <CardHeader className="flex flex-row items-center gap-2 pb-3">
+                    <ShieldAlert className="w-4 h-4 text-muted-foreground" />
+                    <CardTitle className="text-sm font-medium">MCP Tool Risk Registry</CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-4 pt-0 overflow-x-auto">
+                    {toolsByRisk && toolsByRisk.length > 0 ? (
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="text-xs">Tool Name</TableHead>
+                            <TableHead className="text-xs">Server</TableHead>
+                            <TableHead className="text-xs">Risk Level</TableHead>
+                            <TableHead className="text-xs">Status</TableHead>
+                            <TableHead className="text-xs">Owner</TableHead>
+                            <TableHead className="text-xs">Usage</TableHead>
+                            <TableHead className="text-xs">Governance Gate</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {toolsByRisk.map(tool => {
+                            const risk = (tool.riskClassification || "low").toLowerCase();
+                            const riskInfo = riskMeta.find(r => r.level === risk) || riskMeta[3];
+                            const needsApproval = risk === "critical" || risk === "high";
+                            return (
+                              <TableRow key={tool.id} data-testid={`row-tool-risk-${tool.id}`}>
+                                <TableCell className="text-xs font-medium">{tool.name}</TableCell>
+                                <TableCell>
+                                  <Badge variant="outline" className="text-[10px]">{tool.serverName}</Badge>
+                                </TableCell>
+                                <TableCell>
+                                  <Badge variant="outline" className={`text-[10px] border ${riskInfo.color}`}>
+                                    {riskInfo.label}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell>
+                                  <Badge variant={tool.enabled ? "default" : "secondary"} className="text-[10px]">
+                                    {tool.enabled ? "Enabled" : "Disabled"}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell className="text-xs text-muted-foreground">{tool.owner || "Unassigned"}</TableCell>
+                                <TableCell className="text-xs text-muted-foreground">{tool.usageCount || 0}</TableCell>
+                                <TableCell>
+                                  {needsApproval ? (
+                                    <Badge variant="outline" className="text-[10px] border-orange-300 text-orange-600 dark:border-orange-800 dark:text-orange-400">
+                                      <Lock className="w-3 h-3 mr-1" />
+                                      Approval Required
+                                    </Badge>
+                                  ) : (
+                                    <Badge variant="outline" className="text-[10px] border-green-300 text-green-600 dark:border-green-800 dark:text-green-400">
+                                      <CheckCircle className="w-3 h-3 mr-1" />
+                                      Auto-Approved
+                                    </Badge>
+                                  )}
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    ) : (
+                      <p className="text-sm text-muted-foreground py-6 text-center" data-testid="text-no-tools">
+                        No MCP tools registered yet. Add tools to MCP servers to see risk classifications here.
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card data-testid="card-risk-policies">
+                  <CardHeader className="flex flex-row items-center gap-2 pb-3">
+                    <Scale className="w-4 h-4 text-muted-foreground" />
+                    <CardTitle className="text-sm font-medium">Risk-Based Governance Policies</CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-4 pt-0 flex flex-col gap-3">
+                    {riskMeta.map(rm => {
+                      const tools = (riskGroups as any)[rm.level] || [];
+                      const RmIcon = rm.icon;
+                      return (
+                        <div key={rm.level} className="flex items-start gap-3 p-3 border rounded-md" data-testid={`policy-rule-${rm.level}`}>
+                          <div className={`w-7 h-7 rounded-md flex items-center justify-center shrink-0 mt-0.5 ${rm.color}`}>
+                            <RmIcon className="w-3.5 h-3.5" />
+                          </div>
+                          <div className="flex flex-col gap-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-xs font-medium">{rm.label} Risk Tools</span>
+                              <Badge variant="secondary" className="text-[10px]">{tools.length} tools</Badge>
+                            </div>
+                            <p className="text-[11px] text-muted-foreground">
+                              {rm.level === "critical" && "Requires dual approval from Security + Compliance officers before any agent invocation. Full audit logging with data lineage tracking."}
+                              {rm.level === "high" && "Requires single approval from authorized reviewer. Rate-limited invocations with mandatory output validation."}
+                              {rm.level === "medium" && "Auto-approved with post-execution review. Standard audit logging and periodic compliance checks."}
+                              {rm.level === "low" && "Auto-approved with basic logging. Included in routine compliance reports."}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </CardContent>
+                </Card>
+              </>
+            );
+          })()}
         </TabsContent>
 
         <TabsContent value="ethics" className="mt-0 flex flex-col gap-4">
