@@ -15,11 +15,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import {
   ArrowLeft, Server, Shield, Activity, CheckCircle2, AlertCircle,
   Globe, Terminal, Wrench, FileText, MessageSquare, Lock,
-  RefreshCw, Clock, Zap, Play, Plus,
+  RefreshCw, Clock, Zap, Play, Plus, Brain, XCircle, Tag,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { McpServer, McpServerTool, McpServerResource, McpServerPrompt, McpServerAuth, AuditEvent } from "@shared/schema";
+import type { McpServer, McpServerTool, McpServerResource, McpServerPrompt, McpServerAuth, AuditEvent, OntologyConcept } from "@shared/schema";
 
 const HEALTH_COLOR: Record<string, string> = {
   healthy: "bg-green-500",
@@ -66,6 +66,9 @@ export default function McpServerDetail() {
 
   const { data: allAuditEvents } = useQuery<AuditEvent[]>({
     queryKey: ["/api/audit-events"],
+  });
+  const { data: allOntologyConcepts } = useQuery<OntologyConcept[]>({
+    queryKey: ["/api/ontology-concepts/all"],
   });
 
   const auditEvents = useMemo(() => {
@@ -834,6 +837,63 @@ export default function McpServerDetail() {
                         <code>{JSON.stringify(tool.inputSchema as Record<string, unknown>, null, 2)}</code>
                       </pre>
                     ) : null}
+                    {(() => {
+                      const toolTags = (tool.ontologyTags as Array<{ conceptId: string; label: string; category?: string }>) || [];
+                      const taggedIds = new Set(toolTags.map(t => t.conceptId));
+                      const available = (allOntologyConcepts || []).filter(c => !taggedIds.has(c.id)).slice(0, 10);
+                      return (
+                        <div className="flex flex-col gap-1.5 pt-2 border-t" data-testid={`tool-ontology-section-${tool.id}`}>
+                          <div className="flex items-center gap-1.5">
+                            <Brain className="w-3 h-3 text-purple-500" />
+                            <span className="text-[11px] font-medium text-muted-foreground">Ontology Tags</span>
+                          </div>
+                          {toolTags.length > 0 && (
+                            <div className="flex items-center gap-1 flex-wrap">
+                              {toolTags.map((t, i) => (
+                                <Badge
+                                  key={i}
+                                  variant="outline"
+                                  className="text-[9px] text-purple-600 border-purple-300 dark:text-purple-400 dark:border-purple-700 cursor-pointer"
+                                  data-testid={`badge-tool-ontology-${tool.id}-${t.conceptId}`}
+                                  onClick={async () => {
+                                    const updated = toolTags.filter(x => x.conceptId !== t.conceptId);
+                                    try {
+                                      await apiRequest("PATCH", `/api/mcp-tools/${tool.id}/ontology-tags`, { ontologyTags: updated });
+                                      queryClient.invalidateQueries({ queryKey: ["/api/mcp-servers", id, "tools"] });
+                                      toast({ title: `Removed "${t.label}"` });
+                                    } catch { toast({ title: "Failed to remove tag", variant: "destructive" }); }
+                                  }}
+                                >
+                                  {t.label} <XCircle className="w-2.5 h-2.5 ml-0.5" />
+                                </Badge>
+                              ))}
+                            </div>
+                          )}
+                          {available.length > 0 && (
+                            <div className="flex items-center gap-1 flex-wrap">
+                              {available.map(c => (
+                                <Badge
+                                  key={c.id}
+                                  variant="outline"
+                                  className="text-[9px] cursor-pointer hover-elevate"
+                                  data-testid={`badge-add-tool-ontology-${tool.id}-${c.id}`}
+                                  onClick={async () => {
+                                    const updated = [...toolTags, { conceptId: c.id, label: c.label, category: c.category }];
+                                    try {
+                                      await apiRequest("PATCH", `/api/mcp-tools/${tool.id}/ontology-tags`, { ontologyTags: updated });
+                                      queryClient.invalidateQueries({ queryKey: ["/api/mcp-servers", id, "tools"] });
+                                      toast({ title: `Tagged with "${c.label}"` });
+                                    } catch { toast({ title: "Failed to add tag", variant: "destructive" }); }
+                                  }}
+                                >
+                                  <Plus className="w-2.5 h-2.5 mr-0.5" /> {c.label}
+                                </Badge>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </CardContent>
                 </Card>
               ))}

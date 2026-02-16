@@ -26,6 +26,7 @@ import {
   ClipboardCheck,
   FileCheck,
   AlertOctagon,
+  Brain,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -1361,6 +1362,101 @@ export default function Deployments() {
                         </div>
                       ))}
                     </div>
+                  </div>
+                  <div className="col-span-full flex flex-col gap-3 bg-purple-500/5 border border-purple-200 dark:border-purple-800 rounded-md p-3" data-testid="panel-ontology-validation">
+                    <div className="flex items-center gap-1.5">
+                      <Brain className="w-3.5 h-3.5 text-purple-500" />
+                      <span className="text-xs font-medium">Ontology Validation Gate</span>
+                      <Badge variant="outline" className="text-[10px] text-purple-600 border-purple-300 dark:text-purple-400 dark:border-purple-700 ml-auto">
+                        Pre-Deploy Check
+                      </Badge>
+                    </div>
+                    <span className="text-[10px] text-muted-foreground">
+                      Agents are checked for required ontology tags matching the target industry domain. Insufficient coverage triggers a manual approval gate.
+                    </span>
+                    {(() => {
+                      const industryOntologyRequirements: Record<string, { domain: string; minTags: number; requiredCategories: string[] }> = {
+                        healthcare: { domain: "Healthcare", minTags: 2, requiredCategories: ["Regulatory Compliance", "Clinical Operations"] },
+                        financial_services: { domain: "Financial Services", minTags: 2, requiredCategories: ["Risk Assessment", "Regulatory Compliance"] },
+                        manufacturing: { domain: "Manufacturing", minTags: 1, requiredCategories: ["Process Optimization"] },
+                        insurance: { domain: "Insurance", minTags: 2, requiredCategories: ["Risk Assessment", "Claims Processing"] },
+                        retail: { domain: "Retail", minTags: 1, requiredCategories: ["Customer Intelligence"] },
+                        technology: { domain: "Technology/SaaS", minTags: 1, requiredCategories: ["System Architecture"] },
+                      };
+                      const req = industryOntologyRequirements[detectedIndustry] || industryOntologyRequirements.technology;
+                      const agentCoverage = (agents || []).map(agent => {
+                        const tags = (agent.ontologyTags as Array<{ conceptId: string; label: string; category?: string }>) || [];
+                        const tagCategories = new Set(tags.map(t => t.category).filter(Boolean));
+                        const coveredCategories = req.requiredCategories.filter(c => tagCategories.has(c));
+                        const missingCategories = req.requiredCategories.filter(c => !tagCategories.has(c));
+                        const meetsMinTags = tags.length >= req.minTags;
+                        const meetsCategories = missingCategories.length === 0;
+                        const passed = meetsMinTags && meetsCategories;
+                        return { agent, tags, coveredCategories, missingCategories, meetsMinTags, passed, tagCount: tags.length };
+                      });
+                      const passCount = agentCoverage.filter(a => a.passed).length;
+                      const failCount = agentCoverage.filter(a => !a.passed).length;
+                      return (
+                        <div className="flex flex-col gap-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                            <div className="flex flex-col gap-1 p-2 rounded-md bg-background/50">
+                              <span className="text-[10px] text-muted-foreground">Target Domain</span>
+                              <span className="text-xs font-medium" data-testid="text-ontology-domain">{req.domain}</span>
+                            </div>
+                            <div className="flex flex-col gap-1 p-2 rounded-md bg-background/50">
+                              <span className="text-[10px] text-muted-foreground">Min. Ontology Tags</span>
+                              <span className="text-xs font-medium" data-testid="text-ontology-min-tags">{req.minTags}</span>
+                            </div>
+                            <div className="flex flex-col gap-1 p-2 rounded-md bg-background/50">
+                              <span className="text-[10px] text-muted-foreground">Required Categories</span>
+                              <div className="flex items-center gap-1 flex-wrap">
+                                {req.requiredCategories.map(cat => (
+                                  <Badge key={cat} variant="outline" className="text-[9px] text-purple-600 border-purple-300 dark:text-purple-400 dark:border-purple-700" data-testid={`badge-required-cat-${cat.replace(/\s/g, "-")}`}>
+                                    {cat}
+                                  </Badge>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3 p-2 rounded-md bg-background/50">
+                            <div className="flex items-center gap-1.5">
+                              <CheckCircle className="w-3.5 h-3.5 text-green-500" />
+                              <span className="text-[10px] font-medium text-green-600 dark:text-green-400" data-testid="text-ontology-pass-count">{passCount} pass</span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+                              <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400" data-testid="text-ontology-fail-count">{failCount} need attention</span>
+                            </div>
+                            <Progress value={agentCoverage.length > 0 ? (passCount / agentCoverage.length) * 100 : 0} className="flex-1 h-2" />
+                          </div>
+                          {failCount > 0 && (
+                            <div className="flex flex-col gap-2">
+                              <span className="text-[10px] font-medium text-muted-foreground">Agents Requiring Ontology Remediation:</span>
+                              {agentCoverage.filter(a => !a.passed).slice(0, 5).map(({ agent, missingCategories, tagCount, meetsMinTags }) => (
+                                <div key={agent.id} className="flex items-center justify-between gap-2 p-2 rounded-md bg-amber-500/5 border border-amber-200 dark:border-amber-800" data-testid={`ontology-fail-agent-${agent.id}`}>
+                                  <div className="flex flex-col gap-0.5 min-w-0">
+                                    <span className="text-[11px] font-medium truncate">{agent.name}</span>
+                                    <div className="flex items-center gap-1 flex-wrap">
+                                      {!meetsMinTags && (
+                                        <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-300 dark:text-amber-400 dark:border-amber-700">
+                                          {tagCount}/{req.minTags} tags
+                                        </Badge>
+                                      )}
+                                      {missingCategories.map(cat => (
+                                        <Badge key={cat} variant="outline" className="text-[9px] text-red-600 border-red-300 dark:text-red-400 dark:border-red-700">
+                                          Missing: {cat}
+                                        </Badge>
+                                      ))}
+                                    </div>
+                                  </div>
+                                  <Badge variant="destructive" className="text-[9px] shrink-0">Blocked</Badge>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
               )}

@@ -474,6 +474,7 @@ export interface IStorage {
   createRegulatoryChange(change: InsertRegulatoryChange): Promise<RegulatoryChange>;
   updateRegulatoryChange(id: string, data: Partial<RegulatoryChange>): Promise<RegulatoryChange | undefined>;
 
+  getAllOntologyConcepts(): Promise<OntologyConcept[]>;
   getOntologyConcepts(industryId: string): Promise<OntologyConcept[]>;
   getOntologyConcept(id: string): Promise<OntologyConcept | undefined>;
   createOntologyConcept(concept: InsertOntologyConcept): Promise<OntologyConcept>;
@@ -1823,6 +1824,9 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
+  async getAllOntologyConcepts() {
+    return db.select().from(ontologyConcepts);
+  }
   async getOntologyConcepts(industryId: string) {
     return db.select().from(ontologyConcepts).where(eq(ontologyConcepts.industryId, industryId));
   }

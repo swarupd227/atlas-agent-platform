@@ -31,6 +31,7 @@ import {
   History,
   Gauge,
   XCircle,
+  Plus,
   ChevronRight,
   Archive,
   Power,
@@ -90,7 +91,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import type { Agent, RunTrace, EvalSuite, OutcomeContract, ImprovementRecommendation, AutonomousActionLog, AgentVersion, Deployment, Policy, Approval, PolicyException, ToolConnector, RemoteAgent, AgentTeam, Skill, McpServer, McpServerTool, McpServerResource, AgentMcpServer } from "@shared/schema";
+import type { Agent, RunTrace, EvalSuite, OutcomeContract, ImprovementRecommendation, AutonomousActionLog, AgentVersion, Deployment, Policy, Approval, PolicyException, ToolConnector, RemoteAgent, AgentTeam, Skill, McpServer, McpServerTool, McpServerResource, AgentMcpServer, OntologyConcept } from "@shared/schema";
 import { Wifi, WifiOff, Crown, Brain, Sparkles, ShieldAlert, Layers3, BookMarked, Binary, ScrollText, FileCheck } from "lucide-react";
 import { useIndustry } from "@/components/industry-provider";
 
@@ -325,6 +326,9 @@ function AgentDetailInner() {
   });
   const { data: allMcpServers } = useQuery<McpServer[]>({
     queryKey: ["/api/mcp-servers"],
+  });
+  const { data: allOntologyConcepts } = useQuery<OntologyConcept[]>({
+    queryKey: ["/api/ontology-concepts/all"],
   });
   const { industry } = useIndustry();
 
@@ -725,6 +729,7 @@ function AgentDetailInner() {
           <TabsTrigger value="compliance" data-testid="tab-compliance">Compliance</TabsTrigger>
           <TabsTrigger value="context-profile" data-testid="tab-context-profile">Context Profile</TabsTrigger>
           <TabsTrigger value="mcp-servers" data-testid="tab-mcp-servers">MCP Servers</TabsTrigger>
+          <TabsTrigger value="ontology" data-testid="tab-ontology">Ontology</TabsTrigger>
           {agent.agentType === "remote" && (
             <TabsTrigger value="a2a" data-testid="tab-a2a">A2A Card</TabsTrigger>
           )}
@@ -3509,6 +3514,142 @@ function AgentDetailInner() {
               })}
             </div>
           )}
+        </TabsContent>
+
+        <TabsContent value="ontology" className="flex flex-col gap-4 mt-0" data-testid="tab-content-ontology">
+          {(() => {
+            const currentTags: Array<{ conceptId: string; label: string; category?: string }> = (() => {
+              const raw = agent.ontologyTags as any;
+              if (Array.isArray(raw)) return raw;
+              if (raw && typeof raw === "object" && Array.isArray(raw.tags)) return raw.tags;
+              return [];
+            })();
+            const conceptMap = new Map((allOntologyConcepts || []).map(c => [c.id, c]));
+            const industryConcepts = (allOntologyConcepts || []).filter(c =>
+              industry?.id ? c.industryId === industry.id : true
+            );
+            const categories = Array.from(new Set(industryConcepts.map(c => c.category))).sort();
+            const taggedIds = new Set(currentTags.map(t => t.conceptId));
+            const untaggedConcepts = industryConcepts.filter(c => !taggedIds.has(c.id));
+
+            return (
+              <>
+                <div className="flex items-center justify-between gap-4 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <Brain className="w-4 h-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">Ontology Tags</span>
+                    <Badge variant="secondary" className="text-[10px]">{currentTags.length} mapped</Badge>
+                  </div>
+                  {industry && (
+                    <Badge variant="outline" className="text-[10px]">{industry.ontology || industry.label}</Badge>
+                  )}
+                </div>
+
+                {currentTags.length > 0 ? (
+                  <Card data-testid="card-current-ontology-tags">
+                    <CardHeader className="flex flex-row items-center gap-2 pb-3">
+                      <Network className="w-4 h-4 text-muted-foreground" />
+                      <CardTitle className="text-sm font-medium">Mapped Concepts ({currentTags.length})</CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-4 pt-0 flex flex-col gap-2">
+                      {currentTags.map(tag => {
+                        const concept = conceptMap.get(tag.conceptId);
+                        return (
+                          <div key={tag.conceptId} className="flex items-start gap-2 p-2.5 border rounded-md group" data-testid={`ontology-tag-${tag.conceptId}`}>
+                            <Brain className="w-3.5 h-3.5 text-purple-500 shrink-0 mt-0.5" />
+                            <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-xs font-medium">{tag.label || concept?.label || tag.conceptId}</span>
+                                <Badge variant="outline" className="text-[9px] text-purple-600 border-purple-300 dark:text-purple-400 dark:border-purple-700">
+                                  {tag.category || concept?.category || "General"}
+                                </Badge>
+                              </div>
+                              {concept?.description && (
+                                <p className="text-[11px] text-muted-foreground line-clamp-2">{concept.description}</p>
+                              )}
+                            </div>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                              style={{ visibility: "visible" }}
+                              data-testid={`button-remove-ontology-${tag.conceptId}`}
+                              onClick={async () => {
+                                const updated = currentTags.filter(t => t.conceptId !== tag.conceptId);
+                                try {
+                                  await apiRequest("PATCH", `/api/agents/${agentId}`, { ontologyTags: updated });
+                                  queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId] });
+                                  toast({ title: "Ontology tag removed" });
+                                } catch {
+                                  toast({ title: "Failed to remove tag", variant: "destructive" });
+                                }
+                              }}
+                            >
+                              <XCircle className="w-3.5 h-3.5 text-muted-foreground" />
+                            </Button>
+                          </div>
+                        );
+                      })}
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <Card data-testid="card-no-ontology-tags">
+                    <CardContent className="p-6 flex flex-col items-center gap-2 text-center">
+                      <Brain className="w-8 h-8 text-muted-foreground" />
+                      <p className="text-sm font-medium">No ontology tags mapped</p>
+                      <p className="text-xs text-muted-foreground">Map this agent to domain concepts to enable ontology-aware governance and compliance.</p>
+                    </CardContent>
+                  </Card>
+                )}
+
+                <Card data-testid="card-add-ontology-tags">
+                  <CardHeader className="flex flex-row items-center gap-2 pb-3">
+                    <Tag className="w-4 h-4 text-muted-foreground" />
+                    <CardTitle className="text-sm font-medium">Add Ontology Concepts</CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-4 pt-0 flex flex-col gap-3">
+                    {categories.length > 0 ? (
+                      categories.map(cat => {
+                        const catConcepts = untaggedConcepts.filter(c => c.category === cat);
+                        if (catConcepts.length === 0) return null;
+                        return (
+                          <div key={cat} className="flex flex-col gap-1.5">
+                            <span className="text-[11px] font-medium text-muted-foreground">{cat}</span>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              {catConcepts.map(c => (
+                                <Badge
+                                  key={c.id}
+                                  variant="outline"
+                                  className="text-[10px] cursor-pointer hover-elevate"
+                                  data-testid={`badge-add-ontology-${c.id}`}
+                                  onClick={async () => {
+                                    const updated = [...currentTags, { conceptId: c.id, label: c.label, category: c.category }];
+                                    try {
+                                      await apiRequest("PATCH", `/api/agents/${agentId}`, { ontologyTags: updated });
+                                      queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId] });
+                                      toast({ title: `Tagged with "${c.label}"` });
+                                    } catch {
+                                      toast({ title: "Failed to add tag", variant: "destructive" });
+                                    }
+                                  }}
+                                >
+                                  <Plus className="w-3 h-3 mr-0.5" /> {c.label}
+                                </Badge>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <p className="text-xs text-muted-foreground text-center py-3" data-testid="text-no-concepts">
+                        No ontology concepts available. Generate concepts from the Ontology Explorer first.
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+              </>
+            );
+          })()}
         </TabsContent>
       </Tabs>
 

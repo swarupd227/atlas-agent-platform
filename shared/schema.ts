@@ -190,6 +190,7 @@ export const evalSuites = pgTable("eval_suites", {
   schedule: text("schedule"),
   industry: text("industry"),
   goldenDatasetId: varchar("golden_dataset_id"),
+  ontologyTags: jsonb("ontology_tags").default(sql`'[]'::jsonb`),
 });
 
 export const insertEvalSuiteSchema = createInsertSchema(evalSuites).omit({ id: true });
@@ -207,6 +208,7 @@ export const policies = pgTable("policies", {
   policyJson: jsonb("policy_json"),
   description: text("description"),
   versionHistory: jsonb("version_history"),
+  ontologyRefs: jsonb("ontology_refs").default(sql`'[]'::jsonb`),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -834,6 +836,7 @@ export const mcpServerTools = pgTable("mcp_server_tools", {
   lastUsedAt: timestamp("last_used_at"),
   lastDriftAt: timestamp("last_drift_at"),
   driftStatus: varchar("drift_status", { length: 20 }).default("stable"),
+  ontologyTags: jsonb("ontology_tags").default(sql`'[]'::jsonb`),
   syncedAt: timestamp("synced_at").defaultNow(),
 });
 

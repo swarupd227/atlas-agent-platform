@@ -1960,6 +1960,11 @@ Return ONLY a valid JSON object with an enriched "rules" array. Do not include m
     }
   });
 
+  app.get("/api/ontology-concepts/all", async (_req, res) => {
+    const concepts = await storage.getAllOntologyConcepts();
+    res.json(concepts);
+  });
+
   app.post("/api/ai/enhance-ontology-concept", checkPermission("create_modify_policies"), async (req, res) => {
     try {
       if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
@@ -10409,6 +10414,41 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
     } catch (e) {
       if (e instanceof ZodError) return res.status(400).json({ message: "Invalid request", errors: e.errors });
       res.status(500).json({ message: "Failed to update tool" });
+    }
+  });
+
+  app.patch("/api/mcp-tools/:id/ontology-tags", checkPermission("manage_mcp_servers"), async (req, res) => {
+    try {
+      const tool = await storage.getMcpServerToolById(req.params.id as string);
+      if (!tool) return res.status(404).json({ message: "Tool not found" });
+      const { ontologyTags } = req.body;
+      if (!Array.isArray(ontologyTags)) return res.status(400).json({ message: "ontologyTags must be an array" });
+      const updated = await storage.updateMcpServerTool(tool.id, { ontologyTags });
+      if (!updated) return res.status(500).json({ message: "Failed to update" });
+      await storage.createAuditEvent({
+        action: "tool_catalog.ontology_tags_updated",
+        objectType: "mcp_server_tool",
+        objectId: tool.id,
+        actorId: "platform_admin",
+        details: JSON.stringify({ ontologyTags }),
+      });
+      res.json(updated);
+    } catch (e) {
+      res.status(500).json({ message: "Failed to update ontology tags" });
+    }
+  });
+
+  app.patch("/api/eval-suites/:id/ontology-tags", checkPermission("manage_agents"), async (req, res) => {
+    try {
+      const suite = await storage.getEvalSuite(req.params.id as string);
+      if (!suite) return res.status(404).json({ message: "Eval suite not found" });
+      const { ontologyTags } = req.body;
+      if (!Array.isArray(ontologyTags)) return res.status(400).json({ message: "ontologyTags must be an array" });
+      const updated = await storage.updateEvalSuite(suite.id, { ontologyTags });
+      if (!updated) return res.status(500).json({ message: "Failed to update" });
+      res.json(updated);
+    } catch (e) {
+      res.status(500).json({ message: "Failed to update ontology tags" });
     }
   });
 

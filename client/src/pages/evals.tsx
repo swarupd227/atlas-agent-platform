@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
-import type { EvalSuite, EvalRun, Agent, GoldenDataset } from "@shared/schema";
+import type { EvalSuite, EvalRun, Agent, GoldenDataset, OntologyConcept } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   FlaskConical, Search, TrendingUp, TrendingDown, Bot,
   ArrowRight, Calendar, Tag, BarChart3, AlertTriangle, CheckCircle,
-  Clock, Loader2, Shield, ShieldAlert, Bug, Play, Factory, DollarSign, Lock, BookOpen,
+  Clock, Loader2, Shield, ShieldAlert, Bug, Play, Factory, DollarSign, Lock, BookOpen, Brain,
 } from "lucide-react";
 import {
   industryLabels, kpiDimensions, regulatoryTemplates, industryScorers,
@@ -106,11 +106,13 @@ function formatTimeAgo(date: string | Date | null) {
 export default function Evals() {
   const [searchQuery, setSearchQuery] = useState("");
   const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const [ontologyDomainFilter, setOntologyDomainFilter] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("overview");
   const { data: suites, isLoading: suitesLoading } = useQuery<EvalSuite[]>({ queryKey: ["/api/eval-suites"] });
   const { data: agents, isLoading: agentsLoading } = useQuery<Agent[]>({ queryKey: ["/api/agents"] });
   const { data: allRuns } = useQuery<EvalRun[]>({ queryKey: ["/api/eval-runs"] });
   const { data: goldenDatasets } = useQuery<GoldenDataset[]>({ queryKey: ["/api/golden-datasets"] });
+  const { data: ontologyConcepts } = useQuery<OntologyConcept[]>({ queryKey: ["/api/ontology-concepts/all"] });
   const isLoading = suitesLoading || agentsLoading;
 
   const agentMap = useMemo(() => {
@@ -131,14 +133,56 @@ export default function Evals() {
     return Array.from(s).sort();
   }, [suites]);
 
+  const ontologyDomains = useMemo(() => {
+    if (!ontologyConcepts) return [];
+    const s = new Set<string>();
+    ontologyConcepts.forEach((c) => { if (c.industryId) s.add(c.industryId); });
+    return Array.from(s).sort();
+  }, [ontologyConcepts]);
+
+  const agentOntologyDomains = useMemo(() => {
+    const m = new Map<string, Set<string>>();
+    agents?.forEach((a) => {
+      const tags = (a.ontologyTags as Array<{ conceptId: string; label: string; category?: string }>) || [];
+      if (tags.length > 0 && ontologyConcepts) {
+        const conceptIds = new Set(tags.map(t => t.conceptId));
+        const domains = new Set<string>();
+        ontologyConcepts.forEach(c => { if (conceptIds.has(c.id) && c.industryId) domains.add(c.industryId); });
+        m.set(a.id, domains);
+      }
+    });
+    return m;
+  }, [agents, ontologyConcepts]);
+
+  const suiteOntologyDomains = useMemo(() => {
+    const m = new Map<string, Set<string>>();
+    suites?.forEach(s => {
+      const tags = (s.ontologyTags as Array<{ conceptId: string; label: string }>) || [];
+      if (tags.length > 0 && ontologyConcepts) {
+        const conceptIds = new Set(tags.map(t => t.conceptId));
+        const domains = new Set<string>();
+        ontologyConcepts.forEach(c => { if (conceptIds.has(c.id) && c.industryId) domains.add(c.industryId); });
+        m.set(s.id, domains);
+      }
+    });
+    return m;
+  }, [suites, ontologyConcepts]);
+
   const filtered = useMemo(() => {
     if (!suites) return [];
     return suites.filter((s) => {
       if (searchQuery && !s.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
       if (tagFilter && !(s.coverageTags || []).includes(tagFilter)) return false;
+      if (ontologyDomainFilter) {
+        const suiteDomains = suiteOntologyDomains.get(s.id);
+        const agentDomains = s.agentId ? agentOntologyDomains.get(s.agentId) : undefined;
+        const hasSuiteDomain = suiteDomains?.has(ontologyDomainFilter);
+        const hasAgentDomain = agentDomains?.has(ontologyDomainFilter);
+        if (!hasSuiteDomain && !hasAgentDomain) return false;
+      }
       return true;
     });
-  }, [suites, searchQuery, tagFilter]);
+  }, [suites, searchQuery, tagFilter, ontologyDomainFilter, agentOntologyDomains, suiteOntologyDomains]);
 
   const grouped = useMemo(() => {
     const groups = new Map<string, EvalSuite[]>();
@@ -409,6 +453,31 @@ export default function Evals() {
                   </Badge>
                 ))}
               </div>
+              {ontologyDomains.length > 0 && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Brain className="w-3.5 h-3.5 text-purple-500 shrink-0" />
+                  <span className="text-[11px] text-muted-foreground">Domain:</span>
+                  <Badge
+                    variant={ontologyDomainFilter === null ? "default" : "outline"}
+                    className="cursor-pointer text-[10px]"
+                    onClick={() => setOntologyDomainFilter(null)}
+                    data-testid="filter-ontology-all"
+                  >
+                    All
+                  </Badge>
+                  {ontologyDomains.map((domain) => (
+                    <Badge
+                      key={domain}
+                      variant="outline"
+                      className={`cursor-pointer text-[10px] ${ontologyDomainFilter === domain ? "ring-1 ring-purple-400 text-purple-600 border-purple-300 dark:text-purple-400 dark:border-purple-700" : ""}`}
+                      onClick={() => setOntologyDomainFilter(ontologyDomainFilter === domain ? null : domain)}
+                      data-testid={`filter-ontology-${domain.replace(/[\/\s]/g, "-")}`}
+                    >
+                      {domain}
+                    </Badge>
+                  ))}
+                </div>
+              )}
             </div>
 
             {filtered.length === 0 ? (
@@ -474,6 +543,20 @@ export default function Evals() {
                                   ))}
                                 </div>
                               )}
+                              {(() => {
+                                const sTags = (suite.ontologyTags as Array<{ conceptId: string; label: string }>) || [];
+                                return sTags.length > 0 ? (
+                                  <div className="flex items-center gap-1 flex-wrap" data-testid={`ontology-tags-${suite.id}`}>
+                                    <Brain className="w-3 h-3 text-purple-500 shrink-0" />
+                                    {sTags.slice(0, 3).map((t, i) => (
+                                      <Badge key={i} variant="outline" className="text-[9px] text-purple-600 border-purple-300 dark:text-purple-400 dark:border-purple-700">
+                                        {t.label}
+                                      </Badge>
+                                    ))}
+                                    {sTags.length > 3 && <span className="text-[9px] text-muted-foreground">+{sTags.length - 3}</span>}
+                                  </div>
+                                ) : null;
+                              })()}
                               <div className="flex items-center justify-between gap-2 flex-wrap">
                                 <div className="flex flex-col gap-1">
                                   {suite.totalCases !== null && (
@@ -823,6 +906,66 @@ export default function Evals() {
                     </CardContent>
                   </Card>
                 </div>
+
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-3">
+                    <div className="flex items-center gap-2">
+                      <Brain className="w-4 h-4 text-purple-500" />
+                      <CardTitle className="text-sm font-medium">Ontology Coverage Analysis</CardTitle>
+                    </div>
+                    <Badge variant="outline" className="text-[10px] text-purple-600 border-purple-300 dark:text-purple-400 dark:border-purple-700">
+                      {ontologyDomains.length} domain{ontologyDomains.length !== 1 ? "s" : ""}
+                    </Badge>
+                  </CardHeader>
+                  <CardContent>
+                    {(() => {
+                      const agentsWithTags = (agents || []).filter(a => {
+                        const tags = (a.ontologyTags as Array<{ conceptId: string; label: string }>) || [];
+                        return tags.length > 0;
+                      });
+                      const agentsWithSuites = new Set((suites || []).map(s => s.agentId).filter(Boolean));
+                      const taggedWithSuites = agentsWithTags.filter(a => agentsWithSuites.has(a.id));
+                      const taggedWithoutSuites = agentsWithTags.filter(a => !agentsWithSuites.has(a.id));
+                      const ontologyCovPct = (agents || []).length > 0
+                        ? Math.round((agentsWithTags.length / (agents || []).length) * 100)
+                        : 0;
+                      return (
+                        <div className="flex flex-col gap-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-muted/30">
+                              <span className="text-[10px] text-muted-foreground">Agents with Ontology Tags</span>
+                              <span className="text-lg font-semibold" data-testid="stat-ontology-tagged-agents">{agentsWithTags.length}/{(agents || []).length}</span>
+                              <Progress value={ontologyCovPct} className="h-1.5" />
+                            </div>
+                            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-muted/30">
+                              <span className="text-[10px] text-muted-foreground">Tagged Agents with Eval Suites</span>
+                              <span className="text-lg font-semibold" data-testid="stat-ontology-eval-coverage">{taggedWithSuites.length}</span>
+                              <span className="text-[10px] text-muted-foreground">{taggedWithoutSuites.length > 0 ? `${taggedWithoutSuites.length} tagged agents lack eval suites` : "All tagged agents have eval coverage"}</span>
+                            </div>
+                            <div className="flex flex-col gap-1 p-2.5 rounded-md bg-muted/30">
+                              <span className="text-[10px] text-muted-foreground">Active Ontology Domains</span>
+                              <div className="flex items-center gap-1 flex-wrap">
+                                {ontologyDomains.length > 0 ? ontologyDomains.map(d => (
+                                  <Badge key={d} variant="outline" className="text-[9px] text-purple-600 border-purple-300 dark:text-purple-400 dark:border-purple-700">
+                                    {d}
+                                  </Badge>
+                                )) : <span className="text-[10px] text-muted-foreground">No domains</span>}
+                              </div>
+                            </div>
+                          </div>
+                          {taggedWithoutSuites.length > 0 && (
+                            <div className="flex items-center gap-2 p-2 rounded-md bg-amber-500/10">
+                              <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                              <span className="text-[10px] text-amber-700 dark:text-amber-300">
+                                {taggedWithoutSuites.length} ontology-tagged agent{taggedWithoutSuites.length !== 1 ? "s" : ""} have no eval suites. Consider creating test coverage for: {taggedWithoutSuites.slice(0, 3).map(a => a.name).join(", ")}{taggedWithoutSuites.length > 3 ? "..." : ""}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </CardContent>
+                </Card>
 
                 {industryAssurance.primaryIndustry && (
                   <Card>

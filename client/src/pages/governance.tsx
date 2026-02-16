@@ -91,7 +91,7 @@ import { useEvidenceDrawer } from "@/components/evidence-drawer";
 import { usePermission, PermissionGate } from "@/components/role-provider";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { Policy, AuditEvent, Approval, Agent, PolicyException, ComplianceReport, PolicyTestCase, McpServerTool } from "@shared/schema";
+import type { Policy, AuditEvent, Approval, Agent, PolicyException, ComplianceReport, PolicyTestCase, McpServerTool, OntologyConcept } from "@shared/schema";
 import { useIndustry, type IndustryId } from "@/components/industry-provider";
 
 const domainIcons: Record<string, typeof Shield> = {
@@ -1098,6 +1098,9 @@ export default function Governance() {
   const { data: toolsByRisk } = useQuery<(McpServerTool & { serverName: string; serverStatus: string })[]>({
     queryKey: ["/api/mcp-tools/by-risk"],
   });
+  const { data: allOntologyConcepts } = useQuery<OntologyConcept[]>({
+    queryKey: ["/api/ontology-concepts/all"],
+  });
 
   const createMutation = useMutation({
     mutationFn: async (data: Record<string, any>) => {
@@ -1274,6 +1277,21 @@ export default function Governance() {
     return { totalRegs: detectedRegulations.length, totalReqs, allDomains: Array.from(allDomains), coveredDomains: Array.from(coveredDomains), uncoveredDomains };
   }, [detectedRegulations, policies]);
 
+  const ontologyConceptMap = useMemo(() => {
+    const map: Record<string, OntologyConcept> = {};
+    allOntologyConcepts?.forEach(c => { map[c.id] = c; });
+    return map;
+  }, [allOntologyConcepts]);
+
+  const ontologyCategories = useMemo(() => {
+    if (!allOntologyConcepts) return [];
+    const cats = new Set(allOntologyConcepts.map(c => c.category));
+    return Array.from(cats).sort();
+  }, [allOntologyConcepts]);
+
+  const [ontologyFilter, setOntologyFilter] = useState<string>("all");
+  const [selectedOntologyRefs, setSelectedOntologyRefs] = useState<string[]>([]);
+
   const filtered = useMemo(() => {
     let result = policies || [];
     if (search) {
@@ -1282,8 +1300,16 @@ export default function Governance() {
     if (domainFilter !== "all") {
       result = result.filter((p) => p.domain === domainFilter);
     }
+    if (ontologyFilter !== "all") {
+      const conceptsInCategory = allOntologyConcepts?.filter(c => c.category === ontologyFilter).map(c => c.id) || [];
+      result = result.filter((p) => {
+        const refs = (p as any).ontologyRefs as string[] | null;
+        if (!refs || !Array.isArray(refs)) return false;
+        return refs.some(r => conceptsInCategory.includes(r));
+      });
+    }
     return result;
-  }, [policies, search, domainFilter]);
+  }, [policies, search, domainFilter, ontologyFilter, allOntologyConcepts]);
 
   const domainGroups = useMemo(() => {
     const groups: Record<string, Policy[]> = {};
@@ -1669,7 +1695,9 @@ export default function Governance() {
                       domain: fd.get("domain") as string,
                       description: fd.get("description") as string,
                       scopeType: fd.get("scopeType") as string,
+                      ontologyRefs: selectedOntologyRefs,
                     });
+                    setSelectedOntologyRefs([]);
                   }}
                 >
                   <div className="flex flex-col gap-2">
@@ -1701,6 +1729,35 @@ export default function Governance() {
                       </select>
                     </div>
                   </div>
+                  {allOntologyConcepts && allOntologyConcepts.length > 0 && (
+                    <div className="flex flex-col gap-2">
+                      <Label>Ontology Concepts</Label>
+                      <div className="flex flex-wrap gap-1.5 max-h-[160px] overflow-y-auto border rounded-md p-2" data-testid="container-ontology-select">
+                        {allOntologyConcepts.map(concept => {
+                          const isSelected = selectedOntologyRefs.includes(concept.id);
+                          return (
+                            <Badge
+                              key={concept.id}
+                              variant="outline"
+                              className={`text-[10px] cursor-pointer ${isSelected ? "bg-purple-500/15 text-purple-600 border-purple-400 dark:text-purple-400 dark:border-purple-500" : "text-muted-foreground"}`}
+                              onClick={() => {
+                                setSelectedOntologyRefs(prev =>
+                                  isSelected ? prev.filter(id => id !== concept.id) : [...prev, concept.id]
+                                );
+                              }}
+                              data-testid={`badge-ontology-option-${concept.id}`}
+                            >
+                              {isSelected && <Check className="w-3 h-3 mr-0.5" />}
+                              {concept.label}
+                            </Badge>
+                          );
+                        })}
+                      </div>
+                      {selectedOntologyRefs.length > 0 && (
+                        <span className="text-[11px] text-muted-foreground" data-testid="text-ontology-count">{selectedOntologyRefs.length} concept{selectedOntologyRefs.length !== 1 ? "s" : ""} selected</span>
+                      )}
+                    </div>
+                  )}
                   <Button type="submit" disabled={createMutation.isPending} data-testid="button-submit-policy">
                     {createMutation.isPending ? "Creating..." : "Create Policy"}
                   </Button>
@@ -1775,6 +1832,19 @@ export default function Governance() {
                 <SelectItem value="content_boundaries">Content Boundaries</SelectItem>
               </SelectContent>
             </Select>
+            {ontologyCategories.length > 0 && (
+              <Select value={ontologyFilter} onValueChange={setOntologyFilter}>
+                <SelectTrigger className="w-[200px]" data-testid="select-ontology-filter">
+                  <SelectValue placeholder="All Ontology Domains" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Ontology Domains</SelectItem>
+                  {ontologyCategories.map(cat => (
+                    <SelectItem key={cat} value={cat} data-testid={`option-ontology-filter-${cat}`}>{cat}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </div>
 
           {filteredRegGroupPolicies.groups.map((group) => {
@@ -1857,6 +1927,15 @@ export default function Governance() {
                                 <Scale className="w-3 h-3" />
                                 {group.regulation}
                               </Badge>
+                              {Array.isArray((policy as any).ontologyRefs) && ((policy as any).ontologyRefs as string[]).map(refId => {
+                                const concept = ontologyConceptMap[refId];
+                                if (!concept) return null;
+                                return (
+                                  <Badge key={refId} variant="outline" className="text-[10px] text-purple-600 border-purple-300 dark:text-purple-400 dark:border-purple-600" data-testid={`badge-ontology-${policy.id}-${refId}`}>
+                                    {concept.label}
+                                  </Badge>
+                                );
+                              })}
                               {(policy as any).versionHistory && Array.isArray((policy as any).versionHistory) && (
                                 <Badge variant="secondary" className="text-[10px]">{((policy as any).versionHistory as any[]).length} prior versions</Badge>
                               )}
@@ -1920,6 +1999,15 @@ export default function Governance() {
                             <AlertTriangle className="w-3 h-3" />
                             No regulation linked
                           </Badge>
+                          {Array.isArray((policy as any).ontologyRefs) && ((policy as any).ontologyRefs as string[]).map(refId => {
+                            const concept = ontologyConceptMap[refId];
+                            if (!concept) return null;
+                            return (
+                              <Badge key={refId} variant="outline" className="text-[10px] text-purple-600 border-purple-300 dark:text-purple-400 dark:border-purple-600" data-testid={`badge-ontology-${policy.id}-${refId}`}>
+                                {concept.label}
+                              </Badge>
+                            );
+                          })}
                         </div>
                       </CardContent>
                     </Card>
@@ -3274,6 +3362,7 @@ export default function Governance() {
                             <TableHead className="text-xs">Status</TableHead>
                             <TableHead className="text-xs">Owner</TableHead>
                             <TableHead className="text-xs">Usage</TableHead>
+                            <TableHead className="text-xs">Ontology</TableHead>
                             <TableHead className="text-xs">Governance Gate</TableHead>
                           </TableRow>
                         </TableHeader>
@@ -3300,6 +3389,23 @@ export default function Governance() {
                                 </TableCell>
                                 <TableCell className="text-xs text-muted-foreground">{tool.owner || "Unassigned"}</TableCell>
                                 <TableCell className="text-xs text-muted-foreground">{tool.usageCount || 0}</TableCell>
+                                <TableCell>
+                                  {(() => {
+                                    const tags = (tool.ontologyTags as Array<{ conceptId: string; label: string }>) || [];
+                                    return tags.length > 0 ? (
+                                      <div className="flex items-center gap-1 flex-wrap">
+                                        {tags.slice(0, 2).map((t, i) => (
+                                          <Badge key={i} variant="outline" className="text-[9px] text-purple-600 border-purple-300 dark:text-purple-400 dark:border-purple-700">
+                                            {t.label}
+                                          </Badge>
+                                        ))}
+                                        {tags.length > 2 && <span className="text-[9px] text-muted-foreground">+{tags.length - 2}</span>}
+                                      </div>
+                                    ) : (
+                                      <span className="text-[9px] text-muted-foreground">None</span>
+                                    );
+                                  })()}
+                                </TableCell>
                                 <TableCell>
                                   {needsApproval ? (
                                     <Badge variant="outline" className="text-[10px] border-orange-300 text-orange-600 dark:border-orange-800 dark:text-orange-400">
