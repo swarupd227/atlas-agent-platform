@@ -277,6 +277,162 @@ export const INDUSTRIES: IndustryProfile[] = [
   },
 ];
 
+export interface OutcomeTemplateKpi {
+  name: string;
+  target: number;
+  unit: string;
+  baseline: number | null;
+  slaThreshold?: number;
+  weight?: number;
+}
+
+export interface OutcomeTemplate {
+  id: string;
+  name: string;
+  description: string;
+  industry: IndustryId;
+  subVertical?: string;
+  riskTier: string;
+  pricingModel: string;
+  pricePerUnit: number;
+  riskThreshold: number;
+  maxDriftPercent: number;
+  kpis: OutcomeTemplateKpi[];
+  slaDescription: string;
+}
+
+export const OUTCOME_TEMPLATES: OutcomeTemplate[] = [
+  {
+    id: "software-package-automation",
+    name: "Autonomous Application Packaging & Deployment",
+    description: "Automatically discover outdated applications across endpoints, build deployment packages, validate in sandbox, and deploy to production endpoints — with admin gates for critical apps. Achieve 95% packaging success with zero untested deployments.",
+    industry: "technology_saas",
+    subVertical: "Software Deployment & Patch Management",
+    riskTier: "HIGH",
+    pricingModel: "PER_OUTCOME_EVENT",
+    pricePerUnit: 2.50,
+    riskThreshold: 0.70,
+    maxDriftPercent: 5,
+    kpis: [
+      { name: "Packaging Success Rate", target: 95, unit: "percent", baseline: null, slaThreshold: 90, weight: 1.5 },
+      { name: "Sandbox Validation Pass Rate", target: 95, unit: "percent", baseline: null, slaThreshold: 90, weight: 1.2 },
+      { name: "First-Attempt Deployment Success", target: 90, unit: "percent", baseline: null, slaThreshold: 85, weight: 1.3 },
+      { name: "False Positive Rate", target: 5, unit: "percent", baseline: null, slaThreshold: 8, weight: 1.0 },
+      { name: "Zero Untested Deployments", target: 100, unit: "percent", baseline: null, slaThreshold: 100, weight: 2.0 },
+      { name: "Mean Time Discovery to Deployment", target: 30, unit: "minutes", baseline: null, slaThreshold: 45, weight: 1.0 },
+    ],
+    slaDescription: "95% packaging success rate measured monthly",
+  },
+  {
+    id: "saas-incident-resolution",
+    name: "Automated Incident Detection & Resolution",
+    description: "Detect, diagnose, and remediate production incidents automatically with AI-driven root cause analysis. Reduce MTTR and minimize customer impact through autonomous healing workflows.",
+    industry: "technology_saas",
+    riskTier: "HIGH",
+    pricingModel: "PER_OUTCOME_EVENT",
+    pricePerUnit: 5.00,
+    riskThreshold: 0.80,
+    maxDriftPercent: 10,
+    kpis: [
+      { name: "Mean Time to Resolution", target: 15, unit: "minutes", baseline: null, slaThreshold: 30 },
+      { name: "Auto-Resolution Rate", target: 70, unit: "percent", baseline: null, slaThreshold: 60 },
+      { name: "False Alarm Rate", target: 5, unit: "percent", baseline: null, slaThreshold: 10 },
+      { name: "Customer Impact Score", target: 2, unit: "score", baseline: null, slaThreshold: 3 },
+    ],
+    slaDescription: "70% auto-resolution rate with <15min MTTR measured weekly",
+  },
+  {
+    id: "kyc-onboarding-acceleration",
+    name: "Accelerated KYC Onboarding",
+    description: "Automate KYC document verification, risk scoring, and compliance checks to reduce onboarding time from days to hours while maintaining full BSA/AML regulatory compliance.",
+    industry: "financial_services",
+    riskTier: "HIGH",
+    pricingModel: "PER_OUTCOME_EVENT",
+    pricePerUnit: 8.00,
+    riskThreshold: 0.80,
+    maxDriftPercent: 5,
+    kpis: [
+      { name: "Onboarding Cycle Time", target: 24, unit: "hours", baseline: null, slaThreshold: 48 },
+      { name: "Document Verification Accuracy", target: 98, unit: "percent", baseline: null, slaThreshold: 95 },
+      { name: "Regulatory Compliance Rate", target: 100, unit: "percent", baseline: null, slaThreshold: 100 },
+      { name: "False Positive Screening Rate", target: 10, unit: "percent", baseline: null, slaThreshold: 20 },
+    ],
+    slaDescription: "98% document verification accuracy with <24hr onboarding measured monthly",
+  },
+  {
+    id: "claims-processing-automation",
+    name: "Straight-Through Claims Processing",
+    description: "Automate claims intake, adjudication, and settlement for standard claims with AI-driven fraud detection and compliance checks. Achieve straight-through processing for majority of claims.",
+    industry: "insurance",
+    riskTier: "HIGH",
+    pricingModel: "PER_OUTCOME_EVENT",
+    pricePerUnit: 4.00,
+    riskThreshold: 0.75,
+    maxDriftPercent: 8,
+    kpis: [
+      { name: "Straight-Through Processing Rate", target: 60, unit: "percent", baseline: null, slaThreshold: 50 },
+      { name: "Average Cycle Time", target: 3, unit: "days", baseline: null, slaThreshold: 5 },
+      { name: "Fraud Detection Accuracy", target: 95, unit: "percent", baseline: null, slaThreshold: 90 },
+      { name: "Claims Leakage Reduction", target: 25, unit: "percent", baseline: null, slaThreshold: 15 },
+    ],
+    slaDescription: "60% straight-through processing with <3 day cycle time measured monthly",
+  },
+  {
+    id: "clinical-documentation-improvement",
+    name: "Clinical Documentation Improvement",
+    description: "Automate clinical documentation completeness scoring, gap identification, and coding accuracy to improve quality reporting and reduce claim denials.",
+    industry: "healthcare",
+    riskTier: "HIGH",
+    pricingModel: "PER_OUTCOME_EVENT",
+    pricePerUnit: 3.50,
+    riskThreshold: 0.85,
+    maxDriftPercent: 5,
+    kpis: [
+      { name: "Documentation Completeness Score", target: 95, unit: "percent", baseline: null, slaThreshold: 90 },
+      { name: "Coding Accuracy Rate", target: 98, unit: "percent", baseline: null, slaThreshold: 95 },
+      { name: "Claim Denial Rate Reduction", target: 50, unit: "percent", baseline: null, slaThreshold: 30 },
+      { name: "Query Response Time", target: 4, unit: "hours", baseline: null, slaThreshold: 8 },
+    ],
+    slaDescription: "95% documentation completeness with 98% coding accuracy measured monthly",
+  },
+  {
+    id: "predictive-maintenance",
+    name: "Predictive Equipment Maintenance",
+    description: "Predict equipment failures 48+ hours in advance using sensor data analysis, reduce unplanned downtime, and optimize maintenance scheduling for maximum OEE.",
+    industry: "manufacturing",
+    riskTier: "MEDIUM",
+    pricingModel: "PER_OUTCOME_EVENT",
+    pricePerUnit: 6.00,
+    riskThreshold: 0.75,
+    maxDriftPercent: 10,
+    kpis: [
+      { name: "Failure Prediction Accuracy", target: 90, unit: "percent", baseline: null, slaThreshold: 85 },
+      { name: "Prediction Lead Time", target: 48, unit: "hours", baseline: null, slaThreshold: 24 },
+      { name: "Unplanned Downtime Reduction", target: 60, unit: "percent", baseline: null, slaThreshold: 40 },
+      { name: "OEE Improvement", target: 85, unit: "percent", baseline: null, slaThreshold: 80 },
+    ],
+    slaDescription: "90% failure prediction accuracy with 48hr lead time measured monthly",
+  },
+  {
+    id: "demand-forecasting-optimization",
+    name: "AI-Driven Demand Forecasting",
+    description: "Optimize demand forecasting accuracy using AI to reduce overstock and stockout rates, lower inventory carrying costs, and improve fill rates across all channels.",
+    industry: "retail",
+    riskTier: "MEDIUM",
+    pricingModel: "FIXED_MONTHLY",
+    pricePerUnit: 2000.00,
+    riskThreshold: 0.70,
+    maxDriftPercent: 10,
+    kpis: [
+      { name: "Forecast Accuracy", target: 90, unit: "percent", baseline: null, slaThreshold: 85 },
+      { name: "Overstock Rate Reduction", target: 50, unit: "percent", baseline: null, slaThreshold: 30 },
+      { name: "Stockout Rate", target: 2, unit: "percent", baseline: null, slaThreshold: 5 },
+      { name: "Inventory Carrying Cost Reduction", target: 25, unit: "percent", baseline: null, slaThreshold: 15 },
+    ],
+    slaDescription: "90% forecast accuracy with <2% stockout rate measured monthly",
+  },
+];
+
 type TermKey =
   | "outcomes"
   | "outcome"

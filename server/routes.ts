@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { db } from "./db";
 import { eq, desc } from "drizzle-orm";
-import { conversations, messages as chatMessages } from "@shared/schema";
+import { conversations, messages as chatMessages, outcomeContracts, kpiDefinitions } from "@shared/schema";
 import { z, ZodError } from "zod";
 import { startWorker, jobEvents } from "./worker";
 import OpenAI, { toFile } from "openai";
@@ -129,6 +129,31 @@ export async function registerRoutes(
       const data = insertOutcomeContractSchema.parse(req.body);
       const outcome = await storage.createOutcome(data);
       res.status(201).json(outcome);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  app.post("/api/outcomes/with-kpis", checkPermission("create_modify_outcomes"), async (req, res) => {
+    try {
+      const { outcome: outcomeData, kpis: kpiData, constraints } = req.body;
+      const parsedOutcome = insertOutcomeContractSchema.parse({
+        ...outcomeData,
+        slaConfig: constraints ? { constraints, ...(outcomeData.slaConfig || {}) } : outcomeData.slaConfig,
+      });
+      const parsedKpis = (kpiData && Array.isArray(kpiData))
+        ? kpiData.map((kpi: any) => insertKpiDefinitionSchema.omit({ outcomeId: true }).parse(kpi))
+        : [];
+      const result = await db.transaction(async (tx) => {
+        const [outcome] = await tx.insert(outcomeContracts).values(parsedOutcome).returning();
+        const createdKpis = [];
+        for (const kpi of parsedKpis) {
+          const [created] = await tx.insert(kpiDefinitions).values({ ...kpi, outcomeId: outcome.id }).returning();
+          createdKpis.push(created);
+        }
+        return { outcome, kpis: createdKpis };
+      });
+      res.status(201).json(result);
     } catch (e) {
       handleZodError(res, e);
     }

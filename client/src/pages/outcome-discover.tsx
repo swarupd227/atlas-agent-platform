@@ -133,6 +133,12 @@ const INDUSTRY_STARTER_PROMPTS: Record<IndustryId | "null", StarterPrompt[]> = {
     { icon: Zap, label: "Automate Vendor Management", prompt: "We manage 200+ vendors with manual PO processing, compliance checks, and performance reviews. We want to automate 75%+ of routine vendor operations." },
     { icon: Shield, label: "PCI Compliance Automation", prompt: "PCI-DSS compliance monitoring and evidence collection requires 2 FTEs. We need automated scanning, gap detection, and remediation tracking." },
   ],
+  technology_saas: [
+    { icon: Target, label: "Autonomous Package Deployment", prompt: "We deploy 200+ software packages across 15,000 endpoints monthly. Manual packaging takes 4 hours per app and deployment failures are at 12%. We want to achieve 95% first-attempt deployment success with zero untested packages reaching production." },
+    { icon: BarChart3, label: "Reduce Incident MTTR", prompt: "Our mean time to resolution for production incidents is 45 minutes with 30% requiring manual intervention. We want to achieve <15 minute MTTR with 70%+ auto-resolution rate." },
+    { icon: Zap, label: "Automate SOC 2 Compliance", prompt: "SOC 2 evidence collection and control monitoring consumes 3 FTEs. We want to automate continuous monitoring, evidence collection, and gap remediation for all trust service criteria." },
+    { icon: Shield, label: "API Security Posture Management", prompt: "We have 400+ APIs across microservices with inconsistent security practices. We want automated API discovery, vulnerability scanning, and policy enforcement with zero unmonitored endpoints." },
+  ],
   custom: [
     { icon: Target, label: "Reduce customer churn", prompt: "Our customer churn rate is around 8% monthly and we want to bring it down to under 4%. We're a SaaS company with about 2,000 customers." },
     { icon: BarChart3, label: "Speed up support resolution", prompt: "Our customer support tickets take an average of 48 hours to resolve. We want to get that under 4 hours for common issues." },
@@ -347,8 +353,22 @@ export default function OutcomeDiscover() {
 
   const createOutcomeMutation = useMutation({
     mutationFn: async (data: any) => {
-      const res = await apiRequest("POST", "/api/outcomes", data);
-      const outcome = await res.json();
+      const kpis = (proposal?.kpis || []).map((k: any) => ({
+        name: k.name,
+        target: k.target,
+        unit: k.unit,
+        baseline: k.currentBaseline ?? 0,
+        slaThreshold: k.target * 0.9,
+        weight: 1.0,
+      }));
+      const governanceConstraints = industry?.defaultGovernancePolicies || [];
+      const res = await apiRequest("POST", "/api/outcomes/with-kpis", {
+        outcome: data,
+        kpis,
+        constraints: governanceConstraints.length > 0 ? governanceConstraints : undefined,
+      });
+      const result = await res.json();
+      const outcome = result.outcome;
       await apiRequest("POST", "/api/approvals", {
         type: "outcome_review",
         objectType: "outcome_contract",
@@ -363,14 +383,16 @@ export default function OutcomeDiscover() {
           validationChecklist: proposal?.validationChecklist || [],
           outcomeContract: data,
           discoveryConversation: messages.length,
+          createdKpis: result.kpis?.length || 0,
         },
       });
       return outcome;
     },
     onSuccess: (outcome: OutcomeContract) => {
       queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/kpis"] });
       queryClient.invalidateQueries({ queryKey: ["/api/approvals"] });
-      toast({ title: "Outcome Contract created", description: `"${outcome.name}" has been sent for expert validation.` });
+      toast({ title: "Outcome Contract created", description: `"${outcome.name}" has been created with KPIs and sent for expert validation.` });
       navigate(`/outcomes/${outcome.id}`);
     },
     onError: (err: Error) => {
