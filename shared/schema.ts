@@ -1791,4 +1791,35 @@ export const insertAgentMcpServerSchema = createInsertSchema(agentMcpServers).om
 export type InsertAgentMcpServer = z.infer<typeof insertAgentMcpServerSchema>;
 export type AgentMcpServer = typeof agentMcpServers.$inferSelect;
 
+export const agentPipelines = pgTable("agent_pipelines", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  description: text("description"),
+  status: text("status").notNull().default("draft"),
+  stages: jsonb("stages").notNull().default(sql`'[]'::jsonb`),
+  connections: jsonb("connections").notNull().default(sql`'[]'::jsonb`),
+  triggerConfig: jsonb("trigger_config"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAgentPipelineSchema = createInsertSchema(agentPipelines).omit({ id: true, createdAt: true });
+export type InsertAgentPipeline = z.infer<typeof insertAgentPipelineSchema>;
+export type AgentPipeline = typeof agentPipelines.$inferSelect;
+
+export const pipelineRuns = pgTable("pipeline_runs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  pipelineId: varchar("pipeline_id").notNull(),
+  status: text("status").notNull().default("pending"),
+  scenarioInput: text("scenario_input"),
+  stageResults: jsonb("stage_results").notNull().default(sql`'[]'::jsonb`),
+  currentStageId: varchar("current_stage_id"),
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertPipelineRunSchema = createInsertSchema(pipelineRuns).omit({ id: true, createdAt: true });
+export type InsertPipelineRun = z.infer<typeof insertPipelineRunSchema>;
+export type PipelineRun = typeof pipelineRuns.$inferSelect;
+
 export * from "./models/chat";
