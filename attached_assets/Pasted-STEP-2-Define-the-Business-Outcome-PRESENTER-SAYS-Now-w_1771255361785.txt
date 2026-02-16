@@ -1,0 +1,44 @@
+STEP 2	Define the Business Outcome
+
+🎤 PRESENTER SAYS:
+"Now we define what success looks like. In ALMP, everything starts with a business outcome — not a technical spec. The outcome drives KPIs, which drive agent design, which drive evaluation criteria. Everything flows from this."
+
+🖱️ CLICK ACTION:
+Sidebar → Outcomes → + New Outcome → Template: “Software Package Automation”
+
+💻 ON SCREEN:
+OUTCOME BUILDER — New Service Level Objective
+
+TEMPLATE SELECTED: Software Package Automation (pre-built for Endpoint Management)
+
+OUTCOME NAME: “Autonomous Application Packaging & Deployment”
+
+DESCRIPTION (editable, pre-filled from template):
+  “Automatically discover outdated applications across endpoints, build deployment packages,
+   validate in sandbox, and deploy to production endpoints — with admin gates for critical apps.
+   Achieve 95% packaging success with zero untested deployments.”
+
+SUCCESS METRICS (KPIs):
+  KPI 1: Packaging Success Rate — Target: 95% | Current baseline: N/A (manual process)
+  KPI 2: Sandbox Validation Pass Rate — Target: 95% | First-attempt pass
+  KPI 3: First-Attempt Deployment Success — Target: 90%
+  KPI 4: False Positive Rate — Target: < 5%
+  KPI 5: Zero Untested Deployments — Target: 100% compliance
+  KPI 6: Mean Time from Discovery to Deployment — Target: < 30 minutes (vs. hours/days manual)
+
+CONSTRAINTS (auto-injected from governance profile):
+  • All packages must pass checksum verification before deployment
+  • Confidence score ≥ 0.70 required for auto-execution; below = admin gate
+  • Security-sensitive apps (antivirus, VPN, OS patches) always require admin gate
+  • Single retry with AI analysis permitted on failure; second failure = escalate to human
+  • Complete audit log for every decision and action
+
+CONTRACT MODEL:
+  Pricing: Per package successfully deployed | Not billed for failed/rejected packages
+  SLA: 95% packaging success rate measured monthly
+
+🎤 PRESENTER SAYS:
+"Look at what happened: we selected the ‘Software Package Automation’ outcome template, and it pre-filled with exactly the KPIs from your PoC spec — 95% packaging success, 95% sandbox validation, 90% first-attempt deployment, under 5% false positives, zero untested deployments. And the constraints came from your governance profile: checksum verification, confidence thresholds, critical app gates, single retry with AI analysis. We’re defining a contract, not just a project. The platform will continuously measure these KPIs and hold the agents accountable. Now let’s build the agents that will deliver this outcome."
+
+💡 KEY DIFFERENTIATOR:
+The Outcome is a contract, not a spec. ALMP continuously measures KPIs against the outcome definition. If agents drift below 95% packaging success, the platform detects it, diagnoses why, and self-heals. No other platform ties agent performance to a contractual business outcome with continuous monitoring.
