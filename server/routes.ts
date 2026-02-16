@@ -12783,6 +12783,139 @@ Return ONLY a valid JSON object.`
     }
   });
 
+  app.get("/api/knowledge-graph/related", async (req, res) => {
+    try {
+      const term = req.query.term as string;
+      const industry = req.query.industry as string;
+      if (!term) return res.status(400).json({ message: "term query parameter is required" });
+
+      const kgRelationships: Array<{
+        type: string;
+        targetEntity: string;
+        source: string;
+        confidence: number;
+        context: string | null;
+      }> = [];
+
+      const extractions = await storage.getRelationshipExtractions();
+      const filteredExtractions = extractions.filter(e => {
+        const matchesIndustry = !industry || e.industry === industry;
+        const termLower = term.toLowerCase();
+        return matchesIndustry && (
+          e.sourceEntity.toLowerCase().includes(termLower) ||
+          e.targetEntity.toLowerCase().includes(termLower)
+        );
+      });
+      for (const ext of filteredExtractions) {
+        const isSource = ext.sourceEntity.toLowerCase().includes(term.toLowerCase());
+        kgRelationships.push({
+          type: ext.relationshipType,
+          targetEntity: isSource ? ext.targetEntity : ext.sourceEntity,
+          source: "relationship_extraction",
+          confidence: ext.confidence,
+          context: ext.extractedText,
+        });
+      }
+
+      const resolutions = await storage.getEntityResolutions();
+      const filteredResolutions = resolutions.filter(r => {
+        const matchesIndustry = !industry || r.industry === industry;
+        const termLower = term.toLowerCase();
+        return matchesIndustry && r.resolutionStatus === "resolved" && (
+          r.entityA.toLowerCase().includes(termLower) ||
+          r.entityB.toLowerCase().includes(termLower)
+        );
+      });
+      for (const res_item of filteredResolutions) {
+        const isA = res_item.entityA.toLowerCase().includes(term.toLowerCase());
+        kgRelationships.push({
+          type: "same_as",
+          targetEntity: isA ? res_item.entityB : res_item.entityA,
+          source: "entity_resolution",
+          confidence: res_item.confidenceScore,
+          context: `Entity type: ${res_item.entityType}`,
+        });
+      }
+
+      const temporals = await storage.getTemporalGraphEntries();
+      const filteredTemporals = temporals.filter(t => {
+        const matchesIndustry = !industry || t.industry === industry;
+        const termLower = term.toLowerCase();
+        return matchesIndustry && (
+          t.entityName.toLowerCase().includes(termLower) ||
+          (t.relatedEntity && t.relatedEntity.toLowerCase().includes(termLower))
+        );
+      });
+      for (const temp of filteredTemporals) {
+        if (temp.relatedEntity && temp.relationshipType) {
+          const isEntity = temp.entityName.toLowerCase().includes(term.toLowerCase());
+          kgRelationships.push({
+            type: temp.relationshipType,
+            targetEntity: isEntity ? temp.relatedEntity : temp.entityName,
+            source: "temporal_graph",
+            confidence: 0.8,
+            context: `Valid from: ${temp.validFrom}${temp.validTo ? ` to ${temp.validTo}` : ""}`,
+          });
+        }
+      }
+
+      let aiSuggestions: typeof kgRelationships = [];
+      if (process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        try {
+          const concepts = await storage.getOntologyConcepts(industry || "");
+          const conceptLabels = concepts.slice(0, 30).map(c => c.label).join(", ");
+
+          const response = await openai.chat.completions.create({
+            model: "gpt-4o-mini",
+            messages: [
+              {
+                role: "system",
+                content: `You are an industry ontology expert. Given an ontology term and its industry context, suggest meaningful relationships to other entities. Return a JSON array of objects with: type (e.g., "applies_to", "required_in", "governs", "depends_on", "related_to", "part_of", "regulates", "measured_by"), targetEntity (the related entity name), and context (brief explanation of the relationship). Suggest 4-8 relationships that would be valuable for an AI agent operating in this domain. Consider regulatory, operational, and domain-specific relationships.`
+              },
+              {
+                role: "user",
+                content: `Term: "${term}"\nIndustry: ${industry || "general"}\nExisting ontology concepts in this domain: ${conceptLabels}\n\nSuggest relationships for this term.`
+              }
+            ],
+            response_format: { type: "json_object" },
+            temperature: 0.7,
+          });
+
+          const parsed = JSON.parse(response.choices[0]?.message?.content || "{}");
+          const suggestions = parsed.relationships || parsed.suggestions || [];
+          aiSuggestions = suggestions.map((s: any) => ({
+            type: s.type || "related_to",
+            targetEntity: s.targetEntity || s.target || "",
+            source: "ai_suggestion",
+            confidence: 0.7,
+            context: s.context || s.explanation || null,
+          })).filter((s: any) => s.targetEntity);
+        } catch (aiErr: any) {
+          console.error("AI suggestion error:", aiErr.message);
+        }
+      }
+
+      const allSuggestions = [...kgRelationships, ...aiSuggestions];
+      const seen = new Set<string>();
+      const deduplicated = allSuggestions.filter(s => {
+        const key = `${s.type}:${s.targetEntity.toLowerCase()}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+
+      res.json({
+        term,
+        industry: industry || "general",
+        kgResults: kgRelationships.length,
+        aiResults: aiSuggestions.length,
+        suggestions: deduplicated.sort((a, b) => b.confidence - a.confidence),
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   // AI: Enhance a skill with detailed analysis
   app.post("/api/ai/enhance-skill", async (req, res) => {
     try {

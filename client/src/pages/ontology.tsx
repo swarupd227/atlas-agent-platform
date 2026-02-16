@@ -28,6 +28,10 @@ import {
   ZoomIn,
   ZoomOut,
   RotateCcw,
+  Database,
+  X,
+  CheckCircle,
+  ArrowRight,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -117,6 +121,22 @@ interface EnrichedConcept {
   agentTypes?: string[];
 }
 
+interface KgSuggestion {
+  type: string;
+  targetEntity: string;
+  source: string;
+  confidence: number;
+  context: string | null;
+}
+
+interface KgRelatedResponse {
+  term: string;
+  industry: string;
+  kgResults: number;
+  aiResults: number;
+  suggestions: KgSuggestion[];
+}
+
 const AGENT_MAPPING: Record<string, { skills: string[]; agentTypes: string[] }> = {
   "Financial Instruments": { skills: ["Trade Execution", "Pricing", "Portfolio Analysis", "Risk Calculation"], agentTypes: ["Trading Agent", "Portfolio Manager Agent", "Market Analyst Agent"] },
   "Parties & Roles": { skills: ["Identity Verification", "Client Onboarding", "Due Diligence", "Relationship Management"], agentTypes: ["KYC Agent", "Onboarding Agent", "Client Service Agent"] },
@@ -203,6 +223,9 @@ export default function OntologyExplorer() {
   const [newSynonyms, setNewSynonyms] = useState("");
   const [newTags, setNewTags] = useState("");
   const [newRelateTo, setNewRelateTo] = useState("");
+  const [kgPanelOpen, setKgPanelOpen] = useState(false);
+  const [kgSuggestions, setKgSuggestions] = useState<KgSuggestion[]>([]);
+  const [kgDismissed, setKgDismissed] = useState<Set<number>>(new Set());
 
   const industryId = industry && industry.id !== "custom" ? industry.id : null;
 
@@ -425,6 +448,57 @@ export default function OntologyExplorer() {
     },
     onError: (err: Error) => {
       toast({ title: "Failed to delete concept", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const suggestRelationshipsMutation = useMutation({
+    mutationFn: async (concept: ConceptView) => {
+      const res = await fetch(`/api/knowledge-graph/related?term=${encodeURIComponent(concept.label)}&industry=${encodeURIComponent(industryId || "")}`);
+      if (!res.ok) throw new Error("Failed to fetch KG suggestions");
+      return res.json() as Promise<KgRelatedResponse>;
+    },
+    onSuccess: (data) => {
+      setKgSuggestions(data.suggestions);
+      setKgDismissed(new Set());
+      setKgPanelOpen(true);
+      if (data.suggestions.length === 0) {
+        toast({ title: "No suggestions found", description: "The Knowledge Graph did not return any related entities for this term." });
+      } else {
+        toast({ title: "Suggestions ready", description: `Found ${data.kgResults} from Knowledge Graph and ${data.aiResults} from AI.` });
+      }
+    },
+    onError: (err: Error) => {
+      toast({ title: "Suggestion failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const acceptKgRelationshipMutation = useMutation({
+    mutationFn: async ({ concept, suggestion }: { concept: ConceptView; suggestion: KgSuggestion }) => {
+      const validTypes: OntologyRelationship["type"][] = ["parent", "child", "related", "depends_on"];
+      const normalizedType: OntologyRelationship["type"] = validTypes.includes(suggestion.type as any)
+        ? (suggestion.type as OntologyRelationship["type"])
+        : "related";
+      const newRelationship: OntologyRelationship = {
+        type: normalizedType,
+        targetId: suggestion.targetEntity,
+        label: suggestion.context || `${suggestion.type.replace(/_/g, " ")}: ${suggestion.targetEntity}`,
+      };
+      const existingKeys = new Set(concept.relationships.map(r => `${r.type}-${r.targetId}`));
+      if (existingKeys.has(`${newRelationship.type}-${newRelationship.targetId}`)) {
+        throw new Error("Relationship already exists on this concept");
+      }
+      const updatedRelationships = [...concept.relationships, newRelationship];
+      await apiRequest("PUT", `/api/ontology/concepts/${concept.id}`, {
+        relationships: updatedRelationships,
+      });
+      return { conceptId: concept.id };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/ontology/concepts", industryId] });
+      toast({ title: "Relationship added", description: "The suggested relationship was added to this concept." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to add relationship", description: err.message, variant: "destructive" });
     },
   });
 
@@ -946,10 +1020,26 @@ export default function OntologyExplorer() {
 
               <Card data-testid="card-relationships">
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-sm flex items-center gap-2">
-                    <Link2 className="w-4 h-4" />
-                    Relationships
-                  </CardTitle>
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <Link2 className="w-4 h-4" />
+                      Relationships
+                    </CardTitle>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => suggestRelationshipsMutation.mutate(selectedConcept)}
+                      disabled={suggestRelationshipsMutation.isPending}
+                      data-testid="button-suggest-relationships"
+                    >
+                      {suggestRelationshipsMutation.isPending ? (
+                        <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                      ) : (
+                        <Database className="w-3.5 h-3.5 mr-1.5" />
+                      )}
+                      Suggest Relationships
+                    </Button>
+                  </div>
                 </CardHeader>
                 <CardContent>
                   {selectedConcept.relationships.length === 0 ? (
@@ -1442,6 +1532,122 @@ export default function OntologyExplorer() {
           )}
         </ScrollArea>
       </div>
+
+      {kgPanelOpen && selectedConcept && (
+        <div className="w-80 border-l flex flex-col shrink-0" data-testid="panel-kg-suggestions">
+          <div className="flex items-center justify-between gap-2 p-3 border-b">
+            <div className="flex items-center gap-2 min-w-0">
+              <Database className="w-4 h-4 shrink-0" />
+              <span className="text-sm font-medium truncate">KG Suggestions</span>
+            </div>
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={() => setKgPanelOpen(false)}
+              data-testid="button-close-kg-panel"
+            >
+              <X className="w-4 h-4" />
+            </Button>
+          </div>
+          <div className="px-3 py-2 border-b">
+            <p className="text-xs text-muted-foreground">
+              Showing relationship suggestions for <span className="font-medium text-foreground">{selectedConcept.label}</span> from Knowledge Graph and AI analysis.
+            </p>
+          </div>
+          <ScrollArea className="flex-1">
+            <div className="p-3 space-y-2">
+              {kgSuggestions.length === 0 ? (
+                <div className="text-center py-8 space-y-2">
+                  <Network className="w-8 h-8 text-muted-foreground mx-auto" />
+                  <p className="text-xs text-muted-foreground">No suggestions available.</p>
+                </div>
+              ) : (
+                kgSuggestions.map((suggestion, idx) => {
+                  if (kgDismissed.has(idx)) return null;
+                  const existingKeys = new Set(selectedConcept.relationships.map(r => `${r.type}-${r.targetId}`));
+                  const alreadyAdded = existingKeys.has(`${suggestion.type}-${suggestion.targetEntity}`);
+                  return (
+                    <Card key={idx} className={alreadyAdded ? "opacity-60" : ""} data-testid={`card-kg-suggestion-${idx}`}>
+                      <CardContent className="p-3 space-y-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                              <Badge
+                                variant="secondary"
+                                className="text-[10px]"
+                                data-testid={`badge-kg-type-${idx}`}
+                              >
+                                {suggestion.type.replace(/_/g, " ")}
+                              </Badge>
+                              <Badge
+                                variant="outline"
+                                className={`text-[9px] ${
+                                  suggestion.source === "ai_suggestion"
+                                    ? "border-purple-500/50 text-purple-600 dark:text-purple-400"
+                                    : suggestion.source === "relationship_extraction"
+                                    ? "border-blue-500/50 text-blue-600 dark:text-blue-400"
+                                    : suggestion.source === "entity_resolution"
+                                    ? "border-emerald-500/50 text-emerald-600 dark:text-emerald-400"
+                                    : "border-amber-500/50 text-amber-600 dark:text-amber-400"
+                                }`}
+                                data-testid={`badge-kg-source-${idx}`}
+                              >
+                                {suggestion.source === "ai_suggestion" ? "AI" : suggestion.source === "relationship_extraction" ? "KG" : suggestion.source === "entity_resolution" ? "Entity" : "Temporal"}
+                              </Badge>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0" />
+                              <span className="text-xs font-medium" data-testid={`text-kg-target-${idx}`}>{suggestion.targetEntity}</span>
+                            </div>
+                          </div>
+                          <div className="text-[10px] text-muted-foreground shrink-0">
+                            {Math.round(suggestion.confidence * 100)}%
+                          </div>
+                        </div>
+                        {suggestion.context && (
+                          <p className="text-[11px] text-muted-foreground" data-testid={`text-kg-context-${idx}`}>{suggestion.context}</p>
+                        )}
+                        {alreadyAdded ? (
+                          <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                            <CheckCircle className="w-3 h-3" />
+                            Already added
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1.5">
+                            <Button
+                              size="sm"
+                              variant="default"
+                              onClick={() => acceptKgRelationshipMutation.mutate({ concept: selectedConcept, suggestion })}
+                              disabled={acceptKgRelationshipMutation.isPending}
+                              data-testid={`button-accept-suggestion-${idx}`}
+                            >
+                              {acceptKgRelationshipMutation.isPending ? (
+                                <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                              ) : (
+                                <Check className="w-3 h-3 mr-1" />
+                              )}
+                              Accept
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => setKgDismissed(prev => { const next = new Set(Array.from(prev)); next.add(idx); return next; })}
+                              data-testid={`button-reject-suggestion-${idx}`}
+                            >
+                              <X className="w-3 h-3 mr-1" />
+                              Dismiss
+                            </Button>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  );
+                })
+              )}
+            </div>
+          </ScrollArea>
+        </div>
+      )}
 
       <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
         <DialogContent data-testid="dialog-add-custom-concept">
