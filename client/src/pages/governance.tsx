@@ -518,6 +518,61 @@ const POLICY_PACKS: PolicyPack[] = [
       { name: "Cross-Border Data Transfer Controls", domain: "data_handling", description: "Enforce data residency and transfer mechanisms for international operations", policyJson: { rules: [{ type: "data_residency", requires: ["adequacy_decision", "standard_contractual_clauses"] }] } },
     ],
   },
+  {
+    id: "naic-insurance-pack",
+    name: "NAIC Model Audit Pack",
+    description: "Policies aligned to NAIC Model Audit Rule for claims processing, underwriting governance, and actuarial validation",
+    industry: "insurance",
+    framework: "NAIC Model Laws",
+    riskLevel: "critical",
+    policies: [
+      { name: "Actuarial Model Validation", domain: "data_handling", description: "All pricing and reserving models validated against Solvency II and NAIC standards before production use", policyJson: { rules: [{ type: "model_validation", frameworks: ["solvency_ii", "naic"], requires: "actuarial_sign_off" }] } },
+      { name: "Claims Fraud Detection", domain: "allowed_actions", description: "Automated fraud pattern analysis on all claims above materiality threshold", policyJson: { rules: [{ type: "fraud_screening", trigger: "claim_submission", threshold: "materiality", action: "flag_for_review" }] } },
+      { name: "Policyholder Privacy", domain: "data_handling", description: "PII redaction enforced on all data exports and agent outputs per state privacy laws", policyJson: { rules: [{ type: "data_class_restriction", classes: ["PII", "PHI", "SSN"], action: "require_redaction" }] } },
+      { name: "Underwriting Audit Trail", domain: "logging", description: "Complete audit logging of all agent actions and underwriting decisions with full attribution and rationale", policyJson: { rules: [{ type: "audit_requirement", level: "comprehensive", scope: "all_agent_actions", retention_days: 2555 }] } },
+      { name: "Confidence Threshold Enforcement", domain: "allowed_actions", description: "No auto-execution below 0.75 confidence score for underwriting and claims decisions", policyJson: { rules: [{ type: "confidence_gate", threshold: 0.75, scope: ["underwriting", "claims"], action: "require_human_review" }] } },
+    ],
+  },
+  {
+    id: "solvency2-insurance-pack",
+    name: "Solvency II Compliance Pack",
+    description: "Risk management and capital adequacy policies for Solvency II directive compliance",
+    industry: "insurance",
+    framework: "Solvency II",
+    riskLevel: "high",
+    policies: [
+      { name: "Risk Capital Monitoring", domain: "allowed_actions", description: "Continuous SCR and MCR monitoring with automated escalation on threshold breaches", policyJson: { rules: [{ type: "threshold_monitoring", metrics: ["SCR_ratio", "MCR_ratio"], escalation: "CRO" }] } },
+      { name: "ORSA Integration", domain: "logging", description: "Own Risk and Solvency Assessment reporting with full model lineage", policyJson: { rules: [{ type: "reporting_requirement", report: "ORSA", frequency: "annual", requires: "board_approval" }] } },
+    ],
+  },
+  {
+    id: "soc2-tech-pack",
+    name: "SOC 2 Type II Compliance Pack",
+    description: "Trust service criteria policies for SaaS security, availability, processing integrity, and confidentiality",
+    industry: "technology_saas",
+    framework: "SOC 2 Type II",
+    riskLevel: "high",
+    policies: [
+      { name: "Package Integrity Verification", domain: "data_handling", description: "Checksum verification required before any software deployment to endpoints", policyJson: { rules: [{ type: "data_integrity", requires: ["sha256_checksum", "signature_validation"], scope: "deployment_artifacts" }] } },
+      { name: "Sandbox-First Validation", domain: "allowed_actions", description: "No package reaches production endpoints without passing sandbox validation first", policyJson: { rules: [{ type: "pre_action_check", action: "deploy_package", requires: "sandbox_validation_pass", environments: ["sandbox"] }] } },
+      { name: "Tenant Isolation Enforcement", domain: "data_handling", description: "Zero cross-tenant data exposure enforced across all agent operations", policyJson: { rules: [{ type: "data_boundary", principle: "tenant_isolation", enforcement: "strict", action: "block_cross_tenant" }] } },
+      { name: "Change Management Logging", domain: "logging", description: "Complete audit trail of all agent actions, deployment, and configuration changes with attribution", policyJson: { rules: [{ type: "audit_requirement", level: "comprehensive", scope: "all_agent_actions", retention_days: 365 }] } },
+      { name: "Confidence Threshold Enforcement", domain: "allowed_actions", description: "No auto-execution below 0.70 confidence score for deployment and operational decisions", policyJson: { rules: [{ type: "confidence_gate", threshold: 0.70, scope: ["deployment", "configuration_change"], action: "require_human_review" }] } },
+    ],
+  },
+  {
+    id: "eu-ai-act-tech-pack",
+    name: "EU AI Act Compliance Pack",
+    description: "Policies for EU AI Act compliance including risk classification, transparency, and human oversight requirements",
+    industry: "technology_saas",
+    framework: "EU AI Act",
+    riskLevel: "critical",
+    policies: [
+      { name: "AI Risk Classification", domain: "allowed_actions", description: "Classify all AI agent operations by risk level per EU AI Act Annex III categories", policyJson: { rules: [{ type: "classification", framework: "eu_ai_act", annex: "III", requires: "risk_assessment" }] } },
+      { name: "Transparency & Explainability", domain: "logging", description: "Mandatory transparency reporting for all high-risk AI system decisions", policyJson: { rules: [{ type: "transparency", requires: ["decision_explanation", "data_provenance", "model_card"] }] } },
+      { name: "Human Oversight Controls", domain: "allowed_actions", description: "Human-in-the-loop requirement for high-risk AI operations per Article 14", policyJson: { rules: [{ type: "human_in_loop", triggers: ["high_risk_decision", "automated_decision_with_legal_effect"] }] } },
+    ],
+  },
 ];
 
 interface IndustryTestScenario {
@@ -1062,6 +1117,7 @@ export default function Governance() {
   const [exportObjectFilter, setExportObjectFilter] = useState("all");
   const [exportRedactionProfile, setExportRedactionProfile] = useState("none");
   const [selectedRegulationId, setSelectedRegulationId] = useState<string | null>(null);
+  const [activeGovTab, setActiveGovTab] = useState("policies");
   const [deptFilter, setDeptFilter] = useState<string | null>(null);
   const [enhancedRegulations, setEnhancedRegulations] = useState<Record<string, any>>({});
   const [generatingPoliciesFor, setGeneratingPoliciesFor] = useState<string | null>(null);
@@ -1777,7 +1833,7 @@ export default function Governance() {
         <StatCard title="Approval Compliance" value={`${approvalCompliance}%`} icon={CheckCircle} variant="success" testId="stat-compliance" />
       </div>
 
-      <Tabs defaultValue="policies" className="flex flex-col gap-4">
+      <Tabs value={activeGovTab} onValueChange={setActiveGovTab} className="flex flex-col gap-4">
         <TabsList className="w-fit flex-wrap h-auto">
           <TabsTrigger value="policies" data-testid="tab-policies">Policy Library</TabsTrigger>
           <TabsTrigger value="compliance-matrix" data-testid="tab-compliance-matrix">Compliance Matrix</TabsTrigger>
@@ -1794,6 +1850,46 @@ export default function Governance() {
         </TabsList>
 
         <TabsContent value="policies" className="mt-0 flex flex-col gap-4">
+          {industry && industry.id !== "custom" && industry.defaultGovernancePolicies.length > 0 && (
+            <Card data-testid="card-workspace-governance-banner">
+              <CardContent className="p-4 space-y-3">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck className="h-4 w-4 text-green-500" />
+                    <h3 className="text-sm font-semibold">Workspace Governance Active</h3>
+                    <Badge variant="outline" className="text-[10px]">{industry.shortLabel}</Badge>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setActiveGovTab("policy-packs")}
+                    data-testid="button-view-packs-from-banner"
+                  >
+                    <Layers className="h-3.5 w-3.5 mr-1.5" />
+                    View Policy Packs
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  These governance rules are auto-configured from your <span className="font-medium">{industry.label}</span> workspace. Activate the matching policy packs in the Policy Packs tab to enforce them as auditable policies.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                  {industry.defaultGovernancePolicies.map((gp, idx) => (
+                    <div
+                      key={idx}
+                      className="flex items-start gap-2 py-1.5 px-2.5 rounded-md bg-muted/30"
+                      data-testid={`row-workspace-governance-${idx}`}
+                    >
+                      <Check className="h-3.5 w-3.5 mt-0.5 shrink-0 text-green-500" />
+                      <div className="min-w-0">
+                        <span className="text-xs font-medium">{gp.label}</span>
+                        <p className="text-[11px] text-muted-foreground leading-tight">{gp.description}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
           <div className="flex items-center gap-3 flex-wrap">
             <div className="relative max-w-sm flex-1 min-w-[200px]">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -3647,6 +3743,8 @@ export default function Governance() {
                   healthcare: "Healthcare",
                   manufacturing: "Manufacturing",
                   retail: "Retail",
+                  insurance: "Insurance",
+                  technology_saas: "Technology / SaaS",
                 };
                 return (
                   <Card key={pack.id} data-testid={`card-policy-pack-${pack.id}`}>
