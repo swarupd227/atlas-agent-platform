@@ -1822,4 +1822,23 @@ export const insertPipelineRunSchema = createInsertSchema(pipelineRuns).omit({ i
 export type InsertPipelineRun = z.infer<typeof insertPipelineRunSchema>;
 export type PipelineRun = typeof pipelineRuns.$inferSelect;
 
+export const mcpParameterMatches = pgTable("mcp_parameter_matches", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  serverId: varchar("server_id").notNull(),
+  toolId: varchar("tool_id").notNull(),
+  toolName: text("tool_name").notNull(),
+  parameterName: text("parameter_name").notNull(),
+  parameterPath: text("parameter_path"),
+  matchStatus: text("match_status").notNull().default("unmatched"),
+  matchedConceptId: varchar("matched_concept_id"),
+  matchedConceptLabel: text("matched_concept_label"),
+  matchMethod: text("match_method"),
+  confidence: real("confidence").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertMcpParameterMatchSchema = createInsertSchema(mcpParameterMatches).omit({ id: true, createdAt: true });
+export type InsertMcpParameterMatch = z.infer<typeof insertMcpParameterMatchSchema>;
+export type McpParameterMatch = typeof mcpParameterMatches.$inferSelect;
+
 export * from "./models/chat";

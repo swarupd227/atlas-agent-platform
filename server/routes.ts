@@ -12783,6 +12783,223 @@ Return ONLY a valid JSON object.`
     }
   });
 
+  app.post("/api/ontology/match-parameters", async (req, res) => {
+    try {
+      const { serverId } = req.body;
+      if (!serverId) return res.status(400).json({ message: "serverId is required" });
+
+      const server = await storage.getMcpServer(serverId);
+      if (!server) return res.status(404).json({ message: "MCP server not found" });
+
+      const tools = await storage.getMcpServerTools(serverId);
+      const resources = await storage.getMcpServerResources(serverId);
+      const allConcepts = await storage.getAllOntologyConcepts();
+
+      const conceptIndex = allConcepts.map(c => ({
+        id: c.id,
+        label: c.label,
+        labelNorm: c.label.toLowerCase().replace(/[\s_-]+/g, ""),
+        synonyms: (c.synonyms || []).map((s: string) => s.toLowerCase().replace(/[\s_-]+/g, "")),
+        tags: (c.tags || []).map((t: string) => t.toLowerCase().replace(/[\s_-]+/g, "")),
+        category: c.category,
+      }));
+
+      function normalizeParam(name: string): string {
+        return name.toLowerCase().replace(/[\s_-]+/g, "");
+      }
+
+      function matchParam(paramName: string): { conceptId: string; conceptLabel: string; method: string; confidence: number } | null {
+        const norm = normalizeParam(paramName);
+        for (const c of conceptIndex) {
+          if (c.labelNorm === norm) {
+            return { conceptId: c.id, conceptLabel: c.label, method: "exact", confidence: 1.0 };
+          }
+        }
+        for (const c of conceptIndex) {
+          if (c.synonyms.includes(norm)) {
+            return { conceptId: c.id, conceptLabel: c.label, method: "synonym", confidence: 0.95 };
+          }
+        }
+        for (const c of conceptIndex) {
+          if (c.tags.includes(norm)) {
+            return { conceptId: c.id, conceptLabel: c.label, method: "tag", confidence: 0.9 };
+          }
+        }
+        for (const c of conceptIndex) {
+          if (norm.includes(c.labelNorm) || c.labelNorm.includes(norm)) {
+            return { conceptId: c.id, conceptLabel: c.label, method: "substring", confidence: 0.75 };
+          }
+          for (const syn of c.synonyms) {
+            if (norm.includes(syn) || syn.includes(norm)) {
+              return { conceptId: c.id, conceptLabel: c.label, method: "substring_synonym", confidence: 0.7 };
+            }
+          }
+        }
+        return null;
+      }
+
+      interface ParamEntry {
+        toolId: string;
+        toolName: string;
+        parameterName: string;
+        parameterPath: string;
+      }
+      const allParams: ParamEntry[] = [];
+
+      for (const tool of tools) {
+        const schema = tool.inputSchema as Record<string, unknown> | null;
+        if (schema && typeof schema === "object") {
+          const props = (schema as any).properties;
+          if (props && typeof props === "object") {
+            for (const paramName of Object.keys(props)) {
+              allParams.push({
+                toolId: tool.id,
+                toolName: tool.name,
+                parameterName: paramName,
+                parameterPath: `${tool.name}.input.${paramName}`,
+              });
+            }
+          }
+        }
+      }
+
+      for (const resource of resources) {
+        const nameParts = resource.name.replace(/[^a-zA-Z0-9_\s-]/g, " ").trim().split(/\s+/);
+        for (const part of nameParts) {
+          if (part.length > 2) {
+            allParams.push({
+              toolId: resource.id,
+              toolName: `resource:${resource.name}`,
+              parameterName: part,
+              parameterPath: `resource.${resource.name}`,
+            });
+          }
+        }
+      }
+
+      const unmatchedNames: string[] = [];
+      const results: Array<{
+        toolId: string;
+        toolName: string;
+        parameterName: string;
+        parameterPath: string;
+        matchStatus: string;
+        matchedConceptId: string | null;
+        matchedConceptLabel: string | null;
+        matchMethod: string | null;
+        confidence: number;
+      }> = [];
+
+      for (const param of allParams) {
+        const match = matchParam(param.parameterName);
+        if (match) {
+          results.push({
+            ...param,
+            matchStatus: "matched",
+            matchedConceptId: match.conceptId,
+            matchedConceptLabel: match.conceptLabel,
+            matchMethod: match.method,
+            confidence: match.confidence,
+          });
+        } else {
+          unmatchedNames.push(param.parameterName);
+          results.push({
+            ...param,
+            matchStatus: "unmatched",
+            matchedConceptId: null,
+            matchedConceptLabel: null,
+            matchMethod: null,
+            confidence: 0,
+          });
+        }
+      }
+
+      if (unmatchedNames.length > 0 && allConcepts.length > 0) {
+        try {
+          const conceptLabels = allConcepts.slice(0, 100).map(c => c.label).join(", ");
+          const aiRes = await openai.chat.completions.create({
+            model: "gpt-4o-mini",
+            messages: [
+              {
+                role: "system",
+                content: `You are a domain vocabulary matcher. Given a list of parameter names and a list of ontology concepts, suggest matches. Return JSON array of objects with: parameterName, matchedConceptLabel (exact match from concept list or null if no match), confidence (0.5-0.85). Only suggest matches where there is a genuine semantic relationship.`,
+              },
+              {
+                role: "user",
+                content: `Parameters: ${unmatchedNames.join(", ")}\n\nOntology concepts: ${conceptLabels}`,
+              },
+            ],
+            response_format: { type: "json_object" },
+            temperature: 0.3,
+          });
+
+          const content = aiRes.choices[0]?.message?.content;
+          if (content) {
+            const parsed = JSON.parse(content);
+            const aiMatches: Array<{ parameterName: string; matchedConceptLabel: string | null; confidence: number }> =
+              Array.isArray(parsed) ? parsed : parsed.matches || parsed.results || [];
+
+            for (const aiMatch of aiMatches) {
+              if (!aiMatch.matchedConceptLabel || !aiMatch.parameterName) continue;
+              const concept = allConcepts.find(c => c.label.toLowerCase() === aiMatch.matchedConceptLabel!.toLowerCase());
+              if (!concept) continue;
+              const idx = results.findIndex(r => r.parameterName === aiMatch.parameterName && r.matchStatus === "unmatched");
+              if (idx >= 0) {
+                results[idx].matchStatus = "matched";
+                results[idx].matchedConceptId = concept.id;
+                results[idx].matchedConceptLabel = concept.label;
+                results[idx].matchMethod = "ai";
+                results[idx].confidence = Math.min(aiMatch.confidence || 0.6, 0.85);
+              }
+            }
+          }
+        } catch (aiErr: any) {
+          console.warn("AI matching failed, continuing with rule-based results:", aiErr.message);
+        }
+      }
+
+      await storage.deleteMcpParameterMatchesByServer(serverId);
+      for (const r of results) {
+        await storage.createMcpParameterMatch({
+          serverId,
+          toolId: r.toolId,
+          toolName: r.toolName,
+          parameterName: r.parameterName,
+          parameterPath: r.parameterPath || null,
+          matchStatus: r.matchStatus,
+          matchedConceptId: r.matchedConceptId || null,
+          matchedConceptLabel: r.matchedConceptLabel || null,
+          matchMethod: r.matchMethod || null,
+          confidence: r.confidence,
+        });
+      }
+
+      const matched = results.filter(r => r.matchStatus === "matched").length;
+      const unmatched = results.filter(r => r.matchStatus === "unmatched").length;
+
+      res.json({
+        serverId,
+        serverName: server.name,
+        totalParameters: results.length,
+        matched,
+        unmatched,
+        results,
+      });
+    } catch (err: any) {
+      console.error("Ontology match-parameters error:", err);
+      res.status(500).json({ message: err.message || "Failed to match parameters" });
+    }
+  });
+
+  app.get("/api/ontology/parameter-matches/:serverId", async (req, res) => {
+    try {
+      const matches = await storage.getMcpParameterMatches(req.params.serverId);
+      res.json(matches);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to fetch parameter matches" });
+    }
+  });
+
   app.get("/api/knowledge-graph/related", async (req, res) => {
     try {
       const term = req.query.term as string;

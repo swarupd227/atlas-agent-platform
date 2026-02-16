@@ -142,6 +142,7 @@ import {
   agentMcpServers, type AgentMcpServer, type InsertAgentMcpServer,
   agentPipelines, type AgentPipeline, type InsertAgentPipeline,
   pipelineRuns, type PipelineRun, type InsertPipelineRun,
+  mcpParameterMatches, type McpParameterMatch, type InsertMcpParameterMatch,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -611,6 +612,10 @@ export interface IStorage {
   getPipelineRun(id: string): Promise<PipelineRun | undefined>;
   createPipelineRun(run: InsertPipelineRun): Promise<PipelineRun>;
   updatePipelineRun(id: string, data: Partial<PipelineRun>): Promise<PipelineRun | undefined>;
+
+  getMcpParameterMatches(serverId: string): Promise<McpParameterMatch[]>;
+  createMcpParameterMatch(match: InsertMcpParameterMatch): Promise<McpParameterMatch>;
+  deleteMcpParameterMatchesByServer(serverId: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2384,6 +2389,19 @@ export class DatabaseStorage implements IStorage {
   async updatePipelineRun(id: string, data: Partial<PipelineRun>): Promise<PipelineRun | undefined> {
     const [updated] = await db.update(pipelineRuns).set(data).where(eq(pipelineRuns.id, id)).returning();
     return updated;
+  }
+
+  async getMcpParameterMatches(serverId: string): Promise<McpParameterMatch[]> {
+    return db.select().from(mcpParameterMatches).where(eq(mcpParameterMatches.serverId, serverId));
+  }
+
+  async createMcpParameterMatch(match: InsertMcpParameterMatch): Promise<McpParameterMatch> {
+    const [created] = await db.insert(mcpParameterMatches).values(match).returning();
+    return created;
+  }
+
+  async deleteMcpParameterMatchesByServer(serverId: string): Promise<void> {
+    await db.delete(mcpParameterMatches).where(eq(mcpParameterMatches.serverId, serverId));
   }
 }
 

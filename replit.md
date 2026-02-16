@@ -58,6 +58,7 @@ The Nous Agent Orchestrator is built on a modern web stack: React, Vite, Tailwin
 - **RAG Pipeline Manager**: Configures how agents retrieve industry-specific knowledge at runtime.
 - **Knowledge Graph Ingestion & Enrichment**: Tools for populating and maintaining the knowledge graph with customer-specific data.
 - **Agent Wizard Ontology Integration**: AI-suggested ontology tags for agent definition.
+- **MCP-Ontology Parameter Matching**: Cross-references MCP server tool parameters and resource names against ontology concepts. Auto-links matching parameters (exact, synonym, tag, substring, AI-fuzzy) and flags unmatched parameters as "not in domain vocabulary" with warning badges on the MCP server detail Vocabulary tab.
 - **Data Model**: Comprehensive schema linking incidents, patches, and deployments.
 
 ## External Dependencies

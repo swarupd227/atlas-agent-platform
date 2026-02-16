@@ -16,10 +16,11 @@ import {
   ArrowLeft, Server, Shield, Activity, CheckCircle2, AlertCircle,
   Globe, Terminal, Wrench, FileText, MessageSquare, Lock,
   RefreshCw, Clock, Zap, Play, Plus, Brain, XCircle, Tag,
+  BookOpen, AlertTriangle, Loader2, Link2, Search,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { McpServer, McpServerTool, McpServerResource, McpServerPrompt, McpServerAuth, AuditEvent, OntologyConcept } from "@shared/schema";
+import type { McpServer, McpServerTool, McpServerResource, McpServerPrompt, McpServerAuth, AuditEvent, OntologyConcept, McpParameterMatch } from "@shared/schema";
 
 const HEALTH_COLOR: Record<string, string> = {
   healthy: "bg-green-500",
@@ -69,6 +70,28 @@ export default function McpServerDetail() {
   });
   const { data: allOntologyConcepts } = useQuery<OntologyConcept[]>({
     queryKey: ["/api/ontology-concepts/all"],
+  });
+
+  const { data: parameterMatches, isLoading: matchesLoading } = useQuery<McpParameterMatch[]>({
+    queryKey: ["/api/ontology/parameter-matches", id],
+    enabled: !!id,
+  });
+
+  const runOntologyMatchMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/ontology/match-parameters", { serverId: id });
+      return res.json();
+    },
+    onSuccess: (data: { matched: number; unmatched: number; totalParameters: number }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/ontology/parameter-matches", id] });
+      toast({
+        title: "Ontology matching complete",
+        description: `${data.matched} matched, ${data.unmatched} unmatched out of ${data.totalParameters} parameters`,
+      });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Matching failed", description: err.message, variant: "destructive" });
+    },
   });
 
   const auditEvents = useMemo(() => {
@@ -447,6 +470,15 @@ export default function McpServerDetail() {
           <TabsTrigger value="audit" data-testid="tab-audit">
             <Clock className="w-3.5 h-3.5 mr-1.5" />
             Audit
+          </TabsTrigger>
+          <TabsTrigger value="vocabulary" data-testid="tab-vocabulary">
+            <BookOpen className="w-3.5 h-3.5 mr-1.5" />
+            Vocabulary
+            {parameterMatches && parameterMatches.filter(m => m.matchStatus === "unmatched").length > 0 && (
+              <Badge variant="destructive" className="ml-1.5 text-[10px]">
+                {parameterMatches.filter(m => m.matchStatus === "unmatched").length}
+              </Badge>
+            )}
           </TabsTrigger>
         </TabsList>
 
@@ -1382,6 +1414,164 @@ export default function McpServerDetail() {
               ))}
             </div>
           )}
+        </TabsContent>
+
+        <TabsContent value="vocabulary" className="flex flex-col gap-4 mt-4">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div className="flex flex-col gap-1">
+              <span className="text-sm font-medium">Domain Vocabulary Match</span>
+              <span className="text-xs text-muted-foreground">
+                Cross-reference tool parameters and resource names against ontology concepts
+              </span>
+            </div>
+            <Button
+              size="sm"
+              onClick={() => runOntologyMatchMutation.mutate()}
+              disabled={runOntologyMatchMutation.isPending}
+              data-testid="button-run-ontology-match"
+            >
+              {runOntologyMatchMutation.isPending ? (
+                <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+              ) : (
+                <Search className="w-4 h-4 mr-1.5" />
+              )}
+              Run Ontology Match
+            </Button>
+          </div>
+
+          {parameterMatches && parameterMatches.length > 0 && (() => {
+            const matched = parameterMatches.filter(m => m.matchStatus === "matched");
+            const unmatched = parameterMatches.filter(m => m.matchStatus === "unmatched");
+            return (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <Card data-testid="card-match-total">
+                  <CardContent className="p-4 flex items-center gap-3">
+                    <BookOpen className="w-5 h-5 text-muted-foreground" />
+                    <div className="flex flex-col">
+                      <span className="text-lg font-bold" data-testid="text-match-total">{parameterMatches.length}</span>
+                      <span className="text-xs text-muted-foreground">Total Parameters</span>
+                    </div>
+                  </CardContent>
+                </Card>
+                <Card data-testid="card-match-matched">
+                  <CardContent className="p-4 flex items-center gap-3">
+                    <CheckCircle2 className="w-5 h-5 text-green-500" />
+                    <div className="flex flex-col">
+                      <span className="text-lg font-bold" data-testid="text-match-matched">{matched.length}</span>
+                      <span className="text-xs text-muted-foreground">In Domain Vocabulary</span>
+                    </div>
+                  </CardContent>
+                </Card>
+                <Card data-testid="card-match-unmatched">
+                  <CardContent className="p-4 flex items-center gap-3">
+                    <AlertTriangle className="w-5 h-5 text-yellow-500" />
+                    <div className="flex flex-col">
+                      <span className="text-lg font-bold" data-testid="text-match-unmatched">{unmatched.length}</span>
+                      <span className="text-xs text-muted-foreground">Not in Domain Vocabulary</span>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            );
+          })()}
+
+          {matchesLoading ? (
+            <div className="flex flex-col gap-2">
+              <Skeleton className="h-12 w-full" />
+              <Skeleton className="h-12 w-full" />
+              <Skeleton className="h-12 w-full" />
+            </div>
+          ) : !parameterMatches || parameterMatches.length === 0 ? (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
+                <BookOpen className="w-8 h-8 text-muted-foreground" />
+                <p className="text-sm text-muted-foreground" data-testid="text-no-matches">
+                  No vocabulary analysis yet. Click "Run Ontology Match" to analyze tool parameters against your domain ontology.
+                </p>
+              </CardContent>
+            </Card>
+          ) : (() => {
+            const toolGroups = new Map<string, McpParameterMatch[]>();
+            for (const m of parameterMatches) {
+              const key = m.toolName;
+              if (!toolGroups.has(key)) toolGroups.set(key, []);
+              toolGroups.get(key)!.push(m);
+            }
+            return (
+              <div className="flex flex-col gap-4">
+                {Array.from(toolGroups.entries()).map(([toolName, matches]) => {
+                  const unmatchedCount = matches.filter(m => m.matchStatus === "unmatched").length;
+                  const safeToolName = toolName.replace(/[^a-zA-Z0-9_-]/g, "_");
+                  return (
+                    <Card key={toolName} data-testid={`card-vocab-tool-${safeToolName}`}>
+                      <CardHeader className="pb-2">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <div className="flex items-center gap-2">
+                            {toolName.startsWith("resource:") ? (
+                              <FileText className="w-4 h-4 text-muted-foreground" />
+                            ) : (
+                              <Wrench className="w-4 h-4 text-muted-foreground" />
+                            )}
+                            <CardTitle className="text-sm font-bold" data-testid={`text-vocab-tool-name-${safeToolName}`}>
+                              {toolName}
+                            </CardTitle>
+                          </div>
+                          {unmatchedCount > 0 && (
+                            <Badge variant="destructive" className="text-[10px]" data-testid={`badge-vocab-unmatched-count-${safeToolName}`}>
+                              <AlertTriangle className="w-3 h-3 mr-0.5" />
+                              {unmatchedCount} unmatched
+                            </Badge>
+                          )}
+                        </div>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="flex flex-col gap-1.5">
+                          {matches.map((m) => (
+                            <div
+                              key={m.id}
+                              className="flex items-center justify-between gap-2 py-1.5 px-2 rounded-md bg-muted/30 flex-wrap"
+                              data-testid={`row-param-match-${m.id}`}
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <code className="text-xs font-mono truncate" data-testid={`text-param-name-${m.id}`}>
+                                  {m.parameterName}
+                                </code>
+                              </div>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                {m.matchStatus === "matched" ? (
+                                  <>
+                                    <Badge variant="outline" className="text-[10px] text-green-600 border-green-300 dark:text-green-400 dark:border-green-700" data-testid={`badge-match-status-${m.id}`}>
+                                      <Link2 className="w-3 h-3 mr-0.5" />
+                                      {m.matchedConceptLabel}
+                                    </Badge>
+                                    {m.matchMethod && (
+                                      <Badge variant="secondary" className="text-[9px]" data-testid={`badge-match-method-${m.id}`}>
+                                        {m.matchMethod}
+                                      </Badge>
+                                    )}
+                                    {m.confidence != null && m.confidence > 0 && (
+                                      <span className="text-[10px] text-muted-foreground" data-testid={`text-match-confidence-${m.id}`}>
+                                        {Math.round(m.confidence * 100)}%
+                                      </span>
+                                    )}
+                                  </>
+                                ) : (
+                                  <Badge variant="destructive" className="text-[10px]" data-testid={`badge-unmatched-${m.id}`}>
+                                    <AlertTriangle className="w-3 h-3 mr-0.5" />
+                                    Not in domain vocabulary
+                                  </Badge>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            );
+          })()}
         </TabsContent>
       </Tabs>
     </div>
