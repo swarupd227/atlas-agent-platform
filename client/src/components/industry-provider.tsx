@@ -36,6 +36,11 @@ export interface WorkspaceConfig {
   dataClassificationDefault: DataClassification;
 }
 
+export interface GovernancePolicy {
+  label: string;
+  description: string;
+}
+
 export interface IndustryProfile {
   id: IndustryId;
   label: string;
@@ -51,6 +56,7 @@ export interface IndustryProfile {
   jurisdictions: string[];
   integrationSystems: IntegrationSystem[];
   departments: string[];
+  defaultGovernancePolicies: GovernancePolicy[];
 }
 
 export const INDUSTRIES: IndustryProfile[] = [
@@ -80,6 +86,13 @@ export const INDUSTRIES: IndustryProfile[] = [
       { id: "creditedge", name: "Moody's CreditEdge", category: "Credit Rating", description: "Public firm credit risk measurement and monitoring" },
     ],
     departments: ["Treasury", "Risk Management", "Compliance", "Trading", "Client Services", "Finance & Accounting", "Marketing", "HR", "IT & Operations", "Legal", "Rating Analytics", "Structured Finance", "Rating Committee"],
+    defaultGovernancePolicies: [
+      { label: "Model Risk Management", description: "All AI models validated against SR 11-7 / SS1/23 before production use" },
+      { label: "Fair Lending Compliance", description: "Automated bias detection on all credit decisioning outputs" },
+      { label: "Audit Trail", description: "Every agent action logged with full explainability for regulatory examination" },
+      { label: "Data Lineage", description: "Complete provenance tracking for all data inputs and model outputs" },
+      { label: "Confidence Thresholds", description: "No auto-execution below 0.80 confidence score for financial decisions" },
+    ],
   },
   {
     id: "insurance",
@@ -105,6 +118,13 @@ export const INDUSTRIES: IndustryProfile[] = [
       { id: "earnix", name: "Earnix", category: "Pricing & Rating", description: "Dynamic pricing and rating engine for insurance products" },
     ],
     departments: ["Underwriting", "Claims", "Actuarial", "Policy Administration", "Risk Management", "Compliance & Regulatory", "Finance & Accounting", "Distribution & Sales", "IT & Digital", "Legal"],
+    defaultGovernancePolicies: [
+      { label: "Actuarial Model Validation", description: "All pricing and reserving models validated against Solvency II standards" },
+      { label: "Claims Fraud Detection", description: "Automated fraud pattern analysis on all claims above threshold" },
+      { label: "Audit Trail", description: "Every agent action logged with full explainability for regulatory review" },
+      { label: "Policyholder Privacy", description: "PII redaction enforced on all data exports and agent outputs" },
+      { label: "Confidence Thresholds", description: "No auto-execution below 0.75 confidence score for underwriting decisions" },
+    ],
   },
   {
     id: "healthcare",
@@ -130,6 +150,13 @@ export const INDUSTRIES: IndustryProfile[] = [
       { id: "allscripts", name: "Allscripts", category: "EHR", description: "Healthcare IT solutions" },
     ],
     departments: ["Clinical Operations", "Pharmacy", "Research & Development", "Finance & Billing", "Marketing & Outreach", "Human Resources", "IT & Health Informatics", "Supply Chain", "Quality & Safety", "Legal & Compliance"],
+    defaultGovernancePolicies: [
+      { label: "PHI Protection", description: "HIPAA-compliant data handling with automatic PII/PHI detection and redaction" },
+      { label: "Clinical Validation", description: "All clinical decision support outputs require physician review" },
+      { label: "Audit Trail", description: "Every agent action logged with full explainability for regulatory audit" },
+      { label: "FDA Compliance", description: "AI/ML models follow FDA guidance for Software as a Medical Device (SaMD)" },
+      { label: "Confidence Thresholds", description: "No auto-execution below 0.85 confidence score for clinical decisions" },
+    ],
   },
   {
     id: "manufacturing",
@@ -155,6 +182,13 @@ export const INDUSTRIES: IndustryProfile[] = [
       { id: "kinaxis", name: "Kinaxis RapidResponse", category: "Supply Chain", description: "Supply chain planning and analytics" },
     ],
     departments: ["Production", "Quality Assurance", "Supply Chain & Logistics", "Engineering", "Finance & Accounting", "Marketing & Sales", "HR & Safety", "IT & Automation", "Maintenance", "Legal & Compliance"],
+    defaultGovernancePolicies: [
+      { label: "Quality Assurance", description: "All production changes validated against ISO 9001 quality standards" },
+      { label: "Safety Compliance", description: "Automated safety impact analysis before any process modification" },
+      { label: "Audit Trail", description: "Every agent action logged with full traceability for regulatory inspection" },
+      { label: "Supply Chain Integrity", description: "Vendor and material verification required for all procurement actions" },
+      { label: "Confidence Thresholds", description: "No auto-execution below 0.75 confidence score for production decisions" },
+    ],
   },
   {
     id: "retail",
@@ -180,6 +214,13 @@ export const INDUSTRIES: IndustryProfile[] = [
       { id: "stripe", name: "Stripe", category: "Payments", description: "Payment processing infrastructure" },
     ],
     departments: ["Merchandising", "E-Commerce", "Marketing & Advertising", "Customer Service", "Supply Chain & Fulfillment", "Finance & Accounting", "HR & Training", "IT & Digital", "Loss Prevention", "Legal & Compliance"],
+    defaultGovernancePolicies: [
+      { label: "PCI Compliance", description: "Payment card data handling follows PCI DSS Level 1 requirements" },
+      { label: "Customer Privacy", description: "CCPA/GDPR-compliant customer data processing and consent management" },
+      { label: "Audit Trail", description: "Every agent action logged with full explainability for compliance review" },
+      { label: "Inventory Accuracy", description: "All inventory modifications require dual verification before execution" },
+      { label: "Confidence Thresholds", description: "No auto-execution below 0.70 confidence score for pricing decisions" },
+    ],
   },
   {
     id: "technology_saas",
@@ -192,7 +233,7 @@ export const INDUSTRIES: IndustryProfile[] = [
     agentSkills: 104,
     regulatoryFrameworks: ["SOC 2 Type II", "GDPR", "CCPA/CPRA", "ISO 27001", "HIPAA BAA", "FedRAMP"],
     goldenTemplates: 20,
-    subVerticals: ["B2B SaaS", "Developer Tools", "Cloud Infrastructure", "FinTech", "HealthTech"],
+    subVerticals: ["B2B SaaS", "Developer Tools", "Cloud Infrastructure", "FinTech", "HealthTech", "Software Deployment & Patch Management"],
     jurisdictions: ["US", "EU", "UK", "APAC", "Global"],
     integrationSystems: [
       { id: "zendesk", name: "Zendesk", category: "Customer Support", description: "Customer service and engagement platform" },
@@ -203,8 +244,19 @@ export const INDUSTRIES: IndustryProfile[] = [
       { id: "hubspot", name: "HubSpot", category: "CRM & Marketing", description: "Inbound marketing and CRM platform" },
       { id: "jira", name: "Jira", category: "Project Management", description: "Agile project management and issue tracking" },
       { id: "github", name: "GitHub", category: "DevOps", description: "Code hosting and CI/CD platform" },
+      { id: "rest_api_connector", name: "REST API Connector", category: "Endpoint Management", description: "Generic REST API integration for device and endpoint management platforms" },
+      { id: "web_scraper", name: "Web Scraper", category: "Endpoint Management", description: "Automated web content extraction for vendor release notes and package metadata" },
+      { id: "sandbox_env", name: "Sandbox Environment", category: "Endpoint Management", description: "Isolated validation environment for package testing before deployment" },
+      { id: "package_repository", name: "Package Repository", category: "Endpoint Management", description: "Software package storage and distribution system for deployment artifacts" },
     ],
     departments: ["Engineering", "Product", "Customer Success", "Sales", "Marketing", "Finance & Billing", "DevOps / SRE", "Security & Compliance", "People Ops", "Legal"],
+    defaultGovernancePolicies: [
+      { label: "Package Integrity", description: "Checksum verification required before any software deployment" },
+      { label: "Sandbox-First Validation", description: "No package reaches endpoints without passing sandbox validation" },
+      { label: "Tenant Isolation", description: "Zero cross-tenant data exposure enforced across all operations" },
+      { label: "Audit Trail", description: "Every agent action logged with full explainability" },
+      { label: "Confidence Thresholds", description: "No auto-execution below 0.70 confidence score" },
+    ],
   },
   {
     id: "custom",
@@ -221,6 +273,7 @@ export const INDUSTRIES: IndustryProfile[] = [
     jurisdictions: ["US", "EU", "UK", "APAC", "Global"],
     integrationSystems: [],
     departments: [],
+    defaultGovernancePolicies: [],
   },
 ];
 
