@@ -10047,12 +10047,98 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
     }
   });
 
+  app.post("/api/mcp-servers/:id/resources", checkPermission("manage_mcp_servers"), async (req, res) => {
+    try {
+      const server = await storage.getMcpServer(req.params.id);
+      if (!server) return res.status(404).json({ message: "MCP server not found" });
+
+      const parsed = insertMcpServerResourceSchema.safeParse({
+        ...req.body,
+        serverId: req.params.id,
+      });
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Invalid resource data", errors: parsed.error.flatten().fieldErrors });
+      }
+
+      const resource = await storage.createMcpServerResource(parsed.data);
+
+      await storage.createAuditEvent({
+        action: "mcp_resource.created",
+        objectType: "mcp_server_resource",
+        objectId: resource.id,
+        actorId: "user",
+        details: JSON.stringify({ serverId: req.params.id, resourceName: resource.name, uri: resource.uri }),
+      });
+
+      res.status(201).json(resource);
+    } catch (e) {
+      res.status(500).json({ message: "Failed to create MCP server resource" });
+    }
+  });
+
   app.get("/api/mcp-servers/:id/prompts", async (req, res) => {
     try {
       const prompts = await storage.getMcpServerPrompts(req.params.id);
       res.json(prompts);
     } catch (e) {
       res.status(500).json({ message: "Failed to fetch MCP server prompts" });
+    }
+  });
+
+  app.post("/api/mcp-servers/:id/prompts", checkPermission("manage_mcp_servers"), async (req, res) => {
+    try {
+      const server = await storage.getMcpServer(req.params.id);
+      if (!server) return res.status(404).json({ message: "MCP server not found" });
+
+      const parsed = insertMcpServerPromptSchema.safeParse({
+        ...req.body,
+        serverId: req.params.id,
+      });
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Invalid prompt data", errors: parsed.error.flatten().fieldErrors });
+      }
+
+      const prompt = await storage.createMcpServerPrompt(parsed.data);
+
+      await storage.createAuditEvent({
+        action: "mcp_prompt.created",
+        objectType: "mcp_server_prompt",
+        objectId: prompt.id,
+        actorId: "user",
+        details: JSON.stringify({ serverId: req.params.id, promptName: prompt.name }),
+      });
+
+      res.status(201).json(prompt);
+    } catch (e) {
+      res.status(500).json({ message: "Failed to create MCP server prompt" });
+    }
+  });
+
+  app.patch("/api/mcp-servers/:id/capabilities", checkPermission("manage_mcp_servers"), async (req, res) => {
+    try {
+      if (!req.body || typeof req.body !== "object" || Array.isArray(req.body) || Object.keys(req.body).length === 0) {
+        return res.status(400).json({ message: "Request body must be a non-empty object with capability name keys" });
+      }
+
+      const server = await storage.getMcpServer(req.params.id);
+      if (!server) return res.status(404).json({ message: "MCP server not found" });
+
+      const existing = (server.capabilities as Record<string, unknown>) || {};
+      const merged = { ...existing, ...req.body };
+
+      const updated = await storage.updateMcpServer(req.params.id, { capabilities: merged });
+
+      await storage.createAuditEvent({
+        action: "mcp_server.capabilities_updated",
+        objectType: "mcp_server",
+        objectId: req.params.id,
+        actorId: "user",
+        details: JSON.stringify({ addedCapabilities: Object.keys(req.body) }),
+      });
+
+      res.json(updated);
+    } catch (e) {
+      res.status(500).json({ message: "Failed to update MCP server capabilities" });
     }
   });
 

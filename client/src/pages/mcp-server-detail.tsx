@@ -186,6 +186,115 @@ export default function McpServerDetail() {
     },
   });
 
+  const [addResourceOpen, setAddResourceOpen] = useState(false);
+  const [newResName, setNewResName] = useState("");
+  const [newResUri, setNewResUri] = useState("");
+  const [newResDescription, setNewResDescription] = useState("");
+  const [newResMimeType, setNewResMimeType] = useState("");
+  const [newResSensitivity, setNewResSensitivity] = useState("public");
+  const [newResContentType, setNewResContentType] = useState("text");
+  const [newResOwner, setNewResOwner] = useState("");
+
+  const addResourceMutation = useMutation({
+    mutationFn: () =>
+      apiRequest("POST", `/api/mcp-servers/${id}/resources`, {
+        name: newResName,
+        uri: newResUri,
+        description: newResDescription || undefined,
+        mimeType: newResMimeType || undefined,
+        sensitivityLevel: newResSensitivity,
+        contentType: newResContentType,
+        owner: newResOwner || undefined,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/mcp-servers", id, "resources"] });
+      setAddResourceOpen(false);
+      setNewResName("");
+      setNewResUri("");
+      setNewResDescription("");
+      setNewResMimeType("");
+      setNewResSensitivity("public");
+      setNewResContentType("text");
+      setNewResOwner("");
+      toast({ title: "Resource added", description: "The resource has been registered on this MCP server." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to add resource", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const [addPromptOpen, setAddPromptOpen] = useState(false);
+  const [newPromptName, setNewPromptName] = useState("");
+  const [newPromptDescription, setNewPromptDescription] = useState("");
+  const [newPromptArgs, setNewPromptArgs] = useState('[]');
+  const [newPromptArgsError, setNewPromptArgsError] = useState<string | null>(null);
+  const [newPromptOwner, setNewPromptOwner] = useState("");
+
+  const addPromptMutation = useMutation({
+    mutationFn: async () => {
+      let parsedArgs: unknown[] | null = null;
+      if (newPromptArgs.trim()) {
+        try {
+          parsedArgs = JSON.parse(newPromptArgs);
+          if (!Array.isArray(parsedArgs)) throw new Error("Arguments must be an array");
+        } catch {
+          throw new Error("Invalid JSON for arguments");
+        }
+      }
+      return apiRequest("POST", `/api/mcp-servers/${id}/prompts`, {
+        name: newPromptName,
+        description: newPromptDescription || undefined,
+        arguments: parsedArgs,
+        owner: newPromptOwner || undefined,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/mcp-servers", id, "prompts"] });
+      setAddPromptOpen(false);
+      setNewPromptName("");
+      setNewPromptDescription("");
+      setNewPromptArgs('[]');
+      setNewPromptArgsError(null);
+      setNewPromptOwner("");
+      toast({ title: "Prompt added", description: "The prompt template has been registered on this MCP server." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to add prompt", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const [addCapOpen, setAddCapOpen] = useState(false);
+  const [newCapName, setNewCapName] = useState("");
+  const [newCapConfig, setNewCapConfig] = useState('{}');
+  const [newCapConfigError, setNewCapConfigError] = useState<string | null>(null);
+
+  const addCapMutation = useMutation({
+    mutationFn: async () => {
+      let parsedConfig: Record<string, unknown> = {};
+      if (newCapConfig.trim()) {
+        try {
+          parsedConfig = JSON.parse(newCapConfig);
+        } catch {
+          throw new Error("Invalid JSON for capability configuration");
+        }
+      }
+      return apiRequest("PATCH", `/api/mcp-servers/${id}/capabilities`, {
+        [newCapName]: parsedConfig,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/mcp-servers", id] });
+      setAddCapOpen(false);
+      setNewCapName("");
+      setNewCapConfig('{}');
+      setNewCapConfigError(null);
+      toast({ title: "Capability added", description: "The capability has been registered on this MCP server." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to add capability", description: err.message, variant: "destructive" });
+    },
+  });
+
   if (isLoading) {
     return (
       <div className="flex flex-col gap-6 p-6">
@@ -470,12 +579,85 @@ export default function McpServerDetail() {
         </TabsContent>
 
         <TabsContent value="capabilities" className="flex flex-col gap-4 mt-4">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium">Server Capabilities</span>
+              {Object.keys(capabilities).length > 0 && (
+                <Badge variant="secondary" className="text-[10px]">{Object.keys(capabilities).length}</Badge>
+              )}
+            </div>
+            <Dialog open={addCapOpen} onOpenChange={setAddCapOpen}>
+              <DialogTrigger asChild>
+                <Button size="sm" data-testid="button-add-capability">
+                  <Plus className="w-4 h-4 mr-1.5" /> Add Capability
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-lg">
+                <DialogHeader>
+                  <DialogTitle>Add Capability</DialogTitle>
+                </DialogHeader>
+                <div className="flex flex-col gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <Label>Capability Name *</Label>
+                    <Select value={newCapName} onValueChange={setNewCapName}>
+                      <SelectTrigger data-testid="select-capability-name">
+                        <SelectValue placeholder="Select a capability" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="tools">tools</SelectItem>
+                        <SelectItem value="resources">resources</SelectItem>
+                        <SelectItem value="prompts">prompts</SelectItem>
+                        <SelectItem value="logging">logging</SelectItem>
+                        <SelectItem value="experimental">experimental</SelectItem>
+                        <SelectItem value="sampling">sampling</SelectItem>
+                        <SelectItem value="roots">roots</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label>Configuration (JSON)</Label>
+                    <Textarea
+                      className="font-mono text-xs"
+                      value={newCapConfig}
+                      onChange={(e) => {
+                        setNewCapConfig(e.target.value);
+                        try {
+                          JSON.parse(e.target.value);
+                          setNewCapConfigError(null);
+                        } catch {
+                          setNewCapConfigError("Invalid JSON");
+                        }
+                      }}
+                      rows={5}
+                      data-testid="input-capability-config"
+                    />
+                    {newCapConfigError && (
+                      <span className="text-[11px] text-red-500" data-testid="text-cap-config-error">{newCapConfigError}</span>
+                    )}
+                  </div>
+                  <Button
+                    onClick={() => addCapMutation.mutate()}
+                    disabled={!newCapName || !!newCapConfigError || addCapMutation.isPending}
+                    data-testid="button-submit-capability"
+                  >
+                    {addCapMutation.isPending ? (
+                      <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" />
+                    ) : (
+                      <Plus className="w-4 h-4 mr-1.5" />
+                    )}
+                    Add Capability
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+          </div>
+
           {Object.keys(capabilities).length === 0 ? (
             <Card>
               <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
                 <Zap className="w-8 h-8 text-muted-foreground" />
                 <p className="text-sm text-muted-foreground" data-testid="text-no-capabilities-detail">
-                  Run initialization to negotiate capabilities
+                  No capabilities configured. Add capabilities to define what this server supports.
                 </p>
               </CardContent>
             </Card>
@@ -484,7 +666,12 @@ export default function McpServerDetail() {
               {Object.entries(capabilities).map(([name, props]) => (
                 <Card key={name} data-testid={`card-capability-${name}`}>
                   <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium">{name}</CardTitle>
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <CardTitle className="text-sm font-medium">{name}</CardTitle>
+                      <Badge variant="default" className="text-[10px]">
+                        <CheckCircle2 className="w-3 h-3 mr-0.5" /> Active
+                      </Badge>
+                    </div>
                   </CardHeader>
                   <CardContent>
                     <pre className="text-xs font-mono bg-muted/30 rounded-md p-3 overflow-auto">
@@ -655,12 +842,126 @@ export default function McpServerDetail() {
         </TabsContent>
 
         <TabsContent value="resources" className="flex flex-col gap-4 mt-4">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium">Registered Resources</span>
+              {resources && resources.length > 0 && (
+                <Badge variant="secondary" className="text-[10px]">{resources.length}</Badge>
+              )}
+            </div>
+            <Dialog open={addResourceOpen} onOpenChange={setAddResourceOpen}>
+              <DialogTrigger asChild>
+                <Button size="sm" data-testid="button-add-resource">
+                  <Plus className="w-4 h-4 mr-1.5" /> Add Resource
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-lg">
+                <DialogHeader>
+                  <DialogTitle>Add Resource to MCP Server</DialogTitle>
+                </DialogHeader>
+                <div className="flex flex-col gap-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="flex flex-col gap-1.5">
+                      <Label>Resource Name *</Label>
+                      <Input
+                        placeholder="e.g. customer_database"
+                        value={newResName}
+                        onChange={(e) => setNewResName(e.target.value)}
+                        data-testid="input-resource-name"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Label>URI *</Label>
+                      <Input
+                        placeholder="e.g. file:///data/customers.db"
+                        value={newResUri}
+                        onChange={(e) => setNewResUri(e.target.value)}
+                        data-testid="input-resource-uri"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label>Description</Label>
+                    <Textarea
+                      placeholder="What data or knowledge does this resource provide?"
+                      value={newResDescription}
+                      onChange={(e) => setNewResDescription(e.target.value)}
+                      rows={2}
+                      data-testid="input-resource-description"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="flex flex-col gap-1.5">
+                      <Label>MIME Type</Label>
+                      <Input
+                        placeholder="e.g. application/json"
+                        value={newResMimeType}
+                        onChange={(e) => setNewResMimeType(e.target.value)}
+                        data-testid="input-resource-mimetype"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Label>Sensitivity Level</Label>
+                      <Select value={newResSensitivity} onValueChange={setNewResSensitivity}>
+                        <SelectTrigger data-testid="select-resource-sensitivity">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="public">Public</SelectItem>
+                          <SelectItem value="internal">Internal</SelectItem>
+                          <SelectItem value="confidential">Confidential</SelectItem>
+                          <SelectItem value="restricted">Restricted</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="flex flex-col gap-1.5">
+                      <Label>Content Type</Label>
+                      <Select value={newResContentType} onValueChange={setNewResContentType}>
+                        <SelectTrigger data-testid="select-resource-contenttype">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="text">Text</SelectItem>
+                          <SelectItem value="binary">Binary</SelectItem>
+                          <SelectItem value="structured">Structured</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Label>Owner</Label>
+                      <Input
+                        placeholder="e.g. data-team"
+                        value={newResOwner}
+                        onChange={(e) => setNewResOwner(e.target.value)}
+                        data-testid="input-resource-owner"
+                      />
+                    </div>
+                  </div>
+                  <Button
+                    onClick={() => addResourceMutation.mutate()}
+                    disabled={!newResName.trim() || !newResUri.trim() || addResourceMutation.isPending}
+                    data-testid="button-submit-resource"
+                  >
+                    {addResourceMutation.isPending ? (
+                      <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" />
+                    ) : (
+                      <Plus className="w-4 h-4 mr-1.5" />
+                    )}
+                    Add Resource
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+          </div>
+
           {!resources || resources.length === 0 ? (
             <Card>
               <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
                 <FileText className="w-8 h-8 text-muted-foreground" />
                 <p className="text-sm text-muted-foreground" data-testid="text-no-resources">
-                  No resources discovered. Sync catalogs to discover resources.
+                  No resources registered. Add resources to define data sources for agents.
                 </p>
               </CardContent>
             </Card>
@@ -669,9 +970,28 @@ export default function McpServerDetail() {
               {resources.map((resource) => (
                 <Card key={resource.id} data-testid={`card-resource-${resource.id}`}>
                   <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium" data-testid={`text-resource-name-${resource.id}`}>
-                      {resource.name}
-                    </CardTitle>
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <CardTitle className="text-sm font-medium" data-testid={`text-resource-name-${resource.id}`}>
+                        {resource.name}
+                      </CardTitle>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {resource.sensitivityLevel && resource.sensitivityLevel !== "public" && (
+                          <Badge
+                            variant={resource.sensitivityLevel === "restricted" || resource.sensitivityLevel === "confidential" ? "destructive" : "outline"}
+                            className="text-[10px]"
+                            data-testid={`badge-sensitivity-${resource.id}`}
+                          >
+                            <Lock className="w-3 h-3 mr-0.5" />
+                            {resource.sensitivityLevel}
+                          </Badge>
+                        )}
+                        {resource.freshnessStatus && (
+                          <Badge variant={resource.freshnessStatus === "fresh" ? "default" : "secondary"} className="text-[10px]" data-testid={`badge-freshness-${resource.id}`}>
+                            {resource.freshnessStatus}
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
                   </CardHeader>
                   <CardContent className="flex flex-col gap-2">
                     <span className="text-xs font-mono text-muted-foreground" data-testid={`text-resource-uri-${resource.id}`}>
@@ -680,11 +1000,19 @@ export default function McpServerDetail() {
                     {resource.description && (
                       <p className="text-xs text-muted-foreground">{resource.description}</p>
                     )}
-                    {resource.mimeType && (
-                      <Badge variant="outline" className="text-[10px] w-fit" data-testid={`badge-mimetype-${resource.id}`}>
-                        {resource.mimeType}
-                      </Badge>
-                    )}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {resource.mimeType && (
+                        <Badge variant="outline" className="text-[10px]" data-testid={`badge-mimetype-${resource.id}`}>
+                          {resource.mimeType}
+                        </Badge>
+                      )}
+                      {resource.contentType && (
+                        <Badge variant="outline" className="text-[10px]">{resource.contentType}</Badge>
+                      )}
+                      {resource.owner && (
+                        <span className="text-[11px] text-muted-foreground">Owner: {resource.owner}</span>
+                      )}
+                    </div>
                   </CardContent>
                 </Card>
               ))}
@@ -693,12 +1021,101 @@ export default function McpServerDetail() {
         </TabsContent>
 
         <TabsContent value="prompts" className="flex flex-col gap-4 mt-4">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium">Prompt Templates</span>
+              {prompts && prompts.length > 0 && (
+                <Badge variant="secondary" className="text-[10px]">{prompts.length}</Badge>
+              )}
+            </div>
+            <Dialog open={addPromptOpen} onOpenChange={setAddPromptOpen}>
+              <DialogTrigger asChild>
+                <Button size="sm" data-testid="button-add-prompt">
+                  <Plus className="w-4 h-4 mr-1.5" /> Add Prompt
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-lg">
+                <DialogHeader>
+                  <DialogTitle>Add Prompt Template</DialogTitle>
+                </DialogHeader>
+                <div className="flex flex-col gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <Label>Prompt Name *</Label>
+                    <Input
+                      placeholder="e.g. summarize_document"
+                      value={newPromptName}
+                      onChange={(e) => setNewPromptName(e.target.value)}
+                      data-testid="input-prompt-name"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label>Description</Label>
+                    <Textarea
+                      placeholder="What does this prompt template do?"
+                      value={newPromptDescription}
+                      onChange={(e) => setNewPromptDescription(e.target.value)}
+                      rows={2}
+                      data-testid="input-prompt-description"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label>Arguments (JSON Array)</Label>
+                    <Textarea
+                      className="font-mono text-xs"
+                      placeholder='[{"name": "document", "description": "The document to summarize"}]'
+                      value={newPromptArgs}
+                      onChange={(e) => {
+                        setNewPromptArgs(e.target.value);
+                        try {
+                          const parsed = JSON.parse(e.target.value);
+                          if (!Array.isArray(parsed)) {
+                            setNewPromptArgsError("Must be a JSON array");
+                          } else {
+                            setNewPromptArgsError(null);
+                          }
+                        } catch {
+                          setNewPromptArgsError("Invalid JSON");
+                        }
+                      }}
+                      rows={4}
+                      data-testid="input-prompt-arguments"
+                    />
+                    {newPromptArgsError && (
+                      <span className="text-[11px] text-red-500" data-testid="text-prompt-args-error">{newPromptArgsError}</span>
+                    )}
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label>Owner</Label>
+                    <Input
+                      placeholder="e.g. ai-team"
+                      value={newPromptOwner}
+                      onChange={(e) => setNewPromptOwner(e.target.value)}
+                      data-testid="input-prompt-owner"
+                    />
+                  </div>
+                  <Button
+                    onClick={() => addPromptMutation.mutate()}
+                    disabled={!newPromptName.trim() || !!newPromptArgsError || addPromptMutation.isPending}
+                    data-testid="button-submit-prompt"
+                  >
+                    {addPromptMutation.isPending ? (
+                      <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" />
+                    ) : (
+                      <Plus className="w-4 h-4 mr-1.5" />
+                    )}
+                    Add Prompt
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+          </div>
+
           {!prompts || prompts.length === 0 ? (
             <Card>
               <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
                 <MessageSquare className="w-8 h-8 text-muted-foreground" />
                 <p className="text-sm text-muted-foreground" data-testid="text-no-prompts">
-                  No prompts discovered. Sync catalogs to discover prompts.
+                  No prompt templates registered. Add prompts to define reusable instruction templates.
                 </p>
               </CardContent>
             </Card>
@@ -707,13 +1124,25 @@ export default function McpServerDetail() {
               {prompts.map((prompt) => (
                 <Card key={prompt.id} data-testid={`card-prompt-${prompt.id}`}>
                   <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium" data-testid={`text-prompt-name-${prompt.id}`}>
-                      {prompt.name}
-                    </CardTitle>
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <CardTitle className="text-sm font-medium" data-testid={`text-prompt-name-${prompt.id}`}>
+                        {prompt.name}
+                      </CardTitle>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {prompt.publishedStatus && (
+                          <Badge variant={prompt.publishedStatus === "published" ? "default" : "secondary"} className="text-[10px]" data-testid={`badge-prompt-status-${prompt.id}`}>
+                            {prompt.publishedStatus}
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
                   </CardHeader>
                   <CardContent className="flex flex-col gap-2">
                     {prompt.description && (
                       <p className="text-xs text-muted-foreground">{prompt.description}</p>
+                    )}
+                    {prompt.owner && (
+                      <span className="text-[11px] text-muted-foreground">Owner: {prompt.owner}</span>
                     )}
                     {prompt.arguments && Array.isArray(prompt.arguments) && (prompt.arguments as Array<{ name: string; description?: string }>).length > 0 ? (
                       <div className="flex flex-col gap-1">
