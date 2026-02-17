@@ -2109,7 +2109,7 @@ export default function Governance() {
                         <Card key={policy.id} className="hover-elevate cursor-pointer" onClick={() => setSelectedPolicyId(policy.id)} data-testid={`card-policy-${policy.id}`}>
                           <CardContent className="p-4 flex flex-col gap-3">
                             <div className="flex items-start justify-between gap-2">
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-2 min-w-0">
                                 <div className="w-8 h-8 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
                                   <DIcon className="w-4 h-4 text-primary" />
                                 </div>
@@ -2118,7 +2118,7 @@ export default function Governance() {
                                   <span className="text-[11px] text-muted-foreground capitalize">{policy.domain.replace(/_/g, " ")} | v{policy.version}</span>
                                 </div>
                               </div>
-                              <StatusBadge status={policy.status} />
+                              <div className="shrink-0"><StatusBadge status={policy.status} /></div>
                             </div>
                             {policy.description && (
                               <p className="text-xs text-muted-foreground line-clamp-2">{policy.description}</p>
@@ -2181,7 +2181,7 @@ export default function Governance() {
                     <Card key={policy.id} className="hover-elevate cursor-pointer" onClick={() => setSelectedPolicyId(policy.id)} data-testid={`card-policy-${policy.id}`}>
                       <CardContent className="p-4 flex flex-col gap-3">
                         <div className="flex items-start justify-between gap-2">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
                             <div className="w-8 h-8 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
                               <DIcon className="w-4 h-4 text-primary" />
                             </div>
@@ -2190,7 +2190,7 @@ export default function Governance() {
                               <span className="text-[11px] text-muted-foreground capitalize">{policy.domain.replace(/_/g, " ")} | v{policy.version}</span>
                             </div>
                           </div>
-                          <StatusBadge status={policy.status} />
+                          <div className="shrink-0"><StatusBadge status={policy.status} /></div>
                         </div>
                         {policy.description && (
                           <p className="text-xs text-muted-foreground line-clamp-2">{policy.description}</p>
