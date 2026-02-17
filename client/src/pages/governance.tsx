@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Link } from "wouter";
 import {
   Shield,
@@ -57,6 +57,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -466,6 +468,22 @@ const POLICY_PACKS: PolicyPack[] = [
     policies: [
       { name: "Anomaly Detection Triggers", domain: "allowed_actions", description: "Flag unusual transaction patterns or data access for human review", policyJson: { rules: [{ type: "anomaly_detection", thresholds: { transaction_volume: "3x_baseline", access_frequency: "5x_baseline" } }] } },
       { name: "Anti-Money Laundering Checks", domain: "allowed_actions", description: "Enforce AML screening for all financial transactions above threshold", policyJson: { rules: [{ type: "pre_action_check", action: "financial_transaction", requires: "aml_screening", threshold: 10000 }] } },
+    ],
+  },
+  {
+    id: "sec-17g-credit-rating-pack",
+    name: "Credit Rating / SEC Compliance Pack",
+    description: "Comprehensive SEC Rule 17g compliance for Nationally Recognized Statistical Rating Organizations (NRSROs) covering record retention, conflict management, rating methodology governance, and disclosure controls",
+    industry: "financial_services",
+    framework: "SEC Rule 17g (NRSRO)",
+    riskLevel: "critical",
+    policies: [
+      { name: "17g-2 Record Retention", domain: "logging", description: "Maintain all rating action records, internal communications, compliance reports, and revenue records for minimum 10 years in easily accessible format per SEC Rule 17g-2", policyJson: { rules: [{ type: "record_retention", retention_years: 10, record_types: ["rating_actions", "methodologies", "communications", "compliance_reports", "revenue_records"], format: "easily_accessible", enforcement: "block" }] } },
+      { name: "17g-5 Conflict of Interest Controls", domain: "allowed_actions", description: "Prevent analyst participation in fee discussions, enforce look-back reviews when analysts join rated entities, and ensure rating shopping disclosure per SEC Rule 17g-5", policyJson: { rules: [{ type: "conflict_prevention", prohibitions: ["analyst_fee_discussion", "rating_shopping_concealment"], requires: ["look_back_review", "conflict_disclosure"], enforcement: "block" }] } },
+      { name: "17g-6 Prohibited Conduct Prevention", domain: "content_boundaries", description: "Block unfair, coercive, or abusive practices including conditional ratings, rating threats, and commercially-motivated unsolicited ratings per SEC Rule 17g-6", policyJson: { rules: [{ type: "action_blocklist", actions: ["conditional_rating", "rating_threat", "coercive_practice", "tying_arrangement"], severity: "critical", enforcement: "block" }] } },
+      { name: "17g-7 Disclosure Controls", domain: "logging", description: "Ensure publication of rating performance statistics, methodology documentation, rating histories, and annual NRSRO certifications per SEC Rule 17g-7", policyJson: { rules: [{ type: "disclosure_requirement", disclosures: ["performance_statistics", "methodology_docs", "rating_histories", "annual_certification"], frequency: "annual", public: true, enforcement: "require_approval" }] } },
+      { name: "17g-8 Internal Controls Framework", domain: "tool_permissions", description: "Establish and enforce documented policies for credit rating process management, methodology application, and violation prevention per SEC Rule 17g-8", policyJson: { rules: [{ type: "internal_controls", scope: "rating_process", requires: ["documented_policies", "methodology_compliance", "violation_prevention", "annual_review"], enforcement: "block" }] } },
+      { name: "Rating Committee Governance", domain: "allowed_actions", description: "Enforce proper rating committee composition, quorum requirements, voting procedures, and documentation of dissenting opinions for all rating actions", policyJson: { rules: [{ type: "committee_governance", requires: ["quorum_check", "voting_record", "dissent_documentation", "chair_approval"], scope: "rating_actions", enforcement: "require_approval" }] } },
     ],
   },
   {
@@ -1072,6 +1090,73 @@ const REGULATION_DATABASE: Record<string, RegulationDetail> = {
     policyDomains: ["content_boundaries", "allowed_actions"],
     departments: ["E-Commerce", "Customer Service", "IT & Digital"],
   },
+  "SEC Rule 17g (NRSRO)": {
+    id: "sec-17g-nrsro",
+    name: "SEC Rule 17g (NRSRO)",
+    fullName: "SEC Rules 17g-1 through 17g-10 - Nationally Recognized Statistical Rating Organizations",
+    description: "SEC regulations governing credit rating agencies (NRSROs) including record-keeping, conflicts of interest, prohibited conduct, disclosure requirements, and internal controls for credit rating processes.",
+    category: "financial",
+    jurisdictions: ["US"],
+    requirements: [
+      { id: "17g2-1", title: "Record-Keeping Requirements (17g-2)", description: "Maintain and preserve records of rating actions, methodologies, internal communications, compliance reports, and revenue records for a minimum of 10 years in an easily accessible format", severity: "critical", category: "Records Management" },
+      { id: "17g2-2", title: "Conflicts of Interest (17g-5)", description: "Prevent and manage conflicts of interest including analyst participation in fee discussions, rating shopping disclosure, and look-back reviews when analysts join rated entities", severity: "critical", category: "Conflict Management" },
+      { id: "17g2-3", title: "Prohibited Conduct (17g-6)", description: "Prohibit unfair, coercive, or abusive practices including conditioning ratings on purchase of other services, threatening to lower ratings, or issuing unsolicited ratings for commercial advantage", severity: "critical", category: "Conduct" },
+      { id: "17g2-4", title: "Disclosure Requirements (17g-7)", description: "Publish rating action performance statistics, methodologies, rating histories, and form NRSRO annual certifications with complete transparency", severity: "high", category: "Transparency" },
+      { id: "17g2-5", title: "Internal Controls (17g-8)", description: "Establish, maintain, enforce, and document policies and procedures reasonably designed to address the management of credit rating processes and prevent violations", severity: "critical", category: "Internal Controls" },
+      { id: "17g2-6", title: "Board Governance (17g-9)", description: "Board of directors must oversee rating policies, methodologies, and internal controls with at least one independent director", severity: "high", category: "Governance" },
+      { id: "17g2-7", title: "Annual Certification (17g-1)", description: "Submit annual certification to SEC including complete organizational information, rating methodologies, and compliance attestation", severity: "high", category: "Compliance" },
+    ],
+    policyDomains: ["logging", "data_handling", "tool_permissions", "allowed_actions"],
+    departments: ["Rating Analytics", "Structured Finance", "Rating Committee", "Compliance"],
+  },
+  "EU CRA Regulation": {
+    id: "eu-cra",
+    name: "EU CRA Regulation",
+    fullName: "EU Credit Rating Agencies Regulation (EC No 1060/2009)",
+    description: "European regulation on credit rating agencies establishing registration, conduct of business, and transparency requirements for CRAs operating in the EU.",
+    category: "financial",
+    jurisdictions: ["EU"],
+    requirements: [
+      { id: "eucra-1", title: "Registration and Certification", description: "Credit rating agencies must register with ESMA and comply with ongoing supervisory requirements", severity: "critical", category: "Registration" },
+      { id: "eucra-2", title: "Independence and Conflict Avoidance", description: "Ensure organizational and operational independence of rating activities from commercial interests and advisory services", severity: "critical", category: "Conflict Management" },
+      { id: "eucra-3", title: "Rating Methodology Transparency", description: "Publish and apply rating methodologies that are rigorous, systematic, continuous, and subject to validation based on historical experience", severity: "high", category: "Methodology" },
+      { id: "eucra-4", title: "Structured Finance Disclosure", description: "Enhanced disclosure requirements for structured finance instruments including underlying asset quality and performance data", severity: "high", category: "Transparency" },
+    ],
+    policyDomains: ["logging", "data_handling", "allowed_actions"],
+    departments: ["Rating Analytics", "Structured Finance", "Compliance"],
+  },
+  "IOSCO Code of Conduct": {
+    id: "iosco-coc",
+    name: "IOSCO Code of Conduct",
+    fullName: "IOSCO Code of Conduct Fundamentals for Credit Rating Agencies",
+    description: "International standards for credit rating agency conduct including quality and integrity of the rating process, independence, conflict management, and responsibilities to investors and issuers.",
+    category: "financial",
+    jurisdictions: ["US", "EU", "Global"],
+    requirements: [
+      { id: "iosco-1", title: "Quality of the Rating Process", description: "Apply rigorous and systematic methodologies, maintain historical data on rating transitions, and ensure adequate staffing and expertise", severity: "critical", category: "Quality" },
+      { id: "iosco-2", title: "Independence and Conflicts", description: "Maintain organizational separation between rating operations, commercial activities, and advisory functions", severity: "critical", category: "Independence" },
+      { id: "iosco-3", title: "Analyst Conduct Standards", description: "Analysts must not participate in fee negotiations or be influenced by existing or potential commercial relationships", severity: "high", category: "Conduct" },
+      { id: "iosco-4", title: "Transparency to Market", description: "Disclose methodologies, models, key assumptions, and the meaning of each rating category to the public", severity: "high", category: "Transparency" },
+    ],
+    policyDomains: ["allowed_actions", "logging", "content_boundaries"],
+    departments: ["Rating Analytics", "Rating Committee", "Compliance"],
+  },
+  "Dodd-Frank Title IX": {
+    id: "dodd-frank-ix",
+    name: "Dodd-Frank Title IX",
+    fullName: "Dodd-Frank Wall Street Reform - Title IX: Investor Protections and Improvements to the Regulation of Securities",
+    description: "Comprehensive reform of credit rating agency oversight including enhanced SEC authority, liability provisions, and removal of regulatory reliance on ratings.",
+    category: "financial",
+    jurisdictions: ["US"],
+    requirements: [
+      { id: "df9-1", title: "Enhanced SEC Oversight", description: "Comply with expanded SEC examination and enforcement authority over NRSRO operations, internal controls, and conflicts of interest", severity: "critical", category: "Regulatory Oversight" },
+      { id: "df9-2", title: "Rating Analyst Qualification", description: "Ensure rating analysts meet qualification standards including testing, continuing education, and competency requirements", severity: "high", category: "Personnel" },
+      { id: "df9-3", title: "Look-Back Reviews", description: "Conduct reviews of ratings where a former analyst has joined the rated entity to assess potential conflicts that may have influenced the rating", severity: "high", category: "Conflict Management" },
+      { id: "df9-4", title: "Whistleblower Protections", description: "Maintain procedures for employees to report violations without fear of retaliation, with SEC whistleblower program compliance", severity: "high", category: "Compliance" },
+    ],
+    policyDomains: ["tool_permissions", "allowed_actions", "logging"],
+    departments: ["Rating Analytics", "Compliance", "Rating Committee"],
+  },
 };
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -1175,7 +1260,28 @@ export default function Governance() {
 
   const [activatedPacks, setActivatedPacks] = useState<Set<string>>(new Set());
   const [selectedPackId, setSelectedPackId] = useState<string | null>(null);
-  const selectedPack = selectedPackId ? POLICY_PACKS.find((p) => p.id === selectedPackId) || null : null;
+  const [createPackOpen, setCreatePackOpen] = useState(false);
+  const [createPackDefaultFramework, setCreatePackDefaultFramework] = useState("");
+  const [customPacks, setCustomPacks] = useState<PolicyPack[]>(() => {
+    try {
+      const stored = localStorage.getItem("almp-custom-policy-packs");
+      return stored ? JSON.parse(stored) : [];
+    } catch { return []; }
+  });
+
+  const allPolicyPacks = useMemo(() => [...POLICY_PACKS, ...customPacks], [customPacks]);
+
+  function saveCustomPack(pack: PolicyPack) {
+    setCustomPacks((prev) => {
+      const next = [...prev, pack];
+      localStorage.setItem("almp-custom-policy-packs", JSON.stringify(next));
+      return next;
+    });
+    toast({ title: "Policy pack created", description: `${pack.name} with ${pack.policies.length} policies` });
+    setCreatePackOpen(false);
+  }
+
+  const selectedPack = selectedPackId ? allPolicyPacks.find((p) => p.id === selectedPackId) || null : null;
 
   const [enhancedPackRules, setEnhancedPackRules] = useState<Record<string, Record<number, Record<string, unknown>>>>(() => {
     try {
@@ -3642,11 +3748,18 @@ export default function Governance() {
         </TabsContent>
 
         <TabsContent value="policy-packs" className="mt-0 flex flex-col gap-4" data-testid="content-policy-packs">
-          <div className="flex flex-col gap-1">
-            <h2 className="text-lg font-semibold">Industry Policy Packs</h2>
-            <p className="text-sm text-muted-foreground">
-              Pre-configured policy bundles aligned to regulatory frameworks. Activate a pack to create all included policies at once.
-            </p>
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="flex flex-col gap-1">
+              <h2 className="text-lg font-semibold">Industry Policy Packs</h2>
+              <p className="text-sm text-muted-foreground">
+                Pre-configured policy bundles aligned to regulatory frameworks. Activate a pack to create all included policies at once.
+              </p>
+            </div>
+            <PermissionGate action="create_modify_policies">
+              <Button variant="outline" onClick={() => { setCreatePackDefaultFramework(""); setCreatePackOpen(true); }} data-testid="button-create-pack">
+                <Plus className="h-4 w-4 mr-1.5" /> Create Pack
+              </Button>
+            </PermissionGate>
           </div>
 
           {industry && industry.id !== "custom" && (
@@ -3656,7 +3769,7 @@ export default function Governance() {
                 <h3 className="text-sm font-medium">Recommended for {industry.label}</h3>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {POLICY_PACKS.filter((p) => p.industry === industry.id).map((pack) => {
+                {allPolicyPacks.filter((p) => p.industry === industry.id).map((pack) => {
                   const isActivated = activatedPacks.has(pack.id);
                   const riskColors: Record<string, string> = {
                     critical: "text-red-600 dark:text-red-400",
@@ -3736,7 +3849,7 @@ export default function Governance() {
           <div className="space-y-3 mt-2">
             <h3 className="text-sm font-medium">All Available Packs</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {POLICY_PACKS.filter((p) => !industry || industry.id === "custom" || p.industry !== industry.id).map((pack) => {
+              {allPolicyPacks.filter((p) => !industry || industry.id === "custom" || p.industry !== industry.id).map((pack) => {
                 const isActivated = activatedPacks.has(pack.id);
                 const industryLabel: Record<string, string> = {
                   financial_services: "Financial Services",
@@ -3804,6 +3917,13 @@ export default function Governance() {
               onPersistEnhancement={(idx, rules) => persistEnhancedRules(selectedPack.id, idx, rules)}
             />
           )}
+          <CreatePolicyPackDialog
+            open={createPackOpen}
+            onOpenChange={(open) => { setCreatePackOpen(open); if (!open) setCreatePackDefaultFramework(""); }}
+            onSave={saveCustomPack}
+            defaultIndustry={industry?.id as IndustryId}
+            defaultFramework={createPackDefaultFramework}
+          />
         </TabsContent>
 
         <TabsContent value="what-if" className="mt-0 flex flex-col gap-4">
@@ -3898,6 +4018,21 @@ export default function Governance() {
                           <Button size="sm" onClick={() => generateRegulationPoliciesMutation.mutate(reg)} disabled={generatingPoliciesFor === reg.id} data-testid={`button-generate-policies-${reg.id}`}>
                             {generatingPoliciesFor === reg.id ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Wand2 className="w-4 h-4 mr-1" />}
                             Generate Policies
+                          </Button>
+                        </PermissionGate>
+                        <PermissionGate action="create_modify_policies">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setCreatePackDefaultFramework(reg.name);
+                              setCreatePackOpen(true);
+                              setActiveGovTab("policy-packs");
+                            }}
+                            data-testid={`button-create-pack-from-reg-${reg.id}`}
+                          >
+                            <Layers className="w-4 h-4 mr-1" />
+                            Create Pack
                           </Button>
                         </PermissionGate>
                       </div>
@@ -5315,6 +5450,220 @@ function PolicyPackDetailDialog({
             </Button>
           </PermissionGate>
         </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function CreatePolicyPackDialog({
+  open,
+  onOpenChange,
+  onSave,
+  defaultIndustry,
+  defaultFramework,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSave: (pack: PolicyPack) => void;
+  defaultIndustry?: IndustryId;
+  defaultFramework?: string;
+}) {
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [packIndustry, setPackIndustry] = useState<IndustryId>(defaultIndustry || "financial_services");
+  const [framework, setFramework] = useState(defaultFramework || "");
+  const [riskLevel, setRiskLevel] = useState<"low" | "medium" | "high" | "critical">("high");
+  const [packPolicies, setPackPolicies] = useState<PolicyPackPolicy[]>([
+    { name: "", domain: "data_handling", description: "", policyJson: {} },
+  ]);
+
+  useEffect(() => {
+    if (open) {
+      setName("");
+      setDescription("");
+      setPackIndustry(defaultIndustry || "financial_services");
+      setFramework(defaultFramework || "");
+      setRiskLevel("high");
+      setPackPolicies([{ name: "", domain: "data_handling", description: "", policyJson: {} }]);
+    }
+  }, [open, defaultIndustry, defaultFramework]);
+
+  const addPackPolicy = () => {
+    setPackPolicies((prev) => [...prev, { name: "", domain: "data_handling", description: "", policyJson: {} }]);
+  };
+
+  const updatePackPolicy = (idx: number, field: keyof PolicyPackPolicy, value: string) => {
+    setPackPolicies((prev) => prev.map((p, i) => i === idx ? { ...p, [field]: value } : p));
+  };
+
+  const removePackPolicy = (idx: number) => {
+    setPackPolicies((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const canSave = name.trim() && framework.trim() && packPolicies.some((p) => p.name.trim());
+
+  const handleSave = () => {
+    const validPolicies = packPolicies.filter((p) => p.name.trim());
+    onSave({
+      id: `custom-${Date.now()}`,
+      name: name.trim(),
+      description: description.trim(),
+      industry: packIndustry,
+      framework: framework.trim(),
+      riskLevel,
+      policies: validPolicies.map((p) => ({
+        ...p,
+        policyJson: p.policyJson && Object.keys(p.policyJson).length > 0 ? p.policyJson : { rules: [] },
+      })),
+    });
+  };
+
+  const domainOptions = [
+    { value: "data_handling", label: "Data Handling" },
+    { value: "tool_permissions", label: "Tool Permissions" },
+    { value: "allowed_actions", label: "Allowed Actions" },
+    { value: "content_boundaries", label: "Content Boundaries" },
+    { value: "logging", label: "Logging & Audit" },
+  ];
+
+  const industryOptions: { value: IndustryId; label: string }[] = [
+    { value: "healthcare", label: "Healthcare" },
+    { value: "financial_services", label: "Financial Services" },
+    { value: "manufacturing", label: "Manufacturing" },
+    { value: "insurance", label: "Insurance" },
+    { value: "retail", label: "Retail" },
+    { value: "technology_saas", label: "Technology / SaaS" },
+  ];
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Layers className="w-5 h-5" />
+            Create Policy Pack
+          </DialogTitle>
+          <DialogDescription>
+            Define a reusable policy pack with multiple policies. Once created, you can activate it to create all policies at once.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Pack Name</label>
+              <Input
+                placeholder="e.g., Credit Rating / SEC Compliance"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                data-testid="input-pack-name"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Regulatory Framework</label>
+              <Input
+                placeholder="e.g., SEC Rule 17g (NRSRO)"
+                value={framework}
+                onChange={(e) => setFramework(e.target.value)}
+                data-testid="input-pack-framework"
+              />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Description</label>
+            <Textarea
+              placeholder="Describe the purpose and scope of this policy pack..."
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={2}
+              data-testid="input-pack-description"
+            />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Industry</label>
+              <Select value={packIndustry} onValueChange={(v) => setPackIndustry(v as IndustryId)}>
+                <SelectTrigger data-testid="select-pack-industry">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {industryOptions.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Risk Level</label>
+              <Select value={riskLevel} onValueChange={(v) => setRiskLevel(v as "low" | "medium" | "high" | "critical")}>
+                <SelectTrigger data-testid="select-pack-risk">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="low">Low</SelectItem>
+                  <SelectItem value="medium">Medium</SelectItem>
+                  <SelectItem value="high">High</SelectItem>
+                  <SelectItem value="critical">Critical</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <label className="text-sm font-medium">Policies in Pack ({packPolicies.length})</label>
+              <Button variant="outline" size="sm" onClick={addPackPolicy} data-testid="button-add-pack-policy">
+                <Plus className="h-3.5 w-3.5 mr-1" /> Add Policy
+              </Button>
+            </div>
+            <div className="space-y-3">
+              {packPolicies.map((pp, idx) => (
+                <Card key={idx}>
+                  <CardContent className="p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium text-muted-foreground">Policy {idx + 1}</span>
+                      {packPolicies.length > 1 && (
+                        <Button variant="ghost" size="icon" onClick={() => removePackPolicy(idx)} data-testid={`button-remove-pack-policy-${idx}`}>
+                          <XCircle className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <Input
+                        placeholder="Policy name"
+                        value={pp.name}
+                        onChange={(e) => updatePackPolicy(idx, "name", e.target.value)}
+                        data-testid={`input-pack-policy-name-${idx}`}
+                      />
+                      <Select value={pp.domain} onValueChange={(v) => updatePackPolicy(idx, "domain", v)}>
+                        <SelectTrigger data-testid={`select-pack-policy-domain-${idx}`}>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {domainOptions.map((d) => (
+                            <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <Input
+                      placeholder="Policy description"
+                      value={pp.description}
+                      onChange={(e) => updatePackPolicy(idx, "description", e.target.value)}
+                      data-testid={`input-pack-policy-desc-${idx}`}
+                    />
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </div>
+        </div>
+        <DialogFooter className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => onOpenChange(false)} data-testid="button-cancel-create-pack">Cancel</Button>
+          <Button onClick={handleSave} disabled={!canSave} data-testid="button-save-pack">
+            <Layers className="h-4 w-4 mr-1.5" />
+            Create Pack ({packPolicies.filter(p => p.name.trim()).length} policies)
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
