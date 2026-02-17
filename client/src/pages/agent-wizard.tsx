@@ -88,6 +88,14 @@ const STEPS = [
   { number: 7, label: "Review & Create" },
 ];
 
+interface ToolParam {
+  name: string;
+  description: string;
+  type?: string;
+  required?: boolean;
+  enrichedFrom?: string;
+}
+
 interface ToolConfig {
   name: string;
   description: string;
@@ -98,19 +106,20 @@ interface ToolConfig {
   costPerCall?: number;
   accessTier?: string;
   writeAccess?: boolean;
+  parameters?: ToolParam[];
 }
 
 const TOOL_CATALOG: ToolConfig[] = [
-  { name: "search_knowledge_base", description: "Search internal knowledge base articles", permissionScope: "READ", dataClasses: ["internal_docs"], failureModes: ["timeout", "index_unavailable"], rateLimit: "100/min", costPerCall: 0.001, accessTier: "OPEN" },
-  { name: "query_database", description: "Execute read-only database queries", permissionScope: "READ", dataClasses: ["customer_data", "product_data"], failureModes: ["connection_error", "query_timeout"], rateLimit: "50/min", costPerCall: 0.002, accessTier: "STANDARD" },
-  { name: "send_email", description: "Send emails to customers or internal teams", permissionScope: "WRITE", dataClasses: ["contact_info", "pii"], failureModes: ["smtp_error", "rate_limit"], rateLimit: "20/min", costPerCall: 0.005, accessTier: "RESTRICTED", writeAccess: true },
-  { name: "update_crm_record", description: "Create or update CRM records", permissionScope: "WRITE", dataClasses: ["customer_data", "sales_data"], failureModes: ["api_error", "validation_error"], rateLimit: "30/min", costPerCall: 0.003, accessTier: "RESTRICTED", writeAccess: true },
-  { name: "create_ticket", description: "Create support tickets in ticketing system", permissionScope: "WRITE", dataClasses: ["support_data"], failureModes: ["api_error", "duplicate_detection"], rateLimit: "40/min", costPerCall: 0.002, accessTier: "STANDARD", writeAccess: true },
-  { name: "web_search", description: "Search the web for current information", permissionScope: "READ", dataClasses: ["public_data"], failureModes: ["api_quota", "timeout"], rateLimit: "30/min", costPerCall: 0.01, accessTier: "OPEN" },
-  { name: "execute_code", description: "Execute sandboxed code for data analysis", permissionScope: "EXECUTE", dataClasses: ["computed_data"], failureModes: ["sandbox_error", "timeout", "memory_limit"], rateLimit: "10/min", costPerCall: 0.02, accessTier: "RESTRICTED" },
-  { name: "deploy_model", description: "Deploy or update ML model endpoints", permissionScope: "ADMIN", dataClasses: ["model_artifacts", "infrastructure"], failureModes: ["deployment_error", "resource_limit"], rateLimit: "5/min", costPerCall: 0.05, accessTier: "CRITICAL", writeAccess: true },
-  { name: "process_payment", description: "Process financial transactions", permissionScope: "ADMIN", dataClasses: ["financial_data", "pii"], failureModes: ["payment_declined", "fraud_detection"], rateLimit: "10/min", costPerCall: 0.03, accessTier: "CRITICAL", writeAccess: true },
-  { name: "extract_document", description: "Extract structured data from documents", permissionScope: "READ", dataClasses: ["document_data"], failureModes: ["ocr_error", "format_unsupported"], rateLimit: "20/min", costPerCall: 0.015, accessTier: "STANDARD" },
+  { name: "search_knowledge_base", description: "Search internal knowledge base articles", permissionScope: "READ", dataClasses: ["internal_docs"], failureModes: ["timeout", "index_unavailable"], rateLimit: "100/min", costPerCall: 0.001, accessTier: "OPEN", parameters: [{ name: "query", description: "Search query string", type: "string", required: true }, { name: "patient_mrn", description: "Patient medical record number", type: "string" }, { name: "document_type", description: "Type of document to search", type: "string" }] },
+  { name: "query_database", description: "Execute read-only database queries", permissionScope: "READ", dataClasses: ["customer_data", "product_data"], failureModes: ["connection_error", "query_timeout"], rateLimit: "50/min", costPerCall: 0.002, accessTier: "STANDARD", parameters: [{ name: "sql_query", description: "SQL query to execute", type: "string", required: true }, { name: "customer_cif", description: "Customer identifier", type: "string" }, { name: "account_number", description: "Account number for lookup", type: "string" }, { name: "portfolio_id", description: "Portfolio identifier", type: "string" }] },
+  { name: "send_email", description: "Send emails to customers or internal teams", permissionScope: "WRITE", dataClasses: ["contact_info", "pii"], failureModes: ["smtp_error", "rate_limit"], rateLimit: "20/min", costPerCall: 0.005, accessTier: "RESTRICTED", writeAccess: true, parameters: [{ name: "recipient", description: "Email recipient address", type: "string", required: true }, { name: "subject", description: "Email subject line", type: "string", required: true }, { name: "body", description: "Email body content", type: "string", required: true }] },
+  { name: "update_crm_record", description: "Create or update CRM records", permissionScope: "WRITE", dataClasses: ["customer_data", "sales_data"], failureModes: ["api_error", "validation_error"], rateLimit: "30/min", costPerCall: 0.003, accessTier: "RESTRICTED", writeAccess: true, parameters: [{ name: "record_id", description: "CRM record identifier", type: "string", required: true }, { name: "customer_cif", description: "Customer identifier", type: "string" }, { name: "field_updates", description: "Fields to update", type: "object", required: true }] },
+  { name: "create_ticket", description: "Create support tickets in ticketing system", permissionScope: "WRITE", dataClasses: ["support_data"], failureModes: ["api_error", "duplicate_detection"], rateLimit: "40/min", costPerCall: 0.002, accessTier: "STANDARD", writeAccess: true, parameters: [{ name: "title", description: "Ticket title", type: "string", required: true }, { name: "description", description: "Ticket description", type: "string", required: true }, { name: "priority", description: "Ticket priority level", type: "string" }, { name: "assignee", description: "Assigned team or person", type: "string" }] },
+  { name: "web_search", description: "Search the web for current information", permissionScope: "READ", dataClasses: ["public_data"], failureModes: ["api_quota", "timeout"], rateLimit: "30/min", costPerCall: 0.01, accessTier: "OPEN", parameters: [{ name: "query", description: "Search query", type: "string", required: true }, { name: "max_results", description: "Maximum number of results", type: "number" }] },
+  { name: "execute_code", description: "Execute sandboxed code for data analysis", permissionScope: "EXECUTE", dataClasses: ["computed_data"], failureModes: ["sandbox_error", "timeout", "memory_limit"], rateLimit: "10/min", costPerCall: 0.02, accessTier: "RESTRICTED", parameters: [{ name: "code", description: "Code to execute", type: "string", required: true }, { name: "language", description: "Programming language", type: "string", required: true }, { name: "timeout_ms", description: "Execution timeout in milliseconds", type: "number" }] },
+  { name: "deploy_model", description: "Deploy or update ML model endpoints", permissionScope: "ADMIN", dataClasses: ["model_artifacts", "infrastructure"], failureModes: ["deployment_error", "resource_limit"], rateLimit: "5/min", costPerCall: 0.05, accessTier: "CRITICAL", writeAccess: true, parameters: [{ name: "model_id", description: "Model identifier", type: "string", required: true }, { name: "environment", description: "Target deployment environment", type: "string", required: true }, { name: "version", description: "Model version to deploy", type: "string" }] },
+  { name: "process_payment", description: "Process financial transactions", permissionScope: "ADMIN", dataClasses: ["financial_data", "pii"], failureModes: ["payment_declined", "fraud_detection"], rateLimit: "10/min", costPerCall: 0.03, accessTier: "CRITICAL", writeAccess: true, parameters: [{ name: "amount", description: "Payment amount", type: "number", required: true }, { name: "currency", description: "Currency code", type: "string", required: true }, { name: "customer_cif", description: "Customer identifier", type: "string", required: true }, { name: "payment_method", description: "Payment method type", type: "string", required: true }] },
+  { name: "extract_document", description: "Extract structured data from documents", permissionScope: "READ", dataClasses: ["document_data"], failureModes: ["ocr_error", "format_unsupported"], rateLimit: "20/min", costPerCall: 0.015, accessTier: "STANDARD", parameters: [{ name: "document_url", description: "URL or path to document", type: "string", required: true }, { name: "output_format", description: "Desired output format", type: "string" }, { name: "fields", description: "Specific fields to extract", type: "string[]" }] },
 ];
 
 interface WorkflowNode {
@@ -1123,7 +1132,7 @@ export default function AgentWizard() {
           />
         )}
         {currentStep === 2 && (
-          <Step2IndustryTools state={wizardState} updateState={updateState} />
+          <Step2IndustryTools state={wizardState} updateState={updateState} ontologyConcepts={ontologyConcepts || []} />
         )}
         {currentStep === 3 && (
           <Step3IndustryGovernance state={wizardState} updateState={updateState} />
@@ -1904,12 +1913,20 @@ function Step0GoldenTemplate({
 function Step2IndustryTools({
   state,
   updateState,
+  ontologyConcepts,
 }: {
   state: WizardState;
   updateState: (u: Partial<WizardState>) => void;
+  ontologyConcepts: Array<{ id: string; label: string; category: string; description: string; synonyms: string[] | null }>;
 }) {
+  const { toast } = useToast();
   const [catalogFilter, setCatalogFilter] = useState<string>("all");
   const [showCatalog, setShowCatalog] = useState(false);
+  const [expandedParams, setExpandedParams] = useState<Record<number, boolean>>({});
+  const [addingParamIdx, setAddingParamIdx] = useState<number | null>(null);
+  const [newParamName, setNewParamName] = useState("");
+  const [newParamDesc, setNewParamDesc] = useState("");
+  const [newParamType, setNewParamType] = useState("string");
 
   function addToolFromCatalog(catalogTool: ToolConfig) {
     const alreadyAdded = state.toolsConfig.some(t => t.name === catalogTool.name);
@@ -1919,17 +1936,119 @@ function Step2IndustryTools({
   }
 
   function addCustomTool() {
-    updateState({ toolsConfig: [...state.toolsConfig, { name: "", description: "", permissionScope: "READ", accessTier: "STANDARD" }] });
+    updateState({ toolsConfig: [...state.toolsConfig, { name: "", description: "", permissionScope: "READ", accessTier: "STANDARD", parameters: [] }] });
   }
 
   function removeTool(i: number) {
     updateState({ toolsConfig: state.toolsConfig.filter((_, idx) => idx !== i) });
   }
 
-  function updateTool(i: number, field: keyof ToolConfig, value: string | number | boolean | string[]) {
+  function updateTool(i: number, field: keyof ToolConfig, value: string | number | boolean | string[] | ToolParam[]) {
     const updated = [...state.toolsConfig];
     updated[i] = { ...updated[i], [field]: value };
     updateState({ toolsConfig: updated });
+  }
+
+  function addParamToTool(toolIdx: number) {
+    if (!newParamName.trim()) return;
+    const params = [...(state.toolsConfig[toolIdx].parameters || [])];
+    params.push({ name: newParamName.trim(), description: newParamDesc.trim(), type: newParamType });
+    updateTool(toolIdx, "parameters", params);
+    setNewParamName("");
+    setNewParamDesc("");
+    setNewParamType("string");
+    setAddingParamIdx(null);
+  }
+
+  function removeParam(toolIdx: number, paramIdx: number) {
+    const params = [...(state.toolsConfig[toolIdx].parameters || [])];
+    params.splice(paramIdx, 1);
+    updateTool(toolIdx, "parameters", params);
+  }
+
+  function updateParam(toolIdx: number, paramIdx: number, field: keyof ToolParam, value: string | boolean | undefined) {
+    const params = [...(state.toolsConfig[toolIdx].parameters || [])];
+    params[paramIdx] = { ...params[paramIdx], [field]: value };
+    updateTool(toolIdx, "parameters", params);
+  }
+
+  function unenrichParam(toolIdx: number, paramIdx: number) {
+    const params = [...(state.toolsConfig[toolIdx].parameters || [])];
+    const param = params[paramIdx];
+    if (!param.enrichedFrom) return;
+    const conceptLabel = param.enrichedFrom;
+    const enrichPattern = new RegExp(`\\s*\\(${conceptLabel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^)]*\\)\\s*$`);
+    const cleanedDesc = param.description.replace(enrichPattern, "").trim();
+    const altPattern = new RegExp(`\\s*\\([^)]*${conceptLabel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^)]*\\)\\s*$`);
+    const finalDesc = cleanedDesc || param.description.replace(altPattern, "").trim();
+    params[paramIdx] = { ...param, description: finalDesc || param.description, enrichedFrom: undefined };
+    updateTool(toolIdx, "parameters", params);
+  }
+
+  function enrichToolWithOntology(toolIdx: number) {
+    if (!ontologyConcepts || ontologyConcepts.length === 0) {
+      toast({ title: "No ontology loaded", description: "Configure your industry workspace to load domain terminology", variant: "destructive" });
+      return;
+    }
+    const tool = state.toolsConfig[toolIdx];
+    const params = tool.parameters || [];
+    if (params.length === 0) {
+      toast({ title: "No parameters", description: "Add parameters to this tool before enriching", variant: "destructive" });
+      return;
+    }
+
+    let enrichedCount = 0;
+    const enrichedParams = params.map((param) => {
+      if (param.enrichedFrom) return param;
+
+      const paramNameLower = param.name.toLowerCase().replace(/[_-]/g, " ");
+      const paramWords = paramNameLower.split(" ");
+
+      for (const concept of ontologyConcepts) {
+        const labelLower = concept.label.toLowerCase();
+        const synonymsLower = (concept.synonyms || []).map(s => s.toLowerCase());
+
+        const labelWords = labelLower.split(/[\s_-]+/);
+        const exactMatch = paramNameLower === labelLower || paramNameLower === labelLower.replace(/\s+/g, "_");
+        const synonymMatch = synonymsLower.some(s => paramNameLower.includes(s.replace(/\s+/g, " ")) || s.replace(/\s+/g, "_") === param.name.toLowerCase());
+        const substringMatch = paramWords.some(w => w.length > 2 && labelWords.some(lw => lw.length > 2 && (lw.includes(w) || w.includes(lw))));
+        const acronymParts = param.name.split("_");
+        const acronymMatch = acronymParts.some(part => {
+          const partLower = part.toLowerCase();
+          return partLower.length >= 2 && (
+            labelLower === partLower ||
+            synonymsLower.includes(partLower) ||
+            labelWords.some(lw => lw === partLower)
+          );
+        });
+
+        if (exactMatch || synonymMatch || substringMatch || acronymMatch) {
+          const acronymStr = concept.synonyms && concept.synonyms.length > 0
+            ? ` (${concept.synonyms[0]} = ${concept.label}`
+            : ` (${concept.label}`;
+          const enrichment = `${acronymStr}, ${concept.description})`;
+
+          if (!param.description.includes(concept.label)) {
+            enrichedCount++;
+            const baseDesc = param.description || param.name.replace(/[_-]/g, " ");
+            return {
+              ...param,
+              description: `${baseDesc} ${enrichment}`.trim(),
+              enrichedFrom: concept.label,
+            };
+          }
+        }
+      }
+      return param;
+    });
+
+    if (enrichedCount > 0) {
+      updateTool(toolIdx, "parameters", enrichedParams);
+      setExpandedParams(prev => ({ ...prev, [toolIdx]: true }));
+      toast({ title: `${enrichedCount} parameter(s) enriched`, description: "Ontology definitions appended to parameter descriptions" });
+    } else {
+      toast({ title: "No matches found", description: "No parameter names matched ontology concepts. Try adding more concepts to your knowledge graph." });
+    }
   }
 
   function updatePermission(field: "dataAccess" | "apiAccess" | "writeAccess", value: string) {
@@ -2093,6 +2212,9 @@ function Step2IndustryTools({
                       <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
                         <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{tool.rateLimit}</span>
                         <span className="flex items-center gap-1"><DollarSign className="w-3 h-3" />${tool.costPerCall}/call</span>
+                        {tool.parameters && tool.parameters.length > 0 && (
+                          <span className="flex items-center gap-1"><Settings className="w-3 h-3" />{tool.parameters.length} params</span>
+                        )}
                         {tool.writeAccess && <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400"><AlertTriangle className="w-3 h-3" />Write</span>}
                       </div>
                       <div className="flex flex-wrap gap-1">
@@ -2123,56 +2245,210 @@ function Step2IndustryTools({
           {state.toolsConfig.length > 0 && (
             <div className="flex flex-col gap-2">
               <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Selected Tools</span>
-              {state.toolsConfig.map((tool, i) => (
-                <div key={i} className="flex items-start gap-2 p-3 rounded-md border" data-testid={`selected-tool-${i}`}>
-                  <div className="flex-1 flex flex-col gap-2">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {tool.name ? (
-                        <span className="text-xs font-medium font-mono">{tool.name}</span>
-                      ) : (
+              {state.toolsConfig.map((tool, i) => {
+                const params = tool.parameters || [];
+                const enrichedCount = params.filter(p => p.enrichedFrom).length;
+                const isExpanded = expandedParams[i];
+                return (
+                <div key={i} className="flex flex-col gap-0 rounded-md border" data-testid={`selected-tool-${i}`}>
+                  <div className="flex items-start gap-2 p-3">
+                    <div className="flex-1 flex flex-col gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {tool.name ? (
+                          <span className="text-xs font-medium font-mono">{tool.name}</span>
+                        ) : (
+                          <Input
+                            placeholder="Tool name"
+                            value={tool.name}
+                            onChange={(e) => updateTool(i, "name", e.target.value)}
+                            className="h-7 text-xs w-48"
+                            data-testid={`input-tool-name-${i}`}
+                          />
+                        )}
+                        {tool.accessTier && (
+                          <Badge variant="outline" className={`text-[9px] ${tierColors[tool.accessTier]}`}>
+                            {tool.accessTier}
+                          </Badge>
+                        )}
+                        {tool.permissionScope && (
+                          <Badge variant="outline" className={`text-[9px] ${scopeColors[tool.permissionScope]}`}>
+                            {tool.permissionScope}
+                          </Badge>
+                        )}
+                        {enrichedCount > 0 && (
+                          <Badge variant="secondary" className="text-[9px] text-emerald-600 dark:text-emerald-400">
+                            <BookOpen className="w-3 h-3 mr-0.5" />
+                            {enrichedCount} enriched
+                          </Badge>
+                        )}
+                      </div>
+                      {!tool.description && !TOOL_CATALOG.some(c => c.name === tool.name) ? (
                         <Input
-                          placeholder="Tool name"
-                          value={tool.name}
-                          onChange={(e) => updateTool(i, "name", e.target.value)}
-                          className="h-7 text-xs w-48"
-                          data-testid={`input-tool-name-${i}`}
+                          placeholder="Tool description"
+                          value={tool.description}
+                          onChange={(e) => updateTool(i, "description", e.target.value)}
+                          className="h-7 text-xs"
+                          data-testid={`input-tool-desc-${i}`}
                         />
+                      ) : (
+                        <p className="text-[11px] text-muted-foreground">{tool.description}</p>
                       )}
-                      {tool.accessTier && (
-                        <Badge variant="outline" className={`text-[9px] ${tierColors[tool.accessTier]}`}>
-                          {tool.accessTier}
-                        </Badge>
-                      )}
-                      {tool.permissionScope && (
-                        <Badge variant="outline" className={`text-[9px] ${scopeColors[tool.permissionScope]}`}>
-                          {tool.permissionScope}
-                        </Badge>
-                      )}
+                      <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+                        {tool.rateLimit && <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{tool.rateLimit}</span>}
+                        {tool.costPerCall !== undefined && <span className="flex items-center gap-1"><DollarSign className="w-3 h-3" />${tool.costPerCall}/call</span>}
+                        {tool.failureModes && tool.failureModes.length > 0 && (
+                          <span className="flex items-center gap-1"><AlertTriangle className="w-3 h-3" />{tool.failureModes.length} failure modes</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setExpandedParams(prev => ({ ...prev, [i]: !prev[i] }))}
+                          data-testid={`button-toggle-params-${i}`}
+                        >
+                          <Settings className="w-3.5 h-3.5 mr-1" />
+                          Parameters ({params.length})
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => enrichToolWithOntology(i)}
+                          disabled={ontologyConcepts.length === 0 || params.length === 0}
+                          title={ontologyConcepts.length === 0 ? "Select an industry with ontology concepts to enable enrichment" : params.length === 0 ? "Add parameters to this tool before enriching" : "Match parameter names against domain ontology and append definitions"}
+                          data-testid={`button-enrich-ontology-${i}`}
+                        >
+                          <BookOpen className="w-3.5 h-3.5 mr-1" />
+                          Enrich with Ontology
+                        </Button>
+                      </div>
                     </div>
-                    {!tool.description && !TOOL_CATALOG.some(c => c.name === tool.name) ? (
-                      <Input
-                        placeholder="Tool description"
-                        value={tool.description}
-                        onChange={(e) => updateTool(i, "description", e.target.value)}
-                        className="h-7 text-xs"
-                        data-testid={`input-tool-desc-${i}`}
-                      />
-                    ) : (
-                      <p className="text-[11px] text-muted-foreground">{tool.description}</p>
-                    )}
-                    <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
-                      {tool.rateLimit && <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{tool.rateLimit}</span>}
-                      {tool.costPerCall !== undefined && <span className="flex items-center gap-1"><DollarSign className="w-3 h-3" />${tool.costPerCall}/call</span>}
-                      {tool.failureModes && tool.failureModes.length > 0 && (
-                        <span className="flex items-center gap-1"><AlertTriangle className="w-3 h-3" />{tool.failureModes.length} failure modes</span>
-                      )}
-                    </div>
+                    <Button variant="ghost" size="icon" onClick={() => removeTool(i)} data-testid={`button-remove-tool-${i}`}>
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
                   </div>
-                  <Button variant="ghost" size="icon" onClick={() => removeTool(i)} data-testid={`button-remove-tool-${i}`}>
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
+
+                  {isExpanded && (
+                    <div className="border-t px-3 pb-3 pt-2 flex flex-col gap-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Tool Parameters</span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => { setAddingParamIdx(addingParamIdx === i ? null : i); setNewParamName(""); setNewParamDesc(""); }}
+                          data-testid={`button-add-param-${i}`}
+                        >
+                          <Plus className="w-3 h-3 mr-1" /> Add
+                        </Button>
+                      </div>
+
+                      {params.length === 0 && addingParamIdx !== i && (
+                        <p className="text-[11px] text-muted-foreground text-center py-2">No parameters defined</p>
+                      )}
+
+                      {params.map((param, pIdx) => (
+                        <div key={pIdx} className="flex items-start gap-2 p-2 rounded-md bg-muted/30" data-testid={`param-${i}-${pIdx}`}>
+                          <div className="flex-1 flex flex-col gap-1.5 min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <Input
+                                value={param.name}
+                                onChange={(e) => updateParam(i, pIdx, "name", e.target.value)}
+                                className="h-6 text-[11px] font-mono font-medium w-36"
+                                data-testid={`input-param-name-${i}-${pIdx}`}
+                              />
+                              <Select value={param.type || "string"} onValueChange={(v) => updateParam(i, pIdx, "type", v)}>
+                                <SelectTrigger className="w-20 h-6 text-[10px]" data-testid={`select-param-type-${i}-${pIdx}`}>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="string">string</SelectItem>
+                                  <SelectItem value="number">number</SelectItem>
+                                  <SelectItem value="boolean">boolean</SelectItem>
+                                  <SelectItem value="object">object</SelectItem>
+                                  <SelectItem value="string[]">string[]</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <Button
+                                variant={param.required ? "default" : "outline"}
+                                size="sm"
+                                className="h-6 text-[9px] px-2"
+                                onClick={() => updateParam(i, pIdx, "required", !param.required)}
+                                data-testid={`button-toggle-required-${i}-${pIdx}`}
+                              >
+                                {param.required ? "required" : "optional"}
+                              </Button>
+                              {param.enrichedFrom && (
+                                <Badge variant="secondary" className="text-[9px] text-emerald-600 dark:text-emerald-400">
+                                  <BookOpen className="w-2.5 h-2.5 mr-0.5" /> {param.enrichedFrom}
+                                </Badge>
+                              )}
+                            </div>
+                            <Input
+                              value={param.description}
+                              onChange={(e) => updateParam(i, pIdx, "description", e.target.value)}
+                              placeholder="Parameter description"
+                              className="h-6 text-[10px]"
+                              data-testid={`input-param-desc-${i}-${pIdx}`}
+                            />
+                          </div>
+                          <div className="flex flex-col gap-1 shrink-0">
+                            {param.enrichedFrom && (
+                              <Button variant="ghost" size="icon" title="Remove ontology enrichment" onClick={() => unenrichParam(i, pIdx)} data-testid={`button-unenrich-${i}-${pIdx}`}>
+                                <RotateCcw className="w-3 h-3" />
+                              </Button>
+                            )}
+                            <Button variant="ghost" size="icon" onClick={() => removeParam(i, pIdx)} data-testid={`button-remove-param-${i}-${pIdx}`}>
+                              <Trash2 className="w-3 h-3" />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+
+                      {addingParamIdx === i && (
+                        <div className="flex flex-col gap-2 p-2 rounded-md border border-dashed">
+                          <div className="flex items-center gap-2">
+                            <Input
+                              placeholder="Parameter name (e.g., customer_cif)"
+                              value={newParamName}
+                              onChange={(e) => setNewParamName(e.target.value)}
+                              className="h-7 text-xs flex-1"
+                              data-testid={`input-new-param-name-${i}`}
+                            />
+                            <Select value={newParamType} onValueChange={setNewParamType}>
+                              <SelectTrigger className="w-24 h-7 text-xs" data-testid={`select-param-type-${i}`}>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="string">string</SelectItem>
+                                <SelectItem value="number">number</SelectItem>
+                                <SelectItem value="boolean">boolean</SelectItem>
+                                <SelectItem value="object">object</SelectItem>
+                                <SelectItem value="string[]">string[]</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <Input
+                            placeholder="Parameter description"
+                            value={newParamDesc}
+                            onChange={(e) => setNewParamDesc(e.target.value)}
+                            className="h-7 text-xs"
+                            data-testid={`input-new-param-desc-${i}`}
+                          />
+                          <div className="flex items-center gap-2">
+                            <Button size="sm" disabled={!newParamName.trim()} onClick={() => addParamToTool(i)} data-testid={`button-save-param-${i}`}>
+                              <Plus className="w-3 h-3 mr-1" /> Add
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={() => setAddingParamIdx(null)} data-testid={`button-cancel-param-${i}`}>
+                              Cancel
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </CardContent>
