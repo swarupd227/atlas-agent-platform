@@ -5350,7 +5350,7 @@ function PolicyPackDetailDialog({
       const res = await apiRequest("POST", "/api/ai/enhance-policy-rules", {
         policyName: policy.name,
         domain: policy.domain,
-        description: policy.description,
+        description: policy.description || `Policy for ${policy.name} in the ${policy.domain} domain`,
         framework: pack.framework,
         industry: industryLabel[pack.industry] || pack.industry,
         existingRules: getEffectiveRules(idx),
@@ -5477,11 +5477,15 @@ function PolicyPackDetailDialog({
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="data_handling">Data Handling</SelectItem>
+                        <SelectItem value="tool_permissions">Tool Permissions</SelectItem>
+                        <SelectItem value="logging">Logging & Audit</SelectItem>
+                        <SelectItem value="allowed_actions">Allowed Actions</SelectItem>
+                        <SelectItem value="content_boundaries">Content Boundaries</SelectItem>
+                        <SelectItem value="financial_reporting">Financial Reporting</SelectItem>
                         <SelectItem value="access_control">Access Control</SelectItem>
                         <SelectItem value="audit_compliance">Audit Compliance</SelectItem>
                         <SelectItem value="deployment_safety">Deployment Safety</SelectItem>
                         <SelectItem value="model_governance">Model Governance</SelectItem>
-                        <SelectItem value="financial_reporting">Financial Reporting</SelectItem>
                       </SelectContent>
                     </Select>
                     <Textarea placeholder="Policy description" value={newPolicyDescription} onChange={(e) => setNewPolicyDescription(e.target.value)} className="text-sm min-h-[60px]" data-testid="input-add-policy-desc" />

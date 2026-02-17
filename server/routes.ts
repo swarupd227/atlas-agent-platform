@@ -1931,9 +1931,10 @@ export async function registerRoutes(
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { policyName, domain, description, framework, industry, existingRules } = req.body;
-      if (!policyName || !domain || !description) {
-        return res.status(400).json({ error: "policyName, domain, and description are required" });
+      if (!policyName || !domain) {
+        return res.status(400).json({ error: "policyName and domain are required" });
       }
+      const effectiveDescription = description || `Policy for ${policyName} in the ${domain} domain`;
 
       const response = await openai.chat.completions.create({
         model: "gpt-4.1",
@@ -1961,7 +1962,7 @@ Be thorough and specific to the ${industry || "general"} industry and ${framewor
 
 Policy Name: ${policyName}
 Domain: ${domain}
-Description: ${description}
+Description: ${effectiveDescription}
 Framework: ${framework || "General"}
 Industry: ${industry || "General"}
 
