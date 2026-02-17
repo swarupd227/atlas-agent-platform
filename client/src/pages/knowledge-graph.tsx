@@ -311,7 +311,7 @@ export default function KnowledgeGraphIngestion() {
   const [aiExtractResult, setAiExtractResult] = useState<any>(null);
   const [showAiSuggestions, setShowAiSuggestions] = useState(false);
   const [aiSuggestionsResult, setAiSuggestionsResult] = useState<any>(null);
-  const [showOverview, setShowOverview] = useState(true);
+  const [showOverview, setShowOverview] = useState(false);
 
   const connectorsQuery = useQuery<ConnectorView[]>({ queryKey: ["/api/knowledge-connectors"] });
   const resolutionsQuery = useQuery<ResolutionView[]>({ queryKey: ["/api/entity-resolutions"] });
@@ -488,21 +488,38 @@ export default function KnowledgeGraphIngestion() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="border-b px-6 py-4 flex items-center justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold" data-testid="text-page-title">Knowledge Graph Ingestion</h1>
-          <p className="text-sm text-muted-foreground">Populate and maintain the knowledge graph with customer-specific data</p>
+      <div className="border-b px-6 py-3 flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-4 flex-wrap">
+          <h1 className="text-lg font-semibold whitespace-nowrap" data-testid="text-page-title">Knowledge Graph Ingestion</h1>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Badge variant="outline" className="text-xs" data-testid="badge-stat-entities">
+              <Layers className="w-3 h-3 mr-1" />{totalEntities.toLocaleString()} entities
+            </Badge>
+            <Badge variant="outline" className="text-xs" data-testid="badge-stat-relationships">
+              <Network className="w-3 h-3 mr-1" />{totalRelationships.toLocaleString()} relationships
+            </Badge>
+            {pendingResolutions > 0 && (
+              <Badge variant="secondary" className="text-xs" data-testid="badge-stat-pending">
+                <AlertTriangle className="w-3 h-3 mr-1" />{pendingResolutions} pending
+              </Badge>
+            )}
+            <Badge variant="outline" className="text-xs" data-testid="badge-stat-verified">
+              <CheckCircle className="w-3 h-3 mr-1" />{verifiedExtractions}/{extractions.length} verified
+            </Badge>
+          </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Button
+            size="sm"
             variant="outline"
             onClick={() => setShowOverview(!showOverview)}
             data-testid="button-toggle-overview"
           >
-            <Network className="w-4 h-4 mr-1.5" />
+            <BrainCircuit className="w-4 h-4 mr-1.5" />
             {showOverview ? "Hide" : "Show"} Overview
           </Button>
           <Button
+            size="sm"
             variant="outline"
             onClick={() => {
               setAiExtractText("");
@@ -515,6 +532,7 @@ export default function KnowledgeGraphIngestion() {
             <Wand2 className="w-4 h-4 mr-1.5" />AI Extract
           </Button>
           <Button
+            size="sm"
             variant="outline"
             onClick={() => {
               const entityList = [
@@ -540,12 +558,12 @@ export default function KnowledgeGraphIngestion() {
             AI Suggestions
           </Button>
           <div className="relative">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Search className="absolute left-2.5 top-2 h-4 w-4 text-muted-foreground" />
             <Input
               placeholder="Search..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-8 w-56"
+              className="pl-8 w-48 h-8 text-sm"
               data-testid="input-search"
             />
           </div>
@@ -553,209 +571,187 @@ export default function KnowledgeGraphIngestion() {
       </div>
 
       {showOverview && (
-        <div className="border-b px-6 py-4">
-          <div className="grid grid-cols-3 gap-4">
-            <Card className="col-span-2" data-testid="card-overview-graph">
-              <CardContent className="pt-4 pb-3">
-                <div className="flex items-center justify-between gap-2 mb-3">
-                  <div className="flex items-center gap-2">
-                    <BrainCircuit className="h-4 w-4 text-muted-foreground" />
-                    <span className="text-sm font-medium">Knowledge Graph Overview</span>
-                  </div>
-                  <Badge variant="outline" className="text-xs">
-                    <Zap className="w-3 h-3 mr-1" />Powers agent intelligence
-                  </Badge>
+        <div className="border-b px-6 py-3">
+          <div className="flex gap-4">
+            <svg viewBox="0 0 320 160" className="flex-1 h-32" data-testid="svg-graph-preview">
+              {graphEntities.map((entity, i) => {
+                const angle = (i / graphEntities.length) * Math.PI * 2;
+                const cx = 160 + Math.cos(angle) * 60;
+                const cy = 80 + Math.sin(angle) * 55;
+                const nextIdx = (i + 1) % graphEntities.length;
+                const nextAngle = (nextIdx / graphEntities.length) * Math.PI * 2;
+                const nx = 160 + Math.cos(nextAngle) * 60;
+                const ny = 80 + Math.sin(nextAngle) * 55;
+                return (
+                  <g key={i}>
+                    {i < graphEntities.length - 1 && (
+                      <line x1={cx} y1={cy} x2={nx} y2={ny} className="stroke-muted-foreground/20" strokeWidth="1" />
+                    )}
+                    {i % 3 === 0 && (
+                      <line x1={cx} y1={cy} x2={160} y2={80} className="stroke-muted-foreground/15" strokeWidth="1" strokeDasharray="3,3" />
+                    )}
+                    <circle
+                      cx={cx} cy={cy} r={entity.type === "source" ? 6 : 4}
+                      className={entity.type === "source" ? "fill-primary/60" : "fill-muted-foreground/40"}
+                    />
+                    <text x={cx} y={cy + (i % 2 === 0 ? -10 : 14)} textAnchor="middle" className="fill-muted-foreground text-[7px]">
+                      {entity.name.length > 16 ? entity.name.slice(0, 14) + "..." : entity.name}
+                    </text>
+                  </g>
+                );
+              })}
+              <circle cx={160} cy={80} r={8} className="fill-primary/30" />
+              <text x={160} y={84} textAnchor="middle" className="fill-foreground text-[6px] font-medium">KG</text>
+            </svg>
+            <div className="space-y-2 w-52 shrink-0">
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-muted-foreground">Graph completeness</span>
+                  <span className="text-xs font-medium">{Math.min(100, Math.round((totalEntities / 100000) * 100))}%</span>
                 </div>
-                <div className="flex gap-4">
-                  <svg viewBox="0 0 320 160" className="flex-1 h-40" data-testid="svg-graph-preview">
-                    {graphEntities.map((entity, i) => {
-                      const angle = (i / graphEntities.length) * Math.PI * 2;
-                      const cx = 160 + Math.cos(angle) * 60;
-                      const cy = 80 + Math.sin(angle) * 55;
-                      const nextIdx = (i + 1) % graphEntities.length;
-                      const nextAngle = (nextIdx / graphEntities.length) * Math.PI * 2;
-                      const nx = 160 + Math.cos(nextAngle) * 60;
-                      const ny = 80 + Math.sin(nextAngle) * 55;
-                      return (
-                        <g key={i}>
-                          {i < graphEntities.length - 1 && (
-                            <line x1={cx} y1={cy} x2={nx} y2={ny} className="stroke-muted-foreground/20" strokeWidth="1" />
-                          )}
-                          {i % 3 === 0 && (
-                            <line x1={cx} y1={cy} x2={160} y2={80} className="stroke-muted-foreground/15" strokeWidth="1" strokeDasharray="3,3" />
-                          )}
-                          <circle
-                            cx={cx} cy={cy} r={entity.type === "source" ? 6 : 4}
-                            className={entity.type === "source" ? "fill-primary/60" : "fill-muted-foreground/40"}
-                          />
-                          <text x={cx} y={cy + (i % 2 === 0 ? -10 : 14)} textAnchor="middle" className="fill-muted-foreground text-[7px]">
-                            {entity.name.length > 16 ? entity.name.slice(0, 14) + "..." : entity.name}
-                          </text>
-                        </g>
-                      );
-                    })}
-                    <circle cx={160} cy={80} r={8} className="fill-primary/30" />
-                    <text x={160} y={84} textAnchor="middle" className="fill-foreground text-[6px] font-medium">KG</text>
-                  </svg>
-                  <div className="space-y-2 w-48 shrink-0">
-                    <p className="text-xs text-muted-foreground leading-relaxed">
-                      Your knowledge graph connects entities, relationships, and temporal data to give AI agents deep understanding of your organization.
-                    </p>
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs text-muted-foreground">Graph completeness</span>
-                        <span className="text-xs font-medium">{Math.min(100, Math.round((totalEntities / 100000) * 100))}%</span>
-                      </div>
-                      <Progress value={Math.min(100, Math.round((totalEntities / 100000) * 100))} className="h-1.5" />
-                    </div>
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs text-muted-foreground">Resolution rate</span>
-                        <span className="text-xs font-medium">{resolutions.length > 0 ? Math.round(((resolutions.length - pendingResolutions) / resolutions.length) * 100) : 0}%</span>
-                      </div>
-                      <Progress value={resolutions.length > 0 ? Math.round(((resolutions.length - pendingResolutions) / resolutions.length) * 100) : 0} className="h-1.5" />
-                    </div>
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs text-muted-foreground">Extraction verified</span>
-                        <span className="text-xs font-medium">{extractions.length > 0 ? Math.round((verifiedExtractions / extractions.length) * 100) : 0}%</span>
-                      </div>
-                      <Progress value={extractions.length > 0 ? Math.round((verifiedExtractions / extractions.length) * 100) : 0} className="h-1.5" />
-                    </div>
-                  </div>
+                <Progress value={Math.min(100, Math.round((totalEntities / 100000) * 100))} className="h-1.5" />
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-muted-foreground">Resolution rate</span>
+                  <span className="text-xs font-medium">{resolutions.length > 0 ? Math.round(((resolutions.length - pendingResolutions) / resolutions.length) * 100) : 0}%</span>
                 </div>
-              </CardContent>
-            </Card>
-            <div className="space-y-2">
-              <Card data-testid="card-stat-entities">
-                <CardContent className="pt-3 pb-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <Layers className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-xs text-muted-foreground">Entities</span>
-                    </div>
-                    <p className="text-lg font-bold">{totalEntities.toLocaleString()}</p>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card data-testid="card-stat-relationships">
-                <CardContent className="pt-3 pb-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <Network className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-xs text-muted-foreground">Relationships</span>
-                    </div>
-                    <p className="text-lg font-bold">{totalRelationships.toLocaleString()}</p>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card data-testid="card-stat-pending">
-                <CardContent className="pt-3 pb-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <AlertTriangle className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-xs text-muted-foreground">Pending</span>
-                    </div>
-                    <p className="text-lg font-bold">{pendingResolutions}</p>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card data-testid="card-stat-verified">
-                <CardContent className="pt-3 pb-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <CheckCircle className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-xs text-muted-foreground">Verified</span>
-                    </div>
-                    <p className="text-lg font-bold">{verifiedExtractions}/{extractions.length}</p>
-                  </div>
-                </CardContent>
-              </Card>
+                <Progress value={resolutions.length > 0 ? Math.round(((resolutions.length - pendingResolutions) / resolutions.length) * 100) : 0} className="h-1.5" />
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-muted-foreground">Extraction verified</span>
+                  <span className="text-xs font-medium">{extractions.length > 0 ? Math.round((verifiedExtractions / extractions.length) * 100) : 0}%</span>
+                </div>
+                <Progress value={extractions.length > 0 ? Math.round((verifiedExtractions / extractions.length) * 100) : 0} className="h-1.5" />
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      {!showOverview && (
-        <div className="grid grid-cols-4 gap-4 px-6 py-4 border-b">
-          <Card data-testid="card-stat-entities-compact">
-            <CardContent className="pt-4 pb-3">
-              <div className="flex items-center gap-2">
-                <Layers className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm text-muted-foreground">Entities Ingested</span>
-              </div>
-              <p className="text-2xl font-bold mt-1">{totalEntities.toLocaleString()}</p>
-            </CardContent>
-          </Card>
-          <Card data-testid="card-stat-relationships-compact">
-            <CardContent className="pt-4 pb-3">
-              <div className="flex items-center gap-2">
-                <Network className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm text-muted-foreground">Relationships Mapped</span>
-              </div>
-              <p className="text-2xl font-bold mt-1">{totalRelationships.toLocaleString()}</p>
-            </CardContent>
-          </Card>
-          <Card data-testid="card-stat-pending-compact">
-            <CardContent className="pt-4 pb-3">
-              <div className="flex items-center gap-2">
-                <AlertTriangle className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm text-muted-foreground">Pending Resolutions</span>
-              </div>
-              <p className="text-2xl font-bold mt-1">{pendingResolutions}</p>
-            </CardContent>
-          </Card>
-          <Card data-testid="card-stat-verified-compact">
-            <CardContent className="pt-4 pb-3">
-              <div className="flex items-center gap-2">
-                <CheckCircle className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm text-muted-foreground">Verified Extractions</span>
-              </div>
-              <p className="text-2xl font-bold mt-1">{verifiedExtractions}/{extractions.length}</p>
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      <div className="flex-1 overflow-hidden px-6 py-4">
+      <div className="flex-1 overflow-hidden flex flex-col">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
-          <TabsList className="mb-4">
-            <TabsTrigger value="connectors" data-testid="tab-connectors">
-              <Database className="w-4 h-4 mr-1.5" />Data Source Connectors
-            </TabsTrigger>
-            <TabsTrigger value="resolution" data-testid="tab-resolution">
-              <Users className="w-4 h-4 mr-1.5" />Entity Resolution
-            </TabsTrigger>
-            <TabsTrigger value="extraction" data-testid="tab-extraction">
-              <GitBranch className="w-4 h-4 mr-1.5" />Relationship Extraction
-            </TabsTrigger>
-            <TabsTrigger value="temporal" data-testid="tab-temporal">
-              <Clock className="w-4 h-4 mr-1.5" />Temporal Graph
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="connectors" className="flex-1 overflow-hidden mt-0">
-            <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
-              <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center justify-between gap-2 px-6 py-2 border-b flex-wrap">
+            <TabsList>
+              <TabsTrigger value="connectors" data-testid="tab-connectors">
+                <Database className="w-4 h-4 mr-1.5" />Connectors
+              </TabsTrigger>
+              <TabsTrigger value="resolution" data-testid="tab-resolution">
+                <Users className="w-4 h-4 mr-1.5" />Resolution
+              </TabsTrigger>
+              <TabsTrigger value="extraction" data-testid="tab-extraction">
+                <GitBranch className="w-4 h-4 mr-1.5" />Extraction
+              </TabsTrigger>
+              <TabsTrigger value="temporal" data-testid="tab-temporal">
+                <Clock className="w-4 h-4 mr-1.5" />Temporal
+              </TabsTrigger>
+            </TabsList>
+            <div className="flex items-center gap-2 flex-wrap">
+              {activeTab === "connectors" && (
+                <>
+                  <Select value={filterStatus} onValueChange={setFilterStatus}>
+                    <SelectTrigger className="w-32 h-8 text-sm" data-testid="select-filter-status">
+                      <Filter className="w-3 h-3 mr-1" />
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Statuses</SelectItem>
+                      <SelectItem value="completed">Completed</SelectItem>
+                      <SelectItem value="syncing">Syncing</SelectItem>
+                      <SelectItem value="idle">Idle</SelectItem>
+                      <SelectItem value="error">Error</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button size="sm" onClick={() => setShowAddConnector(true)} data-testid="button-add-connector">
+                    <Plus className="w-4 h-4 mr-1.5" />Add Connector
+                  </Button>
+                </>
+              )}
+              {activeTab === "resolution" && (
                 <Select value={filterStatus} onValueChange={setFilterStatus}>
-                  <SelectTrigger className="w-36" data-testid="select-filter-status">
-                    <Filter className="w-3 h-3 mr-1.5" />
+                  <SelectTrigger className="w-32 h-8 text-sm" data-testid="select-filter-resolution-status">
+                    <Filter className="w-3 h-3 mr-1" />
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Statuses</SelectItem>
-                    <SelectItem value="completed">Completed</SelectItem>
-                    <SelectItem value="syncing">Syncing</SelectItem>
-                    <SelectItem value="idle">Idle</SelectItem>
-                    <SelectItem value="error">Error</SelectItem>
+                    <SelectItem value="pending">Pending</SelectItem>
+                    <SelectItem value="review">Review</SelectItem>
+                    <SelectItem value="matched">Matched</SelectItem>
+                    <SelectItem value="rejected">Rejected</SelectItem>
                   </SelectContent>
                 </Select>
-              </div>
-              <Button onClick={() => setShowAddConnector(true)} data-testid="button-add-connector">
-                <Plus className="w-4 h-4 mr-1.5" />Add Connector
-              </Button>
+              )}
+              {activeTab === "extraction" && (
+                <>
+                  <Select value={filterStatus} onValueChange={setFilterStatus}>
+                    <SelectTrigger className="w-32 h-8 text-sm" data-testid="select-filter-extraction-status">
+                      <Filter className="w-3 h-3 mr-1" />
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Statuses</SelectItem>
+                      <SelectItem value="extracted">Extracted</SelectItem>
+                      <SelectItem value="verified">Verified</SelectItem>
+                      <SelectItem value="rejected">Rejected</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setAiExtractText("");
+                      setAiExtractDocName("");
+                      setAiExtractResult(null);
+                      setShowAiExtract(true);
+                    }}
+                    data-testid="button-ai-extract-tab"
+                  >
+                    <Wand2 className="w-4 h-4 mr-1.5" />AI Extract
+                  </Button>
+                  <Button size="sm" onClick={() => setShowAddExtraction(true)} data-testid="button-add-extraction">
+                    <Plus className="w-4 h-4 mr-1.5" />Add Extraction
+                  </Button>
+                </>
+              )}
+              {activeTab === "temporal" && (
+                <>
+                  <div className="flex items-center gap-1.5">
+                    <Label className="text-xs text-muted-foreground whitespace-nowrap">From:</Label>
+                    <Input
+                      type="date"
+                      value={dateRange.from}
+                      onChange={(e) => setDateRange((prev) => ({ ...prev, from: e.target.value }))}
+                      className="w-32 h-8 text-sm"
+                      data-testid="input-date-from"
+                    />
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <Label className="text-xs text-muted-foreground whitespace-nowrap">To:</Label>
+                    <Input
+                      type="date"
+                      value={dateRange.to}
+                      onChange={(e) => setDateRange((prev) => ({ ...prev, to: e.target.value }))}
+                      className="w-32 h-8 text-sm"
+                      data-testid="input-date-to"
+                    />
+                  </div>
+                  {(dateRange.from || dateRange.to) && (
+                    <Button size="sm" variant="outline" onClick={() => setDateRange({ from: "", to: "" })} data-testid="button-clear-dates">
+                      Clear
+                    </Button>
+                  )}
+                  <Button size="sm" onClick={() => setShowAddTemporal(true)} data-testid="button-add-temporal">
+                    <Plus className="w-4 h-4 mr-1.5" />Add Entry
+                  </Button>
+                </>
+              )}
             </div>
-            <ScrollArea className="h-[calc(100vh-380px)]">
+          </div>
+
+          <TabsContent value="connectors" className="flex-1 overflow-hidden mt-0 px-6 pt-3">
+            <ScrollArea className="h-full">
               <div className="space-y-3">
                 {filteredConnectors.map((connector) => {
                   const Icon = getConnectorIcon(connector.sourceType);
@@ -813,35 +809,8 @@ export default function KnowledgeGraphIngestion() {
             </ScrollArea>
           </TabsContent>
 
-          <TabsContent value="resolution" className="flex-1 overflow-hidden mt-0">
-            <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
-              <div className="flex items-center gap-2 flex-wrap">
-                <Select value={filterStatus} onValueChange={setFilterStatus}>
-                  <SelectTrigger className="w-36" data-testid="select-filter-resolution-status">
-                    <Filter className="w-3 h-3 mr-1.5" />
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Statuses</SelectItem>
-                    <SelectItem value="pending">Pending</SelectItem>
-                    <SelectItem value="review">Review</SelectItem>
-                    <SelectItem value="matched">Matched</SelectItem>
-                    <SelectItem value="rejected">Rejected</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <Badge variant="outline">
-                  <AlertTriangle className="w-3 h-3 mr-1" />
-                  {pendingResolutions} need review
-                </Badge>
-                <Badge variant="outline">
-                  <BrainCircuit className="w-3 h-3 mr-1" />
-                  AI-assisted resolution available
-                </Badge>
-              </div>
-            </div>
-            <ScrollArea className="h-[calc(100vh-380px)]">
+          <TabsContent value="resolution" className="flex-1 overflow-hidden mt-0 px-6 pt-3">
+            <ScrollArea className="h-full">
               <div className="space-y-3">
                 {filteredResolutions.map((res) => (
                   <Card key={res.id} data-testid={`card-resolution-${res.id}`}>
@@ -937,44 +906,8 @@ export default function KnowledgeGraphIngestion() {
             </ScrollArea>
           </TabsContent>
 
-          <TabsContent value="extraction" className="flex-1 overflow-hidden mt-0">
-            <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
-              <div className="flex items-center gap-2 flex-wrap">
-                <Select value={filterStatus} onValueChange={setFilterStatus}>
-                  <SelectTrigger className="w-36" data-testid="select-filter-extraction-status">
-                    <Filter className="w-3 h-3 mr-1.5" />
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Statuses</SelectItem>
-                    <SelectItem value="extracted">Extracted</SelectItem>
-                    <SelectItem value="verified">Verified</SelectItem>
-                    <SelectItem value="rejected">Rejected</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Badge variant="outline">
-                  <Sparkles className="w-3 h-3 mr-1" />LLM-powered extraction
-                </Badge>
-              </div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setAiExtractText("");
-                    setAiExtractDocName("");
-                    setAiExtractResult(null);
-                    setShowAiExtract(true);
-                  }}
-                  data-testid="button-ai-extract-tab"
-                >
-                  <Wand2 className="w-4 h-4 mr-1.5" />AI Extract from Text
-                </Button>
-                <Button onClick={() => setShowAddExtraction(true)} data-testid="button-add-extraction">
-                  <Plus className="w-4 h-4 mr-1.5" />Add Extraction
-                </Button>
-              </div>
-            </div>
-            <ScrollArea className="h-[calc(100vh-380px)]">
+          <TabsContent value="extraction" className="flex-1 overflow-hidden mt-0 px-6 pt-3">
+            <ScrollArea className="h-full">
               <div className="space-y-3">
                 {filteredExtractions.map((ext) => (
                   <Card key={ext.id} data-testid={`card-extraction-${ext.id}`}>
@@ -1028,40 +961,8 @@ export default function KnowledgeGraphIngestion() {
             </ScrollArea>
           </TabsContent>
 
-          <TabsContent value="temporal" className="flex-1 overflow-hidden mt-0">
-            <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
-              <div className="flex items-center gap-2 flex-wrap">
-                <div className="flex items-center gap-1.5">
-                  <Label className="text-xs text-muted-foreground whitespace-nowrap">From:</Label>
-                  <Input
-                    type="date"
-                    value={dateRange.from}
-                    onChange={(e) => setDateRange((prev) => ({ ...prev, from: e.target.value }))}
-                    className="w-36 h-9"
-                    data-testid="input-date-from"
-                  />
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <Label className="text-xs text-muted-foreground whitespace-nowrap">To:</Label>
-                  <Input
-                    type="date"
-                    value={dateRange.to}
-                    onChange={(e) => setDateRange((prev) => ({ ...prev, to: e.target.value }))}
-                    className="w-36 h-9"
-                    data-testid="input-date-to"
-                  />
-                </div>
-                {(dateRange.from || dateRange.to) && (
-                  <Button size="sm" variant="outline" onClick={() => setDateRange({ from: "", to: "" })} data-testid="button-clear-dates">
-                    Clear
-                  </Button>
-                )}
-              </div>
-              <Button onClick={() => setShowAddTemporal(true)} data-testid="button-add-temporal">
-                <Plus className="w-4 h-4 mr-1.5" />Add Entry
-              </Button>
-            </div>
-            <ScrollArea className="h-[calc(100vh-380px)]">
+          <TabsContent value="temporal" className="flex-1 overflow-hidden mt-0 px-6 pt-3">
+            <ScrollArea className="h-full">
               <div className="space-y-3">
                 {filteredTemporal.map((entry) => {
                   const isActive = !entry.validTo || new Date(entry.validTo) > new Date();
