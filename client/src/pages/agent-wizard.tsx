@@ -346,7 +346,7 @@ const INDUSTRY_CONTEXT_CONFIG: Record<string, {
       { model: "claude-3.5-sonnet", provider: "anthropic", score: 91, reasoning: "Strong compliance text analysis" },
       { model: "gpt-4o", provider: "openai", score: 87, reasoning: "Good cost/accuracy balance for routine queries" },
     ],
-    compliancePrerequisites: ["BSA/AML Training Certification", "KYC Policy Acknowledgment", "Data Classification Review", "Model Risk Management (SR 11-7) Review", "Fair Lending Impact Assessment"],
+    compliancePrerequisites: ["GLBA Privacy Compliance Review", "E-SIGN Act Consent Framework", "BSA/AML CIP Identity Verification", "Reg CC Funds Availability Disclosure", "Reg DD Truth in Savings Disclosure", "BSA/AML Training Certification", "KYC Policy Acknowledgment", "Data Classification Review", "Model Risk Management (SR 11-7) Review", "Fair Lending Impact Assessment"],
     mcpTools: [
       { name: "core_banking_api", description: "Connect to core banking system for account data", permissionScope: "READ", dataClasses: ["financial_data", "pii"], failureModes: ["connection_error", "auth_failure"], rateLimit: "100/min", costPerCall: 0.003, accessTier: "RESTRICTED" },
       { name: "market_data_feed", description: "Real-time and historical market data access", permissionScope: "READ", dataClasses: ["market_data"], failureModes: ["feed_delay", "data_stale"], rateLimit: "200/min", costPerCall: 0.001, accessTier: "STANDARD" },
