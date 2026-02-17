@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRoute, Link } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -27,6 +27,7 @@ import {
   Crosshair,
   Bug,
   AlertTriangle,
+  ArrowRight,
   CheckCircle,
   CheckSquare,
   Layers,
@@ -65,6 +66,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { StatusBadge } from "@/components/status-badge";
 import { StatCard } from "@/components/stat-card";
 import { formatDate } from "@/components/shared-utils";
@@ -157,6 +159,34 @@ export default function EvalDetail() {
   const [diffRunB, setDiffRunB] = useState<string>("");
   const [diffFilter, setDiffFilter] = useState<"all" | "improved" | "regressed">("all");
   const [generatedCases, setGeneratedCases] = useState<Array<{ name: string; inputData: unknown; expectedOutput: unknown; tags: string[]; weight: number; rationale: string }>>([]);
+  const [ontologyWarnings, setOntologyWarnings] = useState<Array<{term: string; suggestedTerm: string; conceptId: string; category: string; confidence: number}>>([]);
+  const [ontologyValidating, setOntologyValidating] = useState(false);
+  const [testCaseOntologyIssues, setTestCaseOntologyIssues] = useState<Map<string, Array<{term: string; suggestedTerm: string; conceptId: string; category: string; confidence: number}>>>(new Map());
+  const [bulkValidating, setBulkValidating] = useState(false);
+
+  useEffect(() => {
+    const combinedText = `${tcName} ${tcInputData} ${tcExpectedOutput}`.trim();
+    if (combinedText.length < 5) {
+      setOntologyWarnings([]);
+      return;
+    }
+    setOntologyValidating(true);
+    const timer = setTimeout(async () => {
+      try {
+        const res = await apiRequest("POST", "/api/ontology/validate-text", { text: combinedText });
+        const data = await res.json();
+        setOntologyWarnings(data.mismatches || []);
+      } catch {
+        setOntologyWarnings([]);
+      } finally {
+        setOntologyValidating(false);
+      }
+    }, 600);
+    return () => {
+      clearTimeout(timer);
+      setOntologyValidating(false);
+    };
+  }, [tcName, tcInputData, tcExpectedOutput]);
 
   const { data: suite, isLoading } = useQuery<EvalSuite>({
     queryKey: ["/api/evals", id],
@@ -227,12 +257,16 @@ export default function EvalDetail() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/evals", id, "test-cases"] });
       toast({ title: "Test case added", description: "The test case has been created successfully." });
+      if (ontologyWarnings.length > 0) {
+        toast({ title: "Ontology term warnings", description: `${ontologyWarnings.length} term${ontologyWarnings.length !== 1 ? "s" : ""} may not match standard terminology.`, variant: "default" });
+      }
       setAddTcOpen(false);
       setTcName("");
       setTcInputData("");
       setTcExpectedOutput("");
       setTcTags("");
       setTcWeight("1");
+      setOntologyWarnings([]);
     },
     onError: (error: Error) => {
       toast({ title: "Failed to add test case", description: error.message, variant: "destructive" });
@@ -527,6 +561,40 @@ export default function EvalDetail() {
                   <><Sparkles className="w-3.5 h-3.5 mr-1.5" /> Auto-Generate</>
                 )}
               </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                data-testid="button-validate-terminology"
+                disabled={bulkValidating || !testCases || testCases.length === 0}
+                onClick={async () => {
+                  if (!testCases || testCases.length === 0) return;
+                  setBulkValidating(true);
+                  const issuesMap = new Map<string, Array<{term: string; suggestedTerm: string; conceptId: string; category: string; confidence: number}>>();
+                  try {
+                    for (const tc of testCases) {
+                      const text = `${tc.name} ${JSON.stringify(tc.inputData)} ${JSON.stringify(tc.expectedOutput)}`.trim();
+                      if (text.length < 5) continue;
+                      try {
+                        const res = await apiRequest("POST", "/api/ontology/validate-text", { text });
+                        const data = await res.json();
+                        if (data.mismatches && data.mismatches.length > 0) {
+                          issuesMap.set(tc.id, data.mismatches);
+                        }
+                      } catch {}
+                    }
+                    setTestCaseOntologyIssues(new Map(issuesMap));
+                    toast({ title: "Terminology validation complete", description: `${issuesMap.size} test case${issuesMap.size !== 1 ? "s" : ""} with potential term mismatches.` });
+                  } catch {} finally {
+                    setBulkValidating(false);
+                  }
+                }}
+              >
+                {bulkValidating ? (
+                  <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Validating...</>
+                ) : (
+                  <><AlertTriangle className="w-3.5 h-3.5 mr-1.5" /> Validate Terminology</>
+                )}
+              </Button>
               <Button variant="outline" size="sm" data-testid="button-add-test-case" onClick={() => setAddTcOpen(true)}>
                 <Plus className="w-3.5 h-3.5 mr-1.5" /> Add Test Case
               </Button>
@@ -553,7 +621,21 @@ export default function EvalDetail() {
                 <TableBody>
                   {testCases.map((tc) => (
                     <TableRow key={tc.id} data-testid={`row-test-case-${tc.id}`}>
-                      <TableCell className="font-medium text-sm">{tc.name}</TableCell>
+                      <TableCell className="font-medium text-sm">
+                        <span className="flex items-center gap-1.5">
+                          {tc.name}
+                          {testCaseOntologyIssues.has(tc.id) && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <AlertTriangle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" data-testid={`icon-ontology-warning-${tc.id}`} />
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <span>{testCaseOntologyIssues.get(tc.id)!.length} term mismatch{testCaseOntologyIssues.get(tc.id)!.length !== 1 ? "es" : ""}</span>
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
+                        </span>
+                      </TableCell>
                       <TableCell>
                         <span className="font-mono text-xs text-muted-foreground">
                           {truncateJson(tc.inputData)}
@@ -1990,6 +2072,29 @@ export default function EvalDetail() {
             <div className="flex flex-col gap-2"><Label htmlFor="tc-expected-output" className="text-xs text-muted-foreground">Expected Output (JSON)</Label><Textarea id="tc-expected-output" value={tcExpectedOutput} onChange={(e) => setTcExpectedOutput(e.target.value)} placeholder='{"result": "expected"}' className="font-mono text-xs" rows={3} data-testid="input-tc-expected-output" /></div>
             <div className="flex flex-col gap-2"><Label htmlFor="tc-tags" className="text-xs text-muted-foreground">Tags (comma-separated)</Label><Input id="tc-tags" value={tcTags} onChange={(e) => setTcTags(e.target.value)} placeholder="tag1, tag2, tag3" data-testid="input-tc-tags" /></div>
             <div className="flex flex-col gap-2"><Label htmlFor="tc-weight" className="text-xs text-muted-foreground">Weight</Label><Input id="tc-weight" type="number" min="0" step="0.1" value={tcWeight} onChange={(e) => setTcWeight(e.target.value)} data-testid="input-tc-weight" /></div>
+            {(ontologyWarnings.length > 0 || ontologyValidating) && (
+              <div className="flex flex-col gap-2 p-3 rounded-md border border-amber-500/20 bg-amber-500/5" data-testid="ontology-warnings-section">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                  <span className="text-xs font-medium text-amber-600 dark:text-amber-400">Ontology Term Warnings</span>
+                </div>
+                {ontologyValidating && (
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />
+                    <span className="text-xs text-muted-foreground">Checking terminology...</span>
+                  </div>
+                )}
+                {ontologyWarnings.map((w, index) => (
+                  <div key={index} className="flex items-center gap-2 flex-wrap" data-testid={`ontology-warning-${index}`}>
+                    <Badge variant="outline" className="text-amber-600 dark:text-amber-400">{w.term}</Badge>
+                    <ArrowRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                    <Badge variant="outline" className="text-emerald-600 dark:text-emerald-400">{w.suggestedTerm}</Badge>
+                    <span className="text-xs text-muted-foreground">{(w.confidence * 100).toFixed(0)}%</span>
+                    <span className="text-[10px] text-muted-foreground">{w.category}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" size="sm" onClick={() => setAddTcOpen(false)}>Cancel</Button>
