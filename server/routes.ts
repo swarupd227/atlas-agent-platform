@@ -2509,6 +2509,25 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     res.json(updated);
   });
 
+  app.delete("/api/policies/:id", checkPermission("create_modify_policies"), async (req, res) => {
+    try {
+      const policy = await storage.getPolicy(req.params.id as string);
+      if (!policy) return res.status(404).json({ error: "Policy not found" });
+      const deleted = await storage.deletePolicy(req.params.id as string);
+      if (!deleted) return res.status(500).json({ error: "Failed to delete policy" });
+      await storage.createAuditEvent({
+        action: "policy_deleted",
+        userId: "system",
+        objectType: "policy",
+        objectId: policy.id,
+        details: `Policy "${policy.name}" deleted`,
+      });
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get("/api/policies/:id/test-cases", async (req, res) => {
     const testCases = await storage.getPolicyTestCases(req.params.id);
     res.json(testCases);

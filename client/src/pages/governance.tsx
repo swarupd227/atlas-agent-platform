@@ -63,6 +63,16 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -102,6 +112,10 @@ const domainIcons: Record<string, typeof Shield> = {
   logging: Eye,
   allowed_actions: CheckCircle,
   content_boundaries: AlertTriangle,
+  financial_reporting: FileSpreadsheet,
+  audit_compliance: ShieldCheck,
+  deployment_safety: Activity,
+  model_governance: GitBranch,
 };
 
 interface RetentionRule {
@@ -479,6 +493,7 @@ const POLICY_PACKS: PolicyPack[] = [
     riskLevel: "critical",
     policies: [
       { name: "17g-2 Record Retention", domain: "logging", description: "Maintain all rating action records, internal communications, compliance reports, and revenue records for minimum 10 years in easily accessible format per SEC Rule 17g-2", policyJson: { rules: [{ type: "record_retention", retention_years: 10, record_types: ["rating_actions", "methodologies", "communications", "compliance_reports", "revenue_records"], format: "easily_accessible", enforcement: "block" }] } },
+      { name: "17g-3 Annual Financial Reporting", domain: "financial_reporting", description: "Require annual submission of audited financial statements, revenue breakdowns by rating category, and material governance changes to the SEC per Rule 17g-3", policyJson: { rules: [{ type: "financial_reporting", frequency: "annual", reports: ["audited_financial_statements", "revenue_by_category", "governance_changes", "analyst_compensation_summary", "compliance_officer_report"], submission_to: "SEC", requires: ["independent_audit", "board_approval"], enforcement: "require_approval" }] } },
       { name: "17g-5 Conflict of Interest Controls", domain: "allowed_actions", description: "Prevent analyst participation in fee discussions, enforce look-back reviews when analysts join rated entities, and ensure rating shopping disclosure per SEC Rule 17g-5", policyJson: { rules: [{ type: "conflict_prevention", prohibitions: ["analyst_fee_discussion", "rating_shopping_concealment"], requires: ["look_back_review", "conflict_disclosure"], enforcement: "block" }] } },
       { name: "17g-6 Prohibited Conduct Prevention", domain: "content_boundaries", description: "Block unfair, coercive, or abusive practices including conditional ratings, rating threats, and commercially-motivated unsolicited ratings per SEC Rule 17g-6", policyJson: { rules: [{ type: "action_blocklist", actions: ["conditional_rating", "rating_threat", "coercive_practice", "tying_arrangement"], severity: "critical", enforcement: "block" }] } },
       { name: "17g-7 Disclosure Controls", domain: "logging", description: "Ensure publication of rating performance statistics, methodology documentation, rating histories, and annual NRSRO certifications per SEC Rule 17g-7", policyJson: { rules: [{ type: "disclosure_requirement", disclosures: ["performance_statistics", "methodology_docs", "rating_histories", "annual_certification"], frequency: "annual", public: true, enforcement: "require_approval" }] } },
@@ -1269,7 +1284,34 @@ export default function Governance() {
     } catch { return []; }
   });
 
-  const allPolicyPacks = useMemo(() => [...POLICY_PACKS, ...customPacks], [customPacks]);
+  const [packPolicyOverrides, setPackPolicyOverrides] = useState<Record<string, PolicyPackPolicy[]>>(() => {
+    try {
+      const stored = localStorage.getItem("almp-pack-policy-overrides");
+      return stored ? JSON.parse(stored) : {};
+    } catch { return {}; }
+  });
+
+  const allPolicyPacks = useMemo(() => {
+    const builtIn = POLICY_PACKS.map((p) => packPolicyOverrides[p.id] ? { ...p, policies: packPolicyOverrides[p.id] } : p);
+    return [...builtIn, ...customPacks];
+  }, [customPacks, packPolicyOverrides]);
+
+  function updatePackPolicies(packId: string, updatedPolicies: PolicyPackPolicy[]) {
+    const isCustom = customPacks.some((p) => p.id === packId);
+    if (isCustom) {
+      setCustomPacks((prev) => {
+        const next = prev.map((p) => p.id === packId ? { ...p, policies: updatedPolicies } : p);
+        localStorage.setItem("almp-custom-policy-packs", JSON.stringify(next));
+        return next;
+      });
+    } else {
+      setPackPolicyOverrides((prev) => {
+        const next = { ...prev, [packId]: updatedPolicies };
+        localStorage.setItem("almp-pack-policy-overrides", JSON.stringify(next));
+        return next;
+      });
+    }
+  }
 
   function saveCustomPack(pack: PolicyPack) {
     setCustomPacks((prev) => {
@@ -1297,6 +1339,21 @@ export default function Governance() {
       return next;
     });
   }
+
+  const deletePolicyMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await apiRequest("DELETE", `/api/policies/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/policies'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/audit-events'] });
+      setSelectedPolicyId(null);
+      toast({ title: "Policy deleted", description: "The policy has been permanently removed." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to delete policy", description: err.message, variant: "destructive" });
+    },
+  });
 
   function getPackWithEnhancements(pack: PolicyPack): PolicyPack {
     const enhancements = enhancedPackRules[pack.id];
@@ -3915,6 +3972,7 @@ export default function Governance() {
               activating={activatePackMutation.isPending}
               savedEnhancements={enhancedPackRules[selectedPack.id] || {}}
               onPersistEnhancement={(idx, rules) => persistEnhancedRules(selectedPack.id, idx, rules)}
+              onUpdatePolicies={updatePackPolicies}
             />
           )}
           <CreatePolicyPackDialog
@@ -4230,6 +4288,7 @@ export default function Governance() {
             policyId={selectedPolicyId}
             open={!!selectedPolicyId}
             onOpenChange={(open) => { if (!open) setSelectedPolicyId(null); }}
+            onDelete={(id) => deletePolicyMutation.mutate(id)}
           />
         )}
       </Tabs>
@@ -4321,9 +4380,10 @@ function IndustryTestScenariosSection({ industry, policyDomain, policyFramework,
   );
 }
 
-function PolicyDetailDialog({ policyId, open, onOpenChange }: { policyId: string; open: boolean; onOpenChange: (open: boolean) => void }) {
+function PolicyDetailDialog({ policyId, open, onOpenChange, onDelete }: { policyId: string; open: boolean; onOpenChange: (open: boolean) => void; onDelete?: (id: string) => void }) {
   const { toast } = useToast();
   const { industry } = useIndustry();
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const { data: policy, isLoading: policyLoading } = useQuery<Policy>({
     queryKey: ['/api/policies', policyId],
     enabled: !!policyId && open,
@@ -4536,14 +4596,37 @@ function PolicyDetailDialog({ policyId, open, onOpenChange }: { policyId: string
         ) : (
         <>
         <DialogHeader>
-          <div className="flex items-center gap-2 flex-wrap">
-            <DialogTitle data-testid="text-policy-detail-name">{policy.name}</DialogTitle>
-            <Badge variant="outline" className="text-[10px]" data-testid="badge-policy-version">v{policy.version}</Badge>
-            <Badge variant="outline" className="text-[10px] capitalize" data-testid="badge-policy-scope">{policy.scopeType}</Badge>
-            <StatusBadge status={policy.status} />
-            <Badge variant="secondary" className="text-[10px] capitalize" data-testid="badge-policy-domain">{policy.domain.replace(/_/g, " ")}</Badge>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 flex-wrap min-w-0">
+              <DialogTitle data-testid="text-policy-detail-name">{policy.name}</DialogTitle>
+              <Badge variant="outline" className="text-[10px]" data-testid="badge-policy-version">v{policy.version}</Badge>
+              <Badge variant="outline" className="text-[10px] capitalize" data-testid="badge-policy-scope">{policy.scopeType}</Badge>
+              <StatusBadge status={policy.status} />
+              <Badge variant="secondary" className="text-[10px] capitalize" data-testid="badge-policy-domain">{policy.domain.replace(/_/g, " ")}</Badge>
+            </div>
+            {onDelete && (
+              <Button variant="ghost" size="icon" className="shrink-0 text-destructive" onClick={() => setDeleteConfirmOpen(true)} data-testid="button-delete-policy">
+                <Trash2 className="w-4 h-4" />
+              </Button>
+            )}
           </div>
         </DialogHeader>
+        <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete Policy</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to delete "{policy.name}"? This action cannot be undone. The policy will be permanently removed from the Policy Library.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel data-testid="button-cancel-delete">Cancel</AlertDialogCancel>
+              <AlertDialogAction className="bg-destructive text-destructive-foreground" onClick={() => { onDelete(policyId); setDeleteConfirmOpen(false); onOpenChange(false); }} data-testid="button-confirm-delete">
+                Delete
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         <Tabs defaultValue="rules" className="mt-2">
           <TabsList data-testid="tabs-policy-detail">
@@ -5223,6 +5306,7 @@ function PolicyPackDetailDialog({
   activating,
   savedEnhancements,
   onPersistEnhancement,
+  onUpdatePolicies,
 }: {
   pack: PolicyPack;
   open: boolean;
@@ -5232,12 +5316,18 @@ function PolicyPackDetailDialog({
   activating: boolean;
   savedEnhancements: Record<number, Record<string, unknown>>;
   onPersistEnhancement: (idx: number, rules: Record<string, unknown>) => void;
+  onUpdatePolicies?: (packId: string, policies: PolicyPackPolicy[]) => void;
 }) {
   const { toast } = useToast();
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [editedRules, setEditedRules] = useState<Record<number, string>>({});
   const [localEnhancements, setLocalEnhancements] = useState<Record<number, Record<string, unknown>>>({});
   const [enhancingIdx, setEnhancingIdx] = useState<number | null>(null);
+  const [addPolicyOpen, setAddPolicyOpen] = useState(false);
+  const [newPolicyName, setNewPolicyName] = useState("");
+  const [newPolicyDomain, setNewPolicyDomain] = useState("data_handling");
+  const [newPolicyDescription, setNewPolicyDescription] = useState("");
+  const [removingIdx, setRemovingIdx] = useState<number | null>(null);
 
   const industryLabel: Record<string, string> = {
     financial_services: "Financial Services",
@@ -5305,6 +5395,30 @@ function PolicyPackDetailDialog({
 
   const hasAnyEnhancements = pack.policies.some((_, idx) => isEnhanced(idx));
 
+  function handleAddPolicy() {
+    if (!newPolicyName.trim() || !onUpdatePolicies) return;
+    const newPolicy: PolicyPackPolicy = {
+      name: newPolicyName.trim(),
+      domain: newPolicyDomain,
+      description: newPolicyDescription.trim(),
+      policyJson: { rules: [] },
+    };
+    onUpdatePolicies(pack.id, [...pack.policies, newPolicy]);
+    setNewPolicyName("");
+    setNewPolicyDomain("data_handling");
+    setNewPolicyDescription("");
+    setAddPolicyOpen(false);
+    toast({ title: "Policy added to pack", description: `"${newPolicy.name}" has been added` });
+  }
+
+  function handleRemovePolicy(idx: number) {
+    if (!onUpdatePolicies) return;
+    const removed = pack.policies[idx];
+    onUpdatePolicies(pack.id, pack.policies.filter((_, i) => i !== idx));
+    setRemovingIdx(null);
+    toast({ title: "Policy removed from pack", description: `"${removed.name}" has been removed` });
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
@@ -5340,7 +5454,50 @@ function PolicyPackDetailDialog({
           </div>
 
           <div className="space-y-3">
-            <h4 className="text-sm font-medium">Included Policies</h4>
+            <div className="flex items-center justify-between gap-2">
+              <h4 className="text-sm font-medium">Included Policies</h4>
+              {onUpdatePolicies && (
+                <PermissionGate action="create_modify_policies">
+                  <Button size="sm" variant="outline" onClick={() => setAddPolicyOpen(!addPolicyOpen)} data-testid="button-add-policy-to-pack">
+                    <Plus className="h-3.5 w-3.5 mr-1" /> Add Policy
+                  </Button>
+                </PermissionGate>
+              )}
+            </div>
+
+            {addPolicyOpen && (
+              <Card>
+                <CardContent className="p-4 space-y-3">
+                  <h5 className="text-xs font-medium text-muted-foreground">New Policy</h5>
+                  <div className="space-y-2">
+                    <Input placeholder="Policy name" value={newPolicyName} onChange={(e) => setNewPolicyName(e.target.value)} data-testid="input-add-policy-name" />
+                    <Select value={newPolicyDomain} onValueChange={setNewPolicyDomain}>
+                      <SelectTrigger data-testid="select-add-policy-domain">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="data_handling">Data Handling</SelectItem>
+                        <SelectItem value="access_control">Access Control</SelectItem>
+                        <SelectItem value="audit_compliance">Audit Compliance</SelectItem>
+                        <SelectItem value="deployment_safety">Deployment Safety</SelectItem>
+                        <SelectItem value="model_governance">Model Governance</SelectItem>
+                        <SelectItem value="financial_reporting">Financial Reporting</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Textarea placeholder="Policy description" value={newPolicyDescription} onChange={(e) => setNewPolicyDescription(e.target.value)} className="text-sm min-h-[60px]" data-testid="input-add-policy-desc" />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" disabled={!newPolicyName.trim()} onClick={handleAddPolicy} data-testid="button-save-add-policy">
+                      <Plus className="h-3.5 w-3.5 mr-1" /> Add
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => { setAddPolicyOpen(false); setNewPolicyName(""); setNewPolicyDescription(""); }} data-testid="button-cancel-add-policy">
+                      Cancel
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
             {pack.policies.map((p, idx) => {
               const DIcon = domainIcons[p.domain] || Shield;
               const policyEnhanced = isEnhanced(idx);
@@ -5353,13 +5510,20 @@ function PolicyPackDetailDialog({
                   <CardContent className="p-4 space-y-3">
                     <div className="flex items-center gap-2">
                       <DIcon className="h-4 w-4 text-muted-foreground shrink-0" />
-                      <span className="text-sm font-medium">{p.name}</span>
+                      <span className="text-sm font-medium min-w-0 truncate">{p.name}</span>
                       {policyEnhanced && (
                         <Badge variant="secondary" className="text-[10px] text-green-600 dark:text-green-400">
                           <Wand2 className="h-2.5 w-2.5 mr-0.5" /> AI Enhanced
                         </Badge>
                       )}
-                      <Badge variant="outline" className="text-[10px] ml-auto">{p.domain.replace(/_/g, " ")}</Badge>
+                      <Badge variant="outline" className="text-[10px] ml-auto shrink-0">{p.domain.replace(/_/g, " ")}</Badge>
+                      {onUpdatePolicies && pack.policies.length > 1 && (
+                        <PermissionGate action="create_modify_policies">
+                          <Button size="icon" variant="ghost" className="shrink-0 text-muted-foreground" onClick={(e) => { e.stopPropagation(); setRemovingIdx(idx); }} data-testid={`button-remove-policy-${idx}`}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </PermissionGate>
+                      )}
                     </div>
                     <p className="text-xs text-muted-foreground">{p.description}</p>
 
@@ -5450,6 +5614,22 @@ function PolicyPackDetailDialog({
             </Button>
           </PermissionGate>
         </div>
+        <AlertDialog open={removingIdx !== null} onOpenChange={(open) => { if (!open) setRemovingIdx(null); }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Remove Policy from Pack</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to remove "{removingIdx !== null ? pack.policies[removingIdx]?.name : ""}" from this pack? This won't delete any already-activated policies.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel data-testid="button-cancel-remove-policy">Cancel</AlertDialogCancel>
+              <AlertDialogAction className="bg-destructive text-destructive-foreground" onClick={() => removingIdx !== null && handleRemovePolicy(removingIdx)} data-testid="button-confirm-remove-policy">
+                Remove
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DialogContent>
     </Dialog>
   );
