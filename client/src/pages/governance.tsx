@@ -1369,14 +1369,21 @@ export default function Governance() {
 
   const activatePackMutation = useMutation({
     mutationFn: async (pack: PolicyPack) => {
-      const policyList = pack.policies.map((p) => ({
-        name: `[${pack.framework}] ${p.name}`,
-        domain: p.domain,
-        description: p.description,
-        policyJson: p.policyJson,
-        scopeType: "org",
-        status: "active",
-      }));
+      const regulationName = pack.framework;
+      const policyList = pack.policies.map((p) => {
+        const pJson: any = { ...p.policyJson, sourceRegulation: regulationName };
+        if (Array.isArray(pJson.rules)) {
+          pJson.rules = pJson.rules.map((r: any) => ({ ...r, sourceRegulation: regulationName }));
+        }
+        return {
+          name: `[${pack.framework}] ${p.name}`,
+          domain: p.domain,
+          description: p.description,
+          policyJson: pJson,
+          scopeType: "org",
+          status: "active",
+        };
+      });
       const res = await apiRequest("POST", "/api/policies/bulk-create", { policies: policyList });
       return res.json();
     },
@@ -1451,14 +1458,20 @@ export default function Governance() {
         jurisdictions: workspaceConfig.jurisdictions,
       });
       const data = await res.json();
-      const policyList = (data.policies || []).map((p: any) => ({
-        name: `[${regulation.name}] ${p.name}`,
-        domain: p.domain || regulation.policyDomains[0] || "data_handling",
-        description: p.description,
-        policyJson: p.policyJson || p.rules || {},
-        scopeType: "org",
-        status: "active",
-      }));
+      const policyList = (data.policies || []).map((p: any) => {
+        const pJson = { ...(p.policyJson || p.rules || {}), sourceRegulation: regulation.name };
+        if (Array.isArray(pJson.rules)) {
+          pJson.rules = pJson.rules.map((r: any) => ({ ...r, sourceRegulation: regulation.name }));
+        }
+        return {
+          name: `[${regulation.name}] ${p.name}`,
+          domain: p.domain || regulation.policyDomains[0] || "data_handling",
+          description: p.description,
+          policyJson: pJson,
+          scopeType: "org",
+          status: "active",
+        };
+      });
       const bulkRes = await apiRequest("POST", "/api/policies/bulk-create", { policies: policyList });
       return bulkRes.json();
     },
@@ -1556,7 +1569,7 @@ export default function Governance() {
     const groups: Record<string, { regulation: string; framework: string; policies: Policy[]; activeCount: number; lastReview: string }> = {};
     const ungrouped: Policy[] = [];
     filtered?.forEach((p) => {
-      const sourceReg = (p as any).policyJson?.rules?.[0]?.sourceRegulation;
+      const sourceReg = (p as any).policyJson?.sourceRegulation || (p as any).policyJson?.rules?.[0]?.sourceRegulation;
       if (sourceReg) {
         if (!groups[sourceReg]) {
           groups[sourceReg] = {
