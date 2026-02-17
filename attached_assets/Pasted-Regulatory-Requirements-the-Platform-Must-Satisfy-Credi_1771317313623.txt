@@ -1,0 +1,12 @@
+Regulatory Requirements the Platform Must Satisfy
+
+Credit rating agencies operate under intense regulatory scrutiny. ALMP’s agents must satisfy these requirements by design, not as an afterthought.
+
+Regulation	Requirement	How ALMP Addresses It
+SEC Rule 17g-2	Make and keep records of rating actions, methodologies applied, and information relied upon for at least 3 years	Complete audit trail with hash-chained immutability. Every agent action logged with methodology version, data sources, and reasoning. 7-year retention.
+SEC Rule 17g-7	With each rating action, disclose: methodology version, data types relied upon, information quality assessment, rating sensitivity, assumptions	Auto-generated disclosure package from audit trail. Methodology version tracked per agent run. Data quality scored by extraction agent. Sensitivity scenarios documented.
+SEC Rule 17g-5	Manage conflicts of interest. Separate analytical and commercial functions	Agent system has zero commercial awareness. Agents cannot access revenue, fee, or relationship data. Firewall enforced by MCP server scoping.
+SEC Rule 17g-3	Annual financial reports and internal controls certification	Self-healing pipeline provides continuous internal controls evidence. Eval dataset proves methodology consistency.
+EU CRA Regulation (ESMA)	Structured finance: disclose loss and cash-flow analysis, data sources, third-party info. Regular methodology review.	KG stores methodology versions. Agent traces which criteria applied. Structured finance agents run full cash-flow models with documented assumptions.
+IOSCO Code of Conduct	Rating quality, integrity, independence, transparency, confidentiality, timeliness	Policies-as-Code enforce each principle. Confidentiality: PII redaction + data isolation. Transparency: full audit trail. Quality: eval dataset + continuous monitoring.
+Dodd-Frank Section 932	Internal controls over rating process. Look-back reviews for analyst rotation. Board oversight of methodologies.	Agent system provides 100% criteria coverage (no human variability). Analyst rotation does not affect agent consistency. Board can review agent performance dashboards.
