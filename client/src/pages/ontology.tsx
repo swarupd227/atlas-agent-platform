@@ -67,6 +67,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useIndustry } from "@/components/industry-provider";
 import { PermissionGate } from "@/components/role-provider";
@@ -226,6 +227,15 @@ export default function OntologyExplorer() {
   const [kgPanelOpen, setKgPanelOpen] = useState(false);
   const [kgSuggestions, setKgSuggestions] = useState<KgSuggestion[]>([]);
   const [kgDismissed, setKgDismissed] = useState<Set<number>>(new Set());
+  const [kgBuilderOpen, setKgBuilderOpen] = useState(false);
+  const [kgBuilderStep, setKgBuilderStep] = useState<"configure" | "generating" | "review">("configure");
+  const [kgSubdomain, setKgSubdomain] = useState("");
+  const [kgCustomSubdomain, setKgCustomSubdomain] = useState(false);
+  const [kgCompanyContext, setKgCompanyContext] = useState("");
+  const [kgGeneratedConcepts, setKgGeneratedConcepts] = useState<any[]>([]);
+  const [kgSelectedIds, setKgSelectedIds] = useState<Set<string>>(new Set());
+  const [kgImporting, setKgImporting] = useState(false);
+  const [kgExpandedCategories, setKgExpandedCategories] = useState<Set<string>>(new Set());
 
   const industryId = industry && industry.id !== "custom" ? industry.id : null;
 
@@ -596,6 +606,73 @@ export default function OntologyExplorer() {
     },
   });
 
+  const kgGenerateMutation = useMutation({
+    mutationFn: async () => {
+      if (!industry || industry.id === "custom") throw new Error("No industry selected");
+      const subdomain = kgSubdomain.trim();
+      if (!subdomain) throw new Error("Sub-domain is required");
+      const res = await apiRequest("POST", "/api/ai/generate-subdomain-ontology", {
+        industryId: industry.id,
+        industryName: industry.label,
+        ontologyName: industry.ontology,
+        subdomain,
+        companyContext: kgCompanyContext.trim() || undefined,
+      });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setKgGeneratedConcepts(data.concepts || []);
+      const nonDuplicates = (data.concepts || []).filter((c: any) => !c.isDuplicate).map((c: any) => c.id);
+      setKgSelectedIds(new Set(nonDuplicates));
+      const cats = new Set<string>();
+      (data.concepts || []).forEach((c: any) => cats.add(c.category));
+      setKgExpandedCategories(cats);
+      setKgBuilderStep("review");
+      toast({ title: "Knowledge graph generated", description: `Generated ${data.count} concepts for ${data.subdomain}. ${data.duplicates} duplicates flagged.` });
+    },
+    onError: (err: Error) => {
+      setKgBuilderStep("configure");
+      toast({ title: "Generation failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const handleKgImport = async () => {
+    const selected = kgGeneratedConcepts.filter(c => kgSelectedIds.has(c.id));
+    if (selected.length === 0) return;
+    setKgImporting(true);
+    try {
+      const conceptsToImport = selected.map(c => ({
+        id: c.id,
+        industryId: c.industryId,
+        ontologyName: c.ontologyName,
+        label: c.label,
+        category: c.category,
+        description: c.description,
+        properties: c.properties,
+        relationships: c.relationships,
+        tags: c.tags,
+        synonyms: c.synonyms,
+        source: "ai-subdomain",
+        industryRelevance: c.industryRelevance,
+        linkedRegulations: [],
+      }));
+      const res = await apiRequest("POST", "/api/ontology/concepts/bulk", { concepts: conceptsToImport });
+      const data = await res.json();
+      queryClient.invalidateQueries({ queryKey: ["/api/ontology/concepts", industryId] });
+      toast({ title: "Knowledge graph imported", description: `Successfully imported ${data.count} concepts into the ontology.${data.errors?.length > 0 ? ` ${data.errors.length} had issues.` : ""}` });
+      setKgBuilderOpen(false);
+      setKgBuilderStep("configure");
+      setKgGeneratedConcepts([]);
+      setKgSelectedIds(new Set());
+      setKgSubdomain("");
+      setKgCompanyContext("");
+    } catch (err: any) {
+      toast({ title: "Import failed", description: err.message, variant: "destructive" });
+    } finally {
+      setKgImporting(false);
+    }
+  };
+
   const isCustom = (concept: ConceptView) => concept.source === "custom-extension";
 
   const categoryColorMap = useMemo(() => {
@@ -693,14 +770,26 @@ export default function OntologyExplorer() {
               <BookOpen className="w-4 h-4 text-muted-foreground shrink-0" />
               <h2 className="text-sm font-semibold truncate" data-testid="text-ontology-name">{ontologyName}</h2>
             </div>
-            <Button
-              size="sm"
-              onClick={() => setAddDialogOpen(true)}
-              data-testid="button-add-custom-concept"
-            >
-              <Plus className="w-4 h-4 mr-1" />
-              Add Custom
-            </Button>
+            <div className="flex flex-row gap-1 flex-wrap">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setAddDialogOpen(true)}
+                data-testid="button-add-custom-concept"
+              >
+                <Plus className="w-4 h-4 mr-1" />
+                Add Custom
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => { setKgBuilderOpen(true); setKgBuilderStep("configure"); }}
+                data-testid="button-kg-builder"
+              >
+                <Database className="w-4 h-4 mr-1" />
+                KG Builder
+              </Button>
+            </div>
           </div>
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -1752,6 +1841,238 @@ export default function OntologyExplorer() {
               Create Concept
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={kgBuilderOpen} onOpenChange={setKgBuilderOpen}>
+        <DialogContent className="max-w-3xl" data-testid="dialog-kg-builder">
+          {kgBuilderStep === "configure" && (
+            <>
+              <DialogHeader>
+                <DialogTitle>Knowledge Graph Builder</DialogTitle>
+                <DialogDescription>
+                  Generate a domain-specific knowledge graph for a sub-domain within {industry.label}.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-2">
+                <div className="space-y-1.5">
+                  <Label>Sub-domain</Label>
+                  <Select
+                    value={kgCustomSubdomain ? "__custom__" : kgSubdomain}
+                    onValueChange={(v) => {
+                      if (v === "__custom__") {
+                        setKgCustomSubdomain(true);
+                        setKgSubdomain("");
+                      } else {
+                        setKgCustomSubdomain(false);
+                        setKgSubdomain(v);
+                      }
+                    }}
+                    data-testid="select-kg-subdomain"
+                  >
+                    <SelectTrigger data-testid="select-kg-subdomain">
+                      <SelectValue placeholder="Select a sub-domain" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(industry?.subVerticals || []).map((sv) => (
+                        <SelectItem key={sv} value={sv}>{sv}</SelectItem>
+                      ))}
+                      <SelectItem value="__custom__">Custom...</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {kgCustomSubdomain && (
+                    <Input
+                      placeholder="Enter custom sub-domain name"
+                      value={kgSubdomain}
+                      onChange={(e) => setKgSubdomain(e.target.value)}
+                      data-testid="input-kg-custom-subdomain"
+                    />
+                  )}
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Company Context (optional)</Label>
+                  <Textarea
+                    value={kgCompanyContext}
+                    onChange={(e) => setKgCompanyContext(e.target.value)}
+                    placeholder="e.g., Fitch Ratings - global credit rating agency specializing in sovereign, corporate, and structured finance ratings"
+                    className="resize-none"
+                    rows={3}
+                    data-testid="input-kg-company-context"
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button
+                  onClick={() => {
+                    setKgBuilderStep("generating");
+                    kgGenerateMutation.mutate();
+                  }}
+                  disabled={!kgSubdomain.trim()}
+                  data-testid="button-kg-generate"
+                >
+                  <Wand2 className="w-4 h-4 mr-2" />
+                  Generate Knowledge Graph
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+
+          {kgBuilderStep === "generating" && (
+            <div className="flex flex-col items-center gap-4 py-12 text-center">
+              <Loader2 className="w-10 h-10 animate-spin text-primary" />
+              <div className="space-y-2">
+                <h2 className="text-lg font-semibold">Generating Knowledge Graph</h2>
+                <p className="text-sm text-muted-foreground max-w-sm">
+                  AI is building domain-specific concepts, relationships, and properties for the {kgSubdomain} sub-domain. This may take a moment...
+                </p>
+              </div>
+            </div>
+          )}
+
+          {kgBuilderStep === "review" && (() => {
+            const grouped: Record<string, any[]> = {};
+            kgGeneratedConcepts.forEach((c) => {
+              if (!grouped[c.category]) grouped[c.category] = [];
+              grouped[c.category].push(c);
+            });
+            const selectedCount = kgSelectedIds.size;
+            const duplicatesCount = kgGeneratedConcepts.filter((c) => c.isDuplicate).length;
+
+            return (
+              <>
+                <DialogHeader>
+                  <DialogTitle>{kgSubdomain} Knowledge Graph</DialogTitle>
+                  <DialogDescription>Review and select concepts to import</DialogDescription>
+                </DialogHeader>
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                    <span>{kgGeneratedConcepts.length} concepts</span>
+                    <span>{selectedCount} selected</span>
+                    {duplicatesCount > 0 && <span>{duplicatesCount} duplicates</span>}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setKgSelectedIds(new Set(kgGeneratedConcepts.map((c) => c.id)))}
+                      data-testid="button-kg-select-all"
+                    >
+                      Select All
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setKgSelectedIds(new Set())}
+                      data-testid="button-kg-deselect-all"
+                    >
+                      Deselect All
+                    </Button>
+                  </div>
+                </div>
+                <ScrollArea className="max-h-[400px]">
+                  <Accordion
+                    type="multiple"
+                    value={Array.from(kgExpandedCategories)}
+                    onValueChange={(v) => setKgExpandedCategories(new Set(v))}
+                  >
+                    {Object.entries(grouped).map(([category, conceptsInCat]) => (
+                      <AccordionItem key={category} value={category}>
+                        <AccordionTrigger className="text-sm font-medium">
+                          {category} ({conceptsInCat.length})
+                        </AccordionTrigger>
+                        <AccordionContent>
+                          <div className="space-y-1">
+                            {conceptsInCat.map((concept, idx) => {
+                              const globalIdx = kgGeneratedConcepts.indexOf(concept);
+                              const isSelected = kgSelectedIds.has(concept.id);
+                              return (
+                                <div
+                                  key={concept.id}
+                                  className="flex items-start gap-2 p-2 rounded-md cursor-pointer"
+                                  onClick={() => {
+                                    setKgSelectedIds((prev) => {
+                                      const next = new Set(prev);
+                                      if (next.has(concept.id)) {
+                                        next.delete(concept.id);
+                                      } else {
+                                        next.add(concept.id);
+                                      }
+                                      return next;
+                                    });
+                                  }}
+                                >
+                                  <Checkbox
+                                    checked={isSelected}
+                                    onCheckedChange={(checked) => {
+                                      setKgSelectedIds((prev) => {
+                                        const next = new Set(prev);
+                                        if (checked) {
+                                          next.add(concept.id);
+                                        } else {
+                                          next.delete(concept.id);
+                                        }
+                                        return next;
+                                      });
+                                    }}
+                                    data-testid={`checkbox-kg-concept-${globalIdx}`}
+                                    onClick={(e) => e.stopPropagation()}
+                                  />
+                                  <div className="flex-1 min-w-0 space-y-1">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="font-medium text-sm">{concept.label}</span>
+                                      {concept.isDuplicate && (
+                                        <Badge variant="outline" className="bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30">
+                                          Duplicate
+                                        </Badge>
+                                      )}
+                                    </div>
+                                    <p className="text-xs text-muted-foreground">
+                                      {concept.description?.length > 80
+                                        ? concept.description.slice(0, 80) + "..."
+                                        : concept.description}
+                                    </p>
+                                    <div className="flex items-center gap-1 flex-wrap">
+                                      {(concept.tags || []).slice(0, 4).map((tag: string) => (
+                                        <Badge key={tag} variant="outline" className="text-[10px] px-1 py-0">
+                                          {tag}
+                                        </Badge>
+                                      ))}
+                                      {(concept.synonyms || []).length > 0 && (
+                                        <span className="text-[10px] text-muted-foreground">
+                                          {concept.synonyms.length} synonym{concept.synonyms.length !== 1 ? "s" : ""}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </AccordionContent>
+                      </AccordionItem>
+                    ))}
+                  </Accordion>
+                </ScrollArea>
+                <DialogFooter className="gap-2">
+                  <Button
+                    variant="ghost"
+                    onClick={() => setKgBuilderStep("configure")}
+                    data-testid="button-kg-back"
+                  >
+                    Back
+                  </Button>
+                  <Button
+                    onClick={handleKgImport}
+                    disabled={kgImporting || selectedCount === 0}
+                    data-testid="button-kg-import"
+                  >
+                    {kgImporting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                    Import {selectedCount} Concepts
+                  </Button>
+                </DialogFooter>
+              </>
+            );
+          })()}
         </DialogContent>
       </Dialog>
     </div>

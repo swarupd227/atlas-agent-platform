@@ -2162,6 +2162,130 @@ Use real ${industryName} terminology and standards (${ontologyName || "industry 
     }
   });
 
+  app.post("/api/ai/generate-subdomain-ontology", checkPermission("create_modify_policies"), async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI service not configured" });
+      }
+      const generateSchema = z.object({
+        industryId: z.string().min(1),
+        industryName: z.string().min(1),
+        ontologyName: z.string().optional(),
+        subdomain: z.string().min(1),
+        companyContext: z.string().optional(),
+      });
+      const parseResult = generateSchema.safeParse(req.body);
+      if (!parseResult.success) {
+        return res.status(400).json({ error: "industryId, industryName, and subdomain are required", details: parseResult.error.issues });
+      }
+      const { industryId, industryName, ontologyName, subdomain, companyContext } = parseResult.data;
+
+      const existing = await storage.getOntologyConcepts(industryId);
+      const existingLabels = existing.map(c => c.label.toLowerCase());
+
+      const companyHint = companyContext
+        ? `\n\nThe user is building this for a company context like: ${companyContext}. Tailor concepts to this type of organization.`
+        : "";
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        max_tokens: 12000,
+        messages: [
+          {
+            role: "system",
+            content: `You are a domain ontology expert specializing in ${subdomain} within ${industryName}. You are building a knowledge graph ontology for an AI agent lifecycle management platform.${companyHint}
+
+Generate a comprehensive ${subdomain} ontology with 5-7 categories, each containing 3-5 concepts (20-30 total). These concepts should be specific to the ${subdomain} sub-domain, not general ${industryName} concepts.
+
+The following concepts already exist in the ${industryName} ontology and MUST NOT be duplicated: ${existingLabels.slice(0, 50).join(", ")}
+
+Return a JSON object with a "categories" array. Each category has:
+- "name": Category name specific to ${subdomain}
+- "concepts": Array of concept objects with:
+  - "label": Concept name (specific ${subdomain} terminology)
+  - "description": 2-3 sentence description explaining the concept in ${subdomain} context
+  - "properties": Array of 2-3 property objects with {"name": "camelCase", "type": "string|decimal|date|enum|boolean|integer", "description": "brief"}
+  - "relationships": Array of 1-2 relationship objects with {"type": "related|parent|child|depends_on", "targetLabel": "Another concept label from THIS ontology or existing ontology", "label": "Brief description of relationship"}
+  - "tags": Array of 3-4 classification tags
+  - "synonyms": Array of 1-3 alternative names or abbreviations
+  - "industryRelevance": One sentence on why this matters for ${subdomain}
+
+Use real ${subdomain} terminology, standards, and frameworks. For credit rating domains, include concepts like rating scales, methodologies, committees, rating actions, issuer types, credit events, etc.`
+          },
+          {
+            role: "user",
+            content: `Generate a comprehensive ${subdomain} knowledge graph ontology for ${industryName}. Return ONLY valid JSON.`
+          }
+        ],
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) {
+        return res.status(500).json({ error: "No response from AI" });
+      }
+
+      let parsed;
+      try {
+        parsed = JSON.parse(content);
+      } catch (parseErr) {
+        console.error("AI subdomain ontology JSON parse error, raw length:", content.length);
+        return res.status(500).json({ error: "AI returned malformed response. Please try again." });
+      }
+
+      const categories = parsed.categories || [];
+      const previewConcepts: any[] = [];
+      const conceptLabelToId: Record<string, string> = {};
+
+      for (const cat of categories) {
+        for (const concept of cat.concepts || []) {
+          const slug = `${industryId}-${subdomain.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${concept.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+          conceptLabelToId[concept.label] = slug;
+        }
+      }
+
+      for (const cat of categories) {
+        for (const concept of cat.concepts || []) {
+          const id = conceptLabelToId[concept.label];
+          const relationships = (concept.relationships || []).map((r: any) => ({
+            type: r.type,
+            targetId: conceptLabelToId[r.targetLabel] || r.targetLabel,
+            label: r.label,
+          }));
+
+          const isDuplicate = existingLabels.includes(concept.label.toLowerCase());
+
+          previewConcepts.push({
+            id,
+            industryId,
+            ontologyName: ontologyName || `${subdomain} Ontology`,
+            label: concept.label,
+            category: cat.name,
+            description: concept.description,
+            properties: concept.properties || [],
+            relationships,
+            tags: concept.tags || [],
+            synonyms: concept.synonyms || [],
+            industryRelevance: concept.industryRelevance || null,
+            source: "ai-subdomain",
+            isDuplicate,
+          });
+        }
+      }
+
+      res.json({
+        subdomain,
+        industryId,
+        concepts: previewConcepts,
+        count: previewConcepts.length,
+        duplicates: previewConcepts.filter(c => c.isDuplicate).length,
+      });
+    } catch (e: any) {
+      console.error("AI generate subdomain ontology error:", e);
+      res.status(500).json({ error: e.message || "Failed to generate subdomain ontology" });
+    }
+  });
+
   app.post("/api/ai/enhance-regulation", checkPermission("create_modify_policies"), async (req, res) => {
     try {
       if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
@@ -12711,7 +12835,7 @@ Return ONLY a valid JSON object.`
         relationships: z.array(z.any()).optional(),
         tags: z.array(z.string()).optional(),
         synonyms: z.array(z.string()).optional(),
-        source: z.enum(["industry-standard", "custom-extension"]).optional(),
+        source: z.enum(["industry-standard", "custom-extension", "ai-subdomain"]).optional(),
         linkedRegulations: z.array(z.any()).optional(),
       });
       const parseResult = bodySchema.safeParse(req.body);
@@ -12739,6 +12863,61 @@ Return ONLY a valid JSON object.`
     }
   });
 
+  app.post("/api/ontology/concepts/bulk", checkPermission("create_modify_policies"), async (req, res) => {
+    try {
+      const bulkSchema = z.object({
+        concepts: z.array(z.object({
+          id: z.string().min(1),
+          industryId: z.string().min(1),
+          ontologyName: z.string().optional(),
+          label: z.string().min(1),
+          category: z.string().min(1),
+          description: z.string().min(1),
+          properties: z.array(z.any()).optional(),
+          relationships: z.array(z.any()).optional(),
+          tags: z.array(z.string()).optional(),
+          synonyms: z.array(z.string()).optional(),
+          source: z.string().optional(),
+          industryRelevance: z.string().nullable().optional(),
+          linkedRegulations: z.array(z.any()).optional(),
+        })).min(1).max(100),
+      });
+      const parseResult = bulkSchema.safeParse(req.body);
+      if (!parseResult.success) {
+        return res.status(400).json({ message: "Validation failed", errors: parseResult.error.errors });
+      }
+
+      const created = [];
+      const errors: string[] = [];
+      for (const data of parseResult.data.concepts) {
+        try {
+          const concept = await storage.createOntologyConcept({
+            id: data.id,
+            industryId: data.industryId,
+            ontologyName: data.ontologyName || "Custom",
+            label: data.label,
+            category: data.category,
+            description: data.description,
+            properties: data.properties || [],
+            relationships: data.relationships || [],
+            tags: data.tags || [],
+            synonyms: data.synonyms || [],
+            source: data.source || "ai-subdomain",
+            linkedRegulations: data.linkedRegulations || [],
+            industryRelevance: data.industryRelevance || null,
+          });
+          created.push(concept);
+        } catch (err: any) {
+          errors.push(`Failed to create "${data.label}": ${err.message}`);
+        }
+      }
+
+      res.status(201).json({ created, count: created.length, errors });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.put("/api/ontology/concepts/:id", async (req, res) => {
     try {
       const updated = await storage.updateOntologyConcept(req.params.id, req.body);
@@ -12753,8 +12932,8 @@ Return ONLY a valid JSON object.`
     try {
       const concept = await storage.getOntologyConcept(req.params.id);
       if (!concept) return res.status(404).json({ message: "Concept not found" });
-      if (concept.source !== "custom-extension") {
-        return res.status(403).json({ message: "Only custom extension concepts can be deleted" });
+      if (concept.source !== "custom-extension" && concept.source !== "ai-subdomain") {
+        return res.status(403).json({ message: "Only custom or AI-generated subdomain concepts can be deleted" });
       }
       const deleted = await storage.deleteOntologyConcept(req.params.id);
       if (!deleted) return res.status(404).json({ message: "Concept not found" });

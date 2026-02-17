@@ -53,7 +53,7 @@ The Nous Agent Orchestrator is built on a modern web stack: React, Vite, Tailwin
 - **Redaction Profiles**: Tiered data redaction for sensitive information.
 - **Tool Proxy Control Point**: Unified proxy for MCP tool calls and A2A delegations.
 - **MCP Server Directory, Tool Registry, Resources, Prompt Library**: Manages MCP integrations, tools, knowledge connectors, and prompt templates.
-- **Ontology Explorer**: Industry knowledge graph browser with concept details, search, AI-enhanced descriptions, and KG-powered relationship suggestions (Suggest Relationships button queries Knowledge Graph and AI for related entities with accept/reject side panel).
+- **Ontology Explorer**: Industry knowledge graph browser with concept details, search, AI-enhanced descriptions, and KG-powered relationship suggestions (Suggest Relationships button queries Knowledge Graph and AI for related entities with accept/reject side panel). Includes a **Knowledge Graph Builder** wizard for generating sub-domain-specific ontologies (e.g., Credit Rating for Fitch Rating) via AI, with preview/review of generated concepts, select/deselect, and bulk import alongside existing concepts.
 - **Memory Architecture Manager**: Defines agent memory management with industry-specific retention and governance.
 - **RAG Pipeline Manager**: Configures how agents retrieve industry-specific knowledge at runtime.
 - **Knowledge Graph Ingestion & Enrichment**: Tools for populating and maintaining the knowledge graph with customer-specific data.
