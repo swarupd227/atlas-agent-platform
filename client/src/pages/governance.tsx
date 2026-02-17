@@ -3867,13 +3867,13 @@ export default function Governance() {
                     <CardContent className="flex flex-col gap-3">
                       <div className="flex items-center gap-1 flex-wrap">
                         {reg.jurisdictions.map((j) => (
-                          <Badge key={j} variant="outline" size="sm" data-testid={`badge-jurisdiction-${reg.id}-${j}`}>
+                          <Badge key={j} variant="outline" data-testid={`badge-jurisdiction-${reg.id}-${j}`}>
                             <Globe className="w-3 h-3 mr-1" />
                             {j}
                           </Badge>
                         ))}
                         {reg.departments && reg.departments.length > 0 && reg.departments.map((dept) => (
-                          <Badge key={dept} variant="outline" size="sm" className="bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20" data-testid={`badge-dept-${reg.id}-${dept.replace(/[\s\/&]/g, "-").toLowerCase()}`}>
+                          <Badge key={dept} variant="outline" className="bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20" data-testid={`badge-dept-${reg.id}-${dept.replace(/[\s\/&]/g, "-").toLowerCase()}`}>
                             <Building2 className="w-3 h-3 mr-1" />
                             {dept}
                           </Badge>
@@ -3979,7 +3979,7 @@ export default function Governance() {
                         {reg.category.replace("_", " ")}
                       </Badge>
                       {reg.jurisdictions.map((j) => (
-                        <Badge key={j} variant="outline" size="sm" data-testid={`badge-dialog-jurisdiction-${j}`}>
+                        <Badge key={j} variant="outline" data-testid={`badge-dialog-jurisdiction-${j}`}>
                           <Globe className="w-3 h-3 mr-1" />
                           {j}
                         </Badge>
@@ -4007,12 +4007,12 @@ export default function Governance() {
                             <CardContent className="py-3 flex flex-col gap-1">
                               <div className="flex items-center justify-between gap-2 flex-wrap">
                                 <span className="text-sm font-medium" data-testid={`text-req-title-${req.id}`}>{req.title}</span>
-                                <Badge variant="outline" size="sm" className={SEVERITY_COLORS[req.severity] || ""} data-testid={`badge-severity-${req.id}`}>
+                                <Badge variant="outline" className={SEVERITY_COLORS[req.severity] || ""} data-testid={`badge-severity-${req.id}`}>
                                   {req.severity}
                                 </Badge>
                               </div>
                               <p className="text-xs text-muted-foreground" data-testid={`text-req-desc-${req.id}`}>{req.description}</p>
-                              <Badge variant="outline" size="sm" className="w-fit mt-1" data-testid={`badge-req-category-${req.id}`}>{req.category}</Badge>
+                              <Badge variant="outline" className="w-fit mt-1" data-testid={`badge-req-category-${req.id}`}>{req.category}</Badge>
                             </CardContent>
                           </Card>
                         ))}
@@ -4273,6 +4273,45 @@ function PolicyDetailDialog({ policyId, open, onOpenChange }: { policyId: string
     },
   });
 
+  const enhanceRulesMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/ai/enhance-policy-rules", {
+        policyName: policy?.name || "",
+        domain: policy?.domain || "",
+        description: policy?.description || policy?.name || "",
+        framework: policy?.name || "General",
+        industry: industry?.label || "Financial Services",
+        existingRules: editRules.map((r) => ({
+          name: r.name,
+          field: r.field,
+          operator: r.operator,
+          value: r.value,
+          action: r.action,
+        })),
+      });
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      const enhanced = data?.enhancedRules;
+      if (!enhanced || typeof enhanced !== "object") {
+        toast({ title: "AI enhancement returned unexpected format", variant: "destructive" });
+        return;
+      }
+      const rules = Array.isArray(enhanced.rules) ? enhanced.rules : [];
+      if (rules.length === 0) {
+        toast({ title: "AI returned no rules", description: "Try adding some basic rules first, then enhance.", variant: "destructive" });
+        return;
+      }
+      setIsStructuredFormat(true);
+      setStructuredJsonEdit(JSON.stringify(enhanced, null, 2));
+      setIsEditingStructured(true);
+      toast({ title: "Rules enhanced by AI", description: `${rules.length} rules generated. Review and save when ready.` });
+    },
+    onError: (err: Error) => {
+      toast({ title: "AI enhancement failed", description: err.message, variant: "destructive" });
+    },
+  });
+
   const addTestMutation = useMutation({
     mutationFn: async () => {
       let inputScenario = {};
@@ -4410,6 +4449,18 @@ function PolicyDetailDialog({ policyId, open, onOpenChange }: { policyId: string
                         <Button variant="outline" onClick={() => setIsEditingStructured(true)} data-testid="button-edit-structured-rules">
                           <Pencil className="h-3.5 w-3.5 mr-1.5" /> Edit Rules
                         </Button>
+                        <Button
+                          variant="outline"
+                          onClick={() => enhanceRulesMutation.mutate()}
+                          disabled={enhanceRulesMutation.isPending}
+                          data-testid="button-ai-enhance-rules-structured"
+                        >
+                          {enhanceRulesMutation.isPending ? (
+                            <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> Enhancing...</>
+                          ) : (
+                            <><Sparkles className="h-3.5 w-3.5 mr-1.5" /> AI Enhance Rules</>
+                          )}
+                        </Button>
                       </PermissionGate>
                     </div>
                   </div>
@@ -4475,6 +4526,20 @@ function PolicyDetailDialog({ policyId, open, onOpenChange }: { policyId: string
                   <Button onClick={() => saveRulesMutation.mutate()} disabled={saveRulesMutation.isPending} data-testid="button-save-rules">
                     {saveRulesMutation.isPending ? "Saving..." : "Save Rules"}
                   </Button>
+                  <PermissionGate action="create_modify_policies">
+                    <Button
+                      variant="outline"
+                      onClick={() => enhanceRulesMutation.mutate()}
+                      disabled={enhanceRulesMutation.isPending}
+                      data-testid="button-ai-enhance-rules"
+                    >
+                      {enhanceRulesMutation.isPending ? (
+                        <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> Enhancing...</>
+                      ) : (
+                        <><Sparkles className="w-4 h-4 mr-1" /> AI Enhance Rules</>
+                      )}
+                    </Button>
+                  </PermissionGate>
                 </div>
               </>
             )}
@@ -4585,7 +4650,7 @@ function PolicyDetailDialog({ policyId, open, onOpenChange }: { policyId: string
             <IndustryTestScenariosSection
               industry={industry}
               policyDomain={policy.domain}
-              policyFramework={policy.framework}
+              policyFramework={policy.name || ""}
               onUseScenario={(scenario) => {
                 setNewTestName(scenario.name);
                 setNewTestDescription(scenario.scenario);
