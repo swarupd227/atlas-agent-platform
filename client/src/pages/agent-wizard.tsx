@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { useLocation, useSearch } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -526,6 +526,7 @@ const INDUSTRY_CONTEXT_CONFIG: Record<string, {
 };
 
 export default function AgentWizard() {
+  const { industry } = useIndustry();
   const [currentStep, setCurrentStep] = useState(0);
   const [wizardState, setWizardState] = useState<WizardState>({ ...defaultWizardState });
   const [creationPath, setCreationPath] = useState<CreationPath>(null);
@@ -603,6 +604,32 @@ export default function AgentWizard() {
     queryKey: ["/api/outcomes"],
   });
 
+  const { data: ontologyConcepts } = useQuery<Array<{ id: string; label: string; category: string; description: string; synonyms: string[] | null }>>({
+    queryKey: [`/api/ontology/concepts?industryId=${encodeURIComponent(wizardState.industryId || "")}`],
+    enabled: !!wizardState.industryId,
+  });
+
+  const domainGlossary = useMemo(() => {
+    if (!ontologyConcepts || ontologyConcepts.length === 0) return "";
+    const grouped: Record<string, Array<{ label: string; description: string; synonyms: string[] | null }>> = {};
+    for (const c of ontologyConcepts) {
+      if (!grouped[c.category]) grouped[c.category] = [];
+      grouped[c.category].push({ label: c.label, description: c.description, synonyms: c.synonyms });
+    }
+    let text = "## Domain Terminology\n\nYou MUST use the following industry-standard terminology when reasoning about and responding to tasks in this domain. These terms define the precise meaning of concepts in your operating context.\n";
+    for (const [category, concepts] of Object.entries(grouped).sort((a, b) => a[0].localeCompare(b[0]))) {
+      text += `\n### ${category}\n`;
+      for (const c of concepts.sort((a, b) => a.label.localeCompare(b.label))) {
+        text += `- **${c.label}**: ${c.description}`;
+        if (c.synonyms && c.synonyms.length > 0) {
+          text += ` (Also known as: ${c.synonyms.join(", ")})`;
+        }
+        text += "\n";
+      }
+    }
+    return text.trim();
+  }, [ontologyConcepts]);
+
   const createMutation = useMutation({
     mutationFn: async (data: Record<string, unknown>) => {
       const res = await apiRequest("POST", "/api/agents", data);
@@ -627,6 +654,12 @@ export default function AgentWizard() {
   }, [chatMessages]);
 
   const [outcomeLockedFromUrl, setOutcomeLockedFromUrl] = useState(false);
+
+  useEffect(() => {
+    if (industry?.id && wizardState.industryId !== industry.id) {
+      updateState({ industryId: industry.id });
+    }
+  }, [industry?.id]);
 
   useEffect(() => {
     const params = new URLSearchParams(searchParams);
@@ -819,6 +852,10 @@ export default function AgentWizard() {
   }
 
   function handleCreate() {
+    const composedSystemPrompt = domainGlossary
+      ? `You are an AI agent operating in the ${industry?.label || "industry"} domain.\n\n${domainGlossary}`
+      : undefined;
+
     const payload: Record<string, unknown> = {
       name: wizardState.name,
       description: wizardState.description,
@@ -837,6 +874,7 @@ export default function AgentWizard() {
       guardrailsConfig: wizardState.guardrailsConfig,
       evalSuiteConfig: wizardState.evalSuiteConfig,
       ontologyTags: wizardState.ontologyTags.length > 0 ? wizardState.ontologyTags : undefined,
+      systemPrompt: composedSystemPrompt,
       department: wizardState.department || undefined,
       rolloutConfig: wizardState.rolloutConfig,
       rollbackPlan: wizardState.rolloutConfig ? {
@@ -1068,7 +1106,7 @@ export default function AgentWizard() {
 
       <div className="min-h-[400px]">
         {currentStep === 0 && (
-          <Step1IndustryDefine state={wizardState} updateState={updateState} outcomes={outcomes} outcomeLockedFromUrl={outcomeLockedFromUrl} />
+          <Step1IndustryDefine state={wizardState} updateState={updateState} outcomes={outcomes} outcomeLockedFromUrl={outcomeLockedFromUrl} domainGlossary={domainGlossary} ontologyConceptCount={ontologyConcepts?.length || 0} />
         )}
         {currentStep === 1 && (
           <Step0GoldenTemplate
@@ -1105,6 +1143,9 @@ export default function AgentWizard() {
             onCreate={handleCreate}
             isPending={createMutation.isPending}
             outcomes={outcomes}
+            domainGlossary={domainGlossary}
+            glossaryConceptCount={ontologyConcepts?.length || 0}
+            industryLabel={industry?.label || "Industry"}
           />
         )}
       </div>
@@ -1204,6 +1245,59 @@ export default function AgentWizard() {
         </SheetContent>
       </Sheet>
     </div>
+  );
+}
+
+function DomainTerminologyPreview({
+  glossary,
+  conceptCount,
+  industryLabel,
+  collapsed: initialCollapsed = true,
+}: {
+  glossary: string;
+  conceptCount: number;
+  industryLabel: string;
+  collapsed?: boolean;
+}) {
+  const [collapsed, setCollapsed] = useState(initialCollapsed);
+
+  if (!glossary) return null;
+
+  return (
+    <Card data-testid="card-domain-terminology">
+      <CardContent className="p-4 space-y-3">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2 min-w-0">
+            <Shield className="h-4 w-4 text-muted-foreground shrink-0" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium">Domain Terminology (Auto-injected)</p>
+              <p className="text-xs text-muted-foreground">
+                {conceptCount} {industryLabel} ontology terms will be embedded into this agent's system prompt
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Badge variant="default" className="text-xs" data-testid="badge-glossary-status">
+              <Check className="w-3 h-3 mr-1" />Active
+            </Badge>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setCollapsed(!collapsed)}
+              data-testid="button-toggle-glossary-preview"
+            >
+              <Eye className="h-3.5 w-3.5 mr-1.5" />
+              {collapsed ? "Preview" : "Hide"} Glossary
+            </Button>
+          </div>
+        </div>
+        {!collapsed && (
+          <div className="rounded-md border bg-muted/30 p-3 max-h-64 overflow-y-auto" data-testid="glossary-preview-content">
+            <pre className="text-xs whitespace-pre-wrap font-mono text-muted-foreground leading-relaxed">{glossary}</pre>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -1359,10 +1453,14 @@ function Step1IndustryDefine({
   updateState,
   outcomes,
   outcomeLockedFromUrl,
+  domainGlossary,
+  ontologyConceptCount,
 }: {
   state: WizardState;
   updateState: (u: Partial<WizardState>) => void;
   outcomes: OutcomeContract[] | undefined;
+  domainGlossary?: string;
+  ontologyConceptCount?: number;
   outcomeLockedFromUrl?: boolean;
 }) {
   const { industry } = useIndustry();
@@ -1523,6 +1621,13 @@ function Step1IndustryDefine({
           </Card>
         )}
         <OntologyTagSection state={state} updateState={updateState} />
+        {domainGlossary && (
+          <DomainTerminologyPreview
+            glossary={domainGlossary}
+            conceptCount={ontologyConceptCount || 0}
+            industryLabel={industry?.label || "Industry"}
+          />
+        )}
         {outcomeLockedFromUrl && linkedOutcome ? (
           <div className="flex flex-col gap-2">
             <Label>Linked Outcome</Label>
@@ -3618,11 +3723,17 @@ function StepReview({
   onCreate,
   isPending,
   outcomes,
+  domainGlossary,
+  glossaryConceptCount,
+  industryLabel,
 }: {
   state: WizardState;
   onCreate: () => void;
   isPending: boolean;
   outcomes: OutcomeContract[] | undefined;
+  domainGlossary?: string;
+  glossaryConceptCount?: number;
+  industryLabel?: string;
 }) {
   const linkedOutcome = outcomes?.find((o) => o.id === state.outcomeId);
 
@@ -3678,6 +3789,15 @@ function StepReview({
           )}
         </CardContent>
       </Card>
+
+      {domainGlossary && (
+        <DomainTerminologyPreview
+          glossary={domainGlossary}
+          conceptCount={glossaryConceptCount || 0}
+          industryLabel={industryLabel || "Industry"}
+          collapsed={true}
+        />
+      )}
 
       <Card>
         <CardHeader className="pb-3">
