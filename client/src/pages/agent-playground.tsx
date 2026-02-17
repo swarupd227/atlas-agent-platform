@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useParams, Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -176,6 +176,120 @@ export default function AgentPlayground() {
   const { data: agent, isLoading: agentLoading } = useQuery<Agent>({
     queryKey: ["/api/agents", agentId],
   });
+
+  const agentOntologyTags = useMemo(() => {
+    if (!agent?.ontologyTags) return [] as Array<{ conceptId: string; conceptLabel: string }>;
+    return Array.isArray(agent.ontologyTags)
+      ? (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>)
+      : [];
+  }, [agent?.ontologyTags]);
+
+  const ontologyLabelMap = useMemo(() => {
+    const labelMap: Record<string, { displayLabel: string; conceptLabel: string }> = {};
+    if (agentOntologyTags.length === 0) return labelMap;
+
+    const toolsCfg = Array.isArray(agent?.toolsConfig)
+      ? (agent.toolsConfig as Array<{ name?: string; description?: string; parameters?: Array<{ name: string; enrichedFrom?: string }> }>)
+      : [];
+
+    const conceptsByLabel: Record<string, { label: string }> = {};
+    for (const tag of agentOntologyTags) {
+      conceptsByLabel[tag.conceptLabel.toLowerCase()] = { label: tag.conceptLabel };
+    }
+
+    const verbMap: Record<string, string> = {
+      search: "searched",
+      query: "queried",
+      read: "retrieved data from",
+      write: "updated",
+      update: "updated",
+      create: "created record in",
+      send: "sent via",
+      execute: "executed on",
+      deploy: "deployed to",
+      process: "processed via",
+      extract: "extracted from",
+      get: "retrieved from",
+      fetch: "fetched from",
+      delete: "removed from",
+      validate: "validated against",
+      check: "checked via",
+    };
+
+    for (const tool of toolsCfg) {
+      if (!tool.name) continue;
+      const rawName = tool.name;
+      const nameParts = rawName.toLowerCase().split("_");
+
+      let bestMatch: { label: string } | null = null;
+      let matchedVerb = "";
+
+      const enrichedConcepts = (tool.parameters || [])
+        .filter(p => p.enrichedFrom)
+        .map(p => p.enrichedFrom!);
+      if (enrichedConcepts.length > 0) {
+        const conceptName = enrichedConcepts[0];
+        const found = conceptsByLabel[conceptName.toLowerCase()];
+        if (found) bestMatch = found;
+      }
+
+      if (!bestMatch) {
+        for (const part of nameParts) {
+          if (conceptsByLabel[part]) {
+            bestMatch = conceptsByLabel[part];
+            break;
+          }
+        }
+      }
+
+      if (!bestMatch) {
+        const fullNoVerb = nameParts.slice(1).join(" ");
+        if (conceptsByLabel[fullNoVerb]) {
+          bestMatch = conceptsByLabel[fullNoVerb];
+        }
+      }
+
+      if (!bestMatch) {
+        for (const part of nameParts) {
+          for (const [conceptKey, concept] of Object.entries(conceptsByLabel)) {
+            if (part.length > 3 && (conceptKey.includes(part) || part.includes(conceptKey))) {
+              bestMatch = concept;
+              break;
+            }
+          }
+          if (bestMatch) break;
+        }
+      }
+
+      if (bestMatch) {
+        for (const part of nameParts) {
+          if (verbMap[part]) {
+            matchedVerb = verbMap[part];
+            break;
+          }
+        }
+        const displayLabel = matchedVerb
+          ? `${matchedVerb} ${bestMatch.label}`
+          : bestMatch.label;
+        labelMap[rawName] = { displayLabel, conceptLabel: bestMatch.label };
+      }
+    }
+
+    return labelMap;
+  }, [agentOntologyTags, agent?.toolsConfig]);
+
+  const applyOntologyLabels = useCallback((text: string): string => {
+    if (Object.keys(ontologyLabelMap).length === 0) return text;
+    let result = text;
+    const sortedKeys = Object.keys(ontologyLabelMap).sort((a, b) => b.length - a.length);
+    for (const rawName of sortedKeys) {
+      const { displayLabel, conceptLabel } = ontologyLabelMap[rawName];
+      const escaped = rawName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const pattern = new RegExp(`\\b${escaped}\\b`, 'g');
+      result = result.replace(pattern, `${displayLabel} [${conceptLabel}]`);
+    }
+    return result;
+  }, [ontologyLabelMap]);
 
   const hasWebSearch = Array.isArray(agent?.toolsConfig) &&
     (agent.toolsConfig as Array<{ name?: string; type?: string }>).some(
@@ -459,15 +573,16 @@ export default function AgentPlayground() {
           isStreaming={false}
           canInteract={!isStreaming}
           annotations={annotatedCitations}
+          transformText={applyOntologyLabels}
         />
       ))}
 
       {pendingUserMsg && (
-        <MessageBubble role="user" content={pendingUserMsg} agentName={agent.name} onApproval={handleApprovalAction} canInteract={false} annotations={[]} />
+        <MessageBubble role="user" content={pendingUserMsg} agentName={agent.name} onApproval={handleApprovalAction} canInteract={false} annotations={[]} transformText={applyOntologyLabels} />
       )}
 
       {streaming && streamContent && (
-        <MessageBubble role="assistant" content={streamContent} agentName={agent.name} isStreaming onApproval={handleApprovalAction} canInteract={false} annotations={[]} />
+        <MessageBubble role="assistant" content={streamContent} agentName={agent.name} isStreaming onApproval={handleApprovalAction} canInteract={false} annotations={[]} transformText={applyOntologyLabels} />
       )}
 
       {streaming && !streamContent && (
@@ -702,15 +817,16 @@ export default function AgentPlayground() {
                       isStreaming={false}
                       canInteract={!isStreaming}
                       annotations={annotatedCitations}
+                      transformText={applyOntologyLabels}
                     />
                   ))}
 
                   {pendingUserMsg && (
-                    <MessageBubble role="user" content={pendingUserMsg} agentName={agent.name} onApproval={handleApprovalAction} canInteract={false} annotations={[]} />
+                    <MessageBubble role="user" content={pendingUserMsg} agentName={agent.name} onApproval={handleApprovalAction} canInteract={false} annotations={[]} transformText={applyOntologyLabels} />
                   )}
 
                   {isStreaming && streamingContent && (
-                    <MessageBubble role="assistant" content={streamingContent} agentName={agent.name} isStreaming onApproval={handleApprovalAction} canInteract={false} annotations={[]} />
+                    <MessageBubble role="assistant" content={streamingContent} agentName={agent.name} isStreaming onApproval={handleApprovalAction} canInteract={false} annotations={[]} transformText={applyOntologyLabels} />
                   )}
 
                   {isStreaming && !streamingContent && (
@@ -794,15 +910,32 @@ export default function AgentPlayground() {
 
             {tools.length > 0 && (
               <ConfigSection title={`Tools (${tools.length})`} icon={<Wrench className="h-3.5 w-3.5" />}>
-                <div className="space-y-1">
-                  {tools.map((t, i) => (
-                    <div key={i} className="text-xs">
-                      <span className="font-medium text-foreground">{t.name || `Tool ${i + 1}`}</span>
-                      {t.description && (
-                        <p className="text-[10px] text-muted-foreground">{t.description}</p>
-                      )}
-                    </div>
-                  ))}
+                <div className="space-y-1.5">
+                  {tools.map((t, i) => {
+                    const rawName = t.name || `Tool ${i + 1}`;
+                    const mapped = ontologyLabelMap[rawName];
+                    return (
+                      <div key={i} className="text-xs" data-testid={`config-tool-${i}`}>
+                        {mapped ? (
+                          <div className="flex flex-col gap-0.5">
+                            <span className="font-medium text-foreground">{mapped.displayLabel}</span>
+                            <div className="flex items-center gap-1">
+                              <Badge variant="secondary" className="text-[9px] text-emerald-600 dark:text-emerald-400">
+                                <BookOpen className="w-2.5 h-2.5 mr-0.5" />
+                                {mapped.conceptLabel}
+                              </Badge>
+                              <span className="text-[9px] text-muted-foreground font-mono">{rawName}</span>
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="font-medium text-foreground">{rawName}</span>
+                        )}
+                        {t.description && (
+                          <p className="text-[10px] text-muted-foreground">{t.description}</p>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </ConfigSection>
             )}
@@ -1111,6 +1244,7 @@ function MessageBubble({
   onApproval,
   canInteract,
   annotations,
+  transformText,
 }: {
   role: string;
   content: string;
@@ -1119,8 +1253,10 @@ function MessageBubble({
   onApproval: (action: string, approved: boolean) => void;
   canInteract: boolean;
   annotations: CitationAnnotation[];
+  transformText?: (text: string) => string;
 }) {
   const isUser = role === "user";
+  const applyTransform = (t: string) => (!isUser && transformText ? transformText(t) : t);
   const segments = isUser ? [{ type: "text" as const, content }] : parseStructuredBlocks(content);
 
   return (
@@ -1151,7 +1287,7 @@ function MessageBubble({
               }`}
             >
               <div className="whitespace-pre-wrap break-words">
-                <RenderTextWithLinks text={seg.content} isUser={isUser} annotations={annotations} />
+                <RenderTextWithLinks text={applyTransform(seg.content)} isUser={isUser} annotations={annotations} />
               </div>
             </div>
           );
@@ -1165,12 +1301,38 @@ function MessageBubble({
 }
 
 function RenderTextWithLinks({ text, isUser, annotations }: { text: string; isUser: boolean; annotations: CitationAnnotation[] }) {
+  const conceptBadgeRegex = /\[([^\]]+)\]/g;
+  const renderWithConceptBadges = (inputText: string, keyPrefix: string): React.ReactNode[] => {
+    const nodes: React.ReactNode[] = [];
+    let lastIdx = 0;
+    let match;
+    const regex = new RegExp(conceptBadgeRegex.source, 'g');
+    while ((match = regex.exec(inputText)) !== null) {
+      const before = inputText.slice(lastIdx, match.index);
+      if (before) nodes.push(before);
+      const prevChar = match.index > 0 ? inputText[match.index - 1] : "";
+      if (prevChar === "(") {
+        nodes.push(match[0]);
+      } else {
+        nodes.push(
+          <Badge key={`${keyPrefix}-concept-${match.index}`} variant="secondary" className="text-[9px] text-emerald-600 dark:text-emerald-400 no-default-hover-elevate no-default-active-elevate inline-flex" data-testid="badge-ontology-concept">
+            <BookOpen className="w-2.5 h-2.5 mr-0.5" />
+            {match[1]}
+          </Badge>
+        );
+      }
+      lastIdx = match.index + match[0].length;
+    }
+    if (lastIdx < inputText.length) nodes.push(inputText.slice(lastIdx));
+    return nodes;
+  };
+
   const parts = text.split(/(\[([^\]]+)\]\(([^)]+)\))/g);
   const elements: React.ReactNode[] = [];
   let i = 0;
   while (i < parts.length) {
     if (i + 3 < parts.length && parts[i + 1] && parts[i + 1].startsWith("[")) {
-      if (parts[i]) elements.push(parts[i]);
+      if (parts[i]) elements.push(...renderWithConceptBadges(parts[i], `pre-${i}`));
       const linkUrl = parts[i + 3];
       const linkTitle = parts[i + 2];
       const annotation = annotations.find((a) => a.url === linkUrl);
@@ -1201,7 +1363,7 @@ function RenderTextWithLinks({ text, isUser, annotations }: { text: string; isUs
       );
       i += 4;
     } else {
-      if (parts[i]) elements.push(parts[i]);
+      if (parts[i]) elements.push(...renderWithConceptBadges(parts[i], `txt-${i}`));
       i++;
     }
   }
