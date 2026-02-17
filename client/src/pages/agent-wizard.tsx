@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
   SelectTrigger,
@@ -64,6 +65,7 @@ import {
   Settings,
   Eye,
   Building2,
+  X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -186,7 +188,7 @@ interface WizardState {
   };
   workflowNodes: WorkflowNode[];
   workflowConnections: WorkflowConnection[];
-  policyBindings: string[];
+  policyBindings: Array<{ policyId: string; policyName: string; enforcement: string; domain?: string; description?: string }>;
   evalBindings: string[];
   rollbackPlan: string;
   guardrailsConfig: {
@@ -744,7 +746,19 @@ export default function AgentWizard() {
           ? ((template.blueprintJson as Record<string, unknown>).nodes as WorkflowNode[])
           : []
         : [],
-      policyBindings: Array.isArray(template.policyBindings) ? (template.policyBindings as string[]) : [],
+      policyBindings: Array.isArray(template.policyBindings)
+        ? (template.policyBindings as unknown[]).map((p) => {
+            if (typeof p === "string") return { policyId: p, policyName: p, enforcement: "soft" };
+            const obj = p as Record<string, unknown>;
+            return {
+              policyId: (obj.policyId || obj.id || obj.policyName || "") as string,
+              policyName: (obj.policyName || obj.name || "") as string,
+              enforcement: (obj.enforcement || "soft") as string,
+              domain: (obj.domain || "") as string,
+              description: (obj.description || "") as string,
+            };
+          })
+        : [],
       evalBindings: Array.isArray(template.evalBindings) ? (template.evalBindings as string[]) : [],
       rollbackPlan: template.rollbackPlan
         ? typeof template.rollbackPlan === "string"
@@ -3310,6 +3324,162 @@ function StringListCard({
   );
 }
 
+function PolicyBindingsCard({
+  state,
+  updateState,
+  policies,
+}: {
+  state: WizardState;
+  updateState: (u: Partial<WizardState>) => void;
+  policies: Array<{ id: string; name: string; domain: string; description: string }>;
+}) {
+  const [showSelector, setShowSelector] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const boundPolicyIds = new Set(state.policyBindings.map((b) => b.policyId));
+  const availablePolicies = policies.filter((p) => !boundPolicyIds.has(p.id));
+  const filteredPolicies = availablePolicies.filter(
+    (p) =>
+      p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      p.domain.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      p.description.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  function addBinding(policy: { id: string; name: string; domain: string; description: string }) {
+    updateState({
+      policyBindings: [
+        ...state.policyBindings,
+        { policyId: policy.id, policyName: policy.name, enforcement: "soft", domain: policy.domain, description: policy.description },
+      ],
+    });
+    setShowSelector(false);
+    setSearchQuery("");
+  }
+
+  function removeBinding(idx: number) {
+    updateState({
+      policyBindings: state.policyBindings.filter((_, i) => i !== idx),
+    });
+  }
+
+  function updateEnforcement(idx: number, enforcement: string) {
+    const updated = [...state.policyBindings];
+    updated[idx] = { ...updated[idx], enforcement };
+    updateState({ policyBindings: updated });
+  }
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
+        <div className="flex items-center gap-2">
+          <FileText className="w-4 h-4 text-muted-foreground" />
+          <CardTitle className="text-sm font-medium">Policy Bindings</CardTitle>
+          <Badge variant="secondary" className="text-[10px]">
+            {state.policyBindings.length}
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        {state.policyBindings.length === 0 && !showSelector && (
+          <p className="text-xs text-muted-foreground text-center py-2">
+            No policies bound. Add policies from the library to enforce governance rules.
+          </p>
+        )}
+
+        {state.policyBindings.map((binding, idx) => (
+          <div key={binding.policyId} className="flex items-center gap-2 p-3 rounded-md bg-muted/30" data-testid={`policy-binding-${idx}`}>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-medium">{binding.policyName}</span>
+                {binding.domain && (
+                  <Badge variant="outline" className="text-[9px]">{binding.domain}</Badge>
+                )}
+              </div>
+              {binding.description && (
+                <p className="text-[10px] text-muted-foreground mt-0.5 line-clamp-1">{binding.description}</p>
+              )}
+            </div>
+            <Select value={binding.enforcement} onValueChange={(val) => updateEnforcement(idx, val)}>
+              <SelectTrigger className="w-[110px]" data-testid={`select-enforcement-${idx}`}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="hard">Hard</SelectItem>
+                <SelectItem value="soft">Soft</SelectItem>
+                <SelectItem value="advisory">Advisory</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => removeBinding(idx)}
+              data-testid={`button-remove-binding-${idx}`}
+            >
+              <X className="w-3.5 h-3.5" />
+            </Button>
+          </div>
+        ))}
+
+        {showSelector ? (
+          <div className="flex flex-col gap-2 p-3 rounded-md border border-dashed">
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search policies by name or domain..."
+              data-testid="input-search-policies"
+              autoFocus
+            />
+            <ScrollArea className="max-h-48">
+              <div className="flex flex-col gap-1">
+                {filteredPolicies.length === 0 && (
+                  <p className="text-xs text-muted-foreground text-center py-3">
+                    {availablePolicies.length === 0 ? "All policies already bound" : "No matching policies found"}
+                  </p>
+                )}
+                {filteredPolicies.map((policy) => (
+                  <div
+                    key={policy.id}
+                    className="flex items-center gap-2 p-2 rounded-md cursor-pointer hover-elevate"
+                    onClick={() => addBinding(policy)}
+                    data-testid={`select-policy-${policy.id}`}
+                  >
+                    <Plus className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm">{policy.name}</span>
+                        <Badge variant="outline" className="text-[9px]">{policy.domain}</Badge>
+                      </div>
+                      <p className="text-[10px] text-muted-foreground line-clamp-1">{policy.description}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </ScrollArea>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => { setShowSelector(false); setSearchQuery(""); }}
+              data-testid="button-cancel-policy-search"
+            >
+              Cancel
+            </Button>
+          </div>
+        ) : (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowSelector(true)}
+            className="w-full"
+            data-testid="button-add-policy-binding"
+          >
+            <Plus className="w-3.5 h-3.5 mr-1.5" /> Add Policy
+          </Button>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function Step3IndustryGovernance({
   state,
   updateState,
@@ -3441,6 +3611,8 @@ function Step3IndustryGovernance({
           })}
         </CardContent>
       </Card>
+
+      <PolicyBindingsCard state={state} updateState={updateState} policies={policies || []} />
 
       <StringListCard
         title="Stop Conditions"
@@ -4173,14 +4345,22 @@ function StepReview({
       {state.policyBindings.length > 0 && (
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">Policy Bindings</CardTitle>
+            <CardTitle className="text-sm font-medium">Policy Bindings ({state.policyBindings.length})</CardTitle>
           </CardHeader>
           <CardContent>
-            <ul className="text-sm text-muted-foreground flex flex-col gap-1">
-              {state.policyBindings.map((p, i) => (
-                <li key={i}>{typeof p === "object" ? `${(p as any).policyName || ""} (${(p as any).enforcement || "soft"})` : String(p)}</li>
+            <div className="flex flex-col gap-2">
+              {state.policyBindings.map((binding, i) => (
+                <div key={i} className="flex items-center justify-between gap-2 text-sm" data-testid={`review-policy-${i}`}>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-medium">{binding.policyName}</span>
+                    {binding.domain && <Badge variant="outline" className="text-[9px]">{binding.domain}</Badge>}
+                  </div>
+                  <Badge variant={binding.enforcement === "hard" ? "destructive" : binding.enforcement === "advisory" ? "secondary" : "default"} className="text-[10px]">
+                    {binding.enforcement}
+                  </Badge>
+                </div>
               ))}
-            </ul>
+            </div>
           </CardContent>
         </Card>
       )}
