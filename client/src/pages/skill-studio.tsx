@@ -38,6 +38,10 @@ import {
   FileText,
   RotateCcw,
   Pencil,
+  XCircle,
+  ChevronDown,
+  ChevronUp,
+  Info,
 } from "lucide-react";
 
 const SECTION_TEMPLATES: Record<string, string> = {
@@ -317,6 +321,24 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
   const [versionChangelog, setVersionChangelog] = useState("");
   const [savingVersion, setSavingVersion] = useState(false);
 
+  interface PolicyViolation {
+    policyId: string;
+    policyName: string;
+    ruleName: string;
+    severity: "critical" | "warning" | "info";
+    message: string;
+    suggestion: string;
+  }
+  interface ValidationResult {
+    valid: boolean;
+    canSave: boolean;
+    violations: PolicyViolation[];
+    summary: { total: number; critical: number; warnings: number; info: number; policiesChecked: number };
+  }
+  const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
+  const [validating, setValidating] = useState(false);
+  const [showValidation, setShowValidation] = useState(false);
+
   const { data: versions = [] } = useQuery<SkillVersion[]>({
     queryKey: ["/api/skills", id, "versions"],
     enabled: !!id,
@@ -361,38 +383,86 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
     }, 800);
   }, []);
 
+  const clearValidation = () => {
+    if (validationResult) setValidationResult(null);
+  };
+
   const handleDescriptionChange = (val: string) => {
     setDescription(val);
+    clearValidation();
     fetchQualityScore(val, industry, domain);
+  };
+
+  const getSkillPayload = () => ({
+    name,
+    description,
+    industry,
+    domain,
+    allowedTools: allowedTools.split("\n").map(t => t.trim()).filter(Boolean),
+    requiredMcpServers: requiredMcpServers.split("\n").map(t => t.trim()).filter(Boolean),
+    requiredDataClassifications: requiredDataClassifications.split("\n").map(t => t.trim()).filter(Boolean),
+    markdownBody,
+  });
+
+  const handleValidate = async (): Promise<ValidationResult | null> => {
+    setValidating(true);
+    try {
+      const res = await apiRequest("POST", "/api/policies/validate-skill", getSkillPayload());
+      const result: ValidationResult = await res.json();
+      setValidationResult(result);
+      setShowValidation(true);
+      return result;
+    } catch (e: any) {
+      toast({ title: "Validation failed", description: e.message, variant: "destructive" });
+      return null;
+    } finally {
+      setValidating(false);
+    }
   };
 
   const handleSave = async () => {
     setSaving(true);
     try {
+      const result = await handleValidate();
+      if (!result) {
+        toast({
+          title: "Policy validation unavailable",
+          description: "Could not validate skill against policies. Save blocked for safety.",
+          variant: "destructive",
+        });
+        setSaving(false);
+        return;
+      }
+      if (!result.canSave) {
+        toast({
+          title: "Save blocked by policy violations",
+          description: `${result.summary.critical} critical violation${result.summary.critical !== 1 ? "s" : ""} must be resolved before saving`,
+          variant: "destructive",
+        });
+        setSaving(false);
+        return;
+      }
+
       const parsedTags = tags.split(",").map(t => t.trim()).filter(Boolean);
-      const parsedAllowedTools = allowedTools.split("\n").map(t => t.trim()).filter(Boolean);
-      const parsedMcpServers = requiredMcpServers.split("\n").map(t => t.trim()).filter(Boolean);
-      const parsedDataClassifications = requiredDataClassifications.split("\n").map(t => t.trim()).filter(Boolean);
+      const payload = getSkillPayload();
 
       await apiRequest("PATCH", `/api/skills/${id}`, {
-        name,
-        description,
-        industry,
-        domain,
+        ...payload,
         tags: parsedTags,
-        allowedTools: parsedAllowedTools,
-        requiredMcpServers: parsedMcpServers,
-        requiredDataClassifications: parsedDataClassifications,
         disableModelInvocation,
         contextMode,
         userInvocable,
         version,
         complexity,
-        markdownBody,
       });
       queryClient.invalidateQueries({ queryKey: ["/api/skills", id] });
       queryClient.invalidateQueries({ queryKey: ["/api/skills"] });
-      toast({ title: "Skill saved successfully" });
+
+      if (result.summary.warnings > 0) {
+        toast({ title: "Skill saved with warnings", description: `${result.summary.warnings} policy warning${result.summary.warnings !== 1 ? "s" : ""} detected. Review recommended.` });
+      } else {
+        toast({ title: "Skill saved successfully" });
+      }
     } catch (e: any) {
       toast({ title: "Save failed", description: e.message, variant: "destructive" });
     } finally {
@@ -579,17 +649,122 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
         <Badge variant="outline" className="text-xs" data-testid="badge-version">v{version}</Badge>
         <Badge variant="secondary" className="text-xs" data-testid="badge-status">{skill.status}</Badge>
         <div className="flex-1" />
+        {validationResult && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowValidation(!showValidation)}
+            className="gap-1.5"
+            data-testid="button-toggle-validation"
+          >
+            {validationResult.summary.critical > 0 ? (
+              <XCircle className="w-3.5 h-3.5 text-red-500" />
+            ) : validationResult.summary.warnings > 0 ? (
+              <AlertTriangle className="w-3.5 h-3.5 text-yellow-500" />
+            ) : (
+              <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />
+            )}
+            <span className="text-xs">
+              {validationResult.summary.critical > 0
+                ? `${validationResult.summary.critical} critical`
+                : validationResult.summary.warnings > 0
+                  ? `${validationResult.summary.warnings} warning${validationResult.summary.warnings !== 1 ? "s" : ""}`
+                  : "Compliant"}
+            </span>
+          </Button>
+        )}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => handleValidate()}
+          disabled={validating}
+          data-testid="button-validate-policies"
+        >
+          {validating ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Shield className="w-3.5 h-3.5 mr-1.5" />}
+          {validating ? "Validating..." : "Validate Against Policies"}
+        </Button>
         <Button
           variant="outline"
           size="sm"
           onClick={handleSave}
-          disabled={saving}
+          disabled={saving || (validationResult !== null && !validationResult.canSave)}
           data-testid="button-save"
         >
           {saving ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-1.5" />}
           {saving ? "Saving..." : "Save"}
         </Button>
       </div>
+
+      {showValidation && validationResult && (
+        <div className="border-b px-4 py-3 bg-muted/30" data-testid="panel-policy-validation">
+          <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+            <div className="flex items-center gap-2">
+              <Shield className="w-4 h-4 text-muted-foreground" />
+              <span className="text-sm font-semibold">Policy Compliance</span>
+              <Badge variant="outline" className="text-[10px]">{validationResult.summary.policiesChecked} policies checked</Badge>
+            </div>
+            <div className="flex items-center gap-2">
+              {validationResult.summary.critical > 0 && (
+                <Badge variant="destructive" className="text-[10px]" data-testid="badge-critical-count">
+                  <XCircle className="w-3 h-3 mr-0.5" /> {validationResult.summary.critical} Critical
+                </Badge>
+              )}
+              {validationResult.summary.warnings > 0 && (
+                <Badge variant="outline" className="text-[10px] bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30" data-testid="badge-warning-count">
+                  <AlertTriangle className="w-3 h-3 mr-0.5" /> {validationResult.summary.warnings} Warning{validationResult.summary.warnings !== 1 ? "s" : ""}
+                </Badge>
+              )}
+              {validationResult.valid && validationResult.summary.total === 0 && (
+                <Badge variant="outline" className="text-[10px] bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30" data-testid="badge-compliant">
+                  <CheckCircle2 className="w-3 h-3 mr-0.5" /> Fully Compliant
+                </Badge>
+              )}
+              <Button variant="ghost" size="icon" onClick={() => setShowValidation(false)} data-testid="button-close-validation">
+                <ChevronUp className="w-4 h-4" />
+              </Button>
+            </div>
+          </div>
+
+          {validationResult.violations.length > 0 ? (
+            <div className="space-y-2 max-h-[250px] overflow-y-auto">
+              {validationResult.violations.map((v, i) => (
+                <div
+                  key={i}
+                  className={`flex items-start gap-3 p-2.5 rounded-md border ${
+                    v.severity === "critical"
+                      ? "bg-red-500/10 border-red-500/30"
+                      : v.severity === "warning"
+                        ? "bg-yellow-500/10 border-yellow-500/30"
+                        : "bg-blue-500/10 border-blue-500/30"
+                  }`}
+                  data-testid={`violation-${i}`}
+                >
+                  {v.severity === "critical" ? (
+                    <XCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                  ) : v.severity === "warning" ? (
+                    <AlertTriangle className="w-4 h-4 text-yellow-500 shrink-0 mt-0.5" />
+                  ) : (
+                    <Info className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs font-semibold" data-testid={`violation-message-${i}`}>{v.message}</span>
+                      <Badge variant="outline" className="text-[9px] shrink-0">{v.policyName}</Badge>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground mt-0.5" data-testid={`violation-suggestion-${i}`}>{v.suggestion}</p>
+                    <p className="text-[10px] text-muted-foreground/70 mt-0.5">Rule: {v.ruleName}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 p-3 rounded-md bg-green-500/10 border border-green-500/30">
+              <CheckCircle2 className="w-4 h-4 text-green-500" />
+              <span className="text-sm text-green-600 dark:text-green-400">All policy checks passed. Skill is compliant.</span>
+            </div>
+          )}
+        </div>
+      )}
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0">
         <TabsList className="shrink-0 mx-3 mt-3" data-testid="tabs-studio">
@@ -662,7 +837,7 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
                   <Separator />
                   <div className="space-y-1.5">
                     <Label htmlFor="skill-name">Name</Label>
-                    <Input id="skill-name" value={name} onChange={e => setName(e.target.value)} placeholder="e.g., Real-Time Sanctions Screening" data-testid="input-name" />
+                    <Input id="skill-name" value={name} onChange={e => { setName(e.target.value); clearValidation(); }} placeholder="e.g., Real-Time Sanctions Screening" data-testid="input-name" />
                     <p className="text-[11px] text-muted-foreground">A clear, descriptive name for this skill</p>
                   </div>
                   <div className="space-y-1.5">
@@ -701,7 +876,7 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
 
                   <div className="space-y-1.5">
                     <Label htmlFor="skill-allowed-tools">Allowed Tools (one per line)</Label>
-                    <Textarea id="skill-allowed-tools" value={allowedTools} onChange={e => setAllowedTools(e.target.value)} rows={2} placeholder="mcp:sanctions-api&#10;tool:search" data-testid="input-allowed-tools" />
+                    <Textarea id="skill-allowed-tools" value={allowedTools} onChange={e => { setAllowedTools(e.target.value); clearValidation(); }} rows={2} placeholder="mcp:sanctions-api&#10;tool:search" data-testid="input-allowed-tools" />
                     <p className="text-[11px] text-muted-foreground">MCP tools and external APIs this skill can use</p>
                   </div>
                   <div className="space-y-1.5">
@@ -710,7 +885,7 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="skill-data-class">Required Data Classifications (one per line)</Label>
-                    <Textarea id="skill-data-class" value={requiredDataClassifications} onChange={e => setRequiredDataClassifications(e.target.value)} rows={2} placeholder="PII&#10;financial-records" data-testid="input-data-classifications" />
+                    <Textarea id="skill-data-class" value={requiredDataClassifications} onChange={e => { setRequiredDataClassifications(e.target.value); clearValidation(); }} rows={2} placeholder="PII&#10;financial-records" data-testid="input-data-classifications" />
                   </div>
                   <div className="flex items-center justify-between">
                     <div>
@@ -781,7 +956,7 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
                     <div className="relative">
                       <Textarea
                         value={markdownBody}
-                        onChange={e => setMarkdownBody(e.target.value)}
+                        onChange={e => { setMarkdownBody(e.target.value); clearValidation(); }}
                         rows={24}
                         className="font-mono text-sm"
                         placeholder={"# Skill Instructions\n\nClick a template button above to get started, or write your own instructions.\n\nExample structure:\n- Trigger Conditions: When should this skill activate?\n- Procedure: What steps should the agent follow?\n- Decision Tree: How should the agent handle different scenarios?\n- Edge Cases: What unusual situations should be handled?\n- Output Format: What should the result look like?"}

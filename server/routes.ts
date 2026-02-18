@@ -2562,6 +2562,225 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     }
   });
 
+  app.post("/api/policies/validate-skill", checkPermission("view_agents"), async (req, res) => {
+    try {
+      const { name, description, allowedTools, requiredMcpServers, requiredDataClassifications, markdownBody, industry, domain } = req.body;
+      if (!name) return res.status(400).json({ error: "Skill name is required" });
+
+      const allPolicies = await storage.getPolicies();
+      const activePolicies = allPolicies.filter(p => p.status === "active");
+
+      const toolsList: string[] = Array.isArray(allowedTools) ? allowedTools : [];
+      const mcpServers: string[] = Array.isArray(requiredMcpServers) ? requiredMcpServers : [];
+      const dataClassifications: string[] = Array.isArray(requiredDataClassifications) ? requiredDataClassifications : [];
+      const bodyText = (markdownBody || "").toLowerCase();
+      const descText = (description || "").toLowerCase();
+      const allToolsLower = toolsList.map(t => t.toLowerCase());
+
+      interface Violation {
+        policyId: string;
+        policyName: string;
+        ruleName: string;
+        severity: "critical" | "warning" | "info";
+        message: string;
+        suggestion: string;
+      }
+      const violations: Violation[] = [];
+
+      for (const policy of activePolicies) {
+        const pj = policy.policyJson as any;
+        if (!pj) continue;
+        const rules = Array.isArray(pj.rules) ? pj.rules : [];
+
+        for (const rule of rules) {
+          const ruleType = rule.type || "";
+          const ruleField = (rule.field || "").toLowerCase();
+          const ruleValue = String(rule.value || "").toLowerCase();
+          const ruleName = rule.name || rule.description || ruleType || "Unnamed rule";
+          const ruleAction = (rule.action || "warn").toLowerCase();
+          const severity: "critical" | "warning" = ruleAction === "block" || ruleAction === "hard_block" ? "critical" : "warning";
+
+          if (ruleType === "tool_scope" || ruleField.includes("tool") || ruleField.includes("allowed_tools")) {
+            const blockedTools = rule.blocked_tools || rule.blocklist || [];
+            if (Array.isArray(blockedTools)) {
+              for (const blocked of blockedTools) {
+                const blockedLower = String(blocked).toLowerCase();
+                if (allToolsLower.some(t => t.includes(blockedLower))) {
+                  violations.push({
+                    policyId: policy.id,
+                    policyName: policy.name,
+                    ruleName,
+                    severity,
+                    message: `Skill uses blocked tool "${blocked}"`,
+                    suggestion: `Remove "${blocked}" from allowed tools or request a policy exception`,
+                  });
+                }
+              }
+            }
+            const requiredTools = rule.required_tools || rule.requires || [];
+            if (Array.isArray(requiredTools)) {
+              for (const required of requiredTools) {
+                const reqLower = String(required).toLowerCase();
+                if (!allToolsLower.some(t => t.includes(reqLower)) && !bodyText.includes(reqLower)) {
+                  violations.push({
+                    policyId: policy.id,
+                    policyName: policy.name,
+                    ruleName,
+                    severity,
+                    message: `Policy requires tool "${required}" but skill does not include it`,
+                    suggestion: `Add "${required}" to allowed tools or include it in skill instructions`,
+                  });
+                }
+              }
+            }
+          }
+
+          if (ruleType === "pre_action_check" || ruleField.includes("pre_action") || ruleField.includes("prerequisite")) {
+            const trigger = (rule.trigger || rule.when || "").toLowerCase();
+            const requiredCheck = (rule.required_check || rule.check || rule.requires || "").toLowerCase();
+            if (trigger && requiredCheck) {
+              const triggerMatch = allToolsLower.some(t => t.includes(trigger)) || bodyText.includes(trigger);
+              const checkPresent = allToolsLower.some(t => t.includes(requiredCheck)) || bodyText.includes(requiredCheck) || descText.includes(requiredCheck);
+              if (triggerMatch && !checkPresent) {
+                violations.push({
+                  policyId: policy.id,
+                  policyName: policy.name,
+                  ruleName,
+                  severity,
+                  message: `Skill uses "${trigger}" which requires "${requiredCheck}" check first`,
+                  suggestion: `Add "${requiredCheck}" to skill tools or instructions before using "${trigger}"`,
+                });
+              }
+            }
+          }
+
+          if (ruleType === "data_class_restriction" || ruleField.includes("data_class") || ruleField.includes("classification")) {
+            const restrictedClasses = rule.restricted_classes || rule.classifications || [];
+            if (Array.isArray(restrictedClasses)) {
+              for (const restricted of restrictedClasses) {
+                const restrictedLower = String(restricted).toLowerCase();
+                if (dataClassifications.some(dc => dc.toLowerCase().includes(restrictedLower))) {
+                  const hasHandling = bodyText.includes("redact") || bodyText.includes("mask") || bodyText.includes("encrypt") || allToolsLower.some(t => t.includes("redact") || t.includes("mask"));
+                  if (!hasHandling) {
+                    violations.push({
+                      policyId: policy.id,
+                      policyName: policy.name,
+                      ruleName,
+                      severity,
+                      message: `Skill accesses "${restricted}" data without proper handling`,
+                      suggestion: `Add data redaction/masking in skill instructions or tools for "${restricted}" data`,
+                    });
+                  }
+                }
+              }
+            }
+          }
+
+          if (ruleType === "audit_requirement" || ruleField.includes("audit") || ruleField.includes("logging")) {
+            const auditRequired = rule.required !== false;
+            if (auditRequired) {
+              const hasAudit = allToolsLower.some(t => t.includes("audit") || t.includes("log") || t.includes("compliance_audit")) || bodyText.includes("audit") || bodyText.includes("compliance log");
+              if (!hasAudit) {
+                violations.push({
+                  policyId: policy.id,
+                  policyName: policy.name,
+                  ruleName,
+                  severity: "warning",
+                  message: `Policy requires audit logging but skill does not include audit calls`,
+                  suggestion: `Add compliance audit tool call or audit logging step in skill instructions`,
+                });
+              }
+            }
+          }
+
+          if (ruleType === "human_in_loop" || ruleField.includes("human") || ruleField.includes("approval")) {
+            const threshold = rule.threshold || rule.risk_threshold;
+            if (threshold) {
+              const hasHumanCheck = bodyText.includes("human") || bodyText.includes("approval") || bodyText.includes("escalat") || bodyText.includes("review");
+              if (!hasHumanCheck) {
+                violations.push({
+                  policyId: policy.id,
+                  policyName: policy.name,
+                  ruleName,
+                  severity: "warning",
+                  message: `Policy requires human-in-the-loop for high-risk operations but skill lacks escalation path`,
+                  suggestion: `Add human approval or escalation step in skill instructions`,
+                });
+              }
+            }
+          }
+
+          if (ruleField && ruleValue && !ruleType) {
+            if (ruleField === "name" || ruleField === "value") continue;
+            const ruleOp = (rule.operator || "contains").toLowerCase();
+            const skillFieldValue = (() => {
+              if (ruleField.includes("tool")) return allToolsLower.join(" ");
+              if (ruleField.includes("data")) return dataClassifications.join(" ").toLowerCase();
+              if (ruleField.includes("mcp") || ruleField.includes("server")) return mcpServers.join(" ").toLowerCase();
+              return bodyText + " " + descText;
+            })();
+
+            let violated = false;
+            if (ruleOp === "contains" && !skillFieldValue.includes(ruleValue)) violated = true;
+            if (ruleOp === "not_contains" && skillFieldValue.includes(ruleValue)) violated = true;
+            if (ruleOp === "equals" && skillFieldValue !== ruleValue) violated = true;
+
+            if (violated) {
+              violations.push({
+                policyId: policy.id,
+                policyName: policy.name,
+                ruleName,
+                severity,
+                message: `Rule "${ruleName}": field "${ruleField}" ${ruleOp} "${ruleValue}" — not satisfied`,
+                suggestion: `Review skill definition to satisfy policy requirement`,
+              });
+            }
+          }
+        }
+
+        const ontologyRefs = Array.isArray((policy as any).ontologyRefs) ? (policy as any).ontologyRefs : [];
+        if (ontologyRefs.length > 0 && policy.domain === "tool_permissions") {
+          const allConcepts = await storage.getAllOntologyConcepts();
+          const referencedConcepts = allConcepts.filter(c => ontologyRefs.includes(c.id));
+          for (const concept of referencedConcepts) {
+            const conceptLabel = concept.label.toLowerCase().replace(/\s+/g, "_");
+            const mentionedInSkill = bodyText.includes(conceptLabel) || descText.includes(conceptLabel) || allToolsLower.some(t => t.includes(conceptLabel));
+            if (!mentionedInSkill && concept.category?.toLowerCase().includes("compliance")) {
+              violations.push({
+                policyId: policy.id,
+                policyName: policy.name,
+                ruleName: `Ontology compliance: ${concept.label}`,
+                severity: "warning",
+                message: `Policy references compliance concept "${concept.label}" but skill does not address it`,
+                suggestion: `Consider adding "${concept.label}" handling in skill instructions or tools`,
+              });
+            }
+          }
+        }
+      }
+
+      const critical = violations.filter(v => v.severity === "critical");
+      const warnings = violations.filter(v => v.severity === "warning");
+      const infos = violations.filter(v => v.severity === "info");
+
+      res.json({
+        valid: critical.length === 0,
+        canSave: critical.length === 0,
+        violations,
+        summary: {
+          total: violations.length,
+          critical: critical.length,
+          warnings: warnings.length,
+          info: infos.length,
+          policiesChecked: activePolicies.length,
+        },
+      });
+    } catch (e: any) {
+      console.error("Policy validate-skill error:", e);
+      res.status(500).json({ error: e.message || "Failed to validate skill against policies" });
+    }
+  });
+
   app.post("/api/policies", checkPermission("create_modify_policies"), async (req, res) => {
     try {
       const data = insertPolicySchema.parse(req.body);
