@@ -102,7 +102,7 @@ import { ProgressRing } from "@/components/outcome-cockpit";
 import { useIndustry } from "@/components/industry-provider";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { OutcomeContract, KpiDefinition, Approval, OutcomeEvent, Agent } from "@shared/schema";
+import type { OutcomeContract, KpiDefinition, Approval, OutcomeEvent, Agent, Policy } from "@shared/schema";
 
 function hashCode(str: string): number {
   let hash = 0;
@@ -436,6 +436,10 @@ export default function OutcomeDetail() {
   }>({
     queryKey: [`/api/outcomes/${outcomeId}/snapshots?window=${evidenceWindow}`],
     enabled: !!outcomeId,
+  });
+
+  const { data: governancePolicies } = useQuery<Policy[]>({
+    queryKey: ["/api/policies"],
   });
 
   const { data: invoices } = useQuery<Array<{id: string; status: string; totalAmount: number; periodStart: string; periodEnd: string; lineItems: any[]}>>({
@@ -922,6 +926,7 @@ export default function OutcomeDetail() {
           title="Weighted Progress"
           value={`${Math.round(weightedProgress)}%`}
           icon={Target}
+          subtitle={weightedProgress === 0 ? "Add KPI targets to track" : undefined}
           variant={weightedProgress >= 80 ? "success" : weightedProgress >= 50 ? "warning" : "danger"}
           testId="stat-weighted-progress"
         />
@@ -929,7 +934,7 @@ export default function OutcomeDetail() {
           title="KPIs Tracked"
           value={kpis?.length || 0}
           icon={BarChart3}
-          subtitle={`${breachCount} breaching SLA`}
+          subtitle={!kpis?.length ? "Define KPIs below" : `${breachCount} breaching SLA`}
           variant={breachCount > 0 ? "danger" : "default"}
           testId="stat-kpis-count"
         />
@@ -937,15 +942,15 @@ export default function OutcomeDetail() {
           title="Bound Agents"
           value={boundAgents.length}
           icon={Bot}
-          subtitle={agentContributions?.summary?.underperformingCount ? `${agentContributions.summary.underperformingCount} underperforming` : "All healthy"}
-          variant={agentContributions?.summary?.underperformingCount ? "warning" : "success"}
+          subtitle={boundAgents.length === 0 ? "Assign agents via Create Agent" : agentContributions?.summary?.underperformingCount ? `${agentContributions.summary.underperformingCount} underperforming` : "All healthy"}
+          variant={boundAgents.length === 0 ? "default" : agentContributions?.summary?.underperformingCount ? "warning" : "success"}
           testId="stat-bound-agents"
         />
         <StatCard
           title="Est. Revenue"
           value={`${outcome.currency || "USD"} ${estimatedRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
           icon={DollarSign}
-          subtitle={`${billableEventsCount} billable events`}
+          subtitle={billableEventsCount === 0 ? "Tracked from agent events" : `${billableEventsCount} billable events`}
           variant="default"
           testId="stat-estimated-revenue"
         />
@@ -964,7 +969,12 @@ export default function OutcomeDetail() {
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <div className="flex items-center gap-2">
               <Gavel className="w-4 h-4 text-violet-500" />
-              <span className="text-sm font-medium">Regulatory Impact</span>
+              <span className="text-sm font-medium">Governance Policies</span>
+              {governancePolicies && (
+                <Badge variant="outline" className="text-[10px]">
+                  {governancePolicies.filter(p => p.status === "active").length} active
+                </Badge>
+              )}
             </div>
             <Link href="/governance">
               <Button variant="outline" size="sm" data-testid="link-compliance-matrix">
@@ -972,17 +982,44 @@ export default function OutcomeDetail() {
               </Button>
             </Link>
           </div>
-          <div className="flex items-center gap-2 mt-3 flex-wrap">
-            {(industry?.regulatoryFrameworks || []).map(reg => (
-              <Badge key={reg} variant="outline" className="text-[10px] bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20" data-testid={`regulatory-badge-${reg}`}>
-                <Shield className="w-3 h-3 mr-1" />
-                {reg}
-              </Badge>
-            ))}
-            {(!industry?.regulatoryFrameworks || industry.regulatoryFrameworks.length === 0) && (
-              <span className="text-xs text-muted-foreground">No regulatory frameworks configured for current industry</span>
-            )}
-          </div>
+          {(() => {
+            const activePolicies = (governancePolicies || []).filter(p => p.status === "active");
+            const domainGroups = activePolicies.reduce<Record<string, Policy[]>>((acc, p) => {
+              const d = p.domain || "general";
+              if (!acc[d]) acc[d] = [];
+              acc[d].push(p);
+              return acc;
+            }, {});
+            const domainLabels: Record<string, string> = {
+              data_handling: "Data Handling",
+              tool_permissions: "Tool Permissions",
+              access_control: "Access Control",
+              audit: "Audit & Logging",
+              compliance: "Compliance",
+              general: "General",
+            };
+            return activePolicies.length > 0 ? (
+              <div className="mt-3 space-y-2">
+                {Object.entries(domainGroups).map(([domain, policies]) => (
+                  <div key={domain}>
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">{domainLabels[domain] || domain}</span>
+                    <div className="flex items-center gap-2 mt-1 flex-wrap">
+                      {policies.map(p => (
+                        <Badge key={p.id} variant="outline" className="text-[10px] bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20" data-testid={`policy-badge-${p.id}`}>
+                          <Shield className="w-3 h-3 mr-1" />
+                          {p.name}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="mt-3">
+                <span className="text-xs text-muted-foreground">No active policies configured. <Link href="/governance" className="text-violet-500 underline">Create policies in Governance</Link> to enforce compliance.</span>
+              </div>
+            );
+          })()}
           {boundAgents.length > 0 && (
             <div className="mt-3 pt-3 border-t">
               <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Constrained Agents</span>
