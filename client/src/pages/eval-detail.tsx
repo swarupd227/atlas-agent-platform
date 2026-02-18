@@ -1283,8 +1283,19 @@ export default function EvalDetail() {
                         const isExpanded = expandedScorerOutputs.has(cr.id);
                         return (
                           <TableRow key={cr.id} data-testid={`row-case-result-${cr.id}`}>
-                            <TableCell className="font-medium text-sm" data-testid={`text-case-name-${cr.id}`}>
-                              {tc?.name || cr.caseId}
+                            <TableCell data-testid={`text-case-name-${cr.id}`}>
+                              <div className="flex flex-col gap-1">
+                                <span className="font-medium text-sm">{tc?.name || cr.caseId}: <span className={cr.passed ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}>{cr.passed ? "PASS" : "FAIL"}</span></span>
+                                {tc?.tags && (tc.tags as string[]).length > 0 && (
+                                  <div className="flex items-center gap-1 flex-wrap">
+                                    {(tc.tags as string[]).slice(0, 4).map((tag: string) => (
+                                      <span key={tag} className="inline-flex items-center text-[9px] px-1.5 py-0.5 rounded-sm bg-violet-500/15 text-violet-600 dark:text-violet-400" data-testid={`badge-tag-${tag}-${cr.id}`}>
+                                        {tag}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
                             </TableCell>
                             <TableCell><PassFailBadge passed={cr.passed} /></TableCell>
                             <TableCell className="text-xs text-muted-foreground">{cr.failingStep || "\u2014"}</TableCell>
@@ -1530,7 +1541,7 @@ export default function EvalDetail() {
                   const hasResults = diffResultsA && diffResultsA.length > 0 && diffResultsB && diffResultsB.length > 0;
 
                   let improved = 0, regressed = 0, unchanged = 0;
-                  const comparisonRows: Array<{ caseId: string; name: string; passedA: boolean; passedB: boolean; delta: string }> = [];
+                  const comparisonRows: Array<{ caseId: string; name: string; tags: string[]; passedA: boolean; passedB: boolean; delta: string }> = [];
 
                   if (hasResults) {
                     const mapA = new Map(diffResultsA.map((r) => [r.caseId, r]));
@@ -1546,7 +1557,7 @@ export default function EvalDetail() {
                       if (d === "improved") improved++;
                       else if (d === "regressed") regressed++;
                       else unchanged++;
-                      comparisonRows.push({ caseId, name: tc?.name || caseId, passedA, passedB, delta: d });
+                      comparisonRows.push({ caseId, name: tc?.name || caseId, tags: (tc?.tags as string[] | undefined) || [], passedA, passedB, delta: d });
                     });
                   }
 
@@ -1684,7 +1695,20 @@ export default function EvalDetail() {
                             <TableBody>
                               {filteredRows.map((row) => (
                                 <TableRow key={row.caseId} data-testid={`row-diff-${row.caseId}`}>
-                                  <TableCell className="font-medium text-sm">{row.name}</TableCell>
+                                  <TableCell>
+                                    <div className="flex flex-col gap-1">
+                                      <span className="font-medium text-sm">{row.name}</span>
+                                      {row.tags && row.tags.length > 0 && (
+                                        <div className="flex items-center gap-1 flex-wrap">
+                                          {row.tags.slice(0, 3).map((tag: string) => (
+                                            <span key={tag} className="inline-flex items-center text-[9px] px-1.5 py-0.5 rounded-sm bg-violet-500/15 text-violet-600 dark:text-violet-400">
+                                              {tag}
+                                            </span>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </TableCell>
                                   <TableCell><PassFailBadge passed={row.passedA} /></TableCell>
                                   <TableCell><PassFailBadge passed={row.passedB} /></TableCell>
                                   <TableCell>

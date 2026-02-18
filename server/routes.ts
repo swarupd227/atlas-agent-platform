@@ -928,26 +928,30 @@ export async function registerRoutes(
 
       const testCases: Array<{ name: string; inputData: unknown; expectedOutput: unknown; tags: string[] }> = [];
 
+      const oTags = Array.isArray(agent.ontologyTags) ? agent.ontologyTags as string[] : [];
+      const domainPrefix = oTags.length > 0 ? oTags[0] : (agent.industry || agent.name);
+      const domainTags = oTags.length > 0 ? oTags.slice(0, 3) : [];
+
       testCases.push({
-        name: "Baseline Latency Check",
-        inputData: { type: "latency_probe", payload: "standard_input" },
+        name: `${domainPrefix} Latency Check`,
+        inputData: { type: "latency_probe", payload: "standard_input", domain: domainPrefix },
         expectedOutput: { maxLatencyMs: 5000, status: "pass" },
-        tags: ["baseline", "latency"],
+        tags: ["baseline", "latency", ...domainTags],
       });
       testCases.push({
-        name: "Error Handling - Invalid Input",
-        inputData: { type: "invalid", payload: null },
+        name: `${domainPrefix} Error Handling - Invalid Input`,
+        inputData: { type: "invalid", payload: null, domain: domainPrefix },
         expectedOutput: { status: "graceful_error", errorHandled: true },
-        tags: ["error_handling", "robustness"],
+        tags: ["error_handling", "robustness", ...domainTags],
       });
 
       for (const tool of tools.slice(0, 5)) {
         if (tool.name) {
           testCases.push({
-            name: `Tool Permission - ${tool.name}`,
-            inputData: { type: "tool_access", tool: tool.name, action: "invoke" },
+            name: `${domainPrefix} Tool Access - ${tool.name}`,
+            inputData: { type: "tool_access", tool: tool.name, action: "invoke", domain: domainPrefix },
             expectedOutput: { authorized: true, toolResponds: true },
-            tags: ["tool_permission", tool.name],
+            tags: ["tool_permission", tool.name, ...domainTags],
           });
         }
       }
@@ -955,27 +959,27 @@ export async function registerRoutes(
       for (const node of workflow.slice(0, 5)) {
         if (node.type === "human_review") {
           testCases.push({
-            name: `Escalation Path - ${node.label || node.id}`,
-            inputData: { type: "escalation_trigger", nodeId: node.id },
+            name: `${domainPrefix} Escalation - ${node.label || node.id}`,
+            inputData: { type: "escalation_trigger", nodeId: node.id, domain: domainPrefix },
             expectedOutput: { escalated: true, reviewerNotified: true },
-            tags: ["escalation", "human_review"],
+            tags: ["escalation", "human_review", ...domainTags],
           });
         } else if (node.type) {
           testCases.push({
-            name: `Workflow Node - ${node.label || node.id || node.type}`,
-            inputData: { type: "workflow_step", nodeId: node.id, nodeType: node.type },
+            name: `${domainPrefix} Workflow - ${node.label || node.id || node.type}`,
+            inputData: { type: "workflow_step", nodeId: node.id, nodeType: node.type, domain: domainPrefix },
             expectedOutput: { stepCompleted: true },
-            tags: ["workflow", node.type],
+            tags: ["workflow", node.type, ...domainTags],
           });
         }
       }
 
       if (agent.memoryRagConfig && typeof agent.memoryRagConfig === "object") {
         testCases.push({
-          name: "RAG Retrieval Quality",
-          inputData: { type: "retrieval_probe", query: "test retrieval accuracy" },
+          name: `${domainPrefix} RAG Retrieval Quality`,
+          inputData: { type: "retrieval_probe", query: `test ${domainPrefix} retrieval accuracy`, domain: domainPrefix },
           expectedOutput: { relevanceScore: 0.7, documentsReturned: true },
-          tags: ["rag", "retrieval"],
+          tags: ["rag", "retrieval", ...domainTags],
         });
       }
 
@@ -6535,25 +6539,40 @@ Return a JSON array of 3-5 improvement cycle proposals. Return ONLY valid JSON.`
 
       const agent = agentId ? await storage.getAgent(agentId) : null;
 
+      const agentOntologyTags = agent && Array.isArray(agent.ontologyTags) ? agent.ontologyTags as string[] : [];
+      const agentIndustry = agent?.industry || "";
+      const policyBindings = agent && Array.isArray(agent.policyBindings) ? agent.policyBindings as Array<{ policyName?: string; enforcement?: string }> : [];
+      const ontologyContext = agentOntologyTags.length > 0
+        ? `\n\nDomain Ontology Terms (USE these exact terms in test case names and descriptions):\n${agentOntologyTags.map(t => `- ${t}`).join("\n")}`
+        : "";
+      const policyContext = policyBindings.length > 0
+        ? `\nBound Policies/Regulations:\n${policyBindings.slice(0, 5).map(p => `- ${p.policyName || "Unknown"} (${p.enforcement || "hard"})`).join("\n")}`
+        : "";
+      const industryContext = agentIndustry ? `\nIndustry: ${agentIndustry}` : "";
+
       const completion = await openai.chat.completions.create({
         model: "gpt-4.1",
         response_format: { type: "json_object" },
         messages: [
           {
             role: "system",
-            content: `You are an AI evaluation engineer specializing in creating high-quality test cases for AI agent evaluation suites. Generate new test cases that target failure patterns and coverage gaps. Return JSON with this structure:
+            content: `You are an AI evaluation engineer specializing in creating high-quality test cases for AI agent evaluation suites. Generate new test cases that target failure patterns and coverage gaps.
+
+CRITICAL: Use domain-specific ontology terminology in all test case names and descriptions. Never use generic labels like "Document selection task #7" — instead use terms from the agent's domain ontology, e.g., "Reg DD disclosure selection", "KYC document verification", "Account Opening form validation". Each test case name must reference the specific domain concept being tested.
+
+Return JSON with this structure:
 {
   "cases": [
     {
-      "name": "string - descriptive test case name",
+      "name": "string - domain-specific test case name using ontology terms",
       "inputData": { "userMessage": "string", "context": {} },
       "expectedOutput": { "result": "string or object" },
-      "tags": ["string array of coverage tags"],
+      "tags": ["string array of coverage tags including ontology terms"],
       "weight": 1.0,
-      "rationale": "string - why this case is important"
+      "rationale": "string - why this case is important, referencing domain concepts"
     }
   ],
-  "coverageAnalysis": "string - summary of what gaps these cases address"
+  "coverageAnalysis": "string - summary using domain terminology"
 }`
           },
           {
@@ -6562,7 +6581,7 @@ Return a JSON array of 3-5 improvement cycle proposals. Return ONLY valid JSON.`
 
 Suite: ${suite.name} (type: ${suite.type || "regression"})
 Agent: ${agent ? `${agent.name} - ${agent.description || "No description"}` : "Unknown agent"}
-${agent ? `Model: ${agent.modelProvider}/${agent.modelName}` : ""}
+${agent ? `Model: ${agent.modelProvider}/${agent.modelName}` : ""}${industryContext}${ontologyContext}${policyContext}
 
 Existing cases (${(existingCases || []).length} total):
 ${(existingCases || []).slice(0, 5).map((c: any) => `- ${c.name}: ${JSON.stringify(c.tags || [])}`).join("\n")}
@@ -6574,7 +6593,8 @@ Generate diverse test cases that:
 1. Target identified failure patterns if any
 2. Cover gaps in existing test coverage
 3. Include edge cases and adversarial scenarios
-4. Test different aspects of the agent's capabilities`
+4. Test different aspects of the agent's capabilities
+5. Use domain ontology terms in EVERY test case name — e.g., "Reg DD disclosure selection" not "Task #7"`
           }
         ],
         temperature: 0.7,
