@@ -108,6 +108,99 @@ function handleZodError(res: any, error: unknown) {
   throw error;
 }
 
+type OntologyTagSet = {
+  entity_type?: string;
+  regulation?: string;
+  system?: string;
+  domain?: string;
+  action_category?: string;
+  [key: string]: string | undefined;
+};
+
+function resolveOntologyTags(
+  objectType: string,
+  action: string,
+  opts?: {
+    agentOntologyTags?: Array<{ conceptId: string; conceptLabel: string }>;
+    policyDomain?: string;
+    regulationId?: string;
+    systemId?: string;
+    details?: string;
+  }
+): OntologyTagSet {
+  const tags: OntologyTagSet = {};
+
+  const actionCategoryMap: Record<string, string> = {
+    agent_created: "lifecycle",
+    agent_updated: "lifecycle",
+    eval_baseline_enqueued: "evaluation",
+    eval_completed: "evaluation",
+    version_created: "versioning",
+    deployment_freeze: "deployment",
+    deployment_unfreeze: "deployment",
+    approval_auto_created: "approval",
+    incident_resolved: "remediation",
+    incident_reopened: "remediation",
+    routing_update: "deployment",
+    "marketplace.install_auto_approved": "marketplace",
+    "marketplace.install_requested": "marketplace",
+    "marketplace.install_approved": "marketplace",
+    "marketplace.install_rejected": "marketplace",
+    policy_created: "governance",
+    policy_updated: "governance",
+    bulk_quarantine: "operations",
+    bulk_activate: "operations",
+    bulk_pause: "operations",
+  };
+  tags.action_category = actionCategoryMap[action] || "general";
+
+  if (opts?.agentOntologyTags && opts.agentOntologyTags.length > 0) {
+    tags.entity_type = opts.agentOntologyTags.map(t => t.conceptLabel).join(", ");
+  }
+
+  if (opts?.policyDomain) {
+    tags.domain = opts.policyDomain;
+  }
+
+  if (opts?.regulationId) {
+    tags.regulation = opts.regulationId;
+  }
+
+  if (opts?.systemId) {
+    tags.system = opts.systemId;
+  }
+
+  const systemMap: Record<string, string> = {
+    agent: "AGENT_RUNTIME",
+    deployment: "DEPLOYMENT_PIPELINE",
+    outcome: "OUTCOME_ENGINE",
+    incident: "HEALING_ENGINE",
+    policy: "GOVERNANCE_ENGINE",
+    marketplace_server: "MCP_MARKETPLACE",
+    blueprint: "BLUEPRINT_STUDIO",
+    eval: "EVAL_ENGINE",
+  };
+  if (!tags.system && systemMap[objectType]) {
+    tags.system = systemMap[objectType];
+  }
+
+  if (!tags.regulation && opts?.details) {
+    const regPatterns = [
+      "GLBA", "GDPR", "HIPAA", "SOX", "PCI", "REG_DD", "REG_CC",
+      "BSA", "AML", "CIP", "E-SIGN", "CCPA", "NAIC", "HITECH",
+      "EU AI Act", "Dodd-Frank", "FDA", "OSHA",
+    ];
+    for (const pat of regPatterns) {
+      if (opts.details.toUpperCase().includes(pat.toUpperCase())) {
+        tags.regulation = pat;
+        break;
+      }
+    }
+  }
+
+  return tags;
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -355,6 +448,7 @@ export async function registerRoutes(
           reason,
           changes,
         }),
+        ontologyTags: resolveOntologyTags("outcome", "version_created", { details: reason }),
       });
 
       res.status(201).json(updated);
@@ -993,6 +1087,7 @@ export async function registerRoutes(
         },
       });
 
+      const agentOntologyTags = Array.isArray(agent.ontologyTags) ? (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) : [];
       await storage.createAuditEvent({
         actorType: "system",
         actorId: agent.owner || "system",
@@ -1000,6 +1095,7 @@ export async function registerRoutes(
         objectType: "agent",
         objectId: agent.id,
         details: `Agent "${agent.name}" created with auto-scaffolded eval suite (${testCases.length} test cases) and blueprint review approval`,
+        ontologyTags: resolveOntologyTags("agent", "agent_created", { agentOntologyTags: agentOntologyTags }),
       });
 
       const evalJob = await storage.createJob({
@@ -1017,6 +1113,7 @@ export async function registerRoutes(
         objectType: "agent",
         objectId: agent.id,
         details: `Baseline eval job ${evalJob.id} auto-enqueued for agent "${agent.name}"`,
+        ontologyTags: resolveOntologyTags("agent", "eval_baseline_enqueued", { agentOntologyTags: agentOntologyTags }),
       });
 
       res.status(201).json({
@@ -1052,6 +1149,7 @@ export async function registerRoutes(
           actionDescription = `Audit bundle export requested for agent "${agent.name}"`;
         }
 
+        const bulkAgentTags = Array.isArray(agent.ontologyTags) ? (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) : [];
         await storage.createAuditEvent({
           actorType: "user",
           actorId: "ops_user",
@@ -1059,6 +1157,7 @@ export async function registerRoutes(
           objectType: "agent",
           objectId: agent.id,
           details: actionDescription,
+          ontologyTags: resolveOntologyTags("agent", `bulk_${action}`, { agentOntologyTags: bulkAgentTags }),
         });
       }
 
@@ -1201,6 +1300,7 @@ export async function registerRoutes(
           objectType: "deployment",
           objectId: deployment.id,
           details: `Auto-created ${approvalType} approval for ${deployment.agentName || "agent"} v${deployment.version} → ${env} (risk: ${riskTier})`,
+          ontologyTags: resolveOntologyTags("deployment", "approval_auto_created"),
         });
       }
 
@@ -1299,6 +1399,7 @@ export async function registerRoutes(
         sequenceNum: maxSeq + 1,
         previousHash: lastHash,
         eventHash,
+        ontologyTags: resolveOntologyTags("deployment", action === "freeze" ? "deployment_freeze" : "deployment_unfreeze", { details: reason || "" }),
       });
 
       res.json({ success: true, event: auditEvent });
@@ -1555,6 +1656,7 @@ export async function registerRoutes(
               objectType: "incident",
               objectId: incident.id,
               details: `Incident ${incident.id} resolved via full rollout of deployment ${deployment.id}. Patch: ${deployment.patchId || "N/A"}`,
+              ontologyTags: resolveOntologyTags("incident", "incident_resolved"),
             });
           }
         }
@@ -1582,6 +1684,7 @@ export async function registerRoutes(
               objectType: "incident",
               objectId: incident.id,
               details: `Incident ${incident.id} reopened: deployment ${deployment.id} rolled back`,
+              ontologyTags: resolveOntologyTags("incident", "incident_reopened"),
             });
           }
         }
@@ -1605,6 +1708,7 @@ export async function registerRoutes(
         action: `routing_${action || "update"}`,
         objectType: "deployment",
         objectId: deployment.id,
+        ontologyTags: resolveOntologyTags("deployment", `routing_${action || "update"}`),
         details: `Routing update for ${deployment.agentName || "agent"}: ${action || "manual"} | shadow=${updateData.shadowEnabled ?? deployment.shadowEnabled} canary=${updateData.canaryPercent ?? deployment.canaryPercent}%`,
         sequenceNum: maxSeq + 1,
         previousHash: lastHash,
@@ -2952,7 +3056,27 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     const role = getRequestRole(req);
     const level = getRedactionLevel(role);
     const events = await storage.getAuditEvents();
-    res.json(events.map(e => redactPayload(e, level)));
+
+    const entityType = req.query.entity_type as string | undefined;
+    const regulation = req.query.regulation as string | undefined;
+    const system = req.query.system as string | undefined;
+    const domain = req.query.domain as string | undefined;
+    const actionCategory = req.query.action_category as string | undefined;
+
+    let filtered = events;
+    if (entityType || regulation || system || domain || actionCategory) {
+      filtered = events.filter(e => {
+        const tags = (e.ontologyTags || {}) as Record<string, string>;
+        if (entityType && !(tags.entity_type || "").toLowerCase().includes(entityType.toLowerCase())) return false;
+        if (regulation && (tags.regulation || "").toLowerCase() !== regulation.toLowerCase()) return false;
+        if (system && (tags.system || "").toLowerCase() !== system.toLowerCase()) return false;
+        if (domain && (tags.domain || "").toLowerCase() !== domain.toLowerCase()) return false;
+        if (actionCategory && (tags.action_category || "").toLowerCase() !== actionCategory.toLowerCase()) return false;
+        return true;
+      });
+    }
+
+    res.json(filtered.map(e => redactPayload(e, level)));
   });
 
   // Verify hash chain integrity
@@ -11567,6 +11691,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
             publisher: trustedPublisher.displayName,
             installedServerId: mcpServer.id,
           }),
+          ontologyTags: resolveOntologyTags("marketplace_server", "marketplace.install_auto_approved"),
         });
 
         return res.status(201).json({ status: "auto_approved", mcpServer, installRequest: null });
@@ -11594,6 +11719,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
           namespace: server.namespace,
           installRequestId: installRequest.id,
         }),
+        ontologyTags: resolveOntologyTags("marketplace_server", "marketplace.install_requested"),
       });
 
       res.status(201).json({ status: "pending_approval", mcpServer: null, installRequest });
@@ -11648,6 +11774,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
           installRequestId: req.params.id,
           installedServerId: mcpServer.id,
         }),
+        ontologyTags: resolveOntologyTags("marketplace_server", "marketplace.install_approved"),
       });
 
       res.json({ request: await storage.getMarketplaceInstallRequest(req.params.id), mcpServer });
@@ -11682,6 +11809,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
           installRequestId: req.params.id,
           reason: req.body.reason,
         }),
+        ontologyTags: resolveOntologyTags("marketplace_server", "marketplace.install_rejected"),
       });
 
       res.json(await storage.getMarketplaceInstallRequest(req.params.id));

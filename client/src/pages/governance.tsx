@@ -47,6 +47,8 @@ import {
   Activity,
   ArrowRight,
   Unlink,
+  Database,
+  Tags,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -1190,6 +1192,27 @@ const SEVERITY_COLORS: Record<string, string> = {
   low: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
 };
 
+function OntologyTagBadges({ eventId, ontologyTags }: { eventId: string; ontologyTags: unknown }) {
+  if (!ontologyTags || typeof ontologyTags !== "object") return null;
+  const tags = ontologyTags as Record<string, string>;
+  const entries: Array<{ key: string; label: string; value: string; color: string }> = [];
+  if (tags.entity_type) entries.push({ key: "entity", label: "entity", value: tags.entity_type, color: "bg-violet-500/15 text-violet-600 dark:text-violet-400" });
+  if (tags.regulation) entries.push({ key: "regulation", label: "regulation", value: tags.regulation, color: "bg-amber-500/15 text-amber-600 dark:text-amber-400" });
+  if (tags.system) entries.push({ key: "system", label: "system", value: tags.system.replace(/_/g, " "), color: "bg-sky-500/15 text-sky-600 dark:text-sky-400" });
+  if (tags.domain) entries.push({ key: "domain", label: "domain", value: tags.domain, color: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" });
+  if (tags.action_category) entries.push({ key: "category", label: "category", value: tags.action_category, color: "bg-slate-500/15 text-slate-600 dark:text-slate-400" });
+  if (entries.length === 0) return null;
+  return (
+    <div className="flex items-center gap-1 flex-wrap" data-testid={`ontology-tags-${eventId}`}>
+      {entries.map((tb) => (
+        <span key={tb.key} className={`inline-flex items-center text-[9px] px-1.5 py-0.5 rounded-sm ${tb.color}`} data-testid={`badge-ontology-${tb.key}-${eventId}`}>
+          {tb.label}={tb.value}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 export default function Governance() {
   const { industry, workspaceConfig, activeFrameworks, activeDepartments } = useIndustry();
   const [search, setSearch] = useState("");
@@ -1200,6 +1223,9 @@ export default function Governance() {
   const [auditDateFilter, setAuditDateFilter] = useState("all");
   const [expandedEvent, setExpandedEvent] = useState<string | null>(null);
   const [complianceFilter, setComplianceFilter] = useState<string | null>(null);
+  const [ontologyEntityFilter, setOntologyEntityFilter] = useState<string | null>(null);
+  const [ontologySystemFilter, setOntologySystemFilter] = useState<string | null>(null);
+  const [ontologyRegulationFilter, setOntologyRegulationFilter] = useState<string | null>(null);
   const [traceViewId, setTraceViewId] = useState<string | null>(null);
   const [regulatoryExportOpen, setRegulatoryExportOpen] = useState(false);
   const [selectedExportFormat, setSelectedExportFormat] = useState("csv");
@@ -1644,6 +1670,24 @@ export default function Governance() {
       .map(([action]) => action);
   }, [auditEvents]);
 
+  const ontologyTagOptions = useMemo(() => {
+    if (!auditEvents) return { entityTypes: [] as string[], systems: [] as string[], regulations: [] as string[] };
+    const entitySet = new Set<string>();
+    const systemSet = new Set<string>();
+    const regulationSet = new Set<string>();
+    auditEvents.forEach((e) => {
+      const tags = (e.ontologyTags || {}) as Record<string, string>;
+      if (tags.entity_type) tags.entity_type.split(", ").forEach(t => entitySet.add(t.trim()));
+      if (tags.system) systemSet.add(tags.system);
+      if (tags.regulation) regulationSet.add(tags.regulation);
+    });
+    return {
+      entityTypes: Array.from(entitySet).sort(),
+      systems: Array.from(systemSet).sort(),
+      regulations: Array.from(regulationSet).sort(),
+    };
+  }, [auditEvents]);
+
   const filteredAuditEvents = useMemo(() => {
     if (!auditEvents) return [];
     let events = [...auditEvents];
@@ -1693,8 +1737,29 @@ export default function Governance() {
       });
     }
 
+    if (ontologyEntityFilter) {
+      events = events.filter((e) => {
+        const tags = (e.ontologyTags || {}) as Record<string, string>;
+        return (tags.entity_type || "").toLowerCase().includes(ontologyEntityFilter.toLowerCase());
+      });
+    }
+
+    if (ontologySystemFilter) {
+      events = events.filter((e) => {
+        const tags = (e.ontologyTags || {}) as Record<string, string>;
+        return (tags.system || "").toLowerCase() === ontologySystemFilter.toLowerCase();
+      });
+    }
+
+    if (ontologyRegulationFilter) {
+      events = events.filter((e) => {
+        const tags = (e.ontologyTags || {}) as Record<string, string>;
+        return (tags.regulation || "").toLowerCase() === ontologyRegulationFilter.toLowerCase();
+      });
+    }
+
     return events;
-  }, [auditEvents, auditObjectFilter, auditActionFilter, auditDateFilter, complianceFilter, industry]);
+  }, [auditEvents, auditObjectFilter, auditActionFilter, auditDateFilter, complianceFilter, ontologyEntityFilter, ontologySystemFilter, ontologyRegulationFilter, industry]);
 
   const activeFilterCount = useMemo(() => {
     let count = 0;
@@ -1702,8 +1767,11 @@ export default function Governance() {
     if (auditActionFilter) count++;
     if (auditDateFilter !== "all") count++;
     if (complianceFilter) count++;
+    if (ontologyEntityFilter) count++;
+    if (ontologySystemFilter) count++;
+    if (ontologyRegulationFilter) count++;
     return count;
-  }, [auditObjectFilter, auditActionFilter, auditDateFilter, complianceFilter]);
+  }, [auditObjectFilter, auditActionFilter, auditDateFilter, complianceFilter, ontologyEntityFilter, ontologySystemFilter, ontologyRegulationFilter]);
 
   const industryRetentionRules = useMemo(() => {
     if (!industry) return [];
@@ -2860,6 +2928,54 @@ export default function Governance() {
                 </SelectContent>
               </Select>
             )}
+            {ontologyTagOptions.systems.length > 0 && (
+              <Select value={ontologySystemFilter || "all"} onValueChange={(v) => setOntologySystemFilter(v === "all" ? null : v)}>
+                <SelectTrigger className="w-[180px]" data-testid="select-ontology-system">
+                  <Database className="w-4 h-4 mr-1.5 text-muted-foreground shrink-0" />
+                  <SelectValue placeholder="System" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all" data-testid="select-system-all">All Systems</SelectItem>
+                  {ontologyTagOptions.systems.map((sys) => (
+                    <SelectItem key={sys} value={sys} data-testid={`select-system-${sys.toLowerCase().replace(/\s+/g, "-")}`}>
+                      {sys.replace(/_/g, " ")}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            {ontologyTagOptions.regulations.length > 0 && (
+              <Select value={ontologyRegulationFilter || "all"} onValueChange={(v) => setOntologyRegulationFilter(v === "all" ? null : v)}>
+                <SelectTrigger className="w-[170px]" data-testid="select-ontology-regulation">
+                  <Scale className="w-4 h-4 mr-1.5 text-muted-foreground shrink-0" />
+                  <SelectValue placeholder="Regulation" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all" data-testid="select-regulation-all">All Regulations</SelectItem>
+                  {ontologyTagOptions.regulations.map((reg) => (
+                    <SelectItem key={reg} value={reg} data-testid={`select-regulation-${reg.toLowerCase().replace(/\s+/g, "-")}`}>
+                      {reg}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            {ontologyTagOptions.entityTypes.length > 0 && (
+              <Select value={ontologyEntityFilter || "all"} onValueChange={(v) => setOntologyEntityFilter(v === "all" ? null : v)}>
+                <SelectTrigger className="w-[180px]" data-testid="select-ontology-entity">
+                  <Tags className="w-4 h-4 mr-1.5 text-muted-foreground shrink-0" />
+                  <SelectValue placeholder="Entity Type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all" data-testid="select-entity-all">All Entities</SelectItem>
+                  {ontologyTagOptions.entityTypes.map((ent) => (
+                    <SelectItem key={ent} value={ent} data-testid={`select-entity-${ent.toLowerCase().replace(/\s+/g, "-")}`}>
+                      {ent}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
@@ -3012,6 +3128,7 @@ export default function Governance() {
                               )}
                             </div>
                           )}
+                          <OntologyTagBadges eventId={event.id} ontologyTags={event.ontologyTags} />
                           {event.details && !isExpanded && (
                             <p className="text-[11px] text-muted-foreground/70 truncate">
                               {event.details.length > 100 ? event.details.slice(0, 100) + "..." : event.details}

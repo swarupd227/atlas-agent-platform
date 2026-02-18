@@ -265,6 +265,7 @@ export const auditEvents = pgTable("audit_events", {
   correlationId: varchar("correlation_id"),
   traceId: varchar("trace_id"),
   industryId: text("industry_id"),
+  ontologyTags: jsonb("ontology_tags"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
