@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { Link } from "wouter";
 import {
   Shield,
@@ -1549,6 +1549,7 @@ export default function Governance() {
 
   const [ontologyFilter, setOntologyFilter] = useState<string>("all");
   const [selectedOntologyRefs, setSelectedOntologyRefs] = useState<string[]>([]);
+  const [createRuleText, setCreateRuleText] = useState("");
 
   const filtered = useMemo(() => {
     let result = policies || [];
@@ -1990,14 +1991,24 @@ export default function Governance() {
                   onSubmit={(e) => {
                     e.preventDefault();
                     const fd = new FormData(e.currentTarget);
+                    const ruleLines = createRuleText.trim().split("\n").filter(Boolean);
+                    const initialRules = ruleLines.map((line, i) => ({
+                      name: `Rule ${i + 1}`,
+                      field: "",
+                      operator: "contains",
+                      value: line.trim(),
+                      action: "block",
+                    }));
                     createMutation.mutate({
                       name: fd.get("name") as string,
                       domain: fd.get("domain") as string,
                       description: fd.get("description") as string,
                       scopeType: fd.get("scopeType") as string,
                       ontologyRefs: selectedOntologyRefs,
+                      ...(initialRules.length > 0 ? { policyJson: { rules: initialRules } } : {}),
                     });
                     setSelectedOntologyRefs([]);
+                    setCreateRuleText("");
                   }}
                 >
                   <div className="flex flex-col gap-2">
@@ -2007,6 +2018,19 @@ export default function Governance() {
                   <div className="flex flex-col gap-2">
                     <Label>Description</Label>
                     <Textarea name="description" placeholder="What does this policy enforce?" data-testid="input-policy-description" />
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <Label>Policy Rules</Label>
+                    <p className="text-[11px] text-muted-foreground">Type entity names to get ontology suggestions (e.g. "All DEPOSIT_ACCOUNT openings require REG_DD disclosure"). One rule per line.</p>
+                    <OntologyAutocompleteInput
+                      value={createRuleText}
+                      onChange={setCreateRuleText}
+                      placeholder='e.g. All DEPOSIT_ACCOUNT openings require REG_DD disclosure'
+                      concepts={allOntologyConcepts || []}
+                      testId="input-policy-rule-text"
+                      multiline
+                      className="min-h-[80px] font-mono text-xs"
+                    />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="flex flex-col gap-2">
@@ -4525,6 +4549,9 @@ function PolicyDetailDialog({ policyId, open, onOpenChange, onDelete }: { policy
   const { data: agents } = useQuery<Agent[]>({
     queryKey: ['/api/agents'],
   });
+  const { data: dialogOntologyConcepts } = useQuery<OntologyConcept[]>({
+    queryKey: ['/api/ontology-concepts/all'],
+  });
 
   const [editRules, setEditRules] = useState<Array<{ name: string; field: string; operator: string; value: string; action: string }>>([]);
   const [rulesInitialized, setRulesInitialized] = useState(false);
@@ -4770,12 +4797,14 @@ function PolicyDetailDialog({ policyId, open, onOpenChange, onDelete }: { policy
               <div className="space-y-3">
                 {isEditingStructured ? (
                   <div className="space-y-2">
-                    <Label className="text-xs text-muted-foreground">Advanced Rule Editor (JSON)</Label>
-                    <Textarea
+                    <Label className="text-xs text-muted-foreground">Advanced Rule Editor (JSON) - type entity names for ontology autocomplete</Label>
+                    <OntologyAutocompleteInput
                       value={structuredJsonEdit}
-                      onChange={(e) => setStructuredJsonEdit(e.target.value)}
+                      onChange={setStructuredJsonEdit}
+                      concepts={dialogOntologyConcepts || []}
+                      testId="textarea-structured-rules"
+                      multiline
                       className="font-mono text-[11px] min-h-[300px]"
-                      data-testid="textarea-structured-rules"
                     />
                     <div className="flex items-center gap-2 flex-wrap">
                       <Button onClick={() => saveRulesMutation.mutate()} disabled={saveRulesMutation.isPending} data-testid="button-save-rules">
@@ -4791,7 +4820,7 @@ function PolicyDetailDialog({ policyId, open, onOpenChange, onDelete }: { policy
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    <PolicyRuleViewer rules={(policy?.policyJson as Record<string, unknown>) || {}} />
+                    <PolicyRuleViewer rules={(policy?.policyJson as Record<string, unknown>) || {}} ontologyConcepts={dialogOntologyConcepts} />
                     <div className="flex items-center gap-2 flex-wrap">
                       <PermissionGate action="create_modify_policies">
                         <Button variant="outline" onClick={() => setIsEditingStructured(true)} data-testid="button-edit-structured-rules">
@@ -4818,20 +4847,24 @@ function PolicyDetailDialog({ policyId, open, onOpenChange, onDelete }: { policy
               <>
                 {editRules.map((rule, idx) => (
                   <div key={idx} className="flex items-center gap-2 flex-wrap" data-testid={`rule-row-${idx}`}>
-                    <Input
-                      value={rule.name}
-                      onChange={(e) => updateRule(idx, "name", e.target.value)}
-                      placeholder="Rule name"
-                      className="flex-1 min-w-[120px]"
-                      data-testid={`input-rule-name-${idx}`}
-                    />
-                    <Input
-                      value={rule.field}
-                      onChange={(e) => updateRule(idx, "field", e.target.value)}
-                      placeholder="Field"
-                      className="w-[120px]"
-                      data-testid={`input-rule-field-${idx}`}
-                    />
+                    <div className="flex-1 min-w-[120px]">
+                      <OntologyAutocompleteInput
+                        value={rule.name}
+                        onChange={(v) => updateRule(idx, "name", v)}
+                        placeholder="Rule name (type for ontology)"
+                        concepts={dialogOntologyConcepts || []}
+                        testId={`input-rule-name-${idx}`}
+                      />
+                    </div>
+                    <div className="w-[140px]">
+                      <OntologyAutocompleteInput
+                        value={rule.field}
+                        onChange={(v) => updateRule(idx, "field", v)}
+                        placeholder="Entity type"
+                        concepts={dialogOntologyConcepts || []}
+                        testId={`input-rule-field-${idx}`}
+                      />
+                    </div>
                     <Select value={rule.operator} onValueChange={(v) => updateRule(idx, "operator", v)}>
                       <SelectTrigger className="w-[130px]" data-testid={`select-rule-operator-${idx}`}>
                         <SelectValue />
@@ -5325,6 +5358,115 @@ function WhatIfAnalysis({ policies }: { policies: Policy[] }) {
   );
 }
 
+function OntologyAutocompleteInput({
+  value,
+  onChange,
+  placeholder,
+  concepts,
+  className,
+  testId,
+  multiline,
+}: {
+  value: string;
+  onChange: (val: string) => void;
+  placeholder?: string;
+  concepts: OntologyConcept[];
+  className?: string;
+  testId?: string;
+  multiline?: boolean;
+}) {
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [cursorPos, setCursorPos] = useState(0);
+  const [suggestionFilter, setSuggestionFilter] = useState("");
+  const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
+
+  const getTokenAtCursor = (text: string, pos: number) => {
+    const before = text.slice(0, pos);
+    const match = before.match(/[\w_]+$/);
+    return match ? match[0] : "";
+  };
+
+  const handleInputChange = (newVal: string, newPos: number) => {
+    onChange(newVal);
+    setCursorPos(newPos);
+    const token = getTokenAtCursor(newVal, newPos);
+    if (token.length >= 2) {
+      setSuggestionFilter(token.toLowerCase());
+      setShowSuggestions(true);
+    } else {
+      setShowSuggestions(false);
+    }
+  };
+
+  const filteredConcepts = useMemo(() => {
+    if (!suggestionFilter || suggestionFilter.length < 2) return [];
+    return concepts.filter(c =>
+      c.label.toLowerCase().includes(suggestionFilter) ||
+      (c.category || "").toLowerCase().includes(suggestionFilter)
+    ).slice(0, 8);
+  }, [concepts, suggestionFilter]);
+
+  const insertConcept = (concept: OntologyConcept) => {
+    const token = getTokenAtCursor(value, cursorPos);
+    const before = value.slice(0, cursorPos - token.length);
+    const after = value.slice(cursorPos);
+    const label = concept.label.replace(/\s+/g, "_").toUpperCase();
+    const newVal = before + label + after;
+    onChange(newVal);
+    setShowSuggestions(false);
+    setSuggestionFilter("");
+    setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
+  const sharedProps = {
+    value,
+    placeholder,
+    className: className || "",
+    "data-testid": testId,
+    onBlur: () => setTimeout(() => setShowSuggestions(false), 200),
+  };
+
+  return (
+    <div className="relative">
+      {multiline ? (
+        <Textarea
+          ref={inputRef as any}
+          {...sharedProps}
+          onChange={(e) => handleInputChange(e.target.value, e.target.selectionStart || 0)}
+          onKeyUp={(e) => setCursorPos((e.target as HTMLTextAreaElement).selectionStart || 0)}
+          onClick={(e) => setCursorPos((e.target as HTMLTextAreaElement).selectionStart || 0)}
+        />
+      ) : (
+        <Input
+          ref={inputRef as any}
+          {...sharedProps}
+          onChange={(e) => handleInputChange(e.target.value, e.target.selectionStart || 0)}
+          onKeyUp={(e) => setCursorPos((e.target as HTMLInputElement).selectionStart || 0)}
+          onClick={(e) => setCursorPos((e.target as HTMLInputElement).selectionStart || 0)}
+        />
+      )}
+      {showSuggestions && filteredConcepts.length > 0 && (
+        <div className="absolute z-50 left-0 right-0 top-full mt-1 bg-popover border rounded-md shadow-lg max-h-48 overflow-y-auto" data-testid="ontology-suggestions">
+          {filteredConcepts.map((concept) => (
+            <div
+              key={concept.id}
+              className="flex items-center gap-2 px-3 py-2 cursor-pointer hover-elevate text-sm"
+              onMouseDown={(e) => { e.preventDefault(); insertConcept(concept); }}
+              data-testid={`suggestion-${concept.id}`}
+            >
+              <span className="font-mono text-xs text-purple-600 dark:text-purple-400 shrink-0">{concept.label.replace(/\s+/g, "_").toUpperCase()}</span>
+              <span className="text-muted-foreground text-[11px] truncate">{concept.category}</span>
+            </div>
+          ))}
+          <div className="px-3 py-1.5 border-t text-[10px] text-muted-foreground">
+            Type to search ontology vocabulary
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function renderRuleValue(key: string, value: unknown): JSX.Element {
   if (Array.isArray(value)) {
     return (
@@ -5358,7 +5500,45 @@ function renderRuleValue(key: string, value: unknown): JSX.Element {
   return <span className="text-xs" data-testid={`rule-field-${key}`}>{String(value).replace(/_/g, " ")}</span>;
 }
 
-function PolicyRuleViewer({ rules }: { rules: Record<string, unknown> }) {
+function PolicyRuleViewer({ rules, ontologyConcepts }: { rules: Record<string, unknown>; ontologyConcepts?: OntologyConcept[] }) {
+  const ontologyLabels = useMemo(() => {
+    if (!ontologyConcepts) return [];
+    return ontologyConcepts.map(c => ({
+      pattern: c.label.replace(/\s+/g, "_").toUpperCase(),
+      label: c.label,
+      category: c.category,
+    })).filter(c => c.pattern.length >= 3);
+  }, [ontologyConcepts]);
+
+  const highlightOntologyTerms = (text: string): JSX.Element => {
+    if (!ontologyLabels.length || typeof text !== "string") return <span>{text}</span>;
+    const escaped = ontologyLabels.map(l => l.pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    const regex = new RegExp(`(${escaped.join("|")})`, "gi");
+    const parts = text.split(regex);
+    return (
+      <span>
+        {parts.map((part, i) => {
+          const match = ontologyLabels.find(l => l.pattern.toLowerCase() === part.toLowerCase());
+          if (match) {
+            return (
+              <Badge key={i} variant="outline" className="text-[10px] bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-400/30 font-mono mx-0.5 inline-flex" data-testid={`ontology-highlight-${match.pattern}`}>
+                {part}
+              </Badge>
+            );
+          }
+          return <span key={i}>{part}</span>;
+        })}
+      </span>
+    );
+  };
+
+  const renderWithHighlight = (key: string, value: unknown): JSX.Element => {
+    if (typeof value === "string" && ontologyLabels.length > 0) {
+      return <span className="text-xs" data-testid={`rule-field-${key}`}>{highlightOntologyTerms(value)}</span>;
+    }
+    return renderRuleValue(key, value);
+  };
+
   const rulesList = (rules as { rules?: unknown[] }).rules;
   if (!rulesList || !Array.isArray(rulesList)) {
     return (
@@ -5366,7 +5546,7 @@ function PolicyRuleViewer({ rules }: { rules: Record<string, unknown> }) {
         {Object.entries(rules).map(([key, value]) => (
           <div key={key} className="flex items-start gap-3">
             <span className="text-[11px] text-muted-foreground font-medium min-w-[90px] shrink-0 capitalize">{key.replace(/_/g, " ")}</span>
-            {renderRuleValue(key, value)}
+            {renderWithHighlight(key, value)}
           </div>
         ))}
       </div>
@@ -5416,7 +5596,7 @@ function PolicyRuleViewer({ rules }: { rules: Record<string, unknown> }) {
                   <span className="text-[11px] text-muted-foreground font-medium min-w-[90px] shrink-0 capitalize">
                     {key.replace(/_/g, " ")}
                   </span>
-                  {renderRuleValue(key, value)}
+                  {renderWithHighlight(key, value)}
                 </div>
               ))}
             </div>
