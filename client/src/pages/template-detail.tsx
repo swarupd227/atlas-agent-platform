@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
   SelectContent,
@@ -256,6 +257,8 @@ export default function TemplateDetail() {
   const [deployDialogOpen, setDeployDialogOpen] = useState(false);
   const [skillLibraryOpen, setSkillLibraryOpen] = useState(false);
   const [skillSearch, setSkillSearch] = useState("");
+  const [policySearchOpen, setPolicySearchOpen] = useState(false);
+  const [policySearchQuery, setPolicySearchQuery] = useState("");
   const [editData, setEditData] = useState<Record<string, any>>(isNew ? {
     name: "",
     description: "",
@@ -294,6 +297,10 @@ export default function TemplateDetail() {
   const { data: allSkills } = useQuery<Skill[]>({
     queryKey: ["/api/skills"],
     enabled: skillLibraryOpen,
+  });
+
+  const { data: policyLibrary } = useQuery<Array<{ id: string; name: string; domain: string; description: string }>>({
+    queryKey: ["/api/policies"],
   });
 
   useEffect(() => {
@@ -655,7 +662,7 @@ export default function TemplateDetail() {
     };
 
     if (fixType === "policies" && !pb.some(p => p.enforcement === "hard")) {
-      newEditData.policyBindings = [...newEditData.policyBindings, { policyName: "", enforcement: "hard" }];
+      setPolicySearchOpen(true);
     }
 
     setEditData(newEditData);
@@ -664,7 +671,7 @@ export default function TemplateDetail() {
     const fixMessages: Record<string, { title: string; description: string }> = {
       tools: { title: "Fix: MCP Servers", description: "Add tools/MCP servers in the edit form below." },
       permissions: { title: "Fix: Data Classifications", description: "Configure data access permissions in the edit form." },
-      policies: { title: "Fix: Approval Flows", description: "A hard-enforcement policy binding has been added. Complete the policy name." },
+      policies: { title: "Fix: Approval Flows", description: "Select a policy from the library and set it to 'Hard' enforcement." },
       certs: { title: "Fix: Audit Retention", description: "Add compliance certifications in the edit form." },
     };
     const msg = fixMessages[fixType];
@@ -1181,18 +1188,14 @@ export default function TemplateDetail() {
               </CardHeader>
               <CardContent className="flex flex-col gap-2">
                 {(editData.policyBindings || []).map((p: PolicyBinding, idx: number) => (
-                  <div key={idx} className="flex items-center gap-2">
-                    <Input
-                      value={p.policyName}
-                      onChange={(e) => {
-                        const updated = [...editData.policyBindings];
-                        updated[idx] = { ...updated[idx], policyName: e.target.value };
-                        setEditData({ ...editData, policyBindings: updated });
-                      }}
-                      placeholder="Policy name"
-                      className="flex-1"
-                      data-testid={`input-policy-name-${idx}`}
-                    />
+                  <div key={idx} className="flex items-center gap-2 p-3 rounded-md bg-muted/30" data-testid={`policy-binding-${idx}`}>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-medium">{p.policyName}</span>
+                        {(p as any).domain && <Badge variant="outline" className="text-[9px]">{(p as any).domain}</Badge>}
+                      </div>
+                      {(p as any).description && <p className="text-[10px] text-muted-foreground mt-0.5 line-clamp-1">{(p as any).description}</p>}
+                    </div>
                     <Select
                       value={p.enforcement}
                       onValueChange={(v) => {
@@ -1223,14 +1226,81 @@ export default function TemplateDetail() {
                     </Button>
                   </div>
                 ))}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setEditData({ ...editData, policyBindings: [...(editData.policyBindings || []), { policyName: "", enforcement: "soft" }] })}
-                  data-testid="button-add-policy"
-                >
-                  <Plus className="w-4 h-4 mr-1.5" /> Add Policy
-                </Button>
+                {policySearchOpen ? (
+                  <div className="flex flex-col gap-2 p-3 rounded-md border border-dashed">
+                    <Input
+                      value={policySearchQuery}
+                      onChange={(e) => setPolicySearchQuery(e.target.value)}
+                      placeholder="Search policies by name or domain..."
+                      data-testid="input-search-policies-template"
+                      autoFocus
+                    />
+                    <ScrollArea className="max-h-48">
+                      <div className="flex flex-col gap-1">
+                        {(() => {
+                          const boundIds = new Set((editData.policyBindings || []).map((b: any) => b.policyId).filter(Boolean));
+                          const boundNames = new Set((editData.policyBindings || []).map((b: PolicyBinding) => b.policyName));
+                          const available = (policyLibrary || []).filter(p => !boundIds.has(p.id) && !boundNames.has(p.name));
+                          const filtered = available.filter(p =>
+                            p.name.toLowerCase().includes(policySearchQuery.toLowerCase()) ||
+                            p.domain.toLowerCase().includes(policySearchQuery.toLowerCase()) ||
+                            p.description.toLowerCase().includes(policySearchQuery.toLowerCase())
+                          );
+                          if (filtered.length === 0) return (
+                            <p className="text-xs text-muted-foreground text-center py-3">
+                              {available.length === 0 ? "All policies already bound" : "No matching policies found"}
+                            </p>
+                          );
+                          return filtered.map(policy => (
+                            <div
+                              key={policy.id}
+                              className="flex items-center gap-2 p-2 rounded-md cursor-pointer hover-elevate"
+                              onClick={() => {
+                                setEditData({
+                                  ...editData,
+                                  policyBindings: [
+                                    ...(editData.policyBindings || []),
+                                    { policyId: policy.id, policyName: policy.name, enforcement: "soft", domain: policy.domain, description: policy.description },
+                                  ],
+                                });
+                                setPolicySearchOpen(false);
+                                setPolicySearchQuery("");
+                              }}
+                              data-testid={`select-policy-${policy.id}`}
+                            >
+                              <Plus className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-sm">{policy.name}</span>
+                                  <Badge variant="outline" className="text-[9px]">{policy.domain}</Badge>
+                                </div>
+                                <p className="text-[10px] text-muted-foreground line-clamp-1">{policy.description}</p>
+                              </div>
+                            </div>
+                          ));
+                        })()}
+                      </div>
+                    </ScrollArea>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => { setPolicySearchOpen(false); setPolicySearchQuery(""); }}
+                      data-testid="button-cancel-policy-search"
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPolicySearchOpen(true)}
+                    className="w-full"
+                    data-testid="button-add-policy"
+                  >
+                    <Plus className="w-4 h-4 mr-1.5" /> Add Policy from Library
+                  </Button>
+                )}
               </CardContent>
             </Card>
 
@@ -2436,29 +2506,38 @@ export default function TemplateDetail() {
                 <div>
                   <div className="flex items-center justify-between gap-2 mb-1 flex-wrap">
                     <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Policy Bindings</h4>
-                    <Button size="sm" variant="ghost" onClick={() => setEnhancePreview({ ...enhancePreview, policyBindings: [...enhancePreview.policyBindings, { policyName: "", enforcement: "soft" }] })} data-testid="button-add-preview-policy">
-                      <Plus className="w-3 h-3 mr-1" /> Add
-                    </Button>
                   </div>
                   <div className="flex flex-col gap-1.5">
-                    {enhancePreview.policyBindings.map((p: any, i: number) => (
-                      <div key={i} className="flex items-center gap-2">
-                        <Input value={p.policyName || p.name || ""} onChange={(e) => { const bindings = [...enhancePreview.policyBindings]; bindings[i] = { ...bindings[i], policyName: e.target.value }; setEnhancePreview({ ...enhancePreview, policyBindings: bindings }); }} placeholder="Policy name" className="text-sm flex-1" data-testid={`preview-policy-name-${i}`} />
-                        <Select value={p.enforcement || "soft"} onValueChange={(val) => { const bindings = [...enhancePreview.policyBindings]; bindings[i] = { ...bindings[i], enforcement: val }; setEnhancePreview({ ...enhancePreview, policyBindings: bindings }); }}>
-                          <SelectTrigger className="w-[100px] text-xs" data-testid={`preview-policy-enforcement-${i}`}>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="hard">hard</SelectItem>
-                            <SelectItem value="soft">soft</SelectItem>
-                            <SelectItem value="advisory">advisory</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <Button size="icon" variant="ghost" onClick={() => { const bindings = enhancePreview.policyBindings.filter((_: any, idx: number) => idx !== i); setEnhancePreview({ ...enhancePreview, policyBindings: bindings }); }} data-testid={`button-remove-preview-policy-${i}`}>
-                          <X className="w-3.5 h-3.5" />
-                        </Button>
-                      </div>
-                    ))}
+                    {enhancePreview.policyBindings.map((p: any, i: number) => {
+                      const matchedPolicy = (policyLibrary || []).find(
+                        lib => (p.policyId && lib.id === p.policyId) || lib.name.toLowerCase() === (p.policyName || p.name || "").toLowerCase()
+                      );
+                      return (
+                        <div key={i} className="flex items-center gap-2 p-2 rounded-md bg-muted/30" data-testid={`preview-policy-${i}`}>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-medium">{p.policyName || p.name || "Unnamed Policy"}</span>
+                              {(matchedPolicy?.domain || p.domain) && <Badge variant="outline" className="text-[9px]">{matchedPolicy?.domain || p.domain}</Badge>}
+                              {!matchedPolicy && <Badge variant="outline" className="text-[9px] border-amber-500/50 text-amber-600 dark:text-amber-400">Not in library</Badge>}
+                            </div>
+                            {(matchedPolicy?.description || p.description) && <p className="text-[10px] text-muted-foreground mt-0.5 line-clamp-1">{matchedPolicy?.description || p.description}</p>}
+                          </div>
+                          <Select value={p.enforcement || "soft"} onValueChange={(val) => { const bindings = [...enhancePreview.policyBindings]; bindings[i] = { ...bindings[i], enforcement: val }; setEnhancePreview({ ...enhancePreview, policyBindings: bindings }); }}>
+                            <SelectTrigger className="w-[100px] text-xs" data-testid={`preview-policy-enforcement-${i}`}>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="hard">Hard</SelectItem>
+                              <SelectItem value="soft">Soft</SelectItem>
+                              <SelectItem value="advisory">Advisory</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <Button size="icon" variant="ghost" onClick={() => { const bindings = enhancePreview.policyBindings.filter((_: any, idx: number) => idx !== i); setEnhancePreview({ ...enhancePreview, policyBindings: bindings }); }} data-testid={`button-remove-preview-policy-${i}`}>
+                            <X className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}
