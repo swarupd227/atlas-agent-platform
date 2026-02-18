@@ -1,0 +1,55 @@
+💻 DEMO SCREEN:
+LIVE TRACE — New Account Opening: “Maria Gonzalez, Personal Checking”
+  Banker: Jennifer Kim | Branch: Main Street | Time: 10:23 AM
+
+  STEP 1 [0.6s]  Skill: Customer Data Extraction
+    → MCP Tool: Datava™ API → 360° customer profile retrieved
+    → Existing products: Auto loan (2023), Savings account (2019)
+    → Risk profile: Low | CIP status: Verified (SSN, DOB, Address on file)
+
+  STEP 2 [1.1s]  Skill: Document Selection Logic
+    → State: Texas | Account type: Personal checking | Customer age: 34
+    → Required documents identified (9):
+       Signature Card | Reg DD Disclosure | Reg E Disclosure | Reg CC Hold Policy
+       | Privacy Notice (GLBA) | Patriot Act Notice | W-9 | Debit Card Agreement
+       | Online Banking Enrollment
+
+  STEP 3 [2.8s]  Skill: Form Auto-Population
+    → MCP Tool: SignPlus™ API → All 9 documents generated with pre-filled customer data
+    → Source: Datava™ (name, address, SSN, DOB) + Core via Gateway™ (account number)
+    → Data validation: All fields verified against core record ✅
+
+  STEP 4 [3.4s]  Skill: Signature Routing
+    → MCP Tool: Sign™ API → Document package sent to customer tablet for signing
+    → Signing order configured: W-9 first (tax cert), then remaining docs
+
+  STEP 5 [3.9s]  Skill: ECM Archival (queued — executes after signatures complete)
+    → Archive destination: Laserfiche via SignPlus™ Director workflow
+    → Retention policy: 7 years (BSA/AML) | Auto-indexed by account number + date
+
+  GOVERNANCE: PII handled per GLBA ✅ | BSA/AML CIP verified ✅ | Reg DD compliant ✅
+  TOTAL TIME: 3.9 seconds (agent) + customer signing time
+  COST: $0.04 (vs. 25 min banker time = ~$12.50 at loaded cost)
+
+🎤 PRESENTER SAYS:
+"The banker typed one thing: ‘Maria Gonzalez, personal checking.’ In 3.9 seconds, the agent pulled Maria’s complete profile from Datava, identified that she’s an existing customer with verified CIP, determined the 9 documents required for a Texas personal checking account, generated all 9 documents in SignPlus with pre-filled data validated against the core, routed them to the signing tablet in the correct order, and queued the archival to Laserfiche. The banker’s job is now to have a conversation with Maria while she signs. From 25 minutes of form-filling to 4 seconds of intelligent automation."
+
+💰 VALUE TO KINECTIVE:
+• Time savings: 22 minutes per account opening × ~15 openings/day/branch = 5.5 hours/day recovered
+• Error reduction: 12% manual error rate → <1% (agent validates against core before generating)
+• Compliance: Every document selection decision is logged with regulatory justification
+• For Kinective: Makes SignPlus™ dramatically more valuable to FIs. Higher adoption, stickier platform.
+
+⚠️ ATLAS BUILD REQUIREMENT:
+NEW MCP SERVER NEEDED: Kinective SignPlus™ MCP Server
+  • Endpoints: template_list, document_generate, document_route, archive_queue
+  • Authentication: OAuth 2.0 via Kinective’s existing API auth layer
+  • Estimated build: 3–4 weeks
+
+NEW MCP SERVER NEEDED: Kinective Sign™ MCP Server
+  • Endpoints: signing_session_create, signing_status, signature_verify
+  • Estimated build: 2–3 weeks
+
+NEW SKILL: Regulatory Disclosure Picker (state-by-state document requirements)
+  • Must encode disclosure requirements for all 50 states
+  • Estimated build: 2 weeks (data collection) + 1 week (skill authoring)
