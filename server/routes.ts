@@ -13186,6 +13186,35 @@ Return ONLY a valid JSON object.`
   });
 
   // Ontology Concepts routes
+  app.get("/api/ontology/terms", async (req, res) => {
+    try {
+      const industry = req.query.industry as string;
+      const prefix = (req.query.prefix as string || "").toLowerCase();
+      if (!industry) {
+        return res.status(400).json({ message: "industry query parameter is required" });
+      }
+      const concepts = await storage.getOntologyConcepts(industry);
+      const filtered = prefix.length >= 1
+        ? concepts.filter(c =>
+            c.label.toLowerCase().includes(prefix) ||
+            (c.category || "").toLowerCase().includes(prefix) ||
+            (c.synonyms || []).some((s: string) => s.toLowerCase().includes(prefix))
+          )
+        : concepts;
+      const terms = filtered.slice(0, 20).map(c => ({
+        id: c.id,
+        label: c.label,
+        category: c.category,
+        description: c.description,
+        synonyms: c.synonyms || [],
+        tags: c.tags || [],
+      }));
+      res.json(terms);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.get("/api/ontology/concepts", async (req, res) => {
     try {
       const industryId = req.query.industryId as string;

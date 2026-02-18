@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRoute, useLocation, Link } from "wouter";
 import type { Skill, SkillVersion } from "@shared/schema";
+import { OntologyAutocomplete } from "@/components/ontology-autocomplete";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -344,6 +345,15 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
     enabled: !!id,
   });
 
+  const { data: ontologyTerms = [] } = useQuery<Array<{ id: string; label: string; category: string; description: string; synonyms: string[]; tags: string[] }>>({
+    queryKey: ["/api/ontology/terms", industry],
+    queryFn: async () => {
+      const res = await fetch(`/api/ontology/terms?industry=${encodeURIComponent(industry)}&prefix=`);
+      return res.json();
+    },
+    enabled: !!industry,
+  });
+
   useEffect(() => {
     if (skill) {
       setName(skill.name);
@@ -398,6 +408,7 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
     description,
     industry,
     domain,
+    industryContextId: industry,
     allowedTools: allowedTools.split("\n").map(t => t.trim()).filter(Boolean),
     requiredMcpServers: requiredMcpServers.split("\n").map(t => t.trim()).filter(Boolean),
     requiredDataClassifications: requiredDataClassifications.split("\n").map(t => t.trim()).filter(Boolean),
@@ -842,9 +853,9 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="skill-description">Description</Label>
-                    <Textarea id="skill-description" value={description} onChange={e => handleDescriptionChange(e.target.value)} rows={3} placeholder="Describe what this skill does, when it activates, and what outcome it produces..." data-testid="input-description" />
+                    <OntologyAutocomplete value={description} onChange={handleDescriptionChange} industry={industry} multiline rows={3} placeholder="Describe what this skill does, when it activates, and what outcome it produces..." testId="input-description" />
                     <DescriptionQualityBar score={qualityScore} feedback={qualityFeedback} />
-                    <p className="text-[11px] text-muted-foreground">AI scores your description quality as you type</p>
+                    <p className="text-[11px] text-muted-foreground">Type to get ontology-aware suggestions from your industry knowledge graph</p>
                   </div>
                   <div className="space-y-1.5">
                     <Label>Industry</Label>
@@ -864,12 +875,34 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="skill-domain">Domain</Label>
-                    <Input id="skill-domain" value={domain} onChange={e => setDomain(e.target.value)} placeholder="e.g., KYC/AML, Claims Processing" data-testid="input-domain" />
+                    <OntologyAutocomplete value={domain} onChange={(val) => { setDomain(val); clearValidation(); }} industry={industry} placeholder="e.g., KYC/AML, Claims Processing" testId="input-domain" />
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="skill-tags">Tags (comma-separated)</Label>
-                    <Input id="skill-tags" value={tags} onChange={e => setTags(e.target.value)} placeholder="compliance, fraud, kyc" data-testid="input-tags" />
+                    <OntologyAutocomplete value={tags} onChange={setTags} industry={industry} placeholder="compliance, fraud, kyc" testId="input-tags" />
                   </div>
+
+                  {(() => {
+                    const allText = `${description} ${domain}`;
+                    const upperSnakeTokens = allText.match(/[A-Z][A-Z0-9_]{2,}/g) || [];
+                    const uniqueTokens = Array.from(new Set(upperSnakeTokens));
+                    const matchedTerms = uniqueTokens.filter(token =>
+                      ontologyTerms.some(t => t.label.replace(/\s+/g, "_").toUpperCase() === token)
+                    );
+                    if (matchedTerms.length === 0) return null;
+                    return (
+                      <div className="space-y-1.5" data-testid="ontology-terms-referenced">
+                        <p className="text-[11px] font-medium text-muted-foreground">Ontology Terms Referenced</p>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {matchedTerms.map(token => (
+                            <Badge key={token} variant="secondary" className="text-[10px] bg-purple-500/15 text-purple-600 dark:text-purple-400 no-default-hover-elevate no-default-active-elevate">
+                              {token}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   <Separator />
                   <p className="text-xs text-muted-foreground font-medium">Advanced Configuration</p>

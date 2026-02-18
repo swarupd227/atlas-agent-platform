@@ -1381,6 +1381,7 @@ export const skills = pgTable("skills", {
   contextMode: text("context_mode").default("inline"),
   userInvocable: boolean("user_invocable").default(true),
   descriptionQualityScore: real("description_quality_score"),
+  industryContextId: text("industry_context_id"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
