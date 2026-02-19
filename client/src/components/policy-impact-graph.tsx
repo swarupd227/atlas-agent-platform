@@ -35,7 +35,8 @@ interface PolicyData {
   name: string;
   domain: string;
   status: string;
-  policyJson?: { rules?: Array<{ rule: string; severity?: string }> } | null;
+  description?: string;
+  policyJson?: Record<string, unknown> | null;
   ontologyRefs?: string[];
 }
 
@@ -97,10 +98,53 @@ const LEGEND_ITEMS = [
   { type: "agent", label: "Agent" },
 ];
 
-function extractOntologyTermsFromText(text: string): string[] {
-  const matches = text.match(/[A-Z][A-Z0-9_]{2,}/g) || [];
-  const excluded = new Set(["AND", "NOT", "THE", "FOR", "ALL", "HAS", "ARE", "WITH", "FROM", "INTO", "OVER", "MUST", "JSON", "HTTP", "HTTPS", "REST", "POST", "GET", "PUT", "DELETE", "NULL", "TRUE", "FALSE", "MEDIUM", "HIGH", "LOW", "CRITICAL", "API", "SLA", "KPI", "CRM", "MCP"]);
-  return Array.from(new Set(matches.filter(m => !excluded.has(m))));
+function collectPolicyText(p: PolicyData): string {
+  const parts: string[] = [];
+  if (p.name) parts.push(p.name);
+  if (p.description) parts.push(p.description);
+
+  const pj = p.policyJson as Record<string, unknown> | null;
+  if (pj?.rules && Array.isArray(pj.rules)) {
+    (pj.rules as Record<string, unknown>[]).forEach(r => {
+      if (typeof r.rule === "string") parts.push(r.rule);
+      if (typeof r.when === "string") parts.push(r.when);
+      if (typeof r.action === "string") parts.push(r.action);
+      if (typeof r.id === "string") parts.push(r.id);
+      if (typeof r.description === "string") parts.push(r.description);
+      if (typeof r.escalation === "string") parts.push(r.escalation);
+    });
+  }
+  return parts.join(" ");
+}
+
+function matchOntologyToText(text: string, concepts: OntologyData[]): string[] {
+  const textLower = text.toLowerCase();
+  const matched: string[] = [];
+  concepts.forEach(c => {
+    const labelLower = c.label.toLowerCase();
+    const snakeLabel = c.label.replace(/[\s-]+/g, "_").toLowerCase();
+    if (textLower.includes(labelLower) || textLower.includes(snakeLabel)) {
+      matched.push(c.id);
+    }
+  });
+  return matched;
+}
+
+function inferPolicyIndustry(p: PolicyData, connectedOntologyIds: Set<string>, ontologyMap: Map<string, OntologyData>): Set<string> {
+  const industries = new Set<string>();
+  const nameUpper = p.name.toUpperCase();
+  if (nameUpper.includes("HIPAA") || nameUpper.includes("CLINICAL") || nameUpper.includes("PHI")) industries.add("healthcare");
+  if (nameUpper.includes("IOSCO") || nameUpper.includes("FIBO") || nameUpper.includes("BASEL") || nameUpper.includes("KYC") || nameUpper.includes("AML")) industries.add("financial_services");
+  if (nameUpper.includes("FDA") || nameUpper.includes("GMP") || nameUpper.includes("ISO 13485")) industries.add("manufacturing");
+  if (nameUpper.includes("SOLVENCY") || nameUpper.includes("IFRS 17") || nameUpper.includes("NAIC")) industries.add("insurance");
+  if (nameUpper.includes("PCI") || nameUpper.includes("RETAIL") || nameUpper.includes("CPRA")) industries.add("retail");
+
+  connectedOntologyIds.forEach(oId => {
+    const concept = ontologyMap.get(oId);
+    if (concept) industries.add(concept.industryId);
+  });
+
+  return industries;
 }
 
 function buildGraph(
@@ -131,36 +175,24 @@ function buildGraph(
   });
 
   const ontologyMap = new Map<string, OntologyData>();
-  const ontologyByLabel = new Map<string, OntologyData>();
-  ontologyConcepts.forEach(o => {
-    ontologyMap.set(o.id, o);
-    const snakeLabel = o.label.replace(/[\s-]+/g, "_").toUpperCase();
-    ontologyByLabel.set(snakeLabel, o);
-  });
+  ontologyConcepts.forEach(o => ontologyMap.set(o.id, o));
 
   const connectedSkillIds = new Set<string>();
   const connectedOntologyIds = new Set<string>();
   const connectedAgentIds = new Set<string>();
 
+  const policyIndustries = new Map<string, Set<string>>();
+
   activePolicies.forEach(p => {
     const pNodeId = `policy-${p.id}`;
+    const policyText = collectPolicyText(p);
+
     const directRefs = Array.isArray(p.ontologyRefs) ? p.ontologyRefs : [];
-    const ruleTexts: string[] = [];
-    const pj = p.policyJson as { rules?: Array<{ rule: string; severity?: string }> } | null;
-    if (pj?.rules) {
-      pj.rules.forEach(r => ruleTexts.push(r.rule || ""));
-    }
-    const allRuleText = ruleTexts.join(" ");
-    const extractedTerms = extractOntologyTermsFromText(allRuleText);
+    const textMatchedIds = matchOntologyToText(policyText, ontologyConcepts);
 
     const linkedOntologyIds = new Set<string>();
-    directRefs.forEach(ref => {
-      if (ontologyMap.has(ref)) linkedOntologyIds.add(ref);
-    });
-    extractedTerms.forEach(term => {
-      const match = ontologyByLabel.get(term);
-      if (match) linkedOntologyIds.add(match.id);
-    });
+    directRefs.forEach(ref => { if (ontologyMap.has(ref)) linkedOntologyIds.add(ref); });
+    textMatchedIds.forEach(id => linkedOntologyIds.add(id));
 
     linkedOntologyIds.forEach(oId => {
       connectedOntologyIds.add(oId);
@@ -173,12 +205,17 @@ function buildGraph(
       links.push({ source: pNodeId, target: oNodeId, relation: "references" });
     });
 
+    const industries = inferPolicyIndustry(p, linkedOntologyIds, ontologyMap);
+    policyIndustries.set(p.id, industries);
+
     const domainAliases: Record<string, string[]> = {
       compliance: ["compliance", "regulatory"],
       data_handling: ["data_handling", "data-handling", "data"],
       access_control: ["access_control", "access-control", "security"],
       audit: ["audit", "logging", "monitoring"],
       tool_permissions: ["tool_permissions", "tool-permissions", "tools"],
+      content_boundaries: ["content_boundaries", "content"],
+      allowed_actions: ["allowed_actions", "actions"],
     };
 
     const policyDomains = new Set<string>();
@@ -195,25 +232,31 @@ function buildGraph(
 
       if (policyDomains.has(s.domain)) connected = true;
 
+      if (!connected && industries.size > 0) {
+        if (industries.has(s.industry)) connected = true;
+      }
+
       if (!connected && s.tags) {
-        const tagText = s.tags.join(" ").toUpperCase();
-        const descUpper = s.description.toUpperCase();
+        const tagText = s.tags.join(" ").toLowerCase();
+        const descLower = s.description.toLowerCase();
+        const policyTextLower = policyText.toLowerCase();
         linkedOntologyIds.forEach(oId => {
           const concept = ontologyMap.get(oId);
           if (concept) {
-            const snakeLabel = concept.label.replace(/[\s-]+/g, "_").toUpperCase();
-            if (tagText.includes(snakeLabel) || descUpper.includes(snakeLabel)) {
+            const labelLower = concept.label.toLowerCase();
+            if (tagText.includes(labelLower) || descLower.includes(labelLower)) {
               connected = true;
             }
           }
         });
-      }
-
-      if (!connected) {
-        const skillDescTerms = extractOntologyTermsFromText(s.description);
-        const policyTerms = new Set(extractedTerms);
-        for (const t of skillDescTerms) {
-          if (policyTerms.has(t)) { connected = true; break; }
+        if (!connected) {
+          const policyKeywords = policyTextLower.split(/[\s_,.\-/()]+/).filter(w => w.length > 3);
+          const skillText = (tagText + " " + descLower);
+          let matchCount = 0;
+          for (const kw of policyKeywords) {
+            if (skillText.includes(kw)) matchCount++;
+          }
+          if (matchCount >= 2) connected = true;
         }
       }
 
@@ -233,31 +276,50 @@ function buildGraph(
     let connected = false;
     const aNodeId = `agent-${a.id}`;
 
-    const bindings = a.policyBindings as string[] | null;
+    function ensureAgentNode() {
+      if (!nodeIds.has(aNodeId)) {
+        nodeIds.add(aNodeId);
+        connectedAgentIds.add(a.id);
+        nodes.push({ id: aNodeId, label: a.name, type: "agent", group: a.agentType });
+      }
+    }
+
+    const bindings = a.policyBindings;
     if (Array.isArray(bindings)) {
-      bindings.forEach(bid => {
-        const matchedPolicy = activePolicies.find(p => p.id === bid || p.name === bid);
+      bindings.forEach((bid: unknown) => {
+        const bindingName = typeof bid === "string" ? bid : (bid as Record<string, unknown>)?.name as string | undefined;
+        const bindingPolicyId = typeof bid === "string" ? bid : (bid as Record<string, unknown>)?.policyId as string | undefined;
+        const matchedPolicy = activePolicies.find(p =>
+          p.id === bindingPolicyId || p.id === bindingName ||
+          p.name === bindingName || p.name === bindingPolicyId
+        );
         if (matchedPolicy) {
           connected = true;
-          if (!nodeIds.has(aNodeId)) {
-            nodeIds.add(aNodeId);
-            connectedAgentIds.add(a.id);
-            nodes.push({ id: aNodeId, label: a.name, type: "agent", group: a.agentType });
-          }
+          ensureAgentNode();
           links.push({ source: aNodeId, target: `policy-${matchedPolicy.id}`, relation: "bound-to" });
         }
       });
     }
 
-    const oTags = a.ontologyTags as string[] | null;
-    if (Array.isArray(oTags)) {
-      oTags.forEach(tag => {
-        if (connectedOntologyIds.has(tag)) {
-          if (!nodeIds.has(aNodeId)) {
-            nodeIds.add(aNodeId);
-            connectedAgentIds.add(a.id);
-            nodes.push({ id: aNodeId, label: a.name, type: "agent", group: a.agentType });
+    const oTags = a.ontologyTags;
+    if (oTags && typeof oTags === "object" && !Array.isArray(oTags)) {
+      const tagObj = oTags as Record<string, unknown>;
+      const concepts = Array.isArray(tagObj.concepts) ? tagObj.concepts as string[] : [];
+      concepts.forEach(conceptName => {
+        ontologyConcepts.forEach(oc => {
+          if (connectedOntologyIds.has(oc.id) &&
+              (oc.label.toLowerCase() === conceptName.toLowerCase() ||
+               oc.label.replace(/[\s-]+/g, "_").toUpperCase() === conceptName.toUpperCase())) {
+            connected = true;
+            ensureAgentNode();
+            links.push({ source: aNodeId, target: `ontology-${oc.id}`, relation: "uses-concept" });
           }
+        });
+      });
+    } else if (Array.isArray(oTags)) {
+      (oTags as string[]).forEach(tag => {
+        if (connectedOntologyIds.has(tag)) {
+          ensureAgentNode();
           links.push({ source: aNodeId, target: `ontology-${tag}`, relation: "uses-concept" });
           connected = true;
         }
@@ -266,11 +328,7 @@ function buildGraph(
 
     if (!connected && a.outcomeId) {
       if (activePolicies.length > 0) {
-        if (!nodeIds.has(aNodeId)) {
-          nodeIds.add(aNodeId);
-          connectedAgentIds.add(a.id);
-          nodes.push({ id: aNodeId, label: a.name, type: "agent", group: a.agentType });
-        }
+        ensureAgentNode();
         activePolicies.forEach(pol => {
           links.push({ source: aNodeId, target: `policy-${pol.id}`, relation: "governed-by" });
         });

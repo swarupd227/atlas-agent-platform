@@ -4467,7 +4467,8 @@ export default function Governance() {
                   name: p.name,
                   domain: p.domain,
                   status: p.status,
-                  policyJson: p.policyJson as any,
+                  description: p.description || undefined,
+                  policyJson: p.policyJson as Record<string, unknown> | null,
                   ontologyRefs: (p as any).ontologyRefs || [],
                 }))}
                 skills={(allSkills || []).map(s => ({
