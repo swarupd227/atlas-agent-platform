@@ -229,6 +229,9 @@ export interface IStorage {
   getEvalRunsBySuite(suiteId: string): Promise<EvalRun[]>;
   getAllEvalRuns(): Promise<EvalRun[]>;
   createEvalRun(run: InsertEvalRun): Promise<EvalRun>;
+  getEvalSuitesBySkill(skillId: string): Promise<EvalSuite[]>;
+  getEvalRunsBySkill(skillId: string): Promise<EvalRun[]>;
+  getLatestEvalRunBySkill(skillId: string): Promise<EvalRun | undefined>;
 
   getEvalCaseResults(runId: string): Promise<EvalCaseResult[]>;
   createEvalCaseResult(result: InsertEvalCaseResult): Promise<EvalCaseResult>;
@@ -949,6 +952,19 @@ export class DatabaseStorage implements IStorage {
   async createEvalRun(run: InsertEvalRun) {
     const [created] = await db.insert(evalRuns).values(run).returning();
     return created;
+  }
+
+  async getEvalSuitesBySkill(skillId: string) {
+    return db.select().from(evalSuites).where(eq(evalSuites.skillId, skillId));
+  }
+
+  async getEvalRunsBySkill(skillId: string) {
+    return db.select().from(evalRuns).where(eq(evalRuns.skillId, skillId)).orderBy(desc(evalRuns.startedAt));
+  }
+
+  async getLatestEvalRunBySkill(skillId: string) {
+    const [run] = await db.select().from(evalRuns).where(eq(evalRuns.skillId, skillId)).orderBy(desc(evalRuns.startedAt)).limit(1);
+    return run;
   }
 
   async getEvalCaseResults(runId: string) {

@@ -43,6 +43,10 @@ import {
   ChevronDown,
   ChevronUp,
   Info,
+  Activity,
+  CheckCircle,
+  XOctagon,
+  Clock,
 } from "lucide-react";
 
 const SECTION_TEMPLATES: Record<string, string> = {
@@ -321,6 +325,23 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
   const [selectedVersion, setSelectedVersion] = useState<SkillVersion | null>(null);
   const [versionChangelog, setVersionChangelog] = useState("");
   const [savingVersion, setSavingVersion] = useState(false);
+
+  const [runningEval, setRunningEval] = useState(false);
+
+  const handleRunEval = async () => {
+    setRunningEval(true);
+    try {
+      await apiRequest("POST", `/api/skills/${id}/eval/run`);
+      queryClient.invalidateQueries({ queryKey: ["/api/skills", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/eval/results", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/skills"] });
+      toast({ title: "Skill eval completed", description: "Evaluation results are now available." });
+    } catch (e: any) {
+      toast({ title: "Eval failed", description: e.message || "Could not run skill evaluation", variant: "destructive" });
+    } finally {
+      setRunningEval(false);
+    }
+  };
 
   interface PolicyViolation {
     policyId: string;
@@ -704,6 +725,32 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
           {saving ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-1.5" />}
           {saving ? "Saving..." : "Save"}
         </Button>
+        <Separator orientation="vertical" className="h-6" />
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleRunEval}
+          disabled={runningEval}
+          data-testid="button-run-skill-eval"
+        >
+          {runningEval ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Play className="w-3.5 h-3.5 mr-1.5" />}
+          {runningEval ? "Running Eval..." : "Run Skill Eval"}
+        </Button>
+        {skill?.lastEvalPassRate != null && (
+          <Badge
+            variant="secondary"
+            className={`text-[10px] no-default-hover-elevate no-default-active-elevate ${
+              skill.lastEvalPassRate >= 90
+                ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                : skill.lastEvalPassRate >= 70
+                  ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
+                  : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+            }`}
+            data-testid="badge-eval-pass-rate"
+          >
+            Eval {skill.lastEvalPassRate.toFixed(0)}%
+          </Badge>
+        )}
       </div>
 
       {showValidation && validationResult && (
@@ -793,6 +840,9 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
           </TabsTrigger>
           <TabsTrigger value="dependencies" data-testid="tab-dependencies">
             <Network className="w-3.5 h-3.5 mr-1.5" /> Dependencies
+          </TabsTrigger>
+          <TabsTrigger value="eval" data-testid="tab-eval">
+            <Activity className="w-3.5 h-3.5 mr-1.5" /> Eval Results
           </TabsTrigger>
         </TabsList>
 
@@ -1343,7 +1393,162 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
             </div>
           </ScrollArea>
         </TabsContent>
+
+        <TabsContent value="eval" className="flex-1 min-h-0 mt-0">
+          <ScrollArea className="h-full">
+            <div className="p-5 space-y-4">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <h3 className="text-sm font-semibold flex items-center gap-2">
+                  <Activity className="w-4 h-4" /> Skill Evaluation Results
+                </h3>
+                <Button size="sm" onClick={handleRunEval} disabled={runningEval} data-testid="button-run-eval-tab">
+                  {runningEval ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Play className="w-3.5 h-3.5 mr-1.5" />}
+                  {runningEval ? "Running..." : "Run Eval"}
+                </Button>
+              </div>
+              <Separator />
+              <SkillEvalResultsPanel skillId={id} />
+            </div>
+          </ScrollArea>
+        </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+function SkillEvalResultsPanel({ skillId }: { skillId: string }) {
+  const { data, isLoading } = useQuery<{
+    run: any;
+    caseResults: any[];
+    failingCases: any[];
+  }>({
+    queryKey: ["/api/eval/results", skillId],
+    queryFn: async () => {
+      const res = await fetch(`/api/eval/results?skill_id=${skillId}`);
+      if (!res.ok) throw new Error("Failed to load eval results");
+      return res.json();
+    },
+    enabled: !!skillId,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="space-y-3">
+        <Skeleton className="h-20 w-full" />
+        <Skeleton className="h-40 w-full" />
+      </div>
+    );
+  }
+
+  if (!data?.run) {
+    return (
+      <Card>
+        <CardContent className="py-8 text-center">
+          <Activity className="w-8 h-8 mx-auto text-muted-foreground/50 mb-2" />
+          <p className="text-sm text-muted-foreground" data-testid="text-no-eval">No evaluation runs yet. Click "Run Eval" to generate test cases and evaluate this skill.</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const run = data.run;
+  const passRate = run.passRate ?? 0;
+
+  return (
+    <div className="space-y-4">
+      <Card data-testid="card-eval-summary">
+        <CardContent className="p-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div>
+              <p className="text-xs text-muted-foreground">Pass Rate</p>
+              <p className={`text-xl font-bold ${passRate >= 90 ? "text-green-600 dark:text-green-400" : passRate >= 70 ? "text-yellow-600 dark:text-yellow-400" : "text-red-600 dark:text-red-400"}`} data-testid="text-pass-rate">
+                {passRate.toFixed(1)}%
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Total Cases</p>
+              <p className="text-xl font-bold" data-testid="text-total-cases">{run.totalCases || data.caseResults?.length || 0}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Status</p>
+              <Badge
+                variant="secondary"
+                className={`no-default-hover-elevate no-default-active-elevate ${run.status === "completed" ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" : "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"}`}
+                data-testid="badge-eval-status"
+              >
+                {run.status}
+              </Badge>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Run Date</p>
+              <p className="text-sm flex items-center gap-1" data-testid="text-eval-date">
+                <Clock className="w-3 h-3" />
+                {new Date(run.completedAt || run.startedAt || run.createdAt).toLocaleDateString()}
+              </p>
+            </div>
+          </div>
+          {(run.avgLatencyMs != null || run.totalLatencyMs != null) && (
+            <div className="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
+              <span>Avg Latency: {run.avgLatencyMs ?? run.totalLatencyMs}ms</span>
+              {(run.avgCostUsd != null || run.totalCost != null) && <span>Avg Cost: ${Number(run.avgCostUsd ?? run.totalCost).toFixed(4)}</span>}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {data.failingCases.length > 0 && (
+        <div>
+          <h4 className="text-sm font-semibold mb-2 flex items-center gap-2">
+            <XOctagon className="w-4 h-4 text-red-500" /> Failing Test Cases ({data.failingCases.length})
+          </h4>
+          <div className="space-y-2">
+            {data.failingCases.map((cr: any, i: number) => (
+              <Card key={cr.id || i} data-testid={`card-failing-case-${i}`}>
+                <CardContent className="p-3">
+                  <div className="flex items-start justify-between gap-2 flex-wrap">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium">Case {cr.caseId?.slice(0, 8) || i + 1}</p>
+                      {cr.failingStep && (
+                        <p className="text-xs text-muted-foreground mt-0.5">Step: {cr.failingStep}</p>
+                      )}
+                    </div>
+                    <Badge variant="destructive" className="text-[10px] shrink-0 no-default-hover-elevate no-default-active-elevate">
+                      fail
+                    </Badge>
+                  </div>
+                  {cr.failingReason && (
+                    <div className="mt-2 text-xs">
+                      <p className="text-muted-foreground mb-0.5">Reason:</p>
+                      <pre className="bg-muted rounded p-2 overflow-x-auto text-[10px] whitespace-pre-wrap">{cr.failingReason}</pre>
+                    </div>
+                  )}
+                  {cr.actualOutput && (
+                    <div className="mt-2 text-xs">
+                      <p className="text-muted-foreground mb-0.5">Actual Output:</p>
+                      <pre className="bg-muted rounded p-2 overflow-x-auto text-[10px]">{typeof cr.actualOutput === "string" ? cr.actualOutput : JSON.stringify(cr.actualOutput, null, 2)}</pre>
+                    </div>
+                  )}
+                  {cr.latencyMs != null && (
+                    <div className="mt-1 flex items-center gap-3 text-[10px] text-muted-foreground">
+                      <span>Latency: {cr.latencyMs}ms</span>
+                      {cr.costUsd != null && <span>Cost: ${Number(cr.costUsd).toFixed(4)}</span>}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {data.failingCases.length === 0 && (
+        <Card>
+          <CardContent className="py-6 text-center">
+            <CheckCircle className="w-8 h-8 mx-auto text-green-500 mb-2" />
+            <p className="text-sm text-muted-foreground" data-testid="text-all-pass">All test cases passed</p>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

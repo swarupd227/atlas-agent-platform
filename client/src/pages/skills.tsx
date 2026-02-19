@@ -590,6 +590,21 @@ function SkillCard({
               <Star className="w-3 h-3" />
               <ScoreBar score={skill.performanceScore ?? 0} />
             </span>
+            {skill.lastEvalPassRate != null && (
+              <Badge
+                variant="secondary"
+                className={`text-[9px] px-1.5 py-0 no-default-hover-elevate no-default-active-elevate ${
+                  skill.lastEvalPassRate >= 90
+                    ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                    : skill.lastEvalPassRate >= 70
+                      ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
+                      : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                }`}
+                data-testid={`eval-badge-${skill.id}`}
+              >
+                Eval {skill.lastEvalPassRate.toFixed(0)}%
+              </Badge>
+            )}
           </div>
           <Badge variant="outline" className={`text-[10px] ${COMPLEXITY_STYLES[skill.complexity] || ""}`}>
             {skill.complexity}
@@ -769,6 +784,27 @@ function SkillDetailSheet({
                 <span className="font-semibold flex items-center gap-1">
                   <Zap className="w-3.5 h-3.5 text-amber-500" />
                   {skill.activationCount}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Eval Pass Rate</span>
+                <span className="font-semibold" data-testid="text-detail-eval-rate">
+                  {skill.lastEvalPassRate != null ? (
+                    <Badge
+                      variant="secondary"
+                      className={`text-[10px] no-default-hover-elevate no-default-active-elevate ${
+                        skill.lastEvalPassRate >= 90
+                          ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                          : skill.lastEvalPassRate >= 70
+                            ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
+                            : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                      }`}
+                    >
+                      {skill.lastEvalPassRate.toFixed(1)}%
+                    </Badge>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">Not run</span>
+                  )}
                 </span>
               </div>
             </div>

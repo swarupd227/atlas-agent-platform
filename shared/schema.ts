@@ -179,6 +179,7 @@ export type RunTrace = typeof runTraces.$inferSelect;
 export const evalSuites = pgTable("eval_suites", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   agentId: varchar("agent_id").notNull(),
+  skillId: varchar("skill_id"),
   name: text("name").notNull(),
   type: text("type").default("regression"),
   passRate: real("pass_rate").default(0),
@@ -444,6 +445,7 @@ export const evalRuns = pgTable("eval_runs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   suiteId: varchar("suite_id").notNull(),
   agentId: varchar("agent_id"),
+  skillId: varchar("skill_id"),
   versionId: varchar("version_id"),
   status: text("status").notNull().default("running"),
   totalCases: integer("total_cases").default(0),
@@ -1382,10 +1384,12 @@ export const skills = pgTable("skills", {
   userInvocable: boolean("user_invocable").default(true),
   descriptionQualityScore: real("description_quality_score"),
   industryContextId: text("industry_context_id"),
+  lastEvalPassRate: real("last_eval_pass_rate"),
+  lastEvalAt: timestamp("last_eval_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const insertSkillSchema = createInsertSchema(skills).omit({ id: true, createdAt: true });
+export const insertSkillSchema = createInsertSchema(skills).omit({ id: true, createdAt: true, lastEvalPassRate: true, lastEvalAt: true });
 export type InsertSkill = z.infer<typeof insertSkillSchema>;
 export type Skill = typeof skills.$inferSelect;
 
