@@ -1072,7 +1072,7 @@ export default function OutcomeDetail() {
           <p className="text-xs text-muted-foreground -mt-2">
             Showing how governance policies connect to skills, ontology terms, and agents bound to this outcome. Click any node to highlight its blast radius.
           </p>
-          <div className="flex-1 min-h-0">
+          <div className="flex-1 min-h-0 overflow-hidden">
             <PolicyImpactGraph
               policies={(governancePolicies || []).filter(p => p.status === "active").map(p => ({
                 id: p.id,
@@ -1107,7 +1107,7 @@ export default function OutcomeDetail() {
                 category: o.category,
                 industryId: o.industryId,
               }))}
-              height={700}
+              fillContainer
             />
           </div>
         </DialogContent>

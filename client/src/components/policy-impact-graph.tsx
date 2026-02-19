@@ -74,6 +74,7 @@ interface PolicyImpactGraphProps {
   ontologyConcepts: OntologyData[];
   filterPolicyIds?: string[];
   height?: number;
+  fillContainer?: boolean;
   compact?: boolean;
 }
 
@@ -351,6 +352,7 @@ export function PolicyImpactGraph({
   ontologyConcepts,
   filterPolicyIds,
   height = 500,
+  fillContainer = false,
   compact = false,
 }: PolicyImpactGraphProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -405,12 +407,14 @@ export function PolicyImpactGraph({
     if (!el) return;
     const obs = new ResizeObserver(entries => {
       for (const entry of entries) {
-        setDimensions({ width: entry.contentRect.width, height });
+        const w = entry.contentRect.width;
+        const h = fillContainer ? Math.max(entry.contentRect.height, 300) : height;
+        setDimensions({ width: w, height: h });
       }
     });
     obs.observe(el);
     return () => obs.disconnect();
-  }, [height]);
+  }, [height, fillContainer]);
 
   const highlightedIds = useMemo(() => {
     const active = selectedNode || hoveredNode;
@@ -702,7 +706,7 @@ export function PolicyImpactGraph({
   }
 
   return (
-    <div ref={containerRef} className="relative w-full" data-testid="policy-impact-graph">
+    <div ref={containerRef} className={`relative w-full ${fillContainer ? "h-full" : ""}`} data-testid="policy-impact-graph">
       <div className="absolute top-2 right-2 z-10 flex items-center gap-1">
         <Button size="icon" variant="ghost" onClick={zoomIn} data-testid="button-zoom-in">
           <ZoomIn className="w-4 h-4" />
