@@ -1059,7 +1059,7 @@ export default function OutcomeDetail() {
       </Card>
 
       <Dialog open={impactNetworkOpen} onOpenChange={setImpactNetworkOpen}>
-        <DialogContent className="max-w-4xl w-[90vw]" data-testid="dialog-impact-network">
+        <DialogContent className="max-w-[95vw] w-[95vw] h-[90vh] flex flex-col" data-testid="dialog-impact-network">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Network className="w-5 h-5 text-violet-500" />
@@ -1072,42 +1072,44 @@ export default function OutcomeDetail() {
           <p className="text-xs text-muted-foreground -mt-2">
             Showing how governance policies connect to skills, ontology terms, and agents bound to this outcome. Click any node to highlight its blast radius.
           </p>
-          <PolicyImpactGraph
-            policies={(governancePolicies || []).filter(p => p.status === "active").map(p => ({
-              id: p.id,
-              name: p.name,
-              domain: p.domain,
-              status: p.status,
-              description: p.description || undefined,
-              policyJson: p.policyJson as Record<string, unknown> | null,
-              ontologyRefs: (p as any).ontologyRefs || [],
-            }))}
-            skills={(allSkills || []).map(s => ({
-              id: s.id,
-              name: s.name,
-              industry: s.industry,
-              domain: s.domain,
-              description: s.description,
-              tags: s.tags || [],
-              industryContextId: s.industryContextId || undefined,
-            }))}
-            agents={boundAgents.map(a => ({
-              id: a.id,
-              name: a.name,
-              agentType: a.agentType || undefined,
-              outcomeId: a.outcomeId || undefined,
-              policyBindings: a.policyBindings,
-              complianceTags: a.complianceTags || [],
-              ontologyTags: a.ontologyTags,
-            }))}
-            ontologyConcepts={(allOntologyConcepts || []).map(o => ({
-              id: o.id,
-              label: o.label,
-              category: o.category,
-              industryId: o.industryId,
-            }))}
-            height={420}
-          />
+          <div className="flex-1 min-h-0">
+            <PolicyImpactGraph
+              policies={(governancePolicies || []).filter(p => p.status === "active").map(p => ({
+                id: p.id,
+                name: p.name,
+                domain: p.domain,
+                status: p.status,
+                description: p.description || undefined,
+                policyJson: p.policyJson as Record<string, unknown> | null,
+                ontologyRefs: (p as any).ontologyRefs || [],
+              }))}
+              skills={(allSkills || []).map(s => ({
+                id: s.id,
+                name: s.name,
+                industry: s.industry,
+                domain: s.domain,
+                description: s.description,
+                tags: s.tags || [],
+                industryContextId: s.industryContextId || undefined,
+              }))}
+              agents={boundAgents.map(a => ({
+                id: a.id,
+                name: a.name,
+                agentType: a.agentType || undefined,
+                outcomeId: a.outcomeId || undefined,
+                policyBindings: a.policyBindings,
+                complianceTags: a.complianceTags || [],
+                ontologyTags: a.ontologyTags,
+              }))}
+              ontologyConcepts={(allOntologyConcepts || []).map(o => ({
+                id: o.id,
+                label: o.label,
+                category: o.category,
+                industryId: o.industryId,
+              }))}
+              height={700}
+            />
+          </div>
         </DialogContent>
       </Dialog>
 

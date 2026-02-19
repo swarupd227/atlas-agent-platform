@@ -13,7 +13,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Maximize2, Minimize2, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
+import { Maximize2, Minimize2, RotateCcw, ZoomIn, ZoomOut, Eye, EyeOff } from "lucide-react";
 
 interface GraphNode extends SimulationNodeDatum {
   id: string;
@@ -367,10 +367,38 @@ export function PolicyImpactGraph({
   const simRef = useRef<ReturnType<typeof forceSimulation<GraphNode>> | null>(null);
   const animFrameRef = useRef<number>(0);
 
-  const { nodes, links } = useMemo(() =>
+  const [visibleTypes, setVisibleTypes] = useState<Set<string>>(new Set(["policy", "skill", "ontology", "agent"]));
+
+  const toggleType = useCallback((type: string) => {
+    setVisibleTypes(prev => {
+      const next = new Set(prev);
+      if (next.has(type)) {
+        if (type !== "policy") next.delete(type);
+      } else {
+        next.add(type);
+      }
+      return next;
+    });
+    setSelectedNode(null);
+    setHoveredNode(null);
+    setTooltip(null);
+  }, []);
+
+  const { nodes: allNodes, links: allLinks } = useMemo(() =>
     buildGraph(policies, skills, agents, ontologyConcepts, filterPolicyIds),
     [policies, skills, agents, ontologyConcepts, filterPolicyIds]
   );
+
+  const { nodes, links } = useMemo(() => {
+    const filteredNodes = allNodes.filter(n => visibleTypes.has(n.type));
+    const filteredNodeIds = new Set(filteredNodes.map(n => n.id));
+    const filteredLinks = allLinks.filter(l => {
+      const sid = typeof l.source === "string" ? l.source : (l.source as GraphNode).id;
+      const tid = typeof l.target === "string" ? l.target : (l.target as GraphNode).id;
+      return filteredNodeIds.has(sid) && filteredNodeIds.has(tid);
+    });
+    return { nodes: filteredNodes, links: filteredLinks };
+  }, [allNodes, allLinks, visibleTypes]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -688,16 +716,39 @@ export function PolicyImpactGraph({
       </div>
 
       {!compact && (
-        <div className="absolute top-2 left-2 z-10 flex flex-wrap items-center gap-3">
-          {LEGEND_ITEMS.map(item => (
-            <div key={item.type} className="flex items-center gap-1.5">
-              <div
-                className="w-3 h-3 rounded-full"
-                style={{ backgroundColor: NODE_COLORS[item.type].fill }}
-              />
-              <span className="text-[10px] text-muted-foreground">{item.label}</span>
-            </div>
-          ))}
+        <div className="absolute top-2 left-2 z-10 flex flex-wrap items-center gap-1.5" data-testid="graph-type-filters">
+          {LEGEND_ITEMS.map(item => {
+            const isActive = visibleTypes.has(item.type);
+            const isPolicyType = item.type === "policy";
+            return (
+              <button
+                key={item.type}
+                onClick={() => toggleType(item.type)}
+                disabled={isPolicyType}
+                className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-medium transition-opacity border ${
+                  isActive
+                    ? "opacity-100 border-border"
+                    : "opacity-40 border-transparent"
+                } ${isPolicyType ? "cursor-default" : "cursor-pointer hover-elevate"}`}
+                style={{
+                  backgroundColor: isActive ? NODE_COLORS[item.type].fill + "18" : "transparent",
+                  color: isActive ? NODE_COLORS[item.type].fill : undefined,
+                }}
+                data-testid={`filter-${item.type}`}
+              >
+                <div
+                  className="w-2.5 h-2.5 rounded-full"
+                  style={{ backgroundColor: NODE_COLORS[item.type].fill, opacity: isActive ? 1 : 0.3 }}
+                />
+                {item.label}
+                {!isPolicyType && (
+                  isActive
+                    ? <Eye className="w-3 h-3 ml-0.5" />
+                    : <EyeOff className="w-3 h-3 ml-0.5" />
+                )}
+              </button>
+            );
+          })}
         </div>
       )}
 

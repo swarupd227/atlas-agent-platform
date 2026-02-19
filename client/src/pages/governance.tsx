@@ -4495,7 +4495,7 @@ export default function Governance() {
                   category: o.category,
                   industryId: o.industryId,
                 }))}
-                height={560}
+                height={680}
               />
             </CardContent>
           </Card>
