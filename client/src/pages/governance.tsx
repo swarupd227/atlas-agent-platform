@@ -49,6 +49,7 @@ import {
   Unlink,
   Database,
   Tags,
+  Network,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -105,8 +106,9 @@ import { useEvidenceDrawer } from "@/components/evidence-drawer";
 import { usePermission, PermissionGate } from "@/components/role-provider";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { Policy, AuditEvent, Approval, Agent, PolicyException, ComplianceReport, PolicyTestCase, McpServerTool, OntologyConcept } from "@shared/schema";
+import type { Policy, AuditEvent, Approval, Agent, PolicyException, ComplianceReport, PolicyTestCase, McpServerTool, OntologyConcept, Skill } from "@shared/schema";
 import { useIndustry, type IndustryId } from "@/components/industry-provider";
+import { PolicyImpactGraph } from "@/components/policy-impact-graph";
 
 const domainIcons: Record<string, typeof Shield> = {
   data_handling: Lock,
@@ -1283,6 +1285,9 @@ export default function Governance() {
   const { data: allOntologyConcepts } = useQuery<OntologyConcept[]>({
     queryKey: ["/api/ontology-concepts/all"],
   });
+  const { data: allSkills } = useQuery<Skill[]>({
+    queryKey: ["/api/skills"],
+  });
 
   const createMutation = useMutation({
     mutationFn: async (data: Record<string, any>) => {
@@ -2115,6 +2120,10 @@ export default function Governance() {
           <TabsTrigger value="policy-packs" data-testid="tab-policy-packs">Policy Packs</TabsTrigger>
           <TabsTrigger value="what-if" data-testid="tab-what-if">What-If</TabsTrigger>
           <TabsTrigger value="regulatory" data-testid="tab-regulatory">Regulatory</TabsTrigger>
+          <TabsTrigger value="impact-network" data-testid="tab-impact-network">
+            <Network className="w-3.5 h-3.5 mr-1" />
+            Impact Network
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="policies" className="mt-0 flex flex-col gap-4">
@@ -4435,6 +4444,60 @@ export default function Governance() {
               </Dialog>
             );
           })()}
+        </TabsContent>
+
+        <TabsContent value="impact-network" className="mt-0 flex flex-col gap-4" data-testid="content-impact-network">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+              <div className="flex items-center gap-2">
+                <Network className="w-4 h-4 text-violet-500" />
+                <CardTitle className="text-base" data-testid="text-impact-network-title">Policy Impact Network</CardTitle>
+                <Badge variant="outline" className="text-[10px]">
+                  {(policies || []).filter(p => p.status === "active").length} active policies
+                </Badge>
+              </div>
+              <p className="text-xs text-muted-foreground max-w-md text-right">
+                Visualizes how policies connect to skills, ontology terms, and agents. Click any node to see its blast radius.
+              </p>
+            </CardHeader>
+            <CardContent className="p-2">
+              <PolicyImpactGraph
+                policies={(policies || []).map(p => ({
+                  id: p.id,
+                  name: p.name,
+                  domain: p.domain,
+                  status: p.status,
+                  policyJson: p.policyJson as any,
+                  ontologyRefs: (p as any).ontologyRefs || [],
+                }))}
+                skills={(allSkills || []).map(s => ({
+                  id: s.id,
+                  name: s.name,
+                  industry: s.industry,
+                  domain: s.domain,
+                  description: s.description,
+                  tags: s.tags || [],
+                  industryContextId: s.industryContextId || undefined,
+                }))}
+                agents={(agents || []).map(a => ({
+                  id: a.id,
+                  name: a.name,
+                  agentType: a.agentType || undefined,
+                  outcomeId: a.outcomeId || undefined,
+                  policyBindings: a.policyBindings,
+                  complianceTags: a.complianceTags || [],
+                  ontologyTags: a.ontologyTags,
+                }))}
+                ontologyConcepts={(allOntologyConcepts || []).map(o => ({
+                  id: o.id,
+                  label: o.label,
+                  category: o.category,
+                  industryId: o.industryId,
+                }))}
+                height={560}
+              />
+            </CardContent>
+          </Card>
         </TabsContent>
 
         {selectedPolicyId && (

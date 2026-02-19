@@ -102,7 +102,8 @@ import { ProgressRing } from "@/components/outcome-cockpit";
 import { useIndustry } from "@/components/industry-provider";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { OutcomeContract, KpiDefinition, Approval, OutcomeEvent, Agent, Policy } from "@shared/schema";
+import type { OutcomeContract, KpiDefinition, Approval, OutcomeEvent, Agent, Policy, Skill, OntologyConcept } from "@shared/schema";
+import { PolicyImpactGraph } from "@/components/policy-impact-graph";
 
 function hashCode(str: string): number {
   let hash = 0;
@@ -354,6 +355,7 @@ export default function OutcomeDetail() {
   const [editingKpiId, setEditingKpiId] = useState<string | null>(null);
   const [editKpiData, setEditKpiData] = useState<Record<string, any>>({});
   const [evidenceWindow, setEvidenceWindow] = useState("7d");
+  const [impactNetworkOpen, setImpactNetworkOpen] = useState(false);
 
   const { data: outcome, isLoading } = useQuery<OutcomeContract>({
     queryKey: ["/api/outcomes", outcomeId],
@@ -452,6 +454,14 @@ export default function OutcomeDetail() {
 
   const { data: allAgents } = useQuery<Agent[]>({
     queryKey: ["/api/agents"],
+  });
+
+  const { data: allSkills } = useQuery<Skill[]>({
+    queryKey: ["/api/skills"],
+  });
+
+  const { data: allOntologyConcepts } = useQuery<OntologyConcept[]>({
+    queryKey: ["/api/ontology-concepts/all"],
   });
 
   const { data: agentContributions } = useQuery<{
@@ -976,11 +986,18 @@ export default function OutcomeDetail() {
                 </Badge>
               )}
             </div>
-            <Link href="/governance">
-              <Button variant="outline" size="sm" data-testid="link-compliance-matrix">
-                <ExternalLink className="w-3.5 h-3.5 mr-1.5" /> Compliance Matrix
-              </Button>
-            </Link>
+            <div className="flex items-center gap-2 flex-wrap">
+              {(governancePolicies || []).filter(p => p.status === "active").length > 0 && (
+                <Button variant="outline" size="sm" onClick={() => setImpactNetworkOpen(true)} data-testid="button-view-impact-network">
+                  <Network className="w-3.5 h-3.5 mr-1.5" /> Impact Network
+                </Button>
+              )}
+              <Link href="/governance">
+                <Button variant="outline" size="sm" data-testid="link-compliance-matrix">
+                  <ExternalLink className="w-3.5 h-3.5 mr-1.5" /> Compliance Matrix
+                </Button>
+              </Link>
+            </div>
           </div>
           {(() => {
             const activePolicies = (governancePolicies || []).filter(p => p.status === "active");
@@ -1040,6 +1057,58 @@ export default function OutcomeDetail() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={impactNetworkOpen} onOpenChange={setImpactNetworkOpen}>
+        <DialogContent className="max-w-4xl w-[90vw]" data-testid="dialog-impact-network">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Network className="w-5 h-5 text-violet-500" />
+              Policy Impact Network
+              <Badge variant="outline" className="text-[10px] ml-2">
+                {(governancePolicies || []).filter(p => p.status === "active").length} policies
+              </Badge>
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-xs text-muted-foreground -mt-2">
+            Showing how governance policies connect to skills, ontology terms, and agents bound to this outcome. Click any node to highlight its blast radius.
+          </p>
+          <PolicyImpactGraph
+            policies={(governancePolicies || []).filter(p => p.status === "active").map(p => ({
+              id: p.id,
+              name: p.name,
+              domain: p.domain,
+              status: p.status,
+              policyJson: p.policyJson as any,
+              ontologyRefs: (p as any).ontologyRefs || [],
+            }))}
+            skills={(allSkills || []).map(s => ({
+              id: s.id,
+              name: s.name,
+              industry: s.industry,
+              domain: s.domain,
+              description: s.description,
+              tags: s.tags || [],
+              industryContextId: s.industryContextId || undefined,
+            }))}
+            agents={boundAgents.map(a => ({
+              id: a.id,
+              name: a.name,
+              agentType: a.agentType || undefined,
+              outcomeId: a.outcomeId || undefined,
+              policyBindings: a.policyBindings,
+              complianceTags: a.complianceTags || [],
+              ontologyTags: a.ontologyTags,
+            }))}
+            ontologyConcepts={(allOntologyConcepts || []).map(o => ({
+              id: o.id,
+              label: o.label,
+              category: o.category,
+              industryId: o.industryId,
+            }))}
+            height={420}
+          />
+        </DialogContent>
+      </Dialog>
 
       <Tabs defaultValue="kpi-delivery" className="space-y-4">
         <TabsList className="flex-wrap">
