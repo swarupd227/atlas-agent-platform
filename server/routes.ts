@@ -16268,7 +16268,11 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       const mcpLinks = await storage.getAgentMcpServers(deployment.agentId);
       const mcpServerIds = mcpLinks.map(l => l.serverId);
 
-      const inputConfig = req.body.inputConfig || { city: "Miami", latitude: 25.7617, longitude: -80.1918 };
+      const rtConfig = (agent.runtimeConfig as Record<string, any>) || {};
+      const inputConfig = req.body.inputConfig || rtConfig.inputConfig;
+      if (!inputConfig || !inputConfig.city || !inputConfig.latitude || !inputConfig.longitude) {
+        return res.status(400).json({ error: "No input configuration provided. Either pass inputConfig in the request body or configure the agent's runtime parameters first." });
+      }
 
       const runtimeRun = await storage.createAgentRuntimeRun({
         agentId: deployment.agentId,

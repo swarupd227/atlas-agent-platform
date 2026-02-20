@@ -91,7 +91,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import type { Agent, RunTrace, EvalSuite, OutcomeContract, ImprovementRecommendation, AutonomousActionLog, AgentVersion, Deployment, Policy, Approval, PolicyException, ToolConnector, RemoteAgent, AgentTeam, Skill, McpServer, McpServerTool, McpServerResource, AgentMcpServer, OntologyConcept } from "@shared/schema";
+import type { Agent, RunTrace, EvalSuite, OutcomeContract, ImprovementRecommendation, AutonomousActionLog, AgentVersion, Deployment, Policy, Approval, PolicyException, ToolConnector, RemoteAgent, AgentTeam, Skill, McpServer, McpServerTool, McpServerResource, AgentMcpServer, OntologyConcept, Blueprint } from "@shared/schema";
 import { Wifi, WifiOff, Crown, Brain, Sparkles, ShieldAlert, Layers3, BookMarked, Binary, ScrollText, FileCheck } from "lucide-react";
 import { useIndustry } from "@/components/industry-provider";
 
@@ -330,6 +330,10 @@ function AgentDetailInner() {
   const { data: allOntologyConcepts } = useQuery<OntologyConcept[]>({
     queryKey: ["/api/ontology-concepts/all"],
   });
+  const { data: allBlueprints } = useQuery<Blueprint[]>({
+    queryKey: ["/api/blueprints"],
+  });
+  const agentBlueprint = allBlueprints?.find(b => b.agentId === agentId);
   const { industry } = useIndustry();
 
   const [, navigate] = useLocation();
@@ -417,6 +421,35 @@ function AgentDetailInner() {
   });
 
   const [replacementProposal, setReplacementProposal] = useState<any>(null);
+
+  const existingRtConfig = (agent?.runtimeConfig as Record<string, any>) || {};
+  const [rtCity, setRtCity] = useState(existingRtConfig?.inputConfig?.city || "");
+  const [rtLat, setRtLat] = useState(existingRtConfig?.inputConfig?.latitude?.toString() || "");
+  const [rtLon, setRtLon] = useState(existingRtConfig?.inputConfig?.longitude?.toString() || "");
+  const [rtInterval, setRtInterval] = useState(existingRtConfig?.scheduleIntervalMinutes?.toString() || "");
+  const [rtEditing, setRtEditing] = useState(false);
+
+  const rtConfigMutation = useMutation({
+    mutationFn: () =>
+      apiRequest("PATCH", `/api/agents/${agentId}`, {
+        runtimeConfig: {
+          inputConfig: {
+            city: rtCity.trim(),
+            latitude: parseFloat(rtLat),
+            longitude: parseFloat(rtLon),
+          },
+          scheduleIntervalMinutes: parseInt(rtInterval, 10),
+        },
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId] });
+      setRtEditing(false);
+      toast({ title: "Runtime configuration saved" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to save runtime config", description: err.message, variant: "destructive" });
+    },
+  });
 
   const deployMutation = useMutation({
     mutationFn: async () => {
@@ -959,6 +992,83 @@ function AgentDetailInner() {
             const isReady = readyCount === readyChecks.length;
 
             return (
+              <>
+              <Card data-testid="card-runtime-config">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <CardTitle className="text-sm font-medium">Runtime Configuration</CardTitle>
+                    {!rtEditing ? (
+                      <Button variant="ghost" size="sm" onClick={() => {
+                        const rc = (agent.runtimeConfig as Record<string, any>) || {};
+                        setRtCity(rc?.inputConfig?.city || "");
+                        setRtLat(rc?.inputConfig?.latitude?.toString() || "");
+                        setRtLon(rc?.inputConfig?.longitude?.toString() || "");
+                        setRtInterval(rc?.scheduleIntervalMinutes?.toString() || "");
+                        setRtEditing(true);
+                      }} data-testid="button-edit-runtime-config">
+                        <Settings className="w-3.5 h-3.5 mr-1" /> Edit
+                      </Button>
+                    ) : (
+                      <div className="flex gap-1">
+                        <Button variant="ghost" size="sm" onClick={() => setRtEditing(false)} data-testid="button-cancel-runtime-config">Cancel</Button>
+                        <Button size="sm" onClick={() => rtConfigMutation.mutate()} disabled={rtConfigMutation.isPending || !rtCity.trim() || !rtLat || !rtLon || !rtInterval} data-testid="button-save-runtime-config">
+                          {rtConfigMutation.isPending ? "Saving..." : "Save"}
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-3">
+                  {!rtEditing ? (
+                    (() => {
+                      const rc = (agent.runtimeConfig as Record<string, any>) || {};
+                      const hasConfig = rc?.inputConfig?.city && rc?.scheduleIntervalMinutes;
+                      return hasConfig ? (
+                        <div className="flex flex-col gap-2">
+                          <div className="flex items-center justify-between gap-2 p-2.5 rounded-md bg-muted/30">
+                            <span className="text-xs text-muted-foreground">City</span>
+                            <span className="text-xs font-medium" data-testid="text-rt-city">{rc.inputConfig.city}</span>
+                          </div>
+                          <div className="flex items-center justify-between gap-2 p-2.5 rounded-md bg-muted/30">
+                            <span className="text-xs text-muted-foreground">Coordinates</span>
+                            <span className="text-xs font-medium font-mono" data-testid="text-rt-coords">{rc.inputConfig.latitude}, {rc.inputConfig.longitude}</span>
+                          </div>
+                          <div className="flex items-center justify-between gap-2 p-2.5 rounded-md bg-muted/30">
+                            <span className="text-xs text-muted-foreground">Schedule Interval</span>
+                            <span className="text-xs font-medium" data-testid="text-rt-interval">Every {rc.scheduleIntervalMinutes} minutes</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col items-center gap-2 py-4 text-center">
+                          <Settings className="w-5 h-5 text-muted-foreground" />
+                          <p className="text-xs text-muted-foreground">No runtime configuration set. Click Edit to configure the agent's runtime parameters before deploying.</p>
+                        </div>
+                      );
+                    })()
+                  ) : (
+                    <div className="flex flex-col gap-3">
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs text-muted-foreground">City</label>
+                        <Input value={rtCity} onChange={e => setRtCity(e.target.value)} placeholder="e.g. Miami" className="h-8 text-sm" data-testid="input-rt-city" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-xs text-muted-foreground">Latitude</label>
+                          <Input value={rtLat} onChange={e => setRtLat(e.target.value)} placeholder="e.g. 25.7617" type="number" step="any" className="h-8 text-sm" data-testid="input-rt-lat" />
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-xs text-muted-foreground">Longitude</label>
+                          <Input value={rtLon} onChange={e => setRtLon(e.target.value)} placeholder="e.g. -80.1918" type="number" step="any" className="h-8 text-sm" data-testid="input-rt-lon" />
+                        </div>
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs text-muted-foreground">Schedule Interval (minutes)</label>
+                        <Input value={rtInterval} onChange={e => setRtInterval(e.target.value)} placeholder="e.g. 5" type="number" min="1" className="h-8 text-sm" data-testid="input-rt-interval" />
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
               <Card data-testid="card-export-readiness">
                 <CardHeader className="pb-3">
                   <div className="flex items-center justify-between gap-2">
@@ -1007,6 +1117,7 @@ function AgentDetailInner() {
                   )}
                 </CardContent>
               </Card>
+              </>
             );
           })()}
         </TabsContent>
@@ -1559,8 +1670,9 @@ function AgentDetailInner() {
           </div>
 
           {(() => {
-            const bp = agent.blueprintJson as any;
-            return !bp || (Array.isArray(bp) && bp.length === 0) || (typeof bp === "object" && !Array.isArray(bp) && !(bp?.nodes?.length));
+            const bp = (agent.blueprintJson as any) || (agentBlueprint?.blueprintJson as any);
+            const hasBp = bp && !(Array.isArray(bp) && bp.length === 0) && !(typeof bp === "object" && !Array.isArray(bp) && !(bp?.nodes?.length));
+            return !hasBp;
           })() ? (
             <Card data-testid="card-blueprint-empty">
               <CardContent className="pt-6">
@@ -1582,10 +1694,12 @@ function AgentDetailInner() {
             </Card>
           ) : (
             <>
-              {blueprintView === "graph" ? (
+              {(() => {
+                const effectiveBp = (agent.blueprintJson as any) || (agentBlueprint?.blueprintJson as any);
+                return blueprintView === "graph" ? (
                 <div className="flex gap-4" data-testid="blueprint-split-view">
                   <div className="flex-[2] min-w-0">
-                    <BlueprintWorkflowGraph blueprint={agent.blueprintJson as any} />
+                    <BlueprintWorkflowGraph blueprint={effectiveBp} />
                   </div>
                   <div className="flex-1 min-w-0">
                     <Card data-testid="card-node-inspector">
@@ -1621,11 +1735,12 @@ function AgentDetailInner() {
                 <Card data-testid="card-blueprint-json">
                   <CardContent className="pt-6">
                     <pre className="text-xs font-mono bg-muted/30 p-4 rounded-md overflow-auto max-h-[600px]" data-testid="blueprint-json-view">
-                      <code>{JSON.stringify(agent.blueprintJson, null, 2)}</code>
+                      <code>{JSON.stringify(effectiveBp, null, 2)}</code>
                     </pre>
                   </CardContent>
                 </Card>
-              )}
+              )
+              })()}
 
               <ImplementationGraph
                 agent={agent}

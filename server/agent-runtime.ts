@@ -87,9 +87,27 @@ export async function executeBlueprintWithMcp(
     };
   }
 
-  const lat = (inputConfig.latitude as number) || 25.7617;
-  const lon = (inputConfig.longitude as number) || -80.1918;
-  const cityName = (inputConfig.city as string) || "Miami";
+  const lat = inputConfig.latitude as number | undefined;
+  const lon = inputConfig.longitude as number | undefined;
+  const cityName = inputConfig.city as string | undefined;
+
+  if (!lat || !lon || !cityName) {
+    const errorMsg = "Agent input configuration is incomplete. Please configure the agent with city, latitude, and longitude parameters via the agent's configuration before running.";
+    steps.push({
+      id: "step_0",
+      name: "Input Validation",
+      type: "validation",
+      status: "failed",
+      error: errorMsg,
+      startedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+    });
+    return {
+      steps,
+      success: false,
+      summary: { totalSteps: 1, passedSteps: 0, failedSteps: 1, error: errorMsg },
+    };
+  }
 
   steps.push({
     id: "step_1",
@@ -267,7 +285,7 @@ export async function executeBlueprintWithMcp(
     startedAt: new Date().toISOString(),
   });
 
-  const ind = industry || "insurance";
+  const ind = industry || "general";
   const complianceChecks = [
     { rule: "Data Source Verification", status: "pass", detail: `Data sourced via registered MCP integration: ${resolvedTool.serverName} / ${resolvedTool.toolName}` },
     { rule: "Decision Audit Trail", status: "pass", detail: "All decision factors logged with timestamps" },
@@ -307,6 +325,11 @@ export async function executeBlueprintWithMcp(
 async function executeAgentCycle(agent: RuntimeAgent) {
   console.log(`[agent-runtime] Executing cycle for ${agent.agentName} (deployment: ${agent.deploymentId})`);
 
+  if (!agent.inputConfig || !agent.inputConfig.city || !agent.inputConfig.latitude || !agent.inputConfig.longitude) {
+    console.error(`[agent-runtime] ${agent.agentName}: Missing input configuration (city, latitude, longitude). Configure the agent before running.`);
+    return;
+  }
+
   const runtimeRun = await storage.createAgentRuntimeRun({
     agentId: agent.agentId,
     deploymentId: agent.deploymentId,
@@ -314,7 +337,7 @@ async function executeAgentCycle(agent: RuntimeAgent) {
     triggerType: "scheduled",
     blueprintId: agent.blueprintId || null,
     mcpServerId: agent.mcpServerIds[0] || null,
-    inputConfig: agent.inputConfig || { city: "Miami", latitude: 25.7617, longitude: -80.1918 },
+    inputConfig: agent.inputConfig,
   });
 
   try {
@@ -323,7 +346,7 @@ async function executeAgentCycle(agent: RuntimeAgent) {
       agent.deploymentId,
       agent.blueprintId,
       agent.mcpServerIds,
-      (agent.inputConfig || { city: "Miami", latitude: 25.7617, longitude: -80.1918 }),
+      agent.inputConfig,
       agent.industry,
     );
 
@@ -340,7 +363,7 @@ async function executeAgentCycle(agent: RuntimeAgent) {
       environment: "prod",
       status: result.success ? "completed" : "failed",
       latencyMs: result.summary.latencyMs || 0,
-      inputSummary: `Scheduled weather check for ${result.summary.city || "Miami"}`,
+      inputSummary: `Scheduled check for ${result.summary.city || "unknown"}`,
       outputSummary: result.success
         ? `${result.summary.severity} severity | ${result.summary.temperature}°C | Wind ${result.summary.windSpeed} km/h | Alert: ${result.summary.alertTriggered}`
         : `Execution failed`,
@@ -404,10 +427,22 @@ export async function startAgentRuntime(deploymentId: string): Promise<{ started
     return { started: false, message: "Cannot start runtime: No matching tool found in linked MCP Servers. Ensure an MCP Server with a weather/forecast tool is registered and linked to this agent." };
   }
 
+  const rtConfig = (agent.runtimeConfig as Record<string, any>) || {};
+  const inputConfig = rtConfig.inputConfig;
+
+  if (!inputConfig || !inputConfig.city || !inputConfig.latitude || !inputConfig.longitude) {
+    return { started: false, message: "Cannot start runtime: Agent has no input configuration. Please configure the agent's runtime parameters (e.g. city, latitude, longitude) in the agent's Runtime Configuration before deploying." };
+  }
+
+  const intervalMinutes = rtConfig.scheduleIntervalMinutes;
+  if (!intervalMinutes) {
+    return { started: false, message: "Cannot start runtime: Agent has no schedule interval configured. Please set the execution interval (in minutes) in the agent's Runtime Configuration before deploying." };
+  }
+
+  const intervalMs = intervalMinutes * 60 * 1000;
+
   const blueprints = await storage.getBlueprints();
   const agentBlueprint = blueprints.find(b => b.agentId === deployment.agentId);
-
-  const intervalMs = 5 * 60 * 1000;
 
   const runtimeAgent: RuntimeAgent = {
     deploymentId,
@@ -417,7 +452,7 @@ export async function startAgentRuntime(deploymentId: string): Promise<{ started
     mcpServerIds,
     intervalMs,
     industry: deployment.industry || (agent as any).industry,
-    inputConfig: { city: "Miami", latitude: 25.7617, longitude: -80.1918 },
+    inputConfig,
   };
 
   await executeAgentCycle(runtimeAgent);
@@ -426,7 +461,7 @@ export async function startAgentRuntime(deploymentId: string): Promise<{ started
   activeAgents.set(deploymentId, { timer, agent: runtimeAgent });
 
   console.log(`[agent-runtime] Started runtime for ${agent.name} (every ${intervalMs / 1000}s)`);
-  return { started: true, message: `Agent runtime started for ${agent.name}. Executing every 5 minutes.` };
+  return { started: true, message: `Agent runtime started for ${agent.name}. Executing every ${intervalMinutes} minutes.` };
 }
 
 export function stopAgentRuntime(deploymentId: string): { stopped: boolean; message: string } {
