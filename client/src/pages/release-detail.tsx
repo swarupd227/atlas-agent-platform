@@ -742,9 +742,17 @@ function RuntimeStatusCard({ deploymentId, agentId }: { deploymentId: string; ag
       const res = await apiRequest("POST", `/api/deployments/${deploymentId}/start-runtime`, {});
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: { started: boolean; message: string }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/deployments", deploymentId, "runtime-status"] });
-      toast({ title: "Runtime started" });
+      queryClient.invalidateQueries({ queryKey: ["/api/deployments", deploymentId] });
+      if (data.started) {
+        toast({ title: "Runtime started", description: data.message });
+      } else {
+        toast({ title: "Could not start runtime", description: data.message, variant: "destructive" });
+      }
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to start runtime", description: err.message, variant: "destructive" });
     },
   });
 

@@ -751,12 +751,26 @@ function AgentDetailInner() {
         <Button variant="outline" size="sm" data-testid="button-rollback">
           <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> Rollback
         </Button>
-        <Button size="sm" data-testid="button-deploy" disabled={!deployPerm.allowed || deployMutation.isPending} onClick={() => deployMutation.mutate()} title={!deployPerm.allowed ? "You do not have permission to deploy" : undefined}>
-          <Rocket className="w-3.5 h-3.5 mr-1.5" /> {deployMutation.isPending ? "Creating..." : "Deploy"}
-          {deployPerm.allowed && deployPerm.permission.access === "conditional" && deployPerm.permission.annotation && (
-            <Badge variant="secondary" className="text-[10px] ml-1">{deployPerm.permission.annotation}</Badge>
-          )}
-        </Button>
+        {agentDeployments.length > 0 ? (
+          <div className="flex items-center gap-1">
+            <Button size="sm" data-testid="button-view-deployment" onClick={() => {
+              const latest = agentDeployments.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())[0];
+              if (latest) navigate(`/deployments/${latest.id}`);
+            }}>
+              <Rocket className="w-3.5 h-3.5 mr-1.5" /> View Deployment
+            </Button>
+            <Button variant="outline" size="sm" data-testid="button-new-deployment-version" disabled={!deployPerm.allowed || deployMutation.isPending} onClick={() => deployMutation.mutate()} title="Create a new deployment version">
+              <Plus className="w-3.5 h-3.5" />
+            </Button>
+          </div>
+        ) : (
+          <Button size="sm" data-testid="button-deploy" disabled={!deployPerm.allowed || deployMutation.isPending} onClick={() => deployMutation.mutate()} title={!deployPerm.allowed ? "You do not have permission to deploy" : undefined}>
+            <Rocket className="w-3.5 h-3.5 mr-1.5" /> {deployMutation.isPending ? "Creating..." : "Deploy"}
+            {deployPerm.allowed && deployPerm.permission.access === "conditional" && deployPerm.permission.annotation && (
+              <Badge variant="secondary" className="text-[10px] ml-1">{deployPerm.permission.annotation}</Badge>
+            )}
+          </Button>
+        )}
         {agent.status !== "retired" && (
           <Button variant="outline" size="sm" onClick={() => setRetireDialogOpen(true)} data-testid="button-retire-agent">
             <Archive className="w-3.5 h-3.5 mr-1.5" /> Retire

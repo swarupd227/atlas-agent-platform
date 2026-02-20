@@ -1385,7 +1385,8 @@ export default function Deployments() {
                       };
                       const req = industryOntologyRequirements[detectedIndustry] || industryOntologyRequirements.technology;
                       const agentCoverage = (agents || []).map(agent => {
-                        const tags = (agent.ontologyTags as Array<{ conceptId: string; label: string; category?: string }>) || [];
+                        const rawTags = agent.ontologyTags;
+                        const tags: Array<{ conceptId: string; label: string; category?: string }> = Array.isArray(rawTags) ? rawTags : [];
                         const tagCategories = new Set(tags.map(t => t.category).filter(Boolean));
                         const coveredCategories = req.requiredCategories.filter(c => tagCategories.has(c));
                         const missingCategories = req.requiredCategories.filter(c => !tagCategories.has(c));
