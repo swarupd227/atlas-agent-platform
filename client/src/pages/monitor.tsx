@@ -247,7 +247,152 @@ function generateTimeSeriesData(days: number, baseValue: number, variance: numbe
   });
 }
 
+function RunDetailPanel({ run }: { run: any }) {
+  const steps = run.stepsJson || [];
+  const summary = run.resultSummary || {};
+  const analysis = summary.analysis || {};
+
+  return (
+    <div className="ml-6 mt-1 mb-2 p-4 rounded-lg border bg-muted/10 flex flex-col gap-4" data-testid={`run-detail-${run.id}`}>
+      {analysis.summary && (
+        <div className="flex flex-col gap-1.5" data-testid="run-analysis-summary">
+          <div className="flex items-center gap-2">
+            <Brain className="w-3.5 h-3.5 text-violet-500" />
+            <span className="text-xs font-semibold">AI Analysis</span>
+            {analysis.severity && (
+              <Badge variant={analysis.severity === "low" ? "outline" : "destructive"} className="text-[9px] px-1.5 py-0">
+                {analysis.severity}
+              </Badge>
+            )}
+          </div>
+          <p className="text-[11px] text-muted-foreground leading-relaxed">{analysis.summary}</p>
+        </div>
+      )}
+
+      {analysis.findings && analysis.findings.length > 0 && (
+        <div className="flex flex-col gap-1.5" data-testid="run-findings">
+          <span className="text-xs font-semibold flex items-center gap-1.5">
+            <Target className="w-3.5 h-3.5 text-blue-500" /> Key Findings
+          </span>
+          <div className="flex flex-col gap-1">
+            {analysis.findings.map((finding: string, i: number) => (
+              <div key={i} className="flex items-start gap-2 text-[11px] text-muted-foreground">
+                <span className="text-blue-500 mt-0.5 shrink-0">&#8226;</span>
+                <span>{finding}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {analysis.riskFactors && analysis.riskFactors.length > 0 && (
+        <div className="flex flex-col gap-1.5" data-testid="run-risk-factors">
+          <span className="text-xs font-semibold flex items-center gap-1.5">
+            <ShieldAlert className="w-3.5 h-3.5 text-amber-500" /> Risk Factors
+          </span>
+          <div className="flex flex-wrap gap-1.5">
+            {analysis.riskFactors.map((rf: string, i: number) => (
+              <Badge key={i} variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400 bg-amber-500/10">{rf}</Badge>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {analysis.recommendedActions && analysis.recommendedActions.length > 0 && (
+        <div className="flex flex-col gap-1.5" data-testid="run-recommendations">
+          <span className="text-xs font-semibold flex items-center gap-1.5">
+            <CheckCircle className="w-3.5 h-3.5 text-emerald-500" /> Recommended Actions
+          </span>
+          <div className="flex flex-col gap-1">
+            {analysis.recommendedActions.map((action: string, i: number) => (
+              <div key={i} className="flex items-start gap-2 text-[11px] text-muted-foreground">
+                <span className="text-emerald-500 mt-0.5 shrink-0">&#8226;</span>
+                <span>{action}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {steps.length > 0 && (
+        <div className="flex flex-col gap-1.5" data-testid="run-steps-timeline">
+          <span className="text-xs font-semibold flex items-center gap-1.5">
+            <Activity className="w-3.5 h-3.5 text-muted-foreground" /> Execution Steps
+          </span>
+          <div className="flex flex-col gap-1">
+            {steps.map((step: any, i: number) => {
+              const isLast = i === steps.length - 1;
+              return (
+                <div key={step.id} className="flex items-start gap-2" data-testid={`run-step-${step.id}`}>
+                  <div className="flex flex-col items-center shrink-0">
+                    <div className={`w-2 h-2 rounded-full mt-1.5 ${step.status === "completed" ? "bg-emerald-500" : step.status === "running" ? "bg-blue-500 animate-pulse" : "bg-red-500"}`} />
+                    {!isLast && <div className="w-px h-5 bg-border" />}
+                  </div>
+                  <div className="flex flex-col min-w-0 pb-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[11px] font-medium">{step.name}</span>
+                      <Badge variant="outline" className="text-[9px] px-1 py-0">{step.type}</Badge>
+                      {step.mcpServer && (
+                        <Badge variant="outline" className="text-[9px] text-blue-600 dark:text-blue-400 bg-blue-500/10 px-1 py-0">{step.mcpServer}</Badge>
+                      )}
+                    </div>
+                    {step.output && step.type === "api_call" && (() => {
+                      const o = step.output;
+                      const currentData = o.data?.current || {};
+                      const temp = o.temperature ?? currentData.temperature_2m;
+                      const wind = o.windSpeed ?? currentData.wind_speed_10m;
+                      const humid = o.humidity ?? currentData.relative_humidity_2m;
+                      const hasKnownFields = temp !== undefined || wind !== undefined || humid !== undefined;
+                      if (hasKnownFields) {
+                        return (
+                          <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
+                            {temp !== undefined && <span className="text-[10px] text-muted-foreground">Temp: {temp}°C</span>}
+                            {wind !== undefined && <span className="text-[10px] text-muted-foreground">Wind: {wind} km/h</span>}
+                            {humid !== undefined && <span className="text-[10px] text-muted-foreground">Humidity: {humid}%</span>}
+                          </div>
+                        );
+                      }
+                      const dataKeys = Object.keys(o.data || o).filter(k => !["source", "mcpTool", "mcpServer"].includes(k));
+                      if (dataKeys.length > 0) {
+                        const preview = dataKeys.slice(0, 4).map(k => {
+                          const val = (o.data || o)[k];
+                          const display = typeof val === "object" ? JSON.stringify(val).slice(0, 40) : String(val);
+                          return `${k}: ${display}`;
+                        }).join(" | ");
+                        return <span className="text-[10px] text-muted-foreground mt-0.5">{preview}{dataKeys.length > 4 ? ` +${dataKeys.length - 4} more` : ""}</span>;
+                      }
+                      return null;
+                    })()}
+                    {step.error && (
+                      <span className="text-[10px] text-red-500 mt-0.5">{step.error}</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {!analysis.summary && !steps.length && run.errorMessage && (
+        <div className="flex items-start gap-2 p-2 rounded-md bg-red-500/10 border border-red-500/20">
+          <AlertTriangle className="w-3.5 h-3.5 text-red-500 shrink-0 mt-0.5" />
+          <span className="text-[11px] text-red-600 dark:text-red-400">{run.errorMessage}</span>
+        </div>
+      )}
+
+      <div className="flex items-center gap-3 pt-2 border-t text-[10px] text-muted-foreground">
+        <span>Run ID: {(run.id || "").slice(0, 8)}...</span>
+        {run.latencyMs > 0 && <span>Latency: {run.latencyMs}ms</span>}
+        {run.startedAt && <span>Started: {new Date(run.startedAt).toLocaleString()}</span>}
+        {run.completedAt && <span>Completed: {new Date(run.completedAt).toLocaleString()}</span>}
+      </div>
+    </div>
+  );
+}
+
 function AgentRuntimeTab() {
+  const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const { data: activeRuntimes } = useQuery<Array<{ deploymentId: string; agentId: string; agentName: string; intervalMs: number }>>({
     queryKey: ["/api/agent-runtime/active"],
     refetchInterval: 10000,
@@ -323,43 +468,52 @@ function AgentRuntimeTab() {
                 const summary = run.resultSummary || {};
                 const severity = summary.severity || "unknown";
                 const sevColor = severity === "critical" ? "text-red-600 dark:text-red-400" : severity === "high" ? "text-amber-600 dark:text-amber-400" : severity === "medium" ? "text-yellow-600 dark:text-yellow-400" : "text-emerald-600 dark:text-emerald-400";
+                const isExpanded = expandedRunId === run.id;
                 return (
-                  <div key={run.id} className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted/30" data-testid={`runtime-history-${run.id}`}>
-                    <div className="flex items-center gap-2 min-w-0 flex-1">
-                      {run.status === "completed" ? (
-                        <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                      ) : run.status === "running" ? (
-                        <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin shrink-0" />
-                      ) : (
-                        <AlertTriangle className="w-3.5 h-3.5 text-red-500 shrink-0" />
-                      )}
-                      <div className="flex flex-col min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-[11px] font-medium">{summary.promptSummary || summary.city || "Agent Run"}</span>
-                          <span className={`text-[10px] font-medium ${sevColor}`}>{severity}</span>
-                          {summary.toolsUsed?.length > 0 && (
-                            <span className="text-[10px] text-muted-foreground">{summary.toolsUsed.length} tool{summary.toolsUsed.length > 1 ? "s" : ""}</span>
-                          )}
-                          {summary.passedSteps > 0 && (
-                            <span className="text-[10px] text-muted-foreground">{summary.passedSteps}/{summary.totalSteps} steps</span>
-                          )}
-                          {summary.source === "mcp_integration" && (
-                            <Badge variant="outline" className="text-[9px] text-blue-600 dark:text-blue-400 bg-blue-500/10 px-1 py-0">MCP</Badge>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-[10px] text-muted-foreground">
-                            {run.startedAt ? new Date(run.startedAt).toLocaleString() : ""}
-                          </span>
-                          {run.latencyMs > 0 && (
-                            <span className="text-[10px] text-muted-foreground">{run.latencyMs}ms</span>
-                          )}
-                          <Badge variant="outline" className="text-[9px] px-1 py-0">
-                            {run.triggerType === "manual" ? "Manual" : "Scheduled"}
-                          </Badge>
+                  <div key={run.id}>
+                    <div
+                      className={`flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted/30 cursor-pointer hover-elevate ${isExpanded ? "ring-1 ring-primary/30" : ""}`}
+                      onClick={() => setExpandedRunId(isExpanded ? null : run.id)}
+                      data-testid={`runtime-history-${run.id}`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        {run.status === "completed" ? (
+                          <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                        ) : run.status === "running" ? (
+                          <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin shrink-0" />
+                        ) : (
+                          <AlertTriangle className="w-3.5 h-3.5 text-red-500 shrink-0" />
+                        )}
+                        <div className="flex flex-col min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[11px] font-medium">{summary.promptSummary || summary.city || "Agent Run"}</span>
+                            <span className={`text-[10px] font-medium ${sevColor}`}>{severity}</span>
+                            {summary.toolsUsed?.length > 0 && (
+                              <span className="text-[10px] text-muted-foreground">{summary.toolsUsed.length} tool{summary.toolsUsed.length > 1 ? "s" : ""}</span>
+                            )}
+                            {summary.passedSteps > 0 && (
+                              <span className="text-[10px] text-muted-foreground">{summary.passedSteps}/{summary.totalSteps} steps</span>
+                            )}
+                            {summary.source === "mcp_integration" && (
+                              <Badge variant="outline" className="text-[9px] text-blue-600 dark:text-blue-400 bg-blue-500/10 px-1 py-0">MCP</Badge>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[10px] text-muted-foreground">
+                              {run.startedAt ? new Date(run.startedAt).toLocaleString() : ""}
+                            </span>
+                            {run.latencyMs > 0 && (
+                              <span className="text-[10px] text-muted-foreground">{run.latencyMs}ms</span>
+                            )}
+                            <Badge variant="outline" className="text-[9px] px-1 py-0">
+                              {run.triggerType === "manual" ? "Manual" : "Scheduled"}
+                            </Badge>
+                          </div>
                         </div>
                       </div>
+                      <Eye className={`w-3.5 h-3.5 shrink-0 transition-colors ${isExpanded ? "text-primary" : "text-muted-foreground"}`} />
                     </div>
+                    {isExpanded && <RunDetailPanel run={run} />}
                   </div>
                 );
               })}
@@ -862,15 +1016,15 @@ export default function Monitor() {
       <Tabs defaultValue="outcome-sla" className="flex flex-col gap-4">
         <TabsList className="w-fit flex-wrap h-auto">
           <TabsTrigger value="outcome-sla" data-testid="tab-outcome-sla">Outcome SLA Dashboard</TabsTrigger>
+          <TabsTrigger value="agent-runtime" data-testid="tab-agent-runtime">Agent Runtime</TabsTrigger>
           <TabsTrigger value="slo-heatmap" data-testid="tab-slo-heatmap">SLO Heatmap</TabsTrigger>
           <TabsTrigger value="violations" data-testid="tab-violations">Policy Violations</TabsTrigger>
           <TabsTrigger value="tool-health" data-testid="tab-tool-health">Tool Health</TabsTrigger>
-          <TabsTrigger value="live" data-testid="tab-live">Live Runs</TabsTrigger>
+          <TabsTrigger value="live" data-testid="tab-live">Trace Explorer</TabsTrigger>
           <TabsTrigger value="drift" data-testid="tab-drift">Drift Detection</TabsTrigger>
           <TabsTrigger value="agent-health" data-testid="tab-agent-health">Agent Health</TabsTrigger>
           <TabsTrigger value="industry-kpis" data-testid="tab-industry-kpis">Industry KPIs</TabsTrigger>
           <TabsTrigger value="regulatory-alerts" data-testid="tab-regulatory-alerts">Regulatory Alerts</TabsTrigger>
-          <TabsTrigger value="agent-runtime" data-testid="tab-agent-runtime">Agent Runtime</TabsTrigger>
         </TabsList>
 
         <TabsContent value="outcome-sla" className="mt-0">
