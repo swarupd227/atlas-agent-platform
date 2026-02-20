@@ -704,6 +704,188 @@ function PromoteDialog({
   );
 }
 
+function RuntimeStatusCard({ deploymentId, agentId }: { deploymentId: string; agentId: string }) {
+  const { toast } = useToast();
+  const { data: runtimeStatus, isLoading } = useQuery<{ active: boolean; runs: any[] }>({
+    queryKey: ["/api/deployments", deploymentId, "runtime-status"],
+    refetchInterval: 10000,
+  });
+
+  const executeNowMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/deployments/${deploymentId}/execute-now`, {});
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deployments", deploymentId, "runtime-status"] });
+      toast({ title: "Agent executed", description: "Manual execution completed successfully." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Execution failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const stopRuntimeMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/deployments/${deploymentId}/stop-runtime`, {});
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deployments", deploymentId, "runtime-status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/deployments", deploymentId] });
+      toast({ title: "Runtime stopped" });
+    },
+  });
+
+  const startRuntimeMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/deployments/${deploymentId}/start-runtime`, {});
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deployments", deploymentId, "runtime-status"] });
+      toast({ title: "Runtime started" });
+    },
+  });
+
+  if (isLoading) return <Card><CardContent className="p-6"><Skeleton className="h-40 w-full" /></CardContent></Card>;
+
+  const isActive = runtimeStatus?.active || false;
+  const runs = runtimeStatus?.runs || [];
+
+  return (
+    <Card data-testid="section-agent-runtime">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2">
+            <Activity className="w-4 h-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Live Agent Runtime</CardTitle>
+          </div>
+          <div className="flex items-center gap-2">
+            {isActive ? (
+              <Badge className="text-[10px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" data-testid="badge-runtime-active">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1 animate-pulse" />
+                Running
+              </Badge>
+            ) : (
+              <Badge variant="outline" className="text-[10px]" data-testid="badge-runtime-inactive">Stopped</Badge>
+            )}
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <div className="flex items-center gap-2 flex-wrap">
+          {isActive ? (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => executeNowMutation.mutate()}
+                disabled={executeNowMutation.isPending}
+                data-testid="button-execute-now"
+              >
+                <Zap className="w-3.5 h-3.5 mr-1" />
+                {executeNowMutation.isPending ? "Executing..." : "Execute Now"}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => stopRuntimeMutation.mutate()}
+                disabled={stopRuntimeMutation.isPending}
+                className="text-red-600 hover:text-red-700 dark:text-red-400"
+                data-testid="button-stop-runtime"
+              >
+                <XCircle className="w-3.5 h-3.5 mr-1" />
+                Stop
+              </Button>
+            </>
+          ) : (
+            <Button
+              size="sm"
+              onClick={() => startRuntimeMutation.mutate()}
+              disabled={startRuntimeMutation.isPending}
+              data-testid="button-start-runtime"
+            >
+              <Play className="w-3.5 h-3.5 mr-1" />
+              {startRuntimeMutation.isPending ? "Starting..." : "Start Runtime"}
+            </Button>
+          )}
+        </div>
+
+        {isActive && (
+          <div className="flex items-center gap-2 p-2.5 rounded-md bg-blue-500/5 border border-blue-500/10">
+            <Activity className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+            <span className="text-[11px] text-blue-700 dark:text-blue-400">
+              Agent is running in the background. Next execution in ~5 minutes. Data flows through registered MCP integrations.
+            </span>
+          </div>
+        )}
+
+        {runs.length > 0 && (
+          <div className="flex flex-col gap-1">
+            <span className="text-xs font-medium text-muted-foreground mb-1">Recent Executions</span>
+            {runs.slice(0, 10).map((run: any) => {
+              const summary = run.resultSummary || {};
+              const severity = summary.severity || "unknown";
+              const sevColor = severity === "critical" ? "text-red-600 dark:text-red-400" : severity === "high" ? "text-amber-600 dark:text-amber-400" : severity === "medium" ? "text-yellow-600 dark:text-yellow-400" : "text-emerald-600 dark:text-emerald-400";
+              return (
+                <div key={run.id} className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/30" data-testid={`runtime-run-${run.id}`}>
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    {run.status === "completed" ? (
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                    ) : run.status === "running" ? (
+                      <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin shrink-0" />
+                    ) : (
+                      <XCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />
+                    )}
+                    <div className="flex flex-col min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[11px] font-medium">
+                          {summary.city || "Weather Check"}
+                        </span>
+                        {summary.temperature !== undefined && (
+                          <span className="text-[10px] text-muted-foreground">{summary.temperature}°C</span>
+                        )}
+                        {summary.windSpeed !== undefined && (
+                          <span className="text-[10px] text-muted-foreground">Wind {summary.windSpeed} km/h</span>
+                        )}
+                        <span className={`text-[10px] font-medium ${sevColor}`}>{severity}</span>
+                        {summary.alertTriggered && (
+                          <Badge variant="outline" className="text-[9px] text-red-600 dark:text-red-400 bg-red-500/10 px-1 py-0">Alert</Badge>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[10px] text-muted-foreground">
+                          {run.startedAt ? new Date(run.startedAt).toLocaleTimeString() : ""}
+                        </span>
+                        {run.latencyMs > 0 && (
+                          <span className="text-[10px] text-muted-foreground">{run.latencyMs}ms</span>
+                        )}
+                        {summary.source === "mcp_integration" && (
+                          <span className="text-[10px] text-blue-600 dark:text-blue-400">via MCP</span>
+                        )}
+                        <Badge variant="outline" className="text-[9px] px-1 py-0">
+                          {run.triggerType === "manual" ? "Manual" : "Scheduled"}
+                        </Badge>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {runs.length === 0 && !isActive && (
+          <div className="text-center py-4">
+            <span className="text-xs text-muted-foreground">No execution history yet. Start the runtime to begin monitoring.</span>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function ReleaseDetail() {
   const [, params] = useRoute("/deployments/:id");
   const [, navigate] = useLocation();
@@ -1215,6 +1397,10 @@ export default function ReleaseDetail() {
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {deployment && deployment.status === "deployed" && (
+        <RuntimeStatusCard deploymentId={deployment.id} agentId={deployment.agentId} />
       )}
 
       {detectedIndustry && rollbackTrigs.length > 0 && (

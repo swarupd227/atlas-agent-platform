@@ -143,6 +143,7 @@ import {
   agentPipelines, type AgentPipeline, type InsertAgentPipeline,
   pipelineRuns, type PipelineRun, type InsertPipelineRun,
   mcpParameterMatches, type McpParameterMatch, type InsertMcpParameterMatch,
+  agentRuntimeRuns, type AgentRuntimeRun, type InsertAgentRuntimeRun,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -620,6 +621,12 @@ export interface IStorage {
   getMcpParameterMatches(serverId: string): Promise<McpParameterMatch[]>;
   createMcpParameterMatch(match: InsertMcpParameterMatch): Promise<McpParameterMatch>;
   deleteMcpParameterMatchesByServer(serverId: string): Promise<void>;
+
+  getAgentRuntimeRuns(agentId?: string): Promise<AgentRuntimeRun[]>;
+  getAgentRuntimeRun(id: string): Promise<AgentRuntimeRun | undefined>;
+  createAgentRuntimeRun(run: InsertAgentRuntimeRun): Promise<AgentRuntimeRun>;
+  updateAgentRuntimeRun(id: string, data: Partial<AgentRuntimeRun>): Promise<AgentRuntimeRun | undefined>;
+  getActiveRuntimeRuns(): Promise<AgentRuntimeRun[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2424,6 +2431,32 @@ export class DatabaseStorage implements IStorage {
 
   async deleteMcpParameterMatchesByServer(serverId: string): Promise<void> {
     await db.delete(mcpParameterMatches).where(eq(mcpParameterMatches.serverId, serverId));
+  }
+
+  async getAgentRuntimeRuns(agentId?: string): Promise<AgentRuntimeRun[]> {
+    if (agentId) {
+      return db.select().from(agentRuntimeRuns).where(eq(agentRuntimeRuns.agentId, agentId)).orderBy(agentRuntimeRuns.startedAt);
+    }
+    return db.select().from(agentRuntimeRuns).orderBy(agentRuntimeRuns.startedAt);
+  }
+
+  async getAgentRuntimeRun(id: string): Promise<AgentRuntimeRun | undefined> {
+    const [run] = await db.select().from(agentRuntimeRuns).where(eq(agentRuntimeRuns.id, id));
+    return run;
+  }
+
+  async createAgentRuntimeRun(run: InsertAgentRuntimeRun): Promise<AgentRuntimeRun> {
+    const [created] = await db.insert(agentRuntimeRuns).values(run).returning();
+    return created;
+  }
+
+  async updateAgentRuntimeRun(id: string, data: Partial<AgentRuntimeRun>): Promise<AgentRuntimeRun | undefined> {
+    const [updated] = await db.update(agentRuntimeRuns).set(data).where(eq(agentRuntimeRuns.id, id)).returning();
+    return updated;
+  }
+
+  async getActiveRuntimeRuns(): Promise<AgentRuntimeRun[]> {
+    return db.select().from(agentRuntimeRuns).where(eq(agentRuntimeRuns.status, "running"));
   }
 }
 

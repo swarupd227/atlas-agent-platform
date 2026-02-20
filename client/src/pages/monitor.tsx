@@ -247,6 +247,133 @@ function generateTimeSeriesData(days: number, baseValue: number, variance: numbe
   });
 }
 
+function AgentRuntimeTab() {
+  const { data: activeRuntimes } = useQuery<Array<{ deploymentId: string; agentId: string; agentName: string; intervalMs: number }>>({
+    queryKey: ["/api/agent-runtime/active"],
+    refetchInterval: 10000,
+  });
+  const { data: runtimeRuns } = useQuery<any[]>({
+    queryKey: ["/api/agent-runtime/runs"],
+    refetchInterval: 10000,
+  });
+
+  const runs = runtimeRuns || [];
+  const actives = activeRuntimes || [];
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Card data-testid="section-active-runtimes">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-2">
+              <Zap className="w-4 h-4 text-muted-foreground" />
+              <CardTitle className="text-sm font-medium">Active Agent Runtimes</CardTitle>
+            </div>
+            <Badge variant="outline" className="text-[10px]" data-testid="badge-active-count">
+              {actives.length} running
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {actives.length === 0 ? (
+            <div className="text-center py-6">
+              <span className="text-xs text-muted-foreground">No agents currently running. Deploy an agent to start its runtime.</span>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {actives.map((rt) => (
+                <div key={rt.deploymentId} className="flex items-center justify-between gap-3 p-3 rounded-md bg-emerald-500/5 border border-emerald-500/10" data-testid={`active-runtime-${rt.deploymentId}`}>
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    <span className="text-sm font-medium">{rt.agentName}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="text-[10px]">Every {Math.round(rt.intervalMs / 60000)}min</Badge>
+                    <Link href={`/deployments/${rt.deploymentId}`}>
+                      <Button variant="outline" size="sm" data-testid={`button-view-runtime-${rt.deploymentId}`}>
+                        <Eye className="w-3 h-3 mr-1" /> View
+                      </Button>
+                    </Link>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card data-testid="section-runtime-history">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-2">
+              <Activity className="w-4 h-4 text-muted-foreground" />
+              <CardTitle className="text-sm font-medium">Execution History</CardTitle>
+            </div>
+            <Badge variant="outline" className="text-[10px]">{runs.length} runs</Badge>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {runs.length === 0 ? (
+            <div className="text-center py-6">
+              <span className="text-xs text-muted-foreground">No execution history yet.</span>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-1.5">
+              {runs.slice(0, 20).map((run: any) => {
+                const summary = run.resultSummary || {};
+                const severity = summary.severity || "unknown";
+                const sevColor = severity === "critical" ? "text-red-600 dark:text-red-400" : severity === "high" ? "text-amber-600 dark:text-amber-400" : severity === "medium" ? "text-yellow-600 dark:text-yellow-400" : "text-emerald-600 dark:text-emerald-400";
+                return (
+                  <div key={run.id} className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted/30" data-testid={`runtime-history-${run.id}`}>
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      {run.status === "completed" ? (
+                        <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                      ) : run.status === "running" ? (
+                        <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin shrink-0" />
+                      ) : (
+                        <AlertTriangle className="w-3.5 h-3.5 text-red-500 shrink-0" />
+                      )}
+                      <div className="flex flex-col min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[11px] font-medium">{summary.city || "Agent Run"}</span>
+                          {summary.temperature !== undefined && (
+                            <span className="text-[10px] text-muted-foreground">{summary.temperature}°C</span>
+                          )}
+                          {summary.windSpeed !== undefined && (
+                            <span className="text-[10px] text-muted-foreground">Wind {summary.windSpeed} km/h</span>
+                          )}
+                          <span className={`text-[10px] font-medium ${sevColor}`}>{severity}</span>
+                          {summary.alertTriggered && (
+                            <Badge variant="outline" className="text-[9px] text-red-600 dark:text-red-400 bg-red-500/10 px-1 py-0">Alert</Badge>
+                          )}
+                          {summary.source === "mcp_integration" && (
+                            <Badge variant="outline" className="text-[9px] text-blue-600 dark:text-blue-400 bg-blue-500/10 px-1 py-0">MCP</Badge>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[10px] text-muted-foreground">
+                            {run.startedAt ? new Date(run.startedAt).toLocaleString() : ""}
+                          </span>
+                          {run.latencyMs > 0 && (
+                            <span className="text-[10px] text-muted-foreground">{run.latencyMs}ms</span>
+                          )}
+                          <Badge variant="outline" className="text-[9px] px-1 py-0">
+                            {run.triggerType === "manual" ? "Manual" : "Scheduled"}
+                          </Badge>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 export default function Monitor() {
   const { industry } = useIndustry();
   const industryId = industry?.id || "financial_services";
@@ -746,6 +873,7 @@ export default function Monitor() {
           <TabsTrigger value="agent-health" data-testid="tab-agent-health">Agent Health</TabsTrigger>
           <TabsTrigger value="industry-kpis" data-testid="tab-industry-kpis">Industry KPIs</TabsTrigger>
           <TabsTrigger value="regulatory-alerts" data-testid="tab-regulatory-alerts">Regulatory Alerts</TabsTrigger>
+          <TabsTrigger value="agent-runtime" data-testid="tab-agent-runtime">Agent Runtime</TabsTrigger>
         </TabsList>
 
         <TabsContent value="outcome-sla" className="mt-0">
@@ -1761,6 +1889,10 @@ export default function Monitor() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="agent-runtime" className="mt-0">
+          <AgentRuntimeTab />
         </TabsContent>
       </Tabs>
 

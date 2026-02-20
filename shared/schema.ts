@@ -1848,4 +1848,25 @@ export const insertMcpParameterMatchSchema = createInsertSchema(mcpParameterMatc
 export type InsertMcpParameterMatch = z.infer<typeof insertMcpParameterMatchSchema>;
 export type McpParameterMatch = typeof mcpParameterMatches.$inferSelect;
 
+export const agentRuntimeRuns = pgTable("agent_runtime_runs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  agentId: varchar("agent_id").notNull(),
+  deploymentId: varchar("deployment_id"),
+  status: text("status").notNull().default("running"),
+  triggerType: text("trigger_type").notNull().default("scheduled"),
+  blueprintId: varchar("blueprint_id"),
+  mcpServerId: varchar("mcp_server_id"),
+  stepsJson: jsonb("steps_json"),
+  resultSummary: jsonb("result_summary"),
+  inputConfig: jsonb("input_config"),
+  errorMessage: text("error_message"),
+  latencyMs: integer("latency_ms").default(0),
+  startedAt: timestamp("started_at").defaultNow(),
+  completedAt: timestamp("completed_at"),
+});
+
+export const insertAgentRuntimeRunSchema = createInsertSchema(agentRuntimeRuns).omit({ id: true, startedAt: true, completedAt: true });
+export type InsertAgentRuntimeRun = z.infer<typeof insertAgentRuntimeRunSchema>;
+export type AgentRuntimeRun = typeof agentRuntimeRuns.$inferSelect;
+
 export * from "./models/chat";
