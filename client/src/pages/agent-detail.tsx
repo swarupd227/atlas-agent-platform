@@ -436,7 +436,7 @@ function AgentDetailInner() {
         version: nextVersion,
         rolloutStrategy: "full",
         status: "pending",
-        industry: industry || (agent as any)?.industry || "technology",
+        industry: industry?.id || (agent as any)?.industry || "technology",
       });
       return res.json();
     },
