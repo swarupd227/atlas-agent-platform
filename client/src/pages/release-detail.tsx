@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRoute, useLocation } from "wouter";
 import {
   Rocket,
@@ -31,6 +31,8 @@ import {
   AlertOctagon,
   Circle,
   CheckCircle2,
+  Play,
+  Loader2,
 } from "lucide-react";
 import { mandatoryPipelineStages, industryRollbackTriggers, evidencePackageItems, industryLabels, type IndustryId, type DeploymentStageRecord, type DeploymentEvidenceRecord, getPipelineCompletion, getEvidenceCompletion } from "@/lib/industry-deployment-pipeline";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -709,6 +711,8 @@ export default function ReleaseDetail() {
   const { industry: activeIndustry } = useIndustry();
   const id = params?.id;
   const [promoteOpen, setPromoteOpen] = useState(false);
+  const [pipelineRunning, setPipelineRunning] = useState(false);
+  const [pipelineAnimStep, setPipelineAnimStep] = useState(-1);
 
   const { data: deployment, isLoading } = useQuery<Deployment>({
     queryKey: ["/api/deployments", id],
@@ -799,6 +803,48 @@ export default function ReleaseDetail() {
       toast({ title: "Failed to update stage", description: err.message, variant: "destructive" });
     },
   });
+
+  const runPipelineMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/deployments/${id}/run-pipeline`, {});
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deployments", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/deployments"] });
+      toast({ title: "Pipeline completed", description: "All stages have been verified and completed." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Pipeline execution failed", description: err.message, variant: "destructive" });
+      setPipelineRunning(false);
+      setPipelineAnimStep(-1);
+    },
+  });
+
+  const handleRunPipeline = useCallback(() => {
+    setPipelineRunning(true);
+    setPipelineAnimStep(0);
+    runPipelineMutation.mutate();
+  }, [runPipelineMutation]);
+
+  useEffect(() => {
+    if (!pipelineRunning || pipelineAnimStep < 0) return;
+    const totalStages = stageRecordsForAnim;
+    if (pipelineAnimStep >= totalStages) {
+      setPipelineRunning(false);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setPipelineAnimStep(prev => prev + 1);
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [pipelineRunning, pipelineAnimStep]);
+
+  const stageRecordsForAnim = (() => {
+    if (!deployment) return 0;
+    const sr = (deployment.pipelineStages as any[]) || [];
+    return sr.length;
+  })();
 
   const collectEvidenceMutation = useMutation({
     mutationFn: async (data: { itemId: string; sourceLink?: string; summary?: string }) => {
@@ -979,86 +1025,123 @@ export default function ReleaseDetail() {
                 </Button>
               </div>
             ) : (
-              <div className="flex flex-col gap-0">
-                {stages.map((stage) => {
-                  const record = stageRecords.find(r => r.stageId === stage.id);
-                  const status = record?.status || "pending";
-                  return (
-                    <div key={stage.id} className="flex items-start gap-3" data-testid={`pipeline-stage-${stage.id}`}>
-                      <div className="flex flex-col items-center shrink-0">
-                        <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 ${
-                          status === "completed" ? "border-emerald-500 bg-emerald-500/10" :
-                          status === "in_progress" ? "border-amber-500 bg-amber-500/10" :
-                          "border-muted-foreground/30 bg-muted/30"
-                        }`}>
-                          {status === "completed" ? (
-                            <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                          ) : status === "in_progress" ? (
-                            <Circle className="w-4 h-4 text-amber-500" />
-                          ) : (
-                            <span className="text-xs font-medium text-muted-foreground">{stage.order}</span>
+              <div className="flex flex-col gap-3">
+                {!deployment.pipelineComplete && !pipelineRunning && (
+                  <Button
+                    onClick={handleRunPipeline}
+                    disabled={runPipelineMutation.isPending}
+                    className="w-full"
+                    data-testid="button-run-pipeline"
+                  >
+                    <Play className="w-4 h-4 mr-1.5" />
+                    {runPipelineMutation.isPending ? "Running..." : "Run All Pipeline Stages"}
+                  </Button>
+                )}
+                {pipelineRunning && (
+                  <div className="flex items-center gap-2 p-3 rounded-md bg-blue-500/5 border border-blue-500/10" data-testid="pipeline-running-banner">
+                    <Loader2 className="w-4 h-4 text-blue-500 animate-spin shrink-0" />
+                    <span className="text-xs text-blue-700 dark:text-blue-400">
+                      Running pipeline verification... Stage {Math.min(pipelineAnimStep + 1, stages.length)}/{stages.length}
+                    </span>
+                  </div>
+                )}
+                {deployment.pipelineComplete && (
+                  <div className="flex items-center gap-2 p-3 rounded-md bg-emerald-500/5 border border-emerald-500/10" data-testid="pipeline-complete-banner">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                    <span className="text-xs text-emerald-700 dark:text-emerald-400 font-medium">
+                      All pipeline stages verified and completed
+                    </span>
+                  </div>
+                )}
+                <div className="flex flex-col gap-0">
+                  {stages.map((stage, stageIndex) => {
+                    const record = stageRecords.find(r => r.stageId === stage.id);
+                    const actualStatus = record?.status || "pending";
+                    const isAnimatingThisStage = pipelineRunning && pipelineAnimStep === stageIndex;
+                    const isAnimatedPast = pipelineRunning && pipelineAnimStep > stageIndex;
+                    const displayStatus = isAnimatingThisStage ? "in_progress" : (isAnimatedPast || actualStatus === "completed") ? "completed" : actualStatus;
+                    return (
+                      <div key={stage.id} className={`flex items-start gap-3 transition-all duration-500 ${isAnimatingThisStage ? "scale-[1.02]" : ""}`} data-testid={`pipeline-stage-${stage.id}`}>
+                        <div className="flex flex-col items-center shrink-0">
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 transition-all duration-500 ${
+                            displayStatus === "completed" ? "border-emerald-500 bg-emerald-500/10" :
+                            displayStatus === "in_progress" ? "border-blue-500 bg-blue-500/10" :
+                            "border-muted-foreground/30 bg-muted/30"
+                          }`}>
+                            {displayStatus === "completed" ? (
+                              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                            ) : displayStatus === "in_progress" ? (
+                              <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />
+                            ) : (
+                              <span className="text-xs font-medium text-muted-foreground">{stage.order}</span>
+                            )}
+                          </div>
+                          {stage.order < stages.length && (
+                            <div className={`w-0.5 h-8 transition-all duration-500 ${displayStatus === "completed" ? "bg-emerald-500/40" : "bg-muted-foreground/20"}`} />
                           )}
                         </div>
-                        {stage.order < stages.length && (
-                          <div className="w-0.5 h-8 bg-muted-foreground/20" />
-                        )}
-                      </div>
-                      <div className="flex-1 pb-3">
-                        <div className="flex items-center justify-between gap-2 flex-wrap">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-xs font-medium" data-testid={`text-stage-name-${stage.id}`}>{stage.name}</span>
-                            {stage.mandatory && (
-                              <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400 bg-amber-500/10">
-                                Mandatory
-                              </Badge>
-                            )}
+                        <div className="flex-1 pb-3">
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-xs font-medium" data-testid={`text-stage-name-${stage.id}`}>{stage.name}</span>
+                              {stage.mandatory && (
+                                <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400 bg-amber-500/10">
+                                  Mandatory
+                                </Badge>
+                              )}
+                            </div>
+                            <Badge variant="outline" className={`text-[10px] transition-all duration-300 ${
+                              displayStatus === "completed" ? "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10" :
+                              displayStatus === "in_progress" ? "text-blue-600 dark:text-blue-400 bg-blue-500/10" :
+                              ""
+                            }`} data-testid={`badge-stage-status-${stage.id}`}>
+                              {displayStatus === "completed" ? "Verified" : displayStatus === "in_progress" ? "Verifying..." : "Pending"}
+                            </Badge>
                           </div>
-                          <Badge variant="outline" className={`text-[10px] ${
-                            status === "completed" ? "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10" :
-                            status === "in_progress" ? "text-amber-600 dark:text-amber-400 bg-amber-500/10" :
-                            ""
-                          }`} data-testid={`badge-stage-status-${stage.id}`}>
-                            {status === "completed" ? "Completed" : status === "in_progress" ? "In Progress" : "Pending"}
-                          </Badge>
+                          <p className="text-[11px] text-muted-foreground mt-0.5">{stage.description}</p>
+                          {!pipelineRunning && actualStatus === "pending" && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="mt-2"
+                              onClick={() => advanceStageMutation.mutate({ stageId: stage.id, status: "in_progress" })}
+                              disabled={advanceStageMutation.isPending}
+                              data-testid={`button-start-stage-${stage.id}`}
+                            >
+                              Start
+                            </Button>
+                          )}
+                          {!pipelineRunning && actualStatus === "in_progress" && (
+                            <Button
+                              size="sm"
+                              className="mt-2"
+                              onClick={() => advanceStageMutation.mutate({ stageId: stage.id, status: "completed", completedBy: "Admin" })}
+                              disabled={advanceStageMutation.isPending}
+                              data-testid={`button-complete-stage-${stage.id}`}
+                            >
+                              Complete
+                            </Button>
+                          )}
+                          {displayStatus === "completed" && isAnimatedPast && (
+                            <div className="flex items-center gap-2 mt-1 flex-wrap">
+                              <span className="text-[10px] text-emerald-600 dark:text-emerald-400">Auto-verified by system</span>
+                            </div>
+                          )}
+                          {actualStatus === "completed" && !pipelineRunning && record && (
+                            <div className="flex items-center gap-2 mt-1 flex-wrap">
+                              {record.completedAt && (
+                                <span className="text-[10px] text-muted-foreground">Completed {formatDate(record.completedAt)}</span>
+                              )}
+                              {record.completedBy && (
+                                <span className="text-[10px] text-muted-foreground">by {record.completedBy}</span>
+                              )}
+                            </div>
+                          )}
                         </div>
-                        <p className="text-[11px] text-muted-foreground mt-0.5">{stage.description}</p>
-                        {status === "pending" && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="mt-2"
-                            onClick={() => advanceStageMutation.mutate({ stageId: stage.id, status: "in_progress" })}
-                            disabled={advanceStageMutation.isPending}
-                            data-testid={`button-start-stage-${stage.id}`}
-                          >
-                            Start
-                          </Button>
-                        )}
-                        {status === "in_progress" && (
-                          <Button
-                            size="sm"
-                            className="mt-2"
-                            onClick={() => advanceStageMutation.mutate({ stageId: stage.id, status: "completed", completedBy: "Admin" })}
-                            disabled={advanceStageMutation.isPending}
-                            data-testid={`button-complete-stage-${stage.id}`}
-                          >
-                            Complete
-                          </Button>
-                        )}
-                        {status === "completed" && record && (
-                          <div className="flex items-center gap-2 mt-1 flex-wrap">
-                            {record.completedAt && (
-                              <span className="text-[10px] text-muted-foreground">Completed {formatDate(record.completedAt)}</span>
-                            )}
-                            {record.completedBy && (
-                              <span className="text-[10px] text-muted-foreground">by {record.completedBy}</span>
-                            )}
-                          </div>
-                        )}
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
             )}
           </CardContent>

@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -45,6 +45,11 @@ import {
   BarChart3,
   Target,
   Layers,
+  Zap,
+  Droplets,
+  Wind,
+  Thermometer,
+  CloudRain,
 } from "lucide-react";
 
 function getComplexityVariant(c: string): "default" | "secondary" | "destructive" | "outline" {
@@ -148,6 +153,17 @@ export default function ShadowReplayStudio() {
     riskLevel: "medium",
   });
 
+  const [liveTestOpen, setLiveTestOpen] = useState(false);
+  const [liveTestRunning, setLiveTestRunning] = useState(false);
+  const [liveTestResult, setLiveTestResult] = useState<any>(null);
+  const [liveTestAnimStep, setLiveTestAnimStep] = useState(0);
+  const [liveTestForm, setLiveTestForm] = useState({
+    agentName: "Weather Alert Agent",
+    city: "Miami",
+    latitude: 25.76,
+    longitude: -80.19,
+  });
+
   const [createSessionOpen, setCreateSessionOpen] = useState(false);
   const [newSession, setNewSession] = useState({
     name: "",
@@ -249,6 +265,50 @@ export default function ShadowReplayStudio() {
     },
     onError: (e: any) => toast({ title: "Analysis failed", description: e.message, variant: "destructive" }),
   });
+
+  const liveTestMutation = useMutation({
+    mutationFn: async (data: { agentName: string; city: string; latitude: number; longitude: number; industry: string }) => {
+      const res = await apiRequest("POST", "/api/live-agent-test", data);
+      return res.json();
+    },
+    onSuccess: (result) => {
+      setLiveTestResult(result);
+      setLiveTestRunning(false);
+      setLiveTestOpen(false);
+      setSelectedTraceId(null);
+      setSelectedSessionId(null);
+      setLiveTestAnimStep(0);
+      if (result.steps?.length > 0) {
+        let step = 0;
+        const animate = () => {
+          step++;
+          setLiveTestAnimStep(step);
+          if (step < result.steps.length * 2) {
+            setTimeout(animate, 1000);
+          }
+        };
+        setTimeout(animate, 500);
+      }
+    },
+    onError: (e: any) => {
+      setLiveTestRunning(false);
+      toast({ title: "Live test failed", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const handleRunLiveTest = useCallback(() => {
+    setLiveTestRunning(true);
+    setLiveTestResult(null);
+    setLiveTestAnimStep(0);
+    liveTestMutation.mutate({
+      ...liveTestForm,
+      industry: industry?.id || "financial_services",
+    });
+  }, [liveTestForm, industry]);
+
+  const quickSelectCity = useCallback((cityName: string, lat: number, lon: number) => {
+    setLiveTestForm((prev) => ({ ...prev, city: cityName, latitude: lat, longitude: lon }));
+  }, []);
 
   const filteredTraces = useMemo(() => {
     let list = traces;
@@ -372,6 +432,15 @@ export default function ShadowReplayStudio() {
                 >
                   {generateTracesMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1" />}
                   AI Generate
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setLiveTestOpen(true)}
+                  data-testid="button-live-agent-test"
+                >
+                  <Zap className="w-4 h-4 mr-1" />
+                  Live Agent Test
                 </Button>
               </div>
 
@@ -518,12 +587,249 @@ export default function ShadowReplayStudio() {
 
         {/* Right Column */}
         <div className="flex-1 min-w-0">
-          {!selectedTrace && !selectedSession && (
+          {!selectedTrace && !selectedSession && !liveTestResult && (
             <div className="flex flex-col items-center justify-center h-full text-center">
               <Play className="w-12 h-12 text-muted-foreground mb-3" />
               <p className="text-lg font-medium text-muted-foreground">Select a trace or session</p>
               <p className="text-sm text-muted-foreground mt-1">Choose from the left panel to view details</p>
             </div>
+          )}
+
+          {liveTestResult && !selectedTrace && !selectedSession && (
+            <ScrollArea className="h-full">
+              <div className="space-y-4 pr-2" data-testid="live-test-results">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-semibold flex items-center gap-2" data-testid="text-live-test-title">
+                      <Zap className="w-5 h-5 text-amber-500" />
+                      {liveTestResult.agentName}
+                    </h2>
+                    <p className="text-sm text-muted-foreground">
+                      Live test for {liveTestResult.city}
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setLiveTestResult(null)}
+                    data-testid="button-close-live-test"
+                  >
+                    <XCircle className="w-4 h-4 mr-1" />
+                    Close
+                  </Button>
+                </div>
+
+                <div className="space-y-3">
+                  {liveTestResult.steps?.map((step: any, idx: number) => {
+                    const stepVisible = liveTestAnimStep >= idx * 2 + 1;
+                    const stepComplete = liveTestAnimStep >= idx * 2 + 2;
+                    if (!stepVisible) return null;
+
+                    const typeBadgeClass =
+                      step.type === "api_call" ? "bg-blue-500/15 text-blue-700 dark:text-blue-400" :
+                      step.type === "analysis" ? "bg-amber-500/15 text-amber-700 dark:text-amber-400" :
+                      step.type === "decision" ? "bg-purple-500/15 text-purple-700 dark:text-purple-400" :
+                      step.type === "validation" ? "bg-green-500/15 text-green-700 dark:text-green-400" : "";
+
+                    return (
+                      <Card
+                        key={step.id}
+                        className="animate-in fade-in slide-in-from-bottom-2 duration-300"
+                        data-testid={`card-live-step-${step.id}`}
+                      >
+                        <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+                          <div className="flex items-center gap-2">
+                            {stepComplete ? (
+                              <CheckCircle2 className="w-5 h-5 text-green-500" />
+                            ) : (
+                              <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+                            )}
+                            <CardTitle className="text-sm">{step.name}</CardTitle>
+                          </div>
+                          <Badge variant="outline" className={typeBadgeClass}>
+                            {step.type.replace("_", " ")}
+                          </Badge>
+                        </CardHeader>
+                        {stepComplete && step.output && (
+                          <CardContent className="animate-in fade-in duration-500">
+                            {step.type === "api_call" && (
+                              <div className="space-y-3">
+                                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                                  <div className="rounded-md border p-3 text-center">
+                                    <Thermometer className="w-4 h-4 mx-auto mb-1 text-orange-500" />
+                                    <div className="text-lg font-semibold" data-testid="text-temperature">
+                                      {step.output.temperature}{step.output.temperatureUnit}
+                                    </div>
+                                    <div className="text-[10px] text-muted-foreground">Temperature</div>
+                                  </div>
+                                  <div className="rounded-md border p-3 text-center">
+                                    <Droplets className="w-4 h-4 mx-auto mb-1 text-blue-500" />
+                                    <div className="text-lg font-semibold" data-testid="text-humidity">
+                                      {step.output.humidity}%
+                                    </div>
+                                    <div className="text-[10px] text-muted-foreground">Humidity</div>
+                                  </div>
+                                  <div className="rounded-md border p-3 text-center">
+                                    <Wind className="w-4 h-4 mx-auto mb-1 text-teal-500" />
+                                    <div className="text-lg font-semibold" data-testid="text-wind-speed">
+                                      {step.output.windSpeed} {step.output.windSpeedUnit}
+                                    </div>
+                                    <div className="text-[10px] text-muted-foreground">Wind Speed</div>
+                                  </div>
+                                  <div className="rounded-md border p-3 text-center">
+                                    <CloudRain className="w-4 h-4 mx-auto mb-1 text-indigo-500" />
+                                    <div className="text-lg font-semibold" data-testid="text-precipitation">
+                                      {step.output.precipitation} mm
+                                    </div>
+                                    <div className="text-[10px] text-muted-foreground">Precipitation</div>
+                                  </div>
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  Location: {step.output.city} ({step.output.latitude}, {step.output.longitude})
+                                </div>
+                              </div>
+                            )}
+
+                            {step.type === "analysis" && (
+                              <div className="space-y-3">
+                                <div className="flex flex-wrap items-center gap-3">
+                                  <Badge
+                                    variant="outline"
+                                    className={
+                                      step.output.severityLevel === "critical" ? "bg-red-500/15 text-red-700 dark:text-red-400" :
+                                      step.output.severityLevel === "high" ? "bg-orange-500/15 text-orange-700 dark:text-orange-400" :
+                                      step.output.severityLevel === "medium" ? "bg-amber-500/15 text-amber-700 dark:text-amber-400" :
+                                      "bg-green-500/15 text-green-700 dark:text-green-400"
+                                    }
+                                    data-testid="badge-severity"
+                                  >
+                                    {step.output.severityLevel} severity
+                                  </Badge>
+                                  <span className="text-sm text-muted-foreground">
+                                    Score: {step.output.severityScore}
+                                  </span>
+                                  <Badge variant="outline">
+                                    {step.output.weatherCondition}
+                                  </Badge>
+                                </div>
+                                {step.output.riskFactors?.length > 0 && (
+                                  <div className="space-y-1">
+                                    <span className="text-xs font-medium text-muted-foreground">Risk Factors</span>
+                                    {step.output.riskFactors.map((rf: string, i: number) => (
+                                      <div key={i} className="flex items-center gap-2 text-xs">
+                                        <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />
+                                        <span>{rf}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {step.type === "decision" && (
+                              <div className="space-y-3">
+                                <div
+                                  className={`rounded-md p-3 text-sm ${
+                                    step.output.alertTriggered
+                                      ? step.output.severity === "critical"
+                                        ? "bg-red-500/10 text-red-700 dark:text-red-400 border border-red-500/20"
+                                        : "bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20"
+                                      : "bg-green-500/10 text-green-700 dark:text-green-400 border border-green-500/20"
+                                  }`}
+                                  data-testid="text-alert-message"
+                                >
+                                  {step.output.alertMessage}
+                                </div>
+                                {step.output.estimatedImpact && (
+                                  <div className="grid grid-cols-3 gap-2">
+                                    <div className="rounded-md border p-2 text-center">
+                                      <div className="text-xs font-medium">{step.output.estimatedImpact.estimatedClaimsSurge}</div>
+                                      <div className="text-[10px] text-muted-foreground">Claims Surge</div>
+                                    </div>
+                                    <div className="rounded-md border p-2 text-center">
+                                      <div className="text-xs font-medium">{step.output.estimatedImpact.recommendedAction}</div>
+                                      <div className="text-[10px] text-muted-foreground">Action</div>
+                                    </div>
+                                    <div className="rounded-md border p-2 text-center">
+                                      <div className="text-xs font-medium">{step.output.estimatedImpact.priority}</div>
+                                      <div className="text-[10px] text-muted-foreground">Priority</div>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {step.type === "validation" && (
+                              <div className="space-y-2">
+                                {step.output.checks?.map((check: any, i: number) => (
+                                  <div key={i} className="flex items-start gap-2 text-xs" data-testid={`check-${i}`}>
+                                    {check.status === "pass" ? (
+                                      <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0 mt-0.5" />
+                                    ) : (
+                                      <XCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                                    )}
+                                    <div>
+                                      <div className="font-medium">{check.rule}</div>
+                                      <div className="text-muted-foreground">{check.detail}</div>
+                                    </div>
+                                  </div>
+                                ))}
+                                {step.output.auditId && (
+                                  <div className="text-[10px] text-muted-foreground mt-2">
+                                    Audit ID: {step.output.auditId}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </CardContent>
+                        )}
+                      </Card>
+                    );
+                  })}
+                </div>
+
+                {liveTestResult.summary && liveTestAnimStep >= (liveTestResult.steps?.length || 0) * 2 && (
+                  <Card className="animate-in fade-in slide-in-from-bottom-2 duration-300 border-2" data-testid="card-live-test-summary">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        <Target className="w-4 h-4" />
+                        Execution Summary
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                        <div className="rounded-md border p-2 text-center">
+                          <div className="text-lg font-semibold">{liveTestResult.summary.totalSteps}</div>
+                          <div className="text-[10px] text-muted-foreground">Total Steps</div>
+                        </div>
+                        <div className="rounded-md border p-2 text-center">
+                          <div className="text-lg font-semibold text-green-600 dark:text-green-400">{liveTestResult.summary.passedSteps}</div>
+                          <div className="text-[10px] text-muted-foreground">Passed</div>
+                        </div>
+                        <div className="rounded-md border p-2 text-center">
+                          <div className="text-lg font-semibold text-red-600 dark:text-red-400">{liveTestResult.summary.failedSteps}</div>
+                          <div className="text-[10px] text-muted-foreground">Failed</div>
+                        </div>
+                        <div className="rounded-md border p-2 text-center">
+                          <Badge
+                            variant="outline"
+                            className={
+                              liveTestResult.summary.severity === "critical" ? "bg-red-500/15 text-red-700 dark:text-red-400" :
+                              liveTestResult.summary.severity === "high" ? "bg-orange-500/15 text-orange-700 dark:text-orange-400" :
+                              liveTestResult.summary.severity === "medium" ? "bg-amber-500/15 text-amber-700 dark:text-amber-400" :
+                              "bg-green-500/15 text-green-700 dark:text-green-400"
+                            }
+                          >
+                            {liveTestResult.summary.severity}
+                          </Badge>
+                          <div className="text-[10px] text-muted-foreground mt-1">Severity</div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+            </ScrollArea>
           )}
 
           {/* Trace Detail View */}
@@ -1119,6 +1425,94 @@ export default function ShadowReplayStudio() {
             >
               {createTraceMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Plus className="w-4 h-4 mr-1" />}
               Create Trace
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Live Agent Test Dialog */}
+      <Dialog open={liveTestOpen} onOpenChange={setLiveTestOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Zap className="w-5 h-5 text-amber-500" />
+              Live Agent Test
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label>Agent Name</Label>
+              <Input
+                value={liveTestForm.agentName}
+                onChange={(e) => setLiveTestForm({ ...liveTestForm, agentName: e.target.value })}
+                placeholder="e.g. Weather Alert Agent"
+                data-testid="input-live-agent-name"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>City</Label>
+              <Input
+                value={liveTestForm.city}
+                onChange={(e) => setLiveTestForm({ ...liveTestForm, city: e.target.value })}
+                placeholder="e.g. Miami"
+                data-testid="input-live-city"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>Latitude</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={liveTestForm.latitude}
+                  onChange={(e) => setLiveTestForm({ ...liveTestForm, latitude: parseFloat(e.target.value) || 0 })}
+                  data-testid="input-live-latitude"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Longitude</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={liveTestForm.longitude}
+                  onChange={(e) => setLiveTestForm({ ...liveTestForm, longitude: parseFloat(e.target.value) || 0 })}
+                  data-testid="input-live-longitude"
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs text-muted-foreground">Quick Select</Label>
+              <div className="flex flex-wrap items-center gap-2">
+                {[
+                  { name: "Miami", lat: 25.76, lon: -80.19 },
+                  { name: "Houston", lat: 29.76, lon: -95.37 },
+                  { name: "New York", lat: 40.71, lon: -74.01 },
+                  { name: "Tokyo", lat: 35.68, lon: 139.69 },
+                  { name: "London", lat: 51.51, lon: -0.13 },
+                ].map((c) => (
+                  <Button
+                    key={c.name}
+                    variant={liveTestForm.city === c.name ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => quickSelectCity(c.name, c.lat, c.lon)}
+                    className="toggle-elevate text-xs"
+                    data-testid={`button-city-${c.name.toLowerCase().replace(" ", "-")}`}
+                  >
+                    {c.name}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setLiveTestOpen(false)} data-testid="button-cancel-live-test">Cancel</Button>
+            <Button
+              onClick={handleRunLiveTest}
+              disabled={!liveTestForm.city || liveTestRunning}
+              data-testid="button-run-live-test"
+            >
+              {liveTestRunning ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Zap className="w-4 h-4 mr-1" />}
+              Run Test
             </Button>
           </DialogFooter>
         </DialogContent>
