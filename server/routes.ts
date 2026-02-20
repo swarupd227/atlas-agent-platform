@@ -16177,6 +16177,15 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         };
       });
 
+      const allDeployments = await storage.getDeployments();
+      const previouslyDeployed = allDeployments.filter(
+        d => d.agentId === deployment.agentId && d.id !== req.params.id && d.status === "deployed"
+      );
+      for (const old of previouslyDeployed) {
+        stopAgentRuntime(old.id);
+        await storage.updateDeployment(old.id, { status: "superseded" });
+      }
+
       const updated = await storage.updateDeployment(req.params.id, {
         pipelineStages: updatedStages,
         pipelineComplete: true,
