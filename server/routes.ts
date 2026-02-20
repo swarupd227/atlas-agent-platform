@@ -10633,6 +10633,64 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
     }
   });
 
+  app.get("/api/mcp-servers/tools/validate", async (req, res) => {
+    try {
+      const toolIdsParam = req.query.tool_ids as string | undefined;
+      const serverIdsParam = req.query.server_ids as string | undefined;
+
+      const toolIds: string[] = (toolIdsParam ? JSON.parse(toolIdsParam) : []).map((s: string) => s.trim()).filter(Boolean);
+      const serverIds: string[] = (serverIdsParam ? JSON.parse(serverIdsParam) : []).map((s: string) => s.trim()).filter(Boolean);
+
+      const allTools = await storage.getAllMcpServerTools();
+      const allServers = await storage.getMcpServers();
+
+      const toolNameSet = new Set(allTools.map(t => t.name.toLowerCase()));
+      const toolIdSet = new Set(allTools.map(t => t.id));
+      const serverNameSet = new Set(allServers.map(s => s.name.toLowerCase()));
+      const serverIdSet = new Set(allServers.map(s => s.id));
+
+      const toolResults = toolIds.map(ref => {
+        const lower = ref.toLowerCase().replace(/^(mcp:|tool:)/, "");
+        const found = toolNameSet.has(lower) || toolIdSet.has(ref);
+        const matchedTool = found ? allTools.find(t => t.name.toLowerCase() === lower || t.id === ref) : null;
+        const matchedServer = matchedTool ? allServers.find(s => s.id === matchedTool.serverId) : null;
+        return {
+          ref,
+          valid: found,
+          toolName: matchedTool?.name ?? null,
+          serverId: matchedServer?.id ?? null,
+          serverName: matchedServer?.name ?? null,
+        };
+      });
+
+      const serverResults = serverIds.map(ref => {
+        const lower = ref.toLowerCase();
+        const found = serverNameSet.has(lower) || serverIdSet.has(ref);
+        const matchedServer = found ? allServers.find(s => s.name.toLowerCase() === lower || s.id === ref) : null;
+        return {
+          ref,
+          valid: found,
+          serverId: matchedServer?.id ?? null,
+          serverName: matchedServer?.name ?? null,
+          status: matchedServer?.status ?? null,
+        };
+      });
+
+      const brokenTools = toolResults.filter(r => !r.valid);
+      const brokenServers = serverResults.filter(r => !r.valid);
+
+      res.json({
+        tools: toolResults,
+        servers: serverResults,
+        brokenTools,
+        brokenServers,
+        hasBrokenDependencies: brokenTools.length > 0 || brokenServers.length > 0,
+      });
+    } catch (e) {
+      res.status(500).json({ message: "Failed to validate MCP dependencies" });
+    }
+  });
+
   app.get("/api/mcp-servers/:id/tools", async (req, res) => {
     try {
       const tools = await storage.getMcpServerTools(req.params.id);

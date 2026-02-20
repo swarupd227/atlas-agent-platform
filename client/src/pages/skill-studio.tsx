@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRoute, useLocation, Link } from "wouter";
 import type { Skill, SkillVersion } from "@shared/schema";
@@ -47,6 +47,7 @@ import {
   CheckCircle,
   XOctagon,
   Clock,
+  Unlink,
 } from "lucide-react";
 
 const SECTION_TEMPLATES: Record<string, string> = {
@@ -373,6 +374,38 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
       return res.json();
     },
     enabled: !!industry,
+  });
+
+  const { data: registeredMcpTools = [] } = useQuery<Array<{ id: string; serverId: string; name: string; description: string | null }>>({
+    queryKey: ["/api/mcp-tools"],
+  });
+
+  const { data: registeredMcpServers = [] } = useQuery<Array<{ id: string; name: string; status: string }>>({
+    queryKey: ["/api/mcp-servers"],
+  });
+
+  const toolRefsList = useMemo(() => allowedTools.split("\n").map(t => t.trim()).filter(Boolean), [allowedTools]);
+  const serverRefsList = useMemo(() => requiredMcpServers.split("\n").map(t => t.trim()).filter(Boolean), [requiredMcpServers]);
+
+  const { data: depValidation } = useQuery<{
+    tools: { ref: string; valid: boolean; toolName: string | null; serverName: string | null }[];
+    servers: { ref: string; valid: boolean; serverName: string | null; status: string | null }[];
+    brokenTools: { ref: string }[];
+    brokenServers: { ref: string }[];
+    hasBrokenDependencies: boolean;
+  }>({
+    queryKey: ["/api/mcp-servers/tools/validate", toolRefsList, serverRefsList],
+    queryFn: async () => {
+      if (toolRefsList.length === 0 && serverRefsList.length === 0) {
+        return { tools: [], servers: [], brokenTools: [], brokenServers: [], hasBrokenDependencies: false };
+      }
+      const params = new URLSearchParams();
+      if (toolRefsList.length > 0) params.set("tool_ids", JSON.stringify(toolRefsList));
+      if (serverRefsList.length > 0) params.set("server_ids", JSON.stringify(serverRefsList));
+      const res = await fetch(`/api/mcp-servers/tools/validate?${params}`);
+      return res.json();
+    },
+    enabled: toolRefsList.length > 0 || serverRefsList.length > 0,
   });
 
   useEffect(() => {
@@ -751,6 +784,16 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
             Eval {skill.lastEvalPassRate.toFixed(0)}%
           </Badge>
         )}
+        {depValidation?.hasBrokenDependencies && (
+          <Badge
+            variant="secondary"
+            className="text-[10px] bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 no-default-hover-elevate no-default-active-elevate"
+            data-testid="badge-broken-deps"
+          >
+            <Unlink className="w-3 h-3 mr-1" />
+            {(depValidation.brokenTools.length + depValidation.brokenServers.length)} Broken Dep{(depValidation.brokenTools.length + depValidation.brokenServers.length) !== 1 ? "s" : ""}
+          </Badge>
+        )}
       </div>
 
       {showValidation && validationResult && (
@@ -840,6 +883,7 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
           </TabsTrigger>
           <TabsTrigger value="dependencies" data-testid="tab-dependencies">
             <Network className="w-3.5 h-3.5 mr-1.5" /> Dependencies
+            {depValidation?.hasBrokenDependencies && <Unlink className="w-3 h-3 ml-1 text-red-500" />}
           </TabsTrigger>
           <TabsTrigger value="eval" data-testid="tab-eval">
             <Activity className="w-3.5 h-3.5 mr-1.5" /> Eval Results
@@ -957,14 +1001,145 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
                   <Separator />
                   <p className="text-xs text-muted-foreground font-medium">Advanced Configuration</p>
 
+                  {depValidation?.hasBrokenDependencies && (
+                    <div className="flex items-center gap-2 p-2.5 rounded-md bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800" data-testid="alert-broken-deps">
+                      <Unlink className="w-4 h-4 text-red-500 shrink-0" />
+                      <div className="text-xs text-red-700 dark:text-red-400">
+                        <span className="font-medium">Broken dependencies detected.</span> {depValidation.brokenTools.length > 0 && `${depValidation.brokenTools.length} tool(s)`}{depValidation.brokenTools.length > 0 && depValidation.brokenServers.length > 0 && ", "}{depValidation.brokenServers.length > 0 && `${depValidation.brokenServers.length} server(s)`} not found in registry.
+                      </div>
+                    </div>
+                  )}
+
                   <div className="space-y-1.5">
-                    <Label htmlFor="skill-allowed-tools">Allowed Tools (one per line)</Label>
-                    <Textarea id="skill-allowed-tools" value={allowedTools} onChange={e => { setAllowedTools(e.target.value); clearValidation(); }} rows={2} placeholder="mcp:sanctions-api&#10;tool:search" data-testid="input-allowed-tools" />
-                    <p className="text-[11px] text-muted-foreground">MCP tools and external APIs this skill can use</p>
+                    <div className="flex items-center justify-between gap-2">
+                      <Label htmlFor="skill-allowed-tools">Allowed Tools</Label>
+                      {registeredMcpTools.length > 0 && (
+                        <Select
+                          value=""
+                          onValueChange={(val) => {
+                            const current = allowedTools.split("\n").map(t => t.trim()).filter(Boolean);
+                            if (!current.includes(val)) {
+                              setAllowedTools([...current, val].join("\n"));
+                              clearValidation();
+                            }
+                          }}
+                        >
+                          <SelectTrigger className="w-[220px]" data-testid="select-add-tool">
+                            <Plus className="w-3 h-3 mr-1" />
+                            <span className="text-xs">Add from registry</span>
+                          </SelectTrigger>
+                          <SelectContent>
+                            {registeredMcpTools.map(tool => {
+                              const srv = registeredMcpServers.find(s => s.id === tool.serverId);
+                              return (
+                                <SelectItem key={tool.id} value={tool.name} data-testid={`option-tool-${tool.id}`}>
+                                  <span className="text-xs">{tool.name}</span>
+                                  {srv && <span className="text-[10px] text-muted-foreground ml-1">({srv.name})</span>}
+                                </SelectItem>
+                              );
+                            })}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    </div>
+                    {toolRefsList.length > 0 ? (
+                      <div className="space-y-1" data-testid="list-allowed-tools">
+                        {toolRefsList.map((ref, idx) => {
+                          const validation = depValidation?.tools.find(t => t.ref === ref);
+                          const isBroken = validation ? !validation.valid : false;
+                          return (
+                            <div key={idx} className={`flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-md border text-xs ${isBroken ? "border-red-300 bg-red-50/50 dark:border-red-800 dark:bg-red-900/10" : "border-border"}`} data-testid={`tool-ref-${idx}`}>
+                              <div className="flex items-center gap-2 min-w-0">
+                                {isBroken ? (
+                                  <Unlink className="w-3.5 h-3.5 text-red-500 shrink-0" data-testid={`icon-broken-tool-${idx}`} />
+                                ) : (
+                                  <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" />
+                                )}
+                                <span className="truncate">{ref}</span>
+                                {validation?.serverName && !isBroken && (
+                                  <span className="text-[10px] text-muted-foreground shrink-0">({validation.serverName})</span>
+                                )}
+                                {isBroken && (
+                                  <Badge variant="secondary" className="text-[9px] px-1.5 py-0 bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 no-default-hover-elevate no-default-active-elevate shrink-0">Not in registry</Badge>
+                                )}
+                              </div>
+                              <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => {
+                                const updated = toolRefsList.filter((_, i) => i !== idx);
+                                setAllowedTools(updated.join("\n"));
+                                clearValidation();
+                              }} data-testid={`button-remove-tool-${idx}`}>
+                                <XCircle className="w-3 h-3" />
+                              </Button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-muted-foreground py-1">No tools configured. Add tools from the MCP Server Registry.</p>
+                    )}
+                    <Textarea id="skill-allowed-tools" value={allowedTools} onChange={e => { setAllowedTools(e.target.value); clearValidation(); }} rows={2} placeholder="mcp:sanctions-api&#10;tool:search" className="text-[11px]" data-testid="input-allowed-tools" />
+                    <p className="text-[11px] text-muted-foreground">Type tool names manually or select from the registry above</p>
                   </div>
                   <div className="space-y-1.5">
-                    <Label htmlFor="skill-mcp-servers">Required MCP Servers (one per line)</Label>
-                    <Textarea id="skill-mcp-servers" value={requiredMcpServers} onChange={e => setRequiredMcpServers(e.target.value)} rows={2} placeholder="compliance-server&#10;data-warehouse" data-testid="input-mcp-servers" />
+                    <div className="flex items-center justify-between gap-2">
+                      <Label htmlFor="skill-mcp-servers">Required MCP Servers</Label>
+                      {registeredMcpServers.length > 0 && (
+                        <Select
+                          value=""
+                          onValueChange={(val) => {
+                            const current = requiredMcpServers.split("\n").map(t => t.trim()).filter(Boolean);
+                            if (!current.includes(val)) {
+                              setRequiredMcpServers([...current, val].join("\n"));
+                            }
+                          }}
+                        >
+                          <SelectTrigger className="w-[220px]" data-testid="select-add-server">
+                            <Plus className="w-3 h-3 mr-1" />
+                            <span className="text-xs">Add from registry</span>
+                          </SelectTrigger>
+                          <SelectContent>
+                            {registeredMcpServers.map(srv => (
+                              <SelectItem key={srv.id} value={srv.name} data-testid={`option-server-${srv.id}`}>
+                                <span className="text-xs">{srv.name}</span>
+                                <Badge variant="secondary" className="ml-1 text-[9px] py-0 no-default-hover-elevate no-default-active-elevate">{srv.status}</Badge>
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    </div>
+                    {serverRefsList.length > 0 ? (
+                      <div className="space-y-1" data-testid="list-required-servers">
+                        {serverRefsList.map((ref, idx) => {
+                          const validation = depValidation?.servers.find(s => s.ref === ref);
+                          const isBroken = validation ? !validation.valid : false;
+                          return (
+                            <div key={idx} className={`flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-md border text-xs ${isBroken ? "border-red-300 bg-red-50/50 dark:border-red-800 dark:bg-red-900/10" : "border-border"}`} data-testid={`server-ref-${idx}`}>
+                              <div className="flex items-center gap-2 min-w-0">
+                                {isBroken ? (
+                                  <Unlink className="w-3.5 h-3.5 text-red-500 shrink-0" data-testid={`icon-broken-server-${idx}`} />
+                                ) : (
+                                  <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" />
+                                )}
+                                <span className="truncate">{ref}</span>
+                                {isBroken && (
+                                  <Badge variant="secondary" className="text-[9px] px-1.5 py-0 bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 no-default-hover-elevate no-default-active-elevate shrink-0">Not in registry</Badge>
+                                )}
+                              </div>
+                              <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => {
+                                const updated = serverRefsList.filter((_, i) => i !== idx);
+                                setRequiredMcpServers(updated.join("\n"));
+                              }} data-testid={`button-remove-server-${idx}`}>
+                                <XCircle className="w-3 h-3" />
+                              </Button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-muted-foreground py-1">No servers required. Add servers from the MCP Server Registry.</p>
+                    )}
+                    <Textarea id="skill-mcp-servers" value={requiredMcpServers} onChange={e => setRequiredMcpServers(e.target.value)} rows={2} placeholder="compliance-server&#10;data-warehouse" className="text-[11px]" data-testid="input-mcp-servers" />
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="skill-data-class">Required Data Classifications (one per line)</Label>
@@ -1291,16 +1466,29 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
                     <CardHeader>
                       <CardTitle className="text-sm flex items-center gap-2">
                         <Wrench className="w-4 h-4" /> MCP Tools
+                        {depValidation?.brokenTools && depValidation.brokenTools.length > 0 && (
+                          <Badge variant="secondary" className="text-[9px] px-1.5 py-0 bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 no-default-hover-elevate no-default-active-elevate">
+                            {depValidation.brokenTools.length} broken
+                          </Badge>
+                        )}
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-2">
-                      {toolsList.map((tool, i) => (
-                        <div key={i} className="flex items-center gap-2">
-                          {isDeprecated(tool) ? <Flag className="w-3.5 h-3.5 text-red-500" /> : <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />}
-                          <span className="text-sm flex-1">{tool}</span>
-                          <Badge variant="outline" className="text-[10px]">tool</Badge>
-                        </div>
-                      ))}
+                      {toolsList.map((tool, i) => {
+                        const vResult = depValidation?.tools.find(t => t.ref === tool);
+                        const isBroken = vResult ? !vResult.valid : false;
+                        return (
+                          <div key={i} className={`flex items-center gap-2 ${isBroken ? "text-red-600 dark:text-red-400" : ""}`} data-testid={`dep-tool-${i}`}>
+                            {isBroken ? <Unlink className="w-3.5 h-3.5 text-red-500" /> : isDeprecated(tool) ? <Flag className="w-3.5 h-3.5 text-red-500" /> : <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />}
+                            <span className="text-sm flex-1">{tool}</span>
+                            {isBroken ? (
+                              <Badge variant="secondary" className="text-[9px] px-1.5 py-0 bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 no-default-hover-elevate no-default-active-elevate">not in registry</Badge>
+                            ) : (
+                              <Badge variant="outline" className="text-[10px]">tool</Badge>
+                            )}
+                          </div>
+                        );
+                      })}
                     </CardContent>
                   </Card>
                 )}
@@ -1310,16 +1498,29 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
                     <CardHeader>
                       <CardTitle className="text-sm flex items-center gap-2">
                         <Server className="w-4 h-4" /> MCP Servers
+                        {depValidation?.brokenServers && depValidation.brokenServers.length > 0 && (
+                          <Badge variant="secondary" className="text-[9px] px-1.5 py-0 bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 no-default-hover-elevate no-default-active-elevate">
+                            {depValidation.brokenServers.length} broken
+                          </Badge>
+                        )}
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-2">
-                      {serversList.map((srv, i) => (
-                        <div key={i} className="flex items-center gap-2">
-                          {isDeprecated(srv) ? <Flag className="w-3.5 h-3.5 text-red-500" /> : <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />}
-                          <span className="text-sm flex-1">{srv}</span>
-                          <Badge variant="outline" className="text-[10px]">server</Badge>
-                        </div>
-                      ))}
+                      {serversList.map((srv, i) => {
+                        const vResult = depValidation?.servers.find(s => s.ref === srv);
+                        const isBroken = vResult ? !vResult.valid : false;
+                        return (
+                          <div key={i} className={`flex items-center gap-2 ${isBroken ? "text-red-600 dark:text-red-400" : ""}`} data-testid={`dep-server-${i}`}>
+                            {isBroken ? <Unlink className="w-3.5 h-3.5 text-red-500" /> : isDeprecated(srv) ? <Flag className="w-3.5 h-3.5 text-red-500" /> : <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />}
+                            <span className="text-sm flex-1">{srv}</span>
+                            {isBroken ? (
+                              <Badge variant="secondary" className="text-[9px] px-1.5 py-0 bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 no-default-hover-elevate no-default-active-elevate">not in registry</Badge>
+                            ) : (
+                              <Badge variant="outline" className="text-[10px]">server</Badge>
+                            )}
+                          </div>
+                        );
+                      })}
                     </CardContent>
                   </Card>
                 )}

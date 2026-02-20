@@ -42,6 +42,7 @@ import {
   BookOpen,
   Link2,
   Pencil,
+  Unlink,
 } from "lucide-react";
 
 const INDUSTRY_CONFIG: Record<string, { label: string; icon: typeof Building2; color: string }> = {
@@ -83,6 +84,7 @@ export default function SkillCatalog() {
   const [domainFilter, setDomainFilter] = useState("all");
   const [trustFilter, setTrustFilter] = useState("all");
   const [compatFilter, setCompatFilter] = useState("all");
+  const [brokenDepFilter, setBrokenDepFilter] = useState(false);
   const [sortBy, setSortBy] = useState<"name" | "performance" | "activations">("activations");
   const [collapsedIndustries, setCollapsedIndustries] = useState<Set<string>>(new Set());
   const [compareList, setCompareList] = useState<string[]>([]);
@@ -99,6 +101,62 @@ export default function SkillCatalog() {
   const { data: skills = [], isLoading } = useQuery<Skill[]>({
     queryKey: ["/api/skills"],
   });
+
+  const allToolRefs = useMemo(() => {
+    const toolSet = new Set<string>();
+    const serverSet = new Set<string>();
+    skills.forEach(s => {
+      ((s.allowedTools as string[] | null) ?? []).forEach(t => toolSet.add(t));
+      ((s.requiredMcpServers as string[] | null) ?? []).forEach(t => serverSet.add(t));
+    });
+    return { toolIds: Array.from(toolSet), serverIds: Array.from(serverSet) };
+  }, [skills]);
+
+  const { data: depValidation } = useQuery<{
+    tools: { ref: string; valid: boolean; toolName: string | null; serverName: string | null }[];
+    servers: { ref: string; valid: boolean; serverName: string | null }[];
+    hasBrokenDependencies: boolean;
+  }>({
+    queryKey: ["/api/mcp-servers/tools/validate", allToolRefs],
+    queryFn: async () => {
+      if (allToolRefs.toolIds.length === 0 && allToolRefs.serverIds.length === 0) {
+        return { tools: [], servers: [], hasBrokenDependencies: false };
+      }
+      const params = new URLSearchParams();
+      if (allToolRefs.toolIds.length > 0) params.set("tool_ids", JSON.stringify(allToolRefs.toolIds));
+      if (allToolRefs.serverIds.length > 0) params.set("server_ids", JSON.stringify(allToolRefs.serverIds));
+      const res = await fetch(`/api/mcp-servers/tools/validate?${params}`);
+      return res.json();
+    },
+    enabled: skills.length > 0,
+  });
+
+  const brokenToolRefs = useMemo(() => {
+    if (!depValidation) return new Set<string>();
+    return new Set(depValidation.tools.filter(t => !t.valid).map(t => t.ref));
+  }, [depValidation]);
+
+  const brokenServerRefs = useMemo(() => {
+    if (!depValidation) return new Set<string>();
+    return new Set(depValidation.servers.filter(s => !s.valid).map(s => s.ref));
+  }, [depValidation]);
+
+  const skillHasBrokenDeps = useMemo(() => {
+    const map = new Map<string, boolean>();
+    skills.forEach(skill => {
+      const tools = (skill.allowedTools as string[] | null) ?? [];
+      const servers = (skill.requiredMcpServers as string[] | null) ?? [];
+      const hasBroken = tools.some(t => brokenToolRefs.has(t)) || servers.some(s => brokenServerRefs.has(s));
+      map.set(skill.id, hasBroken);
+    });
+    return map;
+  }, [skills, brokenToolRefs, brokenServerRefs]);
+
+  const brokenDepCount = useMemo(() => {
+    let count = 0;
+    skillHasBrokenDeps.forEach(v => { if (v) count++; });
+    return count;
+  }, [skillHasBrokenDeps]);
 
   async function handleAiEnhanceSkill(skill: Skill) {
     setAiEnhancingSkill(skill.id);
@@ -194,6 +252,8 @@ export default function SkillCatalog() {
     if (trustFilter !== "all") result = result.filter((s) => s.trustTier === trustFilter);
     if (compatFilter !== "all")
       result = result.filter((s) => (s.agentTypeCompatibility as string[] | null)?.includes(compatFilter));
+    if (brokenDepFilter)
+      result = result.filter((s) => skillHasBrokenDeps.get(s.id));
 
     result = [...result].sort((a, b) => {
       if (sortBy === "name") return a.name.localeCompare(b.name);
@@ -201,7 +261,7 @@ export default function SkillCatalog() {
       return b.activationCount - a.activationCount;
     });
     return result;
-  }, [skills, search, industryFilter, domainFilter, trustFilter, compatFilter, sortBy]);
+  }, [skills, search, industryFilter, domainFilter, trustFilter, compatFilter, brokenDepFilter, skillHasBrokenDeps, sortBy]);
 
   const groupedByIndustry = useMemo(() => {
     const grouped: Record<string, Record<string, Skill[]>> = {};
@@ -233,9 +293,10 @@ export default function SkillCatalog() {
     setDomainFilter("all");
     setTrustFilter("all");
     setCompatFilter("all");
+    setBrokenDepFilter(false);
   };
 
-  const hasFilters = search || industryFilter !== "all" || domainFilter !== "all" || trustFilter !== "all" || compatFilter !== "all";
+  const hasFilters = search || industryFilter !== "all" || domainFilter !== "all" || trustFilter !== "all" || compatFilter !== "all" || brokenDepFilter;
 
   if (isLoading) {
     return (
@@ -353,6 +414,21 @@ export default function SkillCatalog() {
                   <SelectItem value="remote">Remote</SelectItem>
                 </SelectContent>
               </Select>
+              <Button
+                variant={brokenDepFilter ? "default" : "outline"}
+                size="sm"
+                onClick={() => setBrokenDepFilter(!brokenDepFilter)}
+                className="toggle-elevate"
+                data-testid="button-broken-dep-filter"
+              >
+                <Unlink className="w-3.5 h-3.5 mr-1" />
+                Broken Deps
+                {brokenDepCount > 0 && (
+                  <Badge variant="secondary" className="ml-1 text-[10px] px-1.5 py-0 bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 no-default-hover-elevate no-default-active-elevate">
+                    {brokenDepCount}
+                  </Badge>
+                )}
+              </Button>
               <Select value={sortBy} onValueChange={(v) => setSortBy(v as typeof sortBy)}>
                 <SelectTrigger className="w-[150px]" data-testid="select-sort">
                   <ArrowUpDown className="w-3.5 h-3.5 mr-1" />
@@ -505,6 +581,7 @@ export default function SkillCatalog() {
                                     onAiEnhance={() => handleAiEnhanceSkill(skill)}
                                     isEnhancing={aiEnhancingSkill === skill.id}
                                     hasEnrichment={!!skill.aiEnrichment}
+                                    hasBrokenDeps={skillHasBrokenDeps.get(skill.id) ?? false}
                                   />
                                 ))}
                               </div>
@@ -548,6 +625,7 @@ function SkillCard({
   onAiEnhance,
   isEnhancing,
   hasEnrichment,
+  hasBrokenDeps,
 }: {
   skill: Skill;
   isComparing: boolean;
@@ -557,6 +635,7 @@ function SkillCard({
   onAiEnhance: () => void;
   isEnhancing: boolean;
   hasEnrichment: boolean;
+  hasBrokenDeps: boolean;
 }) {
   const deps = (skill.dependencies as string[] | null) || [];
   const tags = (skill.tags as string[] | null) || [];
@@ -570,8 +649,18 @@ function SkillCard({
     >
       <CardHeader className="pb-2">
         <div className="flex items-start justify-between gap-2">
-          <CardTitle className="text-sm font-semibold leading-tight">{skill.name}</CardTitle>
+          <div className="flex items-center gap-1.5 min-w-0">
+            {hasBrokenDeps && (
+              <Unlink className="w-3.5 h-3.5 text-red-500 shrink-0" data-testid={`icon-broken-dep-${skill.id}`} />
+            )}
+            <CardTitle className="text-sm font-semibold leading-tight">{skill.name}</CardTitle>
+          </div>
           <div className="flex items-center gap-1 shrink-0">
+            {hasBrokenDeps && (
+              <Badge variant="secondary" className="text-[9px] px-1.5 py-0 bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 no-default-hover-elevate no-default-active-elevate" data-testid={`badge-broken-dep-${skill.id}`}>
+                Broken Dep
+              </Badge>
+            )}
             <Badge className={`text-[10px] no-default-hover-elevate no-default-active-elevate ${TRUST_TIER_STYLES[skill.trustTier] || ""}`}>
               {skill.trustTier === "platform-provided" ? "Platform" : skill.trustTier === "customer-created" ? "Custom" : "Market"}
             </Badge>
