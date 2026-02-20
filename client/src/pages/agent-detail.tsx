@@ -3766,11 +3766,11 @@ function AgentDetailInner() {
                         <div className="grid grid-cols-2 gap-2 text-[11px]">
                           <div>
                             <span className="text-muted-foreground block mb-0.5">Original</span>
-                            <span className="font-mono">{div.original.slice(0, 80)}</span>
+                            <span className="font-mono">{(div.original || "N/A").slice(0, 80)}</span>
                           </div>
                           <div>
                             <span className="text-muted-foreground block mb-0.5">Replay</span>
-                            <span className="font-mono">{div.replay.slice(0, 80)}</span>
+                            <span className="font-mono">{(div.replay || "N/A").slice(0, 80)}</span>
                           </div>
                         </div>
                       </div>
