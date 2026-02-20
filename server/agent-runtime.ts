@@ -487,3 +487,32 @@ export function getActiveRuntimes(): Array<{ deploymentId: string; agentId: stri
 export function isRuntimeActive(deploymentId: string): boolean {
   return activeAgents.has(deploymentId);
 }
+
+export async function autoResumeRuntimes(): Promise<void> {
+  try {
+    const deployments = await storage.getDeployments();
+    const deployed = deployments.filter(d => d.status === "deployed");
+
+    if (deployed.length === 0) {
+      console.log("[agent-runtime] No deployed agents to auto-resume.");
+      return;
+    }
+
+    console.log(`[agent-runtime] Auto-resuming ${deployed.length} deployed agent runtime(s)...`);
+
+    for (const dep of deployed) {
+      try {
+        const result = await startAgentRuntime(dep.id);
+        if (result.started) {
+          console.log(`[agent-runtime] Auto-resumed: ${dep.agentName || dep.agentId} (${dep.id})`);
+        } else {
+          console.log(`[agent-runtime] Skip auto-resume for ${dep.agentName || dep.agentId}: ${result.message}`);
+        }
+      } catch (err: any) {
+        console.error(`[agent-runtime] Failed to auto-resume ${dep.agentName || dep.agentId}:`, err.message);
+      }
+    }
+  } catch (err: any) {
+    console.error("[agent-runtime] Auto-resume error:", err.message);
+  }
+}

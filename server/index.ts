@@ -3,6 +3,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { seedDatabase } from "./seed";
+import { autoResumeRuntimes } from "./agent-runtime";
 
 const app = express();
 const httpServer = createServer(app);
@@ -103,6 +104,9 @@ app.use((req, res, next) => {
     },
     () => {
       log(`serving on port ${port}`);
+      autoResumeRuntimes().catch(err => {
+        console.error("[startup] Failed to auto-resume agent runtimes:", err.message);
+      });
     },
   );
 })();
