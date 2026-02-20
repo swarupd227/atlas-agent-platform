@@ -424,7 +424,7 @@ function AgentDetailInner() {
 
   const existingRtConfig = (agent?.runtimeConfig as Record<string, any>) || {};
   const [rtPrompt, setRtPrompt] = useState(existingRtConfig?.prompt || "");
-  const [rtInterval, setRtInterval] = useState<number>(existingRtConfig?.scheduleIntervalMinutes || 5);
+  const [rtInterval, setRtInterval] = useState<number>(existingRtConfig?.scheduleIntervalMinutes || 0);
   const [rtEditing, setRtEditing] = useState(false);
 
   const rtConfigMutation = useMutation({
@@ -784,7 +784,7 @@ function AgentDetailInner() {
       </div>
 
       <Tabs defaultValue="summary" className="flex flex-col gap-4">
-        <TabsList className="w-fit flex-wrap">
+        <TabsList className="w-fit flex-wrap h-auto gap-y-1 py-1">
           <TabsTrigger value="summary" data-testid="tab-summary">Summary</TabsTrigger>
           <TabsTrigger value="traces" data-testid="tab-traces">Runs & Traces</TabsTrigger>
           <TabsTrigger value="evals" data-testid="tab-evals">Evals</TabsTrigger>
@@ -828,7 +828,7 @@ function AgentDetailInner() {
                   <Button variant="ghost" size="sm" onClick={() => {
                     const rc = (agent.runtimeConfig as Record<string, any>) || {};
                     setRtPrompt(rc?.prompt || "");
-                    setRtInterval(rc?.scheduleIntervalMinutes || 5);
+                    setRtInterval(rc?.scheduleIntervalMinutes || 0);
                     setRtEditing(true);
                   }} data-testid="button-edit-runtime-config">
                     <Settings className="w-3.5 h-3.5 mr-1" /> Edit
@@ -854,7 +854,11 @@ function AgentDetailInner() {
                       <p className="text-xs font-medium leading-relaxed" data-testid="text-rt-prompt">{rc.prompt}</p>
                       <div className="flex items-center gap-1.5 mt-1">
                         <Clock className="w-3 h-3 text-muted-foreground" />
-                        <span className="text-[10px] text-muted-foreground" data-testid="text-rt-interval">Runs every {rc.scheduleIntervalMinutes || 5} minute{(rc.scheduleIntervalMinutes || 5) !== 1 ? "s" : ""}</span>
+                        <span className="text-[10px] text-muted-foreground" data-testid="text-rt-interval">
+                          {(rc.scheduleIntervalMinutes || 0) === 0
+                            ? "On-demand (triggered manually)"
+                            : `Runs every ${rc.scheduleIntervalMinutes} minute${rc.scheduleIntervalMinutes !== 1 ? "s" : ""}`}
+                        </span>
                       </div>
                     </div>
                   ) : (
@@ -880,6 +884,7 @@ function AgentDetailInner() {
                         className="flex h-8 rounded-md border border-input bg-background px-2 py-1 text-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         data-testid="select-rt-interval"
                       >
+                        <option value={0}>On-demand (triggered manually)</option>
                         <option value={1}>Every 1 minute</option>
                         <option value={2}>Every 2 minutes</option>
                         <option value={5}>Every 5 minutes</option>

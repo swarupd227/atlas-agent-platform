@@ -439,7 +439,7 @@ export async function startAgentRuntime(deploymentId: string): Promise<{ started
     return { started: false, message: "Cannot start runtime: Agent has no task instructions configured. Please provide a natural language prompt describing what this agent should do in the Agent Task section." };
   }
 
-  const intervalMinutes = rtConfig.scheduleIntervalMinutes || 5;
+  const intervalMinutes = rtConfig.scheduleIntervalMinutes ?? 0;
   const intervalMs = intervalMinutes * 60 * 1000;
 
   const blueprints = await storage.getBlueprints();
@@ -456,20 +456,24 @@ export async function startAgentRuntime(deploymentId: string): Promise<{ started
     prompt,
   };
 
-  await executeAgentCycle(runtimeAgent);
-
-  const timer = setInterval(() => executeAgentCycle(runtimeAgent), intervalMs);
-  activeAgents.set(deploymentId, { timer, agent: runtimeAgent });
-
-  console.log(`[agent-runtime] Started runtime for ${agent.name} (every ${intervalMs / 1000}s)`);
-  return { started: true, message: `Agent runtime started for ${agent.name}. Executing every ${intervalMinutes} minutes.` };
+  if (intervalMinutes > 0) {
+    await executeAgentCycle(runtimeAgent);
+    const timer = setInterval(() => executeAgentCycle(runtimeAgent), intervalMs);
+    activeAgents.set(deploymentId, { timer, agent: runtimeAgent });
+    console.log(`[agent-runtime] Started runtime for ${agent.name} (every ${intervalMs / 1000}s)`);
+    return { started: true, message: `Agent runtime started for ${agent.name}. Executing every ${intervalMinutes} minutes.` };
+  } else {
+    activeAgents.set(deploymentId, { timer: null as any, agent: runtimeAgent });
+    console.log(`[agent-runtime] Registered on-demand runtime for ${agent.name}`);
+    return { started: true, message: `Agent runtime registered for ${agent.name} (on-demand). Use "Run Now" to trigger execution.` };
+  }
 }
 
 export function stopAgentRuntime(deploymentId: string): { stopped: boolean; message: string } {
   const entry = activeAgents.get(deploymentId);
   if (!entry) return { stopped: false, message: "No active runtime for this deployment" };
 
-  clearInterval(entry.timer);
+  if (entry.timer) clearInterval(entry.timer);
   activeAgents.delete(deploymentId);
   console.log(`[agent-runtime] Stopped runtime for ${entry.agent.agentName}`);
   return { stopped: true, message: `Agent runtime stopped for ${entry.agent.agentName}` };

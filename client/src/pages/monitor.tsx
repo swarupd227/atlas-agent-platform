@@ -433,7 +433,7 @@ function AgentRuntimeTab() {
                     <span className="text-sm font-medium">{rt.agentName}</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Badge variant="outline" className="text-[10px]">Every {Math.round(rt.intervalMs / 60000)}min</Badge>
+                    <Badge variant="outline" className="text-[10px]">{rt.intervalMs > 0 ? `Every ${Math.round(rt.intervalMs / 60000)}min` : "On-demand"}</Badge>
                     <Link href={`/deployments/${rt.deploymentId}`}>
                       <Button variant="outline" size="sm" data-testid={`button-view-runtime-${rt.deploymentId}`}>
                         <Eye className="w-3 h-3 mr-1" /> View
