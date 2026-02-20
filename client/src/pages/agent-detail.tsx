@@ -424,6 +424,7 @@ function AgentDetailInner() {
 
   const existingRtConfig = (agent?.runtimeConfig as Record<string, any>) || {};
   const [rtPrompt, setRtPrompt] = useState(existingRtConfig?.prompt || "");
+  const [rtInterval, setRtInterval] = useState<number>(existingRtConfig?.scheduleIntervalMinutes || 5);
   const [rtEditing, setRtEditing] = useState(false);
 
   const rtConfigMutation = useMutation({
@@ -431,7 +432,7 @@ function AgentDetailInner() {
       apiRequest("PATCH", `/api/agents/${agentId}`, {
         runtimeConfig: {
           prompt: rtPrompt.trim(),
-          scheduleIntervalMinutes: existingRtConfig?.scheduleIntervalMinutes || 5,
+          scheduleIntervalMinutes: rtInterval,
         },
       }),
     onSuccess: () => {
@@ -827,6 +828,7 @@ function AgentDetailInner() {
                   <Button variant="ghost" size="sm" onClick={() => {
                     const rc = (agent.runtimeConfig as Record<string, any>) || {};
                     setRtPrompt(rc?.prompt || "");
+                    setRtInterval(rc?.scheduleIntervalMinutes || 5);
                     setRtEditing(true);
                   }} data-testid="button-edit-runtime-config">
                     <Settings className="w-3.5 h-3.5 mr-1" /> Edit
@@ -850,6 +852,10 @@ function AgentDetailInner() {
                     <div className="flex flex-col gap-1.5 p-2.5 rounded-md bg-muted/30">
                       <span className="text-xs text-muted-foreground">What this agent does when it runs</span>
                       <p className="text-xs font-medium leading-relaxed" data-testid="text-rt-prompt">{rc.prompt}</p>
+                      <div className="flex items-center gap-1.5 mt-1">
+                        <Clock className="w-3 h-3 text-muted-foreground" />
+                        <span className="text-[10px] text-muted-foreground" data-testid="text-rt-interval">Runs every {rc.scheduleIntervalMinutes || 5} minute{(rc.scheduleIntervalMinutes || 5) !== 1 ? "s" : ""}</span>
+                      </div>
                     </div>
                   ) : (
                     <div className="flex flex-col items-center gap-2 py-4 text-center">
@@ -863,7 +869,31 @@ function AgentDetailInner() {
                   <div className="flex flex-col gap-1.5">
                     <label className="text-xs text-muted-foreground">Describe what this agent should do</label>
                     <Textarea value={rtPrompt} onChange={e => setRtPrompt(e.target.value)} placeholder="e.g. 'Get weather update for Bangalore and assess any risk from severe conditions' or 'Analyze customer churn patterns for Q1 and flag high-risk accounts'" className="min-h-[80px] text-sm" data-testid="input-rt-prompt" />
-                    <span className="text-[10px] text-muted-foreground">The agent will use its connected tools (MCP Servers) to fulfill this task automatically every 5 minutes when deployed.</span>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs text-muted-foreground">Schedule interval</label>
+                    <div className="flex items-center gap-2">
+                      <Clock className="w-3.5 h-3.5 text-muted-foreground" />
+                      <select
+                        value={rtInterval}
+                        onChange={e => setRtInterval(Number(e.target.value))}
+                        className="flex h-8 rounded-md border border-input bg-background px-2 py-1 text-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        data-testid="select-rt-interval"
+                      >
+                        <option value={1}>Every 1 minute</option>
+                        <option value={2}>Every 2 minutes</option>
+                        <option value={5}>Every 5 minutes</option>
+                        <option value={10}>Every 10 minutes</option>
+                        <option value={15}>Every 15 minutes</option>
+                        <option value={30}>Every 30 minutes</option>
+                        <option value={60}>Every 1 hour</option>
+                        <option value={120}>Every 2 hours</option>
+                        <option value={360}>Every 6 hours</option>
+                        <option value={720}>Every 12 hours</option>
+                        <option value={1440}>Every 24 hours</option>
+                      </select>
+                    </div>
+                    <span className="text-[10px] text-muted-foreground">The agent will use its connected tools (MCP Servers) to fulfill this task automatically on this schedule when deployed.</span>
                   </div>
                 </div>
               )}
