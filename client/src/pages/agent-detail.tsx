@@ -418,6 +418,36 @@ function AgentDetailInner() {
 
   const [replacementProposal, setReplacementProposal] = useState<any>(null);
 
+  const deployMutation = useMutation({
+    mutationFn: async () => {
+      const existingDeps = allDeployments?.filter(d => d.agentId === agentId) || [];
+      const latestVersion = existingDeps.length > 0
+        ? existingDeps.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())[0]?.version || "1.0.0"
+        : "1.0.0";
+      const parts = latestVersion.split(".");
+      const nextVersion = existingDeps.length > 0
+        ? `${parts[0]}.${parts[1]}.${parseInt(parts[2] || "0") + 1}`
+        : "1.0.0";
+
+      const res = await apiRequest("POST", "/api/deployments", {
+        agentId,
+        agentName: agent?.name || "Agent",
+        environment: "production",
+        version: nextVersion,
+        rolloutStrategy: "full",
+        status: "pending",
+        industry: industry || (agent as any)?.industry || "technology",
+      });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deployments"] });
+      toast({ title: "Deployment created", description: `Version ${data.version} created. Configure the deployment pipeline.` });
+      navigate(`/deployments/${data.id}`);
+    },
+    onError: () => toast({ title: "Failed to create deployment", variant: "destructive" }),
+  });
+
   const proposalMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", `/api/ai/propose-replacement`, { agentId });
@@ -694,8 +724,8 @@ function AgentDetailInner() {
         <Button variant="outline" size="sm" data-testid="button-rollback">
           <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> Rollback
         </Button>
-        <Button size="sm" data-testid="button-deploy" disabled={!deployPerm.allowed} title={!deployPerm.allowed ? "You do not have permission to deploy" : undefined}>
-          <Rocket className="w-3.5 h-3.5 mr-1.5" /> Deploy
+        <Button size="sm" data-testid="button-deploy" disabled={!deployPerm.allowed || deployMutation.isPending} onClick={() => deployMutation.mutate()} title={!deployPerm.allowed ? "You do not have permission to deploy" : undefined}>
+          <Rocket className="w-3.5 h-3.5 mr-1.5" /> {deployMutation.isPending ? "Creating..." : "Deploy"}
           {deployPerm.allowed && deployPerm.permission.access === "conditional" && deployPerm.permission.annotation && (
             <Badge variant="secondary" className="text-[10px] ml-1">{deployPerm.permission.annotation}</Badge>
           )}
