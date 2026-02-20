@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -158,10 +159,8 @@ export default function ShadowReplayStudio() {
   const [liveTestResult, setLiveTestResult] = useState<any>(null);
   const [liveTestAnimStep, setLiveTestAnimStep] = useState(0);
   const [liveTestForm, setLiveTestForm] = useState({
-    agentName: "Weather Alert Agent",
-    city: "Miami",
-    latitude: 25.76,
-    longitude: -80.19,
+    agentName: "",
+    prompt: "",
   });
 
   const [createSessionOpen, setCreateSessionOpen] = useState(false);
@@ -267,7 +266,7 @@ export default function ShadowReplayStudio() {
   });
 
   const liveTestMutation = useMutation({
-    mutationFn: async (data: { agentName: string; city: string; latitude: number; longitude: number; industry: string }) => {
+    mutationFn: async (data: { agentName: string; prompt: string; industry: string }) => {
       const res = await apiRequest("POST", "/api/live-agent-test", data);
       return res.json();
     },
@@ -306,8 +305,8 @@ export default function ShadowReplayStudio() {
     });
   }, [liveTestForm, industry]);
 
-  const quickSelectCity = useCallback((cityName: string, lat: number, lon: number) => {
-    setLiveTestForm((prev) => ({ ...prev, city: cityName, latitude: lat, longitude: lon }));
+  const quickSelectPrompt = useCallback((promptText: string) => {
+    setLiveTestForm((prev) => ({ ...prev, prompt: promptText }));
   }, []);
 
   const filteredTraces = useMemo(() => {
@@ -605,7 +604,7 @@ export default function ShadowReplayStudio() {
                       {liveTestResult.agentName}
                     </h2>
                     <p className="text-sm text-muted-foreground">
-                      Live test for {liveTestResult.city}
+                      Live test: {liveTestResult.prompt ? liveTestResult.prompt.substring(0, 60) + "..." : "completed"}
                     </p>
                   </div>
                   <Button
@@ -1450,55 +1449,32 @@ export default function ShadowReplayStudio() {
               />
             </div>
             <div className="space-y-2">
-              <Label>City</Label>
-              <Input
-                value={liveTestForm.city}
-                onChange={(e) => setLiveTestForm({ ...liveTestForm, city: e.target.value })}
-                placeholder="e.g. Miami"
-                data-testid="input-live-city"
+              <Label>Prompt</Label>
+              <Textarea
+                value={liveTestForm.prompt}
+                onChange={(e) => setLiveTestForm({ ...liveTestForm, prompt: e.target.value })}
+                placeholder="Describe what the agent should do, e.g. 'Monitor weather conditions in Miami (25.76°N, 80.19°W) and assess insurance claims risk from severe weather events'"
+                className="min-h-[80px] text-sm"
+                data-testid="input-live-prompt"
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label>Latitude</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  value={liveTestForm.latitude}
-                  onChange={(e) => setLiveTestForm({ ...liveTestForm, latitude: parseFloat(e.target.value) || 0 })}
-                  data-testid="input-live-latitude"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Longitude</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  value={liveTestForm.longitude}
-                  onChange={(e) => setLiveTestForm({ ...liveTestForm, longitude: parseFloat(e.target.value) || 0 })}
-                  data-testid="input-live-longitude"
-                />
-              </div>
-            </div>
             <div className="space-y-2">
-              <Label className="text-xs text-muted-foreground">Quick Select</Label>
+              <Label className="text-xs text-muted-foreground">Example Prompts</Label>
               <div className="flex flex-wrap items-center gap-2">
                 {[
-                  { name: "Miami", lat: 25.76, lon: -80.19 },
-                  { name: "Houston", lat: 29.76, lon: -95.37 },
-                  { name: "New York", lat: 40.71, lon: -74.01 },
-                  { name: "Tokyo", lat: 35.68, lon: 139.69 },
-                  { name: "London", lat: 51.51, lon: -0.13 },
-                ].map((c) => (
+                  { label: "Data Analysis", prompt: "Retrieve and analyze the latest available data from connected sources. Summarize key metrics, flag anomalies, and provide actionable insights." },
+                  { label: "Compliance Check", prompt: "Review current operational data against industry compliance requirements. Identify any violations or risks and suggest remediation steps." },
+                  { label: "Risk Assessment", prompt: "Assess operational risk using available real-time data sources. Evaluate severity, likelihood, and potential business impact." },
+                ].map((p) => (
                   <Button
-                    key={c.name}
-                    variant={liveTestForm.city === c.name ? "default" : "outline"}
+                    key={p.label}
+                    variant={liveTestForm.prompt === p.prompt ? "default" : "outline"}
                     size="sm"
-                    onClick={() => quickSelectCity(c.name, c.lat, c.lon)}
+                    onClick={() => quickSelectPrompt(p.prompt)}
                     className="toggle-elevate text-xs"
-                    data-testid={`button-city-${c.name.toLowerCase().replace(" ", "-")}`}
+                    data-testid={`button-prompt-${p.label.toLowerCase().replace(/\s/g, "-")}`}
                   >
-                    {c.name}
+                    {p.label}
                   </Button>
                 ))}
               </div>
@@ -1508,7 +1484,7 @@ export default function ShadowReplayStudio() {
             <Button variant="outline" onClick={() => setLiveTestOpen(false)} data-testid="button-cancel-live-test">Cancel</Button>
             <Button
               onClick={handleRunLiveTest}
-              disabled={!liveTestForm.city || liveTestRunning}
+              disabled={!liveTestForm.prompt.trim() || liveTestRunning}
               data-testid="button-run-live-test"
             >
               {liveTestRunning ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Zap className="w-4 h-4 mr-1" />}

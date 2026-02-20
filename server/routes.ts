@@ -6,7 +6,7 @@ import { eq, desc } from "drizzle-orm";
 import { conversations, messages as chatMessages, outcomeContracts, kpiDefinitions } from "@shared/schema";
 import { z, ZodError } from "zod";
 import { startWorker, jobEvents } from "./worker";
-import { executeBlueprintWithMcp, startAgentRuntime, stopAgentRuntime, getActiveRuntimes, isRuntimeActive, runtimeEvents } from "./agent-runtime";
+import { executePromptWithMcp, startAgentRuntime, stopAgentRuntime, getActiveRuntimes, isRuntimeActive, runtimeEvents } from "./agent-runtime";
 import OpenAI, { toFile } from "openai";
 import multer from "multer";
 import { checkPermission, getRequestRole, getTraceRedactionLevel, getRedactionLevel, redactPayload } from "./permissions";
@@ -16109,9 +16109,9 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
 
   app.post("/api/live-agent-test", async (req, res) => {
     try {
-      const { agentName, agentId, city, latitude, longitude, industry } = req.body;
-      if (!city && (!latitude || !longitude)) {
-        return res.status(400).json({ error: "Provide city or latitude/longitude" });
+      const { agentName, agentId, prompt, industry } = req.body;
+      if (!prompt) {
+        return res.status(400).json({ error: "Provide a prompt describing what the agent should do" });
       }
 
       let mcpServerIds: string[] = [];
@@ -16120,19 +16120,19 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         mcpServerIds = mcpLinks.map(l => l.serverId);
       }
 
-      const result = await executeBlueprintWithMcp(
+      const result = await executePromptWithMcp(
         agentId || "test",
         "test-run",
         undefined,
         mcpServerIds,
-        { city: city || "Miami", latitude: latitude || 25.7617, longitude: longitude || -80.1918 },
+        prompt,
         industry,
       );
 
       res.json({
         success: result.success,
-        agentName: agentName || "Weather Alert Agent",
-        city: city || "Miami",
+        agentName: agentName || "Agent",
+        prompt,
         steps: result.steps,
         summary: result.summary,
       });
@@ -16269,9 +16269,9 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       const mcpServerIds = mcpLinks.map(l => l.serverId);
 
       const rtConfig = (agent.runtimeConfig as Record<string, any>) || {};
-      const inputConfig = req.body.inputConfig || rtConfig.inputConfig;
-      if (!inputConfig || !inputConfig.city || !inputConfig.latitude || !inputConfig.longitude) {
-        return res.status(400).json({ error: "No input configuration provided. Either pass inputConfig in the request body or configure the agent's runtime parameters first." });
+      const prompt = req.body.prompt || rtConfig.prompt;
+      if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
+        return res.status(400).json({ error: "No runtime prompt provided. Either pass a prompt in the request body or configure the agent's runtime prompt first." });
       }
 
       const runtimeRun = await storage.createAgentRuntimeRun({
@@ -16280,15 +16280,15 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         status: "running",
         triggerType: "manual",
         mcpServerId: mcpServerIds[0] || null,
-        inputConfig,
+        inputConfig: { prompt },
       });
 
-      const result = await executeBlueprintWithMcp(
+      const result = await executePromptWithMcp(
         deployment.agentId,
         deployment.id,
         undefined,
         mcpServerIds,
-        inputConfig,
+        prompt,
         deployment.industry || (agent as any).industry,
       );
 

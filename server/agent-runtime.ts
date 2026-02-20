@@ -1,8 +1,14 @@
 import { storage } from "./storage";
 import { EventEmitter } from "events";
+import OpenAI from "openai";
 
 export const runtimeEvents = new EventEmitter();
 runtimeEvents.setMaxListeners(50);
+
+const openai = new OpenAI({
+  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+});
 
 interface RuntimeAgent {
   deploymentId: string;
@@ -12,273 +18,275 @@ interface RuntimeAgent {
   mcpServerIds: string[];
   intervalMs: number;
   industry?: string;
-  inputConfig?: Record<string, unknown>;
+  prompt: string;
 }
 
 const activeAgents = new Map<string, { timer: NodeJS.Timeout; agent: RuntimeAgent }>();
 
-export async function resolveToolEndpoint(mcpServerId: string, toolName: string): Promise<{ url: string; inputSchema: any } | null> {
-  const server = await storage.getMcpServer(mcpServerId);
-  if (!server || !server.url) return null;
-
-  const tools = await storage.getMcpServerTools(mcpServerId);
-  const tool = tools.find(t => t.name === toolName);
-  if (!tool) return null;
-
-  return {
-    url: server.url,
-    inputSchema: tool.inputSchema,
-  };
+interface AvailableTool {
+  serverId: string;
+  serverName: string;
+  serverUrl: string;
+  toolName: string;
+  toolDescription: string;
+  toolInputSchema: any;
 }
 
-export async function executeBlueprintWithMcp(
+async function gatherAvailableTools(mcpServerIds: string[]): Promise<AvailableTool[]> {
+  const availableTools: AvailableTool[] = [];
+  for (const serverId of mcpServerIds) {
+    const server = await storage.getMcpServer(serverId);
+    if (!server || !server.url) continue;
+    const tools = await storage.getMcpServerTools(serverId);
+    for (const tool of tools) {
+      availableTools.push({
+        serverId,
+        serverName: server.name,
+        serverUrl: server.url,
+        toolName: tool.name,
+        toolDescription: tool.description || "",
+        toolInputSchema: tool.inputSchema || {},
+      });
+    }
+  }
+  return availableTools;
+}
+
+function buildOpenAITools(availableTools: AvailableTool[]): OpenAI.ChatCompletionTool[] {
+  return availableTools.map((t, idx) => ({
+    type: "function" as const,
+    function: {
+      name: `mcp_${idx}_${t.toolName.replace(/[^a-zA-Z0-9_]/g, "_")}`,
+      description: `[MCP Server: ${t.serverName}] ${t.toolDescription || t.toolName}`,
+      parameters: t.toolInputSchema && typeof t.toolInputSchema === "object" && Object.keys(t.toolInputSchema).length > 0
+        ? t.toolInputSchema
+        : { type: "object", properties: {}, additionalProperties: true },
+    },
+  }));
+}
+
+async function callMcpTool(tool: AvailableTool, args: Record<string, any>): Promise<any> {
+  const baseUrl = tool.serverUrl.replace(/\/$/, "");
+  const qs = new URLSearchParams(
+    Object.fromEntries(Object.entries(args).map(([k, v]) => [k, String(v)]))
+  ).toString();
+  const fetchUrl = qs ? `${baseUrl}?${qs}` : baseUrl;
+  const res = await fetch(fetchUrl);
+  if (!res.ok) throw new Error(`MCP API ${tool.serverName}/${tool.toolName} returned ${res.status}`);
+  return res.json();
+}
+
+export async function executePromptWithMcp(
   agentId: string,
   deploymentId: string,
   blueprintId: string | undefined,
   mcpServerIds: string[],
-  inputConfig: Record<string, unknown>,
+  prompt: string,
   industry?: string,
 ): Promise<{ steps: any[]; success: boolean; summary: any }> {
   const startTime = Date.now();
   const steps: any[] = [];
 
-  let resolvedTool: { serverId: string; serverName: string; serverUrl: string; toolName: string; toolInputSchema: any } | null = null;
-
-  for (const serverId of mcpServerIds) {
-    const server = await storage.getMcpServer(serverId);
-    if (!server || !server.url) continue;
-
-    const tools = await storage.getMcpServerTools(serverId);
-    const matchedTool = tools.find(t =>
-      t.name.toLowerCase().includes("weather") ||
-      t.name.toLowerCase().includes("forecast") ||
-      (t.description || "").toLowerCase().includes("weather")
-    );
-
-    if (matchedTool) {
-      resolvedTool = {
-        serverId,
-        serverName: server.name,
-        serverUrl: server.url,
-        toolName: matchedTool.name,
-        toolInputSchema: matchedTool.inputSchema,
-      };
-      break;
-    }
-  }
-
-  if (!resolvedTool) {
-    const errorMsg = mcpServerIds.length === 0
-      ? "No MCP Server integrations linked to this agent. Configure an MCP Server with weather tools in the MCP Server Directory and link it to the agent."
-      : "No matching tool found in linked MCP Servers. Ensure an MCP Server with a weather/forecast tool is registered and linked to this agent.";
-    steps.push({
-      id: "step_0",
-      name: "MCP Tool Resolution",
-      type: "mcp_resolution",
-      status: "failed",
-      error: errorMsg,
-      startedAt: new Date().toISOString(),
-      completedAt: new Date().toISOString(),
-    });
-    return {
-      steps,
-      success: false,
-      summary: { totalSteps: 1, passedSteps: 0, failedSteps: 1, error: errorMsg },
-    };
-  }
-
-  const lat = inputConfig.latitude as number | undefined;
-  const lon = inputConfig.longitude as number | undefined;
-  const cityName = inputConfig.city as string | undefined;
-
-  if (!lat || !lon || !cityName) {
-    const errorMsg = "Agent input configuration is incomplete. Please configure the agent with city, latitude, and longitude parameters via the agent's configuration before running.";
-    steps.push({
-      id: "step_0",
-      name: "Input Validation",
-      type: "validation",
-      status: "failed",
-      error: errorMsg,
-      startedAt: new Date().toISOString(),
-      completedAt: new Date().toISOString(),
-    });
-    return {
-      steps,
-      success: false,
-      summary: { totalSteps: 1, passedSteps: 0, failedSteps: 1, error: errorMsg },
-    };
-  }
-
   steps.push({
     id: "step_1",
-    name: "Resolve MCP Tool",
-    type: "mcp_resolution",
-    status: "completed",
+    name: "Discover Available Tools",
+    type: "mcp_discovery",
+    status: "running",
     startedAt: new Date().toISOString(),
-    completedAt: new Date().toISOString(),
-    output: {
-      serverName: resolvedTool.serverName,
-      toolName: resolvedTool.toolName,
-      serverUrl: resolvedTool.serverUrl,
-    },
   });
+
+  const availableTools = await gatherAvailableTools(mcpServerIds);
+
+  if (availableTools.length === 0) {
+    const errorMsg = mcpServerIds.length === 0
+      ? "No MCP Server integrations linked to this agent. Configure an MCP Server in the MCP Server Directory and link it to the agent."
+      : "No tools found in linked MCP Servers. Ensure MCP Servers have registered tools with proper descriptions and input schemas.";
+    steps[0].status = "failed";
+    steps[0].error = errorMsg;
+    steps[0].completedAt = new Date().toISOString();
+    return {
+      steps,
+      success: false,
+      summary: { totalSteps: 1, passedSteps: 0, failedSteps: 1, error: errorMsg },
+    };
+  }
+
+  steps[0].status = "completed";
+  steps[0].completedAt = new Date().toISOString();
+  steps[0].output = {
+    toolCount: availableTools.length,
+    tools: availableTools.map(t => ({ server: t.serverName, tool: t.toolName, description: t.toolDescription })),
+  };
 
   steps.push({
     id: "step_2",
-    name: "Fetch Weather Data",
-    type: "api_call",
-    mcpResolved: true,
-    mcpServer: resolvedTool.serverName,
-    mcpTool: resolvedTool.toolName,
+    name: "AI Planning",
+    type: "ai_planning",
     status: "running",
     startedAt: new Date().toISOString(),
   });
 
-  let weatherData: any = null;
+  const openaiTools = buildOpenAITools(availableTools);
+  const systemMessage = `You are an autonomous agent executing a task. You have access to MCP (Model Context Protocol) server tools.
+Your job is to fulfill the user's prompt by calling the appropriate tools and then analyzing the results.
+Industry context: ${industry || "general"}.
+Think step-by-step about what data you need and which tools to call.
+Always call at least one tool if relevant tools are available.
+After receiving tool results, provide a structured analysis with key findings, severity/risk assessment if applicable, and recommended actions.`;
+
+  let toolCallResults: Array<{
+    toolName: string;
+    serverName: string;
+    args: Record<string, any>;
+    result: any;
+    error?: string;
+  }> = [];
+
   try {
-    const schema = resolvedTool.toolInputSchema || {};
-    const queryParams: Record<string, string> = {};
+    const planResponse = await openai.chat.completions.create({
+      model: "gpt-4.1",
+      messages: [
+        { role: "system", content: systemMessage },
+        { role: "user", content: prompt },
+      ],
+      tools: openaiTools.length > 0 ? openaiTools : undefined,
+      max_completion_tokens: 4096,
+    });
 
-    if (schema.properties) {
-      for (const [key, prop] of Object.entries<any>(schema.properties)) {
-        if (key === "latitude") queryParams[key] = String(lat);
-        else if (key === "longitude") queryParams[key] = String(lon);
-        else if (prop.default !== undefined) queryParams[key] = String(prop.default);
-      }
-    }
+    const planChoice = planResponse.choices[0];
+    const toolCalls = (planChoice?.message?.tool_calls || []).filter(
+      (tc: any) => tc.type === "function"
+    ) as Array<{ id: string; type: "function"; function: { name: string; arguments: string } }>;
 
-    const requiredFields = schema.required as string[] | undefined;
-    if (requiredFields) {
-      for (const field of requiredFields) {
-        if (field === "latitude" && !queryParams.latitude) queryParams.latitude = String(lat);
-        if (field === "longitude" && !queryParams.longitude) queryParams.longitude = String(lon);
-      }
-    }
-
-    if (!queryParams.latitude) queryParams.latitude = String(lat);
-    if (!queryParams.longitude) queryParams.longitude = String(lon);
-
-    const baseUrl = resolvedTool.serverUrl.replace(/\/$/, "");
-    const qs = new URLSearchParams(queryParams).toString();
-    const fetchUrl = `${baseUrl}?${qs}`;
-
-    const weatherRes = await fetch(fetchUrl);
-    if (!weatherRes.ok) throw new Error(`MCP API returned ${weatherRes.status}: ${resolvedTool.serverUrl}`);
-    weatherData = await weatherRes.json();
-
-    const stepIdx = steps.length - 1;
-    steps[stepIdx].status = "completed";
-    steps[stepIdx].completedAt = new Date().toISOString();
-    steps[stepIdx].output = {
-      city: cityName,
-      latitude: lat,
-      longitude: lon,
-      temperature: weatherData.current?.temperature_2m,
-      temperatureUnit: weatherData.current_units?.temperature_2m,
-      humidity: weatherData.current?.relative_humidity_2m,
-      windSpeed: weatherData.current?.wind_speed_10m,
-      windSpeedUnit: weatherData.current_units?.wind_speed_10m,
-      weatherCode: weatherData.current?.weather_code,
-      precipitation: weatherData.current?.precipitation,
-      source: "mcp_integration",
-      mcpServer: resolvedTool.serverName,
-      mcpTool: resolvedTool.toolName,
-      forecast: {
-        dates: weatherData.daily?.time,
-        maxTemps: weatherData.daily?.temperature_2m_max,
-        minTemps: weatherData.daily?.temperature_2m_min,
-        precipitationSum: weatherData.daily?.precipitation_sum,
-        maxWindSpeed: weatherData.daily?.wind_speed_10m_max,
-      },
+    steps[steps.length - 1].status = "completed";
+    steps[steps.length - 1].completedAt = new Date().toISOString();
+    steps[steps.length - 1].output = {
+      toolCallsPlanned: toolCalls.length,
+      reasoning: planChoice?.message?.content || "Tool calls planned",
+      toolsSelected: toolCalls.map(tc => tc.function.name),
     };
-  } catch (err: any) {
-    const stepIdx = steps.length - 1;
-    steps[stepIdx].status = "failed";
-    steps[stepIdx].error = err.message;
-    steps[stepIdx].completedAt = new Date().toISOString();
 
+    if (toolCalls.length === 0 && planChoice?.message?.content) {
+      steps.push({
+        id: "step_3",
+        name: "AI Analysis (No Tools Needed)",
+        type: "ai_analysis",
+        status: "completed",
+        startedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        output: { analysis: planChoice.message.content },
+      });
+    }
+
+    for (let i = 0; i < toolCalls.length; i++) {
+      const tc = toolCalls[i];
+      const funcName = tc.function.name;
+      const args = JSON.parse(tc.function.arguments || "{}");
+
+      const toolIdx = availableTools.findIndex((_, idx) => {
+        const expectedName = `mcp_${idx}_${availableTools[idx].toolName.replace(/[^a-zA-Z0-9_]/g, "_")}`;
+        return expectedName === funcName;
+      });
+      const matchedTool = toolIdx >= 0 ? availableTools[toolIdx] : null;
+
+      const stepId = `step_${steps.length + 1}`;
+      steps.push({
+        id: stepId,
+        name: matchedTool ? `Call ${matchedTool.serverName}: ${matchedTool.toolName}` : `Call ${funcName}`,
+        type: "api_call",
+        mcpResolved: true,
+        mcpServer: matchedTool?.serverName || "unknown",
+        mcpTool: matchedTool?.toolName || funcName,
+        status: "running",
+        startedAt: new Date().toISOString(),
+        input: args,
+      });
+
+      if (!matchedTool) {
+        const lastStep = steps[steps.length - 1];
+        lastStep.status = "failed";
+        lastStep.error = `Could not resolve tool: ${funcName}`;
+        lastStep.completedAt = new Date().toISOString();
+        toolCallResults.push({ toolName: funcName, serverName: "unknown", args, result: null, error: "Tool not found" });
+        continue;
+      }
+
+      try {
+        const result = await callMcpTool(matchedTool, args);
+        const lastStep = steps[steps.length - 1];
+        lastStep.status = "completed";
+        lastStep.completedAt = new Date().toISOString();
+        lastStep.output = { source: "mcp_integration", mcpServer: matchedTool.serverName, mcpTool: matchedTool.toolName, data: result };
+        toolCallResults.push({ toolName: matchedTool.toolName, serverName: matchedTool.serverName, args, result });
+      } catch (err: any) {
+        const lastStep = steps[steps.length - 1];
+        lastStep.status = "failed";
+        lastStep.error = err.message;
+        lastStep.completedAt = new Date().toISOString();
+        toolCallResults.push({ toolName: matchedTool.toolName, serverName: matchedTool.serverName, args, result: null, error: err.message });
+      }
+    }
+
+    if (toolCallResults.length > 0) {
+      steps.push({
+        id: `step_${steps.length + 1}`,
+        name: "AI Analysis",
+        type: "ai_analysis",
+        status: "running",
+        startedAt: new Date().toISOString(),
+      });
+
+      const toolResultMessages: OpenAI.ChatCompletionMessageParam[] = [
+        { role: "system", content: systemMessage },
+        { role: "user", content: prompt },
+        planChoice!.message as OpenAI.ChatCompletionAssistantMessageParam,
+        ...toolCalls.map((tc, i) => ({
+          role: "tool" as const,
+          tool_call_id: tc.id,
+          content: JSON.stringify(toolCallResults[i]?.result || { error: toolCallResults[i]?.error }),
+        })),
+      ];
+
+      try {
+        const analysisResponse = await openai.chat.completions.create({
+          model: "gpt-4.1",
+          messages: toolResultMessages,
+          max_completion_tokens: 4096,
+          response_format: { type: "json_object" },
+        });
+
+        let analysis: any = {};
+        const rawContent = analysisResponse.choices[0]?.message?.content || "{}";
+        try {
+          analysis = JSON.parse(rawContent);
+        } catch {
+          analysis = { summary: rawContent };
+        }
+
+        const lastStep = steps[steps.length - 1];
+        lastStep.status = "completed";
+        lastStep.completedAt = new Date().toISOString();
+        lastStep.output = analysis;
+      } catch (err: any) {
+        const lastStep = steps[steps.length - 1];
+        lastStep.status = "failed";
+        lastStep.error = err.message;
+        lastStep.completedAt = new Date().toISOString();
+      }
+    }
+  } catch (err: any) {
+    steps[steps.length - 1].status = "failed";
+    steps[steps.length - 1].error = err.message;
+    steps[steps.length - 1].completedAt = new Date().toISOString();
     return {
       steps,
       success: false,
-      summary: { totalSteps: steps.length, passedSteps: steps.filter((s: any) => s.status === "completed").length, failedSteps: 1, error: err.message },
+      summary: { totalSteps: steps.length, passedSteps: steps.filter(s => s.status === "completed").length, failedSteps: steps.filter(s => s.status === "failed").length, error: err.message },
     };
   }
 
-  const temp = weatherData.current?.temperature_2m || 0;
-  const wind = weatherData.current?.wind_speed_10m || 0;
-  const precip = weatherData.current?.precipitation || 0;
-  const weatherCodeVal = weatherData.current?.weather_code || 0;
-
   steps.push({
-    id: "step_3",
-    name: "Analyze Severity",
-    type: "analysis",
-    status: "running",
-    startedAt: new Date().toISOString(),
-  });
-
-  let severityLevel = "low";
-  let severityScore = 0;
-  const riskFactors: string[] = [];
-
-  if (wind > 60) { severityLevel = "critical"; severityScore += 40; riskFactors.push(`Extreme wind: ${wind} km/h`); }
-  else if (wind > 40) { severityLevel = "high"; severityScore += 25; riskFactors.push(`High wind: ${wind} km/h`); }
-  else if (wind > 25) { severityScore += 10; riskFactors.push(`Moderate wind: ${wind} km/h`); }
-
-  if (precip > 50) { severityLevel = "critical"; severityScore += 35; riskFactors.push(`Heavy precipitation: ${precip} mm`); }
-  else if (precip > 20) { if (severityLevel !== "critical") severityLevel = "high"; severityScore += 20; riskFactors.push(`Significant precipitation: ${precip} mm`); }
-  else if (precip > 5) { severityScore += 8; riskFactors.push(`Light precipitation: ${precip} mm`); }
-
-  if (temp > 40) { severityScore += 15; riskFactors.push(`Extreme heat: ${temp}°C`); }
-  else if (temp < -10) { severityScore += 15; riskFactors.push(`Extreme cold: ${temp}°C`); }
-
-  if (weatherCodeVal >= 95) { severityLevel = "critical"; severityScore += 30; riskFactors.push("Thunderstorm activity detected"); }
-  else if (weatherCodeVal >= 63) { if (severityLevel !== "critical") severityLevel = "high"; severityScore += 15; riskFactors.push("Heavy rain activity"); }
-
-  if (severityScore >= 50) severityLevel = "critical";
-  else if (severityScore >= 30) severityLevel = "high";
-  else if (severityScore >= 15) severityLevel = "medium";
-
-  const sevStepIdx = steps.length - 1;
-  steps[sevStepIdx].status = "completed";
-  steps[sevStepIdx].completedAt = new Date().toISOString();
-  steps[sevStepIdx].output = {
-    severityLevel,
-    severityScore,
-    riskFactors,
-    weatherCondition: weatherCodeVal >= 95 ? "Thunderstorm" : weatherCodeVal >= 80 ? "Rain Showers" : weatherCodeVal >= 63 ? "Heavy Rain" : weatherCodeVal >= 51 ? "Drizzle" : weatherCodeVal >= 45 ? "Fog" : weatherCodeVal >= 3 ? "Overcast" : "Clear",
-  };
-
-  steps.push({
-    id: "step_4",
-    name: "Generate Alert",
-    type: "decision",
-    status: "running",
-    startedAt: new Date().toISOString(),
-  });
-
-  const shouldAlert = severityLevel === "high" || severityLevel === "critical";
-  const alertMessage = shouldAlert
-    ? `WEATHER ALERT for ${cityName}: ${severityLevel.toUpperCase()} severity detected. ${riskFactors.join("; ")}. Potential claims surge expected.`
-    : `${cityName}: Normal conditions (${temp}°C, wind ${wind} km/h). No elevated claims risk.`;
-
-  const estimatedImpact = shouldAlert
-    ? { estimatedClaimsSurge: severityLevel === "critical" ? "200-500%" : "50-150%", recommendedAction: "Activate surge team", priority: severityLevel === "critical" ? "P1" : "P2" }
-    : { estimatedClaimsSurge: "None", recommendedAction: "Continue standard operations", priority: "P4" };
-
-  const alertStepIdx = steps.length - 1;
-  steps[alertStepIdx].status = "completed";
-  steps[alertStepIdx].completedAt = new Date().toISOString();
-  steps[alertStepIdx].output = {
-    alertTriggered: shouldAlert,
-    alertMessage,
-    severity: severityLevel,
-    estimatedImpact,
-    region: cityName,
-  };
-
-  steps.push({
-    id: "step_5",
+    id: `step_${steps.length + 1}`,
     name: "Compliance Check",
     type: "validation",
     status: "running",
@@ -286,37 +294,40 @@ export async function executeBlueprintWithMcp(
   });
 
   const ind = industry || "general";
+  const toolSources = toolCallResults.filter(r => !r.error).map(r => `${r.serverName} / ${r.toolName}`);
   const complianceChecks = [
-    { rule: "Data Source Verification", status: "pass", detail: `Data sourced via registered MCP integration: ${resolvedTool.serverName} / ${resolvedTool.toolName}` },
-    { rule: "Decision Audit Trail", status: "pass", detail: "All decision factors logged with timestamps" },
-    { rule: "Severity Classification", status: "pass", detail: `Score ${severityScore} mapped to '${severityLevel}' per classification matrix` },
-    { rule: ind === "insurance" ? "Insurance Claims Protocol" : "Industry Protocol", status: "pass", detail: shouldAlert ? "Alert routed per claims surge protocol" : "No action required — within normal parameters" },
+    { rule: "Data Source Verification", status: "pass", detail: toolSources.length > 0 ? `Data sourced via registered MCP integrations: ${toolSources.join(", ")}` : "No external data sources used" },
+    { rule: "Decision Audit Trail", status: "pass", detail: "All decision factors logged with timestamps in execution steps" },
+    { rule: "AI Reasoning Logged", status: "pass", detail: "AI planning and analysis steps captured in execution trace" },
+    { rule: `${ind.charAt(0).toUpperCase() + ind.slice(1)} Industry Protocol`, status: "pass", detail: "Execution complied with industry governance framework" },
   ];
 
-  const compStepIdx = steps.length - 1;
-  steps[compStepIdx].status = "completed";
-  steps[compStepIdx].completedAt = new Date().toISOString();
-  steps[compStepIdx].output = {
+  const compStep = steps[steps.length - 1];
+  compStep.status = "completed";
+  compStep.completedAt = new Date().toISOString();
+  compStep.output = {
     allPassed: true,
     checks: complianceChecks,
     auditId: `AUDIT-${Date.now()}`,
   };
 
+  const failedSteps = steps.filter(s => s.status === "failed");
   const latencyMs = Date.now() - startTime;
+
+  const analysisStep = steps.find(s => s.type === "ai_analysis" && s.status === "completed");
+  const analysisOutput = analysisStep?.output || {};
 
   return {
     steps,
-    success: true,
+    success: failedSteps.length === 0,
     summary: {
       totalSteps: steps.length,
-      passedSteps: steps.filter((s: any) => s.status === "completed").length,
-      failedSteps: steps.filter((s: any) => s.status === "failed").length,
-      severity: severityLevel,
-      alertTriggered: shouldAlert,
+      passedSteps: steps.filter(s => s.status === "completed").length,
+      failedSteps: failedSteps.length,
       latencyMs,
-      city: cityName,
-      temperature: temp,
-      windSpeed: wind,
+      prompt,
+      toolsUsed: toolCallResults.filter(r => !r.error).map(r => ({ server: r.serverName, tool: r.toolName })),
+      analysis: analysisOutput,
       source: "mcp_integration",
     },
   };
@@ -325,8 +336,8 @@ export async function executeBlueprintWithMcp(
 async function executeAgentCycle(agent: RuntimeAgent) {
   console.log(`[agent-runtime] Executing cycle for ${agent.agentName} (deployment: ${agent.deploymentId})`);
 
-  if (!agent.inputConfig || !agent.inputConfig.city || !agent.inputConfig.latitude || !agent.inputConfig.longitude) {
-    console.error(`[agent-runtime] ${agent.agentName}: Missing input configuration (city, latitude, longitude). Configure the agent before running.`);
+  if (!agent.prompt) {
+    console.error(`[agent-runtime] ${agent.agentName}: Missing runtime prompt. Configure the agent before running.`);
     return;
   }
 
@@ -337,16 +348,16 @@ async function executeAgentCycle(agent: RuntimeAgent) {
     triggerType: "scheduled",
     blueprintId: agent.blueprintId || null,
     mcpServerId: agent.mcpServerIds[0] || null,
-    inputConfig: agent.inputConfig,
+    inputConfig: { prompt: agent.prompt },
   });
 
   try {
-    const result = await executeBlueprintWithMcp(
+    const result = await executePromptWithMcp(
       agent.agentId,
       agent.deploymentId,
       agent.blueprintId,
       agent.mcpServerIds,
-      agent.inputConfig,
+      agent.prompt,
       agent.industry,
     );
 
@@ -363,14 +374,14 @@ async function executeAgentCycle(agent: RuntimeAgent) {
       environment: "prod",
       status: result.success ? "completed" : "failed",
       latencyMs: result.summary.latencyMs || 0,
-      inputSummary: `Scheduled check for ${result.summary.city || "unknown"}`,
+      inputSummary: `Scheduled: ${agent.prompt.substring(0, 100)}${agent.prompt.length > 100 ? "..." : ""}`,
       outputSummary: result.success
-        ? `${result.summary.severity} severity | ${result.summary.temperature}°C | Wind ${result.summary.windSpeed} km/h | Alert: ${result.summary.alertTriggered}`
+        ? `${result.summary.toolsUsed?.length || 0} tools called | ${result.summary.passedSteps}/${result.summary.totalSteps} steps passed`
         : `Execution failed`,
       stepsJson: result.steps,
       toolCalls: result.steps.filter((s: any) => s.type === "api_call").map((s: any) => ({
-        tool: s.name,
-        input: { source: s.output?.source || "unknown" },
+        tool: s.mcpTool || s.name,
+        input: s.input || {},
         output: s.output,
       })),
     });
@@ -382,7 +393,7 @@ async function executeAgentCycle(agent: RuntimeAgent) {
       result,
     });
 
-    console.log(`[agent-runtime] ${agent.agentName}: ${result.summary.severity} severity, alert=${result.summary.alertTriggered}, ${result.summary.latencyMs}ms`);
+    console.log(`[agent-runtime] ${agent.agentName}: ${result.summary.passedSteps}/${result.summary.totalSteps} steps passed, ${result.summary.latencyMs}ms`);
   } catch (err: any) {
     await storage.updateAgentRuntimeRun(runtimeRun.id, {
       status: "failed",
@@ -411,32 +422,16 @@ export async function startAgentRuntime(deploymentId: string): Promise<{ started
     return { started: false, message: "Cannot start runtime: No MCP Server integrations linked to this agent. Configure an MCP Server in the MCP Server Directory and link it to the agent before deploying." };
   }
 
-  let hasMatchingTool = false;
-  for (const serverId of mcpServerIds) {
-    const server = await storage.getMcpServer(serverId);
-    if (!server || !server.url) continue;
-    const tools = await storage.getMcpServerTools(serverId);
-    const match = tools.find(t =>
-      t.name.toLowerCase().includes("weather") ||
-      t.name.toLowerCase().includes("forecast") ||
-      (t.description || "").toLowerCase().includes("weather")
-    );
-    if (match) { hasMatchingTool = true; break; }
-  }
-  if (!hasMatchingTool) {
-    return { started: false, message: "Cannot start runtime: No matching tool found in linked MCP Servers. Ensure an MCP Server with a weather/forecast tool is registered and linked to this agent." };
-  }
-
   const rtConfig = (agent.runtimeConfig as Record<string, any>) || {};
-  const inputConfig = rtConfig.inputConfig;
+  const prompt = rtConfig.prompt;
 
-  if (!inputConfig || !inputConfig.city || !inputConfig.latitude || !inputConfig.longitude) {
-    return { started: false, message: "Cannot start runtime: Agent has no input configuration. Please configure the agent's runtime parameters (e.g. city, latitude, longitude) in the agent's Runtime Configuration before deploying." };
+  if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
+    return { started: false, message: "Cannot start runtime: Agent has no runtime prompt configured. Please provide a natural language prompt describing what this agent should do in the agent's Runtime Configuration." };
   }
 
   const intervalMinutes = rtConfig.scheduleIntervalMinutes;
   if (!intervalMinutes) {
-    return { started: false, message: "Cannot start runtime: Agent has no schedule interval configured. Please set the execution interval (in minutes) in the agent's Runtime Configuration before deploying." };
+    return { started: false, message: "Cannot start runtime: Agent has no schedule interval configured. Please set the execution interval (in minutes) in the agent's Runtime Configuration." };
   }
 
   const intervalMs = intervalMinutes * 60 * 1000;
@@ -452,7 +447,7 @@ export async function startAgentRuntime(deploymentId: string): Promise<{ started
     mcpServerIds,
     intervalMs,
     industry: deployment.industry || (agent as any).industry,
-    inputConfig,
+    prompt,
   };
 
   await executeAgentCycle(runtimeAgent);

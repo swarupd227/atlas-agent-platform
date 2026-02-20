@@ -423,9 +423,7 @@ function AgentDetailInner() {
   const [replacementProposal, setReplacementProposal] = useState<any>(null);
 
   const existingRtConfig = (agent?.runtimeConfig as Record<string, any>) || {};
-  const [rtCity, setRtCity] = useState(existingRtConfig?.inputConfig?.city || "");
-  const [rtLat, setRtLat] = useState(existingRtConfig?.inputConfig?.latitude?.toString() || "");
-  const [rtLon, setRtLon] = useState(existingRtConfig?.inputConfig?.longitude?.toString() || "");
+  const [rtPrompt, setRtPrompt] = useState(existingRtConfig?.prompt || "");
   const [rtInterval, setRtInterval] = useState(existingRtConfig?.scheduleIntervalMinutes?.toString() || "");
   const [rtEditing, setRtEditing] = useState(false);
 
@@ -433,11 +431,7 @@ function AgentDetailInner() {
     mutationFn: () =>
       apiRequest("PATCH", `/api/agents/${agentId}`, {
         runtimeConfig: {
-          inputConfig: {
-            city: rtCity.trim(),
-            latitude: parseFloat(rtLat),
-            longitude: parseFloat(rtLon),
-          },
+          prompt: rtPrompt.trim(),
           scheduleIntervalMinutes: parseInt(rtInterval, 10),
         },
       }),
@@ -1000,9 +994,7 @@ function AgentDetailInner() {
                     {!rtEditing ? (
                       <Button variant="ghost" size="sm" onClick={() => {
                         const rc = (agent.runtimeConfig as Record<string, any>) || {};
-                        setRtCity(rc?.inputConfig?.city || "");
-                        setRtLat(rc?.inputConfig?.latitude?.toString() || "");
-                        setRtLon(rc?.inputConfig?.longitude?.toString() || "");
+                        setRtPrompt(rc?.prompt || "");
                         setRtInterval(rc?.scheduleIntervalMinutes?.toString() || "");
                         setRtEditing(true);
                       }} data-testid="button-edit-runtime-config">
@@ -1011,7 +1003,7 @@ function AgentDetailInner() {
                     ) : (
                       <div className="flex gap-1">
                         <Button variant="ghost" size="sm" onClick={() => setRtEditing(false)} data-testid="button-cancel-runtime-config">Cancel</Button>
-                        <Button size="sm" onClick={() => rtConfigMutation.mutate()} disabled={rtConfigMutation.isPending || !rtCity.trim() || !rtLat || !rtLon || !rtInterval} data-testid="button-save-runtime-config">
+                        <Button size="sm" onClick={() => rtConfigMutation.mutate()} disabled={rtConfigMutation.isPending || !rtPrompt.trim() || !rtInterval} data-testid="button-save-runtime-config">
                           {rtConfigMutation.isPending ? "Saving..." : "Save"}
                         </Button>
                       </div>
@@ -1022,16 +1014,12 @@ function AgentDetailInner() {
                   {!rtEditing ? (
                     (() => {
                       const rc = (agent.runtimeConfig as Record<string, any>) || {};
-                      const hasConfig = rc?.inputConfig?.city && rc?.scheduleIntervalMinutes;
+                      const hasConfig = rc?.prompt && rc?.scheduleIntervalMinutes;
                       return hasConfig ? (
                         <div className="flex flex-col gap-2">
-                          <div className="flex items-center justify-between gap-2 p-2.5 rounded-md bg-muted/30">
-                            <span className="text-xs text-muted-foreground">City</span>
-                            <span className="text-xs font-medium" data-testid="text-rt-city">{rc.inputConfig.city}</span>
-                          </div>
-                          <div className="flex items-center justify-between gap-2 p-2.5 rounded-md bg-muted/30">
-                            <span className="text-xs text-muted-foreground">Coordinates</span>
-                            <span className="text-xs font-medium font-mono" data-testid="text-rt-coords">{rc.inputConfig.latitude}, {rc.inputConfig.longitude}</span>
+                          <div className="flex flex-col gap-1.5 p-2.5 rounded-md bg-muted/30">
+                            <span className="text-xs text-muted-foreground">Runtime Prompt</span>
+                            <p className="text-xs font-medium leading-relaxed" data-testid="text-rt-prompt">{rc.prompt}</p>
                           </div>
                           <div className="flex items-center justify-between gap-2 p-2.5 rounded-md bg-muted/30">
                             <span className="text-xs text-muted-foreground">Schedule Interval</span>
@@ -1041,25 +1029,15 @@ function AgentDetailInner() {
                       ) : (
                         <div className="flex flex-col items-center gap-2 py-4 text-center">
                           <Settings className="w-5 h-5 text-muted-foreground" />
-                          <p className="text-xs text-muted-foreground">No runtime configuration set. Click Edit to configure the agent's runtime parameters before deploying.</p>
+                          <p className="text-xs text-muted-foreground">No runtime configuration set. Click Edit to configure a runtime prompt describing what this agent should do.</p>
                         </div>
                       );
                     })()
                   ) : (
                     <div className="flex flex-col gap-3">
                       <div className="flex flex-col gap-1.5">
-                        <label className="text-xs text-muted-foreground">City</label>
-                        <Input value={rtCity} onChange={e => setRtCity(e.target.value)} placeholder="e.g. Miami" className="h-8 text-sm" data-testid="input-rt-city" />
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="flex flex-col gap-1.5">
-                          <label className="text-xs text-muted-foreground">Latitude</label>
-                          <Input value={rtLat} onChange={e => setRtLat(e.target.value)} placeholder="e.g. 25.7617" type="number" step="any" className="h-8 text-sm" data-testid="input-rt-lat" />
-                        </div>
-                        <div className="flex flex-col gap-1.5">
-                          <label className="text-xs text-muted-foreground">Longitude</label>
-                          <Input value={rtLon} onChange={e => setRtLon(e.target.value)} placeholder="e.g. -80.1918" type="number" step="any" className="h-8 text-sm" data-testid="input-rt-lon" />
-                        </div>
+                        <label className="text-xs text-muted-foreground">Runtime Prompt</label>
+                        <Textarea value={rtPrompt} onChange={e => setRtPrompt(e.target.value)} placeholder="Describe what this agent should do when it runs, e.g. 'Monitor weather conditions for Miami, FL and assess insurance risk from severe events'" className="min-h-[80px] text-sm" data-testid="input-rt-prompt" />
                       </div>
                       <div className="flex flex-col gap-1.5">
                         <label className="text-xs text-muted-foreground">Schedule Interval (minutes)</label>

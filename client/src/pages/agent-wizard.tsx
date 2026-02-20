@@ -879,6 +879,13 @@ export default function AgentWizard() {
       ? `You are an AI agent operating in the ${industry?.label || "industry"} domain.\n\n${domainGlossary}`
       : undefined;
 
+    const linkedOutcome = outcomes?.find((o) => o.id === wizardState.outcomeId);
+    let autoPrompt = "";
+    if (linkedOutcome) {
+      const kpiNames = (linkedOutcome as any).kpis?.map((k: any) => k.name).join(", ") || "";
+      autoPrompt = `As an AI agent for ${industry?.label || "the organization"}, ${linkedOutcome.description || linkedOutcome.name}. ${kpiNames ? `Track and report on: ${kpiNames}.` : ""} Analyze available data using connected tools and provide actionable insights with compliance considerations.`;
+    }
+
     const payload: Record<string, unknown> = {
       name: wizardState.name,
       description: wizardState.description,
@@ -907,6 +914,7 @@ export default function AgentWizard() {
         shadowModeDuration: wizardState.rolloutConfig.shadowModeDuration,
         canarySteps: wizardState.rolloutConfig.canarySteps,
       } : null,
+      runtimeConfig: autoPrompt ? { prompt: autoPrompt, scheduleIntervalMinutes: 5 } : undefined,
     };
     createMutation.mutate(payload);
   }
