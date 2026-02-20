@@ -248,9 +248,13 @@ After receiving tool results, provide a structured analysis with key findings, s
       ];
 
       try {
+        const analysisMessages = [
+          ...toolResultMessages,
+          { role: "user" as const, content: "Now analyze the tool results above. Respond in JSON format with fields: summary (string), severity (low/medium/high), riskFactors (array of strings), findings (array of key observations), and recommendedActions (array of strings)." },
+        ];
         const analysisResponse = await openai.chat.completions.create({
           model: "gpt-4.1",
-          messages: toolResultMessages,
+          messages: analysisMessages,
           max_completion_tokens: 4096,
           response_format: { type: "json_object" },
         });
