@@ -317,6 +317,10 @@ After receiving tool results, provide a structured analysis with key findings, s
   const analysisStep = steps.find(s => s.type === "ai_analysis" && s.status === "completed");
   const analysisOutput = analysisStep?.output || {};
 
+  const severity = failedSteps.length > 0 ? "high" : analysisOutput?.severity || (analysisOutput?.risk_level === "high" || analysisOutput?.riskLevel === "high" ? "high" : analysisOutput?.risk_level === "medium" || analysisOutput?.riskLevel === "medium" ? "medium" : "low");
+
+  const promptSummary = prompt.length > 60 ? prompt.substring(0, 57) + "..." : prompt;
+
   return {
     steps,
     success: failedSteps.length === 0,
@@ -326,6 +330,8 @@ After receiving tool results, provide a structured analysis with key findings, s
       failedSteps: failedSteps.length,
       latencyMs,
       prompt,
+      promptSummary,
+      severity,
       toolsUsed: toolCallResults.filter(r => !r.error).map(r => ({ server: r.serverName, tool: r.toolName })),
       analysis: analysisOutput,
       source: "mcp_integration",
@@ -426,14 +432,10 @@ export async function startAgentRuntime(deploymentId: string): Promise<{ started
   const prompt = rtConfig.prompt;
 
   if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
-    return { started: false, message: "Cannot start runtime: Agent has no runtime prompt configured. Please provide a natural language prompt describing what this agent should do in the agent's Runtime Configuration." };
+    return { started: false, message: "Cannot start runtime: Agent has no task instructions configured. Please provide a natural language prompt describing what this agent should do in the Agent Task section." };
   }
 
-  const intervalMinutes = rtConfig.scheduleIntervalMinutes;
-  if (!intervalMinutes) {
-    return { started: false, message: "Cannot start runtime: Agent has no schedule interval configured. Please set the execution interval (in minutes) in the agent's Runtime Configuration." };
-  }
-
+  const intervalMinutes = rtConfig.scheduleIntervalMinutes || 5;
   const intervalMs = intervalMinutes * 60 * 1000;
 
   const blueprints = await storage.getBlueprints();

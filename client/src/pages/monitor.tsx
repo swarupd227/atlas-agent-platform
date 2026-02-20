@@ -335,16 +335,13 @@ function AgentRuntimeTab() {
                       )}
                       <div className="flex flex-col min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-[11px] font-medium">{summary.city || "Agent Run"}</span>
-                          {summary.temperature !== undefined && (
-                            <span className="text-[10px] text-muted-foreground">{summary.temperature}°C</span>
-                          )}
-                          {summary.windSpeed !== undefined && (
-                            <span className="text-[10px] text-muted-foreground">Wind {summary.windSpeed} km/h</span>
-                          )}
+                          <span className="text-[11px] font-medium">{summary.promptSummary || summary.city || "Agent Run"}</span>
                           <span className={`text-[10px] font-medium ${sevColor}`}>{severity}</span>
-                          {summary.alertTriggered && (
-                            <Badge variant="outline" className="text-[9px] text-red-600 dark:text-red-400 bg-red-500/10 px-1 py-0">Alert</Badge>
+                          {summary.toolsUsed?.length > 0 && (
+                            <span className="text-[10px] text-muted-foreground">{summary.toolsUsed.length} tool{summary.toolsUsed.length > 1 ? "s" : ""}</span>
+                          )}
+                          {summary.passedSteps > 0 && (
+                            <span className="text-[10px] text-muted-foreground">{summary.passedSteps}/{summary.totalSteps} steps</span>
                           )}
                           {summary.source === "mcp_integration" && (
                             <Badge variant="outline" className="text-[9px] text-blue-600 dark:text-blue-400 bg-blue-500/10 px-1 py-0">MCP</Badge>

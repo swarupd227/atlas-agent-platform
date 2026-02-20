@@ -424,7 +424,6 @@ function AgentDetailInner() {
 
   const existingRtConfig = (agent?.runtimeConfig as Record<string, any>) || {};
   const [rtPrompt, setRtPrompt] = useState(existingRtConfig?.prompt || "");
-  const [rtInterval, setRtInterval] = useState(existingRtConfig?.scheduleIntervalMinutes?.toString() || "");
   const [rtEditing, setRtEditing] = useState(false);
 
   const rtConfigMutation = useMutation({
@@ -432,7 +431,7 @@ function AgentDetailInner() {
       apiRequest("PATCH", `/api/agents/${agentId}`, {
         runtimeConfig: {
           prompt: rtPrompt.trim(),
-          scheduleIntervalMinutes: parseInt(rtInterval, 10),
+          scheduleIntervalMinutes: existingRtConfig?.scheduleIntervalMinutes || 5,
         },
       }),
     onSuccess: () => {
@@ -817,6 +816,60 @@ function AgentDetailInner() {
             <StatCard title="Cost / Run" value={`$${agent.costPerRun?.toFixed(3)}`} icon={DollarSign} variant="default" testId="stat-agent-cost" />
           </div>
 
+          <Card data-testid="card-runtime-config" className="border-primary/20 bg-primary/[0.02]">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Zap className="w-4 h-4 text-primary" />
+                  <CardTitle className="text-sm font-medium">Agent Task</CardTitle>
+                </div>
+                {!rtEditing ? (
+                  <Button variant="ghost" size="sm" onClick={() => {
+                    const rc = (agent.runtimeConfig as Record<string, any>) || {};
+                    setRtPrompt(rc?.prompt || "");
+                    setRtEditing(true);
+                  }} data-testid="button-edit-runtime-config">
+                    <Settings className="w-3.5 h-3.5 mr-1" /> Edit
+                  </Button>
+                ) : (
+                  <div className="flex gap-1">
+                    <Button variant="ghost" size="sm" onClick={() => setRtEditing(false)} data-testid="button-cancel-runtime-config">Cancel</Button>
+                    <Button size="sm" onClick={() => rtConfigMutation.mutate()} disabled={rtConfigMutation.isPending || !rtPrompt.trim()} data-testid="button-save-runtime-config">
+                      {rtConfigMutation.isPending ? "Saving..." : "Save"}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
+              {!rtEditing ? (
+                (() => {
+                  const rc = (agent.runtimeConfig as Record<string, any>) || {};
+                  const hasConfig = !!rc?.prompt;
+                  return hasConfig ? (
+                    <div className="flex flex-col gap-1.5 p-2.5 rounded-md bg-muted/30">
+                      <span className="text-xs text-muted-foreground">What this agent does when it runs</span>
+                      <p className="text-xs font-medium leading-relaxed" data-testid="text-rt-prompt">{rc.prompt}</p>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center gap-2 py-4 text-center">
+                      <Zap className="w-5 h-5 text-muted-foreground" />
+                      <p className="text-xs text-muted-foreground">No task defined yet. Click Edit to describe what this agent should do when it runs.</p>
+                    </div>
+                  );
+                })()
+              ) : (
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs text-muted-foreground">Describe what this agent should do</label>
+                    <Textarea value={rtPrompt} onChange={e => setRtPrompt(e.target.value)} placeholder="e.g. 'Get weather update for Bangalore and assess any risk from severe conditions' or 'Analyze customer churn patterns for Q1 and flag high-risk accounts'" className="min-h-[80px] text-sm" data-testid="input-rt-prompt" />
+                    <span className="text-[10px] text-muted-foreground">The agent will use its connected tools (MCP Servers) to fulfill this task automatically every 5 minutes when deployed.</span>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <Card>
               <CardHeader className="pb-3">
@@ -1000,67 +1053,6 @@ function AgentDetailInner() {
             const isReady = readyCount === readyChecks.length;
 
             return (
-              <>
-              <Card data-testid="card-runtime-config">
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <CardTitle className="text-sm font-medium">Runtime Configuration</CardTitle>
-                    {!rtEditing ? (
-                      <Button variant="ghost" size="sm" onClick={() => {
-                        const rc = (agent.runtimeConfig as Record<string, any>) || {};
-                        setRtPrompt(rc?.prompt || "");
-                        setRtInterval(rc?.scheduleIntervalMinutes?.toString() || "");
-                        setRtEditing(true);
-                      }} data-testid="button-edit-runtime-config">
-                        <Settings className="w-3.5 h-3.5 mr-1" /> Edit
-                      </Button>
-                    ) : (
-                      <div className="flex gap-1">
-                        <Button variant="ghost" size="sm" onClick={() => setRtEditing(false)} data-testid="button-cancel-runtime-config">Cancel</Button>
-                        <Button size="sm" onClick={() => rtConfigMutation.mutate()} disabled={rtConfigMutation.isPending || !rtPrompt.trim() || !rtInterval} data-testid="button-save-runtime-config">
-                          {rtConfigMutation.isPending ? "Saving..." : "Save"}
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                </CardHeader>
-                <CardContent className="flex flex-col gap-3">
-                  {!rtEditing ? (
-                    (() => {
-                      const rc = (agent.runtimeConfig as Record<string, any>) || {};
-                      const hasConfig = rc?.prompt && rc?.scheduleIntervalMinutes;
-                      return hasConfig ? (
-                        <div className="flex flex-col gap-2">
-                          <div className="flex flex-col gap-1.5 p-2.5 rounded-md bg-muted/30">
-                            <span className="text-xs text-muted-foreground">Runtime Prompt</span>
-                            <p className="text-xs font-medium leading-relaxed" data-testid="text-rt-prompt">{rc.prompt}</p>
-                          </div>
-                          <div className="flex items-center justify-between gap-2 p-2.5 rounded-md bg-muted/30">
-                            <span className="text-xs text-muted-foreground">Schedule Interval</span>
-                            <span className="text-xs font-medium" data-testid="text-rt-interval">Every {rc.scheduleIntervalMinutes} minutes</span>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="flex flex-col items-center gap-2 py-4 text-center">
-                          <Settings className="w-5 h-5 text-muted-foreground" />
-                          <p className="text-xs text-muted-foreground">No runtime configuration set. Click Edit to configure a runtime prompt describing what this agent should do.</p>
-                        </div>
-                      );
-                    })()
-                  ) : (
-                    <div className="flex flex-col gap-3">
-                      <div className="flex flex-col gap-1.5">
-                        <label className="text-xs text-muted-foreground">Runtime Prompt</label>
-                        <Textarea value={rtPrompt} onChange={e => setRtPrompt(e.target.value)} placeholder="Describe what this agent should do when it runs, e.g. 'Monitor weather conditions for Miami, FL and assess insurance risk from severe events'" className="min-h-[80px] text-sm" data-testid="input-rt-prompt" />
-                      </div>
-                      <div className="flex flex-col gap-1.5">
-                        <label className="text-xs text-muted-foreground">Schedule Interval (minutes)</label>
-                        <Input value={rtInterval} onChange={e => setRtInterval(e.target.value)} placeholder="e.g. 5" type="number" min="1" className="h-8 text-sm" data-testid="input-rt-interval" />
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
               <Card data-testid="card-export-readiness">
                 <CardHeader className="pb-3">
                   <div className="flex items-center justify-between gap-2">
@@ -1109,7 +1101,6 @@ function AgentDetailInner() {
                   )}
                 </CardContent>
               </Card>
-              </>
             );
           })()}
         </TabsContent>
