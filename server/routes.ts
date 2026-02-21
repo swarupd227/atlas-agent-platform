@@ -1172,6 +1172,49 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/agents/bulk-create-from-plan", checkPermission("create_modify_blueprints"), async (req, res) => {
+    try {
+      const schema = z.object({
+        outcomeId: z.string(),
+        industry: z.string().optional(),
+        agents: z.array(z.object({
+          name: z.string().min(1),
+          description: z.string().optional(),
+          agentType: z.enum(["single", "team", "remote"]).optional(),
+          riskTier: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]).optional(),
+          autonomyMode: z.enum(["manual", "assisted", "autonomous"]).optional(),
+          modelProvider: z.string().optional(),
+          modelName: z.string().optional(),
+          runtimeConfig: z.any().optional(),
+        })).min(1),
+      });
+      const { outcomeId, industry, agents: agentPlans } = schema.parse(req.body);
+
+      const created = [];
+      for (const plan of agentPlans) {
+        const agentData = insertAgentSchema.parse({
+          name: plan.name,
+          description: plan.description || "",
+          agentType: plan.agentType || "single",
+          outcomeId,
+          riskTier: plan.riskTier || "MEDIUM",
+          autonomyMode: plan.autonomyMode || "assisted",
+          modelProvider: plan.modelProvider || "openai",
+          modelName: plan.modelName || "gpt-4.1",
+          industry: industry || undefined,
+          runtimeConfig: plan.runtimeConfig || null,
+          status: "active",
+        });
+        const agent = await storage.createAgent(agentData);
+        created.push(agent);
+      }
+
+      res.json({ agents: created, count: created.length });
+    } catch (e: any) {
+      handleZodError(res, e);
+    }
+  });
+
   app.patch("/api/agents/:id", async (req, res) => {
     try {
       const updated = await storage.updateAgent(req.params.id, req.body);

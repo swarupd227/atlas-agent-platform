@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import {
   ChevronLeft,
   ChevronRight,
@@ -13,6 +14,14 @@ import {
   BarChart3,
   Shield,
   Activity,
+  Bot,
+  Sparkles,
+  Loader2,
+  Check,
+  ExternalLink,
+  Cpu,
+  Wrench,
+  Zap,
 } from "lucide-react";
 import {
   Dialog,
@@ -26,6 +35,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -51,6 +61,30 @@ interface KpiEntry {
   weight: number;
 }
 
+interface ProposedAgent {
+  name: string;
+  description: string;
+  role: string;
+  riskTier: string;
+  autonomyMode: string;
+  modelProvider: string;
+  modelName: string;
+  workflowSteps: string[];
+  tools: { name: string; description: string }[];
+  kpiBindings: string[];
+  estimatedImpact: string;
+  templateMatch: string | null;
+  selected: boolean;
+}
+
+interface CreatedAgent {
+  id: string;
+  name: string;
+  agentType: string;
+  riskTier: string;
+  autonomyMode: string;
+}
+
 interface OutcomeBuilderDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -60,6 +94,7 @@ interface OutcomeBuilderDialogProps {
 export function OutcomeBuilderDialog({ open, onOpenChange, onSuccess }: OutcomeBuilderDialogProps) {
   const { industry } = useIndustry();
   const { toast } = useToast();
+  const [, navigate] = useLocation();
   const [step, setStep] = useState(1);
   const [selectedTemplate, setSelectedTemplate] = useState<OutcomeTemplate | null>(null);
 
@@ -72,6 +107,12 @@ export function OutcomeBuilderDialog({ open, onOpenChange, onSuccess }: OutcomeB
   const [maxDriftPercent, setMaxDriftPercent] = useState(10);
   const [slaDescription, setSlaDescription] = useState("");
   const [kpis, setKpis] = useState<KpiEntry[]>([]);
+
+  const [createdOutcomeId, setCreatedOutcomeId] = useState<string | null>(null);
+  const [proposedAgents, setProposedAgents] = useState<ProposedAgent[]>([]);
+  const [createdAgents, setCreatedAgents] = useState<CreatedAgent[]>([]);
+  const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
 
   const governancePolicies = industry?.defaultGovernancePolicies || [];
 
@@ -103,15 +144,95 @@ export function OutcomeBuilderDialog({ open, onOpenChange, onSuccess }: OutcomeB
       const res = await apiRequest("POST", "/api/outcomes/with-kpis", payload);
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
       queryClient.invalidateQueries({ queryKey: ["/api/kpis"] });
       toast({ title: "Outcome contract created" });
-      resetAndClose();
       onSuccess();
+
+      const outcomeId = data?.outcome?.id;
+      if (outcomeId) {
+        setCreatedOutcomeId(outcomeId);
+        setStep(4);
+        generateAgentPlan(outcomeId);
+      } else {
+        resetAndClose();
+      }
     },
     onError: (err: Error) => {
       toast({ title: "Failed to create outcome", description: err.message, variant: "destructive" });
+    },
+  });
+
+  async function generateAgentPlan(outcomeId: string) {
+    setIsGeneratingPlan(true);
+    setPlanError(null);
+    setProposedAgents([]);
+    try {
+      const outcomeContract = {
+        id: outcomeId,
+        name,
+        description,
+        riskTier,
+        pricingModel,
+        pricePerUnit,
+        riskThreshold,
+        maxDriftPercent,
+        slaDescription,
+        industry: industry?.id || "custom",
+        industryLabel: industry?.label || "Custom",
+        governanceConstraints: governancePolicies.map((p) => p.label),
+      };
+      const res = await apiRequest("POST", "/api/ai/propose-agents", {
+        outcomeContract,
+        kpis: kpis.map((k) => ({ name: k.name, target: k.target, unit: k.unit })),
+      });
+      const data = await res.json();
+      const agents = (data.agents || []).map((a: any) => ({
+        ...a,
+        selected: true,
+      }));
+      setProposedAgents(agents);
+    } catch (err: any) {
+      setPlanError(err.message || "Failed to generate agent plan");
+    } finally {
+      setIsGeneratingPlan(false);
+    }
+  }
+
+  const createAgentsMutation = useMutation({
+    mutationFn: async () => {
+      const selectedAgents = proposedAgents.filter((a) => a.selected);
+      if (selectedAgents.length === 0) return { agents: [], count: 0 };
+
+      const payload = {
+        outcomeId: createdOutcomeId!,
+        industry: industry?.id || "custom",
+        agents: selectedAgents.map((a) => ({
+          name: a.name,
+          description: a.description,
+          agentType: "single",
+          riskTier: a.riskTier || riskTier,
+          autonomyMode: a.autonomyMode || "assisted",
+          modelProvider: a.modelProvider || "openai",
+          modelName: a.modelName || "gpt-4.1",
+          runtimeConfig: {
+            taskPrompt: `Role: ${a.role}\n\nObjective: ${a.description}\n\nWorkflow Steps:\n${(a.workflowSteps || []).map((s: string, i: number) => `${i + 1}. ${s}`).join("\n")}\n\nTarget KPIs: ${(a.kpiBindings || []).join(", ")}`,
+            tools: a.tools || [],
+          },
+        })),
+      };
+      const res = await apiRequest("POST", "/api/agents/bulk-create-from-plan", payload);
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
+      toast({ title: `${data.count} agent(s) created successfully` });
+      setCreatedAgents(data.agents || []);
+      setStep(5);
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to create agents", description: err.message, variant: "destructive" });
     },
   });
 
@@ -127,6 +248,11 @@ export function OutcomeBuilderDialog({ open, onOpenChange, onSuccess }: OutcomeB
     setMaxDriftPercent(10);
     setSlaDescription("");
     setKpis([]);
+    setCreatedOutcomeId(null);
+    setProposedAgents([]);
+    setCreatedAgents([]);
+    setIsGeneratingPlan(false);
+    setPlanError(null);
     onOpenChange(false);
   }
 
@@ -185,6 +311,12 @@ export function OutcomeBuilderDialog({ open, onOpenChange, onSuccess }: OutcomeB
     setKpis(updated);
   }
 
+  function toggleAgent(index: number) {
+    setProposedAgents((prev) =>
+      prev.map((a, i) => (i === index ? { ...a, selected: !a.selected } : a))
+    );
+  }
+
   const industryTemplates = OUTCOME_TEMPLATES.filter((t) => t.industry === industry?.id);
   const otherTemplates = OUTCOME_TEMPLATES.filter((t) => t.industry !== industry?.id);
 
@@ -205,9 +337,12 @@ export function OutcomeBuilderDialog({ open, onOpenChange, onSuccess }: OutcomeB
     { num: 1, label: "Template", icon: FileText },
     { num: 2, label: "Configure", icon: Settings2 },
     { num: 3, label: "Review", icon: ClipboardCheck },
+    { num: 4, label: "Agent Plan", icon: Bot },
+    { num: 5, label: "Done", icon: CheckCircle2 },
   ];
 
   const canProceedToReview = name.trim().length > 0;
+  const selectedCount = proposedAgents.filter((a) => a.selected).length;
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) resetAndClose(); else onOpenChange(o); }}>
@@ -216,10 +351,10 @@ export function OutcomeBuilderDialog({ open, onOpenChange, onSuccess }: OutcomeB
           <DialogTitle data-testid="text-wizard-title">Outcome Builder</DialogTitle>
         </DialogHeader>
 
-        <div className="flex items-center gap-2 mb-4" data-testid="wizard-steps">
+        <div className="flex items-center gap-2 mb-4 flex-wrap" data-testid="wizard-steps">
           {stepLabels.map((s, i) => (
             <div key={s.num} className="flex items-center gap-2">
-              {i > 0 && <div className="w-8 border-t border-border" />}
+              {i > 0 && <div className="w-6 border-t border-border" />}
               <div
                 className={`flex items-center gap-1.5 text-sm ${
                   step === s.num
@@ -599,6 +734,248 @@ export function OutcomeBuilderDialog({ open, onOpenChange, onSuccess }: OutcomeB
                 data-testid="button-create-outcome-contract"
               >
                 {createMutation.isPending ? "Creating..." : "Create Outcome Contract"}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {step === 4 && (
+          <div className="flex flex-col gap-5" data-testid="step-agent-plan">
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-primary" />
+                <p className="text-sm font-medium">Agent Development Plan</p>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                AI has analyzed your outcome contract and recommends the following agents to deliver your KPIs.
+                Select which agents to create.
+              </p>
+            </div>
+
+            {isGeneratingPlan && (
+              <div className="flex flex-col items-center justify-center gap-3 py-8" data-testid="loading-agent-plan">
+                <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                <p className="text-sm text-muted-foreground">Analyzing your outcome and generating agent recommendations...</p>
+              </div>
+            )}
+
+            {planError && (
+              <div className="flex flex-col gap-3 p-4 rounded-md bg-destructive/10 border border-destructive/20" data-testid="error-agent-plan">
+                <p className="text-sm text-destructive">{planError}</p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => createdOutcomeId && generateAgentPlan(createdOutcomeId)}
+                  data-testid="button-retry-plan"
+                >
+                  Retry
+                </Button>
+              </div>
+            )}
+
+            {!isGeneratingPlan && !planError && proposedAgents.length > 0 && (
+              <>
+                <div className="flex items-center justify-between gap-2">
+                  <Badge variant="outline" className="text-xs" data-testid="badge-agent-count">
+                    {selectedCount} of {proposedAgents.length} selected
+                  </Badge>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      const allSelected = proposedAgents.every((a) => a.selected);
+                      setProposedAgents((prev) => prev.map((a) => ({ ...a, selected: !allSelected })));
+                    }}
+                    data-testid="button-toggle-all-agents"
+                  >
+                    {proposedAgents.every((a) => a.selected) ? "Deselect All" : "Select All"}
+                  </Button>
+                </div>
+
+                <div className="flex flex-col gap-3">
+                  {proposedAgents.map((agent, i) => (
+                    <Card
+                      key={i}
+                      className={`transition-colors ${agent.selected ? "border-primary/40 bg-primary/5" : "opacity-60"}`}
+                      data-testid={`card-proposed-agent-${i}`}
+                    >
+                      <CardContent className="p-4">
+                        <div className="flex items-start gap-3">
+                          <Checkbox
+                            checked={agent.selected}
+                            onCheckedChange={() => toggleAgent(i)}
+                            className="mt-1"
+                            data-testid={`checkbox-agent-${i}`}
+                          />
+                          <div className="flex-1 flex flex-col gap-2">
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <div className="flex items-center gap-2">
+                                <Bot className="w-4 h-4 text-primary" />
+                                <p className="font-medium" data-testid={`text-agent-name-${i}`}>{agent.name}</p>
+                              </div>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <Badge variant="outline" className="text-[10px]" data-testid={`badge-agent-risk-${i}`}>
+                                  {agent.riskTier}
+                                </Badge>
+                                <Badge variant="outline" className="text-[10px]" data-testid={`badge-agent-autonomy-${i}`}>
+                                  {agent.autonomyMode}
+                                </Badge>
+                                <Badge variant="secondary" className="text-[10px]" data-testid={`badge-agent-model-${i}`}>
+                                  {agent.modelName || "gpt-4.1"}
+                                </Badge>
+                              </div>
+                            </div>
+
+                            <p className="text-sm text-muted-foreground" data-testid={`text-agent-role-${i}`}>
+                              <span className="font-medium text-foreground">Role:</span> {agent.role}
+                            </p>
+                            <p className="text-sm text-muted-foreground" data-testid={`text-agent-desc-${i}`}>
+                              {agent.description}
+                            </p>
+
+                            {agent.workflowSteps && agent.workflowSteps.length > 0 && (
+                              <div className="flex flex-col gap-1">
+                                <div className="flex items-center gap-1.5">
+                                  <Cpu className="w-3.5 h-3.5 text-muted-foreground" />
+                                  <span className="text-xs font-medium text-muted-foreground">Workflow</span>
+                                </div>
+                                <div className="pl-5 flex flex-col gap-0.5">
+                                  {agent.workflowSteps.map((ws, wi) => (
+                                    <p key={wi} className="text-xs text-muted-foreground" data-testid={`text-agent-step-${i}-${wi}`}>
+                                      {wi + 1}. {ws}
+                                    </p>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {agent.tools && agent.tools.length > 0 && (
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <Wrench className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                                {agent.tools.map((t, ti) => (
+                                  <Badge key={ti} variant="outline" className="text-[10px]" data-testid={`badge-agent-tool-${i}-${ti}`}>
+                                    {t.name}
+                                  </Badge>
+                                ))}
+                              </div>
+                            )}
+
+                            {agent.kpiBindings && agent.kpiBindings.length > 0 && (
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <Zap className="w-3.5 h-3.5 text-amber-500 dark:text-amber-400 shrink-0" />
+                                <span className="text-xs text-muted-foreground">KPIs:</span>
+                                {agent.kpiBindings.map((kb, ki) => (
+                                  <Badge key={ki} variant="secondary" className="text-[10px]" data-testid={`badge-agent-kpi-${i}-${ki}`}>
+                                    {kb}
+                                  </Badge>
+                                ))}
+                              </div>
+                            )}
+
+                            {agent.estimatedImpact && (
+                              <p className="text-xs text-emerald-600 dark:text-emerald-400" data-testid={`text-agent-impact-${i}`}>
+                                Impact: {agent.estimatedImpact}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {!isGeneratingPlan && !planError && proposedAgents.length === 0 && (
+              <div className="flex flex-col items-center gap-3 py-8 text-center" data-testid="empty-agent-plan">
+                <Bot className="w-8 h-8 text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">No agent recommendations generated. You can create agents manually from the Agents page.</p>
+              </div>
+            )}
+
+            <div className="flex items-center justify-between gap-2 pt-2">
+              <Button
+                variant="outline"
+                onClick={resetAndClose}
+                data-testid="button-skip-agent-plan"
+              >
+                Skip &amp; Close
+              </Button>
+              <Button
+                onClick={() => createAgentsMutation.mutate()}
+                disabled={createAgentsMutation.isPending || selectedCount === 0 || isGeneratingPlan}
+                data-testid="button-create-agents-from-plan"
+              >
+                {createAgentsMutation.isPending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> Creating...
+                  </>
+                ) : (
+                  <>
+                    <Bot className="w-4 h-4 mr-1.5" /> Create {selectedCount} Agent{selectedCount !== 1 ? "s" : ""}
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {step === 5 && (
+          <div className="flex flex-col gap-5" data-testid="step-success">
+            <div className="flex flex-col items-center gap-3 py-4">
+              <div className="flex items-center justify-center w-12 h-12 rounded-full bg-emerald-500/10">
+                <Check className="w-6 h-6 text-emerald-500 dark:text-emerald-400" />
+              </div>
+              <p className="text-lg font-medium" data-testid="text-success-title">Outcome &amp; Agents Created</p>
+              <p className="text-sm text-muted-foreground text-center max-w-md">
+                Your outcome contract has been created and {createdAgents.length} agent{createdAgents.length !== 1 ? "s have" : " has"} been registered.
+                Configure their MCP integrations and deploy them to start delivering your KPIs.
+              </p>
+            </div>
+
+            {createdAgents.length > 0 && (
+              <div className="flex flex-col gap-2">
+                <p className="text-sm font-medium">Created Agents</p>
+                <div className="flex flex-col gap-2">
+                  {createdAgents.map((agent) => (
+                    <Card key={agent.id} data-testid={`card-created-agent-${agent.id}`}>
+                      <CardContent className="flex items-center justify-between gap-3 p-3">
+                        <div className="flex items-center gap-2">
+                          <Bot className="w-4 h-4 text-primary" />
+                          <span className="font-medium text-sm" data-testid={`text-created-agent-name-${agent.id}`}>{agent.name}</span>
+                          <Badge variant="outline" className="text-[10px]">{agent.riskTier}</Badge>
+                          <Badge variant="secondary" className="text-[10px]">{agent.autonomyMode}</Badge>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            resetAndClose();
+                            navigate(`/agents/${agent.id}`);
+                          }}
+                          data-testid={`button-go-to-agent-${agent.id}`}
+                        >
+                          Open <ExternalLink className="w-3.5 h-3.5 ml-1" />
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-center justify-center gap-3 pt-2">
+              <Button variant="outline" onClick={resetAndClose} data-testid="button-close-wizard">
+                Close
+              </Button>
+              <Button
+                onClick={() => {
+                  resetAndClose();
+                  navigate("/agents");
+                }}
+                data-testid="button-go-to-agents-page"
+              >
+                Go to Agents <ExternalLink className="w-4 h-4 ml-1.5" />
               </Button>
             </div>
           </div>
