@@ -1484,6 +1484,8 @@ export default function OutcomeDetail() {
             <p className="text-sm text-muted-foreground">Value allocation, health scores, cost-to-serve, and capability breakdown</p>
           </div>
 
+          <AgentProposalsTab outcome={outcome} kpis={kpis || []} />
+
           {!agentContributions ? (
             <div className="space-y-3">
               <Skeleton className="h-24 w-full" />
@@ -1493,7 +1495,8 @@ export default function OutcomeDetail() {
             <Card>
               <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
                 <Bot className="w-10 h-10 text-muted-foreground/50" />
-                <p className="text-sm text-muted-foreground">No agents bound to this outcome</p>
+                <p className="text-sm text-muted-foreground">No agents bound to this outcome yet</p>
+                <p className="text-xs text-muted-foreground">Generate agent proposals above to get started</p>
               </CardContent>
             </Card>
           ) : (
@@ -1677,8 +1680,6 @@ export default function OutcomeDetail() {
                 ))}
               </div>
 
-              <Separator />
-              <AgentProposalsTab outcome={outcome} kpis={kpis || []} />
             </>
           )}
         </TabsContent>
