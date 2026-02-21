@@ -6076,6 +6076,207 @@ Guidelines:
     }
   });
 
+  app.post("/api/ai/create-team-from-proposals", checkPermission("create_modify_blueprints"), async (req, res) => {
+    try {
+      const bodySchema = z.object({
+        outcomeId: z.string(),
+        orchestrator: z.object({
+          name: z.string(),
+          description: z.string(),
+          role: z.string().optional(),
+          riskTier: z.string().optional(),
+          autonomyMode: z.string().optional(),
+          modelProvider: z.string().optional(),
+          modelName: z.string().optional(),
+          tools: z.array(z.object({ name: z.string(), description: z.string() })).optional(),
+          kpiBindings: z.array(z.string()).optional(),
+        }),
+        workers: z.array(z.object({
+          name: z.string(),
+          description: z.string(),
+          role: z.string().optional(),
+          riskTier: z.string().optional(),
+          autonomyMode: z.string().optional(),
+          modelProvider: z.string().optional(),
+          modelName: z.string().optional(),
+          tools: z.array(z.object({ name: z.string(), description: z.string() })).optional(),
+          kpiBindings: z.array(z.string()).optional(),
+        })).min(1),
+        pipeline: z.object({
+          pattern: z.string().optional(),
+          description: z.string().optional(),
+          edges: z.array(z.any()).optional(),
+          errorHandling: z.string().optional(),
+          handoffRules: z.string().optional(),
+        }).nullable().optional(),
+      });
+
+      const { outcomeId, orchestrator, workers, pipeline } = bodySchema.parse(req.body);
+
+      const outcome = await storage.getOutcome(outcomeId);
+      if (!outcome) return res.status(404).json({ error: "Outcome not found" });
+
+      const teamAgent = await storage.createAgent({
+        name: orchestrator.name,
+        description: orchestrator.description,
+        owner: "system",
+        agentType: "team",
+        riskTier: orchestrator.riskTier || "MEDIUM",
+        autonomyMode: orchestrator.autonomyMode || "assisted",
+        modelProvider: orchestrator.modelProvider || "openai",
+        modelName: orchestrator.modelName || "gpt-4.1",
+        outcomeId,
+        toolsConfig: orchestrator.tools || [],
+        runtimeConfig: {
+          orchestration: {
+            pattern: pipeline?.pattern || "supervisor",
+            description: pipeline?.description || "",
+            errorHandling: pipeline?.errorHandling || "retry then escalate",
+            handoffRules: pipeline?.handoffRules || "pass output as input",
+          },
+        },
+      });
+
+      const createdWorkers: any[] = [];
+      for (const worker of workers) {
+        const workerAgent = await storage.createAgent({
+          name: worker.name,
+          description: worker.description,
+          owner: "system",
+          agentType: "single",
+          riskTier: worker.riskTier || "LOW",
+          autonomyMode: worker.autonomyMode || "assisted",
+          modelProvider: worker.modelProvider || "openai",
+          modelName: worker.modelName || "gpt-4.1-mini",
+          outcomeId,
+          toolsConfig: worker.tools || [],
+        });
+        createdWorkers.push(workerAgent);
+
+        await storage.createAgentTeamMember({
+          teamAgentId: teamAgent.id,
+          memberAgentId: workerAgent.id,
+          role: "member",
+        });
+      }
+
+      const blueprint = await storage.createBlueprint({
+        name: `${orchestrator.name} - Team Blueprint`,
+        description: pipeline?.description || `Orchestration blueprint for ${orchestrator.name}`,
+        agentId: teamAgent.id,
+        status: "draft",
+        blueprintJson: {
+          pattern: pipeline?.pattern || "supervisor",
+          edges: pipeline?.edges || [],
+          errorHandling: pipeline?.errorHandling,
+          handoffRules: pipeline?.handoffRules,
+        },
+      });
+
+      const orchestratorNode = await storage.createTeamBlueprintNode({
+        blueprintId: blueprint.id,
+        nodeType: "internal_agent",
+        label: orchestrator.name,
+        positionX: 400,
+        positionY: 50,
+        refAgentId: teamAgent.id,
+        config: { role: "orchestrator", pattern: pipeline?.pattern || "supervisor" },
+      });
+
+      const workerNodes: any[] = [];
+      const isSequential = pipeline?.pattern === "sequential";
+      for (let i = 0; i < createdWorkers.length; i++) {
+        const posX = isSequential ? 400 : 150 + i * Math.floor(600 / Math.max(createdWorkers.length, 1));
+        const posY = isSequential ? 150 + i * 120 : 220;
+        const node = await storage.createTeamBlueprintNode({
+          blueprintId: blueprint.id,
+          nodeType: "internal_agent",
+          label: createdWorkers[i].name,
+          positionX: posX,
+          positionY: posY,
+          refAgentId: createdWorkers[i].id,
+          config: { role: "worker", workerIndex: i },
+        });
+        workerNodes.push(node);
+      }
+
+      if (isSequential) {
+        const firstEdgeLabel = pipeline?.edges?.find((e: any) => e.from === "orchestrator" || e.from === orchestrator.name)?.label;
+        await storage.createTeamBlueprintEdge({
+          blueprintId: blueprint.id,
+          sourceNodeId: orchestratorNode.id,
+          targetNodeId: workerNodes[0].id,
+          label: firstEdgeLabel || "dispatch",
+          failureMode: "escalate",
+        });
+        for (let i = 0; i < workerNodes.length - 1; i++) {
+          const edgeLabel = pipeline?.edges?.find((e: any) => e.to === createdWorkers[i + 1].name)?.label;
+          await storage.createTeamBlueprintEdge({
+            blueprintId: blueprint.id,
+            sourceNodeId: workerNodes[i].id,
+            targetNodeId: workerNodes[i + 1].id,
+            label: edgeLabel || "handoff",
+            failureMode: pipeline?.errorHandling?.includes("retry") ? "retry" : "escalate",
+          });
+        }
+      } else {
+        for (let i = 0; i < workerNodes.length; i++) {
+          const edgeLabel = pipeline?.edges?.find((e: any) => e.to === createdWorkers[i].name)?.label;
+          await storage.createTeamBlueprintEdge({
+            blueprintId: blueprint.id,
+            sourceNodeId: orchestratorNode.id,
+            targetNodeId: workerNodes[i].id,
+            label: edgeLabel || "delegate",
+            failureMode: "escalate",
+          });
+        }
+
+        if (pipeline?.pattern === "fan_out_fan_in") {
+          for (let i = 0; i < workerNodes.length; i++) {
+            await storage.createTeamBlueprintEdge({
+              blueprintId: blueprint.id,
+              sourceNodeId: workerNodes[i].id,
+              targetNodeId: orchestratorNode.id,
+              label: "return results",
+              failureMode: "escalate",
+            });
+          }
+        }
+      }
+
+      await storage.updateAgent(teamAgent.id, {
+        runtimeConfig: {
+          orchestration: {
+            pattern: pipeline?.pattern || "supervisor",
+            description: pipeline?.description || "",
+            errorHandling: pipeline?.errorHandling || "retry then escalate",
+            handoffRules: pipeline?.handoffRules || "pass output as input",
+            workerIds: createdWorkers.map((w: any) => w.id),
+            edges: pipeline?.edges || [],
+            blueprintId: blueprint.id,
+          },
+        },
+      });
+
+      if (outcome.status === "awaiting_agent_plan" || outcome.status === "active" || outcome.status === "draft") {
+        try {
+          await storage.updateOutcome(outcomeId, { status: "agents_assigned" });
+        } catch {}
+      }
+
+      res.status(201).json({
+        teamAgent,
+        workers: createdWorkers,
+        blueprint,
+        membershipCount: createdWorkers.length,
+      });
+    } catch (error) {
+      if (error instanceof ZodError) return res.status(400).json({ error: error.errors });
+      console.error("Team creation error:", error);
+      res.status(500).json({ error: "Failed to create team from proposals" });
+    }
+  });
+
   app.post("/api/ai/customer-value-report", async (req, res) => {
     try {
       const { outcomeName, outcomeDescription, industry, industryLabel, kpis, agents, revenue, regulatoryFrameworks } = req.body;

@@ -2697,7 +2697,7 @@ function PipelineVisualization({ orchestrator, agents, pipeline }: {
           <div className="flex items-center gap-2 px-4 py-2 rounded-lg border-2 border-primary/40 bg-primary/5" data-testid="pipeline-node-orchestrator">
             <Network className="w-4 h-4 text-primary" />
             <span className="text-xs font-semibold text-primary">{orchestrator.name}</span>
-            <Badge className="text-[8px] bg-primary/20 text-primary border-0 px-1.5">Orchestrator</Badge>
+            <Badge className="text-[8px] bg-primary/20 text-primary border-0 px-1.5">Team Agent</Badge>
           </div>
 
           {pipeline?.pattern === "sequential" ? (
@@ -2809,7 +2809,7 @@ function AgentProposalCard({ agent, index, isOrchestrator, isSelected, onToggle,
           {isOrchestrator ? <Network className="w-4 h-4 text-primary" /> : <Bot className="w-4 h-4 text-primary" />}
           {agent.name}
           {isOrchestrator && (
-            <Badge className="text-[9px] bg-primary/15 text-primary border-primary/20" variant="outline">Orchestrator</Badge>
+            <Badge className="text-[9px] bg-primary/15 text-primary border-primary/20" variant="outline">Team Agent</Badge>
           )}
           {!isOrchestrator && (
             <Badge variant="secondary" className="text-[9px]">Worker {index + 1}</Badge>
@@ -2941,91 +2941,51 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
   async function createSelectedAgents() {
     setCreating(true);
     try {
-      let orchestratorId: string | null = null;
+      const selectedWorkers = proposals.filter((_, i) => selectedIndices.has(i));
 
-      if (orchestratorSelected && orchestrator) {
-        const res = await apiRequest("POST", "/api/agents", {
-          name: orchestrator.name,
-          description: orchestrator.description,
-          owner: "system",
-          agentType: "orchestrator",
-          riskTier: orchestrator.riskTier,
-          autonomyMode: orchestrator.autonomyMode,
-          modelProvider: orchestrator.modelProvider,
-          modelName: orchestrator.modelName,
+      if (orchestratorSelected && orchestrator && selectedWorkers.length > 0) {
+        const res = await apiRequest("POST", "/api/ai/create-team-from-proposals", {
           outcomeId: outcome.id,
-          toolsConfig: orchestrator.tools,
-          runtimeConfig: pipeline ? {
-            orchestration: {
-              pattern: pipeline.pattern,
-              description: pipeline.description,
-              errorHandling: pipeline.errorHandling,
-              handoffRules: pipeline.handoffRules,
-              workerNames: proposals.filter((_, i) => selectedIndices.has(i)).map(a => a.name),
-            }
-          } : undefined,
+          orchestrator,
+          workers: selectedWorkers,
+          pipeline,
         });
-        const created = await res.json();
-        orchestratorId = created.id;
-      }
+        const data = await res.json();
 
-      const workerIds: string[] = [];
-      for (const index of Array.from(selectedIndices).sort()) {
-        const agent = proposals[index];
-        const res = await apiRequest("POST", "/api/agents", {
-          name: agent.name,
-          description: agent.description,
-          owner: "system",
-          agentType: "single",
-          riskTier: agent.riskTier,
-          autonomyMode: agent.autonomyMode,
-          modelProvider: agent.modelProvider,
-          modelName: agent.modelName,
-          outcomeId: outcome.id,
-          toolsConfig: agent.tools,
-          runtimeConfig: orchestratorId ? {
-            orchestratorId,
-            pipelineRole: "worker",
-          } : undefined,
+        queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/agent-teams"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/blueprints"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/outcomes", outcome.id] });
+
+        toast({
+          title: "Team Agent created",
+          description: `Team "${data.teamAgent.name}" created with ${data.membershipCount} worker agent${data.membershipCount > 1 ? "s" : ""}, team blueprint, and pipeline graph.`,
         });
-        const created = await res.json();
-        workerIds.push(created.id);
-      }
-
-      if (orchestratorId && workerIds.length > 0) {
-        try {
-          await apiRequest("PATCH", `/api/agents/${orchestratorId}`, {
-            runtimeConfig: {
-              orchestration: {
-                pattern: pipeline?.pattern || "supervisor",
-                description: pipeline?.description || "",
-                errorHandling: pipeline?.errorHandling || "retry then escalate",
-                handoffRules: pipeline?.handoffRules || "pass output as input",
-                workerIds,
-                edges: pipeline?.edges || [],
-              }
-            }
+      } else {
+        for (const worker of selectedWorkers) {
+          await apiRequest("POST", "/api/agents", {
+            name: worker.name,
+            description: worker.description,
+            owner: "system",
+            agentType: "single",
+            riskTier: worker.riskTier,
+            autonomyMode: worker.autonomyMode,
+            modelProvider: worker.modelProvider,
+            modelName: worker.modelName,
+            outcomeId: outcome.id,
+            toolsConfig: worker.tools,
           });
-        } catch {}
+        }
+        queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/outcomes", outcome.id] });
+
+        toast({
+          title: `${selectedWorkers.length} agent${selectedWorkers.length > 1 ? "s" : ""} created`,
+          description: `${selectedWorkers.length} agent${selectedWorkers.length > 1 ? "s" : ""} created and linked to this outcome.`,
+        });
       }
-
-      queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
-
-      if (isAwaitingPlan || outcome.status === "active") {
-        try {
-          await apiRequest("PATCH", `/api/outcomes/${outcome.id}`, { status: "agents_assigned" });
-          queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
-          queryClient.invalidateQueries({ queryKey: ["/api/outcomes", outcome.id] });
-        } catch {}
-      }
-
-      const createdCount = (orchestratorId ? 1 : 0) + workerIds.length;
-      toast({
-        title: `${createdCount} agent${createdCount > 1 ? "s" : ""} created`,
-        description: orchestratorId
-          ? `Orchestrator and ${workerIds.length} worker agent${workerIds.length > 1 ? "s" : ""} created and linked to this outcome.`
-          : `${workerIds.length} agent${workerIds.length > 1 ? "s" : ""} created and linked to this outcome.`,
-      });
     } catch (err: any) {
       toast({ title: "Failed to create agents", description: err.message || "Please try again.", variant: "destructive" });
     } finally {
@@ -3196,7 +3156,12 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
               {creating ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
-                  Creating {totalSelected} agent{totalSelected > 1 ? "s" : ""}...
+                  Creating Team Agent...
+                </>
+              ) : orchestratorSelected && orchestrator && selectedIndices.size > 0 ? (
+                <>
+                  <Plus className="w-4 h-4 mr-1.5" />
+                  Create Team Agent ({selectedIndices.size} worker{selectedIndices.size > 1 ? "s" : ""})
                 </>
               ) : (
                 <>
@@ -3208,10 +3173,10 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
           </div>
 
           {orchestratorSelected && selectedIndices.size > 0 && orchestrator && (
-            <div className="flex items-center gap-2 p-2 rounded-md bg-muted/30 border border-border/50">
+            <div className="flex items-center gap-2 p-2 rounded-md bg-primary/5 border border-primary/10">
               <Network className="w-3.5 h-3.5 text-primary shrink-0" />
               <span className="text-[11px] text-muted-foreground">
-                The orchestrator is auto-selected because it coordinates the worker agents. Deselect all workers first to deselect the orchestrator.
+                This will create a <strong className="text-foreground">Team Agent</strong> with the orchestrator as coordinator, {selectedIndices.size} worker agent{selectedIndices.size > 1 ? "s" : ""} as members, and a team blueprint with the pipeline graph. The team will appear in Agent Teams and its blueprint in the Team Graph Editor.
               </span>
             </div>
           )}
