@@ -5965,39 +5965,76 @@ Eval Suites: ${evalSuites.length} configured`,
       const { outcomeContract, kpis } = req.body;
       const templates = await storage.getAgentTemplates();
 
-      const systemPrompt = `You are an Agent Proposal Generator for the ALMP platform. Given a business Outcome Contract and its KPIs, propose AI agents that can deliver these outcomes.
+      const systemPrompt = `You are an Agent Proposal Generator for the ALMP platform. Given a business Outcome Contract and its KPIs, propose AI agents organized as a multi-agent orchestrated pipeline.
 
 Outcome Contract: ${JSON.stringify(outcomeContract)}
 KPIs: ${JSON.stringify(kpis || [])}
 Available templates: ${JSON.stringify(templates.slice(0, 10).map(t => ({ name: t.name, category: t.category, industry: t.industry, description: t.description })))}
 
-Respond with a JSON array of proposed agents:
+Respond with a JSON object containing an orchestrator agent, worker agents, and the pipeline definition:
 \`\`\`json
-[
-  {
-    "name": "string - agent name",
-    "description": "string - what this agent does",
-    "role": "string - the business role",
-    "riskTier": "LOW | MEDIUM | HIGH",
-    "autonomyMode": "manual | assisted | autonomous",
-    "modelProvider": "openai | anthropic | google",
-    "modelName": "string - specific model",
-    "workflowSteps": ["string"],
+{
+  "orchestrator": {
+    "name": "string - orchestrator agent name (e.g. 'Outcome Pipeline Orchestrator')",
+    "description": "string - how this orchestrator coordinates worker agents",
+    "role": "string - coordination/supervision role",
+    "riskTier": "MEDIUM",
+    "autonomyMode": "assisted",
+    "modelProvider": "openai",
+    "modelName": "gpt-4.1",
+    "workflowSteps": ["Receive trigger", "Dispatch to workers", "Aggregate results", "Report outcomes"],
     "tools": [{"name": "string", "description": "string"}],
-    "kpiBindings": ["string - which KPIs this agent contributes to"],
+    "kpiBindings": ["string - all KPIs since orchestrator oversees all"],
     "estimatedImpact": "string",
-    "templateMatch": "string | null - name of matching template if any"
+    "templateMatch": null
+  },
+  "agents": [
+    {
+      "name": "string - worker agent name",
+      "description": "string - what this agent does",
+      "role": "string - the business role",
+      "riskTier": "LOW | MEDIUM | HIGH",
+      "autonomyMode": "manual | assisted | autonomous",
+      "modelProvider": "openai | anthropic | google",
+      "modelName": "string - specific model",
+      "workflowSteps": ["string"],
+      "tools": [{"name": "string", "description": "string"}],
+      "kpiBindings": ["string - which KPIs this agent contributes to"],
+      "estimatedImpact": "string",
+      "templateMatch": "string | null - name of matching template if any"
+    }
+  ],
+  "pipeline": {
+    "pattern": "sequential | parallel | fan_out_fan_in | supervisor",
+    "description": "string - describe the overall orchestration flow in one sentence",
+    "edges": [
+      {
+        "from": "string - source agent name or 'orchestrator'",
+        "to": "string - target agent name",
+        "label": "string - what data/signal flows on this edge",
+        "type": "sequential | parallel | conditional"
+      }
+    ],
+    "errorHandling": "string - what happens when a worker fails",
+    "handoffRules": "string - how data is passed between agents"
   }
-]
+}
 \`\`\`
 
 Guidelines:
-- Propose 2-4 agents that together can deliver ALL KPIs
-- Each agent should have a clear, specific role
+- Propose 2-4 worker agents that together can deliver ALL KPIs
+- ALWAYS include an orchestrator agent that coordinates the workers using one of these patterns:
+  * "sequential": Agent A → Agent B → Agent C (pipeline)
+  * "parallel": Agents run concurrently, results aggregated
+  * "fan_out_fan_in": Orchestrator fans out to parallel workers, then fans in results
+  * "supervisor": Orchestrator delegates dynamically based on context
+- The orchestrator should bind to ALL KPIs since it oversees the entire pipeline
+- Each worker agent should have a clear, specific role
 - Higher-risk operations should have lower autonomy modes
 - Match to existing templates when possible
 - Use realistic model choices (gpt-4.1-mini for simple tasks, gpt-4.1 for complex)
-- Tools should be specific to the domain`;
+- Tools should be specific to the domain
+- Define edges that show the data flow between orchestrator and workers`;
 
       const response = await openai.chat.completions.create({
         model: "gpt-4.1",
@@ -6010,16 +6047,28 @@ Guidelines:
 
       const content = response.choices[0]?.message?.content || "";
       const jsonMatch = content.match(/```json\s*([\s\S]*?)```/);
+      let parsed: any = null;
       if (jsonMatch) {
-        const agents = JSON.parse(jsonMatch[1]);
-        res.json({ agents });
+        parsed = JSON.parse(jsonMatch[1]);
       } else {
         try {
-          const agents = JSON.parse(content);
-          res.json({ agents: Array.isArray(agents) ? agents : [agents] });
+          parsed = JSON.parse(content);
         } catch {
-          res.json({ agents: [], raw: content });
+          res.json({ agents: [], orchestrator: null, pipeline: null, raw: content });
+          return;
         }
+      }
+
+      if (parsed && parsed.orchestrator && parsed.agents) {
+        res.json({
+          orchestrator: parsed.orchestrator,
+          agents: Array.isArray(parsed.agents) ? parsed.agents : [parsed.agents],
+          pipeline: parsed.pipeline || null,
+        });
+      } else if (Array.isArray(parsed)) {
+        res.json({ agents: parsed, orchestrator: null, pipeline: null });
+      } else {
+        res.json({ agents: [], orchestrator: null, pipeline: null, raw: content });
       }
     } catch (error) {
       console.error("Agent proposal error:", error);

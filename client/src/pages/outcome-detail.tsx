@@ -2650,12 +2650,243 @@ interface AgentProposal {
   templateMatch: string | null;
 }
 
+interface PipelineEdge {
+  from: string;
+  to: string;
+  label: string;
+  type: string;
+}
+
+interface PipelineDefinition {
+  pattern: string;
+  description: string;
+  edges: PipelineEdge[];
+  errorHandling: string;
+  handoffRules: string;
+}
+
+const PATTERN_LABELS: Record<string, { label: string; icon: string; description: string }> = {
+  sequential: { label: "Sequential Pipeline", icon: "→", description: "Agents execute in order, each passing results to the next" },
+  parallel: { label: "Parallel Execution", icon: "⇉", description: "Agents execute concurrently, results aggregated by orchestrator" },
+  fan_out_fan_in: { label: "Fan-Out / Fan-In", icon: "⤨", description: "Orchestrator distributes work, then collects and merges results" },
+  supervisor: { label: "Supervisor / Delegator", icon: "⊛", description: "Orchestrator dynamically delegates tasks based on context" },
+};
+
+function PipelineVisualization({ orchestrator, agents, pipeline }: {
+  orchestrator: AgentProposal;
+  agents: AgentProposal[];
+  pipeline: PipelineDefinition | null;
+}) {
+  const patternInfo = PATTERN_LABELS[pipeline?.pattern || "supervisor"] || PATTERN_LABELS.supervisor;
+
+  return (
+    <Card className="border-primary/20 bg-primary/[0.02]" data-testid="card-pipeline-visualization">
+      <CardContent className="p-4 flex flex-col gap-4">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2">
+            <Network className="w-4 h-4 text-primary" />
+            <span className="text-sm font-semibold">Orchestration Pipeline</span>
+          </div>
+          <Badge variant="outline" className="text-[10px] border-primary/30 text-primary" data-testid="badge-pipeline-pattern">
+            {patternInfo.label}
+          </Badge>
+        </div>
+        <p className="text-xs text-muted-foreground">{pipeline?.description || patternInfo.description}</p>
+
+        <div className="flex flex-col items-center gap-0" data-testid="pipeline-flow-diagram">
+          <div className="flex items-center gap-2 px-4 py-2 rounded-lg border-2 border-primary/40 bg-primary/5" data-testid="pipeline-node-orchestrator">
+            <Network className="w-4 h-4 text-primary" />
+            <span className="text-xs font-semibold text-primary">{orchestrator.name}</span>
+            <Badge className="text-[8px] bg-primary/20 text-primary border-0 px-1.5">Orchestrator</Badge>
+          </div>
+
+          {pipeline?.pattern === "sequential" ? (
+            <div className="flex flex-col items-center gap-0">
+              {agents.map((agent, i) => (
+                <div key={i} className="flex flex-col items-center gap-0">
+                  <div className="w-px h-5 bg-muted-foreground/30" />
+                  <ChevronDown className="w-3 h-3 text-muted-foreground -mt-1 -mb-1" />
+                  <div className="w-px h-2 bg-muted-foreground/30" />
+                  <div className="flex items-center gap-1.5">
+                    {pipeline.edges.find(e => e.to === agent.name) && (
+                      <span className="text-[9px] text-muted-foreground italic hidden sm:block">
+                        {pipeline.edges.find(e => e.to === agent.name)?.label}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-md border border-border bg-card" data-testid={`pipeline-node-worker-${i}`}>
+                    <Bot className="w-3.5 h-3.5 text-muted-foreground" />
+                    <span className="text-xs font-medium">{agent.name}</span>
+                    <Badge variant="secondary" className="text-[8px] px-1.5">Worker {i + 1}</Badge>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-0 w-full">
+              <div className="w-px h-5 bg-muted-foreground/30" />
+              <ChevronDown className="w-3 h-3 text-muted-foreground -mt-1 -mb-1" />
+              <div className="w-px h-2 bg-muted-foreground/30" />
+
+              <div className="relative w-full max-w-2xl">
+                <div className="absolute left-1/2 -translate-x-1/2 top-0 w-[80%] h-px bg-muted-foreground/20" />
+                <div className="flex items-start justify-center gap-4 flex-wrap px-4 pt-2">
+                  {agents.map((agent, i) => {
+                    const edgeLabel = pipeline?.edges.find(e => e.to === agent.name)?.label;
+                    return (
+                      <div key={i} className="flex flex-col items-center gap-1">
+                        {edgeLabel && (
+                          <span className="text-[9px] text-muted-foreground italic text-center max-w-[120px] truncate hidden sm:block">{edgeLabel}</span>
+                        )}
+                        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border bg-card" data-testid={`pipeline-node-worker-${i}`}>
+                          <Bot className="w-3.5 h-3.5 text-muted-foreground" />
+                          <span className="text-xs font-medium">{agent.name}</span>
+                          <Badge variant="secondary" className="text-[8px] px-1.5">W{i + 1}</Badge>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {(pipeline?.pattern === "fan_out_fan_in") && (
+                <div className="flex flex-col items-center gap-0 mt-2">
+                  <div className="w-px h-3 bg-muted-foreground/30" />
+                  <div className="flex items-center gap-2 px-3 py-1 rounded-md border border-dashed border-primary/30 bg-primary/5">
+                    <ArrowRight className="w-3 h-3 text-primary" />
+                    <span className="text-[10px] text-primary font-medium">Aggregate Results</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {pipeline && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-1">
+            <div className="flex flex-col gap-1 p-2 rounded-md bg-muted/30">
+              <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Error Handling</span>
+              <span className="text-[11px]">{pipeline.errorHandling}</span>
+            </div>
+            <div className="flex flex-col gap-1 p-2 rounded-md bg-muted/30">
+              <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Handoff Rules</span>
+              <span className="text-[11px]">{pipeline.handoffRules}</span>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function AgentProposalCard({ agent, index, isOrchestrator, isSelected, onToggle, isCreating }: {
+  agent: AgentProposal;
+  index: number;
+  isOrchestrator: boolean;
+  isSelected: boolean;
+  onToggle: () => void;
+  isCreating: boolean;
+}) {
+  return (
+    <Card
+      className={`transition-all ${isOrchestrator ? "border-primary/30 bg-primary/[0.02]" : ""} ${isSelected ? "ring-1 ring-primary/40" : "opacity-60"}`}
+      data-testid={isOrchestrator ? "card-orchestrator-proposal" : `card-agent-proposal-${index}`}
+    >
+      <CardHeader className="p-4 pb-2">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={onToggle}
+            className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 transition-colors ${
+              isSelected
+                ? "bg-primary border-primary text-primary-foreground"
+                : "border-muted-foreground/30 bg-background hover:border-primary/50"
+            }`}
+            data-testid={isOrchestrator ? "checkbox-orchestrator" : `checkbox-agent-${index}`}
+          >
+            {isSelected && <CheckCircle className="w-3.5 h-3.5" />}
+          </button>
+          {isOrchestrator ? <Network className="w-4 h-4 text-primary" /> : <Bot className="w-4 h-4 text-primary" />}
+          {agent.name}
+          {isOrchestrator && (
+            <Badge className="text-[9px] bg-primary/15 text-primary border-primary/20" variant="outline">Orchestrator</Badge>
+          )}
+          {!isOrchestrator && (
+            <Badge variant="secondary" className="text-[9px]">Worker {index + 1}</Badge>
+          )}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-4 pt-0 flex flex-col gap-3">
+        <p className="text-xs text-muted-foreground">{agent.description}</p>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <Badge variant="outline" className="text-[10px]">{agent.riskTier} Risk</Badge>
+          <Badge variant="outline" className="text-[10px]">{agent.autonomyMode}</Badge>
+          <Badge variant="outline" className="text-[10px]">{agent.modelProvider}/{agent.modelName}</Badge>
+          {agent.templateMatch && (
+            <Badge variant="secondary" className="text-[10px]">Template: {agent.templateMatch}</Badge>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Role</span>
+          <span className="text-xs">{agent.role}</span>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Workflow</span>
+          <div className="flex items-center gap-1 flex-wrap">
+            {agent.workflowSteps.map((step, j) => (
+              <span key={j} className="flex items-center gap-0.5">
+                {j > 0 && <ChevronRight className="w-2.5 h-2.5 text-muted-foreground" />}
+                <Badge variant="secondary" className="text-[9px]">{step}</Badge>
+              </span>
+            ))}
+          </div>
+        </div>
+
+        {agent.tools.length > 0 && (
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Tools</span>
+            <div className="flex flex-wrap gap-1">
+              {agent.tools.map((tool, j) => (
+                <Badge key={j} variant="outline" className="text-[9px]">{tool.name}</Badge>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {agent.kpiBindings.length > 0 && (
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">KPI Bindings</span>
+            <div className="flex flex-wrap gap-1">
+              {agent.kpiBindings.map((kpi, j) => (
+                <Badge key={j} variant="outline" className="text-[9px] text-green-600 dark:text-green-400 border-green-200 dark:border-green-800">{kpi}</Badge>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="flex items-center gap-2 p-2 rounded-md bg-green-500/5 border border-green-500/10 flex-wrap">
+          <TrendingUp className="w-3.5 h-3.5 text-green-500 shrink-0" />
+          <span className="text-[11px] text-green-700 dark:text-green-300">{agent.estimatedImpact}</span>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: KpiDefinition[] }) {
   const { toast } = useToast();
   const agentPerm = usePermission("create_modify_blueprints");
   const [proposals, setProposals] = useState<AgentProposal[]>([]);
+  const [orchestrator, setOrchestrator] = useState<AgentProposal | null>(null);
+  const [pipeline, setPipeline] = useState<PipelineDefinition | null>(null);
   const [generating, setGenerating] = useState(false);
   const [generated, setGenerated] = useState(false);
+  const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
+  const [orchestratorSelected, setOrchestratorSelected] = useState(true);
+  const [creating, setCreating] = useState(false);
 
   const { data: approvals } = useQuery<Approval[]>({
     queryKey: ["/api/approvals"],
@@ -2668,24 +2899,118 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
 
   const isAwaitingPlan = outcome.status === "awaiting_agent_plan";
 
-  const createAgentMutation = useMutation({
-    mutationFn: async (agent: AgentProposal) => {
-      const res = await apiRequest("POST", "/api/agents", {
-        name: agent.name,
-        description: agent.description,
-        owner: "system",
-        riskTier: agent.riskTier,
-        autonomyMode: agent.autonomyMode,
-        modelProvider: agent.modelProvider,
-        modelName: agent.modelName,
-        outcomeId: outcome.id,
-        toolsConfig: agent.tools,
-      });
-      return res.json();
-    },
-    onSuccess: async (created: any) => {
+  const totalSelected = (orchestratorSelected && orchestrator ? 1 : 0) + selectedIndices.size;
+  const allWorkersSelected = proposals.length > 0 && selectedIndices.size === proposals.length;
+
+  function toggleWorker(index: number) {
+    setSelectedIndices(prev => {
+      const next = new Set(prev);
+      if (next.has(index)) {
+        next.delete(index);
+        if (next.size === 0) {
+          setOrchestratorSelected(false);
+        }
+      } else {
+        next.add(index);
+        if (orchestrator) {
+          setOrchestratorSelected(true);
+        }
+      }
+      return next;
+    });
+  }
+
+  function toggleOrchestrator() {
+    if (orchestratorSelected && selectedIndices.size > 0) {
+      return;
+    }
+    setOrchestratorSelected(!orchestratorSelected);
+  }
+
+  function selectAll() {
+    const all = new Set(proposals.map((_, i) => i));
+    setSelectedIndices(all);
+    if (orchestrator) setOrchestratorSelected(true);
+  }
+
+  function deselectAll() {
+    setSelectedIndices(new Set());
+    setOrchestratorSelected(false);
+  }
+
+  async function createSelectedAgents() {
+    setCreating(true);
+    try {
+      let orchestratorId: string | null = null;
+
+      if (orchestratorSelected && orchestrator) {
+        const res = await apiRequest("POST", "/api/agents", {
+          name: orchestrator.name,
+          description: orchestrator.description,
+          owner: "system",
+          agentType: "orchestrator",
+          riskTier: orchestrator.riskTier,
+          autonomyMode: orchestrator.autonomyMode,
+          modelProvider: orchestrator.modelProvider,
+          modelName: orchestrator.modelName,
+          outcomeId: outcome.id,
+          toolsConfig: orchestrator.tools,
+          runtimeConfig: pipeline ? {
+            orchestration: {
+              pattern: pipeline.pattern,
+              description: pipeline.description,
+              errorHandling: pipeline.errorHandling,
+              handoffRules: pipeline.handoffRules,
+              workerNames: proposals.filter((_, i) => selectedIndices.has(i)).map(a => a.name),
+            }
+          } : undefined,
+        });
+        const created = await res.json();
+        orchestratorId = created.id;
+      }
+
+      const workerIds: string[] = [];
+      for (const index of Array.from(selectedIndices).sort()) {
+        const agent = proposals[index];
+        const res = await apiRequest("POST", "/api/agents", {
+          name: agent.name,
+          description: agent.description,
+          owner: "system",
+          agentType: "single",
+          riskTier: agent.riskTier,
+          autonomyMode: agent.autonomyMode,
+          modelProvider: agent.modelProvider,
+          modelName: agent.modelName,
+          outcomeId: outcome.id,
+          toolsConfig: agent.tools,
+          runtimeConfig: orchestratorId ? {
+            orchestratorId,
+            pipelineRole: "worker",
+          } : undefined,
+        });
+        const created = await res.json();
+        workerIds.push(created.id);
+      }
+
+      if (orchestratorId && workerIds.length > 0) {
+        try {
+          await apiRequest("PATCH", `/api/agents/${orchestratorId}`, {
+            runtimeConfig: {
+              orchestration: {
+                pattern: pipeline?.pattern || "supervisor",
+                description: pipeline?.description || "",
+                errorHandling: pipeline?.errorHandling || "retry then escalate",
+                handoffRules: pipeline?.handoffRules || "pass output as input",
+                workerIds,
+                edges: pipeline?.edges || [],
+              }
+            }
+          });
+        } catch {}
+      }
+
       queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
-      toast({ title: "Agent created", description: `"${created.name}" has been created and linked to this outcome.` });
+
       if (isAwaitingPlan || outcome.status === "active") {
         try {
           await apiRequest("PATCH", `/api/outcomes/${outcome.id}`, { status: "agents_assigned" });
@@ -2693,11 +3018,20 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
           queryClient.invalidateQueries({ queryKey: ["/api/outcomes", outcome.id] });
         } catch {}
       }
-    },
-    onError: (err: Error) => {
-      toast({ title: "Failed to create agent", description: err.message, variant: "destructive" });
-    },
-  });
+
+      const createdCount = (orchestratorId ? 1 : 0) + workerIds.length;
+      toast({
+        title: `${createdCount} agent${createdCount > 1 ? "s" : ""} created`,
+        description: orchestratorId
+          ? `Orchestrator and ${workerIds.length} worker agent${workerIds.length > 1 ? "s" : ""} created and linked to this outcome.`
+          : `${workerIds.length} agent${workerIds.length > 1 ? "s" : ""} created and linked to this outcome.`,
+      });
+    } catch (err: any) {
+      toast({ title: "Failed to create agents", description: err.message || "Please try again.", variant: "destructive" });
+    } finally {
+      setCreating(false);
+    }
+  }
 
   async function generateProposals() {
     setGenerating(true);
@@ -2708,7 +3042,12 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
       });
       const data = await res.json();
       setProposals(data.agents || []);
+      setOrchestrator(data.orchestrator || null);
+      setPipeline(data.pipeline || null);
       setGenerated(true);
+      const allIndices = new Set<number>((data.agents || []).map((_: any, i: number) => i));
+      setSelectedIndices(allIndices);
+      setOrchestratorSelected(!!data.orchestrator);
     } catch (err) {
       toast({ title: "Failed to generate proposals", description: "Please try again.", variant: "destructive" });
     } finally {
@@ -2749,7 +3088,7 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
           <div className="text-center flex flex-col gap-1">
             <h3 className="text-base font-semibold">Agent Development Plan</h3>
             <p className="text-sm text-muted-foreground max-w-md">
-              Let AI analyze this outcome contract and its KPIs to propose the right agents — with workflows, tools, and autonomy levels already configured.
+              Let AI analyze this outcome contract and its KPIs to propose an orchestrated multi-agent pipeline — with an orchestrator, worker agents, workflows, tools, and autonomy levels already configured.
             </p>
           </div>
           {isAwaitingPlan && (
@@ -2785,7 +3124,7 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
             ) : (
               <>
                 <Sparkles className="w-4 h-4 mr-1.5" />
-                Generate Agent Proposals
+                Generate Agent Development Plan
               </>
             )}
           </Button>
@@ -2801,8 +3140,8 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
-          <h3 className="text-sm font-semibold">Proposed Agents</h3>
-          <p className="text-xs text-muted-foreground">AI-generated agents to deliver this outcome. Review and create the ones you need.</p>
+          <h3 className="text-sm font-semibold">Multi-Agent Development Plan</h3>
+          <p className="text-xs text-muted-foreground">AI-generated orchestrated pipeline to deliver this outcome. Select agents to create.</p>
         </div>
         <Button variant="outline" onClick={generateProposals} disabled={generating} data-testid="button-regenerate-proposals">
           {generating ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1.5" />}
@@ -2822,7 +3161,7 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
         </div>
       )}
 
-      {proposals.length === 0 ? (
+      {proposals.length === 0 && !orchestrator ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-8 gap-2">
             <Bot className="w-8 h-8 text-muted-foreground/50" />
@@ -2830,96 +3169,77 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
           </CardContent>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {proposals.map((agent, i) => (
-            <Card key={i} data-testid={`card-agent-proposal-${i}`}>
-              <CardHeader className="p-4 pb-2">
-                <CardTitle className="text-sm font-semibold flex items-center gap-2 flex-wrap">
-                  <Bot className="w-4 h-4 text-primary" />
-                  {agent.name}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-4 pt-0 flex flex-col gap-3">
-                <p className="text-xs text-muted-foreground">{agent.description}</p>
+        <>
+          {orchestrator && (
+            <PipelineVisualization orchestrator={orchestrator} agents={proposals} pipeline={pipeline} />
+          )}
 
-                <div className="flex items-center gap-2 flex-wrap">
-                  <Badge variant="outline" className="text-[10px]">{agent.riskTier} Risk</Badge>
-                  <Badge variant="outline" className="text-[10px]">{agent.autonomyMode}</Badge>
-                  <Badge variant="outline" className="text-[10px]">{agent.modelProvider}/{agent.modelName}</Badge>
-                  {agent.templateMatch && (
-                    <Badge variant="secondary" className="text-[10px]">Template: {agent.templateMatch}</Badge>
-                  )}
-                </div>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-muted-foreground" data-testid="text-selected-count">
+                {totalSelected} of {(orchestrator ? 1 : 0) + proposals.length} selected
+              </span>
+              <div className="flex items-center gap-1">
+                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={selectAll} data-testid="button-select-all">
+                  Select All
+                </Button>
+                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={deselectAll} data-testid="button-deselect-all">
+                  Deselect All
+                </Button>
+              </div>
+            </div>
+            <Button
+              onClick={createSelectedAgents}
+              disabled={creating || totalSelected === 0}
+              data-testid="button-create-selected-agents"
+            >
+              {creating ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                  Creating {totalSelected} agent{totalSelected > 1 ? "s" : ""}...
+                </>
+              ) : (
+                <>
+                  <Plus className="w-4 h-4 mr-1.5" />
+                  Create {totalSelected} Selected Agent{totalSelected > 1 ? "s" : ""}
+                </>
+              )}
+            </Button>
+          </div>
 
-                <div className="flex flex-col gap-1">
-                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Role</span>
-                  <span className="text-xs">{agent.role}</span>
-                </div>
+          {orchestratorSelected && selectedIndices.size > 0 && orchestrator && (
+            <div className="flex items-center gap-2 p-2 rounded-md bg-muted/30 border border-border/50">
+              <Network className="w-3.5 h-3.5 text-primary shrink-0" />
+              <span className="text-[11px] text-muted-foreground">
+                The orchestrator is auto-selected because it coordinates the worker agents. Deselect all workers first to deselect the orchestrator.
+              </span>
+            </div>
+          )}
 
-                <div className="flex flex-col gap-1">
-                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Workflow</span>
-                  <div className="flex items-center gap-1 flex-wrap">
-                    {agent.workflowSteps.map((step, j) => (
-                      <span key={j} className="flex items-center gap-0.5">
-                        {j > 0 && <ChevronRight className="w-2.5 h-2.5 text-muted-foreground" />}
-                        <Badge variant="secondary" className="text-[9px]">{step}</Badge>
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                {agent.tools.length > 0 && (
-                  <div className="flex flex-col gap-1">
-                    <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Tools</span>
-                    <div className="flex flex-wrap gap-1">
-                      {agent.tools.map((tool, j) => (
-                        <Badge key={j} variant="outline" className="text-[9px]">{tool.name}</Badge>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {agent.kpiBindings.length > 0 && (
-                  <div className="flex flex-col gap-1">
-                    <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">KPI Bindings</span>
-                    <div className="flex flex-wrap gap-1">
-                      {agent.kpiBindings.map((kpi, j) => (
-                        <Badge key={j} variant="outline" className="text-[9px] text-green-600 dark:text-green-400 border-green-200 dark:border-green-800">{kpi}</Badge>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                <div className="flex items-center gap-2 p-2 rounded-md bg-green-500/5 border border-green-500/10 flex-wrap">
-                  <TrendingUp className="w-3.5 h-3.5 text-green-500 shrink-0" />
-                  <span className="text-[11px] text-green-700 dark:text-green-300">{agent.estimatedImpact}</span>
-                </div>
-
-                <div className="flex items-center gap-2 flex-wrap">
-                  <Button
-                    className="flex-1"
-                    onClick={() => createAgentMutation.mutate(agent)}
-                    disabled={createAgentMutation.isPending}
-                    data-testid={`button-create-agent-${i}`}
-                  >
-                    {createAgentMutation.isPending ? (
-                      <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
-                    ) : (
-                      <Plus className="w-4 h-4 mr-1.5" />
-                    )}
-                    Create Agent
-                  </Button>
-                  <Link href={`/agents/wizard?outcomeId=${outcome.id}&outcomeName=${encodeURIComponent(outcome.name)}&name=${encodeURIComponent(agent.name)}&description=${encodeURIComponent(agent.description)}&riskTier=${agent.riskTier}&autonomyMode=${agent.autonomyMode}`}>
-                    <Button variant="outline" data-testid={`button-customize-agent-${i}`}>
-                      <Edit3 className="w-4 h-4 mr-1.5" />
-                      Customize
-                    </Button>
-                  </Link>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {orchestrator && (
+              <AgentProposalCard
+                agent={orchestrator}
+                index={-1}
+                isOrchestrator={true}
+                isSelected={orchestratorSelected}
+                onToggle={toggleOrchestrator}
+                isCreating={creating}
+              />
+            )}
+            {proposals.map((agent, i) => (
+              <AgentProposalCard
+                key={i}
+                agent={agent}
+                index={i}
+                isOrchestrator={false}
+                isSelected={selectedIndices.has(i)}
+                onToggle={() => toggleWorker(i)}
+                isCreating={creating}
+              />
+            ))}
+          </div>
+        </>
       )}
     </div>
   );
