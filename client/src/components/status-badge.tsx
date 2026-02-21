@@ -35,6 +35,9 @@ const statusConfig: Record<string, { label: string; className: string }> = {
   autonomous: { label: "Autonomous", className: "bg-violet-500/15 text-violet-600 dark:text-violet-400 border-violet-500/20" },
   assisted: { label: "Assisted", className: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/20" },
   manual: { label: "Manual", className: "bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/20" },
+  awaiting_agent_plan: { label: "Awaiting Agent Plan", className: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/20" },
+  agents_assigned: { label: "Agents Assigned", className: "bg-violet-500/15 text-violet-600 dark:text-violet-400 border-violet-500/20" },
+  superseded: { label: "Superseded", className: "bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/20" },
 };
 
 export function StatusBadge({ status, className }: StatusBadgeProps) {

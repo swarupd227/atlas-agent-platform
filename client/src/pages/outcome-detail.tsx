@@ -100,6 +100,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { StatCard } from "@/components/stat-card";
 import { ProgressRing } from "@/components/outcome-cockpit";
 import { useIndustry } from "@/components/industry-provider";
+import { usePermission } from "@/components/role-provider";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { OutcomeContract, KpiDefinition, Approval, OutcomeEvent, Agent, Policy, Skill, OntologyConcept } from "@shared/schema";
@@ -2578,6 +2579,7 @@ interface AgentProposal {
 
 function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: KpiDefinition[] }) {
   const { toast } = useToast();
+  const agentPerm = usePermission("create_modify_blueprints");
   const [proposals, setProposals] = useState<AgentProposal[]>([]);
   const [generating, setGenerating] = useState(false);
   const [generated, setGenerated] = useState(false);
@@ -2590,6 +2592,8 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
   );
   const isPendingValidation = outcomeReview?.status === "pending";
   const isValidated = outcomeReview?.status === "approved";
+
+  const isAwaitingPlan = outcome.status === "awaiting_agent_plan";
 
   const createAgentMutation = useMutation({
     mutationFn: async (agent: AgentProposal) => {
@@ -2606,9 +2610,16 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
       });
       return res.json();
     },
-    onSuccess: (created: any) => {
+    onSuccess: async (created: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
       toast({ title: "Agent created", description: `"${created.name}" has been created and linked to this outcome.` });
+      if (isAwaitingPlan || outcome.status === "active") {
+        try {
+          await apiRequest("PATCH", `/api/outcomes/${outcome.id}`, { status: "agents_assigned" });
+          queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/outcomes", outcome.id] });
+        } catch {}
+      }
     },
     onError: (err: Error) => {
       toast({ title: "Failed to create agent", description: err.message, variant: "destructive" });
@@ -2632,6 +2643,29 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
     }
   }
 
+  if (agentPerm.permission.access === "denied") {
+    return (
+      <Card>
+        <CardContent className="flex flex-col items-center justify-center py-8 gap-3">
+          <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center">
+            <Lock className="w-5 h-5 text-muted-foreground" />
+          </div>
+          <div className="text-center flex flex-col gap-1">
+            <h3 className="text-sm font-semibold">Agent Development Plan</h3>
+            <p className="text-xs text-muted-foreground max-w-sm">
+              Agent proposals and creation are handled by Agent Engineers. Switch to the Agent Engineer role to generate an agent development plan for this outcome.
+            </p>
+          </div>
+          {isAwaitingPlan && (
+            <Badge variant="outline" className="text-xs text-amber-600 dark:text-amber-400 border-amber-300 dark:border-amber-700" data-testid="badge-awaiting-plan">
+              Awaiting Agent Plan
+            </Badge>
+          )}
+        </CardContent>
+      </Card>
+    );
+  }
+
   if (!generated) {
     return (
       <Card>
@@ -2640,11 +2674,20 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
             <Bot className="w-7 h-7 text-primary" />
           </div>
           <div className="text-center flex flex-col gap-1">
-            <h3 className="text-base font-semibold">Agent Proposals</h3>
+            <h3 className="text-base font-semibold">Agent Development Plan</h3>
             <p className="text-sm text-muted-foreground max-w-md">
               Let AI analyze this outcome contract and its KPIs to propose the right agents — with workflows, tools, and autonomy levels already configured.
             </p>
           </div>
+          {isAwaitingPlan && (
+            <div className="flex items-center gap-2 p-3 rounded-md bg-blue-500/5 border border-blue-500/10 max-w-md flex-wrap" data-testid="notice-awaiting-plan">
+              <Bot className="w-4 h-4 text-blue-500 shrink-0" />
+              <div className="flex flex-col gap-0.5">
+                <span className="text-xs font-medium">Agent Plan Requested</span>
+                <span className="text-[11px] text-muted-foreground">The Business Owner has requested an Agent Development Plan for this outcome. Generate proposals below.</span>
+              </div>
+            </div>
+          )}
           {isPendingValidation && (
             <div className="flex items-center gap-2 p-3 rounded-md bg-amber-500/5 border border-amber-500/10 max-w-md flex-wrap" data-testid="notice-pending-validation">
               <Shield className="w-4 h-4 text-amber-500 shrink-0" />

@@ -31,6 +31,7 @@ import {
   Filter,
   Clock,
   Gavel,
+  Bot,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -377,7 +378,8 @@ export default function Outcomes() {
   const pendingRevenue = invoices?.filter((i) => i.status === "pending").reduce((s, i) => s + (i.amount || 0), 0) || 0;
   const disputedRevenue = invoices?.filter((i) => i.status === "disputed").reduce((s, i) => s + (i.amount || 0), 0) || 0;
   const totalRevenue = billedRevenue + pendingRevenue + disputedRevenue;
-  const activeContracts = outcomes?.filter((o) => o.status === "active")?.length || 0;
+  const activeContracts = outcomes?.filter((o) => o.status === "active" || o.status === "awaiting_agent_plan" || o.status === "agents_assigned")?.length || 0;
+  const awaitingPlanCount = outcomes?.filter((o) => o.status === "awaiting_agent_plan")?.length || 0;
 
   const allKpiStats = (kpis || []).map((k) => {
     const attainment = k.target > 0 ? ((k.currentValue || 0) / k.target) * 100 : 0;
@@ -538,6 +540,15 @@ export default function Outcomes() {
             <RefreshCw className={`w-3.5 h-3.5 mr-1 ${recomputingKpis ? "animate-spin" : ""}`} />
             Recompute
           </Button>
+        </div>
+      )}
+
+      {awaitingPlanCount > 0 && (
+        <div className="flex items-center gap-3 p-3 rounded-md bg-blue-500/10 border border-blue-500/20" data-testid="banner-awaiting-agent-plan">
+          <Bot className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
+          <span className="text-xs text-blue-700 dark:text-blue-300 flex-1">
+            {awaitingPlanCount} outcome{awaitingPlanCount !== 1 ? "s" : ""} awaiting Agent Development Plan — Agent Engineers can generate proposals from the outcome detail page.
+          </span>
         </div>
       )}
 

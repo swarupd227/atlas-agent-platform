@@ -14,14 +14,10 @@ import {
   BarChart3,
   Shield,
   Activity,
-  Bot,
-  Sparkles,
-  Loader2,
   Check,
   ExternalLink,
-  Cpu,
-  Wrench,
-  Zap,
+  Bot,
+  Loader2,
 } from "lucide-react";
 import {
   Dialog,
@@ -35,7 +31,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -59,30 +54,6 @@ interface KpiEntry {
   baseline: number;
   slaThreshold: number;
   weight: number;
-}
-
-interface ProposedAgent {
-  name: string;
-  description: string;
-  role: string;
-  riskTier: string;
-  autonomyMode: string;
-  modelProvider: string;
-  modelName: string;
-  workflowSteps: string[];
-  tools: { name: string; description: string }[];
-  kpiBindings: string[];
-  estimatedImpact: string;
-  templateMatch: string | null;
-  selected: boolean;
-}
-
-interface CreatedAgent {
-  id: string;
-  name: string;
-  agentType: string;
-  riskTier: string;
-  autonomyMode: string;
 }
 
 interface OutcomeBuilderDialogProps {
@@ -109,10 +80,8 @@ export function OutcomeBuilderDialog({ open, onOpenChange, onSuccess }: OutcomeB
   const [kpis, setKpis] = useState<KpiEntry[]>([]);
 
   const [createdOutcomeId, setCreatedOutcomeId] = useState<string | null>(null);
-  const [proposedAgents, setProposedAgents] = useState<ProposedAgent[]>([]);
-  const [createdAgents, setCreatedAgents] = useState<CreatedAgent[]>([]);
-  const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
-  const [planError, setPlanError] = useState<string | null>(null);
+  const [requestingPlan, setRequestingPlan] = useState(false);
+  const [planRequested, setPlanRequested] = useState(false);
 
   const governancePolicies = industry?.defaultGovernancePolicies || [];
 
@@ -154,7 +123,6 @@ export function OutcomeBuilderDialog({ open, onOpenChange, onSuccess }: OutcomeB
       if (outcomeId) {
         setCreatedOutcomeId(outcomeId);
         setStep(4);
-        generateAgentPlan(outcomeId);
       } else {
         resetAndClose();
       }
@@ -164,77 +132,22 @@ export function OutcomeBuilderDialog({ open, onOpenChange, onSuccess }: OutcomeB
     },
   });
 
-  async function generateAgentPlan(outcomeId: string) {
-    setIsGeneratingPlan(true);
-    setPlanError(null);
-    setProposedAgents([]);
+  async function requestAgentPlan() {
+    if (!createdOutcomeId) return;
+    setRequestingPlan(true);
     try {
-      const outcomeContract = {
-        id: outcomeId,
-        name,
-        description,
-        riskTier,
-        pricingModel,
-        pricePerUnit,
-        riskThreshold,
-        maxDriftPercent,
-        slaDescription,
-        industry: industry?.id || "custom",
-        industryLabel: industry?.label || "Custom",
-        governanceConstraints: governancePolicies.map((p) => p.label),
-      };
-      const res = await apiRequest("POST", "/api/ai/propose-agents", {
-        outcomeContract,
-        kpis: kpis.map((k) => ({ name: k.name, target: k.target, unit: k.unit })),
+      await apiRequest("PATCH", `/api/outcomes/${createdOutcomeId}`, {
+        status: "awaiting_agent_plan",
       });
-      const data = await res.json();
-      const agents = (data.agents || []).map((a: any) => ({
-        ...a,
-        selected: true,
-      }));
-      setProposedAgents(agents);
+      queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
+      setPlanRequested(true);
+      toast({ title: "Agent plan requested", description: "An Agent Engineer can now generate the development plan for this outcome." });
     } catch (err: any) {
-      setPlanError(err.message || "Failed to generate agent plan");
+      toast({ title: "Failed to request agent plan", description: err.message, variant: "destructive" });
     } finally {
-      setIsGeneratingPlan(false);
+      setRequestingPlan(false);
     }
   }
-
-  const createAgentsMutation = useMutation({
-    mutationFn: async () => {
-      const selectedAgents = proposedAgents.filter((a) => a.selected);
-      if (selectedAgents.length === 0) return { agents: [], count: 0 };
-
-      const payload = {
-        outcomeId: createdOutcomeId!,
-        industry: industry?.id || "custom",
-        agents: selectedAgents.map((a) => ({
-          name: a.name,
-          description: a.description,
-          agentType: "single",
-          riskTier: a.riskTier || riskTier,
-          autonomyMode: a.autonomyMode || "assisted",
-          modelProvider: a.modelProvider || "openai",
-          modelName: a.modelName || "gpt-4.1",
-          runtimeConfig: {
-            taskPrompt: `Role: ${a.role}\n\nObjective: ${a.description}\n\nWorkflow Steps:\n${(a.workflowSteps || []).map((s: string, i: number) => `${i + 1}. ${s}`).join("\n")}\n\nTarget KPIs: ${(a.kpiBindings || []).join(", ")}`,
-            tools: a.tools || [],
-          },
-        })),
-      };
-      const res = await apiRequest("POST", "/api/agents/bulk-create-from-plan", payload);
-      return res.json();
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
-      toast({ title: `${data.count} agent(s) created successfully` });
-      setCreatedAgents(data.agents || []);
-      setStep(5);
-    },
-    onError: (err: Error) => {
-      toast({ title: "Failed to create agents", description: err.message, variant: "destructive" });
-    },
-  });
 
   function resetAndClose() {
     setStep(1);
@@ -249,10 +162,8 @@ export function OutcomeBuilderDialog({ open, onOpenChange, onSuccess }: OutcomeB
     setSlaDescription("");
     setKpis([]);
     setCreatedOutcomeId(null);
-    setProposedAgents([]);
-    setCreatedAgents([]);
-    setIsGeneratingPlan(false);
-    setPlanError(null);
+    setRequestingPlan(false);
+    setPlanRequested(false);
     onOpenChange(false);
   }
 
@@ -311,12 +222,6 @@ export function OutcomeBuilderDialog({ open, onOpenChange, onSuccess }: OutcomeB
     setKpis(updated);
   }
 
-  function toggleAgent(index: number) {
-    setProposedAgents((prev) =>
-      prev.map((a, i) => (i === index ? { ...a, selected: !a.selected } : a))
-    );
-  }
-
   const industryTemplates = OUTCOME_TEMPLATES.filter((t) => t.industry === industry?.id);
   const otherTemplates = OUTCOME_TEMPLATES.filter((t) => t.industry !== industry?.id);
 
@@ -337,12 +242,10 @@ export function OutcomeBuilderDialog({ open, onOpenChange, onSuccess }: OutcomeB
     { num: 1, label: "Template", icon: FileText },
     { num: 2, label: "Configure", icon: Settings2 },
     { num: 3, label: "Review", icon: ClipboardCheck },
-    { num: 4, label: "Agent Plan", icon: Bot },
-    { num: 5, label: "Done", icon: CheckCircle2 },
+    { num: 4, label: "Handoff", icon: Bot },
   ];
 
   const canProceedToReview = name.trim().length > 0;
-  const selectedCount = proposedAgents.filter((a) => a.selected).length;
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) resetAndClose(); else onOpenChange(o); }}>
@@ -354,7 +257,7 @@ export function OutcomeBuilderDialog({ open, onOpenChange, onSuccess }: OutcomeB
         <div className="flex items-center gap-2 mb-4 flex-wrap" data-testid="wizard-steps">
           {stepLabels.map((s, i) => (
             <div key={s.num} className="flex items-center gap-2">
-              {i > 0 && <div className="w-6 border-t border-border" />}
+              {i > 0 && <div className="w-8 border-t border-border" />}
               <div
                 className={`flex items-center gap-1.5 text-sm ${
                   step === s.num
@@ -740,243 +643,79 @@ export function OutcomeBuilderDialog({ open, onOpenChange, onSuccess }: OutcomeB
         )}
 
         {step === 4 && (
-          <div className="flex flex-col gap-5" data-testid="step-agent-plan">
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-primary" />
-                <p className="text-sm font-medium">Agent Development Plan</p>
-              </div>
-              <p className="text-sm text-muted-foreground">
-                AI has analyzed your outcome contract and recommends the following agents to deliver your KPIs.
-                Select which agents to create.
-              </p>
-            </div>
-
-            {isGeneratingPlan && (
-              <div className="flex flex-col items-center justify-center gap-3 py-8" data-testid="loading-agent-plan">
-                <Loader2 className="w-8 h-8 animate-spin text-primary" />
-                <p className="text-sm text-muted-foreground">Analyzing your outcome and generating agent recommendations...</p>
-              </div>
-            )}
-
-            {planError && (
-              <div className="flex flex-col gap-3 p-4 rounded-md bg-destructive/10 border border-destructive/20" data-testid="error-agent-plan">
-                <p className="text-sm text-destructive">{planError}</p>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => createdOutcomeId && generateAgentPlan(createdOutcomeId)}
-                  data-testid="button-retry-plan"
-                >
-                  Retry
-                </Button>
-              </div>
-            )}
-
-            {!isGeneratingPlan && !planError && proposedAgents.length > 0 && (
-              <>
-                <div className="flex items-center justify-between gap-2">
-                  <Badge variant="outline" className="text-xs" data-testid="badge-agent-count">
-                    {selectedCount} of {proposedAgents.length} selected
-                  </Badge>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => {
-                      const allSelected = proposedAgents.every((a) => a.selected);
-                      setProposedAgents((prev) => prev.map((a) => ({ ...a, selected: !allSelected })));
-                    }}
-                    data-testid="button-toggle-all-agents"
-                  >
-                    {proposedAgents.every((a) => a.selected) ? "Deselect All" : "Select All"}
-                  </Button>
-                </div>
-
-                <div className="flex flex-col gap-3">
-                  {proposedAgents.map((agent, i) => (
-                    <Card
-                      key={i}
-                      className={`transition-colors ${agent.selected ? "border-primary/40 bg-primary/5" : "opacity-60"}`}
-                      data-testid={`card-proposed-agent-${i}`}
-                    >
-                      <CardContent className="p-4">
-                        <div className="flex items-start gap-3">
-                          <Checkbox
-                            checked={agent.selected}
-                            onCheckedChange={() => toggleAgent(i)}
-                            className="mt-1"
-                            data-testid={`checkbox-agent-${i}`}
-                          />
-                          <div className="flex-1 flex flex-col gap-2">
-                            <div className="flex items-center justify-between gap-2 flex-wrap">
-                              <div className="flex items-center gap-2">
-                                <Bot className="w-4 h-4 text-primary" />
-                                <p className="font-medium" data-testid={`text-agent-name-${i}`}>{agent.name}</p>
-                              </div>
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <Badge variant="outline" className="text-[10px]" data-testid={`badge-agent-risk-${i}`}>
-                                  {agent.riskTier}
-                                </Badge>
-                                <Badge variant="outline" className="text-[10px]" data-testid={`badge-agent-autonomy-${i}`}>
-                                  {agent.autonomyMode}
-                                </Badge>
-                                <Badge variant="secondary" className="text-[10px]" data-testid={`badge-agent-model-${i}`}>
-                                  {agent.modelName || "gpt-4.1"}
-                                </Badge>
-                              </div>
-                            </div>
-
-                            <p className="text-sm text-muted-foreground" data-testid={`text-agent-role-${i}`}>
-                              <span className="font-medium text-foreground">Role:</span> {agent.role}
-                            </p>
-                            <p className="text-sm text-muted-foreground" data-testid={`text-agent-desc-${i}`}>
-                              {agent.description}
-                            </p>
-
-                            {agent.workflowSteps && agent.workflowSteps.length > 0 && (
-                              <div className="flex flex-col gap-1">
-                                <div className="flex items-center gap-1.5">
-                                  <Cpu className="w-3.5 h-3.5 text-muted-foreground" />
-                                  <span className="text-xs font-medium text-muted-foreground">Workflow</span>
-                                </div>
-                                <div className="pl-5 flex flex-col gap-0.5">
-                                  {agent.workflowSteps.map((ws, wi) => (
-                                    <p key={wi} className="text-xs text-muted-foreground" data-testid={`text-agent-step-${i}-${wi}`}>
-                                      {wi + 1}. {ws}
-                                    </p>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-
-                            {agent.tools && agent.tools.length > 0 && (
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <Wrench className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                                {agent.tools.map((t, ti) => (
-                                  <Badge key={ti} variant="outline" className="text-[10px]" data-testid={`badge-agent-tool-${i}-${ti}`}>
-                                    {t.name}
-                                  </Badge>
-                                ))}
-                              </div>
-                            )}
-
-                            {agent.kpiBindings && agent.kpiBindings.length > 0 && (
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <Zap className="w-3.5 h-3.5 text-amber-500 dark:text-amber-400 shrink-0" />
-                                <span className="text-xs text-muted-foreground">KPIs:</span>
-                                {agent.kpiBindings.map((kb, ki) => (
-                                  <Badge key={ki} variant="secondary" className="text-[10px]" data-testid={`badge-agent-kpi-${i}-${ki}`}>
-                                    {kb}
-                                  </Badge>
-                                ))}
-                              </div>
-                            )}
-
-                            {agent.estimatedImpact && (
-                              <p className="text-xs text-emerald-600 dark:text-emerald-400" data-testid={`text-agent-impact-${i}`}>
-                                Impact: {agent.estimatedImpact}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-              </>
-            )}
-
-            {!isGeneratingPlan && !planError && proposedAgents.length === 0 && (
-              <div className="flex flex-col items-center gap-3 py-8 text-center" data-testid="empty-agent-plan">
-                <Bot className="w-8 h-8 text-muted-foreground" />
-                <p className="text-sm text-muted-foreground">No agent recommendations generated. You can create agents manually from the Agents page.</p>
-              </div>
-            )}
-
-            <div className="flex items-center justify-between gap-2 pt-2">
-              <Button
-                variant="outline"
-                onClick={resetAndClose}
-                data-testid="button-skip-agent-plan"
-              >
-                Skip &amp; Close
-              </Button>
-              <Button
-                onClick={() => createAgentsMutation.mutate()}
-                disabled={createAgentsMutation.isPending || selectedCount === 0 || isGeneratingPlan}
-                data-testid="button-create-agents-from-plan"
-              >
-                {createAgentsMutation.isPending ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> Creating...
-                  </>
-                ) : (
-                  <>
-                    <Bot className="w-4 h-4 mr-1.5" /> Create {selectedCount} Agent{selectedCount !== 1 ? "s" : ""}
-                  </>
-                )}
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {step === 5 && (
-          <div className="flex flex-col gap-5" data-testid="step-success">
+          <div className="flex flex-col gap-5" data-testid="step-handoff">
             <div className="flex flex-col items-center gap-3 py-4">
               <div className="flex items-center justify-center w-12 h-12 rounded-full bg-emerald-500/10">
                 <Check className="w-6 h-6 text-emerald-500 dark:text-emerald-400" />
               </div>
-              <p className="text-lg font-medium" data-testid="text-success-title">Outcome &amp; Agents Created</p>
+              <p className="text-lg font-medium" data-testid="text-success-title">Outcome Contract Created</p>
               <p className="text-sm text-muted-foreground text-center max-w-md">
-                Your outcome contract has been created and {createdAgents.length} agent{createdAgents.length !== 1 ? "s have" : " has"} been registered.
-                Configure their MCP integrations and deploy them to start delivering your KPIs.
+                Your outcome contract and KPIs have been saved. The next step is for an Agent Engineer
+                to generate an Agent Development Plan and create the agents that will deliver your KPIs.
               </p>
             </div>
 
-            {createdAgents.length > 0 && (
-              <div className="flex flex-col gap-2">
-                <p className="text-sm font-medium">Created Agents</p>
-                <div className="flex flex-col gap-2">
-                  {createdAgents.map((agent) => (
-                    <Card key={agent.id} data-testid={`card-created-agent-${agent.id}`}>
-                      <CardContent className="flex items-center justify-between gap-3 p-3">
-                        <div className="flex items-center gap-2">
-                          <Bot className="w-4 h-4 text-primary" />
-                          <span className="font-medium text-sm" data-testid={`text-created-agent-name-${agent.id}`}>{agent.name}</span>
-                          <Badge variant="outline" className="text-[10px]">{agent.riskTier}</Badge>
-                          <Badge variant="secondary" className="text-[10px]">{agent.autonomyMode}</Badge>
-                        </div>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => {
-                            resetAndClose();
-                            navigate(`/agents/${agent.id}`);
-                          }}
-                          data-testid={`button-go-to-agent-${agent.id}`}
-                        >
-                          Open <ExternalLink className="w-3.5 h-3.5 ml-1" />
-                        </Button>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-              </div>
+            {!planRequested ? (
+              <Card className="border-primary/20 bg-primary/5">
+                <CardContent className="flex items-start gap-4 p-4">
+                  <div className="flex items-center justify-center w-10 h-10 rounded-md bg-primary/10 shrink-0">
+                    <Bot className="w-5 h-5 text-primary" />
+                  </div>
+                  <div className="flex flex-col gap-2 flex-1">
+                    <p className="text-sm font-medium">Request Agent Development Plan</p>
+                    <p className="text-xs text-muted-foreground">
+                      Flag this outcome as ready for agent planning. An Agent Engineer will be notified
+                      to generate AI-driven agent proposals, configure workflows, and assign tools.
+                    </p>
+                    <Button
+                      size="sm"
+                      onClick={requestAgentPlan}
+                      disabled={requestingPlan}
+                      className="w-fit"
+                      data-testid="button-request-agent-plan"
+                    >
+                      {requestingPlan ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> Requesting...
+                        </>
+                      ) : (
+                        <>
+                          <Bot className="w-4 h-4 mr-1.5" /> Request Agent Plan
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : (
+              <Card className="border-emerald-500/20 bg-emerald-500/5">
+                <CardContent className="flex items-center gap-3 p-4">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-500 dark:text-emerald-400 shrink-0" />
+                  <div className="flex flex-col gap-0.5">
+                    <p className="text-sm font-medium" data-testid="text-plan-requested">Agent Plan Requested</p>
+                    <p className="text-xs text-muted-foreground">
+                      This outcome is now marked as awaiting agent planning. Agent Engineers can view it on the Outcomes page or the outcome detail page to generate proposals.
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
             )}
 
             <div className="flex items-center justify-center gap-3 pt-2">
               <Button variant="outline" onClick={resetAndClose} data-testid="button-close-wizard">
                 Close
               </Button>
-              <Button
-                onClick={() => {
-                  resetAndClose();
-                  navigate("/agents");
-                }}
-                data-testid="button-go-to-agents-page"
-              >
-                Go to Agents <ExternalLink className="w-4 h-4 ml-1.5" />
-              </Button>
+              {createdOutcomeId && (
+                <Button
+                  onClick={() => {
+                    resetAndClose();
+                    navigate(`/outcomes/${createdOutcomeId}`);
+                  }}
+                  data-testid="button-view-outcome"
+                >
+                  View Outcome <ExternalLink className="w-4 h-4 ml-1.5" />
+                </Button>
+              )}
             </div>
           </div>
         )}
