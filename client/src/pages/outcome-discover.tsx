@@ -32,6 +32,10 @@ import {
   ChevronDown,
   Check,
   Minus,
+  Settings2,
+  CheckCircle2,
+  ChevronLeft,
+  Activity,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -41,11 +45,12 @@ import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { OutcomeContract } from "@shared/schema";
-import { useIndustry } from "@/components/industry-provider";
+import { useIndustry, OUTCOME_TEMPLATES, type OutcomeTemplate, type OutcomeTemplateKpi } from "@/components/industry-provider";
 import { useSpeechToText } from "@/hooks/use-speech-to-text";
 import type { IndustryId } from "@/components/industry-provider";
 import type { LucideIcon } from "lucide-react";
@@ -329,6 +334,19 @@ export default function OutcomeDiscover() {
   const [expandedRegulations, setExpandedRegulations] = useState<Set<number>>(new Set());
   const [createdOutcome, setCreatedOutcome] = useState<OutcomeContract | null>(null);
   const [planRequested, setPlanRequested] = useState(false);
+  const [builderMode, setBuilderMode] = useState<"ai" | "form">("ai");
+  const [formStep, setFormStep] = useState<1 | 2 | 3>(1);
+  const [formName, setFormName] = useState("");
+  const [formDescription, setFormDescription] = useState("");
+  const [formRiskTier, setFormRiskTier] = useState("MEDIUM");
+  const [formPricingModel, setFormPricingModel] = useState("PER_OUTCOME_EVENT");
+  const [formPricePerUnit, setFormPricePerUnit] = useState(0);
+  const [formRiskThreshold, setFormRiskThreshold] = useState(0.8);
+  const [formMaxDriftPercent, setFormMaxDriftPercent] = useState(10);
+  const [formSlaDescription, setFormSlaDescription] = useState("");
+  const [formKpis, setFormKpis] = useState<Array<{name: string; target: number; unit: string; baseline: number; slaThreshold: number; weight: number}>>([]);
+  const [formCreatedOutcome, setFormCreatedOutcome] = useState<OutcomeContract | null>(null);
+  const [formPlanRequested, setFormPlanRequested] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const speechRecognitionRef = useRef<any>(null);
@@ -338,6 +356,108 @@ export default function OutcomeDiscover() {
 
   const industryKpis = industry && industry.id !== "custom" ? INDUSTRY_KPI_LIBRARY[industry.id] : null;
   const regulatoryConstraints = industry && industry.id !== "custom" ? INDUSTRY_REGULATORY_CONSTRAINTS[industry.id] : null;
+
+  const industryTemplates = OUTCOME_TEMPLATES.filter((t) => t.industry === industry?.id);
+  const otherTemplates = OUTCOME_TEMPLATES.filter((t) => t.industry !== industry?.id);
+
+  const industryLabel = (id: string) => {
+    const labels: Record<string, string> = {
+      financial_services: "Financial Services",
+      insurance: "Insurance",
+      healthcare: "Healthcare",
+      manufacturing: "Manufacturing",
+      retail: "Retail",
+      technology_saas: "Technology / SaaS",
+      custom: "Custom",
+    };
+    return labels[id] || id;
+  };
+
+  function selectTemplate(template: OutcomeTemplate) {
+    setFormName(template.name);
+    setFormDescription(template.description);
+    setFormRiskTier(template.riskTier);
+    setFormPricingModel(template.pricingModel);
+    setFormPricePerUnit(template.pricePerUnit);
+    setFormRiskThreshold(template.riskThreshold);
+    setFormMaxDriftPercent(template.maxDriftPercent);
+    setFormSlaDescription(template.slaDescription);
+    setFormKpis(
+      template.kpis.map((k: OutcomeTemplateKpi) => ({
+        name: k.name,
+        target: k.target,
+        unit: k.unit,
+        baseline: k.baseline ?? 0,
+        slaThreshold: k.slaThreshold ?? 0,
+        weight: k.weight ?? 1,
+      }))
+    );
+    setFormStep(2);
+  }
+
+  function addFormKpi() {
+    setFormKpis([...formKpis, { name: "", target: 0, unit: "percent", baseline: 0, slaThreshold: 0, weight: 1 }]);
+  }
+
+  function removeFormKpi(index: number) {
+    setFormKpis(formKpis.filter((_, i) => i !== index));
+  }
+
+  function updateFormKpi(index: number, field: string, value: string | number) {
+    const updated = [...formKpis];
+    if (field === "name" || field === "unit") {
+      updated[index] = { ...updated[index], [field]: value as string };
+    } else {
+      updated[index] = { ...updated[index], [field]: Number(value) || 0 };
+    }
+    setFormKpis(updated);
+  }
+
+  const governancePolicies = industry?.defaultGovernancePolicies || [];
+  const canProceedToReview = formName.trim().length > 0;
+
+  const createFormOutcomeMutation = useMutation({
+    mutationFn: async () => {
+      const payload = {
+        outcome: {
+          name: formName,
+          description: formDescription,
+          riskTier: formRiskTier,
+          pricingModel: formPricingModel,
+          pricePerUnit: formPricePerUnit,
+          riskThreshold: formRiskThreshold,
+          maxDriftPercent: formMaxDriftPercent,
+        },
+        kpis: formKpis.map((k) => ({
+          name: k.name,
+          target: k.target,
+          unit: k.unit,
+          baseline: k.baseline,
+          slaThreshold: k.slaThreshold,
+          weight: k.weight,
+        })),
+        constraints: governancePolicies.map((p) => ({
+          label: p.label,
+          description: p.description,
+        })),
+      };
+      const res = await apiRequest("POST", "/api/outcomes/with-kpis", payload);
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/kpis"] });
+      const outcomeId = data?.outcome?.id;
+      if (outcomeId) {
+        setFormCreatedOutcome(data.outcome);
+        setFormStep(3);
+      }
+      toast({ title: "Outcome contract created" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to create outcome", description: err.message, variant: "destructive" });
+    },
+  });
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -711,7 +831,316 @@ export default function OutcomeDiscover() {
 
   return (
     <div className="flex flex-col h-full" data-testid="page-outcome-discover">
-      {messages.length === 0 ? (
+      <div className="flex items-center gap-2 p-4 border-b shrink-0 flex-wrap">
+        <Sparkles className="w-4 h-4 text-primary" />
+        <h2 className="text-sm font-medium">Outcome Builder</h2>
+        {builderMode === "ai" && proposal && <Badge variant="outline" className="text-[10px] text-green-600 dark:text-green-400">Proposal Ready</Badge>}
+        <div className="flex-1" />
+        <div className="flex items-center border rounded-md overflow-hidden">
+          <Button
+            variant={builderMode === "ai" ? "default" : "ghost"}
+            size="sm"
+            className="rounded-none text-xs h-7"
+            onClick={() => setBuilderMode("ai")}
+            data-testid="button-mode-ai"
+          >
+            <Sparkles className="w-3 h-3 mr-1" /> AI Assistant
+          </Button>
+          <Button
+            variant={builderMode === "form" ? "default" : "ghost"}
+            size="sm"
+            className="rounded-none text-xs h-7"
+            onClick={() => setBuilderMode("form")}
+            data-testid="button-mode-form"
+          >
+            <FileText className="w-3 h-3 mr-1" /> Quick Create
+          </Button>
+        </div>
+      </div>
+
+      {builderMode === "form" ? (
+        <div className="flex-1 overflow-y-auto p-6">
+          <div className="max-w-2xl mx-auto flex flex-col gap-6">
+            <div className="flex items-center gap-3" data-testid="form-steps">
+              {[
+                { num: 1, label: "Template", icon: FileText },
+                { num: 2, label: "Configure", icon: Settings2 },
+                { num: 3, label: "Handoff", icon: Bot },
+              ].map((s, i) => (
+                <div key={s.num} className="flex items-center gap-2">
+                  {i > 0 && <div className="w-8 border-t border-border" />}
+                  <div className={`flex items-center gap-1.5 text-sm ${formStep === s.num ? "font-medium" : formStep > s.num ? "text-muted-foreground" : "text-muted-foreground/50"}`}>
+                    {formStep > s.num ? <CheckCircle className="w-4 h-4 text-emerald-500" /> : <s.icon className="w-4 h-4" />}
+                    <span>{s.label}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {formStep === 1 && (
+              <div className="flex flex-col gap-4" data-testid="form-step-template">
+                <Card className="hover-elevate cursor-pointer" onClick={() => { setFormName(""); setFormDescription(""); setFormStep(2); }} data-testid="card-form-blank">
+                  <CardContent className="flex items-center gap-3 p-4">
+                    <Target className="w-5 h-5 text-muted-foreground" />
+                    <div className="flex-1">
+                      <p className="font-medium">Blank Contract</p>
+                      <p className="text-sm text-muted-foreground">Start from scratch with an empty outcome contract</p>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                  </CardContent>
+                </Card>
+
+                {industryTemplates.length > 0 && (
+                  <div className="flex flex-col gap-2">
+                    <p className="text-sm font-medium text-muted-foreground">{industry?.label} Templates</p>
+                    {industryTemplates.map((t) => (
+                      <Card key={t.id} className="hover-elevate cursor-pointer" onClick={() => selectTemplate(t)} data-testid={`card-form-template-${t.id}`}>
+                        <CardContent className="flex items-start gap-3 p-4">
+                          <div className="flex-1 flex flex-col gap-1.5">
+                            <p className="font-medium">{t.name}</p>
+                            <p className="text-sm text-muted-foreground line-clamp-2">{t.description}</p>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <Badge variant="outline" className="text-xs">{industryLabel(t.industry)}</Badge>
+                              <Badge variant="outline" className="text-xs">{t.riskTier}</Badge>
+                              <Badge variant="outline" className="text-xs">{t.kpis.length} KPIs</Badge>
+                            </div>
+                          </div>
+                          <ChevronRight className="w-4 h-4 text-muted-foreground mt-1 shrink-0" />
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+
+                {otherTemplates.length > 0 && (
+                  <div className="flex flex-col gap-2">
+                    <p className="text-sm font-medium text-muted-foreground">Other Templates</p>
+                    {otherTemplates.map((t) => (
+                      <Card key={t.id} className="hover-elevate cursor-pointer" onClick={() => selectTemplate(t)} data-testid={`card-form-template-${t.id}`}>
+                        <CardContent className="flex items-start gap-3 p-4">
+                          <div className="flex-1 flex flex-col gap-1.5">
+                            <p className="font-medium">{t.name}</p>
+                            <p className="text-sm text-muted-foreground line-clamp-2">{t.description}</p>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <Badge variant="outline" className="text-xs">{industryLabel(t.industry)}</Badge>
+                              <Badge variant="outline" className="text-xs">{t.riskTier}</Badge>
+                              <Badge variant="outline" className="text-xs">{t.kpis.length} KPIs</Badge>
+                            </div>
+                          </div>
+                          <ChevronRight className="w-4 h-4 text-muted-foreground mt-1 shrink-0" />
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {formStep === 2 && !formCreatedOutcome && (
+              <div className="flex flex-col gap-5" data-testid="form-step-configure">
+                <div className="flex flex-col gap-3">
+                  <div className="flex items-center gap-2">
+                    <Target className="w-4 h-4 text-muted-foreground" />
+                    <p className="text-sm font-medium">Outcome Details</p>
+                  </div>
+                  <div className="flex flex-col gap-3">
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="form-name">Name</Label>
+                      <Input id="form-name" value={formName} onChange={(e) => setFormName(e.target.value)} placeholder="Outcome name" data-testid="input-form-name" />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="form-description">Description</Label>
+                      <Textarea id="form-description" value={formDescription} onChange={(e) => setFormDescription(e.target.value)} placeholder="Describe the outcome..." data-testid="input-form-description" />
+                    </div>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="flex flex-col gap-1.5">
+                        <Label>Risk Tier</Label>
+                        <Select value={formRiskTier} onValueChange={setFormRiskTier}>
+                          <SelectTrigger data-testid="select-form-risk-tier"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="LOW">LOW</SelectItem>
+                            <SelectItem value="MEDIUM">MEDIUM</SelectItem>
+                            <SelectItem value="HIGH">HIGH</SelectItem>
+                            <SelectItem value="CRITICAL">CRITICAL</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        <Label htmlFor="form-risk-threshold">Risk Threshold</Label>
+                        <Input id="form-risk-threshold" type="number" step="0.01" value={formRiskThreshold} onChange={(e) => setFormRiskThreshold(Number(e.target.value) || 0)} data-testid="input-form-risk-threshold" />
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        <Label htmlFor="form-max-drift">Max Drift %</Label>
+                        <Input id="form-max-drift" type="number" value={formMaxDriftPercent} onChange={(e) => setFormMaxDriftPercent(Number(e.target.value) || 0)} data-testid="input-form-max-drift" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-3">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <BarChart3 className="w-4 h-4 text-muted-foreground" />
+                      <p className="text-sm font-medium">KPIs</p>
+                      <Badge variant="outline" className="text-xs">{formKpis.length}</Badge>
+                    </div>
+                    <Button size="sm" variant="outline" onClick={addFormKpi} data-testid="button-form-add-kpi">
+                      <Plus className="w-3.5 h-3.5 mr-1" /> Add KPI
+                    </Button>
+                  </div>
+                  {formKpis.length === 0 && <p className="text-sm text-muted-foreground">No KPIs configured yet. Add one to get started.</p>}
+                  {formKpis.map((kpi, i) => (
+                    <div key={i} className="grid grid-cols-[1fr_80px_80px_auto] gap-2 items-end bg-muted/30 rounded-md p-2" data-testid={`form-kpi-row-${i}`}>
+                      <div className="flex flex-col gap-1">
+                        <Label className="text-xs text-muted-foreground">Name</Label>
+                        <Input value={kpi.name} onChange={(e) => updateFormKpi(i, "name", e.target.value)} placeholder="KPI name" data-testid={`input-form-kpi-name-${i}`} />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <Label className="text-xs text-muted-foreground">Target</Label>
+                        <Input type="number" value={kpi.target} onChange={(e) => updateFormKpi(i, "target", e.target.value)} data-testid={`input-form-kpi-target-${i}`} />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <Label className="text-xs text-muted-foreground">Unit</Label>
+                        <Input value={kpi.unit} onChange={(e) => updateFormKpi(i, "unit", e.target.value)} data-testid={`input-form-kpi-unit-${i}`} />
+                      </div>
+                      <Button size="icon" variant="ghost" onClick={() => removeFormKpi(i)} data-testid={`button-form-remove-kpi-${i}`}>
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+
+                {governancePolicies.length > 0 && (
+                  <div className="flex flex-col gap-3">
+                    <div className="flex items-center gap-2">
+                      <Shield className="w-4 h-4 text-muted-foreground" />
+                      <p className="text-sm font-medium">Governance Constraints</p>
+                      <Badge variant="outline" className="text-xs">{governancePolicies.length}</Badge>
+                    </div>
+                    {governancePolicies.map((p, i) => (
+                      <div key={i} className="flex items-start gap-2 bg-muted/30 rounded-md p-2" data-testid={`form-constraint-${i}`}>
+                        <CheckCircle className="w-4 h-4 mt-0.5 text-emerald-500 shrink-0" />
+                        <div className="flex flex-col gap-0.5">
+                          <p className="text-sm font-medium">{p.label}</p>
+                          <p className="text-xs text-muted-foreground">{p.description}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="flex flex-col gap-3">
+                  <div className="flex items-center gap-2">
+                    <Activity className="w-4 h-4 text-muted-foreground" />
+                    <p className="text-sm font-medium">Contract Model</p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="flex flex-col gap-1.5">
+                      <Label>Pricing Model</Label>
+                      <Select value={formPricingModel} onValueChange={setFormPricingModel}>
+                        <SelectTrigger data-testid="select-form-pricing-model"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="PER_OUTCOME_EVENT">Per Outcome Event</SelectItem>
+                          <SelectItem value="FIXED_MONTHLY">Fixed Monthly</SelectItem>
+                          <SelectItem value="TIERED">Tiered</SelectItem>
+                          <SelectItem value="USAGE_BASED">Usage Based</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="form-price">Price per Unit</Label>
+                      <Input id="form-price" type="number" step="0.01" value={formPricePerUnit} onChange={(e) => setFormPricePerUnit(Number(e.target.value) || 0)} data-testid="input-form-price" />
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="form-sla">SLA Description</Label>
+                    <Input id="form-sla" value={formSlaDescription} onChange={(e) => setFormSlaDescription(e.target.value)} placeholder="Describe the SLA terms..." data-testid="input-form-sla" />
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-2 pt-2">
+                  <Button variant="outline" onClick={() => setFormStep(1)} data-testid="button-form-back-template">
+                    <ChevronLeft className="w-4 h-4 mr-1" /> Back
+                  </Button>
+                  <Button onClick={() => createFormOutcomeMutation.mutate()} disabled={!canProceedToReview || createFormOutcomeMutation.isPending} data-testid="button-form-create">
+                    {createFormOutcomeMutation.isPending ? <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> Creating...</> : "Create Outcome Contract"}
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {formStep === 3 && formCreatedOutcome && (
+              <div className="flex flex-col gap-5" data-testid="form-step-handoff">
+                <div className="flex flex-col items-center gap-3 py-4">
+                  <div className="flex items-center justify-center w-12 h-12 rounded-full bg-emerald-500/10">
+                    <CheckCircle className="w-6 h-6 text-emerald-500" />
+                  </div>
+                  <p className="text-lg font-medium" data-testid="text-form-success">Outcome Contract Created</p>
+                  <p className="text-sm text-muted-foreground text-center max-w-md">
+                    Your outcome contract and KPIs have been saved. The next step is for an Agent Engineer
+                    to generate an Agent Development Plan and create the agents that will deliver your KPIs.
+                  </p>
+                </div>
+
+                {!formPlanRequested ? (
+                  <Card className="border-primary/20 bg-primary/5">
+                    <CardContent className="flex items-start gap-4 p-4">
+                      <div className="flex items-center justify-center w-10 h-10 rounded-md bg-primary/10 shrink-0">
+                        <Bot className="w-5 h-5 text-primary" />
+                      </div>
+                      <div className="flex flex-col gap-2 flex-1">
+                        <p className="text-sm font-medium">Request Agent Development Plan</p>
+                        <p className="text-xs text-muted-foreground">
+                          Flag this outcome as ready for agent planning. An Agent Engineer will be notified
+                          to generate AI-driven agent proposals, configure workflows, and assign tools.
+                        </p>
+                        <Button
+                          size="sm"
+                          onClick={async () => {
+                            try {
+                              await apiRequest("PATCH", `/api/outcomes/${formCreatedOutcome.id}`, { status: "awaiting_agent_plan" });
+                              queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
+                              setFormPlanRequested(true);
+                              toast({ title: "Agent plan requested" });
+                            } catch (err: any) {
+                              toast({ title: "Failed to request agent plan", description: err.message, variant: "destructive" });
+                            }
+                          }}
+                          className="w-fit"
+                          data-testid="button-form-request-plan"
+                        >
+                          <Bot className="w-4 h-4 mr-1.5" /> Request Agent Plan
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <Card className="border-emerald-500/20 bg-emerald-500/5">
+                    <CardContent className="flex items-center gap-3 p-4">
+                      <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
+                      <div className="flex flex-col gap-0.5">
+                        <p className="text-sm font-medium" data-testid="text-form-plan-requested">Agent Plan Requested</p>
+                        <p className="text-xs text-muted-foreground">
+                          This outcome is now marked as awaiting agent planning. Agent Engineers can view it on the Outcomes page or the outcome detail page to generate proposals.
+                        </p>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                <div className="flex items-center justify-center gap-3 pt-2">
+                  <Button variant="outline" onClick={() => { setFormStep(1); setFormCreatedOutcome(null); setFormPlanRequested(false); setFormName(""); setFormDescription(""); setFormRiskTier("MEDIUM"); setFormPricingModel("PER_OUTCOME_EVENT"); setFormPricePerUnit(0); setFormRiskThreshold(0.8); setFormMaxDriftPercent(10); setFormSlaDescription(""); setFormKpis([]); }} data-testid="button-form-new">
+                    Create Another
+                  </Button>
+                  <Button onClick={() => navigate(`/outcomes/${formCreatedOutcome.id}`)} data-testid="button-form-view-outcome">
+                    View Outcome <ArrowRight className="w-4 h-4 ml-1.5" />
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : messages.length === 0 ? (
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "chat" | "record")} className="flex-1 flex flex-col">
           <div className="flex justify-center pt-6">
             <TabsList>
@@ -1039,22 +1468,6 @@ export default function OutcomeDiscover() {
       ) : (
         <div className="flex-1 flex flex-col lg:flex-row min-h-0">
           <div className="flex-1 flex flex-col min-h-0 min-w-0">
-            <div className="flex items-center gap-2 p-4 border-b shrink-0 flex-wrap">
-              <Sparkles className="w-4 h-4 text-primary" />
-              <h2 className="text-sm font-medium">Outcome Builder</h2>
-              {proposal && <Badge variant="outline" className="text-[10px] text-green-600 dark:text-green-400">Proposal Ready</Badge>}
-              <div className="flex-1" />
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-xs text-muted-foreground hover:text-foreground"
-                onClick={() => navigate("/outcomes")}
-                data-testid="button-quick-create-link"
-              >
-                <FileText className="w-3.5 h-3.5 mr-1" /> Quick Create
-              </Button>
-            </div>
-
             <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
               {messages.map((msg, i) => (
                 <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
@@ -1123,7 +1536,7 @@ export default function OutcomeDiscover() {
             </div>
           </div>
 
-          {proposal && (
+          {builderMode === "ai" && proposal && (
             <div className="lg:w-[420px] border-t lg:border-t-0 lg:border-l overflow-y-auto shrink-0" data-testid="panel-proposal">
               <div className="p-4 border-b">
                 <h3 className="text-sm font-semibold flex items-center gap-2 flex-wrap">

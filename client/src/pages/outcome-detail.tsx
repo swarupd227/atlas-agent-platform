@@ -347,6 +347,7 @@ export default function OutcomeDetail() {
   const outcomeId = params?.id;
   const { toast } = useToast();
   const { industry } = useIndustry();
+  const [activeTab, setActiveTab] = useState("kpi-delivery");
   const [reportOpen, setReportOpen] = useState(false);
   const [reportGenerating, setReportGenerating] = useState(false);
   const [reportContent, setReportContent] = useState<string | null>(null);
@@ -1162,7 +1163,30 @@ export default function OutcomeDetail() {
         </DialogContent>
       </Dialog>
 
-      <Tabs defaultValue="kpi-delivery" className="space-y-4">
+      {outcome.status === "awaiting_agent_plan" && (
+        <Card className="border-blue-500/30 bg-blue-500/5" data-testid="banner-awaiting-agent-plan">
+          <CardContent className="flex items-center gap-4 p-4">
+            <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center shrink-0">
+              <Bot className="w-5 h-5 text-blue-500" />
+            </div>
+            <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+              <p className="text-sm font-medium" data-testid="text-awaiting-plan-title">This outcome needs an Agent Development Plan</p>
+              <p className="text-xs text-muted-foreground">
+                Generate an AI-powered development plan and create agents to deliver your KPIs.
+              </p>
+            </div>
+            <Button
+              size="sm"
+              onClick={() => setActiveTab("agent-map")}
+              data-testid="button-go-to-agent-proposals"
+            >
+              <Bot className="w-3.5 h-3.5 mr-1.5" /> Go to Agent Proposals
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <TabsList className="flex-wrap">
           <TabsTrigger value="kpi-delivery" data-testid="tab-kpi-delivery">KPI Delivery</TabsTrigger>
           <TabsTrigger value="agent-map" data-testid="tab-agent-map">Agent Contribution Map</TabsTrigger>

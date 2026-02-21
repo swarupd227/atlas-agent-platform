@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import {
   Target,
   Plus,
@@ -67,7 +67,7 @@ import {
 } from "@/components/outcome-cockpit";
 import { usePermission, PermissionGate } from "@/components/role-provider";
 import { useIndustry } from "@/components/industry-provider";
-import { OutcomeBuilderDialog } from "@/components/outcome-builder-dialog";
+
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { OutcomeContract, KpiDefinition, Invoice, Agent } from "@shared/schema";
@@ -245,7 +245,7 @@ export default function Outcomes() {
   const [filterStatus, setFilterStatus] = useState("all");
   const [filterOwner, setFilterOwner] = useState("all");
   const [filterBillingModel, setFilterBillingModel] = useState("all");
-  const [createOpen, setCreateOpen] = useState(false);
+  const [, navigate] = useLocation();
   const [simulateOpen, setSimulateOpen] = useState(false);
   const [expandedKpis, setExpandedKpis] = useState(true);
   const [recomputingKpis, setRecomputingKpis] = useState(false);
@@ -514,33 +514,17 @@ export default function Outcomes() {
               <ScenarioPlanner outcomes={outcomes || []} kpis={kpis || []} agents={agents || []} onClose={() => setSimulateOpen(false)} />
             </DialogContent>
           </Dialog>
-          <Link href="/outcomes/discover">
-            <Button variant="outline" data-testid="button-discover-outcomes">
-              <Sparkles className="w-4 h-4 mr-1.5" /> Build with AI
-            </Button>
-          </Link>
           {!outcomesPerm.allowed ? (
             <Button disabled title="You do not have permission to create outcome contracts" data-testid="button-create-outcome">
               <Plus className="w-4 h-4 mr-1.5" /> New Contract
             </Button>
           ) : (
-            <>
-              <Button onClick={() => setCreateOpen(true)} data-testid="button-create-outcome">
-                <Plus className="w-4 h-4 mr-1.5" /> New Contract
-                {outcomesPerm.permission.access === "conditional" && outcomesPerm.permission.annotation && (
-                  <Badge variant="secondary" className="text-[10px] ml-1">{outcomesPerm.permission.annotation}</Badge>
-                )}
-              </Button>
-              <OutcomeBuilderDialog
-                open={createOpen}
-                onOpenChange={setCreateOpen}
-                onSuccess={() => {
-                  queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
-                  queryClient.invalidateQueries({ queryKey: ["/api/kpis"] });
-                  toast({ title: "Outcome contract created with KPIs" });
-                }}
-              />
-            </>
+            <Button onClick={() => navigate("/outcomes/discover")} data-testid="button-create-outcome">
+              <Plus className="w-4 h-4 mr-1.5" /> New Contract
+              {outcomesPerm.permission.access === "conditional" && outcomesPerm.permission.annotation && (
+                <Badge variant="secondary" className="text-[10px] ml-1">{outcomesPerm.permission.annotation}</Badge>
+              )}
+            </Button>
           )}
         </div>
       </div>
