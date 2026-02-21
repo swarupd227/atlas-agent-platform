@@ -29,7 +29,6 @@ import {
   RefreshCw,
   BookOpen,
   Database,
-  DollarSign,
   ChevronDown,
   Check,
   Minus,
@@ -293,15 +292,6 @@ function renderMessageContent(content: string, isStreaming?: boolean) {
   return <p className="whitespace-pre-wrap text-sm">{content}</p>;
 }
 
-function getEstCost(riskTier: string): string {
-  if (riskTier === "HIGH") return "$0.10-$0.30/run";
-  if (riskTier === "MEDIUM") return "$0.05-$0.15/run";
-  return "$0.01-$0.05/run";
-}
-
-function getMcpConnections(tools: string[]): string[] {
-  return tools.filter(t => /api|system|platform/i.test(t)).slice(0, 2);
-}
 
 export default function OutcomeDiscover() {
   const [, navigate] = useLocation();
@@ -337,6 +327,8 @@ export default function OutcomeDiscover() {
   const [detectingRegulations, setDetectingRegulations] = useState(false);
   const [showKpiBenchmarks, setShowKpiBenchmarks] = useState(false);
   const [expandedRegulations, setExpandedRegulations] = useState<Set<number>>(new Set());
+  const [createdOutcome, setCreatedOutcome] = useState<OutcomeContract | null>(null);
+  const [planRequested, setPlanRequested] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const speechRecognitionRef = useRef<any>(null);
@@ -392,8 +384,8 @@ export default function OutcomeDiscover() {
       queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
       queryClient.invalidateQueries({ queryKey: ["/api/kpis"] });
       queryClient.invalidateQueries({ queryKey: ["/api/approvals"] });
-      toast({ title: "Outcome Contract created", description: `"${outcome.name}" has been created with KPIs and sent for expert validation.` });
-      navigate(`/outcomes/${outcome.id}`);
+      setCreatedOutcome(outcome);
+      toast({ title: "Outcome Contract created", description: `"${outcome.name}" has been created with KPIs.` });
     },
     onError: (err: Error) => {
       toast({ title: "Failed to create outcome", description: err.message, variant: "destructive" });
@@ -1051,6 +1043,16 @@ export default function OutcomeDiscover() {
               <Sparkles className="w-4 h-4 text-primary" />
               <h2 className="text-sm font-medium">Outcome Builder</h2>
               {proposal && <Badge variant="outline" className="text-[10px] text-green-600 dark:text-green-400">Proposal Ready</Badge>}
+              <div className="flex-1" />
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => navigate("/outcomes")}
+                data-testid="button-quick-create-link"
+              >
+                <FileText className="w-3.5 h-3.5 mr-1" /> Quick Create
+              </Button>
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
@@ -1236,71 +1238,14 @@ export default function OutcomeDiscover() {
                 )}
 
                 <Card>
-                  <CardHeader className="p-3 pb-1">
-                    <CardTitle className="text-xs font-medium text-muted-foreground flex items-center gap-1.5 flex-wrap">
-                      <Bot className="w-3.5 h-3.5" />
-                      Proposed Agents ({proposal.proposedAgents.length})
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="p-3 pt-0 flex flex-col gap-2">
-                    {proposal.proposedAgents.map((agent, i) => {
-                      const skills = agent.tools.slice(0, 3);
-                      const mcpConns = getMcpConnections(agent.tools);
-                      const governanceLabel = industry && industry.id !== "custom"
-                        ? `${industry.label} compliance policies`
-                        : "Standard governance policies";
-                      const estCost = getEstCost(agent.riskTier);
-
-                      return (
-                        <div key={i} className="flex flex-col gap-1.5 p-2 rounded-md bg-muted/50" data-testid={`agent-proposal-${i}`}>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-xs font-semibold">{agent.name}</span>
-                            <Badge variant="outline" className="text-[10px]">{agent.autonomyMode}</Badge>
-                          </div>
-                          <span className="text-[11px] text-muted-foreground">{agent.description}</span>
-                          <div className="flex flex-col gap-0.5">
-                            <span className="text-[10px] font-medium text-muted-foreground">Workflow:</span>
-                            <div className="flex items-center gap-1 flex-wrap">
-                              {agent.workflowSteps.map((step, j) => (
-                                <span key={j} className="flex items-center gap-0.5">
-                                  {j > 0 && <ChevronRight className="w-2.5 h-2.5 text-muted-foreground" />}
-                                  <Badge variant="secondary" className="text-[9px]">{step}</Badge>
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                          <span className="text-[10px] text-green-600 dark:text-green-400">{agent.estimatedImpact}</span>
-                          {skills.length > 0 && (
-                            <div className="flex flex-col gap-0.5">
-                              <span className="text-[10px] font-medium text-muted-foreground">Recommended Skills:</span>
-                              <div className="flex items-center gap-1 flex-wrap">
-                                {skills.map((skill, j) => (
-                                  <Badge key={j} variant="secondary" className="text-[9px]">{skill}</Badge>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                          {mcpConns.length > 0 && (
-                            <div className="flex flex-col gap-0.5">
-                              <span className="text-[10px] font-medium text-muted-foreground">MCP Connections:</span>
-                              <div className="flex items-center gap-1 flex-wrap">
-                                {mcpConns.map((conn, j) => (
-                                  <Badge key={j} variant="outline" className="text-[9px]">{conn}</Badge>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                          <div className="flex items-center justify-between gap-2 flex-wrap">
-                            <span className="text-[10px] text-muted-foreground flex items-center gap-1">
-                              <Shield className="w-3 h-3" /> Auto-applied: {governanceLabel}
-                            </span>
-                            <span className="text-[10px] text-muted-foreground flex items-center gap-1">
-                              <DollarSign className="w-3 h-3" /> {estCost}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })}
+                  <CardContent className="p-3 flex items-center gap-2">
+                    <Bot className="w-4 h-4 text-muted-foreground shrink-0" />
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-xs font-medium">Agent Development Plan</span>
+                      <span className="text-[11px] text-muted-foreground">
+                        After creating this outcome, you can request an Agent Development Plan. An Agent Engineer will then propose and create agents from the outcome detail page.
+                      </span>
+                    </div>
                   </CardContent>
                 </Card>
 
@@ -1398,26 +1343,76 @@ export default function OutcomeDiscover() {
                   </Card>
                 )}
 
-                <div className="flex flex-col gap-2">
-                  <Button
-                    onClick={handleAcceptProposal}
-                    disabled={createOutcomeMutation.isPending}
-                    className="w-full"
-                    data-testid="button-accept-proposal"
-                  >
-                    {createOutcomeMutation.isPending ? (
-                      <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
-                    ) : (
-                      <CheckCircle className="w-4 h-4 mr-1.5" />
-                    )}
-                    Create Outcome Contract
-                  </Button>
-                  <p className="text-[10px] text-center text-muted-foreground">
-                    {allChecked
-                      ? "All validation items confirmed — ready to create"
-                      : `${(proposal.validationChecklist?.length || 0) - checkedItems.size} validation items remaining (optional)`}
-                  </p>
-                </div>
+                {createdOutcome ? (
+                  <Card className="border-emerald-500/30 bg-emerald-500/5">
+                    <CardContent className="p-4 flex flex-col gap-3">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-full bg-emerald-500/20 flex items-center justify-center">
+                          <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                        </div>
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-sm font-semibold" data-testid="text-discover-success-title">Outcome Contract Created</span>
+                          <span className="text-xs text-muted-foreground">{createdOutcome.name}</span>
+                        </div>
+                      </div>
+                      {!planRequested ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full"
+                          onClick={async () => {
+                            try {
+                              await apiRequest("PATCH", `/api/outcomes/${createdOutcome.id}`, { status: "awaiting_agent_plan" });
+                              queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
+                              setPlanRequested(true);
+                              toast({ title: "Agent Plan Requested" });
+                            } catch {
+                              toast({ title: "Failed to request agent plan", variant: "destructive" });
+                            }
+                          }}
+                          data-testid="button-discover-request-agent-plan"
+                        >
+                          <Bot className="w-3.5 h-3.5 mr-1.5" /> Request Agent Plan
+                        </Button>
+                      ) : (
+                        <div className="flex items-center gap-2 p-2 rounded-md bg-blue-500/10 border border-blue-500/20">
+                          <CheckCircle className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                          <span className="text-xs text-blue-700 dark:text-blue-300" data-testid="text-discover-plan-requested">Agent Plan Requested</span>
+                        </div>
+                      )}
+                      <Button
+                        variant="default"
+                        size="sm"
+                        className="w-full"
+                        onClick={() => navigate(`/outcomes/${createdOutcome.id}`)}
+                        data-testid="button-discover-view-outcome"
+                      >
+                        <ArrowRight className="w-3.5 h-3.5 mr-1.5" /> View Outcome
+                      </Button>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    <Button
+                      onClick={handleAcceptProposal}
+                      disabled={createOutcomeMutation.isPending}
+                      className="w-full"
+                      data-testid="button-accept-proposal"
+                    >
+                      {createOutcomeMutation.isPending ? (
+                        <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                      ) : (
+                        <CheckCircle className="w-4 h-4 mr-1.5" />
+                      )}
+                      Create Outcome Contract
+                    </Button>
+                    <p className="text-[10px] text-center text-muted-foreground">
+                      {allChecked
+                        ? "All validation items confirmed — ready to create"
+                        : `${(proposal.validationChecklist?.length || 0) - checkedItems.size} validation items remaining (optional)`}
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           )}

@@ -32,6 +32,7 @@ import {
   Clock,
   Gavel,
   Bot,
+  Trash2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -253,6 +254,8 @@ export default function Outcomes() {
   const { industry } = useIndustry();
   const industryId = industry?.id || "";
 
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+
   const { data: outcomes, isLoading } = useQuery<OutcomeContract[]>({
     queryKey: ["/api/outcomes"],
   });
@@ -290,6 +293,25 @@ export default function Outcomes() {
       toast({ title: "Failed to create outcome", description: err.message, variant: "destructive" });
     },
   });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await apiRequest("DELETE", `/api/outcomes/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/kpis"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
+      setDeleteConfirmId(null);
+      toast({ title: "Outcome deleted" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to delete outcome", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const deleteConfirmOutcome = outcomes?.find((o) => o.id === deleteConfirmId);
 
   const outcomeOwnerMap: Record<string, string[]> = {};
   for (const a of (agents || [])) {
@@ -1080,6 +1102,21 @@ export default function Outcomes() {
                       >
                         <BarChart3 className="w-3 h-3" />
                       </Button>
+                      {outcomesPerm.permission.access !== "denied" && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="text-muted-foreground hover:text-red-500"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setDeleteConfirmId(outcome.id);
+                          }}
+                          data-testid={`button-delete-outcome-${outcome.id}`}
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </Button>
+                      )}
                       <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
                     </div>
                   </div>
@@ -1135,6 +1172,33 @@ export default function Outcomes() {
           </Button>
         </div>
       )}
+
+      <Dialog open={!!deleteConfirmId} onOpenChange={(open) => { if (!open) setDeleteConfirmId(null); }}>
+        <DialogContent className="max-w-sm" data-testid="dialog-delete-outcome">
+          <DialogHeader>
+            <DialogTitle className="text-base">Delete Outcome Contract</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-3">
+            <p className="text-sm text-muted-foreground">
+              Are you sure you want to delete <span className="font-medium text-foreground">{deleteConfirmOutcome?.name}</span>? This will also remove all associated KPIs, events, and invoices. Linked agents will be unlinked but not deleted.
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setDeleteConfirmId(null)} data-testid="button-cancel-delete">
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={deleteMutation.isPending}
+                onClick={() => { if (deleteConfirmId) deleteMutation.mutate(deleteConfirmId); }}
+                data-testid="button-confirm-delete"
+              >
+                {deleteMutation.isPending ? "Deleting..." : "Delete"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

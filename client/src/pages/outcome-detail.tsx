@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState } from "react";
-import { useRoute, Link } from "wouter";
+import { useRoute, Link, useLocation } from "wouter";
 import {
   ArrowLeft,
   Target,
@@ -357,6 +357,23 @@ export default function OutcomeDetail() {
   const [editKpiData, setEditKpiData] = useState<Record<string, any>>({});
   const [evidenceWindow, setEvidenceWindow] = useState("7d");
   const [impactNetworkOpen, setImpactNetworkOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [, setLocation] = useLocation();
+
+  const deleteOutcomeMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("DELETE", `/api/outcomes/${outcomeId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/kpis"] });
+      toast({ title: "Outcome deleted" });
+      setLocation("/outcomes");
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to delete outcome", description: err.message, variant: "destructive" });
+    },
+  });
 
   const { data: outcome, isLoading } = useQuery<OutcomeContract>({
     queryKey: ["/api/outcomes", outcomeId],
@@ -929,6 +946,37 @@ export default function OutcomeDetail() {
           <Button variant="outline" onClick={exportAuditBundle} data-testid="button-export-audit-bundle">
             <Download className="w-4 h-4 mr-1.5" /> Export Audit
           </Button>
+          <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline" className="text-red-500 hover:text-red-600 hover:bg-red-500/10 border-red-200 dark:border-red-800" data-testid="button-delete-outcome">
+                <Trash2 className="w-4 h-4 mr-1.5" /> Delete
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-sm" data-testid="dialog-delete-outcome-detail">
+              <DialogHeader>
+                <DialogTitle className="text-base">Delete Outcome Contract</DialogTitle>
+              </DialogHeader>
+              <div className="flex flex-col gap-3">
+                <p className="text-sm text-muted-foreground">
+                  Are you sure you want to delete <span className="font-medium text-foreground">{outcome.name}</span>? This will also remove all associated KPIs, events, and invoices. Linked agents will be unlinked but not deleted.
+                </p>
+                <div className="flex justify-end gap-2">
+                  <Button variant="outline" size="sm" onClick={() => setDeleteConfirmOpen(false)} data-testid="button-cancel-delete-detail">
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    disabled={deleteOutcomeMutation.isPending}
+                    onClick={() => deleteOutcomeMutation.mutate()}
+                    data-testid="button-confirm-delete-detail"
+                  >
+                    {deleteOutcomeMutation.isPending ? "Deleting..." : "Delete"}
+                  </Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
         </div>
       </div>
 

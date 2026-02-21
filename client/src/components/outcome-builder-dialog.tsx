@@ -18,6 +18,7 @@ import {
   ExternalLink,
   Bot,
   Loader2,
+  Sparkles,
 } from "lucide-react";
 import {
   Dialog,
@@ -317,6 +318,21 @@ export function OutcomeBuilderDialog({ open, onOpenChange, onSuccess }: OutcomeB
                 ))}
               </div>
             )}
+
+            <div className="border-t pt-3 mt-1">
+              <Button
+                variant="ghost"
+                className="w-full text-muted-foreground hover:text-foreground"
+                onClick={() => {
+                  onOpenChange(false);
+                  navigate("/outcomes/discover");
+                }}
+                data-testid="button-use-ai-assistant"
+              >
+                <Sparkles className="w-4 h-4 mr-1.5" />
+                Use AI Assistant instead
+              </Button>
+            </div>
           </div>
         )}
 

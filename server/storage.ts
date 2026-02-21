@@ -166,6 +166,7 @@ export interface IStorage {
   deleteKpi(id: string): Promise<boolean>;
 
   updateOutcome(id: string, data: Partial<OutcomeContract>): Promise<OutcomeContract | undefined>;
+  deleteOutcome(id: string): Promise<boolean>;
 
   getDeployments(): Promise<Deployment[]>;
   getDeployment(id: string): Promise<Deployment | undefined>;
@@ -699,6 +700,17 @@ export class DatabaseStorage implements IStorage {
   async updateOutcome(id: string, data: Partial<OutcomeContract>) {
     const [updated] = await db.update(outcomeContracts).set(data).where(eq(outcomeContracts.id, id)).returning();
     return updated;
+  }
+
+  async deleteOutcome(id: string) {
+    await db.delete(kpiDefinitions).where(eq(kpiDefinitions.outcomeId, id));
+    await db.delete(outcomeEvents).where(eq(outcomeEvents.outcomeId, id));
+    await db.delete(billingDisputes).where(eq(billingDisputes.outcomeId, id));
+    await db.delete(invoices).where(eq(invoices.outcomeId, id));
+    await db.update(agents).set({ outcomeId: null }).where(eq(agents.outcomeId, id));
+    await db.update(approvals).set({ outcomeId: null }).where(eq(approvals.outcomeId, id));
+    const [deleted] = await db.delete(outcomeContracts).where(eq(outcomeContracts.id, id)).returning();
+    return !!deleted;
   }
 
   async getDeployments() {
