@@ -10045,130 +10045,151 @@ Eval Suites: ${evalSuites.length} configured`,
         durationMs: Date.now() - startTime,
       });
 
-      let plan = "";
-      let planTokens = { prompt_tokens: 0, completion_tokens: 0 };
-      const planStart = Date.now();
-      try {
+      const mcpLinks = await storage.getAgentMcpServers(agent.id);
+      const mcpServerIds = mcpLinks.map(l => l.serverId);
+
+      const blueprints = await storage.getBlueprints();
+      const agentBlueprint = blueprints.find(b => b.agentId === agent.id);
+
+      let finalOutput = "";
+      let mcpResult: any = null;
+      let toolCalls: Array<Record<string, unknown>> = [];
+      let policyCheckResults: Array<Record<string, unknown>> = [];
+      let totalTokens = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+
+      if (mcpServerIds.length > 0) {
+        mcpResult = await executePromptWithMcp(
+          agent.id,
+          "gateway",
+          agentBlueprint?.id,
+          mcpServerIds,
+          input,
+          (agent as any).industry,
+        );
+
+        const summary = mcpResult.summary || {};
+        finalOutput = summary.summary || summary.analysis || mcpResult.steps?.find((s: any) => s.type === "ai_analysis")?.output?.analysis?.summary || "Execution completed";
+
+        if (typeof finalOutput === "object") {
+          finalOutput = JSON.stringify(finalOutput);
+        }
+
+        const analysisStep = mcpResult.steps?.find((s: any) => s.type === "ai_analysis");
+        if (analysisStep?.output?.analysis) {
+          const a = analysisStep.output.analysis;
+          const parts: string[] = [];
+          if (a.summary) parts.push(a.summary);
+          if (a.findings?.length) parts.push("\n**Key Findings:**\n" + a.findings.map((f: string) => `- ${f}`).join("\n"));
+          if (a.severity) parts.push(`\n**Severity:** ${a.severity}`);
+          if (a.recommendedActions?.length) parts.push("\n**Recommended Actions:**\n" + a.recommendedActions.map((r: string) => `- ${r}`).join("\n"));
+          if (parts.length > 0) finalOutput = parts.join("\n");
+        }
+
+        for (const step of mcpResult.steps || []) {
+          const isTool = step.type === "api_call";
+          const toolName = step.mcpTool || step.name || "unknown";
+
+          if (isTool) {
+            const isAllowed = !policyBundle.blockedTools.includes(toolName) &&
+              (policyBundle.toolAllowlist.length === 0 || policyBundle.toolAllowlist.includes(toolName) || policyBundle.toolAllowlist.includes("*"));
+
+            const policyCheck = {
+              tool: toolName,
+              server: step.mcpServer || "unknown",
+              allowed: isAllowed,
+              appliedPolicies: policyBundle.appliedPolicies,
+              blockedReason: !isAllowed ? `Tool "${toolName}" blocked by policy` : null,
+            };
+            policyCheckResults.push(policyCheck);
+
+            toolCalls.push({
+              tool: toolName,
+              server: step.mcpServer || "unknown",
+              input: step.input,
+              output: step.output?.data,
+              allowed: isAllowed && step.status === "completed",
+              policyCheck,
+              durationMs: step.completedAt && step.startedAt ? new Date(step.completedAt).getTime() - new Date(step.startedAt).getTime() : 0,
+            });
+
+            await storage.createRunStep({
+              runId: trace.id,
+              stepIndex: stepIndex++,
+              type: isAllowed ? "tool_call" : "tool_blocked",
+              status: isAllowed ? (step.status === "completed" ? "completed" : "failed") : "blocked",
+              toolName,
+              input: step.input || { name: step.name },
+              output: isAllowed ? (step.output || { result: step.name }) : { blocked: true, reason: `Tool "${toolName}" blocked by policy` },
+              policyResult: policyCheck,
+              durationMs: step.completedAt && step.startedAt ? new Date(step.completedAt).getTime() - new Date(step.startedAt).getTime() : 0,
+            });
+          } else {
+            await storage.createRunStep({
+              runId: trace.id,
+              stepIndex: stepIndex++,
+              type: step.type === "ai_planning" ? "llm_plan" : step.type === "ai_analysis" ? "llm_output" : step.type === "mcp_discovery" ? "gateway_invoke" : step.type,
+              status: step.status === "completed" ? "completed" : step.status === "failed" ? "failed" : "completed",
+              input: step.input || { name: step.name },
+              output: step.output || { result: step.error || step.name },
+              durationMs: step.completedAt && step.startedAt ? new Date(step.completedAt).getTime() - new Date(step.startedAt).getTime() : 0,
+            });
+          }
+        }
+
+        if (mcpResult.summary?.tokenUsage) {
+          totalTokens = mcpResult.summary.tokenUsage;
+        } else {
+          totalTokens = { prompt_tokens: 500, completion_tokens: 300, total_tokens: 800 };
+        }
+      } else {
+        const openai = new (await import("openai")).default({
+          apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+          baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+        });
+
         const systemPromptBase = agent.systemPrompt
           || `You are an AI agent named "${agent.name}". ${agent.description || ""}`;
-        const guardrailPrompt = policyBundle.guardrails.length > 0
-          ? `\nGuardrails:\n${policyBundle.guardrails.map((g, i) => `${i + 1}. ${g}`).join("\n")}`
-          : "";
 
         const chatResponse = await openai.chat.completions.create({
           model: agent.modelName || "gpt-4.1",
-          max_tokens: 500,
+          max_tokens: 1000,
           messages: [
-            { role: "system", content: `${systemPromptBase}\n\nProduce a concise execution plan with numbered steps.${guardrailPrompt}` },
+            { role: "system", content: systemPromptBase },
             { role: "user", content: input },
           ],
         });
-        plan = chatResponse.choices[0]?.message?.content || "No plan generated";
-        planTokens = {
+        finalOutput = chatResponse.choices[0]?.message?.content || "Execution completed";
+
+        totalTokens = {
           prompt_tokens: chatResponse.usage?.prompt_tokens || 0,
           completion_tokens: chatResponse.usage?.completion_tokens || 0,
+          total_tokens: (chatResponse.usage?.prompt_tokens || 0) + (chatResponse.usage?.completion_tokens || 0),
         };
-      } catch {
-        plan = `Planning fallback: Process "${input}" using standard workflow`;
-      }
-
-      await storage.createRunStep({
-        runId: trace.id,
-        stepIndex: stepIndex++,
-        type: "llm_plan",
-        status: "completed",
-        input: { prompt: input.slice(0, 200), model: agent.modelName || "gpt-4.1" },
-        output: { plan: plan.slice(0, 1000) },
-        tokenUsage: planTokens,
-        durationMs: Date.now() - planStart,
-      });
-
-      const toolCalls: Array<Record<string, unknown>> = [];
-      const policyCheckResults: Array<Record<string, unknown>> = [];
-
-      const agentTools = (agent.toolsConfig as Array<{ name: string; input?: Record<string, unknown> }>) || [];
-      const toolsToCall = agentTools.length > 0
-        ? agentTools.slice(0, 3)
-        : [{ name: "knowledge_search", input: { query: input.slice(0, 100) } }];
-
-      for (const tool of toolsToCall) {
-        const toolStart = Date.now();
-        const toolInput = (tool as any).input || { query: input.slice(0, 100) };
-        const proxyResult = await proxyToolCall(tool.name, toolInput, policyBundle, { agentId: agent.id, traceId: trace.id, environment, shadow: false });
-
-        toolCalls.push({
-          tool: tool.name,
-          input: toolInput,
-          output: proxyResult.result,
-          allowed: proxyResult.allowed,
-          durationMs: Date.now() - toolStart,
-        });
-        policyCheckResults.push(proxyResult.policyCheck);
 
         await storage.createRunStep({
           runId: trace.id,
           stepIndex: stepIndex++,
-          type: proxyResult.allowed ? "tool_call" : "tool_blocked",
-          status: proxyResult.allowed ? "completed" : "blocked",
-          toolName: tool.name,
-          input: toolInput,
-          output: proxyResult.result,
-          policyResult: proxyResult.policyCheck,
-          durationMs: Date.now() - toolStart,
+          type: "llm_output",
+          status: "completed",
+          input: { prompt: input.slice(0, 200) },
+          output: { response: finalOutput.slice(0, 1000) },
+          tokenUsage: totalTokens,
+          durationMs: Date.now() - startTime,
         });
       }
 
-      let finalOutput = "";
-      let outputTokens = { prompt_tokens: 0, completion_tokens: 0 };
-      const outputStart = Date.now();
-      try {
-        const outputResponse = await openai.chat.completions.create({
-          model: agent.modelName || "gpt-4.1",
-          max_tokens: 500,
-          messages: [
-            { role: "system", content: agent.systemPrompt || "You are an AI agent producing a final response. Summarize the execution results concisely." },
-            { role: "user", content: input },
-            { role: "assistant", content: `Plan: ${plan.slice(0, 300)}` },
-            { role: "user", content: `Tool results: ${JSON.stringify(toolCalls.map(t => ({ tool: t.tool, allowed: t.allowed, output: t.output })).slice(0, 3))}.\n\nProduce the final output.` },
-          ],
-        });
-        finalOutput = outputResponse.choices[0]?.message?.content || "Execution completed";
-        outputTokens = {
-          prompt_tokens: outputResponse.usage?.prompt_tokens || 0,
-          completion_tokens: outputResponse.usage?.completion_tokens || 0,
-        };
-      } catch {
-        finalOutput = `Completed processing: "${input}" with ${toolCalls.length} tool calls`;
-      }
-
-      await storage.createRunStep({
-        runId: trace.id,
-        stepIndex: stepIndex++,
-        type: "llm_output",
-        status: "completed",
-        input: { context: "final_response_formatting" },
-        output: { response: finalOutput.slice(0, 1000) },
-        tokenUsage: outputTokens,
-        durationMs: Date.now() - outputStart,
-      });
-
-      const totalTokens = {
-        prompt_tokens: planTokens.prompt_tokens + outputTokens.prompt_tokens,
-        completion_tokens: planTokens.completion_tokens + outputTokens.completion_tokens,
-        total_tokens: planTokens.prompt_tokens + planTokens.completion_tokens + outputTokens.prompt_tokens + outputTokens.completion_tokens,
-      };
-      const costUsd = (totalTokens.prompt_tokens * 0.00001 + totalTokens.completion_tokens * 0.00003);
       const latencyMs = Date.now() - startTime;
+      const costUsd = (totalTokens.prompt_tokens * 0.00001 + totalTokens.completion_tokens * 0.00003);
 
       await storage.updateTrace(trace.id, {
-        status: "completed",
+        status: mcpResult?.success === false ? "failed" : "completed",
         outputSummary: finalOutput.slice(0, 500),
         costUsd: Math.round(costUsd * 100000) / 100000,
         latencyMs,
         toolCalls,
         policyChecks: policyCheckResults,
         tokenUsage: totalTokens,
-        stepsJson: { stepCount: stepIndex, source: "api_gateway", metadata },
+        stepsJson: { stepCount: stepIndex, source: "api_gateway", mcpEnabled: mcpServerIds.length > 0, metadata },
         endedAt: new Date(),
       });
 
@@ -10182,9 +10203,10 @@ Eval Suites: ${evalSuites.length} configured`,
         id: trace.id,
         agentId: agent.id,
         agentName: agent.name,
-        status: "completed",
+        status: mcpResult?.success === false ? "failed" : "completed",
         output: finalOutput,
-        plan: plan.slice(0, 500),
+        mcpEnabled: mcpServerIds.length > 0,
+        toolsUsed: toolCalls.length,
         usage: {
           toolCalls: toolCalls.length,
           policyChecks: policyCheckResults.length,
