@@ -444,11 +444,15 @@ export default function OutcomeDiscover() {
       const res = await apiRequest("POST", "/api/outcomes/with-kpis", payload);
       return res.json();
     },
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
       queryClient.invalidateQueries({ queryKey: ["/api/kpis"] });
       const outcomeId = data?.outcome?.id;
       if (outcomeId) {
+        try {
+          await apiRequest("PATCH", `/api/outcomes/${outcomeId}`, { status: "awaiting_agent_plan" });
+          queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
+        } catch {}
         setFormCreatedOutcome(data.outcome);
         setFormStep(3);
       }
@@ -500,12 +504,16 @@ export default function OutcomeDiscover() {
       });
       return outcome;
     },
-    onSuccess: (outcome: OutcomeContract) => {
+    onSuccess: async (outcome: OutcomeContract) => {
       queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
       queryClient.invalidateQueries({ queryKey: ["/api/kpis"] });
       queryClient.invalidateQueries({ queryKey: ["/api/approvals"] });
       setCreatedOutcome(outcome);
       toast({ title: "Outcome Contract created", description: `"${outcome.name}" has been created with KPIs.` });
+      try {
+        await apiRequest("PATCH", `/api/outcomes/${outcome.id}`, { status: "awaiting_agent_plan" });
+        queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
+      } catch {}
     },
     onError: (err: Error) => {
       toast({ title: "Failed to create outcome", description: err.message, variant: "destructive" });
@@ -1077,64 +1085,22 @@ export default function OutcomeDiscover() {
                   </div>
                   <p className="text-lg font-medium" data-testid="text-form-success">Outcome Contract Created</p>
                   <p className="text-sm text-muted-foreground text-center max-w-md">
-                    Your outcome contract and KPIs have been saved. The next step is for an Agent Engineer
-                    to generate an Agent Development Plan and create the agents that will deliver your KPIs.
+                    Your outcome contract and KPIs have been saved. Continue to generate an AI-powered agent development plan.
                   </p>
                 </div>
 
-                {!formPlanRequested ? (
-                  <Card className="border-primary/20 bg-primary/5">
-                    <CardContent className="flex items-start gap-4 p-4">
-                      <div className="flex items-center justify-center w-10 h-10 rounded-md bg-primary/10 shrink-0">
-                        <Bot className="w-5 h-5 text-primary" />
-                      </div>
-                      <div className="flex flex-col gap-2 flex-1">
-                        <p className="text-sm font-medium">Request Agent Development Plan</p>
-                        <p className="text-xs text-muted-foreground">
-                          Flag this outcome as ready for agent planning. An Agent Engineer will be notified
-                          to generate AI-driven agent proposals, configure workflows, and assign tools.
-                        </p>
-                        <Button
-                          size="sm"
-                          onClick={async () => {
-                            try {
-                              await apiRequest("PATCH", `/api/outcomes/${formCreatedOutcome.id}`, { status: "awaiting_agent_plan" });
-                              queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
-                              setFormPlanRequested(true);
-                              toast({ title: "Agent plan requested" });
-                            } catch (err: any) {
-                              toast({ title: "Failed to request agent plan", description: err.message, variant: "destructive" });
-                            }
-                          }}
-                          className="w-fit"
-                          data-testid="button-form-request-plan"
-                        >
-                          <Bot className="w-4 h-4 mr-1.5" /> Request Agent Plan
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ) : (
-                  <Card className="border-emerald-500/20 bg-emerald-500/5">
-                    <CardContent className="flex items-center gap-3 p-4">
-                      <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
-                      <div className="flex flex-col gap-0.5">
-                        <p className="text-sm font-medium" data-testid="text-form-plan-requested">Agent Plan Requested</p>
-                        <p className="text-xs text-muted-foreground">
-                          This outcome is now marked as awaiting agent planning. Agent Engineers can view it on the Outcomes page or the outcome detail page to generate proposals.
-                        </p>
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
-
-                <div className="flex items-center justify-center gap-3 pt-2">
-                  <Button variant="outline" onClick={() => { setFormStep(1); setFormCreatedOutcome(null); setFormPlanRequested(false); setFormName(""); setFormDescription(""); setFormRiskTier("MEDIUM"); setFormPricingModel("PER_OUTCOME_EVENT"); setFormPricePerUnit(0); setFormRiskThreshold(0.8); setFormMaxDriftPercent(10); setFormSlaDescription(""); setFormKpis([]); }} data-testid="button-form-new">
-                    Create Another
+                <div className="flex flex-col items-center gap-3 pt-2">
+                  <Button onClick={() => navigate(`/outcomes/${formCreatedOutcome.id}?tab=agent-map`)} data-testid="button-form-continue-to-agents" className="w-full max-w-sm">
+                    <Sparkles className="w-4 h-4 mr-1.5" /> Continue to Agent Plan <ArrowRight className="w-4 h-4 ml-1.5" />
                   </Button>
-                  <Button onClick={() => navigate(`/outcomes/${formCreatedOutcome.id}`)} data-testid="button-form-view-outcome">
-                    View Outcome <ArrowRight className="w-4 h-4 ml-1.5" />
-                  </Button>
+                  <div className="flex items-center gap-3">
+                    <Button variant="ghost" size="sm" onClick={() => { setFormStep(1); setFormCreatedOutcome(null); setFormPlanRequested(false); setFormName(""); setFormDescription(""); setFormRiskTier("MEDIUM"); setFormPricingModel("PER_OUTCOME_EVENT"); setFormPricePerUnit(0); setFormRiskThreshold(0.8); setFormMaxDriftPercent(10); setFormSlaDescription(""); setFormKpis([]); }} data-testid="button-form-new" className="text-muted-foreground">
+                      Create Another
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => navigate(`/outcomes/${formCreatedOutcome.id}`)} data-testid="button-form-view-outcome" className="text-muted-foreground">
+                      View Details
+                    </Button>
+                  </div>
                 </div>
               </div>
             )}
@@ -1768,39 +1734,26 @@ export default function OutcomeDiscover() {
                           <span className="text-xs text-muted-foreground">{createdOutcome.name}</span>
                         </div>
                       </div>
-                      {!planRequested ? (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="w-full"
-                          onClick={async () => {
-                            try {
-                              await apiRequest("PATCH", `/api/outcomes/${createdOutcome.id}`, { status: "awaiting_agent_plan" });
-                              queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
-                              setPlanRequested(true);
-                              toast({ title: "Agent Plan Requested" });
-                            } catch {
-                              toast({ title: "Failed to request agent plan", variant: "destructive" });
-                            }
-                          }}
-                          data-testid="button-discover-request-agent-plan"
-                        >
-                          <Bot className="w-3.5 h-3.5 mr-1.5" /> Request Agent Plan
-                        </Button>
-                      ) : (
-                        <div className="flex items-center gap-2 p-2 rounded-md bg-blue-500/10 border border-blue-500/20">
-                          <CheckCircle className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-                          <span className="text-xs text-blue-700 dark:text-blue-300" data-testid="text-discover-plan-requested">Agent Plan Requested</span>
-                        </div>
-                      )}
+                      <p className="text-xs text-muted-foreground">
+                        Your outcome contract is ready. Continue to generate an AI-powered agent development plan.
+                      </p>
                       <Button
                         variant="default"
                         size="sm"
                         className="w-full"
+                        onClick={() => navigate(`/outcomes/${createdOutcome.id}?tab=agent-map`)}
+                        data-testid="button-discover-continue-to-agents"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 mr-1.5" /> Continue to Agent Plan <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="w-full text-muted-foreground"
                         onClick={() => navigate(`/outcomes/${createdOutcome.id}`)}
                         data-testid="button-discover-view-outcome"
                       >
-                        <ArrowRight className="w-3.5 h-3.5 mr-1.5" /> View Outcome
+                        View Outcome Details
                       </Button>
                     </CardContent>
                   </Card>

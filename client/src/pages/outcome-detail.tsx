@@ -342,12 +342,73 @@ function KpiGaugeRing({
   );
 }
 
+function OutcomeProgressStepper({ outcome, hasAgentPlan, hasDeployedAgents }: { outcome: OutcomeContract; hasAgentPlan: boolean; hasDeployedAgents: boolean }) {
+  const steps = [
+    {
+      label: "Define Outcome",
+      description: "Contract & KPIs",
+      icon: Target,
+      complete: true,
+    },
+    {
+      label: "Agent Plan",
+      description: "Generate & select agents",
+      icon: Bot,
+      complete: hasAgentPlan,
+      active: outcome.status === "awaiting_agent_plan" && !hasAgentPlan,
+    },
+    {
+      label: "Deploy Agents",
+      description: "Create & activate",
+      icon: Zap,
+      complete: hasDeployedAgents,
+      active: hasAgentPlan && !hasDeployedAgents,
+    },
+  ];
+
+  return (
+    <div className="flex items-center gap-2 w-full" data-testid="stepper-outcome-progress">
+      {steps.map((step, i) => {
+        const StepIcon = step.icon;
+        const isActive = step.active && !step.complete;
+        const isComplete = step.complete;
+        return (
+          <div key={i} className="flex items-center gap-2 flex-1 min-w-0">
+            {i > 0 && (
+              <div className={`h-px flex-shrink-0 w-6 ${isComplete || isActive ? "bg-primary/40" : "bg-border"}`} />
+            )}
+            <div className={`flex items-center gap-2 rounded-lg px-3 py-2 flex-1 min-w-0 border transition-colors ${
+              isActive ? "border-primary/30 bg-primary/5" : isComplete ? "border-emerald-500/20 bg-emerald-500/5" : "border-border bg-muted/30"
+            }`} data-testid={`step-${step.label.toLowerCase().replace(/\s/g, "-")}`}>
+              <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${
+                isComplete ? "bg-emerald-500/20" : isActive ? "bg-primary/20" : "bg-muted"
+              }`}>
+                {isComplete ? (
+                  <CheckCircle className="w-4 h-4 text-emerald-500" />
+                ) : (
+                  <StepIcon className={`w-3.5 h-3.5 ${isActive ? "text-primary" : "text-muted-foreground"}`} />
+                )}
+              </div>
+              <div className="flex flex-col min-w-0">
+                <span className={`text-xs font-medium truncate ${isActive ? "text-primary" : isComplete ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`}>{step.label}</span>
+                <span className="text-[10px] text-muted-foreground truncate">{step.description}</span>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function OutcomeDetail() {
   const [, params] = useRoute("/outcomes/:id");
   const outcomeId = params?.id;
   const { toast } = useToast();
   const { industry } = useIndustry();
-  const [activeTab, setActiveTab] = useState("kpi-delivery");
+  const searchParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+  const initialTab = searchParams?.get("tab") === "agent-map" ? "agent-map" : "kpi-delivery";
+  const [activeTab, setActiveTab] = useState(initialTab);
   const [reportOpen, setReportOpen] = useState(false);
   const [reportGenerating, setReportGenerating] = useState(false);
   const [reportContent, setReportContent] = useState<string | null>(null);
@@ -753,7 +814,20 @@ export default function OutcomeDetail() {
     return <Minus className="w-3.5 h-3.5 text-muted-foreground" />;
   };
 
+  const { data: pageProposalData } = useQuery<any>({
+    queryKey: ["/api/agent-proposals", outcomeId],
+    queryFn: async () => {
+      const res = await fetch(`/api/agent-proposals/${outcomeId}`);
+      if (res.status === 404) return null;
+      if (!res.ok) throw new Error("Failed to load");
+      return res.json();
+    },
+    enabled: !!outcomeId,
+  });
+  const hasAgentPlan = !!pageProposalData?.orchestrator || (pageProposalData?.workers?.length > 0);
+
   const boundAgents = allAgents?.filter(a => a.outcomeId === outcomeId) || [];
+  const hasDeployedAgents = boundAgents.length > 0;
   const outcomeApprovals = allApprovals?.filter(a => a.objectId === outcomeId) || [];
   const pendingApprovals = outcomeApprovals.filter(a => a.status === "pending");
 
@@ -1024,6 +1098,8 @@ export default function OutcomeDetail() {
         />
       </div>
 
+      <OutcomeProgressStepper outcome={outcome} hasAgentPlan={hasAgentPlan} hasDeployedAgents={hasDeployedAgents} />
+
       <Card data-testid="card-regulatory-impact">
         <CardContent className="p-4">
           <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -1163,16 +1239,16 @@ export default function OutcomeDetail() {
         </DialogContent>
       </Dialog>
 
-      {outcome.status === "awaiting_agent_plan" && (
+      {outcome.status === "awaiting_agent_plan" && !hasAgentPlan && (
         <Card className="border-blue-500/30 bg-blue-500/5" data-testid="banner-awaiting-agent-plan">
           <CardContent className="flex items-center gap-4 p-4">
             <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center shrink-0">
               <Bot className="w-5 h-5 text-blue-500" />
             </div>
             <div className="flex flex-col gap-0.5 flex-1 min-w-0">
-              <p className="text-sm font-medium" data-testid="text-awaiting-plan-title">This outcome needs an Agent Development Plan</p>
+              <p className="text-sm font-medium" data-testid="text-awaiting-plan-title">Next step: Generate an Agent Development Plan</p>
               <p className="text-xs text-muted-foreground">
-                Generate an AI-powered development plan and create agents to deliver your KPIs.
+                AI will analyze your outcome contract and KPIs to propose an orchestrated multi-agent pipeline.
               </p>
             </div>
             <Button
@@ -1180,7 +1256,7 @@ export default function OutcomeDetail() {
               onClick={() => setActiveTab("agent-map")}
               data-testid="button-go-to-agent-proposals"
             >
-              <Bot className="w-3.5 h-3.5 mr-1.5" /> Go to Agent Proposals
+              <Sparkles className="w-3.5 h-3.5 mr-1.5" /> Generate Agent Plan
             </Button>
           </CardContent>
         </Card>
@@ -1189,7 +1265,7 @@ export default function OutcomeDetail() {
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <TabsList className="flex-wrap">
           <TabsTrigger value="kpi-delivery" data-testid="tab-kpi-delivery">KPI Delivery</TabsTrigger>
-          <TabsTrigger value="agent-map" data-testid="tab-agent-map">Agent Contribution Map</TabsTrigger>
+          <TabsTrigger value="agent-map" data-testid="tab-agent-map">Agent Plan</TabsTrigger>
           <TabsTrigger value="financial-ledger" data-testid="tab-financial-ledger">Financial Ledger</TabsTrigger>
           <TabsTrigger value="evidence-vault" data-testid="tab-evidence-vault">Evidence Vault</TabsTrigger>
           <TabsTrigger value="risk-remediation" data-testid="tab-risk-remediation">Risk & Remediation</TabsTrigger>
@@ -1477,13 +1553,8 @@ export default function OutcomeDetail() {
           </div>
         </TabsContent>
 
-        {/* Tab 2: Agent Contribution Map */}
+        {/* Tab 2: Agent Plan & Contributions */}
         <TabsContent value="agent-map" className="space-y-6" data-testid="tabcontent-agent-map">
-          <div>
-            <h2 className="text-lg font-semibold">Agent Contribution Map</h2>
-            <p className="text-sm text-muted-foreground">Value allocation, health scores, cost-to-serve, and capability breakdown</p>
-          </div>
-
           <AgentProposalsTab outcome={outcome} kpis={kpis || []} />
 
           {!agentContributions ? (
@@ -3130,26 +3201,17 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
 
   if (!generated) {
     return (
-      <Card>
-        <CardContent className="flex flex-col items-center justify-center py-12 gap-4">
-          <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center">
-            <Bot className="w-7 h-7 text-primary" />
+      <Card className={isAwaitingPlan ? "border-primary/20 bg-primary/[0.02]" : ""}>
+        <CardContent className="flex flex-col items-center justify-center py-10 gap-5">
+          <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
+            <Sparkles className="w-8 h-8 text-primary" />
           </div>
-          <div className="text-center flex flex-col gap-1">
-            <h3 className="text-base font-semibold">Agent Development Plan</h3>
-            <p className="text-sm text-muted-foreground max-w-md">
-              Let AI analyze this outcome contract and its KPIs to propose an orchestrated multi-agent pipeline — with an orchestrator, worker agents, workflows, tools, and autonomy levels already configured.
+          <div className="text-center flex flex-col gap-1.5">
+            <h3 className="text-lg font-semibold">Generate Agent Development Plan</h3>
+            <p className="text-sm text-muted-foreground max-w-lg">
+              AI will analyze your outcome contract and {kpis.length} KPI{kpis.length !== 1 ? "s" : ""} to propose a multi-agent pipeline — complete with an orchestrator, worker agents, workflows, tools, and autonomy levels.
             </p>
           </div>
-          {isAwaitingPlan && (
-            <div className="flex items-center gap-2 p-3 rounded-md bg-blue-500/5 border border-blue-500/10 max-w-md flex-wrap" data-testid="notice-awaiting-plan">
-              <Bot className="w-4 h-4 text-blue-500 shrink-0" />
-              <div className="flex flex-col gap-0.5">
-                <span className="text-xs font-medium">Agent Plan Requested</span>
-                <span className="text-[11px] text-muted-foreground">The Business Owner has requested an Agent Development Plan for this outcome. Generate proposals below.</span>
-              </div>
-            </div>
-          )}
           {isPendingValidation && (
             <div className="flex items-center gap-2 p-3 rounded-md bg-amber-500/5 border border-amber-500/10 max-w-md flex-wrap" data-testid="notice-pending-validation">
               <Shield className="w-4 h-4 text-amber-500 shrink-0" />
@@ -3165,15 +3227,15 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
               <span className="text-xs text-green-700 dark:text-green-300">Outcome validated by expert — ready for agent creation</span>
             </div>
           )}
-          <Button onClick={generateProposals} disabled={generating} data-testid="button-generate-proposals">
+          <Button size="lg" onClick={generateProposals} disabled={generating} data-testid="button-generate-proposals" className="px-8">
             {generating ? (
               <>
-                <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
-                Analyzing outcome...
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Analyzing outcome & KPIs...
               </>
             ) : (
               <>
-                <Sparkles className="w-4 h-4 mr-1.5" />
+                <Sparkles className="w-4 h-4 mr-2" />
                 Generate Agent Development Plan
               </>
             )}
