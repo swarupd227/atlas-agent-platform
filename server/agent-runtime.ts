@@ -19,6 +19,7 @@ interface RuntimeAgent {
   intervalMs: number;
   industry?: string;
   prompt: string;
+  agentSystemPrompt?: string;
 }
 
 const activeAgents = new Map<string, { timer: NodeJS.Timeout; agent: RuntimeAgent }>();
@@ -83,6 +84,7 @@ export async function executePromptWithMcp(
   mcpServerIds: string[],
   prompt: string,
   industry?: string,
+  agentSystemPrompt?: string,
 ): Promise<{ steps: any[]; success: boolean; summary: any }> {
   const startTime = Date.now();
   const steps: any[] = [];
@@ -127,12 +129,15 @@ export async function executePromptWithMcp(
   });
 
   const openaiTools = buildOpenAITools(availableTools);
-  const systemMessage = `You are an autonomous agent executing a task. You have access to MCP (Model Context Protocol) server tools.
+  const baseInstructions = `You have access to MCP (Model Context Protocol) server tools for executing real API calls.
 Your job is to fulfill the user's prompt by calling the appropriate tools and then analyzing the results.
-Industry context: ${industry || "general"}.
 Think step-by-step about what data you need and which tools to call.
 Always call at least one tool if relevant tools are available.
 After receiving tool results, provide a structured analysis with key findings, severity/risk assessment if applicable, and recommended actions.`;
+
+  const systemMessage = agentSystemPrompt
+    ? `${agentSystemPrompt}\n\n## MCP TOOL EXECUTION INSTRUCTIONS\n${baseInstructions}`
+    : `You are an autonomous agent executing a task.\nIndustry context: ${industry || "general"}.\n\n${baseInstructions}`;
 
   let toolCallResults: Array<{
     toolName: string;
@@ -369,6 +374,7 @@ async function executeAgentCycle(agent: RuntimeAgent) {
       agent.mcpServerIds,
       agent.prompt,
       agent.industry,
+      agent.agentSystemPrompt,
     );
 
     await storage.updateAgentRuntimeRun(runtimeRun.id, {
@@ -414,7 +420,7 @@ async function executeAgentCycle(agent: RuntimeAgent) {
   }
 }
 
-export async function startAgentRuntime(deploymentId: string): Promise<{ started: boolean; message: string }> {
+export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?: string): Promise<{ started: boolean; message: string }> {
   if (activeAgents.has(deploymentId)) {
     return { started: false, message: "Agent runtime already running for this deployment" };
   }
@@ -454,6 +460,7 @@ export async function startAgentRuntime(deploymentId: string): Promise<{ started
     intervalMs,
     industry: deployment.industry || (agent as any).industry,
     prompt,
+    agentSystemPrompt,
   };
 
   if (intervalMinutes > 0) {
@@ -506,7 +513,12 @@ export async function autoResumeRuntimes(): Promise<void> {
 
     for (const dep of deployed) {
       try {
-        const result = await startAgentRuntime(dep.id);
+        let resumePrompt: string | undefined;
+        const resumeAgent = await storage.getAgent(dep.agentId);
+        if (resumeAgent?.systemPrompt) {
+          resumePrompt = resumeAgent.systemPrompt;
+        }
+        const result = await startAgentRuntime(dep.id, resumePrompt);
         if (result.started) {
           console.log(`[agent-runtime] Auto-resumed: ${dep.agentName || dep.agentId} (${dep.id})`);
         } else {

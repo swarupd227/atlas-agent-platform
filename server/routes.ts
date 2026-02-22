@@ -10057,6 +10057,8 @@ Eval Suites: ${evalSuites.length} configured`,
       let policyCheckResults: Array<Record<string, unknown>> = [];
       let totalTokens = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 
+      const richAgentPrompt = buildAgentSystemPrompt(agent);
+
       if (mcpServerIds.length > 0) {
         mcpResult = await executePromptWithMcp(
           agent.id,
@@ -10065,6 +10067,7 @@ Eval Suites: ${evalSuites.length} configured`,
           mcpServerIds,
           input,
           (agent as any).industry,
+          richAgentPrompt,
         );
 
         const summary = mcpResult.summary || {};
@@ -10147,8 +10150,7 @@ Eval Suites: ${evalSuites.length} configured`,
           baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
         });
 
-        const systemPromptBase = agent.systemPrompt
-          || `You are an AI agent named "${agent.name}". ${agent.description || ""}`;
+        const systemPromptBase = richAgentPrompt;
 
         const chatResponse = await openai.chat.completions.create({
           model: agent.modelName || "gpt-4.1",
@@ -16974,9 +16976,12 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       }
 
       let mcpServerIds: string[] = [];
+      let richPrompt: string | undefined;
       if (agentId) {
         const mcpLinks = await storage.getAgentMcpServers(agentId);
         mcpServerIds = mcpLinks.map(l => l.serverId);
+        const testAgent = await storage.getAgent(agentId);
+        if (testAgent) richPrompt = buildAgentSystemPrompt(testAgent);
       }
 
       const result = await executePromptWithMcp(
@@ -16986,6 +16991,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         mcpServerIds,
         prompt,
         industry,
+        richPrompt,
       );
 
       res.json({
@@ -17052,7 +17058,9 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         deployedAt: new Date(),
       });
 
-      const runtimeResult = await startAgentRuntime(req.params.id);
+      const deployAgent = await storage.getAgent(deployment.agentId);
+      const richSystemPrompt = deployAgent ? buildAgentSystemPrompt(deployAgent) : undefined;
+      const runtimeResult = await startAgentRuntime(req.params.id, richSystemPrompt);
       console.log(`[deploy] Agent runtime: ${runtimeResult.message}`);
 
       res.json({ ...updated, runtimeStarted: runtimeResult.started, runtimeMessage: runtimeResult.message });
@@ -17063,7 +17071,13 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
 
   app.post("/api/deployments/:id/start-runtime", async (req, res) => {
     try {
-      const result = await startAgentRuntime(req.params.id);
+      const dep = await storage.getDeployment(req.params.id);
+      let richPrompt: string | undefined;
+      if (dep) {
+        const ag = await storage.getAgent(dep.agentId);
+        if (ag) richPrompt = buildAgentSystemPrompt(ag);
+      }
+      const result = await startAgentRuntime(req.params.id, richPrompt);
       res.json(result);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -17151,6 +17165,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         inputConfig: { prompt },
       });
 
+      const execRichPrompt = buildAgentSystemPrompt(agent);
       const result = await executePromptWithMcp(
         deployment.agentId,
         deployment.id,
@@ -17158,6 +17173,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         mcpServerIds,
         prompt,
         deployment.industry || (agent as any).industry,
+        execRichPrompt,
       );
 
       await storage.updateAgentRuntimeRun(runtimeRun.id, {
