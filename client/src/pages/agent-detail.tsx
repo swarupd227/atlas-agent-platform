@@ -6918,6 +6918,7 @@ function AgentApiGateway({ agent }: { agent: any }) {
   const [tryItResult, setTryItResult] = useState<any>(null);
   const [newKeyName, setNewKeyName] = useState("");
   const [createdKey, setCreatedKey] = useState<string | null>(null);
+  const [tryItApiKey, setTryItApiKey] = useState("");
 
   const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
   const gatewayEndpoint = `${baseUrl}/api/gateway/v1/invoke/${agent.id}`;
@@ -6934,6 +6935,7 @@ function AgentApiGateway({ agent }: { agent: any }) {
     },
     onSuccess: (data) => {
       setCreatedKey(data.key);
+      setTryItApiKey(data.key);
       setNewKeyName("");
       queryClient.invalidateQueries({ queryKey: ["/api/agents", agent.id, "api-keys"] });
       toast({ title: "API key created", description: "Copy the key now — it won't be shown again." });
@@ -7157,70 +7159,72 @@ print(result["output"])`;
           </div>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
-          {activeKeys.length === 0 ? (
-            <p className="text-xs text-muted-foreground text-center py-4">
-              Create an API key first to test the gateway.
-            </p>
-          ) : (
-            <>
-              <Textarea
-                placeholder="Enter your input prompt..."
-                value={tryItInput}
-                onChange={(e) => setTryItInput(e.target.value)}
-                className="min-h-[80px] text-xs font-mono"
-                data-testid="textarea-try-it-input"
-              />
-              <Button
-                size="sm"
-                className="self-end text-xs"
-                disabled={!tryItInput.trim() || invokeMutation.isPending}
-                onClick={() => {
-                  const storedKey = createdKey || "";
-                  if (!storedKey) {
-                    toast({
-                      title: "API key needed",
-                      description: "Create a new API key and copy it, then try again. The Try It console uses the most recently created key.",
-                      variant: "destructive",
-                    });
-                    return;
-                  }
-                  invokeMutation.mutate({ input: tryItInput, apiKey: storedKey });
-                }}
-                data-testid="btn-try-invoke"
-              >
-                {invokeMutation.isPending ? (
-                  <><Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> Running...</>
-                ) : (
-                  <><Play className="w-3.5 h-3.5 mr-1" /> Invoke Agent</>
-                )}
-              </Button>
-              {tryItResult && (
-                <div className="flex flex-col gap-2 mt-2" data-testid="try-it-result">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-medium text-muted-foreground">Response</span>
-                    {tryItResult.usage && (
-                      <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-                        <span>{tryItResult.usage.latencyMs}ms</span>
-                        <span>${tryItResult.usage.costUsd?.toFixed(5)}</span>
-                        <span>{tryItResult.usage.tokens?.total_tokens} tokens</span>
-                      </div>
-                    )}
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[11px] font-medium text-muted-foreground">API Key</span>
+            <Input
+              type="password"
+              placeholder="Paste your API key here (nous_...)"
+              value={tryItApiKey}
+              onChange={(e) => setTryItApiKey(e.target.value)}
+              className="h-8 text-xs font-mono"
+              data-testid="input-try-it-api-key"
+            />
+            {!tryItApiKey && (
+              <p className="text-[10px] text-muted-foreground">
+                Create an API key above and it will be auto-filled, or paste an existing key.
+              </p>
+            )}
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[11px] font-medium text-muted-foreground">Input Prompt</span>
+            <Textarea
+              placeholder="Enter your input prompt..."
+              value={tryItInput}
+              onChange={(e) => setTryItInput(e.target.value)}
+              className="min-h-[80px] text-xs font-mono"
+              data-testid="textarea-try-it-input"
+            />
+          </div>
+          <Button
+            size="sm"
+            className="self-end text-xs"
+            disabled={!tryItInput.trim() || !tryItApiKey.trim() || invokeMutation.isPending}
+            onClick={() => {
+              invokeMutation.mutate({ input: tryItInput, apiKey: tryItApiKey });
+            }}
+            data-testid="btn-try-invoke"
+          >
+            {invokeMutation.isPending ? (
+              <><Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> Running...</>
+            ) : (
+              <><Play className="w-3.5 h-3.5 mr-1" /> Invoke Agent</>
+            )}
+          </Button>
+          {tryItResult && (
+            <div className="flex flex-col gap-2 mt-2" data-testid="try-it-result">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-medium text-muted-foreground">Response</span>
+                {tryItResult.usage && (
+                  <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                    <span>{tryItResult.usage.latencyMs}ms</span>
+                    <span>${tryItResult.usage.costUsd?.toFixed(5)}</span>
+                    <span>{tryItResult.usage.tokens?.total_tokens} tokens</span>
                   </div>
-                  {tryItResult.error ? (
-                    <div className="p-3 bg-destructive/10 text-destructive text-xs rounded-md">
-                      {tryItResult.error}: {tryItResult.message}
-                    </div>
-                  ) : (
-                    <div className="p-3 bg-muted/30 rounded-md">
-                      <p className="text-xs whitespace-pre-wrap" data-testid="text-try-it-output">{tryItResult.output}</p>
-                    </div>
-                  )}
-                  {tryItResult.id && (
-                    <span className="text-[10px] text-muted-foreground">Trace ID: {tryItResult.id}</span>
-                  )}
+                )}
+              </div>
+              {tryItResult.error ? (
+                <div className="p-3 bg-destructive/10 text-destructive text-xs rounded-md">
+                  {tryItResult.error}: {tryItResult.message}
+                </div>
+              ) : (
+                <div className="p-3 bg-muted/30 rounded-md">
+                  <p className="text-xs whitespace-pre-wrap" data-testid="text-try-it-output">{tryItResult.output}</p>
                 </div>
               )}
-            </>
+              {tryItResult.id && (
+                <span className="text-[10px] text-muted-foreground">Trace ID: {tryItResult.id}</span>
+              )}
+            </div>
           )}
         </CardContent>
       </Card>

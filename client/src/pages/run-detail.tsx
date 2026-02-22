@@ -39,6 +39,7 @@ import {
   ToggleRight,
   Package,
   AppWindow,
+  KeyRound,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -55,6 +56,7 @@ interface RunWithSteps extends RunTrace {
 }
 
 const stepTypeConfig: Record<string, { icon: typeof Shield; label: string; color: string }> = {
+  gateway_auth: { icon: KeyRound, label: "Gateway Auth", color: "text-cyan-500" },
   policy_resolve: { icon: ShieldCheck, label: "Policy Resolution", color: "text-blue-500" },
   run_started: { icon: Play, label: "Run Started", color: "text-emerald-500" },
   llm_plan: { icon: Brain, label: "LLM Planning", color: "text-purple-500" },
@@ -62,6 +64,7 @@ const stepTypeConfig: Record<string, { icon: typeof Shield; label: string; color
   tool_blocked: { icon: Ban, label: "Tool Blocked", color: "text-red-500" },
   llm_output: { icon: FileText, label: "LLM Output", color: "text-purple-500" },
   run_completed: { icon: CheckCircle, label: "Run Completed", color: "text-emerald-500" },
+  gateway_invoke: { icon: Globe, label: "Gateway Invoke", color: "text-cyan-600" },
 };
 
 const mcpMethodConfig: Record<string, { icon: typeof Server; label: string; color: string }> = {

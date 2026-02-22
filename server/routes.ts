@@ -10214,6 +10214,12 @@ Eval Suites: ${evalSuites.length} configured`,
         return res.status(401).json({ error: "unauthorized", message: "Invalid API key" });
       }
 
+      if (apiKey.expiresAt && new Date(apiKey.expiresAt) < new Date()) {
+        return res.status(401).json({ error: "expired", message: "API key has expired" });
+      }
+
+      storage.updateAgentApiKey(apiKey.id, { lastUsedAt: new Date() });
+
       const agent = await storage.getAgent(req.params.agentId);
       if (!agent) return res.status(404).json({ error: "not_found", message: "Agent not found" });
 
