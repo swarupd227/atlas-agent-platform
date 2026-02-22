@@ -235,6 +235,7 @@ export interface IStorage {
   getEvalRunsBySuite(suiteId: string): Promise<EvalRun[]>;
   getAllEvalRuns(): Promise<EvalRun[]>;
   createEvalRun(run: InsertEvalRun): Promise<EvalRun>;
+  updateEvalRun(id: string, data: Partial<InsertEvalRun>): Promise<EvalRun | undefined>;
   getEvalSuitesBySkill(skillId: string): Promise<EvalSuite[]>;
   getEvalRunsBySkill(skillId: string): Promise<EvalRun[]>;
   getLatestEvalRunBySkill(skillId: string): Promise<EvalRun | undefined>;
@@ -1004,6 +1005,11 @@ export class DatabaseStorage implements IStorage {
   async createEvalRun(run: InsertEvalRun) {
     const [created] = await db.insert(evalRuns).values(run).returning();
     return created;
+  }
+
+  async updateEvalRun(id: string, data: Partial<InsertEvalRun>) {
+    const [updated] = await db.update(evalRuns).set(data).where(eq(evalRuns.id, id)).returning();
+    return updated;
   }
 
   async getEvalSuitesBySkill(skillId: string) {

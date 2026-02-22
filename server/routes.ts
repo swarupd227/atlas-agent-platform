@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import crypto from "crypto";
 import { storage } from "./storage";
 import { db } from "./db";
 import { eq, desc } from "drizzle-orm";
@@ -299,14 +300,51 @@ export async function registerRoutes(
       const kpiTimeSeries = kpis.map(kpi => {
         const points = [];
         for (let i = 6; i >= 0; i--) {
-          const dayOffset = i;
-          const baseline = kpi.baseline || 0;
-          const current = kpi.currentValue || 0;
-          const progress = baseline + ((current - baseline) * (7 - i)) / 7;
-          const jitter = (Math.random() - 0.5) * (current * 0.1);
+          const dayStart = new Date(now - (i + 1) * 86400000);
+          const dayEnd = new Date(now - i * 86400000);
+          const dayTraces = relevantTraces.filter(t => {
+            const ts = new Date(t.startedAt || 0).getTime();
+            return ts >= dayStart.getTime() && ts < dayEnd.getTime();
+          });
+
+          let value: number;
+          const kpiNameLower = (kpi.name || "").toLowerCase();
+          if (kpiNameLower.includes("success") || kpiNameLower.includes("accuracy") || kpiNameLower.includes("rate")) {
+            if (dayTraces.length > 0) {
+              const failed = dayTraces.filter(t => t.status === "failed" || t.status === "error").length;
+              value = Math.round(((dayTraces.length - failed) / dayTraces.length) * 10000) / 100;
+            } else {
+              value = kpi.currentValue || kpi.baseline || 0;
+            }
+          } else if (kpiNameLower.includes("latency") || kpiNameLower.includes("time") || kpiNameLower.includes("response")) {
+            if (dayTraces.length > 0) {
+              value = Math.round(dayTraces.reduce((s, t) => s + (t.latencyMs || 0), 0) / dayTraces.length);
+            } else {
+              value = kpi.currentValue || kpi.baseline || 0;
+            }
+          } else if (kpiNameLower.includes("cost")) {
+            if (dayTraces.length > 0) {
+              value = parseFloat((dayTraces.length * (kpi.currentValue || 0.01)).toFixed(4));
+            } else {
+              value = kpi.currentValue || kpi.baseline || 0;
+            }
+          } else if (kpiNameLower.includes("volume") || kpiNameLower.includes("count") || kpiNameLower.includes("throughput")) {
+            value = dayTraces.length;
+          } else {
+            if (dayTraces.length > 0) {
+              const baseline = kpi.baseline || 0;
+              const current = kpi.currentValue || 0;
+              const progress = baseline + ((current - baseline) * (7 - i)) / 7;
+              value = Math.round(progress * 100) / 100;
+            } else {
+              value = kpi.currentValue || kpi.baseline || 0;
+            }
+          }
+
           points.push({
-            date: new Date(now - dayOffset * 86400000).toISOString().split("T")[0],
-            value: Math.round((progress + jitter) * 100) / 100,
+            date: dayEnd.toISOString().split("T")[0],
+            value,
+            traceCount: dayTraces.length,
           });
         }
         return { kpiId: kpi.id, kpiName: kpi.name, unit: kpi.unit, target: kpi.target, baseline: kpi.baseline, points };
@@ -527,6 +565,8 @@ export async function registerRoutes(
         return Math.abs(h);
       }
 
+      const totalAgentRuns = agents.reduce((s, a) => s + traces.filter(t => t.agentId === a.id).length, 0);
+
       const contributions = agents.map(agent => {
         const agentTraces = traces.filter(t => t.agentId === agent.id);
         const totalRuns = agentTraces.length;
@@ -536,22 +576,23 @@ export async function registerRoutes(
           ? Math.round(agentTraces.reduce((s, t) => s + (t.latencyMs || 0), 0) / totalRuns)
           : 0;
 
-        const seed = hashStr(agent.id);
-        const shareBase = agents.length > 0 ? 1 / agents.length : 0;
-        const jitter = ((seed % 40) - 20) / 100;
-        const valueShare = Math.max(0.05, Math.min(0.95, shareBase + jitter));
+        const valueShare = totalAgentRuns > 0 ? totalRuns / totalAgentRuns : (agents.length > 0 ? 1 / agents.length : 0);
         const deliveredValue = Math.round(totalRevenue * valueShare);
-        const costToServe = Math.round(totalRuns * (0.01 + (seed % 5) * 0.005) * 100) / 100;
+
+        const costPerRun = (agent as any).costPerRun || 0.01;
+        const costToServe = Math.round(totalRuns * costPerRun * 100) / 100;
+
         const healthScore = Math.round(
           (successRate * 0.4) +
           (Math.max(0, 100 - avgLatency / 50) * 0.3) +
           ((totalRuns > 0 ? 80 : 30) * 0.3)
         );
 
+        const successfulRuns = totalRuns - failedRuns;
         const capabilities = [
-          { name: "Primary Task Execution", contribution: Math.round(60 + (seed % 20)) },
-          { name: "Error Recovery", contribution: Math.round(10 + (seed % 15)) },
-          { name: "Data Processing", contribution: Math.round(5 + (seed % 15)) },
+          { name: "Primary Task Execution", contribution: totalRuns > 0 ? Math.round((successfulRuns / totalRuns) * 80) : 0 },
+          { name: "Error Recovery", contribution: failedRuns > 0 && totalRuns > 0 ? Math.round(((totalRuns - failedRuns) / totalRuns) * 15) : 10 },
+          { name: "Data Processing", contribution: totalRuns > 0 ? Math.min(Math.round(totalRuns / Math.max(totalAgentRuns, 1) * 20), 20) : 0 },
         ];
 
         return {
@@ -573,7 +614,7 @@ export async function registerRoutes(
       });
 
       const totalShare = contributions.reduce((s, c) => s + c.valueShare, 0);
-      if (totalShare > 0) {
+      if (totalShare > 0 && totalShare !== 100) {
         contributions.forEach(c => {
           c.valueShare = Math.round((c.valueShare / totalShare) * 100);
         });
@@ -661,7 +702,14 @@ export async function registerRoutes(
               : `Set up an experiment to test alternative agent configurations that could improve ${kpi.name}.`,
             linkedPatchId: relatedPatch?.id || null,
             linkedExperimentId: null,
-            estimatedImpact: `+${Math.round(10 + Math.random() * 20)}% improvement in ${kpi.name}`,
+            estimatedImpact: (() => {
+              const gap = (kpi.slaThreshold || 0) - (kpi.currentValue || 0);
+              const isInverse = kpi.name.includes("Time") || kpi.name.includes("Latency");
+              const improvementPct = isInverse
+                ? Math.min(30, Math.round(Math.abs(gap) / Math.max(kpi.currentValue || 1, 1) * 100))
+                : Math.min(30, Math.round(Math.abs(gap) / Math.max(kpi.slaThreshold || 1, 1) * 100));
+              return `+${Math.max(5, improvementPct)}% improvement in ${kpi.name}`;
+            })(),
             effort: relatedPatch ? "Low" : "Medium",
           },
         });
@@ -2101,40 +2149,114 @@ export async function registerRoutes(
 
       const testCases = await storage.getEvalTestCases(suite.id);
       const totalCases = testCases.length;
-      const passedCount = Math.floor(totalCases * (0.6 + Math.random() * 0.4));
-      const failedCount = totalCases - passedCount;
-      const passRate = totalCases > 0 ? parseFloat((passedCount / totalCases * 100).toFixed(1)) : 0;
 
       const run = await storage.createEvalRun({
         suiteId: suite.id,
         agentId: "system",
         skillId,
-        status: "completed",
+        status: "running",
         totalCases,
-        passedCases: passedCount,
-        failedCases: failedCount,
-        passRate,
-        avgLatencyMs: Math.floor(100 + Math.random() * 400),
-        avgCostUsd: parseFloat((0.001 + Math.random() * 0.01).toFixed(4)),
+        passedCases: 0,
+        failedCases: 0,
+        passRate: 0,
+        avgLatencyMs: 0,
+        avgCostUsd: 0,
         triggeredBy: "manual",
         environment: "staging",
-        completedAt: new Date(),
       });
 
+      let passedCount = 0;
+      let failedCount = 0;
+      let totalLatencyMs = 0;
+      let totalCostUsd = 0;
+
       for (const tc of testCases) {
-        const idx = testCases.indexOf(tc);
-        const passed = idx < passedCount;
+        const caseStart = Date.now();
+        let actualOutput: any = {};
+        let passed = false;
+        let failingStep: string | null = null;
+        let failingReason: string | null = null;
+        let costUsd = 0;
+
+        try {
+          const evalPrompt = `You are evaluating a skill called "${skill.name}" (domain: ${skill.domain || "general"}, industry: ${skill.industry || "general"}).
+
+Skill description: ${skill.description || "No description"}
+${skill.instructions ? `Skill instructions: ${skill.instructions}` : ""}
+
+Test case: "${tc.name}"
+Input scenario: ${JSON.stringify(tc.inputData)}
+Expected output criteria: ${JSON.stringify(tc.expectedOutput)}
+
+Execute this test case by simulating the skill's behavior with the given input. Then evaluate whether the output meets the expected criteria.
+
+Respond in JSON format:
+{
+  "status": "success" | "failure",
+  "output": { ... your simulated output ... },
+  "reasoning": "Why this passed or failed",
+  "meetsExpectations": true | false,
+  "qualityScore": 0.0 to 1.0
+}`;
+
+          const evalResponse = await openai.chat.completions.create({
+            model: "gpt-4.1-mini",
+            messages: [{ role: "user", content: evalPrompt }],
+            max_completion_tokens: 1024,
+            response_format: { type: "json_object" },
+          });
+
+          const rawContent = evalResponse.choices[0]?.message?.content || "{}";
+          const usage = evalResponse.usage;
+          costUsd = usage ? ((usage.prompt_tokens || 0) * 0.0000004 + (usage.completion_tokens || 0) * 0.0000016) : 0.001;
+
+          try {
+            actualOutput = JSON.parse(rawContent);
+          } catch {
+            actualOutput = { raw: rawContent };
+          }
+
+          passed = actualOutput.meetsExpectations === true || actualOutput.status === "success";
+          if (!passed) {
+            failingStep = "ai_evaluation";
+            failingReason = actualOutput.reasoning || `Output did not meet expected criteria: ${JSON.stringify(tc.expectedOutput)}`;
+          }
+        } catch (evalErr: any) {
+          actualOutput = { error: evalErr.message };
+          failingStep = "execution_error";
+          failingReason = `Eval execution failed: ${evalErr.message}`;
+        }
+
+        const latencyMs = Date.now() - caseStart;
+        totalLatencyMs += latencyMs;
+        totalCostUsd += costUsd;
+        if (passed) passedCount++; else failedCount++;
+
         await storage.createEvalCaseResult({
           runId: run.id,
           caseId: tc.id,
           passed,
-          actualOutput: (passed ? tc.expectedOutput : { status: "unexpected_result", error: "Output did not match expected" }) as any,
-          failingStep: passed ? null : "output_validation",
-          failingReason: passed ? null : `Expected ${JSON.stringify(tc.expectedOutput)} but got unexpected result`,
-          latencyMs: Math.floor(50 + Math.random() * 500),
-          costUsd: parseFloat((0.001 + Math.random() * 0.005).toFixed(4)),
+          actualOutput: actualOutput as any,
+          failingStep,
+          failingReason,
+          latencyMs,
+          costUsd: parseFloat(costUsd.toFixed(6)),
         });
       }
+
+      const passRate = totalCases > 0 ? parseFloat((passedCount / totalCases * 100).toFixed(1)) : 0;
+      const avgLatencyMs = totalCases > 0 ? Math.round(totalLatencyMs / totalCases) : 0;
+      const avgCostUsd = totalCases > 0 ? parseFloat((totalCostUsd / totalCases).toFixed(6)) : 0;
+
+      await storage.updateEvalRun(run.id, {
+        status: "completed",
+        passedCases: passedCount,
+        failedCases: failedCount,
+        passRate,
+        avgLatencyMs,
+        avgCostUsd,
+        completedAt: new Date(),
+      });
 
       await storage.updateSkill(skillId, {
         lastEvalPassRate: passRate,
@@ -3232,7 +3354,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
       details: `Approval "${approval.objectName || approval.type}" ${status || "updated"} by ${decidedBy || "system"}${constraintsJson ? " with constraints" : ""}`,
       sequenceNum: allEvents.length + 1,
       previousHash: prevHash?.eventHash || null,
-      eventHash: `sha256:${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`,
+      eventHash: `sha256:${crypto.createHash("sha256").update(`${Date.now()}-${approval.id}-${status}`).digest("hex").slice(0, 16)}`,
     });
 
     if (status === "approved" && approval.objectType === "patch" && approval.objectId) {
@@ -4781,12 +4903,22 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
             riskTier: agent.riskTier,
             version: newVersion,
             validationResults: blueprint.validationResults,
-            diff: {
-              added: newVersion > 1 ? Math.floor(Math.random() * 20 + 5) : 0,
-              removed: newVersion > 1 ? Math.floor(Math.random() * 10 + 2) : 0,
-              changed: newVersion > 1 ? Math.floor(Math.random() * 8 + 1) : 0,
-              summary: newVersion > 1 ? `v${newVersion - 1} → v${newVersion}: Updated workflow nodes and tool configuration` : "Initial version",
-            },
+            diff: (() => {
+              if (newVersion <= 1) return { added: 0, removed: 0, changed: 0, summary: "Initial version" };
+              const prevHistory = existingHistory as any[];
+              const prevVersion = prevHistory.length > 0 ? prevHistory[prevHistory.length - 1] : null;
+              const currentNodes = Array.isArray(blueprint.nodes) ? blueprint.nodes.length : 0;
+              const currentEdges = Array.isArray(blueprint.edges) ? blueprint.edges.length : 0;
+              const prevNodes = prevVersion?.nodeCount || currentNodes;
+              const prevEdges = prevVersion?.edgeCount || currentEdges;
+              const added = Math.max(0, currentNodes - prevNodes) + Math.max(0, currentEdges - prevEdges);
+              const removed = Math.max(0, prevNodes - currentNodes) + Math.max(0, prevEdges - currentEdges);
+              const changed = Math.abs(currentNodes - prevNodes) === 0 && Math.abs(currentEdges - prevEdges) === 0 ? 1 : 0;
+              return {
+                added, removed, changed,
+                summary: `v${newVersion - 1} → v${newVersion}: ${added > 0 ? `Added ${added} elements` : ""}${removed > 0 ? ` Removed ${removed} elements` : ""}${changed > 0 ? " Modified configuration" : ""}`.trim() || "Updated",
+              };
+            })(),
             evalResults: {
               before: [
                 { name: "Accuracy Benchmark", passRate: 88.5, totalCases: 200 },
@@ -5551,13 +5683,7 @@ Eval Suites: ${evalSuites.length} configured`,
       });
 
       if (connectors.length === 0) {
-        res.json([
-          { name: "llm_call", status: "healthy", totalCalls: 142, errorCount: 2, errorRate: 1, avgLatencyMs: 820, lastSeen: new Date().toISOString() },
-          { name: "retrieval", status: "healthy", totalCalls: 98, errorCount: 1, errorRate: 1, avgLatencyMs: 145, lastSeen: new Date().toISOString() },
-          { name: "api_call", status: "degraded", totalCalls: 67, errorCount: 8, errorRate: 12, avgLatencyMs: 340, lastSeen: new Date().toISOString() },
-          { name: "code_exec", status: "healthy", totalCalls: 31, errorCount: 0, errorRate: 0, avgLatencyMs: 210, lastSeen: new Date().toISOString() },
-          { name: "database", status: "healthy", totalCalls: 54, errorCount: 0, errorRate: 0, avgLatencyMs: 45, lastSeen: new Date().toISOString() },
-        ]);
+        res.json([]);
         return;
       }
 
@@ -5629,15 +5755,7 @@ Eval Suites: ${evalSuites.length} configured`,
       violations.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
       if (violations.length === 0) {
-        const now = new Date();
-        const sampleViolations = [
-          { id: "pv-1", traceId: "t-1", agentId: agents[0]?.id || "a1", agentName: agents[0]?.name || "Agent Alpha", policyName: "Data Privacy Policy", rule: "PII detected in output — must be redacted before returning", severity: "critical", timestamp: new Date(now.getTime() - 15 * 60000).toISOString(), action: "block", blocked: true },
-          { id: "pv-2", traceId: "t-2", agentId: agents[1]?.id || "a2", agentName: agents[1]?.name || "Agent Beta", policyName: "Cost Ceiling", rule: "Token usage exceeded per-run budget ($0.50 limit)", severity: "high", timestamp: new Date(now.getTime() - 45 * 60000).toISOString(), action: "block", blocked: true },
-          { id: "pv-3", traceId: "t-3", agentId: agents[0]?.id || "a1", agentName: agents[0]?.name || "Agent Alpha", policyName: "Tool Access Control", rule: "Agent attempted to call restricted tool 'admin_db_write'", severity: "high", timestamp: new Date(now.getTime() - 120 * 60000).toISOString(), action: "block", blocked: true },
-          { id: "pv-4", traceId: "t-4", agentId: agents[2]?.id || "a3", agentName: agents[2]?.name || "Agent Gamma", policyName: "Hallucination Guard", rule: "Response confidence below 0.4 threshold — citation required", severity: "medium", timestamp: new Date(now.getTime() - 180 * 60000).toISOString(), action: "warn", blocked: false },
-          { id: "pv-5", traceId: "t-5", agentId: agents[1]?.id || "a2", agentName: agents[1]?.name || "Agent Beta", policyName: "Rate Limit", rule: "Agent exceeded 100 calls/min rate limit", severity: "medium", timestamp: new Date(now.getTime() - 300 * 60000).toISOString(), action: "throttle", blocked: false },
-        ];
-        res.json(sampleViolations);
+        res.json([]);
         return;
       }
 
@@ -7025,7 +7143,36 @@ Return a JSON array of 3-5 improvement cycle proposals. Return ONLY valid JSON.`
       if (hookType === "auto_expand_eval") {
         const evals = await storage.getEvalsByAgent(req.params.id);
         const suitesExpanded = evals.length;
-        const casesGenerated = Math.floor(Math.random() * 5) + 3;
+        let casesGenerated = 0;
+        for (const suite of evals) {
+          const existingCases = await storage.getEvalTestCases(suite.id);
+          try {
+            const genPrompt = `Generate 2 additional test cases for an AI agent eval suite. Suite: "${suite.name}". Agent: "${agent.name}". Existing cases: ${existingCases.map(c => c.name).join(", ")}.
+
+Respond in JSON: { "testCases": [{ "name": string, "inputData": object, "expectedOutput": object, "tags": string[] }] }`;
+            const genResponse = await openai.chat.completions.create({
+              model: "gpt-4.1-mini",
+              messages: [{ role: "user", content: genPrompt }],
+              max_completion_tokens: 1024,
+              response_format: { type: "json_object" },
+            });
+            const generated = JSON.parse(genResponse.choices[0]?.message?.content || "{}");
+            const newCases = generated.testCases || [];
+            for (const tc of newCases) {
+              await storage.createEvalTestCase({
+                suiteId: suite.id,
+                name: tc.name,
+                inputData: tc.inputData,
+                expectedOutput: tc.expectedOutput,
+                tags: tc.tags || [],
+                weight: 1,
+                status: "active",
+                origin: "ai_generated",
+              });
+              casesGenerated++;
+            }
+          } catch { /* continue with other suites */ }
+        }
         res.json({
           hookType,
           action: "expand",
@@ -7067,28 +7214,99 @@ Return a JSON array of 3-5 improvement cycle proposals. Return ONLY valid JSON.`
         .filter((t) => new Date(t.startedAt || 0).getTime() > cutoff)
         .slice(0, Math.min(sampleSize || 10, 100));
 
-      const tracesReplayed = filteredTraces.length || Math.min(sampleSize || 10, 15);
-      const passCount = Math.round(tracesReplayed * (0.7 + Math.random() * 0.25));
-      const passRate = tracesReplayed > 0 ? passCount / tracesReplayed : 0;
-
-      const divergenceTypes = ["output_mismatch", "tool_call_diff", "latency_spike", "missing_step", "extra_step"];
-      const divergences = [];
-      const failCount = tracesReplayed - passCount;
-      for (let i = 0; i < Math.min(failCount, 5); i++) {
-        const trace = filteredTraces[i];
-        divergences.push({
-          traceId: trace?.id || `shadow-${crypto.randomUUID().slice(0, 8)}`,
-          originalOutput: trace?.outputSummary || "Original response content",
-          replayOutput: `Replayed output with ${divergenceTypes[i % divergenceTypes.length]} detected`,
-          divergenceType: divergenceTypes[i % divergenceTypes.length],
+      if (filteredTraces.length === 0) {
+        return res.json({
+          status: "completed",
+          summary: `No traces found in the ${timeWindow} window to replay.`,
+          tracesReplayed: 0, passCount: 0, failCount: 0, passRate: 0,
+          divergences: [],
+          metrics: { accuracy: 0, policyBlocks: 0, avgCostOriginal: 0, avgCostReplay: 0, avgLatencyOriginal: 0, avgLatencyReplay: 0 },
+          environment, timeWindow,
         });
       }
 
-      const avgCostOriginal = 0.002 + Math.random() * 0.008;
-      const avgCostReplay = avgCostOriginal * (0.8 + Math.random() * 0.4);
-      const avgLatencyOriginal = 200 + Math.floor(Math.random() * 300);
-      const avgLatencyReplay = avgLatencyOriginal + Math.floor((Math.random() - 0.5) * 100);
-      const policyBlocks = Math.floor(Math.random() * 3);
+      const agentMcpLinks = await storage.getAgentMcpServers(agent.id);
+      const mcpServerIds = agentMcpLinks.map((l: any) => l.serverId);
+      const richPrompt = buildAgentSystemPrompt(agent);
+
+      let passCount = 0;
+      let failCount = 0;
+      const divergences: any[] = [];
+      let totalOrigLatency = 0;
+      let totalReplayLatency = 0;
+      let totalOrigCost = 0;
+      let totalReplayCost = 0;
+      let policyBlocks = 0;
+
+      for (const trace of filteredTraces) {
+        const originalOutput = trace.outputSummary || "";
+        const originalPrompt = (trace as any).inputPrompt || (trace as any).prompt || `Replay trace ${trace.id}`;
+        const origLatency = trace.latencyMs || 0;
+        totalOrigLatency += origLatency;
+
+        const origCostEstimate = (trace as any).costUsd || 0.005;
+        totalOrigCost += origCostEstimate;
+
+        try {
+          const replayStart = Date.now();
+          const replayResult = await executePromptWithMcp(
+            agent.id, "", undefined, mcpServerIds,
+            originalPrompt,
+            (agent as any).industry || "technology",
+            richPrompt,
+          );
+          const replayLatency = Date.now() - replayStart;
+          totalReplayLatency += replayLatency;
+
+          const replayUsage = replayResult.summary?.analysis?.usage;
+          const replayCost = replayUsage ? ((replayUsage.prompt_tokens || 0) * 0.000002 + (replayUsage.completion_tokens || 0) * 0.000008) : 0.005;
+          totalReplayCost += replayCost;
+
+          const replayOutput = replayResult.summary?.analysis?.summary || extractResponseText(replayResult);
+
+          const outputMatch = originalOutput && replayOutput &&
+            (originalOutput === replayOutput ||
+             (originalOutput.length > 20 && replayOutput.length > 20 &&
+              originalOutput.substring(0, 50).toLowerCase() === replayOutput.substring(0, 50).toLowerCase()));
+
+          const latencyDivergence = origLatency > 0 && Math.abs(replayLatency - origLatency) / origLatency > 0.5;
+
+          if (outputMatch && !latencyDivergence) {
+            passCount++;
+          } else {
+            failCount++;
+            let divergenceType = "output_mismatch";
+            if (latencyDivergence && outputMatch) divergenceType = "latency_spike";
+            if (!replayResult.success) divergenceType = "execution_failure";
+
+            divergences.push({
+              traceId: trace.id,
+              originalOutput: originalOutput || "(no original output recorded)",
+              replayOutput: replayOutput || "(no replay output)",
+              divergenceType,
+              originalLatency: origLatency,
+              replayLatency,
+            });
+          }
+
+          if (!replayResult.success) policyBlocks++;
+        } catch (replayErr: any) {
+          failCount++;
+          divergences.push({
+            traceId: trace.id,
+            originalOutput: originalOutput || "(no original output recorded)",
+            replayOutput: `Replay failed: ${replayErr.message}`,
+            divergenceType: "execution_failure",
+          });
+        }
+      }
+
+      const tracesReplayed = filteredTraces.length;
+      const passRate = tracesReplayed > 0 ? passCount / tracesReplayed : 0;
+      const avgCostOriginal = tracesReplayed > 0 ? totalOrigCost / tracesReplayed : 0;
+      const avgCostReplay = tracesReplayed > 0 ? totalReplayCost / tracesReplayed : 0;
+      const avgLatencyOriginal = tracesReplayed > 0 ? Math.round(totalOrigLatency / tracesReplayed) : 0;
+      const avgLatencyReplay = tracesReplayed > 0 ? Math.round(totalReplayLatency / tracesReplayed) : 0;
 
       res.json({
         status: "completed",
@@ -7858,18 +8076,86 @@ Enhance this template to be production-ready and comprehensive. For preloadedSki
       const patch = allPatches.find(p => p.id === (req.params.id as string));
       if (!patch) return res.status(404).json({ message: "Patch not found" });
 
-      const simulationResult = {
-        sandboxId: `sandbox-${crypto.randomUUID().slice(0, 8)}`,
-        status: "completed",
-        kpiProjections: {
-          successRate: { current: 0.89, projected: patch.changeType === "prompt_tweak" ? 0.94 : 0.92, confidence: 0.85 },
-          latency: { current: 2400, projected: patch.changeType === "model_upgrade_downgrade" ? 1800 : 2200, confidence: 0.78 },
-          costPerRun: { current: 0.045, projected: patch.changeType === "cost_cap_tuning" ? 0.032 : 0.042, confidence: 0.90 },
-        },
-        policyViolations: 0,
-        regressionDetected: false,
-        simulatedAt: new Date().toISOString(),
-      };
+      const agent = patch.agentId ? await storage.getAgent(patch.agentId) : null;
+      const agentTraces = patch.agentId ? await storage.getTracesByAgent(patch.agentId) : [];
+      const recentTraces = agentTraces.slice(-30);
+      const totalRuns = recentTraces.length;
+      const failedRuns = recentTraces.filter(t => t.status === "failed" || t.status === "error").length;
+      const currentSuccessRate = totalRuns > 0 ? (totalRuns - failedRuns) / totalRuns : 0.9;
+      const currentAvgLatency = totalRuns > 0 ? Math.round(recentTraces.reduce((s, t) => s + (t.latencyMs || 0), 0) / totalRuns) : 2000;
+      const currentCostPerRun = (agent as any)?.costPerRun || 0.04;
+
+      let simulationResult: any;
+      try {
+        const simPrompt = `You are analyzing a proposed patch for an AI agent. Predict the impact on KPIs.
+
+Agent: ${agent?.name || "Unknown"} (${(agent as any)?.industry || "general"} industry)
+Current metrics (from ${totalRuns} recent runs):
+- Success rate: ${(currentSuccessRate * 100).toFixed(1)}%
+- Average latency: ${currentAvgLatency}ms
+- Cost per run: $${currentCostPerRun}
+
+Proposed patch:
+- Type: ${patch.changeType}
+- Title: ${patch.title}
+- Description: ${patch.description}
+- Expected KPI impact: ${patch.expectedKpiImpact || "Not specified"}
+- Expected cost impact: ${patch.expectedCostImpact || "Not specified"}
+- Risk level: ${patch.riskLevel || "unknown"}
+
+Diff: ${JSON.stringify((patch as any).diff || {})}
+
+Analyze and respond in JSON:
+{
+  "kpiProjections": {
+    "successRate": { "current": number, "projected": number, "confidence": 0-1 },
+    "latency": { "current": number, "projected": number, "confidence": 0-1 },
+    "costPerRun": { "current": number, "projected": number, "confidence": 0-1 }
+  },
+  "policyViolations": number,
+  "regressionDetected": boolean,
+  "regressionDetails": "string or null",
+  "reasoning": "brief explanation"
+}`;
+
+        const simResponse = await openai.chat.completions.create({
+          model: "gpt-4.1-mini",
+          messages: [{ role: "user", content: simPrompt }],
+          max_completion_tokens: 1024,
+          response_format: { type: "json_object" },
+        });
+
+        const parsed = JSON.parse(simResponse.choices[0]?.message?.content || "{}");
+        simulationResult = {
+          sandboxId: `sandbox-${crypto.randomUUID().slice(0, 8)}`,
+          status: "completed",
+          kpiProjections: parsed.kpiProjections || {
+            successRate: { current: currentSuccessRate, projected: currentSuccessRate, confidence: 0.5 },
+            latency: { current: currentAvgLatency, projected: currentAvgLatency, confidence: 0.5 },
+            costPerRun: { current: currentCostPerRun, projected: currentCostPerRun, confidence: 0.5 },
+          },
+          policyViolations: parsed.policyViolations || 0,
+          regressionDetected: parsed.regressionDetected || false,
+          regressionDetails: parsed.regressionDetails || null,
+          reasoning: parsed.reasoning || null,
+          simulatedAt: new Date().toISOString(),
+          basedOnTraces: totalRuns,
+        };
+      } catch (aiErr: any) {
+        simulationResult = {
+          sandboxId: `sandbox-${crypto.randomUUID().slice(0, 8)}`,
+          status: "completed",
+          kpiProjections: {
+            successRate: { current: currentSuccessRate, projected: currentSuccessRate, confidence: 0.5 },
+            latency: { current: currentAvgLatency, projected: currentAvgLatency, confidence: 0.5 },
+            costPerRun: { current: currentCostPerRun, projected: currentCostPerRun, confidence: 0.5 },
+          },
+          policyViolations: 0,
+          regressionDetected: false,
+          simulatedAt: new Date().toISOString(),
+          aiError: aiErr.message,
+        };
+      }
 
       const patchId = req.params.id as string;
       await storage.updatePatch(patchId, {
@@ -8702,11 +8988,49 @@ Eval Suites: ${evalSuites.length} configured`,
     const connector = await storage.getToolConnector(req.params.id);
     if (!connector) return res.status(404).json({ message: "Connector not found" });
 
-    await new Promise(resolve => setTimeout(resolve, 800 + Math.random() * 1200));
+    const startTime = Date.now();
+    let success = false;
+    let message = "";
+    let statusCode = 0;
 
-    const success = Math.random() > 0.15;
+    try {
+      const testUrl = (connector as any).endpoint || (connector as any).url || (connector as any).baseUrl;
+      if (!testUrl) {
+        message = "No endpoint URL configured for this connector";
+      } else {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10000);
+        try {
+          const response = await fetch(testUrl, {
+            method: "GET",
+            signal: controller.signal,
+            headers: { "User-Agent": "NousOrchestrator/1.0 ConnectorTest" },
+          });
+          clearTimeout(timeout);
+          statusCode = response.status;
+          success = response.ok || response.status < 500;
+          message = success
+            ? `Connection successful (HTTP ${statusCode})`
+            : `Server returned error (HTTP ${statusCode})`;
+        } catch (fetchErr: any) {
+          clearTimeout(timeout);
+          if (fetchErr.name === "AbortError") {
+            message = "Connection timed out after 10 seconds — check endpoint URL and network";
+          } else if (fetchErr.code === "ENOTFOUND") {
+            message = `DNS resolution failed — host not found: ${testUrl}`;
+          } else if (fetchErr.code === "ECONNREFUSED") {
+            message = `Connection refused — server at ${testUrl} is not accepting connections`;
+          } else {
+            message = `Connection failed: ${fetchErr.message}`;
+          }
+        }
+      }
+    } catch (err: any) {
+      message = `Test error: ${err.message}`;
+    }
+
+    const latency = Date.now() - startTime;
     const result = success ? "success" : "failure";
-    const latency = Math.floor(80 + Math.random() * 400);
 
     await storage.updateToolConnector(req.params.id, {
       lastTestedAt: new Date(),
@@ -8717,7 +9041,8 @@ Eval Suites: ${evalSuites.length} configured`,
     res.json({
       success,
       latencyMs: latency,
-      message: success ? "Connection successful" : "Connection timed out - check credentials",
+      statusCode: statusCode || undefined,
+      message,
       testedAt: new Date().toISOString(),
     });
   });
@@ -8826,9 +9151,8 @@ Eval Suites: ${evalSuites.length} configured`,
 
           const wouldBeBlocked = proposedValue < currentValue;
           if (wouldBeBlocked && trace.status !== "blocked") {
-            const random = Math.random();
             const blockProbability = Math.abs(proposedValue - currentValue) / Math.max(currentValue, 1);
-            if (random < blockProbability) {
+            if (blockProbability > 0.5) {
               tracesBlockedCount++;
             }
           }
@@ -9047,15 +9371,57 @@ Eval Suites: ${evalSuites.length} configured`,
   app.post("/api/admin/webhooks/:id/test", async (req, res) => {
     const webhook = await storage.getAdminWebhook(req.params.id);
     if (!webhook) return res.status(404).json({ error: "Webhook not found" });
-    await new Promise(r => setTimeout(r, 500 + Math.random() * 1500));
-    const success = Math.random() > 0.15;
+
+    const startTime = Date.now();
+    let success = false;
+    let message = "";
+
+    try {
+      const webhookUrl = (webhook as any).url || (webhook as any).endpoint;
+      if (!webhookUrl) {
+        message = "No webhook URL configured";
+      } else {
+        const testPayload = {
+          event: "webhook.test",
+          timestamp: new Date().toISOString(),
+          source: "nous-orchestrator",
+          webhookId: webhook.id,
+        };
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10000);
+        try {
+          const response = await fetch(webhookUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "User-Agent": "NousOrchestrator/1.0 WebhookTest" },
+            body: JSON.stringify(testPayload),
+            signal: controller.signal,
+          });
+          clearTimeout(timeout);
+          success = response.ok;
+          message = success
+            ? `Webhook delivered successfully (HTTP ${response.status})`
+            : `Webhook endpoint returned error (HTTP ${response.status})`;
+        } catch (fetchErr: any) {
+          clearTimeout(timeout);
+          if (fetchErr.name === "AbortError") {
+            message = "Webhook delivery timed out after 10 seconds";
+          } else {
+            message = `Webhook delivery failed: ${fetchErr.message}`;
+          }
+        }
+      }
+    } catch (err: any) {
+      message = `Test error: ${err.message}`;
+    }
+
+    const latencyMs = Date.now() - startTime;
     await storage.updateAdminWebhook(req.params.id, {
       lastDeliveryAt: new Date(),
       lastDeliveryStatus: success ? "success" : "failed",
       deliveredCount: (webhook.deliveredCount ?? 0) + (success ? 1 : 0),
       failedCount: (webhook.failedCount ?? 0) + (success ? 0 : 1),
     });
-    res.json({ success, latencyMs: Math.floor(Math.random() * 400 + 100), message: success ? "Webhook delivered successfully" : "Connection timed out" });
+    res.json({ success, latencyMs, message });
   });
 
   // ─── Job Queue Routes ───
