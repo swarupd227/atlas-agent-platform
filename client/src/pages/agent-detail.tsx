@@ -1689,7 +1689,7 @@ function AgentDetailInner() {
 
           {(() => {
             const bp = (agent.blueprintJson as any) || (agentBlueprint?.blueprintJson as any);
-            const hasBp = bp && !(Array.isArray(bp) && bp.length === 0) && !(typeof bp === "object" && !Array.isArray(bp) && !(bp?.nodes?.length));
+            const hasBp = bp && !(Array.isArray(bp) && bp.length === 0) && !(typeof bp === "object" && !Array.isArray(bp) && !(bp?.nodes?.length) && !(bp?.steps?.length));
             return !hasBp;
           })() ? (
             <Card data-testid="card-blueprint-empty">
@@ -6249,7 +6249,10 @@ function ImplementationGraph({ agent, toolConnectors, onGenerateExport }: { agen
 }
 
 function BlueprintWorkflowGraph({ blueprint }: { blueprint: any }) {
-  if (!blueprint?.nodes?.length) {
+  const hasNodes = blueprint?.nodes?.length > 0;
+  const hasSteps = blueprint?.steps?.length > 0;
+
+  if (!hasNodes && !hasSteps) {
     return (
       <Card data-testid="section-workflow-graph">
         <CardHeader className="pb-3">
@@ -6267,7 +6270,14 @@ function BlueprintWorkflowGraph({ blueprint }: { blueprint: any }) {
     );
   }
 
-  const nodes = blueprint.nodes as Array<{ id: string; type: string; label?: string; [k: string]: any }>;
+  const nodes: Array<{ id: string; type: string; label?: string; [k: string]: any }> = hasNodes
+    ? blueprint.nodes
+    : blueprint.steps.map((step: any) => ({
+        id: step.id,
+        type: step.type || "process",
+        label: step.label,
+        order: step.order,
+      }));
   const edges = (blueprint.edges || []) as Array<{ from: string; to: string }>;
 
   const nodeTypeColor: Record<string, string> = {
@@ -6293,6 +6303,9 @@ function BlueprintWorkflowGraph({ blueprint }: { blueprint: any }) {
     data_aggregate: "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400",
     notification: "bg-pink-500/15 text-pink-600 dark:text-pink-400",
     queue_consumer: "bg-slate-500/15 text-slate-600 dark:text-slate-400",
+    trigger: "bg-green-500/15 text-green-600 dark:text-green-400",
+    process: "bg-blue-500/15 text-blue-600 dark:text-blue-400",
+    output: "bg-purple-500/15 text-purple-600 dark:text-purple-400",
     evidence_collect: "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400",
     audit_log: "bg-gray-500/15 text-gray-600 dark:text-gray-400",
     event_listener: "bg-slate-500/15 text-slate-600 dark:text-slate-400",

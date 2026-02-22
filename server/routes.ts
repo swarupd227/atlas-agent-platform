@@ -6151,30 +6151,25 @@ Guidelines:
 
   app.post("/api/ai/create-team-from-proposals", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
+      const agentProposalSchema = z.object({
+        name: z.string(),
+        description: z.string(),
+        role: z.string().optional(),
+        riskTier: z.string().optional(),
+        autonomyMode: z.string().optional(),
+        modelProvider: z.string().optional(),
+        modelName: z.string().optional(),
+        tools: z.array(z.object({ name: z.string(), description: z.string() })).optional(),
+        kpiBindings: z.array(z.string()).optional(),
+        workflowSteps: z.array(z.string()).optional(),
+        estimatedImpact: z.string().optional(),
+        templateMatch: z.string().nullable().optional(),
+      });
       const bodySchema = z.object({
         outcomeId: z.string(),
-        orchestrator: z.object({
-          name: z.string(),
-          description: z.string(),
-          role: z.string().optional(),
-          riskTier: z.string().optional(),
-          autonomyMode: z.string().optional(),
-          modelProvider: z.string().optional(),
-          modelName: z.string().optional(),
-          tools: z.array(z.object({ name: z.string(), description: z.string() })).optional(),
-          kpiBindings: z.array(z.string()).optional(),
-        }),
-        workers: z.array(z.object({
-          name: z.string(),
-          description: z.string(),
-          role: z.string().optional(),
-          riskTier: z.string().optional(),
-          autonomyMode: z.string().optional(),
-          modelProvider: z.string().optional(),
-          modelName: z.string().optional(),
-          tools: z.array(z.object({ name: z.string(), description: z.string() })).optional(),
-          kpiBindings: z.array(z.string()).optional(),
-        })).min(1),
+        industry: z.string().optional(),
+        orchestrator: agentProposalSchema,
+        workers: z.array(agentProposalSchema).min(1),
         pipeline: z.object({
           pattern: z.string().optional(),
           description: z.string().optional(),
@@ -6184,10 +6179,57 @@ Guidelines:
         }).nullable().optional(),
       });
 
-      const { outcomeId, orchestrator, workers, pipeline } = bodySchema.parse(req.body);
+      const { outcomeId, industry: reqIndustry, orchestrator, workers, pipeline } = bodySchema.parse(req.body);
 
       const outcome = await storage.getOutcome(outcomeId);
       if (!outcome) return res.status(404).json({ error: "Outcome not found" });
+
+      function composeTaskPrompt(agent: z.infer<typeof agentProposalSchema>, isOrchestrator: boolean): string {
+        const lines: string[] = [];
+        lines.push(`Role: ${agent.role || agent.name}`);
+        lines.push(`Goal: ${agent.description}`);
+        if (agent.workflowSteps?.length) {
+          lines.push(`\nWorkflow Steps:`);
+          agent.workflowSteps.forEach((step, i) => lines.push(`${i + 1}. ${step}`));
+        }
+        if (agent.tools?.length) {
+          lines.push(`\nAvailable Tools: ${agent.tools.map(t => t.name).join(", ")}`);
+        }
+        if (agent.kpiBindings?.length) {
+          lines.push(`\nKPIs to optimize: ${agent.kpiBindings.join(", ")}`);
+        }
+        if (agent.estimatedImpact) {
+          lines.push(`\nExpected Impact: ${agent.estimatedImpact}`);
+        }
+        if (isOrchestrator && pipeline) {
+          lines.push(`\nOrchestration Pattern: ${pipeline.pattern || "supervisor"}`);
+          if (pipeline.errorHandling) lines.push(`Error Handling: ${pipeline.errorHandling}`);
+          if (pipeline.handoffRules) lines.push(`Handoff Rules: ${pipeline.handoffRules}`);
+        }
+        return lines.join("\n");
+      }
+
+      function composeSystemPrompt(agent: z.infer<typeof agentProposalSchema>, isOrchestrator: boolean): string {
+        const industry = reqIndustry || "general";
+        const lines: string[] = [];
+        lines.push(`You are ${agent.name}, an AI agent operating within the ${industry} industry.`);
+        lines.push(`Your role: ${agent.role || agent.description}`);
+        if (isOrchestrator) {
+          lines.push(`You are the orchestrator agent responsible for coordinating worker agents to deliver the outcome "${outcome!.name}".`);
+          lines.push(`Orchestration pattern: ${pipeline?.pattern || "supervisor"}.`);
+        } else {
+          lines.push(`You are a worker agent contributing to the outcome "${outcome!.name}".`);
+        }
+        if (agent.kpiBindings?.length) {
+          lines.push(`You are responsible for optimizing these KPIs: ${agent.kpiBindings.join(", ")}.`);
+        }
+        if (agent.tools?.length) {
+          lines.push(`You have access to these tools: ${agent.tools.map(t => `${t.name} (${t.description})`).join("; ")}.`);
+        }
+        lines.push(`Risk tier: ${agent.riskTier || "MEDIUM"}. Autonomy mode: ${agent.autonomyMode || "assisted"}.`);
+        lines.push(`Always follow compliance requirements and escalate when operating outside your autonomy boundaries.`);
+        return lines.join("\n");
+      }
 
       const teamAgent = await storage.createAgent({
         name: orchestrator.name,
@@ -6200,7 +6242,12 @@ Guidelines:
         modelName: orchestrator.modelName || "gpt-4.1",
         outcomeId,
         toolsConfig: orchestrator.tools || [],
+        systemPrompt: composeSystemPrompt(orchestrator, true),
         runtimeConfig: {
+          prompt: composeTaskPrompt(orchestrator, true),
+          kpiBindings: orchestrator.kpiBindings || [],
+          workflowSteps: orchestrator.workflowSteps || [],
+          estimatedImpact: orchestrator.estimatedImpact || "",
           orchestration: {
             pattern: pipeline?.pattern || "supervisor",
             description: pipeline?.description || "",
@@ -6223,6 +6270,13 @@ Guidelines:
           modelName: worker.modelName || "gpt-4.1-mini",
           outcomeId,
           toolsConfig: worker.tools || [],
+          systemPrompt: composeSystemPrompt(worker, false),
+          runtimeConfig: {
+            prompt: composeTaskPrompt(worker, false),
+            kpiBindings: worker.kpiBindings || [],
+            workflowSteps: worker.workflowSteps || [],
+            estimatedImpact: worker.estimatedImpact || "",
+          },
         });
         createdWorkers.push(workerAgent);
 
@@ -6317,8 +6371,43 @@ Guidelines:
         }
       }
 
+      for (let i = 0; i < createdWorkers.length; i++) {
+        const worker = workers[i];
+        if (worker.workflowSteps?.length) {
+          const workerBlueprint = await storage.createBlueprint({
+            name: `${worker.name} - Workflow`,
+            description: worker.description,
+            agentId: createdWorkers[i].id,
+            status: "draft",
+            blueprintJson: {
+              type: "workflow",
+              steps: worker.workflowSteps.map((step, stepIdx) => ({
+                id: `step-${stepIdx + 1}`,
+                label: step,
+                order: stepIdx + 1,
+                type: stepIdx === 0 ? "trigger" : stepIdx === worker.workflowSteps!.length - 1 ? "output" : "process",
+              })),
+              edges: worker.workflowSteps.slice(0, -1).map((_, stepIdx) => ({
+                from: `step-${stepIdx + 1}`,
+                to: `step-${stepIdx + 2}`,
+                label: "next",
+              })),
+              tools: worker.tools || [],
+              kpiBindings: worker.kpiBindings || [],
+            },
+          });
+          await storage.updateAgent(createdWorkers[i].id, {
+            blueprintJson: workerBlueprint.blueprintJson,
+          });
+        }
+      }
+
       await storage.updateAgent(teamAgent.id, {
         runtimeConfig: {
+          prompt: composeTaskPrompt(orchestrator, true),
+          kpiBindings: orchestrator.kpiBindings || [],
+          workflowSteps: orchestrator.workflowSteps || [],
+          estimatedImpact: orchestrator.estimatedImpact || "",
           orchestration: {
             pattern: pipeline?.pattern || "supervisor",
             description: pipeline?.description || "",

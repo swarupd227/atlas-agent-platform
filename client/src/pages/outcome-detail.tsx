@@ -2950,6 +2950,7 @@ function AgentProposalCard({ agent, index, isOrchestrator, isSelected, onToggle,
 
 function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: KpiDefinition[] }) {
   const { toast } = useToast();
+  const { industry } = useIndustry();
   const agentPerm = usePermission("create_modify_blueprints");
   const [proposals, setProposals] = useState<AgentProposal[]>([]);
   const [orchestrator, setOrchestrator] = useState<AgentProposal | null>(null);
@@ -3086,6 +3087,7 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
       if (orchestratorSelected && orchestrator && selectedWorkers.length > 0) {
         const res = await apiRequest("POST", "/api/ai/create-team-from-proposals", {
           outcomeId: outcome.id,
+          industry: industry?.id || "general",
           orchestrator,
           workers: selectedWorkers,
           pipeline,
@@ -3108,6 +3110,38 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
         });
       } else {
         for (const worker of selectedWorkers) {
+          const taskLines: string[] = [];
+          taskLines.push(`Role: ${worker.role || worker.name}`);
+          taskLines.push(`Goal: ${worker.description}`);
+          if (worker.workflowSteps?.length) {
+            taskLines.push(`\nWorkflow Steps:`);
+            worker.workflowSteps.forEach((step, i) => taskLines.push(`${i + 1}. ${step}`));
+          }
+          if (worker.tools?.length) {
+            taskLines.push(`\nAvailable Tools: ${worker.tools.map(t => t.name).join(", ")}`);
+          }
+          if (worker.kpiBindings?.length) {
+            taskLines.push(`\nKPIs to optimize: ${worker.kpiBindings.join(", ")}`);
+          }
+          if (worker.estimatedImpact) {
+            taskLines.push(`\nExpected Impact: ${worker.estimatedImpact}`);
+          }
+          const taskPrompt = taskLines.join("\n");
+
+          const industryLabel = industry?.id || "general";
+          const sysLines: string[] = [];
+          sysLines.push(`You are ${worker.name}, an AI agent operating within the ${industryLabel} industry.`);
+          sysLines.push(`Your role: ${worker.role || worker.description}`);
+          sysLines.push(`You are a worker agent contributing to the outcome "${outcome.name}".`);
+          if (worker.kpiBindings?.length) {
+            sysLines.push(`You are responsible for optimizing these KPIs: ${worker.kpiBindings.join(", ")}.`);
+          }
+          if (worker.tools?.length) {
+            sysLines.push(`You have access to these tools: ${worker.tools.map(t => `${t.name} (${t.description})`).join("; ")}.`);
+          }
+          sysLines.push(`Risk tier: ${worker.riskTier || "MEDIUM"}. Autonomy mode: ${worker.autonomyMode || "assisted"}.`);
+          sysLines.push(`Always follow compliance requirements and escalate when operating outside your autonomy boundaries.`);
+
           await apiRequest("POST", "/api/agents", {
             name: worker.name,
             description: worker.description,
@@ -3119,6 +3153,29 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
             modelName: worker.modelName,
             outcomeId: outcome.id,
             toolsConfig: worker.tools,
+            systemPrompt: sysLines.join("\n"),
+            runtimeConfig: {
+              prompt: taskPrompt,
+              kpiBindings: worker.kpiBindings || [],
+              workflowSteps: worker.workflowSteps || [],
+              estimatedImpact: worker.estimatedImpact || "",
+            },
+            blueprintJson: worker.workflowSteps?.length ? {
+              type: "workflow",
+              steps: worker.workflowSteps.map((step, idx) => ({
+                id: `step-${idx + 1}`,
+                label: step,
+                order: idx + 1,
+                type: idx === 0 ? "trigger" : idx === worker.workflowSteps!.length - 1 ? "output" : "process",
+              })),
+              edges: worker.workflowSteps.slice(0, -1).map((_, idx) => ({
+                from: `step-${idx + 1}`,
+                to: `step-${idx + 2}`,
+                label: "next",
+              })),
+              tools: worker.tools || [],
+              kpiBindings: worker.kpiBindings || [],
+            } : undefined,
           });
         }
         queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
