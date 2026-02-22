@@ -10090,8 +10090,7 @@ Eval Suites: ${evalSuites.length} configured`,
       res.json({
         success: result.success,
         channelType: channel.channelType,
-        response: result.output || result.error,
-        latencyMs: result.latencyMs,
+        response: extractResponseText(result),
       });
     } catch (e: any) {
       console.error("[channels] Test error:", e);
@@ -10187,11 +10186,12 @@ Eval Suites: ${evalSuites.length} configured`,
         lastMessageAt: new Date(),
       });
 
+      const responseText = extractResponseText(result);
       let formattedResponse: any;
       switch (platform) {
         case "slack":
           formattedResponse = {
-            text: result.output || result.error || "No response",
+            text: responseText,
             thread_ts: senderInfo.threadTs,
             channel: senderInfo.channel,
           };
@@ -10199,18 +10199,18 @@ Eval Suites: ${evalSuites.length} configured`,
         case "teams":
           formattedResponse = {
             type: "message",
-            text: result.output || result.error || "No response",
+            text: responseText,
           };
           break;
         case "discord":
           formattedResponse = {
             type: 4,
-            data: { content: (result.output || result.error || "No response").slice(0, 2000) },
+            data: { content: responseText.slice(0, 2000) },
           };
           break;
         default:
           formattedResponse = {
-            output: result.output || result.error,
+            output: responseText,
             success: result.success,
             agentId: agent.id,
             agentName: agent.name,
@@ -10282,7 +10282,7 @@ Eval Suites: ${evalSuites.length} configured`,
       });
 
       res.json({
-        output: result.output || result.error || "No response",
+        output: extractResponseText(result),
         success: result.success,
         agentName: agent.name,
       });
@@ -18791,6 +18791,24 @@ Return ONLY valid JSON array, no explanation.`;
   startWorker();
 
   return httpServer;
+}
+
+function extractResponseText(result: any): string {
+  const analysisStep = result.steps?.find((s: any) => s.type === "ai_analysis");
+  if (analysisStep?.output) {
+    const out = analysisStep.output;
+    if (typeof out === "string") return out;
+    if (out.summary) return out.summary;
+    if (out.analysis) return typeof out.analysis === "string" ? out.analysis : out.analysis.summary || JSON.stringify(out.analysis);
+    return JSON.stringify(out);
+  }
+  if (result.summary?.summary) return result.summary.summary;
+  if (result.summary?.error) return result.summary.error;
+  const planStep = result.steps?.find((s: any) => s.type === "ai_planning");
+  if (planStep?.output?.reasoning && typeof planStep.output.reasoning === "string" && planStep.output.reasoning !== "Tool calls planned") {
+    return planStep.output.reasoning;
+  }
+  return "I couldn't generate a response. Please try again.";
 }
 
 function buildAgentSystemPrompt(agent: any, options?: { generic?: boolean }): string {
