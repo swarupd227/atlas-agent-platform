@@ -544,6 +544,17 @@ export default function OutcomeDetail() {
     queryKey: ["/api/ontology-concepts/all"],
   });
 
+  const { data: pageProposalData } = useQuery<any>({
+    queryKey: ["/api/agent-proposals", outcomeId],
+    queryFn: async () => {
+      const res = await fetch(`/api/agent-proposals/${outcomeId}`);
+      if (res.status === 404) return null;
+      if (!res.ok) throw new Error("Failed to load");
+      return res.json();
+    },
+    enabled: !!outcomeId,
+  });
+
   const { data: agentContributions } = useQuery<{
     contributions: Array<{
       agentId: string;
@@ -788,6 +799,10 @@ export default function OutcomeDetail() {
     );
   }
 
+  const hasAgentPlan = !!pageProposalData?.orchestrator || (pageProposalData?.workers?.length > 0);
+  const boundAgents = allAgents?.filter(a => a.outcomeId === outcomeId) || [];
+  const hasDeployedAgents = boundAgents.length > 0;
+
   const sla = (outcome.slaConfig || {}) as Record<string, any>;
   const attribution = (outcome.attributionRules || {}) as Record<string, any>;
   const gates = (outcome.approvalGates || []) as Array<Record<string, any>>;
@@ -814,20 +829,6 @@ export default function OutcomeDetail() {
     return <Minus className="w-3.5 h-3.5 text-muted-foreground" />;
   };
 
-  const { data: pageProposalData } = useQuery<any>({
-    queryKey: ["/api/agent-proposals", outcomeId],
-    queryFn: async () => {
-      const res = await fetch(`/api/agent-proposals/${outcomeId}`);
-      if (res.status === 404) return null;
-      if (!res.ok) throw new Error("Failed to load");
-      return res.json();
-    },
-    enabled: !!outcomeId,
-  });
-  const hasAgentPlan = !!pageProposalData?.orchestrator || (pageProposalData?.workers?.length > 0);
-
-  const boundAgents = allAgents?.filter(a => a.outcomeId === outcomeId) || [];
-  const hasDeployedAgents = boundAgents.length > 0;
   const outcomeApprovals = allApprovals?.filter(a => a.objectId === outcomeId) || [];
   const pendingApprovals = outcomeApprovals.filter(a => a.status === "pending");
 
