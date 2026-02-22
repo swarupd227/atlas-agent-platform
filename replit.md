@@ -32,7 +32,8 @@ The Nous Agent Orchestrator is built on a modern web stack: React, Vite, Tailwin
 - **Approvals**: Expert validation queue and approval gates for human oversight.
 - **Evaluation Evidence System**: Provides robust evidence for agent performance and risks.
 - **Continuous Industry Assurance Engine (Eval Studio)**: Manages evaluations with industry-contextualized testing, including golden dataset integration, mandatory regulatory test cases, and industry-specific scorers.
-- **Outcome Builder**: Conversational AI for defining goals and drafting outcome contracts.
+- **Outcome Builder**: Conversational AI for defining goals and drafting outcome contracts. Includes **Agent Proposal Persistence** — AI-generated agent development plans (orchestrator, workers, pipeline) are automatically saved to the database, enabling engineers to navigate away and return later with the full plan restored including selection state. Plans can be manually saved after modifying selections.
+- **Team-Based Multi-Agent Orchestration**: Agent proposals create proper Team Agents using the platform's canonical team infrastructure (agentTeams, teamBlueprintNodes/Edges). Single POST endpoint atomically creates Team Agent, worker agents, membership records, blueprint, graph nodes, and edges. Teams integrate with Agent Teams page, Team Graph Editor, and Agent Detail views.
 - **Role-based Access**: Six switchable personas for tailored access.
 - **Global App Shell**: Provides environment selection, search, command palette, notifications, and role switcher.
 - **Adaptive Autonomy Engine**: Dynamic, context-aware human oversight with a risk dimension matrix, autonomy spectrum, and override calendar.

@@ -1870,4 +1870,21 @@ export const insertAgentRuntimeRunSchema = createInsertSchema(agentRuntimeRuns).
 export type InsertAgentRuntimeRun = z.infer<typeof insertAgentRuntimeRunSchema>;
 export type AgentRuntimeRun = typeof agentRuntimeRuns.$inferSelect;
 
+export const agentProposals = pgTable("agent_proposals", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  outcomeId: varchar("outcome_id").notNull(),
+  status: text("status").notNull().default("draft"),
+  orchestrator: jsonb("orchestrator"),
+  workers: jsonb("workers"),
+  pipeline: jsonb("pipeline"),
+  selectedIndices: jsonb("selected_indices"),
+  orchestratorSelected: boolean("orchestrator_selected").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertAgentProposalSchema = createInsertSchema(agentProposals).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertAgentProposal = z.infer<typeof insertAgentProposalSchema>;
+export type AgentProposal = typeof agentProposals.$inferSelect;
+
 export * from "./models/chat";

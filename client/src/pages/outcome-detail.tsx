@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRoute, Link, useLocation } from "wouter";
 import {
   ArrowLeft,
@@ -2887,6 +2887,52 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
   const [orchestratorSelected, setOrchestratorSelected] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [proposalId, setProposalId] = useState<string | null>(null);
+  const [lastSaved, setLastSaved] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
+
+  const { data: savedProposal, isLoading: loadingSaved } = useQuery<any>({
+    queryKey: ["/api/agent-proposals", outcome.id],
+    queryFn: async () => {
+      const res = await fetch(`/api/agent-proposals/${outcome.id}`);
+      if (res.status === 404) return null;
+      if (!res.ok) throw new Error("Failed to load");
+      return res.json();
+    },
+  });
+
+  const loadedRef = useRef<string | null>(null);
+  useEffect(() => {
+    loadedRef.current = null;
+    setGenerated(false);
+    setProposals([]);
+    setOrchestrator(null);
+    setPipeline(null);
+    setProposalId(null);
+    setLastSaved(null);
+    setDirty(false);
+  }, [outcome.id]);
+
+  useEffect(() => {
+    if (savedProposal && loadedRef.current !== savedProposal.id) {
+      loadedRef.current = savedProposal.id;
+      setProposals(savedProposal.workers || []);
+      setOrchestrator(savedProposal.orchestrator || null);
+      setPipeline(savedProposal.pipeline || null);
+      setGenerated(true);
+      setProposalId(savedProposal.id);
+      setLastSaved(savedProposal.updatedAt || savedProposal.createdAt);
+      const savedIndices = savedProposal.selectedIndices;
+      if (Array.isArray(savedIndices)) {
+        setSelectedIndices(new Set(savedIndices));
+      } else {
+        setSelectedIndices(new Set((savedProposal.workers || []).map((_: any, i: number) => i)));
+      }
+      setOrchestratorSelected(savedProposal.orchestratorSelected !== false);
+      setDirty(false);
+    }
+  }, [savedProposal]);
 
   const { data: approvals } = useQuery<Approval[]>({
     queryKey: ["/api/approvals"],
@@ -2918,6 +2964,7 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
       }
       return next;
     });
+    setDirty(true);
   }
 
   function toggleOrchestrator() {
@@ -2925,17 +2972,38 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
       return;
     }
     setOrchestratorSelected(!orchestratorSelected);
+    setDirty(true);
   }
 
   function selectAll() {
     const all = new Set(proposals.map((_, i) => i));
     setSelectedIndices(all);
     if (orchestrator) setOrchestratorSelected(true);
+    setDirty(true);
   }
 
   function deselectAll() {
     setSelectedIndices(new Set());
     setOrchestratorSelected(false);
+    setDirty(true);
+  }
+
+  async function savePlan() {
+    if (!proposalId) return;
+    setSaving(true);
+    try {
+      await apiRequest("PATCH", `/api/agent-proposals/${proposalId}`, {
+        selectedIndices: Array.from(selectedIndices),
+        orchestratorSelected,
+      });
+      setLastSaved(new Date().toISOString());
+      setDirty(false);
+      toast({ title: "Plan saved", description: "Your agent selection has been saved." });
+    } catch {
+      toast({ title: "Failed to save plan", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function createSelectedAgents() {
@@ -2957,6 +3025,10 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
         queryClient.invalidateQueries({ queryKey: ["/api/blueprints"] });
         queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
         queryClient.invalidateQueries({ queryKey: ["/api/outcomes", outcome.id] });
+
+        if (proposalId) {
+          try { await apiRequest("PATCH", `/api/agent-proposals/${proposalId}`, { status: "created" }); } catch {}
+        }
 
         toast({
           title: "Team Agent created",
@@ -3008,6 +3080,13 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
       const allIndices = new Set<number>((data.agents || []).map((_: any, i: number) => i));
       setSelectedIndices(allIndices);
       setOrchestratorSelected(!!data.orchestrator);
+      if (data.proposalId) {
+        setProposalId(data.proposalId);
+        setLastSaved(new Date().toISOString());
+        setDirty(false);
+        loadedRef.current = data.proposalId;
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/agent-proposals", outcome.id] });
     } catch (err) {
       toast({ title: "Failed to generate proposals", description: "Please try again.", variant: "destructive" });
     } finally {
@@ -3033,6 +3112,17 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
               Awaiting Agent Plan
             </Badge>
           )}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (loadingSaved) {
+    return (
+      <Card>
+        <CardContent className="flex flex-col items-center justify-center py-12 gap-4">
+          <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">Loading saved plan...</p>
         </CardContent>
       </Card>
     );
@@ -3102,11 +3192,28 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
         <div>
           <h3 className="text-sm font-semibold">Multi-Agent Development Plan</h3>
           <p className="text-xs text-muted-foreground">AI-generated orchestrated pipeline to deliver this outcome. Select agents to create.</p>
+          {lastSaved && (
+            <div className="flex items-center gap-1.5 mt-1" data-testid="text-plan-saved-status">
+              <CheckCircle className="w-3 h-3 text-green-500" />
+              <span className="text-[11px] text-muted-foreground">
+                Plan saved {new Date(lastSaved).toLocaleDateString()} at {new Date(lastSaved).toLocaleTimeString()}
+              </span>
+              {dirty && <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 text-amber-600 border-amber-300">Unsaved changes</Badge>}
+            </div>
+          )}
         </div>
-        <Button variant="outline" onClick={generateProposals} disabled={generating} data-testid="button-regenerate-proposals">
-          {generating ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1.5" />}
-          Regenerate
-        </Button>
+        <div className="flex items-center gap-2">
+          {proposalId && dirty && (
+            <Button variant="outline" size="sm" onClick={savePlan} disabled={saving} data-testid="button-save-plan">
+              {saving ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-1.5" />}
+              Save Plan
+            </Button>
+          )}
+          <Button variant="outline" onClick={generateProposals} disabled={generating} data-testid="button-regenerate-proposals">
+            {generating ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1.5" />}
+            Regenerate
+          </Button>
+        </div>
       </div>
 
       {isPendingValidation && (

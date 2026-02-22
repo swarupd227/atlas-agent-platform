@@ -5957,6 +5957,46 @@ Eval Suites: ${evalSuites.length} configured`,
     res.json(timeline);
   });
 
+  app.get("/api/agent-proposals/:outcomeId", async (req, res) => {
+    try {
+      const proposal = await storage.getAgentProposalByOutcome(req.params.outcomeId);
+      if (!proposal) return res.status(404).json({ error: "No saved proposal found" });
+      res.json(proposal);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch proposal" });
+    }
+  });
+
+  app.patch("/api/agent-proposals/:id", checkPermission("create_modify_blueprints"), async (req, res) => {
+    try {
+      const patchSchema = z.object({
+        selectedIndices: z.array(z.number()).optional(),
+        orchestratorSelected: z.boolean().optional(),
+        status: z.string().optional(),
+        orchestrator: z.any().optional(),
+        workers: z.any().optional(),
+        pipeline: z.any().optional(),
+      });
+      const data = patchSchema.parse(req.body);
+      const updated = await storage.updateAgentProposal(req.params.id, data);
+      if (!updated) return res.status(404).json({ error: "Proposal not found" });
+      res.json(updated);
+    } catch (error) {
+      if (error instanceof ZodError) return res.status(400).json({ error: error.errors });
+      res.status(500).json({ error: "Failed to update proposal" });
+    }
+  });
+
+  app.delete("/api/agent-proposals/:id", checkPermission("create_modify_blueprints"), async (req, res) => {
+    try {
+      const deleted = await storage.deleteAgentProposal(req.params.id);
+      if (!deleted) return res.status(404).json({ error: "Proposal not found" });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete proposal" });
+    }
+  });
+
   app.post("/api/ai/propose-agents", async (req, res) => {
     try {
       if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
@@ -6059,17 +6099,50 @@ Guidelines:
         }
       }
 
+      let result: any;
       if (parsed && parsed.orchestrator && parsed.agents) {
-        res.json({
+        result = {
           orchestrator: parsed.orchestrator,
           agents: Array.isArray(parsed.agents) ? parsed.agents : [parsed.agents],
           pipeline: parsed.pipeline || null,
-        });
+        };
       } else if (Array.isArray(parsed)) {
-        res.json({ agents: parsed, orchestrator: null, pipeline: null });
+        result = { agents: parsed, orchestrator: null, pipeline: null };
       } else {
-        res.json({ agents: [], orchestrator: null, pipeline: null, raw: content });
+        result = { agents: [], orchestrator: null, pipeline: null, raw: content };
       }
+
+      if (outcomeContract?.id && (result.agents?.length > 0 || result.orchestrator)) {
+        try {
+          const existing = await storage.getAgentProposalByOutcome(outcomeContract.id);
+          if (existing) {
+            await storage.updateAgentProposal(existing.id, {
+              orchestrator: result.orchestrator,
+              workers: result.agents,
+              pipeline: result.pipeline,
+              selectedIndices: result.agents.map((_: any, i: number) => i),
+              orchestratorSelected: !!result.orchestrator,
+              status: "draft",
+            });
+            result.proposalId = existing.id;
+          } else {
+            const saved = await storage.createAgentProposal({
+              outcomeId: outcomeContract.id,
+              orchestrator: result.orchestrator,
+              workers: result.agents,
+              pipeline: result.pipeline,
+              selectedIndices: result.agents.map((_: any, i: number) => i),
+              orchestratorSelected: !!result.orchestrator,
+              status: "draft",
+            });
+            result.proposalId = saved.id;
+          }
+        } catch (saveErr) {
+          console.error("Failed to auto-save proposal:", saveErr);
+        }
+      }
+
+      res.json(result);
     } catch (error) {
       console.error("Agent proposal error:", error);
       res.status(500).json({ error: "Failed to generate agent proposals" });

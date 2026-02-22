@@ -144,6 +144,7 @@ import {
   pipelineRuns, type PipelineRun, type InsertPipelineRun,
   mcpParameterMatches, type McpParameterMatch, type InsertMcpParameterMatch,
   agentRuntimeRuns, type AgentRuntimeRun, type InsertAgentRuntimeRun,
+  agentProposals, type AgentProposal, type InsertAgentProposal,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -628,6 +629,11 @@ export interface IStorage {
   createAgentRuntimeRun(run: InsertAgentRuntimeRun): Promise<AgentRuntimeRun>;
   updateAgentRuntimeRun(id: string, data: Partial<AgentRuntimeRun>): Promise<AgentRuntimeRun | undefined>;
   getActiveRuntimeRuns(): Promise<AgentRuntimeRun[]>;
+
+  getAgentProposalByOutcome(outcomeId: string): Promise<AgentProposal | undefined>;
+  createAgentProposal(proposal: InsertAgentProposal): Promise<AgentProposal>;
+  updateAgentProposal(id: string, data: Partial<AgentProposal>): Promise<AgentProposal | undefined>;
+  deleteAgentProposal(id: string): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2469,6 +2475,26 @@ export class DatabaseStorage implements IStorage {
 
   async getActiveRuntimeRuns(): Promise<AgentRuntimeRun[]> {
     return db.select().from(agentRuntimeRuns).where(eq(agentRuntimeRuns.status, "running"));
+  }
+
+  async getAgentProposalByOutcome(outcomeId: string): Promise<AgentProposal | undefined> {
+    const [proposal] = await db.select().from(agentProposals).where(eq(agentProposals.outcomeId, outcomeId)).orderBy(desc(agentProposals.createdAt));
+    return proposal;
+  }
+
+  async createAgentProposal(proposal: InsertAgentProposal): Promise<AgentProposal> {
+    const [created] = await db.insert(agentProposals).values(proposal).returning();
+    return created;
+  }
+
+  async updateAgentProposal(id: string, data: Partial<AgentProposal>): Promise<AgentProposal | undefined> {
+    const [updated] = await db.update(agentProposals).set({ ...data, updatedAt: new Date() }).where(eq(agentProposals.id, id)).returning();
+    return updated;
+  }
+
+  async deleteAgentProposal(id: string): Promise<boolean> {
+    const result = await db.delete(agentProposals).where(eq(agentProposals.id, id)).returning();
+    return result.length > 0;
   }
 }
 
