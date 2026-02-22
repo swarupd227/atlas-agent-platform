@@ -802,6 +802,7 @@ function AgentDetailInner() {
           <TabsTrigger value="mcp-servers" data-testid="tab-mcp-servers">MCP Servers</TabsTrigger>
           <TabsTrigger value="ontology" data-testid="tab-ontology">Ontology</TabsTrigger>
           <TabsTrigger value="api-gateway" data-testid="tab-api-gateway">API Gateway</TabsTrigger>
+          <TabsTrigger value="channels" data-testid="tab-channels">Channels</TabsTrigger>
           {agent.agentType === "remote" && (
             <TabsTrigger value="a2a" data-testid="tab-a2a">A2A Card</TabsTrigger>
           )}
@@ -3818,6 +3819,10 @@ function AgentDetailInner() {
 
         <TabsContent value="api-gateway" className="flex flex-col gap-4 mt-0" data-testid="tab-content-api-gateway">
           <AgentApiGateway agent={agent} />
+        </TabsContent>
+
+        <TabsContent value="channels" className="flex flex-col gap-4 mt-0" data-testid="tab-content-channels">
+          <AgentChannels agent={agent} />
         </TabsContent>
       </Tabs>
 
@@ -7276,6 +7281,384 @@ print(result["output"])`;
           </div>
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+const CHANNEL_TYPES = [
+  { type: "slack", label: "Slack", icon: MessageSquare, color: "text-purple-500", bgColor: "bg-purple-500/10", description: "Publish your agent to Slack workspaces. Users can interact via direct messages or channels." },
+  { type: "teams", label: "Microsoft Teams", icon: Users, color: "text-blue-500", bgColor: "bg-blue-500/10", description: "Deploy as a Teams bot. Available in chats, channels, and meetings." },
+  { type: "discord", label: "Discord", icon: MessageSquare, color: "text-indigo-500", bgColor: "bg-indigo-500/10", description: "Add your agent to Discord servers. Responds to commands and mentions." },
+  { type: "whatsapp", label: "WhatsApp", icon: MessageSquare, color: "text-green-500", bgColor: "bg-green-500/10", description: "Connect via WhatsApp Business API for customer interactions." },
+  { type: "email", label: "Email", icon: Globe, color: "text-orange-500", bgColor: "bg-orange-500/10", description: "Process incoming emails and auto-respond with agent intelligence." },
+  { type: "web_widget", label: "Web Widget", icon: Code, color: "text-cyan-500", bgColor: "bg-cyan-500/10", description: "Embed a chat widget on any website. Copy the snippet to get started." },
+] as const;
+
+function AgentChannels({ agent }: { agent: any }) {
+  const { toast } = useToast();
+  const [connectDialogOpen, setConnectDialogOpen] = useState(false);
+  const [selectedChannelType, setSelectedChannelType] = useState<string | null>(null);
+  const [channelName, setChannelName] = useState("");
+  const [botUsername, setBotUsername] = useState("");
+  const [configToken, setConfigToken] = useState("");
+
+  const { data: channels = [], isLoading } = useQuery<any[]>({
+    queryKey: ["/api/agents", agent.id, "channels"],
+  });
+
+  const createChannelMutation = useMutation({
+    mutationFn: async (data: { channelType: string; name: string; config: any; botUsername: string }) => {
+      const res = await apiRequest("POST", `/api/agents/${agent.id}/channels`, data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agent.id, "channels"] });
+      setConnectDialogOpen(false);
+      setSelectedChannelType(null);
+      setChannelName("");
+      setBotUsername("");
+      setConfigToken("");
+      toast({ title: "Channel connected", description: "Your agent is now available on this channel." });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to connect channel", description: err.message || "Please try again.", variant: "destructive" });
+    },
+  });
+
+  const updateChannelMutation = useMutation({
+    mutationFn: async ({ channelId, data }: { channelId: string; data: any }) => {
+      const res = await apiRequest("PATCH", `/api/agents/${agent.id}/channels/${channelId}`, data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agent.id, "channels"] });
+      toast({ title: "Channel updated" });
+    },
+  });
+
+  const deleteChannelMutation = useMutation({
+    mutationFn: async (channelId: string) => {
+      await apiRequest("DELETE", `/api/agents/${agent.id}/channels/${channelId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agent.id, "channels"] });
+      toast({ title: "Channel removed" });
+    },
+  });
+
+  const testChannelMutation = useMutation({
+    mutationFn: async (channelId: string) => {
+      const res = await apiRequest("POST", `/api/agents/${agent.id}/channels/${channelId}/test`);
+      return res.json();
+    },
+    onSuccess: (data) => {
+      toast({ title: data.success ? "Test successful" : "Test completed with issues", description: typeof data.response === "string" ? data.response.slice(0, 100) : "Response received" });
+    },
+    onError: () => {
+      toast({ title: "Channel test failed", variant: "destructive" });
+    },
+  });
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    toast({ title: "Copied to clipboard" });
+  };
+
+  const connectedTypes = new Set((channels as any[]).map((c: any) => c.channelType));
+
+  const selectedMeta = CHANNEL_TYPES.find(ct => ct.type === selectedChannelType);
+
+  const handleConnect = () => {
+    if (!selectedChannelType || !channelName.trim()) return;
+    const config: any = {};
+    if (configToken.trim()) {
+      config.botToken = configToken;
+    }
+    createChannelMutation.mutate({
+      channelType: selectedChannelType,
+      name: channelName.trim(),
+      config,
+      botUsername: botUsername.trim() || `${agent.name} Bot`,
+    });
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+      {agent.status !== "deployed" && (
+        <div className="flex items-center gap-2 p-3 bg-amber-500/10 border border-amber-500/20 rounded-md" data-testid="channels-not-deployed-notice">
+          <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+          <span className="text-xs text-amber-700 dark:text-amber-400">This agent must be deployed before publishing to channels. Deploy the agent through the Deployments pipeline first.</span>
+        </div>
+      )}
+
+      <Card data-testid="card-channels-overview">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="flex items-center justify-center w-7 h-7 rounded-md bg-primary/10 shrink-0">
+                <Radio className="w-3.5 h-3.5 text-primary" />
+              </div>
+              <CardTitle className="text-sm font-medium">Channel Publishing</CardTitle>
+              <Badge variant="secondary" className="text-[10px]">{(channels as any[]).length} connected</Badge>
+            </div>
+            <Button
+              size="sm"
+              className="text-xs"
+              disabled={agent.status !== "deployed"}
+              onClick={() => setConnectDialogOpen(true)}
+              data-testid="btn-add-channel"
+            >
+              <Plus className="w-3.5 h-3.5 mr-1" /> Add Channel
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="flex flex-col gap-3">
+              <Skeleton className="h-20 w-full" />
+              <Skeleton className="h-20 w-full" />
+            </div>
+          ) : (channels as any[]).length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <Radio className="w-8 h-8 mx-auto mb-2 opacity-40" />
+              <p className="text-sm">No channels configured</p>
+              <p className="text-xs mt-1">Publish your agent to messaging platforms like Slack, Teams, or Discord</p>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {(channels as any[]).map((channel: any) => {
+                const meta = CHANNEL_TYPES.find(ct => ct.type === channel.channelType);
+                const Icon = meta?.icon || MessageSquare;
+                return (
+                  <div key={channel.id} className="flex items-center gap-3 p-3 rounded-md border bg-card" data-testid={`channel-card-${channel.id}`}>
+                    <div className={`flex items-center justify-center w-9 h-9 rounded-md ${meta?.bgColor || "bg-muted"} shrink-0`}>
+                      <Icon className={`w-4 h-4 ${meta?.color || "text-muted-foreground"}`} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium truncate">{channel.name}</span>
+                        <Badge variant={channel.status === "connected" ? "default" : "secondary"} className="text-[10px]">
+                          {channel.status}
+                        </Badge>
+                      </div>
+                      <div className="flex items-center gap-3 mt-0.5">
+                        <span className="text-[11px] text-muted-foreground">{meta?.label || channel.channelType}</span>
+                        <span className="text-[11px] text-muted-foreground">{channel.messageCount || 0} messages</span>
+                        {channel.lastMessageAt && (
+                          <span className="text-[11px] text-muted-foreground">Last: {new Date(channel.lastMessageAt).toLocaleDateString()}</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-[11px]"
+                        onClick={() => testChannelMutation.mutate(channel.id)}
+                        disabled={testChannelMutation.isPending || channel.status !== "connected"}
+                        data-testid={`btn-test-channel-${channel.id}`}
+                      >
+                        {testChannelMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3 mr-1" />}
+                        Test
+                      </Button>
+                      {channel.status === "connected" ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-[11px]"
+                          onClick={() => updateChannelMutation.mutate({ channelId: channel.id, data: { status: "paused" } })}
+                          data-testid={`btn-pause-channel-${channel.id}`}
+                        >
+                          Pause
+                        </Button>
+                      ) : channel.status === "paused" ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-[11px]"
+                          onClick={() => updateChannelMutation.mutate({ channelId: channel.id, data: { status: "connected" } })}
+                          data-testid={`btn-resume-channel-${channel.id}`}
+                        >
+                          Resume
+                        </Button>
+                      ) : null}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-[11px]"
+                        onClick={() => {
+                          if (channel.webhookUrl) copyToClipboard(channel.webhookUrl);
+                        }}
+                        data-testid={`btn-copy-webhook-${channel.id}`}
+                      >
+                        <Copy className="w-3 h-3 mr-1" /> Webhook
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-[11px] text-destructive"
+                        onClick={() => deleteChannelMutation.mutate(channel.id)}
+                        data-testid={`btn-remove-channel-${channel.id}`}
+                      >
+                        <XCircle className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card data-testid="card-available-channels">
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-2">
+            <div className="flex items-center justify-center w-7 h-7 rounded-md bg-primary/10 shrink-0">
+              <Globe className="w-3.5 h-3.5 text-primary" />
+            </div>
+            <CardTitle className="text-sm font-medium">Available Channels</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {CHANNEL_TYPES.map((ct) => {
+              const isConnected = connectedTypes.has(ct.type);
+              const Icon = ct.icon;
+              return (
+                <div key={ct.type} className={`flex flex-col gap-2 p-3 rounded-md border ${isConnected ? "border-primary/30 bg-primary/5" : "bg-card"}`} data-testid={`available-channel-${ct.type}`}>
+                  <div className="flex items-center gap-2">
+                    <div className={`flex items-center justify-center w-8 h-8 rounded-md ${ct.bgColor} shrink-0`}>
+                      <Icon className={`w-4 h-4 ${ct.color}`} />
+                    </div>
+                    <div className="flex-1">
+                      <span className="text-sm font-medium">{ct.label}</span>
+                      {isConnected && <Badge variant="default" className="ml-2 text-[10px]">Connected</Badge>}
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">{ct.description}</p>
+                  {!isConnected && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-xs self-start mt-1"
+                      disabled={agent.status !== "deployed"}
+                      onClick={() => {
+                        setSelectedChannelType(ct.type);
+                        setChannelName(`${agent.name} — ${ct.label}`);
+                        setBotUsername(`${agent.name} Bot`);
+                        setConnectDialogOpen(true);
+                      }}
+                      data-testid={`btn-connect-${ct.type}`}
+                    >
+                      <Plus className="w-3 h-3 mr-1" /> Connect
+                    </Button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Dialog open={connectDialogOpen} onOpenChange={setConnectDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {selectedMeta && (
+                <div className={`flex items-center justify-center w-7 h-7 rounded-md ${selectedMeta.bgColor}`}>
+                  <selectedMeta.icon className={`w-3.5 h-3.5 ${selectedMeta.color}`} />
+                </div>
+              )}
+              Connect {selectedMeta?.label || "Channel"}
+            </DialogTitle>
+            <DialogDescription>
+              Configure the channel integration for your agent.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-4 py-2">
+            {!selectedChannelType && (
+              <div className="flex flex-col gap-2">
+                <Label className="text-xs">Select Channel Type</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  {CHANNEL_TYPES.filter(ct => !connectedTypes.has(ct.type)).map((ct) => {
+                    const Icon = ct.icon;
+                    return (
+                      <button
+                        key={ct.type}
+                        className={`flex items-center gap-2 p-2.5 rounded-md border text-left transition-colors hover:bg-muted/50 ${selectedChannelType === ct.type ? "border-primary bg-primary/5" : ""}`}
+                        onClick={() => {
+                          setSelectedChannelType(ct.type);
+                          setChannelName(`${agent.name} — ${ct.label}`);
+                          setBotUsername(`${agent.name} Bot`);
+                        }}
+                        data-testid={`select-channel-${ct.type}`}
+                      >
+                        <div className={`flex items-center justify-center w-7 h-7 rounded-md ${ct.bgColor} shrink-0`}>
+                          <Icon className={`w-3.5 h-3.5 ${ct.color}`} />
+                        </div>
+                        <span className="text-xs font-medium">{ct.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="channel-name" className="text-xs">Channel Name</Label>
+              <Input
+                id="channel-name"
+                value={channelName}
+                onChange={(e) => setChannelName(e.target.value)}
+                placeholder="e.g., Production Slack Bot"
+                className="text-sm"
+                data-testid="input-channel-name"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="bot-username" className="text-xs">Bot Display Name</Label>
+              <Input
+                id="bot-username"
+                value={botUsername}
+                onChange={(e) => setBotUsername(e.target.value)}
+                placeholder="e.g., Weather Bot"
+                className="text-sm"
+                data-testid="input-bot-username"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="config-token" className="text-xs">Bot Token / API Key (optional)</Label>
+              <Input
+                id="config-token"
+                value={configToken}
+                onChange={(e) => setConfigToken(e.target.value)}
+                placeholder="Platform-specific bot token"
+                className="text-sm font-mono"
+                type="password"
+                data-testid="input-config-token"
+              />
+              <p className="text-[10px] text-muted-foreground">
+                {selectedChannelType === "slack" && "Enter your Slack Bot OAuth Token (xoxb-...)"}
+                {selectedChannelType === "teams" && "Enter your Microsoft Bot Framework App Password"}
+                {selectedChannelType === "discord" && "Enter your Discord Bot Token"}
+                {selectedChannelType === "whatsapp" && "Enter your WhatsApp Business API Token"}
+                {selectedChannelType === "email" && "Enter your email service API key (e.g., SendGrid)"}
+                {selectedChannelType === "web_widget" && "No token needed — a webhook URL will be generated"}
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConnectDialogOpen(false)} data-testid="btn-cancel-connect">Cancel</Button>
+            <Button
+              onClick={handleConnect}
+              disabled={!selectedChannelType || !channelName.trim() || createChannelMutation.isPending}
+              data-testid="btn-confirm-connect"
+            >
+              {createChannelMutation.isPending ? <><Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> Connecting...</> : <><CheckCircle className="w-3.5 h-3.5 mr-1" /> Connect Channel</>}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

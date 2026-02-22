@@ -1904,4 +1904,24 @@ export const insertAgentApiKeySchema = createInsertSchema(agentApiKeys).omit({ i
 export type InsertAgentApiKey = z.infer<typeof insertAgentApiKeySchema>;
 export type AgentApiKey = typeof agentApiKeys.$inferSelect;
 
+export const agentChannels = pgTable("agent_channels", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  agentId: varchar("agent_id").notNull(),
+  channelType: text("channel_type").notNull(),
+  name: text("name").notNull(),
+  status: text("status").default("disconnected"),
+  config: jsonb("config").default({}),
+  webhookUrl: text("webhook_url"),
+  webhookSecret: text("webhook_secret"),
+  botUsername: text("bot_username"),
+  messageCount: integer("message_count").default(0),
+  lastMessageAt: timestamp("last_message_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertAgentChannelSchema = createInsertSchema(agentChannels).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertAgentChannel = z.infer<typeof insertAgentChannelSchema>;
+export type AgentChannel = typeof agentChannels.$inferSelect;
+
 export * from "./models/chat";

@@ -1,4 +1,4 @@
-import { eq, desc, inArray, and } from "drizzle-orm";
+import { eq, desc, inArray, and, like } from "drizzle-orm";
 import { createHash } from "crypto";
 import { db } from "./db";
 import {
@@ -146,6 +146,7 @@ import {
   agentRuntimeRuns, type AgentRuntimeRun, type InsertAgentRuntimeRun,
   agentProposals, type AgentProposal, type InsertAgentProposal,
   agentApiKeys, type AgentApiKey, type InsertAgentApiKey,
+  agentChannels, type AgentChannel, type InsertAgentChannel,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -643,6 +644,14 @@ export interface IStorage {
   createAgentApiKey(key: InsertAgentApiKey): Promise<AgentApiKey>;
   updateAgentApiKey(id: string, data: Partial<AgentApiKey>): Promise<AgentApiKey | undefined>;
   deleteAgentApiKey(id: string): Promise<boolean>;
+
+  getAgentChannels(agentId: string): Promise<AgentChannel[]>;
+  getAgentChannel(id: string): Promise<AgentChannel | undefined>;
+  getAgentChannelByWebhook(webhookUrl: string): Promise<AgentChannel | undefined>;
+  getAgentChannelByWebhookPath(webhookPath: string): Promise<AgentChannel | undefined>;
+  createAgentChannel(channel: InsertAgentChannel): Promise<AgentChannel>;
+  updateAgentChannel(id: string, data: Partial<AgentChannel>): Promise<AgentChannel | undefined>;
+  deleteAgentChannel(id: string): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2540,6 +2549,40 @@ export class DatabaseStorage implements IStorage {
 
   async deleteAgentApiKey(id: string): Promise<boolean> {
     const result = await db.delete(agentApiKeys).where(eq(agentApiKeys.id, id)).returning();
+    return result.length > 0;
+  }
+
+  async getAgentChannels(agentId: string): Promise<AgentChannel[]> {
+    return db.select().from(agentChannels).where(eq(agentChannels.agentId, agentId)).orderBy(desc(agentChannels.createdAt));
+  }
+
+  async getAgentChannel(id: string): Promise<AgentChannel | undefined> {
+    const [channel] = await db.select().from(agentChannels).where(eq(agentChannels.id, id));
+    return channel;
+  }
+
+  async getAgentChannelByWebhook(webhookUrl: string): Promise<AgentChannel | undefined> {
+    const [channel] = await db.select().from(agentChannels).where(eq(agentChannels.webhookUrl, webhookUrl));
+    return channel;
+  }
+
+  async getAgentChannelByWebhookPath(webhookPath: string): Promise<AgentChannel | undefined> {
+    const [channel] = await db.select().from(agentChannels).where(like(agentChannels.webhookUrl, `%${webhookPath}`));
+    return channel;
+  }
+
+  async createAgentChannel(channel: InsertAgentChannel): Promise<AgentChannel> {
+    const [created] = await db.insert(agentChannels).values(channel).returning();
+    return created;
+  }
+
+  async updateAgentChannel(id: string, data: Partial<AgentChannel>): Promise<AgentChannel | undefined> {
+    const [updated] = await db.update(agentChannels).set({ ...data, updatedAt: new Date() }).where(eq(agentChannels.id, id)).returning();
+    return updated;
+  }
+
+  async deleteAgentChannel(id: string): Promise<boolean> {
+    const result = await db.delete(agentChannels).where(eq(agentChannels.id, id)).returning();
     return result.length > 0;
   }
 }

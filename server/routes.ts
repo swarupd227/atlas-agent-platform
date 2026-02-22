@@ -9964,6 +9964,267 @@ Eval Suites: ${evalSuites.length} configured`,
     }
   });
 
+  // --- Agent Channel Publishing Routes ---
+
+  app.get("/api/agents/:agentId/channels", async (req, res) => {
+    try {
+      const channels = await storage.getAgentChannels(req.params.agentId);
+      res.json(channels);
+    } catch (e) {
+      res.status(500).json({ message: "Failed to fetch channels" });
+    }
+  });
+
+  app.post("/api/agents/:agentId/channels", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.agentId);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+
+      if (agent.status !== "deployed") {
+        return res.status(422).json({ message: "Agent must be deployed before publishing to channels." });
+      }
+
+      const schema = z.object({
+        channelType: z.enum(["slack", "teams", "discord", "whatsapp", "email", "web_widget"]),
+        name: z.string().min(1),
+        config: z.record(z.any()).optional().default({}),
+        botUsername: z.string().optional(),
+      });
+      const parsed = schema.parse(req.body);
+
+      const webhookToken = randomBytes(24).toString("hex");
+      const baseUrl = `${req.protocol}://${req.get("host")}`;
+      const webhookUrl = `${baseUrl}/api/webhooks/${parsed.channelType}/${webhookToken}`;
+      const webhookSecret = randomBytes(32).toString("hex");
+
+      const channel = await storage.createAgentChannel({
+        agentId: req.params.agentId,
+        channelType: parsed.channelType,
+        name: parsed.name,
+        status: "connected",
+        config: parsed.config,
+        webhookUrl,
+        webhookSecret,
+        botUsername: parsed.botUsername || `${agent.name} Bot`,
+        messageCount: 0,
+      });
+
+      res.status(201).json(channel);
+    } catch (e: any) {
+      if (e instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid channel configuration", errors: e.errors });
+      }
+      console.error("[channels] Error creating channel:", e);
+      res.status(500).json({ message: "Failed to create channel" });
+    }
+  });
+
+  app.patch("/api/agents/:agentId/channels/:channelId", async (req, res) => {
+    try {
+      const channel = await storage.getAgentChannel(req.params.channelId);
+      if (!channel || channel.agentId !== req.params.agentId) {
+        return res.status(404).json({ message: "Channel not found" });
+      }
+
+      const updateSchema = z.object({
+        name: z.string().min(1).optional(),
+        status: z.enum(["connected", "paused", "disconnected"]).optional(),
+        config: z.record(z.any()).optional(),
+        botUsername: z.string().optional(),
+      });
+      const parsed = updateSchema.parse(req.body);
+
+      const updated = await storage.updateAgentChannel(req.params.channelId, parsed);
+      res.json(updated);
+    } catch (e: any) {
+      if (e instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid update data", errors: e.errors });
+      }
+      res.status(500).json({ message: "Failed to update channel" });
+    }
+  });
+
+  app.delete("/api/agents/:agentId/channels/:channelId", async (req, res) => {
+    try {
+      const channel = await storage.getAgentChannel(req.params.channelId);
+      if (!channel || channel.agentId !== req.params.agentId) {
+        return res.status(404).json({ message: "Channel not found" });
+      }
+      await storage.deleteAgentChannel(req.params.channelId);
+      res.json({ message: "Channel removed" });
+    } catch (e) {
+      res.status(500).json({ message: "Failed to delete channel" });
+    }
+  });
+
+  app.post("/api/agents/:agentId/channels/:channelId/test", async (req, res) => {
+    try {
+      const channel = await storage.getAgentChannel(req.params.channelId);
+      if (!channel || channel.agentId !== req.params.agentId) {
+        return res.status(404).json({ message: "Channel not found" });
+      }
+
+      const agent = await storage.getAgent(req.params.agentId);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+
+      const testMessage = `Test message from ${channel.channelType} channel integration`;
+      const agentMcpLinks = await storage.getAgentMcpServers(agent.id);
+      const mcpServerIds = agentMcpLinks.map((l: any) => l.mcpServerId);
+      const richPrompt = buildAgentSystemPrompt(agent);
+
+      const result = await executePromptWithMcp(
+        agent.id,
+        undefined,
+        undefined,
+        mcpServerIds,
+        testMessage,
+        (agent as any).industry || "technology",
+        richPrompt,
+      );
+
+      await storage.updateAgentChannel(channel.id, {
+        messageCount: (channel.messageCount || 0) + 1,
+        lastMessageAt: new Date(),
+      });
+
+      res.json({
+        success: result.success,
+        channelType: channel.channelType,
+        response: result.output || result.error,
+        latencyMs: result.latencyMs,
+      });
+    } catch (e: any) {
+      console.error("[channels] Test error:", e);
+      res.status(500).json({ message: "Channel test failed", error: e.message });
+    }
+  });
+
+  // --- Webhook Receiver Endpoints (per platform) ---
+
+  app.post("/api/webhooks/:platform/:token", async (req, res) => {
+    try {
+      const { platform, token } = req.params;
+      const webhookPath = `/api/webhooks/${platform}/${token}`;
+      const channel = await storage.getAgentChannelByWebhookPath(webhookPath);
+
+      if (!channel) {
+        return res.status(404).json({ error: "webhook_not_found", message: "No channel configured for this webhook" });
+      }
+
+      if (channel.status !== "connected") {
+        return res.status(422).json({ error: "channel_paused", message: `Channel is ${channel.status}` });
+      }
+
+      const agent = await storage.getAgent(channel.agentId);
+      if (!agent) {
+        return res.status(404).json({ error: "agent_not_found", message: "Agent not found" });
+      }
+
+      if (agent.status !== "deployed") {
+        return res.status(422).json({ error: "agent_not_deployed", message: "Agent is not deployed" });
+      }
+
+      let userMessage = "";
+      let senderInfo: any = {};
+
+      switch (platform) {
+        case "slack": {
+          if (req.body.type === "url_verification") {
+            return res.json({ challenge: req.body.challenge });
+          }
+          const event = req.body.event || {};
+          userMessage = event.text || req.body.text || "";
+          senderInfo = { userId: event.user, channel: event.channel, threadTs: event.thread_ts || event.ts };
+          break;
+        }
+        case "teams": {
+          userMessage = req.body.text || (req.body.value && req.body.value.text) || "";
+          senderInfo = { from: req.body.from, conversation: req.body.conversation };
+          break;
+        }
+        case "discord": {
+          if (req.body.type === 1) {
+            return res.json({ type: 1 });
+          }
+          userMessage = req.body.data?.options?.[0]?.value || req.body.content || "";
+          senderInfo = { userId: req.body.member?.user?.id, channelId: req.body.channel_id };
+          break;
+        }
+        case "whatsapp": {
+          const entry = req.body.entry?.[0];
+          const change = entry?.changes?.[0];
+          const msg = change?.value?.messages?.[0];
+          userMessage = msg?.text?.body || "";
+          senderInfo = { from: msg?.from, messageId: msg?.id };
+          break;
+        }
+        default: {
+          userMessage = req.body.message || req.body.input || req.body.text || "";
+          senderInfo = req.body.sender || {};
+        }
+      }
+
+      if (!userMessage) {
+        return res.status(400).json({ error: "no_message", message: "No message content found in webhook payload" });
+      }
+
+      const agentMcpLinks = await storage.getAgentMcpServers(agent.id);
+      const mcpServerIds = agentMcpLinks.map((l: any) => l.mcpServerId);
+      const richPrompt = buildAgentSystemPrompt(agent);
+
+      const result = await executePromptWithMcp(
+        agent.id,
+        undefined,
+        undefined,
+        mcpServerIds,
+        userMessage,
+        (agent as any).industry || "technology",
+        richPrompt,
+      );
+
+      await storage.updateAgentChannel(channel.id, {
+        messageCount: (channel.messageCount || 0) + 1,
+        lastMessageAt: new Date(),
+      });
+
+      let formattedResponse: any;
+      switch (platform) {
+        case "slack":
+          formattedResponse = {
+            text: result.output || result.error || "No response",
+            thread_ts: senderInfo.threadTs,
+            channel: senderInfo.channel,
+          };
+          break;
+        case "teams":
+          formattedResponse = {
+            type: "message",
+            text: result.output || result.error || "No response",
+          };
+          break;
+        case "discord":
+          formattedResponse = {
+            type: 4,
+            data: { content: (result.output || result.error || "No response").slice(0, 2000) },
+          };
+          break;
+        default:
+          formattedResponse = {
+            output: result.output || result.error,
+            success: result.success,
+            agentId: agent.id,
+            agentName: agent.name,
+            channelType: platform,
+          };
+      }
+
+      res.json(formattedResponse);
+    } catch (e: any) {
+      console.error("[webhook] Error processing webhook:", e);
+      res.status(500).json({ error: "webhook_error", message: e.message });
+    }
+  });
+
   app.post("/api/gateway/v1/invoke/:agentId", async (req, res) => {
     const startTime = Date.now();
     try {
