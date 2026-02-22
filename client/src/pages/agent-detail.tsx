@@ -801,6 +801,7 @@ function AgentDetailInner() {
           <TabsTrigger value="context-profile" data-testid="tab-context-profile">Context Profile</TabsTrigger>
           <TabsTrigger value="mcp-servers" data-testid="tab-mcp-servers">MCP Servers</TabsTrigger>
           <TabsTrigger value="ontology" data-testid="tab-ontology">Ontology</TabsTrigger>
+          <TabsTrigger value="api-gateway" data-testid="tab-api-gateway">API Gateway</TabsTrigger>
           {agent.agentType === "remote" && (
             <TabsTrigger value="a2a" data-testid="tab-a2a">A2A Card</TabsTrigger>
           )}
@@ -3813,6 +3814,10 @@ function AgentDetailInner() {
               </>
             );
           })()}
+        </TabsContent>
+
+        <TabsContent value="api-gateway" className="flex flex-col gap-4 mt-0" data-testid="tab-content-api-gateway">
+          <AgentApiGateway agent={agent} />
         </TabsContent>
       </Tabs>
 
@@ -6904,5 +6909,363 @@ function BlueprintRollbackPlan({ plan }: { plan: any }) {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function AgentApiGateway({ agent }: { agent: any }) {
+  const { toast } = useToast();
+  const [tryItInput, setTryItInput] = useState("");
+  const [tryItResult, setTryItResult] = useState<any>(null);
+  const [newKeyName, setNewKeyName] = useState("");
+  const [createdKey, setCreatedKey] = useState<string | null>(null);
+
+  const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
+  const gatewayEndpoint = `${baseUrl}/api/gateway/v1/invoke/${agent.id}`;
+  const agentInfoEndpoint = `${baseUrl}/api/gateway/v1/agents/${agent.id}`;
+
+  const { data: apiKeys = [], isLoading: keysLoading } = useQuery<any[]>({
+    queryKey: ["/api/agents", agent.id, "api-keys"],
+  });
+
+  const createKeyMutation = useMutation({
+    mutationFn: async (name: string) => {
+      const res = await apiRequest("POST", `/api/agents/${agent.id}/api-keys`, { name });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setCreatedKey(data.key);
+      setNewKeyName("");
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agent.id, "api-keys"] });
+      toast({ title: "API key created", description: "Copy the key now — it won't be shown again." });
+    },
+    onError: () => {
+      toast({ title: "Failed to create API key", variant: "destructive" });
+    },
+  });
+
+  const revokeKeyMutation = useMutation({
+    mutationFn: async (keyId: string) => {
+      await apiRequest("DELETE", `/api/agents/${agent.id}/api-keys/${keyId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agent.id, "api-keys"] });
+      toast({ title: "API key revoked" });
+    },
+  });
+
+  const invokeMutation = useMutation({
+    mutationFn: async ({ input, apiKey }: { input: string; apiKey: string }) => {
+      const res = await fetch(`/api/gateway/v1/invoke/${agent.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-API-Key": apiKey },
+        body: JSON.stringify({ input }),
+      });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setTryItResult(data);
+    },
+    onError: () => {
+      toast({ title: "Invocation failed", variant: "destructive" });
+    },
+  });
+
+  const activeKeys = (apiKeys as any[]).filter((k: any) => k.isActive);
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    toast({ title: "Copied to clipboard" });
+  };
+
+  const curlExample = `curl -X POST "${gatewayEndpoint}" \\
+  -H "Content-Type: application/json" \\
+  -H "X-API-Key: YOUR_API_KEY" \\
+  -d '{"input": "Your prompt here"}'`;
+
+  const jsExample = `const response = await fetch("${gatewayEndpoint}", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "X-API-Key": "YOUR_API_KEY",
+  },
+  body: JSON.stringify({ input: "Your prompt here" }),
+});
+const result = await response.json();
+console.log(result.output);`;
+
+  const pythonExample = `import requests
+
+response = requests.post(
+    "${gatewayEndpoint}",
+    headers={
+        "Content-Type": "application/json",
+        "X-API-Key": "YOUR_API_KEY",
+    },
+    json={"input": "Your prompt here"},
+)
+result = response.json()
+print(result["output"])`;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Card data-testid="card-gateway-endpoint">
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-2">
+            <div className="flex items-center justify-center w-7 h-7 rounded-md bg-primary/10 shrink-0">
+              <Globe className="w-3.5 h-3.5 text-primary" />
+            </div>
+            <CardTitle className="text-sm font-medium">API Endpoint</CardTitle>
+            <Badge variant="outline" className="ml-auto text-[10px]">
+              {agent.status === "active" || agent.status === "deployed" ? "Live" : "Inactive"}
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[11px] font-medium text-muted-foreground">Invoke Endpoint</span>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 text-xs font-mono bg-muted/50 px-3 py-2 rounded-md overflow-x-auto" data-testid="text-gateway-url">
+                POST {gatewayEndpoint}
+              </code>
+              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => copyToClipboard(gatewayEndpoint)} data-testid="btn-copy-endpoint">
+                <Copy className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[11px] font-medium text-muted-foreground">Agent Info Endpoint</span>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 text-xs font-mono bg-muted/50 px-3 py-2 rounded-md overflow-x-auto">
+                GET {agentInfoEndpoint}
+              </code>
+              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => copyToClipboard(agentInfoEndpoint)}>
+                <Copy className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+          </div>
+          <Separator />
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[11px] font-medium text-muted-foreground">Request Body</span>
+            <pre className="text-[11px] font-mono bg-muted/30 p-3 rounded-md">
+{`{
+  "input": "string (required)",
+  "environment": "string (optional, default: production)",
+  "metadata": "object (optional)"
+}`}
+            </pre>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[11px] font-medium text-muted-foreground">Authentication</span>
+            <p className="text-xs text-muted-foreground">
+              Include your API key via <code className="text-[10px] bg-muted/50 px-1 py-0.5 rounded">X-API-Key</code> header or <code className="text-[10px] bg-muted/50 px-1 py-0.5 rounded">Authorization: Bearer &lt;key&gt;</code>
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card data-testid="card-api-keys">
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-2">
+            <div className="flex items-center justify-center w-7 h-7 rounded-md bg-primary/10 shrink-0">
+              <KeyRound className="w-3.5 h-3.5 text-primary" />
+            </div>
+            <CardTitle className="text-sm font-medium">API Keys</CardTitle>
+            <Badge variant="secondary" className="ml-auto text-[10px]">{activeKeys.length} active</Badge>
+          </div>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          {createdKey && (
+            <div className="flex flex-col gap-2 p-3 bg-green-500/10 border border-green-500/20 rounded-md" data-testid="created-key-banner">
+              <div className="flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 text-green-600" />
+                <span className="text-xs font-medium text-green-700 dark:text-green-400">API Key Created — Copy it now!</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 text-[11px] font-mono bg-white/80 dark:bg-black/40 px-2 py-1.5 rounded break-all" data-testid="text-created-key">{createdKey}</code>
+                <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => copyToClipboard(createdKey)} data-testid="btn-copy-key">
+                  <Copy className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+              <Button variant="ghost" size="sm" className="text-[11px] self-end" onClick={() => setCreatedKey(null)}>Dismiss</Button>
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <Input
+              placeholder="Key name (e.g., Production, CI/CD)"
+              value={newKeyName}
+              onChange={(e) => setNewKeyName(e.target.value)}
+              className="flex-1 h-8 text-xs"
+              data-testid="input-key-name"
+            />
+            <Button
+              size="sm"
+              className="h-8 text-xs"
+              disabled={!newKeyName.trim() || createKeyMutation.isPending}
+              onClick={() => createKeyMutation.mutate(newKeyName.trim())}
+              data-testid="btn-create-key"
+            >
+              {createKeyMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Plus className="w-3.5 h-3.5 mr-1" />}
+              Create Key
+            </Button>
+          </div>
+          {keysLoading ? (
+            <div className="flex flex-col gap-2">
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-10 w-full" />
+            </div>
+          ) : activeKeys.length === 0 ? (
+            <p className="text-xs text-muted-foreground text-center py-4" data-testid="text-no-keys">
+              No API keys yet. Create one to start invoking this agent via API.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {activeKeys.map((k: any) => (
+                <div key={k.id} className="flex items-center gap-3 px-3 py-2 bg-muted/30 rounded-md" data-testid={`api-key-${k.id}`}>
+                  <KeyRound className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <span className="text-xs font-medium block truncate">{k.name}</span>
+                    <span className="text-[10px] text-muted-foreground font-mono">{k.keyPrefix}•••</span>
+                  </div>
+                  {k.lastUsedAt && (
+                    <span className="text-[10px] text-muted-foreground shrink-0">
+                      Last used {new Date(k.lastUsedAt).toLocaleDateString()}
+                    </span>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 shrink-0 text-destructive hover:text-destructive"
+                    onClick={() => revokeKeyMutation.mutate(k.id)}
+                    data-testid={`btn-revoke-key-${k.id}`}
+                  >
+                    <XCircle className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card data-testid="card-try-it">
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-2">
+            <div className="flex items-center justify-center w-7 h-7 rounded-md bg-primary/10 shrink-0">
+              <Terminal className="w-3.5 h-3.5 text-primary" />
+            </div>
+            <CardTitle className="text-sm font-medium">Try It</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          {activeKeys.length === 0 ? (
+            <p className="text-xs text-muted-foreground text-center py-4">
+              Create an API key first to test the gateway.
+            </p>
+          ) : (
+            <>
+              <Textarea
+                placeholder="Enter your input prompt..."
+                value={tryItInput}
+                onChange={(e) => setTryItInput(e.target.value)}
+                className="min-h-[80px] text-xs font-mono"
+                data-testid="textarea-try-it-input"
+              />
+              <Button
+                size="sm"
+                className="self-end text-xs"
+                disabled={!tryItInput.trim() || invokeMutation.isPending}
+                onClick={() => {
+                  const storedKey = createdKey || "";
+                  if (!storedKey) {
+                    toast({
+                      title: "API key needed",
+                      description: "Create a new API key and copy it, then try again. The Try It console uses the most recently created key.",
+                      variant: "destructive",
+                    });
+                    return;
+                  }
+                  invokeMutation.mutate({ input: tryItInput, apiKey: storedKey });
+                }}
+                data-testid="btn-try-invoke"
+              >
+                {invokeMutation.isPending ? (
+                  <><Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> Running...</>
+                ) : (
+                  <><Play className="w-3.5 h-3.5 mr-1" /> Invoke Agent</>
+                )}
+              </Button>
+              {tryItResult && (
+                <div className="flex flex-col gap-2 mt-2" data-testid="try-it-result">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-medium text-muted-foreground">Response</span>
+                    {tryItResult.usage && (
+                      <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                        <span>{tryItResult.usage.latencyMs}ms</span>
+                        <span>${tryItResult.usage.costUsd?.toFixed(5)}</span>
+                        <span>{tryItResult.usage.tokens?.total_tokens} tokens</span>
+                      </div>
+                    )}
+                  </div>
+                  {tryItResult.error ? (
+                    <div className="p-3 bg-destructive/10 text-destructive text-xs rounded-md">
+                      {tryItResult.error}: {tryItResult.message}
+                    </div>
+                  ) : (
+                    <div className="p-3 bg-muted/30 rounded-md">
+                      <p className="text-xs whitespace-pre-wrap" data-testid="text-try-it-output">{tryItResult.output}</p>
+                    </div>
+                  )}
+                  {tryItResult.id && (
+                    <span className="text-[10px] text-muted-foreground">Trace ID: {tryItResult.id}</span>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card data-testid="card-code-examples">
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-2">
+            <div className="flex items-center justify-center w-7 h-7 rounded-md bg-primary/10 shrink-0">
+              <Code className="w-3.5 h-3.5 text-primary" />
+            </div>
+            <CardTitle className="text-sm font-medium">Code Examples</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-medium text-muted-foreground">cURL</span>
+              <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => copyToClipboard(curlExample)} data-testid="btn-copy-curl">
+                <Copy className="w-3 h-3" />
+              </Button>
+            </div>
+            <pre className="text-[11px] font-mono bg-muted/30 p-3 rounded-md overflow-x-auto whitespace-pre" data-testid="code-curl">{curlExample}</pre>
+          </div>
+          <Separator />
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-medium text-muted-foreground">JavaScript / TypeScript</span>
+              <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => copyToClipboard(jsExample)} data-testid="btn-copy-js">
+                <Copy className="w-3 h-3" />
+              </Button>
+            </div>
+            <pre className="text-[11px] font-mono bg-muted/30 p-3 rounded-md overflow-x-auto whitespace-pre" data-testid="code-js">{jsExample}</pre>
+          </div>
+          <Separator />
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-medium text-muted-foreground">Python</span>
+              <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => copyToClipboard(pythonExample)} data-testid="btn-copy-python">
+                <Copy className="w-3 h-3" />
+              </Button>
+            </div>
+            <pre className="text-[11px] font-mono bg-muted/30 p-3 rounded-md overflow-x-auto whitespace-pre" data-testid="code-python">{pythonExample}</pre>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   );
 }

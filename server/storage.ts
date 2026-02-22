@@ -145,6 +145,7 @@ import {
   mcpParameterMatches, type McpParameterMatch, type InsertMcpParameterMatch,
   agentRuntimeRuns, type AgentRuntimeRun, type InsertAgentRuntimeRun,
   agentProposals, type AgentProposal, type InsertAgentProposal,
+  agentApiKeys, type AgentApiKey, type InsertAgentApiKey,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -634,6 +635,13 @@ export interface IStorage {
   createAgentProposal(proposal: InsertAgentProposal): Promise<AgentProposal>;
   updateAgentProposal(id: string, data: Partial<AgentProposal>): Promise<AgentProposal | undefined>;
   deleteAgentProposal(id: string): Promise<boolean>;
+
+  getAgentApiKeys(agentId: string): Promise<AgentApiKey[]>;
+  getAgentApiKey(id: string): Promise<AgentApiKey | undefined>;
+  getAgentApiKeyByHash(keyHash: string): Promise<AgentApiKey | undefined>;
+  createAgentApiKey(key: InsertAgentApiKey): Promise<AgentApiKey>;
+  updateAgentApiKey(id: string, data: Partial<AgentApiKey>): Promise<AgentApiKey | undefined>;
+  deleteAgentApiKey(id: string): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2494,6 +2502,35 @@ export class DatabaseStorage implements IStorage {
 
   async deleteAgentProposal(id: string): Promise<boolean> {
     const result = await db.delete(agentProposals).where(eq(agentProposals.id, id)).returning();
+    return result.length > 0;
+  }
+
+  async getAgentApiKeys(agentId: string): Promise<AgentApiKey[]> {
+    return db.select().from(agentApiKeys).where(eq(agentApiKeys.agentId, agentId)).orderBy(desc(agentApiKeys.createdAt));
+  }
+
+  async getAgentApiKey(id: string): Promise<AgentApiKey | undefined> {
+    const [key] = await db.select().from(agentApiKeys).where(eq(agentApiKeys.id, id));
+    return key;
+  }
+
+  async getAgentApiKeyByHash(keyHash: string): Promise<AgentApiKey | undefined> {
+    const [key] = await db.select().from(agentApiKeys).where(and(eq(agentApiKeys.keyHash, keyHash), eq(agentApiKeys.isActive, true)));
+    return key;
+  }
+
+  async createAgentApiKey(key: InsertAgentApiKey): Promise<AgentApiKey> {
+    const [created] = await db.insert(agentApiKeys).values(key).returning();
+    return created;
+  }
+
+  async updateAgentApiKey(id: string, data: Partial<AgentApiKey>): Promise<AgentApiKey | undefined> {
+    const [updated] = await db.update(agentApiKeys).set(data).where(eq(agentApiKeys.id, id)).returning();
+    return updated;
+  }
+
+  async deleteAgentApiKey(id: string): Promise<boolean> {
+    const result = await db.delete(agentApiKeys).where(eq(agentApiKeys.id, id)).returning();
     return result.length > 0;
   }
 }

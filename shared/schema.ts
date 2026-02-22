@@ -1887,4 +1887,21 @@ export const insertAgentProposalSchema = createInsertSchema(agentProposals).omit
 export type InsertAgentProposal = z.infer<typeof insertAgentProposalSchema>;
 export type AgentProposal = typeof agentProposals.$inferSelect;
 
+export const agentApiKeys = pgTable("agent_api_keys", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  agentId: varchar("agent_id").notNull(),
+  name: text("name").notNull(),
+  keyHash: text("key_hash").notNull(),
+  keyPrefix: text("key_prefix").notNull(),
+  scopes: text("scopes").array().default(sql`'{"invoke"}'::text[]`),
+  isActive: boolean("is_active").default(true),
+  lastUsedAt: timestamp("last_used_at"),
+  expiresAt: timestamp("expires_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAgentApiKeySchema = createInsertSchema(agentApiKeys).omit({ id: true, createdAt: true });
+export type InsertAgentApiKey = z.infer<typeof insertAgentApiKeySchema>;
+export type AgentApiKey = typeof agentApiKeys.$inferSelect;
+
 export * from "./models/chat";

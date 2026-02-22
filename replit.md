@@ -41,6 +41,7 @@ The Nous Agent Orchestrator is built on a modern web stack: React, Vite, Tailwin
 - **Context Engineering Studio**: Manages how agents acquire and utilize context, featuring context source inventory, priority matrix, and budget visualizer.
 - **Industry Workspace Selector**: Global context switch adapting platform terminology and regulatory frameworks based on selected industry profiles.
 - **Multi-Agent Pipeline Orchestrator**: Visual workflow editor for designing and executing multi-agent pipelines with sequential agent stages, approval gates, and AI-simulated scenario execution. Supports creating pipelines, adding agent/gate stages, running scenarios with real-time per-stage progression, and human approval checkpoints.
+- **Agent API Gateway**: Exposes deployed agents as REST API endpoints for external invocation. Features include SHA-256-hashed API key management (create, list, revoke), a public invoke endpoint (`POST /api/gateway/v1/invoke/:agentId`) with API key authentication (X-API-Key or Bearer token), full execution tracing, policy checks, and cost tracking. The Agent Detail page includes an API Gateway tab with endpoint documentation, API key management UI, a live "Try It" console, and code examples (cURL, JavaScript, Python).
 
 **Technical Implementations**:
 - **Shadow Replay**: Replays production traces for validation.

@@ -9869,6 +9869,372 @@ Eval Suites: ${evalSuites.length} configured`,
     });
   });
 
+  // ══════════════════════════════════════════════════════
+  // AGENT API GATEWAY
+  // ══════════════════════════════════════════════════════
+
+  const { createHash: createHashCrypto, randomBytes } = await import("crypto");
+
+  function generateApiKey(): { raw: string; hash: string; prefix: string } {
+    const raw = `nous_${randomBytes(32).toString("hex")}`;
+    const hash = createHashCrypto("sha256").update(raw).digest("hex");
+    const prefix = raw.slice(0, 12);
+    return { raw, hash, prefix };
+  }
+
+  function hashApiKey(raw: string): string {
+    return createHashCrypto("sha256").update(raw).digest("hex");
+  }
+
+  app.post("/api/agents/:agentId/api-keys", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.agentId);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+
+      const schema = z.object({
+        name: z.string().min(1).max(100),
+        scopes: z.array(z.string()).optional().default(["invoke"]),
+        expiresInDays: z.number().optional(),
+      });
+      const { name, scopes, expiresInDays } = schema.parse(req.body);
+
+      const { raw, hash, prefix } = generateApiKey();
+
+      const expiresAt = expiresInDays
+        ? new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000)
+        : null;
+
+      const apiKey = await storage.createAgentApiKey({
+        agentId: req.params.agentId,
+        name,
+        keyHash: hash,
+        keyPrefix: prefix,
+        scopes,
+        isActive: true,
+        expiresAt,
+      });
+
+      res.status(201).json({
+        id: apiKey.id,
+        name: apiKey.name,
+        key: raw,
+        keyPrefix: apiKey.keyPrefix,
+        scopes: apiKey.scopes,
+        expiresAt: apiKey.expiresAt,
+        createdAt: apiKey.createdAt,
+        message: "Store this API key securely. It will not be shown again.",
+      });
+    } catch (e) {
+      if (e instanceof ZodError) return res.status(400).json({ message: "Validation error", errors: e.errors });
+      console.error("[api-keys] Error:", e);
+      res.status(500).json({ message: "Failed to create API key" });
+    }
+  });
+
+  app.get("/api/agents/:agentId/api-keys", async (req, res) => {
+    try {
+      const keys = await storage.getAgentApiKeys(req.params.agentId);
+      res.json(keys.map(k => ({
+        id: k.id,
+        name: k.name,
+        keyPrefix: k.keyPrefix,
+        scopes: k.scopes,
+        isActive: k.isActive,
+        lastUsedAt: k.lastUsedAt,
+        expiresAt: k.expiresAt,
+        createdAt: k.createdAt,
+      })));
+    } catch (e) {
+      console.error("[api-keys] Error:", e);
+      res.status(500).json({ message: "Failed to list API keys" });
+    }
+  });
+
+  app.delete("/api/agents/:agentId/api-keys/:keyId", async (req, res) => {
+    try {
+      const key = await storage.getAgentApiKey(req.params.keyId);
+      if (!key || key.agentId !== req.params.agentId) {
+        return res.status(404).json({ message: "API key not found" });
+      }
+      await storage.updateAgentApiKey(req.params.keyId, { isActive: false });
+      res.json({ message: "API key revoked" });
+    } catch (e) {
+      console.error("[api-keys] Error:", e);
+      res.status(500).json({ message: "Failed to revoke API key" });
+    }
+  });
+
+  app.post("/api/gateway/v1/invoke/:agentId", async (req, res) => {
+    const startTime = Date.now();
+    try {
+      const authHeader = req.headers["authorization"] || req.headers["x-api-key"];
+      if (!authHeader) {
+        return res.status(401).json({ error: "unauthorized", message: "Missing API key. Provide via Authorization: Bearer <key> or X-API-Key header." });
+      }
+
+      const rawKey = typeof authHeader === "string" && authHeader.startsWith("Bearer ")
+        ? authHeader.slice(7)
+        : authHeader as string;
+
+      const keyHash = hashApiKey(rawKey);
+      const apiKey = await storage.getAgentApiKeyByHash(keyHash);
+      if (!apiKey) {
+        return res.status(401).json({ error: "unauthorized", message: "Invalid API key" });
+      }
+
+      if (apiKey.agentId !== req.params.agentId) {
+        return res.status(403).json({ error: "forbidden", message: "API key does not have access to this agent" });
+      }
+
+      if (apiKey.expiresAt && new Date(apiKey.expiresAt) < new Date()) {
+        return res.status(401).json({ error: "expired", message: "API key has expired" });
+      }
+
+      storage.updateAgentApiKey(apiKey.id, { lastUsedAt: new Date() });
+
+      const agent = await storage.getAgent(req.params.agentId);
+      if (!agent) return res.status(404).json({ error: "not_found", message: "Agent not found" });
+
+      if (agent.status !== "active" && agent.status !== "deployed") {
+        return res.status(422).json({ error: "agent_unavailable", message: `Agent is in '${agent.status}' status. Only active/deployed agents can be invoked.` });
+      }
+
+      const schema = z.object({
+        input: z.string().min(1),
+        environment: z.string().optional().default("production"),
+        metadata: z.record(z.any()).optional(),
+      });
+      const { input, environment, metadata } = schema.parse(req.body);
+
+      const policyBundle = await resolvePolicyBundle(agent.id);
+
+      const trace = await storage.createTrace({
+        agentId: agent.id,
+        versionId: agent.currentVersion,
+        environment,
+        status: "running",
+        inputSummary: input.slice(0, 500),
+        modelId: agent.modelName || "gpt-4.1",
+        policyChecks: policyBundle.appliedPolicies,
+      });
+
+      let stepIndex = 0;
+
+      await storage.createRunStep({
+        runId: trace.id,
+        stepIndex: stepIndex++,
+        type: "gateway_auth",
+        status: "completed",
+        input: { keyPrefix: apiKey.keyPrefix, agentId: agent.id },
+        output: { authenticated: true, keyName: apiKey.name },
+        durationMs: Date.now() - startTime,
+      });
+
+      await storage.createRunStep({
+        runId: trace.id,
+        stepIndex: stepIndex++,
+        type: "policy_resolve",
+        status: "completed",
+        input: { agentId: agent.id, environment },
+        output: {
+          appliedPolicies: policyBundle.appliedPolicies,
+          toolAllowlist: policyBundle.toolAllowlist,
+          blockedTools: policyBundle.blockedTools,
+          guardrails: policyBundle.guardrails,
+        },
+        durationMs: Date.now() - startTime,
+      });
+
+      let plan = "";
+      let planTokens = { prompt_tokens: 0, completion_tokens: 0 };
+      const planStart = Date.now();
+      try {
+        const systemPromptBase = agent.systemPrompt
+          || `You are an AI agent named "${agent.name}". ${agent.description || ""}`;
+        const guardrailPrompt = policyBundle.guardrails.length > 0
+          ? `\nGuardrails:\n${policyBundle.guardrails.map((g, i) => `${i + 1}. ${g}`).join("\n")}`
+          : "";
+
+        const chatResponse = await openai.chat.completions.create({
+          model: agent.modelName || "gpt-4.1",
+          max_tokens: 500,
+          messages: [
+            { role: "system", content: `${systemPromptBase}\n\nProduce a concise execution plan with numbered steps.${guardrailPrompt}` },
+            { role: "user", content: input },
+          ],
+        });
+        plan = chatResponse.choices[0]?.message?.content || "No plan generated";
+        planTokens = {
+          prompt_tokens: chatResponse.usage?.prompt_tokens || 0,
+          completion_tokens: chatResponse.usage?.completion_tokens || 0,
+        };
+      } catch {
+        plan = `Planning fallback: Process "${input}" using standard workflow`;
+      }
+
+      await storage.createRunStep({
+        runId: trace.id,
+        stepIndex: stepIndex++,
+        type: "llm_plan",
+        status: "completed",
+        input: { prompt: input.slice(0, 200), model: agent.modelName || "gpt-4.1" },
+        output: { plan: plan.slice(0, 1000) },
+        tokenUsage: planTokens,
+        durationMs: Date.now() - planStart,
+      });
+
+      const toolCalls: Array<Record<string, unknown>> = [];
+      const policyCheckResults: Array<Record<string, unknown>> = [];
+
+      const agentTools = (agent.toolsConfig as Array<{ name: string; input?: Record<string, unknown> }>) || [];
+      const toolsToCall = agentTools.length > 0
+        ? agentTools.slice(0, 3)
+        : [{ name: "knowledge_search", input: { query: input.slice(0, 100) } }];
+
+      for (const tool of toolsToCall) {
+        const toolStart = Date.now();
+        const toolInput = (tool as any).input || { query: input.slice(0, 100) };
+        const proxyResult = await proxyToolCall(tool.name, toolInput, policyBundle, { agentId: agent.id, traceId: trace.id, environment, shadow: false });
+
+        toolCalls.push({
+          tool: tool.name,
+          input: toolInput,
+          output: proxyResult.result,
+          allowed: proxyResult.allowed,
+          durationMs: Date.now() - toolStart,
+        });
+        policyCheckResults.push(proxyResult.policyCheck);
+
+        await storage.createRunStep({
+          runId: trace.id,
+          stepIndex: stepIndex++,
+          type: proxyResult.allowed ? "tool_call" : "tool_blocked",
+          status: proxyResult.allowed ? "completed" : "blocked",
+          toolName: tool.name,
+          input: toolInput,
+          output: proxyResult.result,
+          policyResult: proxyResult.policyCheck,
+          durationMs: Date.now() - toolStart,
+        });
+      }
+
+      let finalOutput = "";
+      let outputTokens = { prompt_tokens: 0, completion_tokens: 0 };
+      const outputStart = Date.now();
+      try {
+        const outputResponse = await openai.chat.completions.create({
+          model: agent.modelName || "gpt-4.1",
+          max_tokens: 500,
+          messages: [
+            { role: "system", content: agent.systemPrompt || "You are an AI agent producing a final response. Summarize the execution results concisely." },
+            { role: "user", content: input },
+            { role: "assistant", content: `Plan: ${plan.slice(0, 300)}` },
+            { role: "user", content: `Tool results: ${JSON.stringify(toolCalls.map(t => ({ tool: t.tool, allowed: t.allowed, output: t.output })).slice(0, 3))}.\n\nProduce the final output.` },
+          ],
+        });
+        finalOutput = outputResponse.choices[0]?.message?.content || "Execution completed";
+        outputTokens = {
+          prompt_tokens: outputResponse.usage?.prompt_tokens || 0,
+          completion_tokens: outputResponse.usage?.completion_tokens || 0,
+        };
+      } catch {
+        finalOutput = `Completed processing: "${input}" with ${toolCalls.length} tool calls`;
+      }
+
+      await storage.createRunStep({
+        runId: trace.id,
+        stepIndex: stepIndex++,
+        type: "llm_output",
+        status: "completed",
+        input: { context: "final_response_formatting" },
+        output: { response: finalOutput.slice(0, 1000) },
+        tokenUsage: outputTokens,
+        durationMs: Date.now() - outputStart,
+      });
+
+      const totalTokens = {
+        prompt_tokens: planTokens.prompt_tokens + outputTokens.prompt_tokens,
+        completion_tokens: planTokens.completion_tokens + outputTokens.completion_tokens,
+        total_tokens: planTokens.prompt_tokens + planTokens.completion_tokens + outputTokens.prompt_tokens + outputTokens.completion_tokens,
+      };
+      const costUsd = (totalTokens.prompt_tokens * 0.00001 + totalTokens.completion_tokens * 0.00003);
+      const latencyMs = Date.now() - startTime;
+
+      await storage.updateTrace(trace.id, {
+        status: "completed",
+        outputSummary: finalOutput.slice(0, 500),
+        costUsd: Math.round(costUsd * 100000) / 100000,
+        latencyMs,
+        toolCalls,
+        policyChecks: policyCheckResults,
+        tokenUsage: totalTokens,
+        stepsJson: { stepCount: stepIndex, source: "api_gateway", metadata },
+        endedAt: new Date(),
+      });
+
+      await storage.updateAgent(agent.id, {
+        totalRuns: (agent.totalRuns || 0) + 1,
+        avgLatencyMs: Math.round(((agent.avgLatencyMs || 250) * (agent.totalRuns || 0) + latencyMs) / ((agent.totalRuns || 0) + 1)),
+        costPerRun: Math.round(costUsd * 100000) / 100000,
+      });
+
+      res.json({
+        id: trace.id,
+        agentId: agent.id,
+        agentName: agent.name,
+        status: "completed",
+        output: finalOutput,
+        plan: plan.slice(0, 500),
+        usage: {
+          toolCalls: toolCalls.length,
+          policyChecks: policyCheckResults.length,
+          tokens: totalTokens,
+          costUsd: Math.round(costUsd * 100000) / 100000,
+          latencyMs,
+        },
+      });
+    } catch (e) {
+      if (e instanceof ZodError) return res.status(400).json({ error: "validation_error", message: "Invalid request body", details: e.errors });
+      console.error("[gateway] Error:", e);
+      res.status(500).json({ error: "internal_error", message: "Agent invocation failed" });
+    }
+  });
+
+  app.get("/api/gateway/v1/agents/:agentId", async (req, res) => {
+    try {
+      const authHeader = req.headers["authorization"] || req.headers["x-api-key"];
+      if (!authHeader) {
+        return res.status(401).json({ error: "unauthorized", message: "Missing API key" });
+      }
+      const rawKey = typeof authHeader === "string" && authHeader.startsWith("Bearer ")
+        ? authHeader.slice(7) : authHeader as string;
+      const keyHash = hashApiKey(rawKey);
+      const apiKey = await storage.getAgentApiKeyByHash(keyHash);
+      if (!apiKey || apiKey.agentId !== req.params.agentId) {
+        return res.status(401).json({ error: "unauthorized", message: "Invalid API key" });
+      }
+
+      const agent = await storage.getAgent(req.params.agentId);
+      if (!agent) return res.status(404).json({ error: "not_found", message: "Agent not found" });
+
+      res.json({
+        id: agent.id,
+        name: agent.name,
+        description: agent.description,
+        status: agent.status,
+        model: agent.modelName,
+        riskTier: agent.riskTier,
+        autonomyMode: agent.autonomyMode,
+        totalRuns: agent.totalRuns,
+        avgLatencyMs: agent.avgLatencyMs,
+        endpoint: `/api/gateway/v1/invoke/${agent.id}`,
+      });
+    } catch (e) {
+      console.error("[gateway] Error:", e);
+      res.status(500).json({ error: "internal_error", message: "Failed to fetch agent info" });
+    }
+  });
+
   // --- Export Code Package helpers ---
 
   function generateAgentYaml(
