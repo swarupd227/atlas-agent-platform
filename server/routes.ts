@@ -9995,8 +9995,13 @@ Eval Suites: ${evalSuites.length} configured`,
       const agent = await storage.getAgent(req.params.agentId);
       if (!agent) return res.status(404).json({ error: "not_found", message: "Agent not found" });
 
-      if (agent.status !== "active" && agent.status !== "deployed") {
-        return res.status(422).json({ error: "agent_unavailable", message: `Agent is in '${agent.status}' status. Only active/deployed agents can be invoked.` });
+      if (agent.status !== "deployed") {
+        return res.status(422).json({ error: "agent_not_deployed", message: `Agent is in '${agent.status}' status. The API Gateway is only available after the agent has been deployed.` });
+      }
+
+      const agentDeployments = await storage.getDeploymentsByAgentId(agent.id, "deployed");
+      if (agentDeployments.length === 0) {
+        return res.status(422).json({ error: "no_active_deployment", message: "No active deployment found for this agent. Deploy the agent first to enable API Gateway access." });
       }
 
       const schema = z.object({
@@ -17059,6 +17064,9 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       });
 
       const deployAgent = await storage.getAgent(deployment.agentId);
+      if (deployAgent) {
+        await storage.updateAgent(deployment.agentId, { status: "deployed" });
+      }
       const richSystemPrompt = deployAgent ? buildAgentSystemPrompt(deployAgent) : undefined;
       const runtimeResult = await startAgentRuntime(req.params.id, richSystemPrompt);
       console.log(`[deploy] Agent runtime: ${runtimeResult.message}`);

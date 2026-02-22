@@ -174,6 +174,7 @@ export interface IStorage {
   getDeployment(id: string): Promise<Deployment | undefined>;
   createDeployment(deployment: InsertDeployment): Promise<Deployment>;
   updateDeployment(id: string, data: Partial<Deployment>): Promise<Deployment | undefined>;
+  getDeploymentsByAgentId(agentId: string, status?: string): Promise<Deployment[]>;
   getDeploymentsByPromotedFrom(promotedFrom: string): Promise<Deployment[]>;
 
   getTraces(): Promise<RunTrace[]>;
@@ -744,6 +745,14 @@ export class DatabaseStorage implements IStorage {
   async updateDeployment(id: string, data: Partial<Deployment>) {
     const [updated] = await db.update(deployments).set(data).where(eq(deployments.id, id)).returning();
     return updated;
+  }
+
+  async getDeploymentsByAgentId(agentId: string, status?: string) {
+    const conditions = [eq(deployments.agentId, agentId)];
+    if (status) {
+      conditions.push(eq(deployments.status, status));
+    }
+    return db.select().from(deployments).where(and(...conditions));
   }
 
   async getDeploymentsByPromotedFrom(promotedFrom: string) {

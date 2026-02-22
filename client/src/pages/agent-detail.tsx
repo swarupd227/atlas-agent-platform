@@ -7017,12 +7017,18 @@ print(result["output"])`;
               <Globe className="w-3.5 h-3.5 text-primary" />
             </div>
             <CardTitle className="text-sm font-medium">API Endpoint</CardTitle>
-            <Badge variant="outline" className="ml-auto text-[10px]">
-              {agent.status === "active" || agent.status === "deployed" ? "Live" : "Inactive"}
+            <Badge variant={agent.status === "deployed" ? "default" : "secondary"} className="ml-auto text-[10px]">
+              {agent.status === "deployed" ? "Live" : "Not Deployed"}
             </Badge>
           </div>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
+          {agent.status !== "deployed" && (
+            <div className="flex items-center gap-2 p-3 bg-amber-500/10 border border-amber-500/20 rounded-md" data-testid="gateway-not-deployed-notice">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+              <span className="text-xs text-amber-700 dark:text-amber-400">This agent must be deployed before the API Gateway can be used. Deploy the agent through the Deployments pipeline first.</span>
+            </div>
+          )}
           <div className="flex flex-col gap-1.5">
             <span className="text-[11px] font-medium text-muted-foreground">Invoke Endpoint</span>
             <div className="flex items-center gap-2">
@@ -7188,7 +7194,7 @@ print(result["output"])`;
           <Button
             size="sm"
             className="self-end text-xs"
-            disabled={!tryItInput.trim() || !tryItApiKey.trim() || invokeMutation.isPending}
+            disabled={!tryItInput.trim() || !tryItApiKey.trim() || invokeMutation.isPending || agent.status !== "deployed"}
             onClick={() => {
               invokeMutation.mutate({ input: tryItInput, apiKey: tryItApiKey });
             }}
