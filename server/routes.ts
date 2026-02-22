@@ -10225,6 +10225,73 @@ Eval Suites: ${evalSuites.length} configured`,
     }
   });
 
+  // --- Web Widget Public Messaging Endpoint (CORS-enabled for external embedding) ---
+  app.options("/api/widget/:token/message", (_req, res) => {
+    res.set({
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+      "Access-Control-Max-Age": "86400",
+    });
+    res.sendStatus(204);
+  });
+
+  app.post("/api/widget/:token/message", async (req, res) => {
+    res.set("Access-Control-Allow-Origin", "*");
+    try {
+      const { token } = req.params;
+      const channel = await storage.getAgentChannelByToken(token, "web_widget");
+
+      if (!channel) {
+        return res.status(404).json({ error: "channel_not_found", message: "Widget channel not found. Check your channel token." });
+      }
+      if (channel.status !== "connected") {
+        return res.status(422).json({ error: "channel_paused", message: `Channel is ${channel.status}` });
+      }
+
+      const agent = await storage.getAgent(channel.agentId);
+      if (!agent) {
+        return res.status(404).json({ error: "agent_not_found", message: "Agent not found" });
+      }
+      if (agent.status !== "deployed") {
+        return res.status(422).json({ error: "agent_not_deployed", message: "Agent is not deployed" });
+      }
+
+      const userMessage = req.body.message || req.body.input || req.body.text || "";
+      if (!userMessage) {
+        return res.status(400).json({ error: "no_message", message: "Please provide a message." });
+      }
+
+      const agentMcpLinks = await storage.getAgentMcpServers(agent.id);
+      const mcpServerIds = agentMcpLinks.map((l: any) => l.mcpServerId);
+      const richPrompt = buildAgentSystemPrompt(agent);
+
+      const result = await executePromptWithMcp(
+        agent.id,
+        undefined,
+        undefined,
+        mcpServerIds,
+        userMessage,
+        (agent as any).industry || "technology",
+        richPrompt,
+      );
+
+      await storage.updateAgentChannel(channel.id, {
+        messageCount: (channel.messageCount || 0) + 1,
+        lastMessageAt: new Date(),
+      });
+
+      res.json({
+        output: result.output || result.error || "No response",
+        success: result.success,
+        agentName: agent.name,
+      });
+    } catch (e: any) {
+      console.error("[widget] Error processing widget message:", e);
+      res.status(500).json({ error: "widget_error", message: "Failed to process message. Please try again." });
+    }
+  });
+
   app.post("/api/gateway/v1/invoke/:agentId", async (req, res) => {
     const startTime = Date.now();
     try {

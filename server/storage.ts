@@ -649,6 +649,7 @@ export interface IStorage {
   getAgentChannel(id: string): Promise<AgentChannel | undefined>;
   getAgentChannelByWebhook(webhookUrl: string): Promise<AgentChannel | undefined>;
   getAgentChannelByWebhookPath(webhookPath: string): Promise<AgentChannel | undefined>;
+  getAgentChannelByToken(token: string, channelType: string): Promise<AgentChannel | undefined>;
   createAgentChannel(channel: InsertAgentChannel): Promise<AgentChannel>;
   updateAgentChannel(id: string, data: Partial<AgentChannel>): Promise<AgentChannel | undefined>;
   deleteAgentChannel(id: string): Promise<boolean>;
@@ -2569,6 +2570,14 @@ export class DatabaseStorage implements IStorage {
   async getAgentChannelByWebhookPath(webhookPath: string): Promise<AgentChannel | undefined> {
     const [channel] = await db.select().from(agentChannels).where(like(agentChannels.webhookUrl, `%${webhookPath}`));
     return channel;
+  }
+
+  async getAgentChannelByToken(token: string, channelType: string): Promise<AgentChannel | undefined> {
+    const suffix = `/api/webhooks/${channelType}/${token}`;
+    const all = await db.select().from(agentChannels).where(
+      and(eq(agentChannels.channelType, channelType), like(agentChannels.webhookUrl, `%${suffix}`))
+    );
+    return all.find(ch => ch.webhookUrl?.endsWith(suffix));
   }
 
   async createAgentChannel(channel: InsertAgentChannel): Promise<AgentChannel> {

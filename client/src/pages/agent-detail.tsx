@@ -7429,80 +7429,108 @@ function AgentChannels({ agent }: { agent: any }) {
               {(channels as any[]).map((channel: any) => {
                 const meta = CHANNEL_TYPES.find(ct => ct.type === channel.channelType);
                 const Icon = meta?.icon || MessageSquare;
+                const widgetToken = channel.channelType === "web_widget" && channel.webhookUrl
+                  ? channel.webhookUrl.split("/").pop() || ""
+                  : "";
+                const embedSnippet = widgetToken
+                  ? `<script src="${window.location.origin}/widget.js"\n  data-agent-channel="${widgetToken}"\n  data-title="${agent.name}"\n  data-theme="dark"\n  data-position="bottom-right"></script>`
+                  : "";
                 return (
-                  <div key={channel.id} className="flex items-center gap-3 p-3 rounded-md border bg-card" data-testid={`channel-card-${channel.id}`}>
-                    <div className={`flex items-center justify-center w-9 h-9 rounded-md ${meta?.bgColor || "bg-muted"} shrink-0`}>
-                      <Icon className={`w-4 h-4 ${meta?.color || "text-muted-foreground"}`} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium truncate">{channel.name}</span>
-                        <Badge variant={channel.status === "connected" ? "default" : "secondary"} className="text-[10px]">
-                          {channel.status}
-                        </Badge>
+                  <div key={channel.id} className="flex flex-col rounded-md border bg-card" data-testid={`channel-card-${channel.id}`}>
+                    <div className="flex items-center gap-3 p-3">
+                      <div className={`flex items-center justify-center w-9 h-9 rounded-md ${meta?.bgColor || "bg-muted"} shrink-0`}>
+                        <Icon className={`w-4 h-4 ${meta?.color || "text-muted-foreground"}`} />
                       </div>
-                      <div className="flex items-center gap-3 mt-0.5">
-                        <span className="text-[11px] text-muted-foreground">{meta?.label || channel.channelType}</span>
-                        <span className="text-[11px] text-muted-foreground">{channel.messageCount || 0} messages</span>
-                        {channel.lastMessageAt && (
-                          <span className="text-[11px] text-muted-foreground">Last: {new Date(channel.lastMessageAt).toLocaleDateString()}</span>
-                        )}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium truncate">{channel.name}</span>
+                          <Badge variant={channel.status === "connected" ? "default" : "secondary"} className="text-[10px]">
+                            {channel.status}
+                          </Badge>
+                        </div>
+                        <div className="flex items-center gap-3 mt-0.5">
+                          <span className="text-[11px] text-muted-foreground">{meta?.label || channel.channelType}</span>
+                          <span className="text-[11px] text-muted-foreground">{channel.messageCount || 0} messages</span>
+                          {channel.lastMessageAt && (
+                            <span className="text-[11px] text-muted-foreground">Last: {new Date(channel.lastMessageAt).toLocaleDateString()}</span>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-[11px]"
-                        onClick={() => testChannelMutation.mutate(channel.id)}
-                        disabled={testChannelMutation.isPending || channel.status !== "connected"}
-                        data-testid={`btn-test-channel-${channel.id}`}
-                      >
-                        {testChannelMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3 mr-1" />}
-                        Test
-                      </Button>
-                      {channel.status === "connected" ? (
+                      <div className="flex items-center gap-1 shrink-0">
                         <Button
                           variant="ghost"
                           size="sm"
                           className="text-[11px]"
-                          onClick={() => updateChannelMutation.mutate({ channelId: channel.id, data: { status: "paused" } })}
-                          data-testid={`btn-pause-channel-${channel.id}`}
+                          onClick={() => testChannelMutation.mutate(channel.id)}
+                          disabled={testChannelMutation.isPending || channel.status !== "connected"}
+                          data-testid={`btn-test-channel-${channel.id}`}
                         >
-                          Pause
+                          {testChannelMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3 mr-1" />}
+                          Test
                         </Button>
-                      ) : channel.status === "paused" ? (
+                        {channel.status === "connected" ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-[11px]"
+                            onClick={() => updateChannelMutation.mutate({ channelId: channel.id, data: { status: "paused" } })}
+                            data-testid={`btn-pause-channel-${channel.id}`}
+                          >
+                            Pause
+                          </Button>
+                        ) : channel.status === "paused" ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-[11px]"
+                            onClick={() => updateChannelMutation.mutate({ channelId: channel.id, data: { status: "connected" } })}
+                            data-testid={`btn-resume-channel-${channel.id}`}
+                          >
+                            Resume
+                          </Button>
+                        ) : null}
                         <Button
                           variant="ghost"
                           size="sm"
                           className="text-[11px]"
-                          onClick={() => updateChannelMutation.mutate({ channelId: channel.id, data: { status: "connected" } })}
-                          data-testid={`btn-resume-channel-${channel.id}`}
+                          onClick={() => {
+                            if (channel.webhookUrl) copyToClipboard(channel.webhookUrl);
+                          }}
+                          data-testid={`btn-copy-webhook-${channel.id}`}
                         >
-                          Resume
+                          <Copy className="w-3 h-3 mr-1" /> Webhook
                         </Button>
-                      ) : null}
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-[11px]"
-                        onClick={() => {
-                          if (channel.webhookUrl) copyToClipboard(channel.webhookUrl);
-                        }}
-                        data-testid={`btn-copy-webhook-${channel.id}`}
-                      >
-                        <Copy className="w-3 h-3 mr-1" /> Webhook
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-[11px] text-destructive"
-                        onClick={() => deleteChannelMutation.mutate(channel.id)}
-                        data-testid={`btn-remove-channel-${channel.id}`}
-                      >
-                        <XCircle className="w-3 h-3" />
-                      </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-[11px] text-destructive"
+                          onClick={() => deleteChannelMutation.mutate(channel.id)}
+                          data-testid={`btn-remove-channel-${channel.id}`}
+                        >
+                          <XCircle className="w-3 h-3" />
+                        </Button>
+                      </div>
                     </div>
+                    {channel.channelType === "web_widget" && embedSnippet && (
+                      <div className="px-3 pb-3 border-t border-border/50 pt-2" data-testid={`widget-embed-${channel.id}`}>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-[11px] font-medium text-muted-foreground">Embed Snippet — paste this into your website's HTML</span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-[11px] h-6"
+                            onClick={() => copyToClipboard(embedSnippet)}
+                            data-testid={`btn-copy-embed-${channel.id}`}
+                          >
+                            <Copy className="w-3 h-3 mr-1" /> Copy Snippet
+                          </Button>
+                        </div>
+                        <pre className="text-[11px] font-mono bg-muted/30 p-3 rounded-md overflow-x-auto whitespace-pre select-all" data-testid={`code-embed-${channel.id}`}>{embedSnippet}</pre>
+                        <p className="text-[10px] text-muted-foreground mt-1.5">
+                          Add this script tag before the closing <code className="text-[10px] bg-muted/50 px-1 rounded">&lt;/body&gt;</code> tag. The widget will appear as a floating chat bubble. Customize with <code className="text-[10px] bg-muted/50 px-1 rounded">data-theme="light"</code> or <code className="text-[10px] bg-muted/50 px-1 rounded">data-position="bottom-left"</code>.
+                        </p>
+                      </div>
+                    )}
                   </div>
                 );
               })}
