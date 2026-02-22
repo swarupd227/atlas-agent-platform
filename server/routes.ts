@@ -10069,7 +10069,7 @@ Eval Suites: ${evalSuites.length} configured`,
 
       const testMessage = `Test message from ${channel.channelType} channel integration`;
       const agentMcpLinks = await storage.getAgentMcpServers(agent.id);
-      const mcpServerIds = agentMcpLinks.map((l: any) => l.mcpServerId);
+      const mcpServerIds = agentMcpLinks.map((l: any) => l.serverId);
       const richPrompt = buildAgentSystemPrompt(agent);
 
       const result = await executePromptWithMcp(
@@ -10169,7 +10169,7 @@ Eval Suites: ${evalSuites.length} configured`,
       }
 
       const agentMcpLinks = await storage.getAgentMcpServers(agent.id);
-      const mcpServerIds = agentMcpLinks.map((l: any) => l.mcpServerId);
+      const mcpServerIds = agentMcpLinks.map((l: any) => l.serverId);
       const richPrompt = buildAgentSystemPrompt(agent);
 
       const result = await executePromptWithMcp(
@@ -10263,7 +10263,7 @@ Eval Suites: ${evalSuites.length} configured`,
       }
 
       const agentMcpLinks = await storage.getAgentMcpServers(agent.id);
-      const mcpServerIds = agentMcpLinks.map((l: any) => l.mcpServerId);
+      const mcpServerIds = agentMcpLinks.map((l: any) => l.serverId);
       const richPrompt = buildAgentSystemPrompt(agent);
 
       const result = await executePromptWithMcp(
