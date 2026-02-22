@@ -10080,6 +10080,7 @@ Eval Suites: ${evalSuites.length} configured`,
         testMessage,
         (agent as any).industry || "technology",
         richPrompt,
+        { conversational: true },
       );
 
       await storage.updateAgentChannel(channel.id, {
@@ -10090,7 +10091,7 @@ Eval Suites: ${evalSuites.length} configured`,
       res.json({
         success: result.success,
         channelType: channel.channelType,
-        response: extractResponseText(result),
+        response: result.conversationalResponse || extractResponseText(result),
       });
     } catch (e: any) {
       console.error("[channels] Test error:", e);
@@ -10179,6 +10180,7 @@ Eval Suites: ${evalSuites.length} configured`,
         userMessage,
         (agent as any).industry || "technology",
         richPrompt,
+        { conversational: true },
       );
 
       await storage.updateAgentChannel(channel.id, {
@@ -10186,7 +10188,7 @@ Eval Suites: ${evalSuites.length} configured`,
         lastMessageAt: new Date(),
       });
 
-      const responseText = extractResponseText(result);
+      const responseText = result.conversationalResponse || extractResponseText(result);
       let formattedResponse: any;
       switch (platform) {
         case "slack":
@@ -10274,6 +10276,7 @@ Eval Suites: ${evalSuites.length} configured`,
         userMessage,
         (agent as any).industry || "technology",
         richPrompt,
+        { conversational: true },
       );
 
       await storage.updateAgentChannel(channel.id, {
@@ -10282,7 +10285,7 @@ Eval Suites: ${evalSuites.length} configured`,
       });
 
       res.json({
-        output: extractResponseText(result),
+        output: result.conversationalResponse || extractResponseText(result),
         success: result.success,
         agentName: agent.name,
       });

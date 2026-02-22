@@ -85,7 +85,8 @@ export async function executePromptWithMcp(
   prompt: string,
   industry?: string,
   agentSystemPrompt?: string,
-): Promise<{ steps: any[]; success: boolean; summary: any }> {
+  options?: { conversational?: boolean },
+): Promise<{ steps: any[]; success: boolean; summary: any; conversationalResponse?: string }> {
   const startTime = Date.now();
   const steps: any[] = [];
 
@@ -253,29 +254,42 @@ After receiving tool results, provide a structured analysis with key findings, s
       ];
 
       try {
+        const isConversational = options?.conversational === true;
+        const analysisPrompt = isConversational
+          ? `Now respond to the user's original question using the tool results above. Write a helpful, detailed, conversational response in natural language. Include specific data points (numbers, measurements, values) from the tool results. Format your response nicely — use line breaks for readability if the answer is long. Do NOT respond in JSON. Respond as a knowledgeable assistant speaking directly to the user.`
+          : "Now analyze the tool results above. Respond in JSON format with fields: summary (string), severity (low/medium/high), riskFactors (array of strings), findings (array of key observations), and recommendedActions (array of strings).";
         const analysisMessages = [
           ...toolResultMessages,
-          { role: "user" as const, content: "Now analyze the tool results above. Respond in JSON format with fields: summary (string), severity (low/medium/high), riskFactors (array of strings), findings (array of key observations), and recommendedActions (array of strings)." },
+          { role: "user" as const, content: analysisPrompt },
         ];
         const analysisResponse = await openai.chat.completions.create({
           model: "gpt-4.1",
           messages: analysisMessages,
           max_completion_tokens: 4096,
-          response_format: { type: "json_object" },
+          ...(isConversational ? {} : { response_format: { type: "json_object" as const } }),
         });
 
+        const rawContent = analysisResponse.choices[0]?.message?.content || (isConversational ? "I couldn't generate a response." : "{}");
+        
         let analysis: any = {};
-        const rawContent = analysisResponse.choices[0]?.message?.content || "{}";
-        try {
-          analysis = JSON.parse(rawContent);
-        } catch {
-          analysis = { summary: rawContent };
+        if (isConversational) {
+          analysis = { summary: rawContent, conversational: true };
+        } else {
+          try {
+            analysis = JSON.parse(rawContent);
+          } catch {
+            analysis = { summary: rawContent };
+          }
         }
 
         const lastStep = steps[steps.length - 1];
         lastStep.status = "completed";
         lastStep.completedAt = new Date().toISOString();
         lastStep.output = analysis;
+        
+        if (isConversational) {
+          (steps as any).__conversationalResponse = rawContent;
+        }
       } catch (err: any) {
         const lastStep = steps[steps.length - 1];
         lastStep.status = "failed";
@@ -330,6 +344,9 @@ After receiving tool results, provide a structured analysis with key findings, s
 
   const promptSummary = prompt.length > 60 ? prompt.substring(0, 57) + "..." : prompt;
 
+  const conversationalResponse = (steps as any).__conversationalResponse as string | undefined;
+  delete (steps as any).__conversationalResponse;
+
   return {
     steps,
     success: failedSteps.length === 0,
@@ -345,6 +362,7 @@ After receiving tool results, provide a structured analysis with key findings, s
       analysis: analysisOutput,
       source: "mcp_integration",
     },
+    ...(conversationalResponse ? { conversationalResponse } : {}),
   };
 }
 
