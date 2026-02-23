@@ -5,7 +5,7 @@ import { db } from "./db";
 import { insertKnowledgeBaseSchema, insertKnowledgeSourceSchema, insertAgentKnowledgeBaseSchema, knowledgeChunks } from "@shared/schema";
 import { sql, eq } from "drizzle-orm";
 import OpenAI from "openai";
-import { generateEmbeddings, isPgvectorAvailable } from "./embeddings";
+import { generateEmbeddings, storeChunkEmbedding } from "./embeddings";
 
 type Params = { id: string; sourceId?: string; kbId?: string; agentId?: string; linkId?: string };
 
@@ -87,12 +87,10 @@ async function processSourceInBackground(sourceId: string, kbId: string) {
 
     const chunks = chunkText(text, kb.chunkSize, kb.chunkOverlap);
     let embeddings: number[][] | null = null;
-    if (isPgvectorAvailable()) {
-      try {
-        embeddings = await generateEmbeddings(chunks);
-      } catch (embErr: any) {
-        console.log("[kb] Embedding generation failed, storing chunks without embeddings:", embErr.message);
-      }
+    try {
+      embeddings = await generateEmbeddings(chunks);
+    } catch (embErr: any) {
+      console.log("[kb] Embedding generation failed, storing chunks without embeddings:", embErr.message);
     }
 
     for (let i = 0; i < chunks.length; i++) {
@@ -105,11 +103,8 @@ async function processSourceInBackground(sourceId: string, kbId: string) {
         tokenCount: Math.ceil(chunks[i].length / 4),
       });
 
-      if (embeddings && embeddings[i] && isPgvectorAvailable()) {
-        const embeddingStr = `[${embeddings[i].join(",")}]`;
-        await db.execute(
-          sql`UPDATE knowledge_chunks SET embedding = ${embeddingStr}::vector WHERE id = ${chunk.id}`
-        );
+      if (embeddings && embeddings[i]) {
+        await storeChunkEmbedding(chunk.id, embeddings[i]);
       }
     }
 
@@ -338,31 +333,9 @@ export function registerKnowledgeBaseRoutes(app: Express) {
       const { query, topK = 5, scoreThreshold = 0.5 } = req.body;
       if (!query) return res.status(400).json({ message: "Query is required" });
 
-      if (!isPgvectorAvailable()) {
-        const fallback = await db.execute(sql`
-          SELECT id, content, chunk_index, metadata, token_count, source_id, 0.5 as similarity
-          FROM knowledge_chunks WHERE knowledge_base_id = ${req.params.id}
-          ORDER BY created_at DESC LIMIT ${topK}
-        `);
-        return res.json(fallback.rows || []);
-      }
-
-      const embeddings = await generateEmbeddings([query]);
-      const queryEmbedding = embeddings[0];
-      const embeddingStr = `[${queryEmbedding.join(",")}]`;
-
-      const results = await db.execute(sql`
-        SELECT id, content, chunk_index, metadata, token_count, source_id,
-               1 - (embedding <=> ${embeddingStr}::vector) as similarity
-        FROM knowledge_chunks
-        WHERE knowledge_base_id = ${req.params.id}
-          AND embedding IS NOT NULL
-          AND 1 - (embedding <=> ${embeddingStr}::vector) > ${scoreThreshold}
-        ORDER BY embedding <=> ${embeddingStr}::vector
-        LIMIT ${topK}
-      `);
-
-      res.json(results.rows || []);
+      const { searchKnowledgeBaseChunks } = await import("./embeddings");
+      const results = await searchKnowledgeBaseChunks(req.params.id, query, topK, scoreThreshold);
+      res.json(results);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -408,29 +381,10 @@ export function registerKnowledgeBaseRoutes(app: Express) {
       const { question, topK = 5 } = req.body;
       if (!question) return res.status(400).json({ message: "Question is required" });
 
-      let results: any;
-      if (!isPgvectorAvailable()) {
-        results = await db.execute(sql`
-          SELECT content, 0.5 as similarity
-          FROM knowledge_chunks WHERE knowledge_base_id = ${req.params.id}
-          ORDER BY created_at DESC LIMIT ${topK}
-        `);
-      } else {
-        const embeddings = await generateEmbeddings([question]);
-        const queryEmbedding = embeddings[0];
-        const embeddingStr = `[${queryEmbedding.join(",")}]`;
+      const { searchKnowledgeBaseChunks } = await import("./embeddings");
+      const searchResults = await searchKnowledgeBaseChunks(req.params.id, question, topK, 0.3);
 
-        results = await db.execute(sql`
-          SELECT content, 1 - (embedding <=> ${embeddingStr}::vector) as similarity
-          FROM knowledge_chunks
-          WHERE knowledge_base_id = ${req.params.id}
-            AND embedding IS NOT NULL
-          ORDER BY embedding <=> ${embeddingStr}::vector
-          LIMIT ${topK}
-        `);
-      }
-
-      const context = (results.rows || []).map((r: any) => r.content).join("\n\n");
+      const context = searchResults.map((r: any) => r.content).join("\n\n");
 
       const openai = new OpenAI();
       const completion = await openai.chat.completions.create({
@@ -444,7 +398,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
       res.json({
         answer: completion.choices[0]?.message?.content || "No answer generated",
-        sources: results.rows || [],
+        sources: searchResults,
       });
     } catch (error: any) {
       res.status(500).json({ message: error.message });

@@ -7,42 +7,51 @@ const openai = new OpenAI({
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
 });
 
-let pgvectorAvailable = false;
+let pgvectorState: "unknown" | "available" | "unavailable" = "unknown";
+let initPromise: Promise<void> | null = null;
 
 export function isPgvectorAvailable(): boolean {
-  return pgvectorAvailable;
+  return pgvectorState === "available";
 }
 
-export async function setupPgVector(): Promise<void> {
-  try {
-    await db.execute(sql`CREATE EXTENSION IF NOT EXISTS vector`);
-    const colCheck = await db.execute(sql`
-      SELECT column_name FROM information_schema.columns
-      WHERE table_name = 'knowledge_chunks' AND column_name = 'embedding'
-    `);
-    if (!colCheck.rows || colCheck.rows.length === 0) {
-      await db.execute(sql`ALTER TABLE knowledge_chunks ADD COLUMN embedding vector(1536)`);
-    }
-    try {
-      const idxCheck = await db.execute(sql`
-        SELECT indexname FROM pg_indexes
-        WHERE tablename = 'knowledge_chunks' AND indexname = 'idx_knowledge_chunks_embedding'
-      `);
-      if (!idxCheck.rows || idxCheck.rows.length === 0) {
-        await db.execute(sql`
-          CREATE INDEX idx_knowledge_chunks_embedding
-          ON knowledge_chunks USING hnsw (embedding vector_cosine_ops)
+async function ensurePgVector(): Promise<boolean> {
+  if (pgvectorState !== "unknown") return pgvectorState === "available";
+
+  if (!initPromise) {
+    initPromise = (async () => {
+      try {
+        await db.execute(sql`CREATE EXTENSION IF NOT EXISTS vector`);
+        const colCheck = await db.execute(sql`
+          SELECT column_name FROM information_schema.columns
+          WHERE table_name = 'knowledge_chunks' AND column_name = 'embedding'
         `);
+        if (!colCheck.rows || colCheck.rows.length === 0) {
+          await db.execute(sql`ALTER TABLE knowledge_chunks ADD COLUMN embedding vector(1536)`);
+        }
+        try {
+          const idxCheck = await db.execute(sql`
+            SELECT indexname FROM pg_indexes
+            WHERE tablename = 'knowledge_chunks' AND indexname = 'idx_knowledge_chunks_embedding'
+          `);
+          if (!idxCheck.rows || idxCheck.rows.length === 0) {
+            await db.execute(sql`
+              CREATE INDEX idx_knowledge_chunks_embedding
+              ON knowledge_chunks USING hnsw (embedding vector_cosine_ops)
+            `);
+          }
+        } catch (indexErr: any) {
+          console.log("[pgvector] HNSW index creation skipped:", indexErr.message);
+        }
+        pgvectorState = "available";
+        console.log("[pgvector] Vector embeddings enabled successfully");
+      } catch (err: any) {
+        pgvectorState = "unavailable";
+        console.log("[pgvector] Vector extension not available, embedding features disabled:", err.message);
       }
-    } catch (indexErr: any) {
-      console.log("[pgvector] HNSW index creation skipped (not supported), falling back to no index:", indexErr.message);
-    }
-    pgvectorAvailable = true;
-    console.log("[pgvector] Vector embeddings enabled successfully");
-  } catch (err: any) {
-    pgvectorAvailable = false;
-    console.log("[pgvector] Vector extension not available, embedding features disabled:", err.message);
+    })();
   }
+  await initPromise;
+  return pgvectorState === "available";
 }
 
 export async function generateEmbeddings(texts: string[]): Promise<number[][]> {
@@ -60,13 +69,25 @@ export async function generateEmbeddings(texts: string[]): Promise<number[][]> {
   return allEmbeddings;
 }
 
+export async function storeChunkEmbedding(chunkId: string, embedding: number[]): Promise<boolean> {
+  const available = await ensurePgVector();
+  if (!available) return false;
+  const embeddingStr = `[${embedding.join(",")}]`;
+  await db.execute(
+    sql`UPDATE knowledge_chunks SET embedding = ${embeddingStr}::vector WHERE id = ${chunkId}`
+  );
+  return true;
+}
+
 export async function searchKnowledgeBaseChunks(
   knowledgeBaseId: string,
   query: string,
   topK: number = 5,
   scoreThreshold: number = 0.3,
 ): Promise<Array<{ id: string; content: string; similarity: number; metadata: any }>> {
-  if (!pgvectorAvailable) {
+  const available = await ensurePgVector();
+
+  if (!available) {
     const fallback = await db.execute(sql`
       SELECT id, content, chunk_index, metadata, token_count, source_id, 0.5 as similarity
       FROM knowledge_chunks WHERE knowledge_base_id = ${knowledgeBaseId}
