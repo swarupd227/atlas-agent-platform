@@ -895,7 +895,7 @@ export default function OutcomeDetail() {
 
   return (
     <div className="flex flex-col gap-6 p-6" data-testid="page-outcome-detail">
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-2">
         <div className="flex items-center gap-3">
           <Link href="/outcomes">
             <Button variant="ghost" size="icon" data-testid="button-back-outcomes">
@@ -908,7 +908,8 @@ export default function OutcomeDetail() {
             <StatusBadge status={outcome.riskTier} />
             <Badge variant="outline" className="text-[10px]">v{outcome.version}</Badge>
           </div>
-          <div className="flex items-center gap-2 flex-wrap shrink-0">
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
             <Button variant="outline" size="sm" onClick={() => setReportOpen(true)} data-testid="button-open-customer-report">
               <FileText className="w-3.5 h-3.5 mr-1.5" /> Customer Report
             </Button>
@@ -1055,7 +1056,6 @@ export default function OutcomeDetail() {
               </div>
             </DialogContent>
           </Dialog>
-          </div>
         </div>
         {outcome.description && (
           <p className="text-sm text-muted-foreground ml-11">{outcome.description}</p>
