@@ -1154,6 +1154,7 @@ export default function OutcomeDetail() {
           subtitle={weightedProgress === 0 ? "Add KPI targets to track" : undefined}
           variant={weightedProgress >= 80 ? "success" : weightedProgress >= 50 ? "warning" : "danger"}
           testId="stat-weighted-progress"
+          tooltip="Aggregate progress across all KPIs, weighted by importance. Set KPI targets to see progress."
         />
         <StatCard
           title="KPIs Tracked"
@@ -1162,6 +1163,7 @@ export default function OutcomeDetail() {
           subtitle={!kpis?.length ? "Define KPIs below" : `${breachCount} breaching SLA`}
           variant={breachCount > 0 ? "danger" : "default"}
           testId="stat-kpis-count"
+          tooltip="Number of Key Performance Indicators being monitored for this outcome."
         />
         <StatCard
           title="Bound Agents"
@@ -1170,14 +1172,16 @@ export default function OutcomeDetail() {
           subtitle={boundAgents.length === 0 ? "Assign agents via Create Agent" : agentContributions?.summary?.underperformingCount ? `${agentContributions.summary.underperformingCount} underperforming` : "All healthy"}
           variant={boundAgents.length === 0 ? "default" : agentContributions?.summary?.underperformingCount ? "warning" : "success"}
           testId="stat-bound-agents"
+          tooltip="Agents assigned to deliver this outcome. Use the Agent Development Plan to create a team."
         />
         <StatCard
-          title="Est. Revenue"
+          title="Estimated Revenue"
           value={`${outcome.currency || "USD"} ${estimatedRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
           icon={DollarSign}
           subtitle={billableEventsCount === 0 ? "Tracked from agent events" : `${billableEventsCount} billable events`}
           variant="default"
           testId="stat-estimated-revenue"
+          tooltip="Revenue estimate based on billable agent events and the outcome's pricing model."
         />
         <StatCard
           title="Risk Threshold"
@@ -1186,6 +1190,7 @@ export default function OutcomeDetail() {
           subtitle={outcome.autoPauseTrigger ? "Auto-pause ON" : "Auto-pause OFF"}
           variant={outcome.autoPauseTrigger ? "warning" : "default"}
           testId="stat-risk-threshold"
+          tooltip="Maximum acceptable risk level. Agents auto-pause if risk exceeds this threshold."
         />
       </div>
 
