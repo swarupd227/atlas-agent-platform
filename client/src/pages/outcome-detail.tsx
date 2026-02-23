@@ -409,6 +409,24 @@ function OutcomeProgressStepper({ outcome, hasAgentPlan, hasDeployedAgents }: { 
   );
 }
 
+const statusTooltips: Record<string, { label: string; description: string }> = {
+  draft: { label: "Draft", description: "This outcome is still being defined. KPIs and targets can be adjusted before activation." },
+  active: { label: "Active", description: "This outcome is live and being tracked, but no agents have been assigned to work on it yet." },
+  awaiting_agent_plan: { label: "Awaiting Agent Plan", description: "The outcome is active and waiting for an agent development plan to be generated or approved." },
+  agents_assigned: { label: "Agents Assigned", description: "One or more agents have been created and linked to this outcome — they are actively executing work toward the KPIs." },
+  completed: { label: "Completed", description: "All KPI targets have been met and the outcome contract has been fulfilled." },
+  paused: { label: "Paused", description: "Tracking and agent execution are temporarily suspended. No progress is being made." },
+  failed: { label: "Failed", description: "The outcome could not be achieved within the defined constraints or SLA thresholds." },
+  superseded: { label: "Superseded", description: "This outcome has been replaced by a newer version or a different contract." },
+};
+
+const riskTierTooltips: Record<string, { label: string; description: string }> = {
+  LOW: { label: "Low Risk", description: "Minimal oversight required. Agents can operate with high autonomy and fewer approval gates." },
+  MEDIUM: { label: "Medium Risk", description: "Standard review gates with balanced human-AI collaboration. Suitable for most business workflows." },
+  HIGH: { label: "High Risk", description: "Strict governance enforced — more approval gates, tighter policy controls, and reduced agent autonomy." },
+  CRITICAL: { label: "Critical Risk", description: "Maximum oversight. Every agent action may require human approval. Used for regulated or high-stakes operations." },
+};
+
 export default function OutcomeDetail() {
   const [, params] = useRoute("/outcomes/:id");
   const outcomeId = params?.id;
@@ -904,9 +922,33 @@ export default function OutcomeDetail() {
           </Link>
           <div className="flex items-center gap-2 flex-wrap flex-1 min-w-0">
             <h1 className="text-xl font-semibold tracking-tight" data-testid="text-outcome-name">{outcome.name}</h1>
-            <StatusBadge status={outcome.status} />
-            <StatusBadge status={outcome.riskTier} />
-            <Badge variant="outline" className="text-[10px]">v{outcome.version}</Badge>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span data-testid="badge-status"><StatusBadge status={outcome.status} /></span>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="max-w-xs text-xs">
+                <p className="font-semibold mb-1">Status: {statusTooltips[outcome.status]?.label || outcome.status}</p>
+                <p>{statusTooltips[outcome.status]?.description || "Current lifecycle stage of this outcome contract."}</p>
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span data-testid="badge-risk-tier"><StatusBadge status={outcome.riskTier} /></span>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="max-w-xs text-xs">
+                <p className="font-semibold mb-1">Risk: {riskTierTooltips[outcome.riskTier]?.label || outcome.riskTier}</p>
+                <p>{riskTierTooltips[outcome.riskTier]?.description || "Determines the level of oversight and governance applied."}</p>
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span data-testid="badge-version"><Badge variant="outline" className="text-[10px]">v{outcome.version}</Badge></span>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="max-w-xs text-xs">
+                <p className="font-semibold mb-1">Version {outcome.version}</p>
+                <p>Contract version increments each time the outcome is edited (KPIs, SLA, pricing, risk tier, etc.), creating an immutable audit trail for regulatory compliance.</p>
+              </TooltipContent>
+            </Tooltip>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
