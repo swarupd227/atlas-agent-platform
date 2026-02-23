@@ -6120,11 +6120,28 @@ Eval Suites: ${evalSuites.length} configured`,
       if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
         return res.status(503).json({ error: "AI assistant is not configured" });
       }
-      const { outcomeContract, kpis } = req.body;
+      const { outcomeContract, kpis, feedback, previousPlan } = req.body;
       const templates = await storage.getAgentTemplates();
 
-      const systemPrompt = `You are an Agent Proposal Generator for the ALMP platform. Given a business Outcome Contract and its KPIs, propose AI agents organized as a multi-agent orchestrated pipeline.
+      let feedbackSection = "";
+      if (feedback && previousPlan) {
+        feedbackSection = `
 
+IMPORTANT: This is a REGENERATION request. The engineer reviewed the previous plan and provided specific feedback.
+
+Previous Plan:
+- Orchestrator: ${previousPlan.orchestrator?.name || "None"}
+- Workers: ${(previousPlan.workers || []).map((w: any) => `${w.name} (${w.role})`).join(", ")}
+- Pipeline Pattern: ${previousPlan.pipeline?.pattern || "N/A"}
+
+Engineer's Feedback: "${feedback}"
+
+You MUST incorporate this feedback into the new plan. Adjust the agents, roles, workflow steps, tools, pipeline pattern, or any other aspect based on what the engineer requested. Keep parts that weren't criticized.
+`;
+      }
+
+      const systemPrompt = `You are an Agent Proposal Generator for the ALMP platform. Given a business Outcome Contract and its KPIs, propose AI agents organized as a multi-agent orchestrated pipeline.
+${feedbackSection}
 Outcome Contract: ${JSON.stringify(outcomeContract)}
 KPIs: ${JSON.stringify(kpis || [])}
 Available templates: ${JSON.stringify(templates.slice(0, 10).map(t => ({ name: t.name, category: t.category, industry: t.industry, description: t.description })))}

@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useRoute, Link, useLocation } from "wouter";
 import {
   ArrowLeft,
@@ -66,6 +66,12 @@ import {
   Lightbulb,
   FlaskConical,
   IterationCw,
+  GripVertical,
+  Undo2,
+  Redo2,
+  MessageSquare,
+  ChevronUp,
+  Copy,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -83,6 +89,8 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
+  DialogFooter,
+  DialogDescription,
 } from "@/components/ui/dialog";
 import {
   Select,
@@ -2720,6 +2728,8 @@ interface AgentProposal {
   kpiBindings: string[];
   estimatedImpact: string;
   templateMatch: string | null;
+  systemPrompt?: string;
+  complianceTags?: string[];
 }
 
 interface PipelineEdge {
@@ -2851,21 +2861,99 @@ function PipelineVisualization({ orchestrator, agents, pipeline }: {
   );
 }
 
-function AgentProposalCard({ agent, index, isOrchestrator, isSelected, onToggle, isCreating }: {
+function AgentProposalCard({ agent, index, isOrchestrator, isSelected, onToggle, isCreating, onEdit, onDelete, onDuplicate, isDragging, onDragStart, onDragOver, onDrop }: {
   agent: AgentProposal;
   index: number;
   isOrchestrator: boolean;
   isSelected: boolean;
   onToggle: () => void;
   isCreating: boolean;
+  onEdit?: (updated: AgentProposal) => void;
+  onDelete?: () => void;
+  onDuplicate?: () => void;
+  isDragging?: boolean;
+  onDragStart?: (e: React.DragEvent) => void;
+  onDragOver?: (e: React.DragEvent) => void;
+  onDrop?: (e: React.DragEvent) => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const [editData, setEditData] = useState<AgentProposal>({ ...agent });
+  const [newToolName, setNewToolName] = useState("");
+  const [newToolDesc, setNewToolDesc] = useState("");
+  const [newStep, setNewStep] = useState("");
+  const [newKpi, setNewKpi] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  useEffect(() => {
+    setEditData({ ...agent });
+  }, [agent]);
+
+  function saveEdit() {
+    if (onEdit) onEdit(editData);
+    setExpanded(false);
+  }
+
+  function cancelEdit() {
+    setEditData({ ...agent });
+    setExpanded(false);
+  }
+
+  function addTool() {
+    if (!newToolName.trim()) return;
+    setEditData(prev => ({
+      ...prev,
+      tools: [...prev.tools, { name: newToolName.trim(), description: newToolDesc.trim() || newToolName.trim() }]
+    }));
+    setNewToolName("");
+    setNewToolDesc("");
+  }
+
+  function removeTool(idx: number) {
+    setEditData(prev => ({ ...prev, tools: prev.tools.filter((_, i) => i !== idx) }));
+  }
+
+  function addStep() {
+    if (!newStep.trim()) return;
+    setEditData(prev => ({ ...prev, workflowSteps: [...prev.workflowSteps, newStep.trim()] }));
+    setNewStep("");
+  }
+
+  function removeStep(idx: number) {
+    setEditData(prev => ({ ...prev, workflowSteps: prev.workflowSteps.filter((_, i) => i !== idx) }));
+  }
+
+  function moveStep(idx: number, dir: -1 | 1) {
+    const newIdx = idx + dir;
+    if (newIdx < 0 || newIdx >= editData.workflowSteps.length) return;
+    const steps = [...editData.workflowSteps];
+    [steps[idx], steps[newIdx]] = [steps[newIdx], steps[idx]];
+    setEditData(prev => ({ ...prev, workflowSteps: steps }));
+  }
+
+  function addKpiBinding() {
+    if (!newKpi.trim()) return;
+    setEditData(prev => ({ ...prev, kpiBindings: [...prev.kpiBindings, newKpi.trim()] }));
+    setNewKpi("");
+  }
+
+  function removeKpiBinding(idx: number) {
+    setEditData(prev => ({ ...prev, kpiBindings: prev.kpiBindings.filter((_, i) => i !== idx) }));
+  }
+
   return (
     <Card
-      className={`transition-all ${isOrchestrator ? "border-primary/30 bg-primary/[0.02]" : ""} ${isSelected ? "ring-1 ring-primary/40" : "opacity-60"}`}
+      className={`transition-all ${isOrchestrator ? "border-primary/30 bg-primary/[0.02]" : ""} ${isSelected ? "ring-1 ring-primary/40" : "opacity-60"} ${isDragging ? "opacity-30 scale-95" : ""}`}
       data-testid={isOrchestrator ? "card-orchestrator-proposal" : `card-agent-proposal-${index}`}
+      draggable={!isOrchestrator && !!onDragStart}
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
     >
       <CardHeader className="p-4 pb-2">
         <CardTitle className="text-sm font-semibold flex items-center gap-2 flex-wrap">
+          {!isOrchestrator && onDragStart && (
+            <GripVertical className="w-4 h-4 text-muted-foreground/50 cursor-grab shrink-0" data-testid={`drag-handle-${index}`} />
+          )}
           <button
             type="button"
             onClick={onToggle}
@@ -2879,73 +2967,360 @@ function AgentProposalCard({ agent, index, isOrchestrator, isSelected, onToggle,
             {isSelected && <CheckCircle className="w-3.5 h-3.5" />}
           </button>
           {isOrchestrator ? <Network className="w-4 h-4 text-primary" /> : <Bot className="w-4 h-4 text-primary" />}
-          {agent.name}
+          <span className="flex-1 truncate">{agent.name}</span>
           {isOrchestrator && (
             <Badge className="text-[9px] bg-primary/15 text-primary border-primary/20" variant="outline">Team Agent</Badge>
           )}
           {!isOrchestrator && (
             <Badge variant="secondary" className="text-[9px]">Worker {index + 1}</Badge>
           )}
+          <div className="flex items-center gap-0.5 ml-auto">
+            <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => setExpanded(!expanded)} data-testid={`button-edit-agent-${isOrchestrator ? "orch" : index}`}>
+              {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <Pencil className="w-3.5 h-3.5" />}
+            </Button>
+            {onDuplicate && (
+              <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={onDuplicate} data-testid={`button-duplicate-agent-${index}`}>
+                <Copy className="w-3.5 h-3.5" />
+              </Button>
+            )}
+            {onDelete && (
+              <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-destructive hover:text-destructive" onClick={() => setConfirmDelete(true)} data-testid={`button-delete-agent-${isOrchestrator ? "orch" : index}`}>
+                <Trash2 className="w-3.5 h-3.5" />
+              </Button>
+            )}
+          </div>
         </CardTitle>
       </CardHeader>
       <CardContent className="p-4 pt-0 flex flex-col gap-3">
-        <p className="text-xs text-muted-foreground">{agent.description}</p>
+        {!expanded ? (
+          <>
+            <p className="text-xs text-muted-foreground">{agent.description}</p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <Badge variant="outline" className="text-[10px]">{agent.riskTier} Risk</Badge>
+              <Badge variant="outline" className="text-[10px]">{agent.autonomyMode}</Badge>
+              <Badge variant="outline" className="text-[10px]">{agent.modelProvider}/{agent.modelName}</Badge>
+              {agent.templateMatch && (
+                <Badge variant="secondary" className="text-[10px]">Template: {agent.templateMatch}</Badge>
+              )}
+            </div>
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Role</span>
+              <span className="text-xs">{agent.role}</span>
+            </div>
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Workflow</span>
+              <div className="flex items-center gap-1 flex-wrap">
+                {agent.workflowSteps.map((step, j) => (
+                  <span key={j} className="flex items-center gap-0.5">
+                    {j > 0 && <ChevronRight className="w-2.5 h-2.5 text-muted-foreground" />}
+                    <Badge variant="secondary" className="text-[9px]">{step}</Badge>
+                  </span>
+                ))}
+              </div>
+            </div>
+            {agent.tools.length > 0 && (
+              <div className="flex flex-col gap-1">
+                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Tools</span>
+                <div className="flex flex-wrap gap-1">
+                  {agent.tools.map((tool, j) => (
+                    <Badge key={j} variant="outline" className="text-[9px]">{tool.name}</Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+            {agent.kpiBindings.length > 0 && (
+              <div className="flex flex-col gap-1">
+                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">KPI Bindings</span>
+                <div className="flex flex-wrap gap-1">
+                  {agent.kpiBindings.map((kpi, j) => (
+                    <Badge key={j} variant="outline" className="text-[9px] text-green-600 dark:text-green-400 border-green-200 dark:border-green-800">{kpi}</Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="flex items-center gap-2 p-2 rounded-md bg-green-500/5 border border-green-500/10 flex-wrap">
+              <TrendingUp className="w-3.5 h-3.5 text-green-500 shrink-0" />
+              <span className="text-[11px] text-green-700 dark:text-green-300">{agent.estimatedImpact}</span>
+            </div>
+          </>
+        ) : (
+          <div className="flex flex-col gap-3 border-t pt-3" data-testid={`edit-panel-agent-${isOrchestrator ? "orch" : index}`}>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-[10px]">Name</Label>
+                <Input value={editData.name} onChange={e => setEditData(prev => ({ ...prev, name: e.target.value }))} className="h-8 text-xs" data-testid="input-agent-name" />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-[10px]">Role</Label>
+                <Input value={editData.role} onChange={e => setEditData(prev => ({ ...prev, role: e.target.value }))} className="h-8 text-xs" data-testid="input-agent-role" />
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-[10px]">Description</Label>
+              <Textarea value={editData.description} onChange={e => setEditData(prev => ({ ...prev, description: e.target.value }))} className="text-xs min-h-[60px]" data-testid="input-agent-description" />
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-[10px]">Risk Tier</Label>
+                <Select value={editData.riskTier} onValueChange={v => setEditData(prev => ({ ...prev, riskTier: v }))}>
+                  <SelectTrigger className="h-8 text-xs" data-testid="select-risk-tier"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="LOW">LOW</SelectItem>
+                    <SelectItem value="MEDIUM">MEDIUM</SelectItem>
+                    <SelectItem value="HIGH">HIGH</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-[10px]">Autonomy</Label>
+                <Select value={editData.autonomyMode} onValueChange={v => setEditData(prev => ({ ...prev, autonomyMode: v }))}>
+                  <SelectTrigger className="h-8 text-xs" data-testid="select-autonomy"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="manual">Manual</SelectItem>
+                    <SelectItem value="assisted">Assisted</SelectItem>
+                    <SelectItem value="autonomous">Autonomous</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-[10px]">Provider</Label>
+                <Select value={editData.modelProvider} onValueChange={v => setEditData(prev => ({ ...prev, modelProvider: v }))}>
+                  <SelectTrigger className="h-8 text-xs" data-testid="select-model-provider"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="openai">OpenAI</SelectItem>
+                    <SelectItem value="anthropic">Anthropic</SelectItem>
+                    <SelectItem value="google">Google</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-[10px]">Model</Label>
+                <Input value={editData.modelName} onChange={e => setEditData(prev => ({ ...prev, modelName: e.target.value }))} className="h-8 text-xs" data-testid="input-model-name" />
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-[10px]">Estimated Impact</Label>
+              <Input value={editData.estimatedImpact} onChange={e => setEditData(prev => ({ ...prev, estimatedImpact: e.target.value }))} className="h-8 text-xs" data-testid="input-estimated-impact" />
+            </div>
 
-        <div className="flex items-center gap-2 flex-wrap">
-          <Badge variant="outline" className="text-[10px]">{agent.riskTier} Risk</Badge>
-          <Badge variant="outline" className="text-[10px]">{agent.autonomyMode}</Badge>
-          <Badge variant="outline" className="text-[10px]">{agent.modelProvider}/{agent.modelName}</Badge>
-          {agent.templateMatch && (
-            <Badge variant="secondary" className="text-[10px]">Template: {agent.templateMatch}</Badge>
-          )}
-        </div>
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-[10px]">Workflow Steps</Label>
+              <div className="flex flex-col gap-1">
+                {editData.workflowSteps.map((step, j) => (
+                  <div key={j} className="flex items-center gap-1">
+                    <span className="text-[10px] text-muted-foreground w-4 text-center">{j + 1}</span>
+                    <Badge variant="secondary" className="text-[9px] flex-1">{step}</Badge>
+                    <Button variant="ghost" size="sm" className="h-5 w-5 p-0" onClick={() => moveStep(j, -1)} disabled={j === 0}><ChevronUp className="w-3 h-3" /></Button>
+                    <Button variant="ghost" size="sm" className="h-5 w-5 p-0" onClick={() => moveStep(j, 1)} disabled={j === editData.workflowSteps.length - 1}><ChevronDown className="w-3 h-3" /></Button>
+                    <Button variant="ghost" size="sm" className="h-5 w-5 p-0 text-destructive" onClick={() => removeStep(j)}><X className="w-3 h-3" /></Button>
+                  </div>
+                ))}
+              </div>
+              <div className="flex items-center gap-1">
+                <Input value={newStep} onChange={e => setNewStep(e.target.value)} placeholder="Add workflow step..." className="h-7 text-xs flex-1" onKeyDown={e => e.key === "Enter" && addStep()} data-testid="input-add-step" />
+                <Button variant="outline" size="sm" className="h-7 text-xs" onClick={addStep} data-testid="button-add-step"><Plus className="w-3 h-3 mr-1" />Add</Button>
+              </div>
+            </div>
 
-        <div className="flex flex-col gap-1">
-          <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Role</span>
-          <span className="text-xs">{agent.role}</span>
-        </div>
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-[10px]">Tools</Label>
+              <div className="flex flex-wrap gap-1">
+                {editData.tools.map((tool, j) => (
+                  <Badge key={j} variant="outline" className="text-[9px] flex items-center gap-1">
+                    {tool.name}
+                    <button onClick={() => removeTool(j)} className="hover:text-destructive"><X className="w-2.5 h-2.5" /></button>
+                  </Badge>
+                ))}
+              </div>
+              <div className="flex items-center gap-1">
+                <Input value={newToolName} onChange={e => setNewToolName(e.target.value)} placeholder="Tool name" className="h-7 text-xs flex-1" data-testid="input-tool-name" />
+                <Input value={newToolDesc} onChange={e => setNewToolDesc(e.target.value)} placeholder="Description" className="h-7 text-xs flex-1" data-testid="input-tool-desc" />
+                <Button variant="outline" size="sm" className="h-7 text-xs" onClick={addTool} data-testid="button-add-tool"><Plus className="w-3 h-3 mr-1" />Add</Button>
+              </div>
+            </div>
 
-        <div className="flex flex-col gap-1">
-          <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Workflow</span>
-          <div className="flex items-center gap-1 flex-wrap">
-            {agent.workflowSteps.map((step, j) => (
-              <span key={j} className="flex items-center gap-0.5">
-                {j > 0 && <ChevronRight className="w-2.5 h-2.5 text-muted-foreground" />}
-                <Badge variant="secondary" className="text-[9px]">{step}</Badge>
-              </span>
-            ))}
-          </div>
-        </div>
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-[10px]">KPI Bindings</Label>
+              <div className="flex flex-wrap gap-1">
+                {editData.kpiBindings.map((kpi, j) => (
+                  <Badge key={j} variant="outline" className="text-[9px] text-green-600 dark:text-green-400 border-green-200 dark:border-green-800 flex items-center gap-1">
+                    {kpi}
+                    <button onClick={() => removeKpiBinding(j)} className="hover:text-destructive"><X className="w-2.5 h-2.5" /></button>
+                  </Badge>
+                ))}
+              </div>
+              <div className="flex items-center gap-1">
+                <Input value={newKpi} onChange={e => setNewKpi(e.target.value)} placeholder="KPI name" className="h-7 text-xs flex-1" onKeyDown={e => e.key === "Enter" && addKpiBinding()} data-testid="input-add-kpi" />
+                <Button variant="outline" size="sm" className="h-7 text-xs" onClick={addKpiBinding} data-testid="button-add-kpi"><Plus className="w-3 h-3 mr-1" />Add</Button>
+              </div>
+            </div>
 
-        {agent.tools.length > 0 && (
-          <div className="flex flex-col gap-1">
-            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Tools</span>
-            <div className="flex flex-wrap gap-1">
-              {agent.tools.map((tool, j) => (
-                <Badge key={j} variant="outline" className="text-[9px]">{tool.name}</Badge>
-              ))}
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-[10px]">System Prompt</Label>
+              <Textarea
+                value={editData.systemPrompt || ""}
+                onChange={e => setEditData(prev => ({ ...prev, systemPrompt: e.target.value }))}
+                placeholder="Custom system prompt for this agent (optional — auto-generated if left empty)"
+                className="text-xs min-h-[60px]"
+                data-testid="input-agent-system-prompt"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-[10px]">Compliance Tags</Label>
+              <div className="flex flex-wrap gap-1">
+                {(editData.complianceTags || []).map((tag, j) => (
+                  <Badge key={j} variant="outline" className="text-[9px] text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800 flex items-center gap-1">
+                    {tag}
+                    <button onClick={() => setEditData(prev => ({ ...prev, complianceTags: (prev.complianceTags || []).filter((_, i) => i !== j) }))} className="hover:text-destructive"><X className="w-2.5 h-2.5" /></button>
+                  </Badge>
+                ))}
+              </div>
+              <div className="flex items-center gap-1">
+                <Input
+                  placeholder="Add compliance tag..."
+                  className="h-7 text-xs flex-1"
+                  data-testid="input-add-compliance-tag"
+                  onKeyDown={e => {
+                    if (e.key === "Enter" && (e.target as HTMLInputElement).value.trim()) {
+                      const val = (e.target as HTMLInputElement).value.trim();
+                      setEditData(prev => ({ ...prev, complianceTags: [...(prev.complianceTags || []), val] }));
+                      (e.target as HTMLInputElement).value = "";
+                    }
+                  }}
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 justify-end pt-2 border-t">
+              <Button variant="ghost" size="sm" onClick={cancelEdit} data-testid="button-cancel-edit">Cancel</Button>
+              <Button size="sm" onClick={saveEdit} data-testid="button-save-edit"><Save className="w-3.5 h-3.5 mr-1.5" />Save Changes</Button>
             </div>
           </div>
         )}
-
-        {agent.kpiBindings.length > 0 && (
-          <div className="flex flex-col gap-1">
-            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">KPI Bindings</span>
-            <div className="flex flex-wrap gap-1">
-              {agent.kpiBindings.map((kpi, j) => (
-                <Badge key={j} variant="outline" className="text-[9px] text-green-600 dark:text-green-400 border-green-200 dark:border-green-800">{kpi}</Badge>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className="flex items-center gap-2 p-2 rounded-md bg-green-500/5 border border-green-500/10 flex-wrap">
-          <TrendingUp className="w-3.5 h-3.5 text-green-500 shrink-0" />
-          <span className="text-[11px] text-green-700 dark:text-green-300">{agent.estimatedImpact}</span>
-        </div>
       </CardContent>
+
+      <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-sm">Delete {agent.name}?</DialogTitle>
+            <DialogDescription className="text-xs">This will remove this agent from the development plan. This action can be undone.</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>Cancel</Button>
+            <Button variant="destructive" size="sm" onClick={() => { setConfirmDelete(false); onDelete?.(); }} data-testid="button-confirm-delete">Delete Agent</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
+}
+
+function AddCustomAgentForm({ onAdd, onCancel }: { onAdd: (agent: AgentProposal) => void; onCancel: () => void }) {
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [role, setRole] = useState("");
+  const [riskTier, setRiskTier] = useState("MEDIUM");
+  const [autonomyMode, setAutonomyMode] = useState("assisted");
+  const [modelProvider, setModelProvider] = useState("openai");
+  const [modelName, setModelName] = useState("gpt-4.1-mini");
+  const [estimatedImpact, setEstimatedImpact] = useState("");
+
+  function handleSubmit() {
+    if (!name.trim() || !description.trim()) return;
+    onAdd({
+      name: name.trim(),
+      description: description.trim(),
+      role: role.trim() || name.trim(),
+      riskTier,
+      autonomyMode,
+      modelProvider,
+      modelName,
+      workflowSteps: [],
+      tools: [],
+      kpiBindings: [],
+      estimatedImpact: estimatedImpact.trim() || "Custom agent — impact to be determined",
+      templateMatch: null,
+    });
+  }
+
+  return (
+    <div className="flex flex-col gap-3" data-testid="form-add-custom-agent">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="flex flex-col gap-1.5">
+          <Label className="text-[10px]">Agent Name *</Label>
+          <Input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Data Validator Agent" className="h-8 text-xs" data-testid="input-new-agent-name" />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label className="text-[10px]">Role</Label>
+          <Input value={role} onChange={e => setRole(e.target.value)} placeholder="e.g. Validates incoming data" className="h-8 text-xs" data-testid="input-new-agent-role" />
+        </div>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <Label className="text-[10px]">Description *</Label>
+        <Textarea value={description} onChange={e => setDescription(e.target.value)} placeholder="What does this agent do?" className="text-xs min-h-[60px]" data-testid="input-new-agent-description" />
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="flex flex-col gap-1.5">
+          <Label className="text-[10px]">Risk Tier</Label>
+          <Select value={riskTier} onValueChange={setRiskTier}>
+            <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="LOW">LOW</SelectItem>
+              <SelectItem value="MEDIUM">MEDIUM</SelectItem>
+              <SelectItem value="HIGH">HIGH</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label className="text-[10px]">Autonomy</Label>
+          <Select value={autonomyMode} onValueChange={setAutonomyMode}>
+            <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="manual">Manual</SelectItem>
+              <SelectItem value="assisted">Assisted</SelectItem>
+              <SelectItem value="autonomous">Autonomous</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label className="text-[10px]">Provider</Label>
+          <Select value={modelProvider} onValueChange={setModelProvider}>
+            <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="openai">OpenAI</SelectItem>
+              <SelectItem value="anthropic">Anthropic</SelectItem>
+              <SelectItem value="google">Google</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label className="text-[10px]">Model</Label>
+          <Input value={modelName} onChange={e => setModelName(e.target.value)} className="h-8 text-xs" />
+        </div>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <Label className="text-[10px]">Estimated Impact</Label>
+        <Input value={estimatedImpact} onChange={e => setEstimatedImpact(e.target.value)} placeholder="e.g. Reduces data errors by 30%" className="h-8 text-xs" data-testid="input-new-agent-impact" />
+      </div>
+      <DialogFooter>
+        <Button variant="ghost" size="sm" onClick={onCancel}>Cancel</Button>
+        <Button size="sm" onClick={handleSubmit} disabled={!name.trim() || !description.trim()} data-testid="button-submit-add-agent">
+          <Plus className="w-3.5 h-3.5 mr-1.5" />
+          Add to Plan
+        </Button>
+      </DialogFooter>
+    </div>
+  );
+}
+
+interface UndoState {
+  proposals: AgentProposal[];
+  orchestrator: AgentProposal | null;
+  pipeline: PipelineDefinition | null;
+  selectedIndices: number[];
+  orchestratorSelected: boolean;
+  label: string;
 }
 
 function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: KpiDefinition[] }) {
@@ -2964,6 +3339,96 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
   const [lastSaved, setLastSaved] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [feedbackText, setFeedbackText] = useState("");
+  const [showAddAgent, setShowAddAgent] = useState(false);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+
+  const [undoStack, setUndoStack] = useState<UndoState[]>([]);
+  const [redoStack, setRedoStack] = useState<UndoState[]>([]);
+
+  function deepCloneAgent(p: AgentProposal): AgentProposal {
+    return { ...p, tools: p.tools.map(t => ({ ...t })), workflowSteps: [...p.workflowSteps], kpiBindings: [...p.kpiBindings], complianceTags: [...(p.complianceTags || [])] };
+  }
+
+  const pushUndo = useCallback((label: string) => {
+    setUndoStack(prev => [...prev.slice(-19), {
+      proposals: proposals.map(deepCloneAgent),
+      orchestrator: orchestrator ? deepCloneAgent(orchestrator) : null,
+      pipeline: pipeline ? { ...pipeline, edges: pipeline.edges.map(e => ({ ...e })) } : null,
+      selectedIndices: Array.from(selectedIndices),
+      orchestratorSelected,
+      label,
+    }]);
+    setRedoStack([]);
+  }, [proposals, orchestrator, pipeline, selectedIndices, orchestratorSelected]);
+
+  function undo() {
+    if (undoStack.length === 0) return;
+    const prev = undoStack[undoStack.length - 1];
+    setRedoStack(r => [...r, {
+      proposals: proposals.map(deepCloneAgent),
+      orchestrator: orchestrator ? deepCloneAgent(orchestrator) : null,
+      pipeline: pipeline ? { ...pipeline, edges: pipeline.edges.map(e => ({ ...e })) } : null,
+      selectedIndices: Array.from(selectedIndices),
+      orchestratorSelected,
+      label: "redo",
+    }]);
+    setProposals(prev.proposals);
+    setOrchestrator(prev.orchestrator);
+    setPipeline(prev.pipeline);
+    setSelectedIndices(new Set(prev.selectedIndices));
+    setOrchestratorSelected(prev.orchestratorSelected);
+    setUndoStack(s => s.slice(0, -1));
+    setDirty(true);
+    toast({ title: `Undid: ${prev.label}` });
+  }
+
+  function redo() {
+    if (redoStack.length === 0) return;
+    const next = redoStack[redoStack.length - 1];
+    setUndoStack(s => [...s, {
+      proposals: proposals.map(deepCloneAgent),
+      orchestrator: orchestrator ? deepCloneAgent(orchestrator) : null,
+      pipeline: pipeline ? { ...pipeline, edges: pipeline.edges.map(e => ({ ...e })) } : null,
+      selectedIndices: Array.from(selectedIndices),
+      orchestratorSelected,
+      label: "undo",
+    }]);
+    setProposals(next.proposals);
+    setOrchestrator(next.orchestrator);
+    setPipeline(next.pipeline);
+    setSelectedIndices(new Set(next.selectedIndices));
+    setOrchestratorSelected(next.orchestratorSelected);
+    setRedoStack(s => s.slice(0, -1));
+    setDirty(true);
+    toast({ title: "Redo applied" });
+  }
+
+  function rebuildPipeline(workers: AgentProposal[], orch: AgentProposal | null, currentPipeline: PipelineDefinition | null) {
+    if (!orch || !currentPipeline) return currentPipeline;
+    const edges: PipelineEdge[] = [];
+    if (currentPipeline.pattern === "sequential") {
+      for (let i = 0; i < workers.length; i++) {
+        edges.push({
+          from: i === 0 ? orch.name : workers[i - 1].name,
+          to: workers[i].name,
+          label: i === 0 ? "dispatch" : "handoff",
+          type: "sequential",
+        });
+      }
+    } else {
+      for (const w of workers) {
+        edges.push({
+          from: orch.name,
+          to: w.name,
+          label: "delegate",
+          type: currentPipeline.pattern === "parallel" ? "parallel" : "conditional",
+        });
+      }
+    }
+    return { ...currentPipeline, edges };
+  }
 
   const { data: savedProposal, isLoading: loadingSaved } = useQuery<any>({
     queryKey: ["/api/agent-proposals", outcome.id],
@@ -2985,6 +3450,8 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
     setProposalId(null);
     setLastSaved(null);
     setDirty(false);
+    setUndoStack([]);
+    setRedoStack([]);
   }, [outcome.id]);
 
   useEffect(() => {
@@ -3019,7 +3486,6 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
   const isAwaitingPlan = outcome.status === "awaiting_agent_plan";
 
   const totalSelected = (orchestratorSelected && orchestrator ? 1 : 0) + selectedIndices.size;
-  const allWorkersSelected = proposals.length > 0 && selectedIndices.size === proposals.length;
 
   function toggleWorker(index: number) {
     setSelectedIndices(prev => {
@@ -3061,6 +3527,122 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
     setDirty(true);
   }
 
+  function editWorker(index: number, updated: AgentProposal) {
+    pushUndo(`Edit ${proposals[index].name}`);
+    const newProposals = [...proposals];
+    newProposals[index] = updated;
+    setProposals(newProposals);
+    const newPipeline = rebuildPipeline(newProposals, orchestrator, pipeline);
+    if (newPipeline) setPipeline(newPipeline);
+    setDirty(true);
+  }
+
+  function editOrchestrator(updated: AgentProposal) {
+    pushUndo(`Edit ${orchestrator?.name || "orchestrator"}`);
+    setOrchestrator(updated);
+    const newPipeline = rebuildPipeline(proposals, updated, pipeline);
+    if (newPipeline) setPipeline(newPipeline);
+    setDirty(true);
+  }
+
+  function deleteWorker(index: number) {
+    pushUndo(`Delete ${proposals[index].name}`);
+    const newProposals = proposals.filter((_, i) => i !== index);
+    setProposals(newProposals);
+    const newSelected = new Set<number>();
+    selectedIndices.forEach(i => {
+      if (i < index) newSelected.add(i);
+      else if (i > index) newSelected.add(i - 1);
+    });
+    setSelectedIndices(newSelected);
+    if (newSelected.size === 0) setOrchestratorSelected(false);
+    const newPipeline = rebuildPipeline(newProposals, orchestrator, pipeline);
+    if (newPipeline) setPipeline(newPipeline);
+    setDirty(true);
+    toast({ title: "Agent removed from plan" });
+  }
+
+  function deleteOrchestrator() {
+    pushUndo(`Delete orchestrator ${orchestrator?.name || ""}`);
+    setOrchestrator(null);
+    setOrchestratorSelected(false);
+    setPipeline(null);
+    setDirty(true);
+    toast({ title: "Orchestrator removed from plan" });
+  }
+
+  function duplicateWorker(index: number) {
+    pushUndo(`Duplicate ${proposals[index].name}`);
+    const source = proposals[index];
+    const copy: AgentProposal = {
+      ...source,
+      name: `${source.name} (Copy)`,
+      tools: [...source.tools],
+      workflowSteps: [...source.workflowSteps],
+      kpiBindings: [...source.kpiBindings],
+    };
+    const newProposals = [...proposals];
+    newProposals.splice(index + 1, 0, copy);
+    setProposals(newProposals);
+    const newSelected = new Set<number>();
+    selectedIndices.forEach(i => {
+      if (i <= index) newSelected.add(i);
+      else newSelected.add(i + 1);
+    });
+    newSelected.add(index + 1);
+    setSelectedIndices(newSelected);
+    const newPipeline = rebuildPipeline(newProposals, orchestrator, pipeline);
+    if (newPipeline) setPipeline(newPipeline);
+    setDirty(true);
+    toast({ title: `Duplicated ${source.name}` });
+  }
+
+  function addCustomAgent(agent: AgentProposal) {
+    pushUndo("Add custom agent");
+    const newProposals = [...proposals, agent];
+    setProposals(newProposals);
+    const newSelected = new Set(selectedIndices);
+    newSelected.add(newProposals.length - 1);
+    setSelectedIndices(newSelected);
+    if (orchestrator) setOrchestratorSelected(true);
+    const newPipeline = rebuildPipeline(newProposals, orchestrator, pipeline);
+    if (newPipeline) setPipeline(newPipeline);
+    setDirty(true);
+    setShowAddAgent(false);
+    toast({ title: `Added ${agent.name} to plan` });
+  }
+
+  function handleDragStart(index: number) {
+    setDragIndex(index);
+  }
+
+  function handleDrop(targetIndex: number) {
+    if (dragIndex === null || dragIndex === targetIndex) { setDragIndex(null); return; }
+    pushUndo(`Reorder agents`);
+    const newProposals = [...proposals];
+    const [dragged] = newProposals.splice(dragIndex, 1);
+    newProposals.splice(targetIndex, 0, dragged);
+    const newSelected = new Set<number>();
+    const oldArr = Array.from(selectedIndices);
+    for (const oldIdx of oldArr) {
+      let newIdx = oldIdx;
+      if (oldIdx === dragIndex) {
+        newIdx = targetIndex;
+      } else if (dragIndex < targetIndex) {
+        if (oldIdx > dragIndex && oldIdx <= targetIndex) newIdx = oldIdx - 1;
+      } else {
+        if (oldIdx >= targetIndex && oldIdx < dragIndex) newIdx = oldIdx + 1;
+      }
+      newSelected.add(newIdx);
+    }
+    setProposals(newProposals);
+    setSelectedIndices(newSelected);
+    const newPipeline = rebuildPipeline(newProposals, orchestrator, pipeline);
+    if (newPipeline) setPipeline(newPipeline);
+    setDirty(true);
+    setDragIndex(null);
+  }
+
   async function savePlan() {
     if (!proposalId) return;
     setSaving(true);
@@ -3068,14 +3650,60 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
       await apiRequest("PATCH", `/api/agent-proposals/${proposalId}`, {
         selectedIndices: Array.from(selectedIndices),
         orchestratorSelected,
+        workers: proposals,
+        orchestrator,
+        pipeline,
       });
       setLastSaved(new Date().toISOString());
       setDirty(false);
-      toast({ title: "Plan saved", description: "Your agent selection has been saved." });
+      toast({ title: "Plan saved", description: "Your agent development plan has been saved." });
     } catch {
       toast({ title: "Failed to save plan", variant: "destructive" });
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function generateProposalsWithFeedback() {
+    if (!feedbackText.trim()) {
+      toast({ title: "Please provide feedback", description: "Tell us what to change about the plan.", variant: "destructive" });
+      return;
+    }
+    setGenerating(true);
+    setShowFeedback(false);
+    try {
+      const res = await apiRequest("POST", "/api/ai/propose-agents", {
+        outcomeContract: outcome,
+        kpis,
+        feedback: feedbackText.trim(),
+        previousPlan: {
+          orchestrator,
+          workers: proposals,
+          pipeline,
+        },
+      });
+      const data = await res.json();
+      pushUndo("Regenerate with feedback");
+      setProposals(data.agents || []);
+      setOrchestrator(data.orchestrator || null);
+      setPipeline(data.pipeline || null);
+      setGenerated(true);
+      const allIndices = new Set<number>((data.agents || []).map((_: any, i: number) => i));
+      setSelectedIndices(allIndices);
+      setOrchestratorSelected(!!data.orchestrator);
+      if (data.proposalId) {
+        setProposalId(data.proposalId);
+        setLastSaved(new Date().toISOString());
+        loadedRef.current = data.proposalId;
+      }
+      setDirty(false);
+      setFeedbackText("");
+      queryClient.invalidateQueries({ queryKey: ["/api/agent-proposals", outcome.id] });
+      toast({ title: "Plan regenerated with feedback", description: "The plan has been updated based on your feedback." });
+    } catch (err) {
+      toast({ title: "Failed to regenerate", description: "Please try again.", variant: "destructive" });
+    } finally {
+      setGenerating(false);
     }
   }
 
@@ -3308,33 +3936,86 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div>
-          <h3 className="text-sm font-semibold">Multi-Agent Development Plan</h3>
-          <p className="text-xs text-muted-foreground">AI-generated orchestrated pipeline to deliver this outcome. Select agents to create.</p>
-          {lastSaved && (
-            <div className="flex items-center gap-1.5 mt-1" data-testid="text-plan-saved-status">
-              <CheckCircle className="w-3 h-3 text-green-500" />
-              <span className="text-[11px] text-muted-foreground">
-                Plan saved {new Date(lastSaved).toLocaleDateString()} at {new Date(lastSaved).toLocaleTimeString()}
-              </span>
-              {dirty && <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 text-amber-600 border-amber-300">Unsaved changes</Badge>}
-            </div>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          {proposalId && dirty && (
-            <Button variant="outline" size="sm" onClick={savePlan} disabled={saving} data-testid="button-save-plan">
-              {saving ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-1.5" />}
-              Save Plan
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div>
+            <h3 className="text-sm font-semibold">Multi-Agent Development Plan</h3>
+            <p className="text-xs text-muted-foreground">AI-generated orchestrated pipeline to deliver this outcome. Edit agents, reorder, or provide feedback to regenerate.</p>
+            {lastSaved && (
+              <div className="flex items-center gap-1.5 mt-1" data-testid="text-plan-saved-status">
+                <CheckCircle className="w-3 h-3 text-green-500" />
+                <span className="text-[11px] text-muted-foreground">
+                  Plan saved {new Date(lastSaved).toLocaleDateString()} at {new Date(lastSaved).toLocaleTimeString()}
+                </span>
+                {dirty && <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 text-amber-600 border-amber-300">Unsaved changes</Badge>}
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <Button variant="ghost" size="sm" onClick={undo} disabled={undoStack.length === 0} data-testid="button-undo" className="h-8 w-8 p-0">
+              <Undo2 className="w-4 h-4" />
             </Button>
-          )}
-          <Button variant="outline" onClick={generateProposals} disabled={generating} data-testid="button-regenerate-proposals">
-            {generating ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1.5" />}
-            Regenerate
-          </Button>
+            <Button variant="ghost" size="sm" onClick={redo} disabled={redoStack.length === 0} data-testid="button-redo" className="h-8 w-8 p-0">
+              <Redo2 className="w-4 h-4" />
+            </Button>
+            <Separator orientation="vertical" className="h-6 mx-1" />
+            <Button variant="outline" size="sm" onClick={() => setShowAddAgent(true)} data-testid="button-add-custom-agent">
+              <Plus className="w-3.5 h-3.5 mr-1.5" />
+              Add Agent
+            </Button>
+            {proposalId && dirty && (
+              <Button variant="outline" size="sm" onClick={savePlan} disabled={saving} data-testid="button-save-plan">
+                {saving ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-1.5" />}
+                Save Plan
+              </Button>
+            )}
+            <Button variant="outline" size="sm" onClick={() => setShowFeedback(true)} disabled={generating} data-testid="button-regenerate-with-feedback">
+              <MessageSquare className="w-3.5 h-3.5 mr-1.5" />
+              Regenerate
+            </Button>
+          </div>
         </div>
+
+        {showFeedback && (
+          <Card className="border-primary/20 bg-primary/[0.02]" data-testid="card-feedback-panel">
+            <CardContent className="p-4 flex flex-col gap-3">
+              <div className="flex items-center gap-2">
+                <MessageSquare className="w-4 h-4 text-primary" />
+                <span className="text-sm font-semibold">Regenerate with Feedback</span>
+              </div>
+              <p className="text-xs text-muted-foreground">Describe what you'd like to change about the current plan. The AI will incorporate your feedback and generate an updated plan.</p>
+              <Textarea
+                value={feedbackText}
+                onChange={e => setFeedbackText(e.target.value)}
+                placeholder="e.g., 'Add a data validation step before the main processor', 'Use fewer workers', 'Include compliance checking agent', 'Change to sequential pipeline'..."
+                className="min-h-[80px] text-xs"
+                data-testid="textarea-feedback"
+              />
+              <div className="flex items-center gap-2 justify-end">
+                <Button variant="ghost" size="sm" onClick={() => { setShowFeedback(false); setFeedbackText(""); }} data-testid="button-cancel-feedback">Cancel</Button>
+                <Button variant="outline" size="sm" onClick={generateProposals} disabled={generating} data-testid="button-regenerate-fresh">
+                  <Sparkles className="w-3.5 h-3.5 mr-1.5" />
+                  Fresh Regenerate
+                </Button>
+                <Button size="sm" onClick={generateProposalsWithFeedback} disabled={generating || !feedbackText.trim()} data-testid="button-submit-feedback">
+                  {generating ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}
+                  Regenerate with Feedback
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
+
+      <Dialog open={showAddAgent} onOpenChange={setShowAddAgent}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-sm">Add Custom Agent</DialogTitle>
+            <DialogDescription className="text-xs">Define a new agent to add to the development plan.</DialogDescription>
+          </DialogHeader>
+          <AddCustomAgentForm onAdd={addCustomAgent} onCancel={() => setShowAddAgent(false)} />
+        </DialogContent>
+      </Dialog>
 
       {isPendingValidation && (
         <div className="flex items-center gap-2 p-3 rounded-md bg-amber-500/5 border border-amber-500/10 flex-wrap" data-testid="notice-pending-validation-proposals">
@@ -3417,17 +4098,26 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
                 isSelected={orchestratorSelected}
                 onToggle={toggleOrchestrator}
                 isCreating={creating}
+                onEdit={editOrchestrator}
+                onDelete={deleteOrchestrator}
               />
             )}
             {proposals.map((agent, i) => (
               <AgentProposalCard
-                key={i}
+                key={`${i}-${agent.name}`}
                 agent={agent}
                 index={i}
                 isOrchestrator={false}
                 isSelected={selectedIndices.has(i)}
                 onToggle={() => toggleWorker(i)}
                 isCreating={creating}
+                onEdit={(updated) => editWorker(i, updated)}
+                onDelete={() => deleteWorker(i)}
+                onDuplicate={() => duplicateWorker(i)}
+                isDragging={dragIndex === i}
+                onDragStart={() => handleDragStart(i)}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={() => handleDrop(i)}
               />
             ))}
           </div>
