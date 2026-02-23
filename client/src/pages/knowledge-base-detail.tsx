@@ -109,6 +109,29 @@ export default function KnowledgeBaseDetail() {
     enabled: linkAgentOpen,
   });
 
+  const { data: embeddingStatus } = useQuery<{ total: number; withEmbeddings: number; withoutEmbeddings: number }>({
+    queryKey: ["/api/knowledge-bases", kbId, "embedding-status"],
+    queryFn: async () => {
+      const res = await fetch(`/api/knowledge-bases/${kbId}/embedding-status`);
+      return res.json();
+    },
+    enabled: !!kbId && (activeTab === "search" || activeTab === "chunks"),
+    refetchInterval: 10000,
+  });
+
+  const embedMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/knowledge-bases/${kbId}/embed`);
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/knowledge-bases", kbId, "embedding-status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/knowledge-bases", kbId, "chunks"] });
+      toast({ title: "Embeddings generated", description: data.message });
+    },
+    onError: (e: any) => toast({ title: "Embedding generation failed", description: e.message, variant: "destructive" }),
+  });
+
   const uploadMutation = useMutation({
     mutationFn: async (file: File) => {
       const form = new FormData();
@@ -522,6 +545,58 @@ export default function KnowledgeBaseDetail() {
         </TabsContent>
 
         <TabsContent value="search" className="mt-4 space-y-6">
+          {embeddingStatus && embeddingStatus.total > 0 && embeddingStatus.withoutEmbeddings > 0 && (
+            <Card className="border-amber-500/50 bg-amber-50/50 dark:bg-amber-950/20">
+              <CardContent className="py-4">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <Database className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                        {embeddingStatus.withoutEmbeddings} of {embeddingStatus.total} chunks missing vector embeddings
+                      </p>
+                      <p className="text-xs text-amber-700/80 dark:text-amber-400/70 mt-0.5">
+                        Semantic search and RAG require embeddings to find relevant content. Click "Generate Embeddings" to enable search.
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    onClick={() => embedMutation.mutate()}
+                    disabled={embedMutation.isPending}
+                    data-testid="button-generate-embeddings"
+                    className="flex-shrink-0"
+                  >
+                    {embedMutation.isPending ? (
+                      <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Generating...</>
+                    ) : (
+                      <><Layers className="w-3.5 h-3.5 mr-1.5" /> Generate Embeddings</>
+                    )}
+                  </Button>
+                </div>
+                {embeddingStatus.withEmbeddings > 0 && (
+                  <div className="mt-2 ml-8">
+                    <div className="w-full bg-amber-200 dark:bg-amber-900 rounded-full h-1.5">
+                      <div className="bg-green-500 h-1.5 rounded-full" style={{ width: `${(embeddingStatus.withEmbeddings / embeddingStatus.total) * 100}%` }} />
+                    </div>
+                    <p className="text-[10px] text-amber-600 dark:text-amber-500 mt-1">{embeddingStatus.withEmbeddings}/{embeddingStatus.total} embedded</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+          {embeddingStatus && embeddingStatus.total > 0 && embeddingStatus.withoutEmbeddings === 0 && (
+            <Card className="border-green-500/30 bg-green-50/50 dark:bg-green-950/20">
+              <CardContent className="py-3">
+                <div className="flex items-center gap-3">
+                  <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-400" />
+                  <p className="text-xs text-green-700 dark:text-green-400">
+                    All {embeddingStatus.total} chunks have vector embeddings. Semantic search is ready.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-sm flex items-center gap-2">

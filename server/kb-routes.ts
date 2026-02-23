@@ -306,6 +306,71 @@ export function registerKnowledgeBaseRoutes(app: Express) {
     }
   });
 
+  app.post("/api/knowledge-bases/:id/embed", async (req, res) => {
+    try {
+      const kb = await storage.getKnowledgeBase(req.params.id);
+      if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
+
+      const chunks = await storage.getKnowledgeChunks(req.params.id);
+      if (chunks.length === 0) return res.json({ total: 0, embedded: 0, message: "No chunks to embed" });
+
+      const { ensurePgVector } = await import("./embeddings");
+      const pgReady = await ensurePgVector();
+      if (!pgReady) return res.status(500).json({ message: "Vector database not available" });
+
+      const missingChunks: typeof chunks = [];
+      for (const chunk of chunks) {
+        const check = await db.execute(sql`SELECT embedding IS NOT NULL as has_emb FROM knowledge_chunks WHERE id = ${chunk.id}`);
+        if (check.rows?.[0] && !(check.rows[0] as any).has_emb) {
+          missingChunks.push(chunk);
+        }
+      }
+
+      if (missingChunks.length === 0) return res.json({ total: chunks.length, embedded: 0, alreadyEmbedded: chunks.length, message: "All chunks already have embeddings" });
+
+      const texts = missingChunks.map(c => c.content);
+      const embeddings = await generateEmbeddings(texts);
+      let embeddedCount = 0;
+      for (let i = 0; i < missingChunks.length; i++) {
+        if (embeddings[i]) {
+          await storeChunkEmbedding(missingChunks[i].id, embeddings[i]);
+          embeddedCount++;
+        }
+      }
+
+      res.json({ total: chunks.length, embedded: embeddedCount, alreadyEmbedded: chunks.length - missingChunks.length, message: `Generated embeddings for ${embeddedCount} chunks` });
+    } catch (error: any) {
+      console.error("[kb] Embedding generation error:", error.message);
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/knowledge-bases/:id/embedding-status", async (req, res) => {
+    try {
+      const kb = await storage.getKnowledgeBase(req.params.id);
+      if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
+
+      const chunks = await storage.getKnowledgeChunks(req.params.id);
+      if (chunks.length === 0) return res.json({ total: 0, withEmbeddings: 0, withoutEmbeddings: 0 });
+
+      try {
+        const result = await db.execute(sql`
+          SELECT COUNT(*) as total,
+                 COUNT(embedding) as with_embeddings
+          FROM knowledge_chunks WHERE knowledge_base_id = ${req.params.id}
+        `);
+        const row = result.rows?.[0] as any;
+        const total = parseInt(row?.total || "0");
+        const withEmb = parseInt(row?.with_embeddings || "0");
+        res.json({ total, withEmbeddings: withEmb, withoutEmbeddings: total - withEmb });
+      } catch {
+        res.json({ total: chunks.length, withEmbeddings: 0, withoutEmbeddings: chunks.length });
+      }
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   app.delete("/api/knowledge-bases/:kbId/sources/:sourceId", async (req, res) => {
     const success = await storage.deleteKnowledgeSource(req.params.sourceId);
     if (!success) return res.status(404).json({ message: "Not found" });

@@ -13,7 +13,7 @@ export function isPgvectorAvailable(): boolean {
   return pgvectorState === "available";
 }
 
-async function ensurePgVector(): Promise<boolean> {
+export async function ensurePgVector(): Promise<boolean> {
   if (pgvectorState !== "unknown") return pgvectorState === "available";
 
   if (!initPromise) {
