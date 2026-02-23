@@ -20,6 +20,7 @@ import {
   Layers,
   Database,
   ChevronRight,
+  ChevronDown,
   Settings,
   Eye,
   Hammer,
@@ -32,6 +33,7 @@ import {
   HeartPulse,
   FileText,
   Workflow,
+  MoreHorizontal,
 } from "lucide-react";
 import {
   Sidebar,
@@ -69,17 +71,20 @@ export function AppSidebar() {
   const [location] = useLocation();
   const { role, isRouteAllowed } = useRole();
 
-  const coreNav: NavItem[] = [
+  const primaryNav: NavItem[] = [
     { title: "Overview", url: "/dashboard", icon: LayoutDashboard },
-    { title: "Agents", url: "/agents", icon: Bot },
     { title: "Outcomes", url: "/outcomes", icon: Target },
+    { title: "Agents", url: "/agents", icon: Bot },
+    { title: "Deployments", url: "/deployments", icon: Rocket },
+    { title: "Monitor", url: "/monitor", icon: Activity },
+    { title: "Governance", url: "/governance", icon: Shield },
+    { title: "Integrations", url: "/integrations", icon: Plug },
   ];
 
-  const navGroups: NavGroup[] = [
+  const advancedGroups: NavGroup[] = [
     {
       label: "Build",
       icon: Hammer,
-      defaultOpen: true,
       items: [
         { title: "Pipelines", url: "/pipelines", icon: Workflow },
         { title: "Blueprints", url: "/blueprints", icon: PenTool },
@@ -100,13 +105,11 @@ export function AppSidebar() {
       ],
     },
     {
-      label: "Deploy & Observe",
+      label: "Operate",
       icon: Eye,
       items: [
-        { title: "Deployments", url: "/deployments", icon: Rocket },
         { title: "Shadow Replay", url: "/shadow-replay", icon: GitCompare },
         { title: "Canary Deployment", url: "/canary-deployment", icon: GitBranch },
-        { title: "Monitor", url: "/monitor", icon: Activity },
         { title: "Optimization", url: "/optimization", icon: Zap },
         { title: "Healing Center", url: "/healing-operations", icon: HeartPulse },
         { title: "Runbooks", url: "/runbook-automation", icon: FileText },
@@ -114,9 +117,8 @@ export function AppSidebar() {
     },
     {
       label: "Govern",
-      icon: Shield,
+      icon: Scale,
       items: [
-        { title: "Governance", url: "/governance", icon: Shield },
         { title: "Autonomy Engine", url: "/autonomy-engine", icon: Gauge },
         { title: "Oversight Console", url: "/oversight-console", icon: Scale },
         { title: "Approvals", url: "/approvals", icon: CheckCircle },
@@ -127,7 +129,6 @@ export function AppSidebar() {
       label: "System",
       icon: Settings,
       items: [
-        { title: "Integrations", url: "/integrations", icon: Plug },
         { title: "Billing", url: "/billing", icon: CreditCard },
         { title: "Ontology", url: "/ontology", icon: BookOpen },
         { title: "Admin", url: "/admin", icon: ShieldCheck },
@@ -151,9 +152,13 @@ export function AppSidebar() {
     return group.items.some((item) => isActive(item.url));
   };
 
-  const filteredCoreNav = coreNav.filter((item) => isRouteAllowed(item.url));
+  const isAnyAdvancedActive = advancedGroups.some((g) =>
+    g.items.some((item) => isRouteAllowed(item.url) && isActive(item.url))
+  );
 
-  const filteredGroups = navGroups
+  const filteredPrimaryNav = primaryNav.filter((item) => isRouteAllowed(item.url));
+
+  const filteredAdvancedGroups = advancedGroups
     .map((group) => ({
       ...group,
       items: group.items.filter((item) => isRouteAllowed(item.url)),
@@ -176,11 +181,11 @@ export function AppSidebar() {
         </Link>
       </SidebarHeader>
       <SidebarContent>
-        {filteredCoreNav.length > 0 && (
+        {filteredPrimaryNav.length > 0 && (
           <SidebarGroup>
             <SidebarGroupContent>
               <SidebarMenu>
-                {filteredCoreNav.map((item) => (
+                {filteredPrimaryNav.map((item) => (
                   <SidebarMenuItem key={item.title}>
                     <SidebarMenuButton asChild data-active={isActive(item.url)}>
                       <Link href={item.url} data-testid={`link-nav-${item.title.toLowerCase()}`}>
@@ -195,17 +200,68 @@ export function AppSidebar() {
           </SidebarGroup>
         )}
 
-        {filteredGroups.map((group) => (
-          <CollapsibleNavGroup
-            key={group.label}
-            group={group}
+        {filteredAdvancedGroups.length > 0 && (
+          <AdvancedSection
+            key={role.id}
+            groups={filteredAdvancedGroups}
             isActive={isActive}
-            isGroupActive={isGroupActive(group)}
+            isGroupActive={isGroupActive}
+            defaultOpen={isAnyAdvancedActive}
           />
-        ))}
+        )}
       </SidebarContent>
       <SidebarFooter />
     </Sidebar>
+  );
+}
+
+function AdvancedSection({
+  groups,
+  isActive,
+  isGroupActive,
+  defaultOpen,
+}: {
+  groups: NavGroup[];
+  isActive: (url: string) => boolean;
+  isGroupActive: (group: NavGroup) => boolean;
+  defaultOpen: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  useEffect(() => {
+    if (defaultOpen) setOpen(true);
+  }, [defaultOpen]);
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <SidebarGroup className="py-0">
+        <CollapsibleTrigger asChild>
+          <button
+            type="button"
+            className="flex items-center gap-2 w-full px-3 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wider hover:bg-sidebar-accent/50 rounded-md transition-colors"
+            data-testid="button-advanced-toggle"
+          >
+            <MoreHorizontal className="w-3.5 h-3.5" />
+            <span className="flex-1 text-left">Advanced</span>
+            <ChevronRight
+              className={`w-3.5 h-3.5 transition-transform duration-200 ${open ? "rotate-90" : ""}`}
+            />
+          </button>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className="flex flex-col gap-0.5 pl-1">
+            {groups.map((group) => (
+              <CollapsibleNavGroup
+                key={group.label}
+                group={group}
+                isActive={isActive}
+                isGroupActive={isGroupActive(group)}
+              />
+            ))}
+          </div>
+        </CollapsibleContent>
+      </SidebarGroup>
+    </Collapsible>
   );
 }
 
@@ -232,13 +288,13 @@ function CollapsibleNavGroup({
         <CollapsibleTrigger asChild>
           <button
             type="button"
-            className="flex items-center gap-2 w-full px-3 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wider hover-elevate rounded-md"
+            className="flex items-center gap-2 w-full px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-sidebar-accent/50 rounded-md transition-colors"
             data-testid={`button-group-${group.label.toLowerCase().replace(/\s+/g, "-")}`}
           >
             <group.icon className="w-3.5 h-3.5" />
             <span className="flex-1 text-left">{group.label}</span>
-            <ChevronRight
-              className={`w-3.5 h-3.5 transition-transform duration-200 ${open ? "rotate-90" : ""}`}
+            <ChevronDown
+              className={`w-3 h-3 transition-transform duration-200 ${open ? "" : "-rotate-90"}`}
             />
           </button>
         </CollapsibleTrigger>
