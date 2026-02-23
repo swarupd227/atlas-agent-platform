@@ -6120,13 +6120,47 @@ Eval Suites: ${evalSuites.length} configured`,
       if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
         return res.status(503).json({ error: "AI assistant is not configured" });
       }
-      const { outcomeContract, kpis, feedback, previousPlan } = req.body;
-      const templates = await storage.getAgentTemplates();
+      const { outcomeContract, kpis, feedback, previousPlan, industryContext } = req.body;
+
+      const [templates, allSkills, allMcpServers, allPolicies, allAgents, ragPipelines] = await Promise.all([
+        storage.getAgentTemplates(),
+        storage.getSkills(),
+        storage.getMcpServers(),
+        storage.getPolicies(),
+        storage.getAgents(),
+        storage.getRagPipelines(),
+      ]);
+
+      const industryId = industryContext?.industryId || outcomeContract?.industry || "general";
+      let ontologyConcepts: any[] = [];
+      let ontologyEnhancements: any[] = [];
+      try {
+        ontologyConcepts = await storage.getOntologyConcepts(industryId);
+        if (ontologyConcepts.length > 0) {
+          const conceptIds = ontologyConcepts.slice(0, 30).map((c: any) => c.id);
+          ontologyEnhancements = await storage.getOntologyEnhancements(conceptIds);
+        }
+      } catch {}
+
+      const mcpToolsByServer: Record<string, any[]> = {};
+      for (const server of allMcpServers.slice(0, 15)) {
+        try {
+          const tools = await storage.getMcpServerTools(server.id);
+          if (tools.length > 0) {
+            mcpToolsByServer[server.name] = tools.map(t => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }));
+          }
+        } catch {}
+      }
+
+      const industrySkills = allSkills.filter(s => s.industry === industryId || s.industry === "cross_industry").slice(0, 20);
+      const activePolicies = allPolicies.filter(p => p.status === "active").slice(0, 15);
+      const existingOutcomeAgents = allAgents.filter(a => a.outcomeId === outcomeContract?.id);
+      const industryTemplates = templates.filter(t => t.industry === industryId || t.industry === "cross_industry").slice(0, 15);
+      const industryRagPipelines = ragPipelines.filter((r: any) => r.industry === industryId || !r.industry).slice(0, 5);
 
       let feedbackSection = "";
       if (feedback && previousPlan) {
         feedbackSection = `
-
 IMPORTANT: This is a REGENERATION request. The engineer reviewed the previous plan and provided specific feedback.
 
 Previous Plan:
@@ -6140,84 +6174,239 @@ You MUST incorporate this feedback into the new plan. Adjust the agents, roles, 
 `;
       }
 
-      const systemPrompt = `You are an Agent Proposal Generator for the ALMP platform. Given a business Outcome Contract and its KPIs, propose AI agents organized as a multi-agent orchestrated pipeline.
-${feedbackSection}
-Outcome Contract: ${JSON.stringify(outcomeContract)}
-KPIs: ${JSON.stringify(kpis || [])}
-Available templates: ${JSON.stringify(templates.slice(0, 10).map(t => ({ name: t.name, category: t.category, industry: t.industry, description: t.description })))}
+      const kpiDetails = (kpis || []).map((k: any) => ({
+        name: k.name,
+        unit: k.unit,
+        baseline: k.baseline,
+        target: k.target,
+        currentValue: k.currentValue,
+        weight: k.weight,
+        slaThreshold: k.slaThreshold,
+        breachLevel: k.breachLevel,
+        confidence: k.confidence,
+        trend: k.trend,
+      }));
 
-Respond with a JSON object containing an orchestrator agent, worker agents, and the pipeline definition:
+      const templateSummaries = industryTemplates.map(t => ({
+        name: t.name,
+        category: t.category,
+        industry: t.industry,
+        description: t.description,
+        complexity: t.complexity,
+        defaultRiskTier: t.defaultRiskTier,
+        defaultAutonomyMode: t.defaultAutonomyMode,
+        toolsConfig: t.toolsConfig,
+        policyBindings: t.policyBindings,
+        preloadedSkills: t.preloadedSkills,
+        complianceCertifications: t.complianceCertifications,
+        estimatedTimeToProd: t.estimatedTimeToProd,
+        memoryRagConfig: t.memoryRagConfig,
+      }));
+
+      const ontologySummary = ontologyConcepts.slice(0, 20).map(c => ({
+        id: c.id,
+        label: c.label,
+        category: c.category,
+        description: c.description,
+        tags: c.tags,
+        linkedRegulations: c.linkedRegulations,
+      }));
+
+      const enhancementSummary = ontologyEnhancements.slice(0, 15).map(e => ({
+        conceptId: e.conceptId,
+        agentUseCases: e.agentUseCases,
+        riskFactors: e.riskFactors,
+        implementationGuidance: e.implementationGuidance,
+        agentSkills: e.agentSkills,
+        agentTypes: e.agentTypes,
+      }));
+
+      const skillSummaries = industrySkills.map(s => ({
+        id: s.id,
+        name: s.name,
+        description: s.description,
+        industry: s.industry,
+        domain: s.domain,
+        complexity: s.complexity,
+        tags: s.tags,
+        allowedTools: s.allowedTools,
+        requiredMcpServers: s.requiredMcpServers,
+        performanceScore: s.performanceScore,
+        trustTier: s.trustTier,
+      }));
+
+      const mcpToolSummary = Object.entries(mcpToolsByServer).map(([serverName, tools]) => ({
+        server: serverName,
+        tools: tools.slice(0, 10).map(t => ({ name: t.name, description: t.description })),
+      }));
+
+      const policySummary = activePolicies.map(p => ({
+        name: p.name,
+        domain: p.domain,
+        description: p.description,
+        policyJson: p.policyJson,
+        ontologyRefs: p.ontologyRefs,
+      }));
+
+      const existingAgentNames = existingOutcomeAgents.map(a => a.name);
+
+      const regulatoryFrameworks = industryContext?.frameworks || [];
+      const jurisdictions = industryContext?.jurisdictions || [];
+      const departments = industryContext?.departments || [];
+
+      const ragSummary = industryRagPipelines.map((r: any) => ({
+        name: r.name,
+        description: r.description,
+        sourceType: r.sourceType,
+        retrievalStrategy: r.retrievalStrategy,
+      }));
+
+      const { id: _oid, createdAt: _oCreated, ...outcomeDetails } = outcomeContract || {} as any;
+
+      const systemPrompt = `You are an Agent Proposal Generator for the Nous Agent Orchestrator (ALMP) platform. You have access to the full platform intelligence. Generate a multi-agent pipeline that leverages REAL platform resources — not generic placeholders.
+${feedbackSection}
+
+═══════════════════════════════════════════
+OUTCOME CONTRACT (the business goal to deliver)
+═══════════════════════════════════════════
+${JSON.stringify(outcomeDetails, null, 1)}
+
+═══════════════════════════════════════════
+KPI DEFINITIONS (with full targets, weights, SLAs)
+═══════════════════════════════════════════
+${JSON.stringify(kpiDetails, null, 1)}
+
+═══════════════════════════════════════════
+INDUSTRY CONTEXT
+═══════════════════════════════════════════
+Industry: ${industryId}
+Regulatory Frameworks: ${regulatoryFrameworks.length > 0 ? regulatoryFrameworks.join(", ") : "None specified"}
+Jurisdictions: ${jurisdictions.length > 0 ? jurisdictions.join(", ") : "Not specified"}
+Departments: ${departments.length > 0 ? departments.join(", ") : "Not specified"}
+
+═══════════════════════════════════════════
+AGENT TEMPLATES (reusable configurations — match to these when possible)
+═══════════════════════════════════════════
+${JSON.stringify(templateSummaries, null, 1)}
+
+═══════════════════════════════════════════
+ONTOLOGY CONCEPTS (industry domain vocabulary — use these terms in agent roles and descriptions)
+═══════════════════════════════════════════
+${JSON.stringify(ontologySummary, null, 1)}
+
+═══════════════════════════════════════════
+ONTOLOGY ENHANCEMENTS (AI-enriched — agent use cases, risk factors, implementation guidance)
+═══════════════════════════════════════════
+${JSON.stringify(enhancementSummary, null, 1)}
+
+═══════════════════════════════════════════
+AGENT SKILLS LIBRARY (composable skill units — assign REAL skills to agents by name)
+═══════════════════════════════════════════
+${JSON.stringify(skillSummaries, null, 1)}
+
+═══════════════════════════════════════════
+MCP SERVERS & TOOLS (registered tool integrations — assign REAL tools from this registry)
+═══════════════════════════════════════════
+${JSON.stringify(mcpToolSummary, null, 1)}
+
+═══════════════════════════════════════════
+ACTIVE POLICIES (governance constraints agents must obey)
+═══════════════════════════════════════════
+${JSON.stringify(policySummary, null, 1)}
+
+═══════════════════════════════════════════
+RAG PIPELINES (knowledge retrieval configurations)
+═══════════════════════════════════════════
+${JSON.stringify(ragSummary, null, 1)}
+
+═══════════════════════════════════════════
+EXISTING AGENTS FOR THIS OUTCOME (avoid duplicating these)
+═══════════════════════════════════════════
+${existingAgentNames.length > 0 ? existingAgentNames.join(", ") : "None yet"}
+
+═══════════════════════════════════════════
+RESPONSE FORMAT
+═══════════════════════════════════════════
+
+Respond with a JSON object:
 \`\`\`json
 {
   "orchestrator": {
-    "name": "string - orchestrator agent name (e.g. 'Outcome Pipeline Orchestrator')",
-    "description": "string - how this orchestrator coordinates worker agents",
-    "role": "string - coordination/supervision role",
+    "name": "string",
+    "description": "string",
+    "role": "string",
     "riskTier": "MEDIUM",
     "autonomyMode": "assisted",
     "modelProvider": "openai",
     "modelName": "gpt-4.1",
-    "workflowSteps": ["Receive trigger", "Dispatch to workers", "Aggregate results", "Report outcomes"],
-    "tools": [{"name": "string", "description": "string"}],
-    "kpiBindings": ["string - all KPIs since orchestrator oversees all"],
+    "workflowSteps": ["string"],
+    "tools": [{"name": "string - MUST be from MCP Tools registry above if available", "description": "string"}],
+    "kpiBindings": ["string - bind ALL KPIs here"],
     "estimatedImpact": "string",
-    "templateMatch": null
+    "templateMatch": "string | null - exact name of matching Agent Template",
+    "matchedSkills": ["string - exact skill names from Skills Library above"],
+    "matchedOntologyConcepts": ["string - exact ontology concept labels from above"],
+    "policyConstraints": ["string - names of policies this agent must comply with"],
+    "mcpToolBindings": [{"server": "string - MCP server name", "tool": "string - tool name"}],
+    "suggestedRagPipeline": "string | null - name of RAG pipeline for knowledge retrieval",
+    "complianceTags": ["string - regulatory frameworks from Industry Context"],
+    "systemPrompt": "string - industry-specific system prompt referencing domain ontology and compliance"
   },
   "agents": [
     {
-      "name": "string - worker agent name",
-      "description": "string - what this agent does",
-      "role": "string - the business role",
-      "riskTier": "LOW | MEDIUM | HIGH",
-      "autonomyMode": "manual | assisted | autonomous",
+      "name": "string",
+      "description": "string - reference ontology concepts and domain vocabulary",
+      "role": "string - grounded in industry domain, not generic",
+      "riskTier": "LOW | MEDIUM | HIGH - based on KPI weight, SLA criticality, and policy constraints",
+      "autonomyMode": "manual | assisted | autonomous - lower for higher risk, respect policy constraints",
       "modelProvider": "openai | anthropic | google",
-      "modelName": "string - specific model",
+      "modelName": "string",
       "workflowSteps": ["string"],
-      "tools": [{"name": "string", "description": "string"}],
-      "kpiBindings": ["string - which KPIs this agent contributes to"],
-      "estimatedImpact": "string",
-      "templateMatch": "string | null - name of matching template if any"
+      "tools": [{"name": "string - from MCP Tools registry", "description": "string"}],
+      "kpiBindings": ["string - specific KPIs this agent drives, weighted by importance"],
+      "estimatedImpact": "string - quantified using KPI baseline→target data",
+      "templateMatch": "string | null",
+      "matchedSkills": ["string - exact skill names from Skills Library"],
+      "matchedOntologyConcepts": ["string - ontology concept labels"],
+      "policyConstraints": ["string - policy names"],
+      "mcpToolBindings": [{"server": "string", "tool": "string"}],
+      "suggestedRagPipeline": "string | null",
+      "complianceTags": ["string - regulatory framework tags"],
+      "systemPrompt": "string - detailed industry-aware system prompt"
     }
   ],
   "pipeline": {
     "pattern": "sequential | parallel | fan_out_fan_in | supervisor",
-    "description": "string - describe the overall orchestration flow in one sentence",
-    "edges": [
-      {
-        "from": "string - source agent name or 'orchestrator'",
-        "to": "string - target agent name",
-        "label": "string - what data/signal flows on this edge",
-        "type": "sequential | parallel | conditional"
-      }
-    ],
-    "errorHandling": "string - what happens when a worker fails",
-    "handoffRules": "string - how data is passed between agents"
+    "description": "string",
+    "edges": [{"from": "string", "to": "string", "label": "string", "type": "sequential | parallel | conditional"}],
+    "errorHandling": "string",
+    "handoffRules": "string"
   }
 }
 \`\`\`
 
-Guidelines:
-- Propose 2-4 worker agents that together can deliver ALL KPIs
-- ALWAYS include an orchestrator agent that coordinates the workers using one of these patterns:
-  * "sequential": Agent A → Agent B → Agent C (pipeline)
-  * "parallel": Agents run concurrently, results aggregated
-  * "fan_out_fan_in": Orchestrator fans out to parallel workers, then fans in results
-  * "supervisor": Orchestrator delegates dynamically based on context
-- The orchestrator should bind to ALL KPIs since it oversees the entire pipeline
-- Each worker agent should have a clear, specific role
-- Higher-risk operations should have lower autonomy modes
-- Match to existing templates when possible
-- Use realistic model choices (gpt-4.1-mini for simple tasks, gpt-4.1 for complex)
-- Tools should be specific to the domain
-- Define edges that show the data flow between orchestrator and workers`;
+═══════════════════════════════════════════
+CRITICAL GUIDELINES
+═══════════════════════════════════════════
+1. USE REAL PLATFORM DATA: Assign tools from the MCP registry, skills from the Skills Library, and reference ontology concepts. Do NOT invent tools or skills that don't exist in the platform.
+2. KPI-DRIVEN DESIGN: Higher-weight KPIs should have dedicated agents. Use baseline→target gaps to estimate impact. Agents bound to KPIs with tight SLA thresholds need lower risk tolerance.
+3. POLICY COMPLIANCE: If active policies restrict tool usage, data handling, or autonomy levels, agents must respect these. Include relevant policy names in policyConstraints.
+4. ONTOLOGY GROUNDING: Agent roles and descriptions should use industry domain vocabulary from ontology concepts. Reference concept labels to ensure domain accuracy.
+5. TEMPLATE MATCHING: When a template closely matches a worker's role, set templateMatch to the template name and inherit its toolsConfig, policyBindings, and preloadedSkills.
+6. SKILL BINDING: Assign real skills from the Skills Library. Skills with higher performance scores and matching industry/domain should be preferred.
+7. RISK CALIBRATION: Use outcome riskTier, KPI breach levels, and policy constraints to determine each agent's riskTier and autonomyMode. High-risk outcome + critical KPI SLA = manual/assisted mode.
+8. NO DUPLICATES: Do not propose agents that overlap with existing agents already created for this outcome.
+9. REGULATORY AWARENESS: Include applicable regulatory frameworks as complianceTags. Reference linkedRegulations from ontology concepts.
+10. SYSTEM PROMPTS: Generate detailed, industry-specific system prompts that reference the agent's domain, ontology concepts, compliance requirements, and KPI responsibilities.
+11. Propose 2-4 worker agents + 1 orchestrator.`;
 
       const response = await openai.chat.completions.create({
         model: "gpt-4.1",
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content: `Generate agent proposals for this outcome contract: "${outcomeContract?.name}". KPIs: ${JSON.stringify(kpis?.map((k: any) => k.name) || [])}` },
+          { role: "user", content: `Generate an agent development plan for the outcome "${outcomeContract?.name}" targeting ${kpiDetails.length} KPIs: ${kpiDetails.map((k: any) => `${k.name} (baseline: ${k.baseline} → target: ${k.target}, weight: ${k.weight}, SLA: ${k.slaThreshold || "none"})`).join("; ")}` },
         ],
-        max_completion_tokens: 2000,
+        max_completion_tokens: 4000,
       });
 
       const content = response.choices[0]?.message?.content || "";
@@ -6234,15 +6423,33 @@ Guidelines:
         }
       }
 
+      function normalizeAgent(a: any): any {
+        if (!a) return a;
+        return {
+          ...a,
+          tools: Array.isArray(a.tools) ? a.tools : [],
+          workflowSteps: Array.isArray(a.workflowSteps) ? a.workflowSteps : [],
+          kpiBindings: Array.isArray(a.kpiBindings) ? a.kpiBindings : [],
+          matchedSkills: Array.isArray(a.matchedSkills) ? a.matchedSkills : [],
+          matchedOntologyConcepts: Array.isArray(a.matchedOntologyConcepts) ? a.matchedOntologyConcepts : [],
+          policyConstraints: Array.isArray(a.policyConstraints) ? a.policyConstraints : [],
+          mcpToolBindings: Array.isArray(a.mcpToolBindings) ? a.mcpToolBindings : [],
+          complianceTags: Array.isArray(a.complianceTags) ? a.complianceTags : [],
+          suggestedRagPipeline: a.suggestedRagPipeline || null,
+          systemPrompt: a.systemPrompt || "",
+          templateMatch: a.templateMatch || null,
+        };
+      }
+
       let result: any;
       if (parsed && parsed.orchestrator && parsed.agents) {
         result = {
-          orchestrator: parsed.orchestrator,
-          agents: Array.isArray(parsed.agents) ? parsed.agents : [parsed.agents],
+          orchestrator: normalizeAgent(parsed.orchestrator),
+          agents: (Array.isArray(parsed.agents) ? parsed.agents : [parsed.agents]).map(normalizeAgent),
           pipeline: parsed.pipeline || null,
         };
       } else if (Array.isArray(parsed)) {
-        result = { agents: parsed, orchestrator: null, pipeline: null };
+        result = { agents: parsed.map(normalizeAgent), orchestrator: null, pipeline: null };
       } else {
         result = { agents: [], orchestrator: null, pipeline: null, raw: content };
       }

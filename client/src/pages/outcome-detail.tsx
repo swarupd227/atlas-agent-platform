@@ -2730,6 +2730,11 @@ interface AgentProposal {
   templateMatch: string | null;
   systemPrompt?: string;
   complianceTags?: string[];
+  matchedSkills?: string[];
+  matchedOntologyConcepts?: string[];
+  policyConstraints?: string[];
+  mcpToolBindings?: Array<{ server: string; tool: string }>;
+  suggestedRagPipeline?: string | null;
 }
 
 interface PipelineEdge {
@@ -3038,6 +3043,62 @@ function AgentProposalCard({ agent, index, isOrchestrator, isSelected, onToggle,
                 </div>
               </div>
             )}
+            {(agent.matchedSkills && agent.matchedSkills.length > 0) && (
+              <div className="flex flex-col gap-1" data-testid={`enrichment-skills-${isOrchestrator ? "orch" : index}`}>
+                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Skills</span>
+                <div className="flex flex-wrap gap-1">
+                  {agent.matchedSkills.map((skill, j) => (
+                    <Badge key={j} variant="outline" className="text-[9px] text-violet-600 dark:text-violet-400 border-violet-200 dark:border-violet-800">{skill}</Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+            {(agent.matchedOntologyConcepts && agent.matchedOntologyConcepts.length > 0) && (
+              <div className="flex flex-col gap-1" data-testid={`enrichment-ontology-${isOrchestrator ? "orch" : index}`}>
+                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Ontology Concepts</span>
+                <div className="flex flex-wrap gap-1">
+                  {agent.matchedOntologyConcepts.map((concept, j) => (
+                    <Badge key={j} variant="outline" className="text-[9px] text-cyan-600 dark:text-cyan-400 border-cyan-200 dark:border-cyan-800">{concept}</Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+            {(agent.mcpToolBindings && agent.mcpToolBindings.length > 0) && (
+              <div className="flex flex-col gap-1" data-testid={`enrichment-mcp-${isOrchestrator ? "orch" : index}`}>
+                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">MCP Tool Bindings</span>
+                <div className="flex flex-wrap gap-1">
+                  {agent.mcpToolBindings.map((binding, j) => (
+                    <Badge key={j} variant="outline" className="text-[9px] text-orange-600 dark:text-orange-400 border-orange-200 dark:border-orange-800">{binding.server}: {binding.tool}</Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+            {(agent.policyConstraints && agent.policyConstraints.length > 0) && (
+              <div className="flex flex-col gap-1" data-testid={`enrichment-policies-${isOrchestrator ? "orch" : index}`}>
+                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Policy Constraints</span>
+                <div className="flex flex-wrap gap-1">
+                  {agent.policyConstraints.map((policy, j) => (
+                    <Badge key={j} variant="outline" className="text-[9px] text-red-600 dark:text-red-400 border-red-200 dark:border-red-800">{policy}</Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+            {(agent.complianceTags && agent.complianceTags.length > 0) && (
+              <div className="flex flex-col gap-1" data-testid={`enrichment-compliance-${isOrchestrator ? "orch" : index}`}>
+                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Compliance</span>
+                <div className="flex flex-wrap gap-1">
+                  {agent.complianceTags.map((tag, j) => (
+                    <Badge key={j} variant="outline" className="text-[9px] text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800">{tag}</Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+            {agent.suggestedRagPipeline && (
+              <div className="flex flex-col gap-1" data-testid={`enrichment-rag-${isOrchestrator ? "orch" : index}`}>
+                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">RAG Pipeline</span>
+                <Badge variant="outline" className="text-[9px] text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-800 w-fit">{agent.suggestedRagPipeline}</Badge>
+              </div>
+            )}
             <div className="flex items-center gap-2 p-2 rounded-md bg-green-500/5 border border-green-500/10 flex-wrap">
               <TrendingUp className="w-3.5 h-3.5 text-green-500 shrink-0" />
               <span className="text-[11px] text-green-700 dark:text-green-300">{agent.estimatedImpact}</span>
@@ -3325,7 +3386,7 @@ interface UndoState {
 
 function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: KpiDefinition[] }) {
   const { toast } = useToast();
-  const { industry } = useIndustry();
+  const { industry, workspaceConfig, activeFrameworks, activeDepartments } = useIndustry();
   const agentPerm = usePermission("create_modify_blueprints");
   const [proposals, setProposals] = useState<AgentProposal[]>([]);
   const [orchestrator, setOrchestrator] = useState<AgentProposal | null>(null);
@@ -3348,7 +3409,19 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
   const [redoStack, setRedoStack] = useState<UndoState[]>([]);
 
   function deepCloneAgent(p: AgentProposal): AgentProposal {
-    return { ...p, tools: p.tools.map(t => ({ ...t })), workflowSteps: [...p.workflowSteps], kpiBindings: [...p.kpiBindings], complianceTags: [...(p.complianceTags || [])] };
+    return {
+      ...p,
+      tools: p.tools.map(t => ({ ...t })),
+      workflowSteps: [...p.workflowSteps],
+      kpiBindings: [...p.kpiBindings],
+      complianceTags: [...(p.complianceTags || [])],
+      matchedSkills: [...(p.matchedSkills || [])],
+      matchedOntologyConcepts: [...(p.matchedOntologyConcepts || [])],
+      policyConstraints: [...(p.policyConstraints || [])],
+      mcpToolBindings: (p.mcpToolBindings || []).map(b => ({ ...b })),
+      suggestedRagPipeline: p.suggestedRagPipeline || null,
+      systemPrompt: p.systemPrompt || "",
+    };
   }
 
   const pushUndo = useCallback((label: string) => {
@@ -3681,6 +3754,7 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
           workers: proposals,
           pipeline,
         },
+        industryContext: industryContextPayload,
       });
       const data = await res.json();
       pushUndo("Regenerate with feedback");
@@ -3822,12 +3896,20 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
     }
   }
 
+  const industryContextPayload = {
+    industryId: industry?.id || "general",
+    frameworks: activeFrameworks,
+    jurisdictions: workspaceConfig?.jurisdictions || [],
+    departments: activeDepartments,
+  };
+
   async function generateProposals() {
     setGenerating(true);
     try {
       const res = await apiRequest("POST", "/api/ai/propose-agents", {
         outcomeContract: outcome,
         kpis,
+        industryContext: industryContextPayload,
       });
       const data = await res.json();
       setProposals(data.agents || []);
