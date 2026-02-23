@@ -91,8 +91,9 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import type { Agent, RunTrace, EvalSuite, OutcomeContract, ImprovementRecommendation, AutonomousActionLog, AgentVersion, Deployment, Policy, Approval, PolicyException, ToolConnector, RemoteAgent, AgentTeam, Skill, McpServer, McpServerTool, McpServerResource, AgentMcpServer, OntologyConcept, Blueprint, KnowledgeBase, AgentKnowledgeBase } from "@shared/schema";
-import { Wifi, WifiOff, Crown, Brain, Sparkles, ShieldAlert, Layers3, BookMarked, Binary, ScrollText, FileCheck } from "lucide-react";
+import { Wifi, WifiOff, Crown, Brain, Sparkles, ShieldAlert, Layers3, BookMarked, Binary, ScrollText, FileCheck, ChevronDown } from "lucide-react";
 import { useIndustry } from "@/components/industry-provider";
 
 
@@ -377,6 +378,7 @@ function AgentDetailInner() {
   const [timelineFilter, setTimelineFilter] = useState<string>("all");
   const [retirementChecklist, setRetirementChecklist] = useState<boolean[]>([false, false, false, false, false, false, false, false]);
   const [expandedTrace, setExpandedTrace] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState("summary");
   const [shadowReplayOpen, setShadowReplayOpen] = useState(false);
   const [shadowTimeWindow, setShadowTimeWindow] = useState("24h");
   const [shadowEnvironment, setShadowEnvironment] = useState("staging");
@@ -783,34 +785,70 @@ function AgentDetailInner() {
         )}
       </div>
 
-      <Tabs defaultValue="summary" className="flex flex-col gap-4">
-        <TabsList className="w-fit flex-wrap h-auto gap-y-1 py-1">
-          <TabsTrigger value="summary" data-testid="tab-summary">Summary</TabsTrigger>
-          <TabsTrigger value="traces" data-testid="tab-traces">Runs & Traces</TabsTrigger>
-          <TabsTrigger value="evals" data-testid="tab-evals">Evals</TabsTrigger>
-          <TabsTrigger value="releases" data-testid="tab-releases">Releases</TabsTrigger>
-          <TabsTrigger value="blueprint" data-testid="tab-blueprint">Blueprint</TabsTrigger>
-          <TabsTrigger value="lifecycle" data-testid="tab-lifecycle">Lifecycle</TabsTrigger>
-          <TabsTrigger value="monitor" data-testid="tab-monitor">Monitor</TabsTrigger>
-          <TabsTrigger value="autonomous" data-testid="tab-autonomous">Autonomous</TabsTrigger>
-          <TabsTrigger value="governance" data-testid="tab-governance">Governance</TabsTrigger>
-          <TabsTrigger value="timeline" data-testid="tab-timeline">Timeline</TabsTrigger>
-          <TabsTrigger value="knowledge-graph" data-testid="tab-knowledge-graph">Knowledge Graph</TabsTrigger>
-          <TabsTrigger value="skills" data-testid="tab-skills">Skills</TabsTrigger>
-          <TabsTrigger value="compliance" data-testid="tab-compliance">Compliance</TabsTrigger>
-          <TabsTrigger value="context-profile" data-testid="tab-context-profile">Context Profile</TabsTrigger>
-          <TabsTrigger value="mcp-servers" data-testid="tab-mcp-servers">MCP Servers</TabsTrigger>
-          <TabsTrigger value="ontology" data-testid="tab-ontology">Ontology</TabsTrigger>
-          <TabsTrigger value="api-gateway" data-testid="tab-api-gateway">API Gateway</TabsTrigger>
-          <TabsTrigger value="channels" data-testid="tab-channels">Channels</TabsTrigger>
-          <TabsTrigger value="knowledge-base" data-testid="tab-knowledge-base">Knowledge Base</TabsTrigger>
-          {agent.agentType === "remote" && (
-            <TabsTrigger value="a2a" data-testid="tab-a2a">A2A Card</TabsTrigger>
-          )}
-          {agent.agentType === "team" && (
-            <TabsTrigger value="team" data-testid="tab-team">Team Members</TabsTrigger>
-          )}
-        </TabsList>
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col gap-4">
+        {(() => {
+          const primaryTabs = [
+            { value: "summary", label: "Summary" },
+            { value: "traces", label: "Runs & Traces" },
+            { value: "knowledge-base", label: "Knowledge Base" },
+            { value: "mcp-servers", label: "MCP Servers" },
+            { value: "releases", label: "Releases" },
+          ];
+          const moreTabs = [
+            { value: "evals", label: "Evals" },
+            { value: "blueprint", label: "Blueprint" },
+            { value: "lifecycle", label: "Lifecycle" },
+            { value: "monitor", label: "Monitor" },
+            { value: "autonomous", label: "Autonomous" },
+            { value: "governance", label: "Governance" },
+            { value: "timeline", label: "Timeline" },
+            { value: "knowledge-graph", label: "Knowledge Graph" },
+            { value: "skills", label: "Skills" },
+            { value: "compliance", label: "Compliance" },
+            { value: "context-profile", label: "Context Profile" },
+            { value: "ontology", label: "Ontology" },
+            { value: "api-gateway", label: "API Gateway" },
+            { value: "channels", label: "Channels" },
+            ...(agent.agentType === "remote" ? [{ value: "a2a", label: "A2A Card" }] : []),
+            ...(agent.agentType === "team" ? [{ value: "team", label: "Team Members" }] : []),
+          ];
+          const activeMoreTab = moreTabs.find(t => t.value === activeTab);
+          return (
+            <div className="flex items-center gap-1 flex-wrap">
+              <TabsList className="w-fit h-auto gap-y-1 py-1">
+                {primaryTabs.map(t => (
+                  <TabsTrigger key={t.value} value={t.value} data-testid={`tab-${t.value}`}>{t.label}</TabsTrigger>
+                ))}
+              </TabsList>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant={activeMoreTab ? "secondary" : "outline"}
+                    size="sm"
+                    className="gap-1"
+                    data-testid="button-more-tabs"
+                  >
+                    {activeMoreTab ? activeMoreTab.label : "More"}
+                    <ChevronDown className="w-3.5 h-3.5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" data-testid="dropdown-more-tabs">
+                  {moreTabs.map(t => (
+                    <DropdownMenuItem
+                      key={t.value}
+                      onClick={() => setActiveTab(t.value)}
+                      className={activeTab === t.value ? "bg-accent" : ""}
+                      data-testid={`tab-${t.value}`}
+                    >
+                      {t.label}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          );
+        })()}
+
 
         <TabsContent value="summary" className="flex flex-col gap-4 mt-0">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

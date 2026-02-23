@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Target,
@@ -32,6 +32,7 @@ import {
   Lock,
   Workflow,
   Plug,
+  ChevronDown,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -437,6 +438,27 @@ const RISK_CATEGORY_ICONS: Record<string, typeof AlertTriangle> = {
   "Cost Overruns": DollarSign,
 };
 
+function CollapsibleDetail({ title, defaultOpen = false, children }: { title: string; defaultOpen?: boolean; children: ReactNode }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-2 w-full py-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+        data-testid={`toggle-${title.toLowerCase().replace(/\s+/g, "-")}`}
+      >
+        <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${open ? "" : "-rotate-90"}`} />
+        <span>{title}</span>
+        {!open && (
+          <span className="text-[10px] text-muted-foreground/60 ml-auto">Click to expand</span>
+        )}
+      </button>
+      {open && <div className="animate-in fade-in-0 slide-in-from-top-1 duration-200">{children}</div>}
+    </div>
+  );
+}
+
 function OutcomeCockpitView({ data, isFinanceRole }: { data: OverviewData; isFinanceRole: boolean }) {
   const [sortBy, setSortBy] = useState<"confidence" | "risk" | "value">("confidence");
 
@@ -528,39 +550,41 @@ function OutcomeCockpitView({ data, isFinanceRole }: { data: OverviewData; isFin
         )}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card data-testid="card-financial-waterfall">
-          <CardHeader className="p-4 pb-2">
-            <div className="flex items-center justify-between gap-2">
-              <CardTitle className="text-sm font-medium">Financial Attribution</CardTitle>
-              <Link href="/billing">
-                <Button variant="ghost" size="sm" data-testid="link-waterfall-billing">
-                  View Billing <ArrowRight className="w-3.5 h-3.5 ml-1" />
-                </Button>
-              </Link>
-            </div>
-          </CardHeader>
-          <CardContent className="p-4 pt-2">
-            <WaterfallChart steps={waterfallSteps} />
-          </CardContent>
-        </Card>
-
-        {riskCategories.length > 0 ? (
-          <RiskExposurePanel risks={riskCategories} />
-        ) : (
-          <Card data-testid="card-no-risk">
+      <CollapsibleDetail title="Financial & Risk Details">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <Card data-testid="card-financial-waterfall">
             <CardHeader className="p-4 pb-2">
-              <CardTitle className="text-sm font-medium">Risk Exposure</CardTitle>
+              <div className="flex items-center justify-between gap-2">
+                <CardTitle className="text-sm font-medium">Financial Attribution</CardTitle>
+                <Link href="/billing">
+                  <Button variant="ghost" size="sm" data-testid="link-waterfall-billing">
+                    View Billing <ArrowRight className="w-3.5 h-3.5 ml-1" />
+                  </Button>
+                </Link>
+              </div>
             </CardHeader>
             <CardContent className="p-4 pt-2">
-              <div className="flex items-center gap-3 p-4 rounded-md bg-emerald-500/5">
-                <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                <span className="text-xs text-muted-foreground">No significant risk exposure detected</span>
-              </div>
+              <WaterfallChart steps={waterfallSteps} />
             </CardContent>
           </Card>
-        )}
-      </div>
+
+          {riskCategories.length > 0 ? (
+            <RiskExposurePanel risks={riskCategories} />
+          ) : (
+            <Card data-testid="card-no-risk">
+              <CardHeader className="p-4 pb-2">
+                <CardTitle className="text-sm font-medium">Risk Exposure</CardTitle>
+              </CardHeader>
+              <CardContent className="p-4 pt-2">
+                <div className="flex items-center gap-3 p-4 rounded-md bg-emerald-500/5">
+                  <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                  <span className="text-xs text-muted-foreground">No significant risk exposure detected</span>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      </CollapsibleDetail>
     </div>
   );
 }
@@ -1123,48 +1147,59 @@ export default function Overview() {
         <OutcomeHealthSection outcomes={data.outcomeHealth} compact={config.outcomeCompact} />
       )}
 
-      {showAgentsAndApprovalRow && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {config.showAgentsAtRisk && (
-            <AgentsAtRiskSection agents={data.agentsAtRisk} />
+      {(showAgentsAndApprovalRow || config.approvalProminent) && (
+        <CollapsibleDetail title="Agents & Approvals" defaultOpen={config.approvalProminent}>
+          {showAgentsAndApprovalRow && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              {config.showAgentsAtRisk && (
+                <AgentsAtRiskSection agents={data.agentsAtRisk} />
+              )}
+              {config.showApprovalQueue && !config.approvalProminent && (
+                <ApprovalQueueSection approvalQueue={data.approvalQueue} prominent={false} />
+              )}
+            </div>
           )}
-          {config.showApprovalQueue && !config.approvalProminent && (
-            <ApprovalQueueSection approvalQueue={data.approvalQueue} prominent={false} />
+          {config.approvalProminent && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
+              <ApprovalQueueSection approvalQueue={data.approvalQueue} prominent={true} />
+            </div>
           )}
-        </div>
-      )}
-
-      {config.approvalProminent && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <ApprovalQueueSection approvalQueue={data.approvalQueue} prominent={true} />
-        </div>
+        </CollapsibleDetail>
       )}
 
       {config.showPolicyViolations && (
-        <PolicyViolationsSection violations={violations || []} isLoading={violationsLoading} />
+        <CollapsibleDetail title="Policy Violations">
+          <PolicyViolationsSection violations={violations || []} isLoading={violationsLoading} />
+        </CollapsibleDetail>
       )}
 
-      {config.financialProminent && !config.showOutcomeCockpit && (
-        <div className="grid grid-cols-1 gap-4">
-          <FinancialSnapshotSection financialSnapshot={data.financialSnapshot} prominent={true} />
-        </div>
+      {(config.financialProminent && !config.showOutcomeCockpit) && (
+        <CollapsibleDetail title="Financial Details">
+          <div className="grid grid-cols-1 gap-4">
+            <FinancialSnapshotSection financialSnapshot={data.financialSnapshot} prominent={true} />
+          </div>
+        </CollapsibleDetail>
       )}
 
       {showFinancialAndSystemRow && !config.financialProminent && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {config.showFinancialSnapshot && (
-            <FinancialSnapshotSection financialSnapshot={data.financialSnapshot} prominent={false} />
-          )}
-          {config.showSystemStatus && (
-            <SystemStatusSection systemStatus={data.systemStatus} prominent={config.systemProminent} />
-          )}
-        </div>
+        <CollapsibleDetail title="Financial & System Status">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {config.showFinancialSnapshot && (
+              <FinancialSnapshotSection financialSnapshot={data.financialSnapshot} prominent={false} />
+            )}
+            {config.showSystemStatus && (
+              <SystemStatusSection systemStatus={data.systemStatus} prominent={config.systemProminent} />
+            )}
+          </div>
+        </CollapsibleDetail>
       )}
 
       {config.showSystemStatus && !showFinancialAndSystemRow && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <SystemStatusSection systemStatus={data.systemStatus} prominent={config.systemProminent} />
-        </div>
+        <CollapsibleDetail title="System Status">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <SystemStatusSection systemStatus={data.systemStatus} prominent={config.systemProminent} />
+          </div>
+        </CollapsibleDetail>
       )}
     </div>
   );

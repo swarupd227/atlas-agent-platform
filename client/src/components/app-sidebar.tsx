@@ -156,6 +156,7 @@ export function AppSidebar() {
   const isAnyAdvancedActive = advancedGroups.some((g) =>
     g.items.some((item) => isRouteAllowed(item.url) && isActive(item.url))
   );
+  const [advancedManuallyOpened, setAdvancedManuallyOpened] = useState(false);
 
   const filteredPrimaryNav = primaryNav.filter((item) => isRouteAllowed(item.url));
 
@@ -208,6 +209,8 @@ export function AppSidebar() {
             isActive={isActive}
             isGroupActive={isGroupActive}
             defaultOpen={isAnyAdvancedActive}
+            forceCollapsed={!advancedManuallyOpened && !isAnyAdvancedActive}
+            onManualToggle={() => setAdvancedManuallyOpened(true)}
           />
         )}
       </SidebarContent>
@@ -221,20 +224,29 @@ function AdvancedSection({
   isActive,
   isGroupActive,
   defaultOpen,
+  forceCollapsed,
+  onManualToggle,
 }: {
   groups: NavGroup[];
   isActive: (url: string) => boolean;
   isGroupActive: (group: NavGroup) => boolean;
   defaultOpen: boolean;
+  forceCollapsed?: boolean;
+  onManualToggle?: () => void;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [open, setOpen] = useState(forceCollapsed ? false : defaultOpen);
 
   useEffect(() => {
-    if (defaultOpen) setOpen(true);
-  }, [defaultOpen]);
+    if (defaultOpen && !forceCollapsed) setOpen(true);
+  }, [defaultOpen, forceCollapsed]);
+
+  const handleOpenChange = (newOpen: boolean) => {
+    setOpen(newOpen);
+    if (newOpen && onManualToggle) onManualToggle();
+  };
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen}>
+    <Collapsible open={open} onOpenChange={handleOpenChange}>
       <SidebarGroup className="py-0">
         <CollapsibleTrigger asChild>
           <button
