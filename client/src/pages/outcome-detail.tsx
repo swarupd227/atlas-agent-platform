@@ -895,29 +895,23 @@ export default function OutcomeDetail() {
 
   return (
     <div className="flex flex-col gap-6 p-6" data-testid="page-outcome-detail">
-      <div className="flex items-start gap-3 flex-wrap">
-        <Link href="/outcomes">
-          <Button variant="ghost" size="icon" data-testid="button-back-outcomes">
-            <ArrowLeft className="w-4 h-4" />
-          </Button>
-        </Link>
-        <div className="flex flex-col gap-0.5 min-w-0 flex-1">
-          <div className="flex items-center gap-2 flex-wrap">
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center gap-3">
+          <Link href="/outcomes">
+            <Button variant="ghost" size="icon" data-testid="button-back-outcomes">
+              <ArrowLeft className="w-4 h-4" />
+            </Button>
+          </Link>
+          <div className="flex items-center gap-2 flex-wrap flex-1 min-w-0">
             <h1 className="text-xl font-semibold tracking-tight" data-testid="text-outcome-name">{outcome.name}</h1>
             <StatusBadge status={outcome.status} />
             <StatusBadge status={outcome.riskTier} />
             <Badge variant="outline" className="text-[10px]">v{outcome.version}</Badge>
-            <div className="flex items-center gap-2 ml-auto shrink-0 flex-wrap">
-              <Button variant="outline" size="sm" onClick={() => setReportOpen(true)} data-testid="button-open-customer-report">
-                <FileText className="w-3.5 h-3.5 mr-1.5" /> Customer Report
-              </Button>
-            </div>
           </div>
-          {outcome.description && (
-            <p className="text-sm text-muted-foreground">{outcome.description}</p>
-          )}
-        </div>
-        <div className="flex items-center gap-2 flex-wrap shrink-0">
+          <div className="flex items-center gap-2 flex-wrap shrink-0">
+            <Button variant="outline" size="sm" onClick={() => setReportOpen(true)} data-testid="button-open-customer-report">
+              <FileText className="w-3.5 h-3.5 mr-1.5" /> Customer Report
+            </Button>
           <Dialog open={editContractOpen} onOpenChange={(open) => {
             setEditContractOpen(open);
             if (open) {
@@ -1061,7 +1055,11 @@ export default function OutcomeDetail() {
               </div>
             </DialogContent>
           </Dialog>
+          </div>
         </div>
+        {outcome.description && (
+          <p className="text-sm text-muted-foreground ml-11">{outcome.description}</p>
+        )}
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
@@ -1108,90 +1106,6 @@ export default function OutcomeDetail() {
       </div>
 
       <OutcomeProgressStepper outcome={outcome} hasAgentPlan={hasAgentPlan} hasDeployedAgents={hasDeployedAgents} />
-
-      <Card data-testid="card-regulatory-impact">
-        <CardContent className="p-4">
-          <div className="flex items-center justify-between gap-4 flex-wrap">
-            <div className="flex items-center gap-2">
-              <Gavel className="w-4 h-4 text-violet-500" />
-              <span className="text-sm font-medium">Governance Policies</span>
-              {governancePolicies && (
-                <Badge variant="outline" className="text-[10px]">
-                  {governancePolicies.filter(p => p.status === "active").length} active
-                </Badge>
-              )}
-            </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              {(governancePolicies || []).filter(p => p.status === "active").length > 0 && (
-                <Button variant="outline" size="sm" onClick={() => setImpactNetworkOpen(true)} data-testid="button-view-impact-network">
-                  <Network className="w-3.5 h-3.5 mr-1.5" /> Impact Network
-                </Button>
-              )}
-              <Link href="/governance">
-                <Button variant="outline" size="sm" data-testid="link-compliance-matrix">
-                  <ExternalLink className="w-3.5 h-3.5 mr-1.5" /> Compliance Matrix
-                </Button>
-              </Link>
-            </div>
-          </div>
-          {(() => {
-            const activePolicies = (governancePolicies || []).filter(p => p.status === "active");
-            const domainGroups = activePolicies.reduce<Record<string, Policy[]>>((acc, p) => {
-              const d = p.domain || "general";
-              if (!acc[d]) acc[d] = [];
-              acc[d].push(p);
-              return acc;
-            }, {});
-            const domainLabels: Record<string, string> = {
-              data_handling: "Data Handling",
-              tool_permissions: "Tool Permissions",
-              access_control: "Access Control",
-              audit: "Audit & Logging",
-              compliance: "Compliance",
-              general: "General",
-            };
-            return activePolicies.length > 0 ? (
-              <div className="mt-3 space-y-2">
-                {Object.entries(domainGroups).map(([domain, policies]) => (
-                  <div key={domain}>
-                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">{domainLabels[domain] || domain}</span>
-                    <div className="flex items-center gap-2 mt-1 flex-wrap">
-                      {policies.map(p => (
-                        <Badge key={p.id} variant="outline" className="text-[10px] bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20" data-testid={`policy-badge-${p.id}`}>
-                          <Shield className="w-3 h-3 mr-1" />
-                          {p.name}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="mt-3">
-                <span className="text-xs text-muted-foreground">No active policies configured. <Link href="/governance" className="text-violet-500 underline">Create policies in Governance</Link> to enforce compliance.</span>
-              </div>
-            );
-          })()}
-          {boundAgents.length > 0 && (
-            <div className="mt-3 pt-3 border-t">
-              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Constrained Agents</span>
-              <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                {boundAgents.slice(0, 5).map(agent => (
-                  <Link key={agent.id} href={`/agents/${agent.id}`}>
-                    <Badge variant="secondary" className="text-[10px] cursor-pointer" data-testid={`constrained-agent-${agent.id}`}>
-                      <Bot className="w-3 h-3 mr-1" />
-                      {agent.name}
-                    </Badge>
-                  </Link>
-                ))}
-                {boundAgents.length > 5 && (
-                  <Badge variant="outline" className="text-[10px]">+{boundAgents.length - 5} more</Badge>
-                )}
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
 
       <Dialog open={impactNetworkOpen} onOpenChange={setImpactNetworkOpen}>
         <DialogContent className="max-w-[95vw] w-[95vw] h-[90vh] flex flex-col" data-testid="dialog-impact-network">
@@ -1275,6 +1189,13 @@ export default function OutcomeDetail() {
         <TabsList className="flex-wrap">
           <TabsTrigger value="kpi-delivery" data-testid="tab-kpi-delivery">KPI Delivery</TabsTrigger>
           <TabsTrigger value="agent-map" data-testid="tab-agent-map">Agent Plan</TabsTrigger>
+          <TabsTrigger value="governance" data-testid="tab-governance">
+            <Gavel className="w-3.5 h-3.5 mr-1.5" />
+            Governance
+            {governancePolicies && governancePolicies.filter(p => p.status === "active").length > 0 && (
+              <Badge variant="secondary" className="text-[9px] ml-1.5 h-4 px-1">{governancePolicies.filter(p => p.status === "active").length}</Badge>
+            )}
+          </TabsTrigger>
           <TabsTrigger value="financial-ledger" data-testid="tab-financial-ledger">Financial Ledger</TabsTrigger>
           <TabsTrigger value="evidence-vault" data-testid="tab-evidence-vault">Evidence Vault</TabsTrigger>
           <TabsTrigger value="risk-remediation" data-testid="tab-risk-remediation">Risk & Remediation</TabsTrigger>
@@ -1765,6 +1686,90 @@ export default function OutcomeDetail() {
         </TabsContent>
 
         {/* Tab 3: Financial Ledger */}
+        <TabsContent value="governance" className="space-y-6" data-testid="tabcontent-governance">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div>
+              <h2 className="text-lg font-semibold">Governance Policies</h2>
+              <p className="text-sm text-muted-foreground">Active policies constraining agents bound to this outcome</p>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              {(governancePolicies || []).filter(p => p.status === "active").length > 0 && (
+                <Button variant="outline" size="sm" onClick={() => setImpactNetworkOpen(true)} data-testid="button-view-impact-network">
+                  <Network className="w-3.5 h-3.5 mr-1.5" /> Impact Network
+                </Button>
+              )}
+              <Link href="/governance">
+                <Button variant="outline" size="sm" data-testid="link-compliance-matrix">
+                  <ExternalLink className="w-3.5 h-3.5 mr-1.5" /> Compliance Matrix
+                </Button>
+              </Link>
+            </div>
+          </div>
+          {(() => {
+            const activePolicies = (governancePolicies || []).filter(p => p.status === "active");
+            const domainGroups = activePolicies.reduce<Record<string, Policy[]>>((acc, p) => {
+              const d = p.domain || "general";
+              if (!acc[d]) acc[d] = [];
+              acc[d].push(p);
+              return acc;
+            }, {});
+            const domainLabels: Record<string, string> = {
+              data_handling: "Data Handling",
+              tool_permissions: "Tool Permissions",
+              access_control: "Access Control",
+              audit: "Audit & Logging",
+              compliance: "Compliance",
+              general: "General",
+            };
+            return activePolicies.length > 0 ? (
+              <div className="space-y-4">
+                {Object.entries(domainGroups).map(([domain, policies]) => (
+                  <Card key={domain}>
+                    <CardContent className="p-4">
+                      <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{domainLabels[domain] || domain}</span>
+                      <div className="flex items-center gap-2 mt-2 flex-wrap">
+                        {policies.map(p => (
+                          <Badge key={p.id} variant="outline" className="text-[10px] bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20" data-testid={`policy-badge-${p.id}`}>
+                            <Shield className="w-3 h-3 mr-1" />
+                            {p.name}
+                          </Badge>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            ) : (
+              <Card>
+                <CardContent className="p-6 text-center">
+                  <Gavel className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
+                  <p className="text-sm text-muted-foreground">No active policies configured.</p>
+                  <Link href="/governance">
+                    <Button variant="ghost" size="sm" className="text-violet-500 mt-1">Create policies in Governance</Button>
+                  </Link>
+                </CardContent>
+              </Card>
+            );
+          })()}
+          {boundAgents.length > 0 && (
+            <Card>
+              <CardContent className="p-4">
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Constrained Agents</span>
+                <div className="flex items-center gap-2 mt-2 flex-wrap">
+                  {boundAgents.map(agent => (
+                    <Link key={agent.id} href={`/agents/${agent.id}`}>
+                      <Badge variant="secondary" className="text-[10px] cursor-pointer" data-testid={`constrained-agent-${agent.id}`}>
+                        <Bot className="w-3 h-3 mr-1" />
+                        {agent.name}
+                      </Badge>
+                    </Link>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
         <TabsContent value="financial-ledger" className="space-y-6" data-testid="tabcontent-financial-ledger">
           <div>
             <h2 className="text-lg font-semibold">Financial Ledger</h2>
@@ -2866,6 +2871,39 @@ function PipelineVisualization({ orchestrator, agents, pipeline }: {
   );
 }
 
+function CollapsibleSection({ title, icon, defaultOpen = false, count, testId, children }: {
+  title: string;
+  icon?: React.ReactNode;
+  defaultOpen?: boolean;
+  count?: number;
+  testId?: string;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="border rounded-md overflow-hidden" data-testid={testId}>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-2 w-full px-3 py-1.5 text-left hover:bg-muted/50 transition-colors"
+        data-testid={testId ? `${testId}-toggle` : undefined}
+      >
+        {icon && <span className="text-muted-foreground">{icon}</span>}
+        <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground flex-1">{title}</span>
+        {count !== undefined && count > 0 && (
+          <Badge variant="secondary" className="text-[9px] h-4 px-1">{count}</Badge>
+        )}
+        <ChevronDown className={`w-3 h-3 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <div className="px-3 pb-2 pt-1">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AgentProposalCard({ agent, index, isOrchestrator, isSelected, onToggle, isCreating, onEdit, onDelete, onDuplicate, isDragging, onDragStart, onDragOver, onDrop }: {
   agent: AgentProposal;
   index: number;
@@ -2996,7 +3034,7 @@ function AgentProposalCard({ agent, index, isOrchestrator, isSelected, onToggle,
           </div>
         </CardTitle>
       </CardHeader>
-      <CardContent className="p-4 pt-0 flex flex-col gap-3">
+      <CardContent className="p-4 pt-0 flex flex-col gap-2">
         {!expanded ? (
           <>
             <p className="text-xs text-muted-foreground">{agent.description}</p>
@@ -3008,101 +3046,104 @@ function AgentProposalCard({ agent, index, isOrchestrator, isSelected, onToggle,
                 <Badge variant="secondary" className="text-[10px]">Template: {agent.templateMatch}</Badge>
               )}
             </div>
-            <div className="flex flex-col gap-1">
-              <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Role</span>
-              <span className="text-xs">{agent.role}</span>
+            <div className="flex items-center gap-2 p-2 rounded-md bg-green-500/5 border border-green-500/10 flex-wrap">
+              <TrendingUp className="w-3.5 h-3.5 text-green-500 shrink-0" />
+              <span className="text-[11px] text-green-700 dark:text-green-300">{agent.estimatedImpact}</span>
             </div>
-            <div className="flex flex-col gap-1">
-              <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Workflow</span>
-              <div className="flex items-center gap-1 flex-wrap">
-                {agent.workflowSteps.map((step, j) => (
-                  <span key={j} className="flex items-center gap-0.5">
-                    {j > 0 && <ChevronRight className="w-2.5 h-2.5 text-muted-foreground" />}
-                    <Badge variant="secondary" className="text-[9px]">{step}</Badge>
-                  </span>
-                ))}
-              </div>
-            </div>
-            {agent.tools.length > 0 && (
-              <div className="flex flex-col gap-1">
-                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Tools</span>
-                <div className="flex flex-wrap gap-1">
-                  {agent.tools.map((tool, j) => (
-                    <Badge key={j} variant="outline" className="text-[9px]">{tool.name}</Badge>
+            <CollapsibleSection title="Role & Workflow" icon={<Workflow className="w-3 h-3" />} defaultOpen={false} count={agent.workflowSteps.length} testId={`section-workflow-${isOrchestrator ? "orch" : index}`}>
+              <div className="flex flex-col gap-2">
+                <span className="text-xs">{agent.role}</span>
+                <div className="flex items-center gap-1 flex-wrap">
+                  {agent.workflowSteps.map((step, j) => (
+                    <span key={j} className="flex items-center gap-0.5">
+                      {j > 0 && <ChevronRight className="w-2.5 h-2.5 text-muted-foreground" />}
+                      <Badge variant="secondary" className="text-[9px]">{step}</Badge>
+                    </span>
                   ))}
                 </div>
               </div>
+            </CollapsibleSection>
+            {(agent.tools.length > 0 || (agent.mcpToolBindings && agent.mcpToolBindings.length > 0)) && (
+              <CollapsibleSection title="Tools & MCP Bindings" icon={<Wrench className="w-3 h-3" />} defaultOpen={false} count={(agent.tools.length || 0) + (agent.mcpToolBindings?.length || 0)} testId={`section-tools-${isOrchestrator ? "orch" : index}`}>
+                <div className="flex flex-col gap-2">
+                  {agent.tools.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {agent.tools.map((tool, j) => (
+                        <Badge key={j} variant="outline" className="text-[9px]">{tool.name}</Badge>
+                      ))}
+                    </div>
+                  )}
+                  {(agent.mcpToolBindings && agent.mcpToolBindings.length > 0) && (
+                    <div className="flex flex-wrap gap-1" data-testid={`enrichment-mcp-${isOrchestrator ? "orch" : index}`}>
+                      {agent.mcpToolBindings.map((binding, j) => (
+                        <Badge key={j} variant="outline" className="text-[9px] text-orange-600 dark:text-orange-400 border-orange-200 dark:border-orange-800">{binding.server}: {binding.tool}</Badge>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </CollapsibleSection>
             )}
             {agent.kpiBindings.length > 0 && (
-              <div className="flex flex-col gap-1">
-                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">KPI Bindings</span>
+              <CollapsibleSection title="KPI Bindings" icon={<BarChart3 className="w-3 h-3" />} defaultOpen={false} count={agent.kpiBindings.length} testId={`section-kpi-${isOrchestrator ? "orch" : index}`}>
                 <div className="flex flex-wrap gap-1">
                   {agent.kpiBindings.map((kpi, j) => (
                     <Badge key={j} variant="outline" className="text-[9px] text-green-600 dark:text-green-400 border-green-200 dark:border-green-800">{kpi}</Badge>
                   ))}
                 </div>
-              </div>
+              </CollapsibleSection>
             )}
-            {(agent.matchedSkills && agent.matchedSkills.length > 0) && (
-              <div className="flex flex-col gap-1" data-testid={`enrichment-skills-${isOrchestrator ? "orch" : index}`}>
-                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Skills</span>
-                <div className="flex flex-wrap gap-1">
-                  {agent.matchedSkills.map((skill, j) => (
-                    <Badge key={j} variant="outline" className="text-[9px] text-violet-600 dark:text-violet-400 border-violet-200 dark:border-violet-800">{skill}</Badge>
-                  ))}
+            {((agent.matchedSkills && agent.matchedSkills.length > 0) || (agent.matchedOntologyConcepts && agent.matchedOntologyConcepts.length > 0) || (agent.policyConstraints && agent.policyConstraints.length > 0) || (agent.complianceTags && agent.complianceTags.length > 0) || agent.suggestedRagPipeline) && (
+              <CollapsibleSection title="Platform Intelligence" icon={<Brain className="w-3 h-3" />} defaultOpen={false} count={(agent.matchedSkills?.length || 0) + (agent.matchedOntologyConcepts?.length || 0) + (agent.policyConstraints?.length || 0) + (agent.complianceTags?.length || 0) + (agent.suggestedRagPipeline ? 1 : 0)} testId={`section-intelligence-${isOrchestrator ? "orch" : index}`}>
+                <div className="flex flex-col gap-2">
+                  {(agent.matchedSkills && agent.matchedSkills.length > 0) && (
+                    <div className="flex flex-col gap-1" data-testid={`enrichment-skills-${isOrchestrator ? "orch" : index}`}>
+                      <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Skills</span>
+                      <div className="flex flex-wrap gap-1">
+                        {agent.matchedSkills.map((skill, j) => (
+                          <Badge key={j} variant="outline" className="text-[9px] text-violet-600 dark:text-violet-400 border-violet-200 dark:border-violet-800">{skill}</Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {(agent.matchedOntologyConcepts && agent.matchedOntologyConcepts.length > 0) && (
+                    <div className="flex flex-col gap-1" data-testid={`enrichment-ontology-${isOrchestrator ? "orch" : index}`}>
+                      <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Ontology Concepts</span>
+                      <div className="flex flex-wrap gap-1">
+                        {agent.matchedOntologyConcepts.map((concept, j) => (
+                          <Badge key={j} variant="outline" className="text-[9px] text-cyan-600 dark:text-cyan-400 border-cyan-200 dark:border-cyan-800">{concept}</Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {(agent.policyConstraints && agent.policyConstraints.length > 0) && (
+                    <div className="flex flex-col gap-1" data-testid={`enrichment-policies-${isOrchestrator ? "orch" : index}`}>
+                      <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Policy Constraints</span>
+                      <div className="flex flex-wrap gap-1">
+                        {agent.policyConstraints.map((policy, j) => (
+                          <Badge key={j} variant="outline" className="text-[9px] text-red-600 dark:text-red-400 border-red-200 dark:border-red-800">{policy}</Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {(agent.complianceTags && agent.complianceTags.length > 0) && (
+                    <div className="flex flex-col gap-1" data-testid={`enrichment-compliance-${isOrchestrator ? "orch" : index}`}>
+                      <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Compliance</span>
+                      <div className="flex flex-wrap gap-1">
+                        {agent.complianceTags.map((tag, j) => (
+                          <Badge key={j} variant="outline" className="text-[9px] text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800">{tag}</Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {agent.suggestedRagPipeline && (
+                    <div className="flex flex-col gap-1" data-testid={`enrichment-rag-${isOrchestrator ? "orch" : index}`}>
+                      <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">RAG Pipeline</span>
+                      <Badge variant="outline" className="text-[9px] text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-800 w-fit">{agent.suggestedRagPipeline}</Badge>
+                    </div>
+                  )}
                 </div>
-              </div>
+              </CollapsibleSection>
             )}
-            {(agent.matchedOntologyConcepts && agent.matchedOntologyConcepts.length > 0) && (
-              <div className="flex flex-col gap-1" data-testid={`enrichment-ontology-${isOrchestrator ? "orch" : index}`}>
-                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Ontology Concepts</span>
-                <div className="flex flex-wrap gap-1">
-                  {agent.matchedOntologyConcepts.map((concept, j) => (
-                    <Badge key={j} variant="outline" className="text-[9px] text-cyan-600 dark:text-cyan-400 border-cyan-200 dark:border-cyan-800">{concept}</Badge>
-                  ))}
-                </div>
-              </div>
-            )}
-            {(agent.mcpToolBindings && agent.mcpToolBindings.length > 0) && (
-              <div className="flex flex-col gap-1" data-testid={`enrichment-mcp-${isOrchestrator ? "orch" : index}`}>
-                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">MCP Tool Bindings</span>
-                <div className="flex flex-wrap gap-1">
-                  {agent.mcpToolBindings.map((binding, j) => (
-                    <Badge key={j} variant="outline" className="text-[9px] text-orange-600 dark:text-orange-400 border-orange-200 dark:border-orange-800">{binding.server}: {binding.tool}</Badge>
-                  ))}
-                </div>
-              </div>
-            )}
-            {(agent.policyConstraints && agent.policyConstraints.length > 0) && (
-              <div className="flex flex-col gap-1" data-testid={`enrichment-policies-${isOrchestrator ? "orch" : index}`}>
-                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Policy Constraints</span>
-                <div className="flex flex-wrap gap-1">
-                  {agent.policyConstraints.map((policy, j) => (
-                    <Badge key={j} variant="outline" className="text-[9px] text-red-600 dark:text-red-400 border-red-200 dark:border-red-800">{policy}</Badge>
-                  ))}
-                </div>
-              </div>
-            )}
-            {(agent.complianceTags && agent.complianceTags.length > 0) && (
-              <div className="flex flex-col gap-1" data-testid={`enrichment-compliance-${isOrchestrator ? "orch" : index}`}>
-                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Compliance</span>
-                <div className="flex flex-wrap gap-1">
-                  {agent.complianceTags.map((tag, j) => (
-                    <Badge key={j} variant="outline" className="text-[9px] text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800">{tag}</Badge>
-                  ))}
-                </div>
-              </div>
-            )}
-            {agent.suggestedRagPipeline && (
-              <div className="flex flex-col gap-1" data-testid={`enrichment-rag-${isOrchestrator ? "orch" : index}`}>
-                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">RAG Pipeline</span>
-                <Badge variant="outline" className="text-[9px] text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-800 w-fit">{agent.suggestedRagPipeline}</Badge>
-              </div>
-            )}
-            <div className="flex items-center gap-2 p-2 rounded-md bg-green-500/5 border border-green-500/10 flex-wrap">
-              <TrendingUp className="w-3.5 h-3.5 text-green-500 shrink-0" />
-              <span className="text-[11px] text-green-700 dark:text-green-300">{agent.estimatedImpact}</span>
-            </div>
           </>
         ) : (
           <div className="flex flex-col gap-3 border-t pt-3" data-testid={`edit-panel-agent-${isOrchestrator ? "orch" : index}`}>
