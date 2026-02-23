@@ -62,6 +62,7 @@ export default function KnowledgeBaseDetail() {
   const [structuredForm, setStructuredForm] = useState({ name: "", data: "" });
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [hasSearched, setHasSearched] = useState(false);
   const [qaQuery, setQaQuery] = useState("");
   const [qaResult, setQaResult] = useState<{ answer: string; sources: any[] } | null>(null);
   const [isSearching, setIsSearching] = useState(false);
@@ -254,14 +255,16 @@ export default function KnowledgeBaseDetail() {
   const handleSearch = async () => {
     if (!searchQuery.trim()) return;
     setIsSearching(true);
+    setHasSearched(false);
     try {
-      const res = await apiRequest("POST", `/api/knowledge-bases/${kbId}/search`, { query: searchQuery, topK: 5, scoreThreshold: 0.5 });
+      const res = await apiRequest("POST", `/api/knowledge-bases/${kbId}/search`, { query: searchQuery, topK: 5, scoreThreshold: 0.3 });
       const data = await res.json();
       setSearchResults(data);
     } catch (e: any) {
       toast({ title: "Search failed", description: e.message, variant: "destructive" });
     } finally {
       setIsSearching(false);
+      setHasSearched(true);
     }
   };
 
@@ -632,6 +635,15 @@ export default function KnowledgeBaseDetail() {
                     </Card>
                   ))}
                 </div>
+              )}
+              {hasSearched && searchResults.length === 0 && !isSearching && (
+                <Card className="bg-muted/30 border-dashed">
+                  <CardContent className="py-6 text-center">
+                    <Search className="w-8 h-8 text-muted-foreground/50 mx-auto mb-2" />
+                    <p className="text-sm text-muted-foreground">No matching results found</p>
+                    <p className="text-xs text-muted-foreground/70 mt-1">Try using different keywords or a more specific query</p>
+                  </CardContent>
+                </Card>
               )}
             </CardContent>
           </Card>
