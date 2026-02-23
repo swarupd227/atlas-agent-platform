@@ -6532,6 +6532,7 @@ CRITICAL GUIDELINES
         workflowSteps: z.array(z.string()).optional(),
         estimatedImpact: z.string().optional(),
         templateMatch: z.string().nullable().optional(),
+        suggestedKnowledgeBases: z.array(z.object({ id: z.string(), name: z.string() })).optional(),
       });
       const bodySchema = z.object({
         outcomeId: z.string(),
@@ -6653,6 +6654,22 @@ CRITICAL GUIDELINES
           memberAgentId: workerAgent.id,
           role: "member",
         });
+
+        if (worker.suggestedKnowledgeBases?.length) {
+          for (const kb of worker.suggestedKnowledgeBases) {
+            try {
+              await storage.createAgentKnowledgeBase({ agentId: workerAgent.id, knowledgeBaseId: kb.id });
+            } catch {}
+          }
+        }
+      }
+
+      if (orchestrator.suggestedKnowledgeBases?.length) {
+        for (const kb of orchestrator.suggestedKnowledgeBases) {
+          try {
+            await storage.createAgentKnowledgeBase({ agentId: teamAgent.id, knowledgeBaseId: kb.id });
+          } catch {}
+        }
       }
 
       const blueprint = await storage.createBlueprint({

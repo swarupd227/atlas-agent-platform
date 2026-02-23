@@ -2947,6 +2947,87 @@ function CollapsibleSection({ title, icon, defaultOpen = false, count, testId, c
   );
 }
 
+function KnowledgeBaseSelector({ selectedKbs, onChange, testIdPrefix }: {
+  selectedKbs: Array<{ id: string; name: string }>;
+  onChange: (kbs: Array<{ id: string; name: string }>) => void;
+  testIdPrefix: string;
+}) {
+  const { data: allKbs } = useQuery<Array<{ id: number; name: string; description: string }>>({
+    queryKey: ["/api/knowledge-bases"],
+  });
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [kbSearch, setKbSearch] = useState("");
+
+  const availableKbs = (allKbs || []).filter(
+    kb => !selectedKbs.some(s => String(s.id) === String(kb.id))
+  );
+  const filteredKbs = availableKbs.filter(
+    kb => kb.name.toLowerCase().includes(kbSearch.toLowerCase()) ||
+      (kb.description || "").toLowerCase().includes(kbSearch.toLowerCase())
+  );
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label className="text-[10px]">Knowledge Bases</Label>
+      <div className="flex flex-wrap gap-1">
+        {selectedKbs.map((kb, j) => (
+          <Badge key={j} variant="outline" className="text-[9px] text-purple-600 dark:text-purple-400 border-purple-200 dark:border-purple-800 flex items-center gap-1" data-testid={`badge-kb-${testIdPrefix}-${j}`}>
+            <Database className="w-2.5 h-2.5" />
+            {kb.name}
+            <button onClick={() => onChange(selectedKbs.filter((_, i) => i !== j))} className="hover:text-destructive" data-testid={`button-remove-kb-${testIdPrefix}-${j}`}><X className="w-2.5 h-2.5" /></button>
+          </Badge>
+        ))}
+        {selectedKbs.length === 0 && (
+          <span className="text-[10px] text-muted-foreground italic">No knowledge bases linked</span>
+        )}
+      </div>
+      <div className="relative">
+        <div className="flex items-center gap-1">
+          <Input
+            value={kbSearch}
+            onChange={e => { setKbSearch(e.target.value); setShowDropdown(true); }}
+            onFocus={() => setShowDropdown(true)}
+            placeholder="Search knowledge bases..."
+            className="h-7 text-xs flex-1"
+            data-testid={`input-kb-search-${testIdPrefix}`}
+          />
+          <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setShowDropdown(!showDropdown)} data-testid={`button-toggle-kb-${testIdPrefix}`}>
+            <Database className="w-3 h-3 mr-1" />Add
+          </Button>
+        </div>
+        {showDropdown && (
+          <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-popover border rounded-md shadow-md max-h-32 overflow-y-auto">
+            {filteredKbs.length === 0 ? (
+              <div className="p-2 text-[10px] text-muted-foreground text-center">
+                {availableKbs.length === 0 ? "All knowledge bases already added" : "No matches"}
+              </div>
+            ) : (
+              filteredKbs.map(kb => (
+                <button
+                  key={kb.id}
+                  className="w-full text-left px-2 py-1.5 hover:bg-accent flex items-center gap-2 text-xs"
+                  data-testid={`kb-option-${testIdPrefix}-${kb.id}`}
+                  onClick={() => {
+                    onChange([...selectedKbs, { id: String(kb.id), name: kb.name }]);
+                    setKbSearch("");
+                    setShowDropdown(false);
+                  }}
+                >
+                  <Database className="w-3 h-3 text-purple-500 flex-shrink-0" />
+                  <div className="flex flex-col min-w-0">
+                    <span className="font-medium truncate">{kb.name}</span>
+                    {kb.description && <span className="text-[9px] text-muted-foreground truncate">{kb.description}</span>}
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AgentProposalCard({ agent, index, isOrchestrator, isSelected, onToggle, isCreating, onEdit, onDelete, onDuplicate, isDragging, onDragStart, onDragOver, onDrop }: {
   agent: AgentProposal;
   index: number;
@@ -3346,6 +3427,12 @@ function AgentProposalCard({ agent, index, isOrchestrator, isSelected, onToggle,
                 />
               </div>
             </div>
+
+            <KnowledgeBaseSelector
+              selectedKbs={editData.suggestedKnowledgeBases || []}
+              onChange={(kbs) => setEditData(prev => ({ ...prev, suggestedKnowledgeBases: kbs }))}
+              testIdPrefix={isOrchestrator ? "orch" : `worker-${index}`}
+            />
 
             <div className="flex items-center gap-2 justify-end pt-2 border-t">
               <Button variant="ghost" size="sm" onClick={cancelEdit} data-testid="button-cancel-edit">Cancel</Button>
@@ -3885,8 +3972,8 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
         const res = await apiRequest("POST", "/api/ai/create-team-from-proposals", {
           outcomeId: outcome.id,
           industry: industry?.id || "general",
-          orchestrator,
-          workers: selectedWorkers,
+          orchestrator: { ...orchestrator, suggestedKnowledgeBases: orchestrator.suggestedKnowledgeBases || [] },
+          workers: selectedWorkers.map(w => ({ ...w, suggestedKnowledgeBases: w.suggestedKnowledgeBases || [] })),
           pipeline,
         });
         const data = await res.json();
@@ -3939,7 +4026,7 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
           sysLines.push(`Risk tier: ${worker.riskTier || "MEDIUM"}. Autonomy mode: ${worker.autonomyMode || "assisted"}.`);
           sysLines.push(`Always follow compliance requirements and escalate when operating outside your autonomy boundaries.`);
 
-          await apiRequest("POST", "/api/agents", {
+          const agentRes = await apiRequest("POST", "/api/agents", {
             name: worker.name,
             description: worker.description,
             owner: "system",
@@ -3974,6 +4061,14 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
               kpiBindings: worker.kpiBindings || [],
             } : undefined,
           });
+          const createdAgent = await agentRes.json();
+          if (createdAgent?.id && worker.suggestedKnowledgeBases?.length) {
+            for (const kb of worker.suggestedKnowledgeBases) {
+              try {
+                await apiRequest("POST", `/api/agents/${createdAgent.id}/knowledge-bases`, { knowledgeBaseId: kb.id });
+              } catch {}
+            }
+          }
         }
         queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
         queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });

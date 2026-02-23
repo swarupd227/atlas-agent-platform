@@ -7303,6 +7303,10 @@ function AgentKnowledgeBases({ agent }: { agent: any }) {
   const { toast } = useToast();
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const [selectedKbId, setSelectedKbId] = useState("");
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [newKbName, setNewKbName] = useState("");
+  const [newKbDescription, setNewKbDescription] = useState("");
+  const [newKbIndustry, setNewKbIndustry] = useState("general");
 
   const { data: kbData, isLoading } = useQuery<{ links: AgentKnowledgeBase[]; knowledgeBases: KnowledgeBase[] }>({
     queryKey: ["/api/agents", agent.id, "knowledge-bases"],
@@ -7346,6 +7350,36 @@ function AgentKnowledgeBases({ agent }: { agent: any }) {
     },
   });
 
+  const createKbMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/knowledge-bases", {
+        name: newKbName.trim(),
+        description: newKbDescription.trim() || undefined,
+        industry: newKbIndustry,
+      });
+      return res.json();
+    },
+    onSuccess: async (newKb: any) => {
+      try {
+        await apiRequest("POST", `/api/agents/${agent.id}/knowledge-bases`, { knowledgeBaseId: newKb.id });
+        queryClient.invalidateQueries({ queryKey: ["/api/agents", agent.id, "knowledge-bases"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/knowledge-bases"] });
+        setCreateDialogOpen(false);
+        setNewKbName("");
+        setNewKbDescription("");
+        setNewKbIndustry("general");
+        toast({ title: "Knowledge base created & linked", description: `"${newKb.name}" has been created and linked to this agent.` });
+      } catch (linkErr: any) {
+        queryClient.invalidateQueries({ queryKey: ["/api/knowledge-bases"] });
+        toast({ title: "KB created but linking failed", description: `"${newKb.name}" was created. You can link it manually.`, variant: "destructive" });
+        setCreateDialogOpen(false);
+      }
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to create knowledge base", description: err.message, variant: "destructive" });
+    },
+  });
+
   const linkedKbIds = new Set(linkedKbs.map((l: any) => l.knowledgeBaseId));
   const availableKbs = allKbs.filter(kb => !linkedKbIds.has(kb.id));
 
@@ -7367,9 +7401,14 @@ function AgentKnowledgeBases({ agent }: { agent: any }) {
           <h3 className="text-lg font-semibold" data-testid="text-kb-section-title">Linked Knowledge Bases</h3>
           <Badge variant="secondary" className="text-xs" data-testid="badge-kb-count">{linkedKbs.length}</Badge>
         </div>
-        <Button size="sm" onClick={() => setLinkDialogOpen(true)} data-testid="button-link-kb">
-          <Plus className="w-4 h-4 mr-1" /> Link Knowledge Base
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => setCreateDialogOpen(true)} data-testid="button-create-kb">
+            <Plus className="w-4 h-4 mr-1" /> Create New
+          </Button>
+          <Button size="sm" onClick={() => setLinkDialogOpen(true)} data-testid="button-link-kb">
+            <Plus className="w-4 h-4 mr-1" /> Link Existing
+          </Button>
+        </div>
       </div>
 
       {linkedKbs.length === 0 ? (
@@ -7471,6 +7510,65 @@ function AgentKnowledgeBases({ agent }: { agent: any }) {
               data-testid="button-confirm-link-kb"
             >
               {linkMutation.isPending ? <><Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> Linking...</> : <><Plus className="w-3.5 h-3.5 mr-1" /> Link</>}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Create & Link Knowledge Base</DialogTitle>
+            <DialogDescription>
+              Create a new knowledge base and automatically link it to this agent.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2">
+              <Label>Name</Label>
+              <Input
+                value={newKbName}
+                onChange={e => setNewKbName(e.target.value)}
+                placeholder="e.g. Product Documentation"
+                data-testid="input-new-kb-name"
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label>Description</Label>
+              <Textarea
+                value={newKbDescription}
+                onChange={e => setNewKbDescription(e.target.value)}
+                placeholder="What kind of knowledge will this contain?"
+                className="min-h-[60px]"
+                data-testid="input-new-kb-description"
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label>Industry</Label>
+              <Select value={newKbIndustry} onValueChange={setNewKbIndustry}>
+                <SelectTrigger data-testid="select-new-kb-industry">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="general">General</SelectItem>
+                  <SelectItem value="healthcare">Healthcare</SelectItem>
+                  <SelectItem value="financial_services">Financial Services</SelectItem>
+                  <SelectItem value="manufacturing">Manufacturing</SelectItem>
+                  <SelectItem value="insurance">Insurance</SelectItem>
+                  <SelectItem value="retail">Retail</SelectItem>
+                  <SelectItem value="technology">Technology / SaaS</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateDialogOpen(false)} data-testid="button-cancel-create-kb">Cancel</Button>
+            <Button
+              onClick={() => createKbMutation.mutate()}
+              disabled={!newKbName.trim() || createKbMutation.isPending}
+              data-testid="button-confirm-create-kb"
+            >
+              {createKbMutation.isPending ? <><Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> Creating...</> : <><Plus className="w-3.5 h-3.5 mr-1" /> Create & Link</>}
             </Button>
           </DialogFooter>
         </DialogContent>
