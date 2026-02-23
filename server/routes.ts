@@ -11,6 +11,7 @@ import { executePromptWithMcp, startAgentRuntime, stopAgentRuntime, getActiveRun
 import OpenAI, { toFile } from "openai";
 import multer from "multer";
 import { checkPermission, getRequestRole, getTraceRedactionLevel, getRedactionLevel, redactPayload } from "./permissions";
+import { registerKnowledgeBaseRoutes } from "./kb-routes";
 import type { RedactionLevel } from "./permissions";
 import {
   insertOutcomeContractSchema,
@@ -207,6 +208,8 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+
+  registerKnowledgeBaseRoutes(app);
 
   app.get("/api/outcomes", async (_req, res) => {
     const outcomes = await storage.getOutcomes();
@@ -6122,13 +6125,14 @@ Eval Suites: ${evalSuites.length} configured`,
       }
       const { outcomeContract, kpis, feedback, previousPlan, industryContext } = req.body;
 
-      const [templates, allSkills, allMcpServers, allPolicies, allAgents, ragPipelines] = await Promise.all([
+      const [templates, allSkills, allMcpServers, allPolicies, allAgents, ragPipelines, allKnowledgeBases] = await Promise.all([
         storage.getAgentTemplates(),
         storage.getSkills(),
         storage.getMcpServers(),
         storage.getPolicies(),
         storage.getAgents(),
         storage.getRagPipelines(),
+        storage.getKnowledgeBases(),
       ]);
 
       const industryId = industryContext?.industryId || outcomeContract?.industry || "general";
@@ -6261,6 +6265,19 @@ You MUST incorporate this feedback into the new plan. Adjust the agents, roles, 
         retrievalStrategy: r.retrievalStrategy,
       }));
 
+      const industryKnowledgeBases = allKnowledgeBases.filter(
+        (kb: any) => kb.industry === industryId || kb.industry === "general"
+      ).slice(0, 10);
+      const kbSummary = industryKnowledgeBases.map((kb: any) => ({
+        id: kb.id,
+        name: kb.name,
+        description: kb.description,
+        industry: kb.industry,
+        totalSources: kb.totalSources,
+        totalChunks: kb.totalChunks,
+        vectorDbType: kb.vectorDbType,
+      }));
+
       const { id: _oid, createdAt: _oCreated, ...outcomeDetails } = outcomeContract || {} as any;
 
       const systemPrompt = `You are an Agent Proposal Generator for the Nous Agent Orchestrator (ALMP) platform. You have access to the full platform intelligence. Generate a multi-agent pipeline that leverages REAL platform resources — not generic placeholders.
@@ -6320,6 +6337,11 @@ RAG PIPELINES (knowledge retrieval configurations)
 ${JSON.stringify(ragSummary, null, 1)}
 
 ═══════════════════════════════════════════
+KNOWLEDGE BASES (vector-embedded document collections for RAG grounding — assign relevant KBs to agents by ID)
+═══════════════════════════════════════════
+${JSON.stringify(kbSummary, null, 1)}
+
+═══════════════════════════════════════════
 EXISTING AGENTS FOR THIS OUTCOME (avoid duplicating these)
 ═══════════════════════════════════════════
 ${existingAgentNames.length > 0 ? existingAgentNames.join(", ") : "None yet"}
@@ -6349,6 +6371,7 @@ Respond with a JSON object:
     "policyConstraints": ["string - names of policies this agent must comply with"],
     "mcpToolBindings": [{"server": "string - MCP server name", "tool": "string - tool name"}],
     "suggestedRagPipeline": "string | null - name of RAG pipeline for knowledge retrieval",
+    "suggestedKnowledgeBases": [{"id": "string - KB id from Knowledge Bases registry", "name": "string"}],
     "complianceTags": ["string - regulatory frameworks from Industry Context"],
     "systemPrompt": "string - industry-specific system prompt referencing domain ontology and compliance"
   },
@@ -6371,6 +6394,7 @@ Respond with a JSON object:
       "policyConstraints": ["string - policy names"],
       "mcpToolBindings": [{"server": "string", "tool": "string"}],
       "suggestedRagPipeline": "string | null",
+      "suggestedKnowledgeBases": [{"id": "string - KB id", "name": "string"}],
       "complianceTags": ["string - regulatory framework tags"],
       "systemPrompt": "string - detailed industry-aware system prompt"
     }
@@ -6398,7 +6422,8 @@ CRITICAL GUIDELINES
 8. NO DUPLICATES: Do not propose agents that overlap with existing agents already created for this outcome.
 9. REGULATORY AWARENESS: Include applicable regulatory frameworks as complianceTags. Reference linkedRegulations from ontology concepts.
 10. SYSTEM PROMPTS: Generate detailed, industry-specific system prompts that reference the agent's domain, ontology concepts, compliance requirements, and KPI responsibilities.
-11. Propose 2-4 worker agents + 1 orchestrator.`;
+11. Propose 2-4 worker agents + 1 orchestrator.
+12. KNOWLEDGE BASE GROUNDING: Assign relevant Knowledge Bases from the registry to agents that need domain-specific RAG grounding. Use exact KB IDs and names. Agents doing research, analysis, or compliance checks benefit most from KB linkage.`;
 
       const response = await openai.chat.completions.create({
         model: "gpt-4.1",
@@ -6436,6 +6461,7 @@ CRITICAL GUIDELINES
           mcpToolBindings: Array.isArray(a.mcpToolBindings) ? a.mcpToolBindings : [],
           complianceTags: Array.isArray(a.complianceTags) ? a.complianceTags : [],
           suggestedRagPipeline: a.suggestedRagPipeline || null,
+          suggestedKnowledgeBases: Array.isArray(a.suggestedKnowledgeBases) ? a.suggestedKnowledgeBases : [],
           systemPrompt: a.systemPrompt || "",
           templateMatch: a.templateMatch || null,
         };

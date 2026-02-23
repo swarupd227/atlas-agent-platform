@@ -147,6 +147,10 @@ import {
   agentProposals, type AgentProposal, type InsertAgentProposal,
   agentApiKeys, type AgentApiKey, type InsertAgentApiKey,
   agentChannels, type AgentChannel, type InsertAgentChannel,
+  knowledgeBases, type KnowledgeBase, type InsertKnowledgeBase,
+  knowledgeSources, type KnowledgeSource, type InsertKnowledgeSource,
+  knowledgeChunks, type KnowledgeChunk, type InsertKnowledgeChunk,
+  agentKnowledgeBases, type AgentKnowledgeBase, type InsertAgentKnowledgeBase,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -654,6 +658,28 @@ export interface IStorage {
   createAgentChannel(channel: InsertAgentChannel): Promise<AgentChannel>;
   updateAgentChannel(id: string, data: Partial<AgentChannel>): Promise<AgentChannel | undefined>;
   deleteAgentChannel(id: string): Promise<boolean>;
+
+  getKnowledgeBases(): Promise<KnowledgeBase[]>;
+  getKnowledgeBase(id: string): Promise<KnowledgeBase | undefined>;
+  createKnowledgeBase(kb: InsertKnowledgeBase): Promise<KnowledgeBase>;
+  updateKnowledgeBase(id: string, data: Partial<KnowledgeBase>): Promise<KnowledgeBase | undefined>;
+  deleteKnowledgeBase(id: string): Promise<boolean>;
+
+  getKnowledgeSources(kbId: string): Promise<KnowledgeSource[]>;
+  getKnowledgeSource(id: string): Promise<KnowledgeSource | undefined>;
+  createKnowledgeSource(source: InsertKnowledgeSource): Promise<KnowledgeSource>;
+  updateKnowledgeSource(id: string, data: Partial<KnowledgeSource>): Promise<KnowledgeSource | undefined>;
+  deleteKnowledgeSource(id: string): Promise<boolean>;
+
+  getKnowledgeChunks(kbId: string): Promise<KnowledgeChunk[]>;
+  getKnowledgeChunksBySource(sourceId: string): Promise<KnowledgeChunk[]>;
+  createKnowledgeChunk(chunk: InsertKnowledgeChunk): Promise<KnowledgeChunk>;
+  deleteKnowledgeChunksBySource(sourceId: string): Promise<boolean>;
+
+  getAgentKnowledgeBases(agentId: string): Promise<AgentKnowledgeBase[]>;
+  getKnowledgeBaseAgents(kbId: string): Promise<AgentKnowledgeBase[]>;
+  createAgentKnowledgeBase(link: InsertAgentKnowledgeBase): Promise<AgentKnowledgeBase>;
+  deleteAgentKnowledgeBase(id: string): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2598,6 +2624,94 @@ export class DatabaseStorage implements IStorage {
 
   async deleteAgentChannel(id: string): Promise<boolean> {
     const result = await db.delete(agentChannels).where(eq(agentChannels.id, id)).returning();
+    return result.length > 0;
+  }
+
+  async getKnowledgeBases(): Promise<KnowledgeBase[]> {
+    return db.select().from(knowledgeBases).orderBy(desc(knowledgeBases.createdAt));
+  }
+
+  async getKnowledgeBase(id: string): Promise<KnowledgeBase | undefined> {
+    const [kb] = await db.select().from(knowledgeBases).where(eq(knowledgeBases.id, id));
+    return kb;
+  }
+
+  async createKnowledgeBase(kb: InsertKnowledgeBase): Promise<KnowledgeBase> {
+    const [created] = await db.insert(knowledgeBases).values(kb).returning();
+    return created;
+  }
+
+  async updateKnowledgeBase(id: string, data: Partial<KnowledgeBase>): Promise<KnowledgeBase | undefined> {
+    const [updated] = await db.update(knowledgeBases).set({ ...data, updatedAt: new Date() }).where(eq(knowledgeBases.id, id)).returning();
+    return updated;
+  }
+
+  async deleteKnowledgeBase(id: string): Promise<boolean> {
+    await db.delete(knowledgeChunks).where(eq(knowledgeChunks.knowledgeBaseId, id));
+    await db.delete(knowledgeSources).where(eq(knowledgeSources.knowledgeBaseId, id));
+    await db.delete(agentKnowledgeBases).where(eq(agentKnowledgeBases.knowledgeBaseId, id));
+    const result = await db.delete(knowledgeBases).where(eq(knowledgeBases.id, id)).returning();
+    return result.length > 0;
+  }
+
+  async getKnowledgeSources(kbId: string): Promise<KnowledgeSource[]> {
+    return db.select().from(knowledgeSources).where(eq(knowledgeSources.knowledgeBaseId, kbId)).orderBy(desc(knowledgeSources.createdAt));
+  }
+
+  async getKnowledgeSource(id: string): Promise<KnowledgeSource | undefined> {
+    const [source] = await db.select().from(knowledgeSources).where(eq(knowledgeSources.id, id));
+    return source;
+  }
+
+  async createKnowledgeSource(source: InsertKnowledgeSource): Promise<KnowledgeSource> {
+    const [created] = await db.insert(knowledgeSources).values(source).returning();
+    return created;
+  }
+
+  async updateKnowledgeSource(id: string, data: Partial<KnowledgeSource>): Promise<KnowledgeSource | undefined> {
+    const [updated] = await db.update(knowledgeSources).set(data).where(eq(knowledgeSources.id, id)).returning();
+    return updated;
+  }
+
+  async deleteKnowledgeSource(id: string): Promise<boolean> {
+    await db.delete(knowledgeChunks).where(eq(knowledgeChunks.sourceId, id));
+    const result = await db.delete(knowledgeSources).where(eq(knowledgeSources.id, id)).returning();
+    return result.length > 0;
+  }
+
+  async getKnowledgeChunks(kbId: string): Promise<KnowledgeChunk[]> {
+    return db.select().from(knowledgeChunks).where(eq(knowledgeChunks.knowledgeBaseId, kbId)).orderBy(knowledgeChunks.chunkIndex);
+  }
+
+  async getKnowledgeChunksBySource(sourceId: string): Promise<KnowledgeChunk[]> {
+    return db.select().from(knowledgeChunks).where(eq(knowledgeChunks.sourceId, sourceId)).orderBy(knowledgeChunks.chunkIndex);
+  }
+
+  async createKnowledgeChunk(chunk: InsertKnowledgeChunk): Promise<KnowledgeChunk> {
+    const [created] = await db.insert(knowledgeChunks).values(chunk).returning();
+    return created;
+  }
+
+  async deleteKnowledgeChunksBySource(sourceId: string): Promise<boolean> {
+    const result = await db.delete(knowledgeChunks).where(eq(knowledgeChunks.sourceId, sourceId)).returning();
+    return result.length > 0;
+  }
+
+  async getAgentKnowledgeBases(agentId: string): Promise<AgentKnowledgeBase[]> {
+    return db.select().from(agentKnowledgeBases).where(eq(agentKnowledgeBases.agentId, agentId));
+  }
+
+  async getKnowledgeBaseAgents(kbId: string): Promise<AgentKnowledgeBase[]> {
+    return db.select().from(agentKnowledgeBases).where(eq(agentKnowledgeBases.knowledgeBaseId, kbId));
+  }
+
+  async createAgentKnowledgeBase(link: InsertAgentKnowledgeBase): Promise<AgentKnowledgeBase> {
+    const [created] = await db.insert(agentKnowledgeBases).values(link).returning();
+    return created;
+  }
+
+  async deleteAgentKnowledgeBase(id: string): Promise<boolean> {
+    const result = await db.delete(agentKnowledgeBases).where(eq(agentKnowledgeBases.id, id)).returning();
     return result.length > 0;
   }
 }

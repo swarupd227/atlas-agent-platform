@@ -82,6 +82,8 @@ import AutonomyEngine from "@/pages/autonomy-engine";
 import OversightConsole from "@/pages/oversight-console";
 import AgentPlayground from "@/pages/agent-playground";
 import Pipelines from "@/pages/pipelines";
+import KnowledgeBasesPage from "@/pages/knowledge-bases";
+import KnowledgeBaseDetail from "@/pages/knowledge-base-detail";
 
 function DashboardRouter() {
   return (
@@ -148,6 +150,8 @@ function DashboardRouter() {
       <Route path="/shadow-replay" component={ShadowReplay} />
       <Route path="/canary-deployment" component={CanaryDeployment} />
       <Route path="/pipelines" component={Pipelines} />
+      <Route path="/knowledge-bases/:id" component={KnowledgeBaseDetail} />
+      <Route path="/knowledge-bases" component={KnowledgeBasesPage} />
       <Route path="/healing-operations" component={HealingOperations} />
       <Route path="/runbook-automation" component={RunbookAutomation} />
       <Route path="/admin" component={Admin} />

@@ -1,6 +1,7 @@
 import { storage } from "./storage";
 import { EventEmitter } from "events";
 import OpenAI from "openai";
+import { searchKnowledgeBaseChunks } from "./embeddings";
 
 export const runtimeEvents = new EventEmitter();
 runtimeEvents.setMaxListeners(50);
@@ -130,6 +131,31 @@ export async function executePromptWithMcp(
   });
 
   const openaiTools = buildOpenAITools(availableTools);
+
+  let kbContext = "";
+  try {
+    const linkedKbs = await storage.getAgentKnowledgeBases(agentId);
+    if (linkedKbs.length > 0) {
+      const kbChunks: string[] = [];
+      for (const link of linkedKbs.slice(0, 3)) {
+        try {
+          const chunks = await searchKnowledgeBaseChunks(link.knowledgeBaseId, prompt, 5, 0.3);
+          if (chunks.length > 0) {
+            kbChunks.push(`--- Knowledge Base: ${link.knowledgeBaseId} ---\n${chunks.map((c: any) => c.content).join("\n\n")}`);
+          }
+        } catch {
+          const fallbackChunks = await storage.getKnowledgeChunks(link.knowledgeBaseId);
+          if (fallbackChunks.length > 0) {
+            kbChunks.push(`--- Knowledge Base: ${link.knowledgeBaseId} ---\n${fallbackChunks.slice(0, 5).map((c: any) => c.content).join("\n\n")}`);
+          }
+        }
+      }
+      if (kbChunks.length > 0) {
+        kbContext = `\n\n## KNOWLEDGE BASE CONTEXT (retrieved via RAG)\nUse the following domain knowledge to inform your analysis and decisions:\n\n${kbChunks.join("\n\n")}`;
+      }
+    }
+  } catch {}
+
   const baseInstructions = `You have access to MCP (Model Context Protocol) server tools for executing real API calls.
 Your job is to fulfill the user's prompt by calling the appropriate tools and then analyzing the results.
 Think step-by-step about what data you need and which tools to call.
@@ -137,8 +163,8 @@ Always call at least one tool if relevant tools are available.
 After receiving tool results, provide a structured analysis with key findings, severity/risk assessment if applicable, and recommended actions.`;
 
   const systemMessage = agentSystemPrompt
-    ? `${agentSystemPrompt}\n\n## MCP TOOL EXECUTION INSTRUCTIONS\n${baseInstructions}`
-    : `You are an autonomous agent executing a task.\nIndustry context: ${industry || "general"}.\n\n${baseInstructions}`;
+    ? `${agentSystemPrompt}\n\n## MCP TOOL EXECUTION INSTRUCTIONS\n${baseInstructions}${kbContext}`
+    : `You are an autonomous agent executing a task.\nIndustry context: ${industry || "general"}.\n\n${baseInstructions}${kbContext}`;
 
   let toolCallResults: Array<{
     toolName: string;

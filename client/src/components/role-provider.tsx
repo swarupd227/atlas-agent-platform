@@ -37,7 +37,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "AD",
     description: "Full platform access, user management, system configuration",
     icon: ShieldCheck,
-    allowedRoutes: ["/dashboard", "/outcomes", "/agents", "/templates", "/blueprints", "/pipelines", "/evals", "/golden-datasets", "/deployments", "/shadow-replay", "/canary-deployment", "/healing-operations", "/runbook-automation", "/monitor", "/governance", "/autonomy-engine", "/oversight-console", "/audit-trail", "/approvals", "/billing", "/optimization", "/improvements", "/improvement-loop", "/integrations", "/admin", "/ontology", "/skills", "/context-studio", "/memory-architecture", "/rag-pipeline", "/knowledge-graph"],
+    allowedRoutes: ["/dashboard", "/outcomes", "/agents", "/knowledge-bases", "/templates", "/blueprints", "/pipelines", "/evals", "/golden-datasets", "/deployments", "/shadow-replay", "/canary-deployment", "/healing-operations", "/runbook-automation", "/monitor", "/governance", "/autonomy-engine", "/oversight-console", "/audit-trail", "/approvals", "/billing", "/optimization", "/improvements", "/improvement-loop", "/integrations", "/admin", "/ontology", "/skills", "/context-studio", "/memory-architecture", "/rag-pipeline", "/knowledge-graph"],
   },
   {
     id: "outcome_owner",
@@ -46,7 +46,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "OO",
     description: "Defines KPIs, sees ROI, approves outcome contracts",
     icon: Target,
-    allowedRoutes: ["/dashboard", "/outcomes", "/agents", "/monitor", "/approvals", "/billing"],
+    allowedRoutes: ["/dashboard", "/outcomes", "/agents", "/knowledge-bases", "/monitor", "/approvals", "/billing"],
   },
   {
     id: "agent_engineer",
@@ -55,7 +55,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "AE",
     description: "Designs blueprints, tools, memory, eval suites",
     icon: Bot,
-    allowedRoutes: ["/dashboard", "/outcomes", "/agents", "/templates", "/blueprints", "/pipelines", "/evals", "/golden-datasets", "/deployments", "/shadow-replay", "/canary-deployment", "/monitor", "/optimization", "/improvements", "/improvement-loop", "/healing-operations", "/runbook-automation", "/integrations", "/ontology", "/skills", "/context-studio", "/memory-architecture", "/rag-pipeline", "/knowledge-graph", "/autonomy-engine", "/oversight-console"],
+    allowedRoutes: ["/dashboard", "/outcomes", "/agents", "/knowledge-bases", "/templates", "/blueprints", "/pipelines", "/evals", "/golden-datasets", "/deployments", "/shadow-replay", "/canary-deployment", "/monitor", "/optimization", "/improvements", "/improvement-loop", "/healing-operations", "/runbook-automation", "/integrations", "/ontology", "/skills", "/context-studio", "/memory-architecture", "/rag-pipeline", "/knowledge-graph", "/autonomy-engine", "/oversight-console"],
   },
   {
     id: "ops_sre",

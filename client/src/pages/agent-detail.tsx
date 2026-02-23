@@ -91,7 +91,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import type { Agent, RunTrace, EvalSuite, OutcomeContract, ImprovementRecommendation, AutonomousActionLog, AgentVersion, Deployment, Policy, Approval, PolicyException, ToolConnector, RemoteAgent, AgentTeam, Skill, McpServer, McpServerTool, McpServerResource, AgentMcpServer, OntologyConcept, Blueprint } from "@shared/schema";
+import type { Agent, RunTrace, EvalSuite, OutcomeContract, ImprovementRecommendation, AutonomousActionLog, AgentVersion, Deployment, Policy, Approval, PolicyException, ToolConnector, RemoteAgent, AgentTeam, Skill, McpServer, McpServerTool, McpServerResource, AgentMcpServer, OntologyConcept, Blueprint, KnowledgeBase, AgentKnowledgeBase } from "@shared/schema";
 import { Wifi, WifiOff, Crown, Brain, Sparkles, ShieldAlert, Layers3, BookMarked, Binary, ScrollText, FileCheck } from "lucide-react";
 import { useIndustry } from "@/components/industry-provider";
 
@@ -803,6 +803,7 @@ function AgentDetailInner() {
           <TabsTrigger value="ontology" data-testid="tab-ontology">Ontology</TabsTrigger>
           <TabsTrigger value="api-gateway" data-testid="tab-api-gateway">API Gateway</TabsTrigger>
           <TabsTrigger value="channels" data-testid="tab-channels">Channels</TabsTrigger>
+          <TabsTrigger value="knowledge-base" data-testid="tab-knowledge-base">Knowledge Base</TabsTrigger>
           {agent.agentType === "remote" && (
             <TabsTrigger value="a2a" data-testid="tab-a2a">A2A Card</TabsTrigger>
           )}
@@ -3823,6 +3824,10 @@ function AgentDetailInner() {
 
         <TabsContent value="channels" className="flex flex-col gap-4 mt-0" data-testid="tab-content-channels">
           <AgentChannels agent={agent} />
+        </TabsContent>
+
+        <TabsContent value="knowledge-base" className="flex flex-col gap-4 mt-0" data-testid="tab-content-knowledge-base">
+          <AgentKnowledgeBases agent={agent} />
         </TabsContent>
       </Tabs>
 
@@ -7293,6 +7298,186 @@ const CHANNEL_TYPES = [
   { type: "email", label: "Email", icon: Globe, color: "text-orange-500", bgColor: "bg-orange-500/10", description: "Process incoming emails and auto-respond with agent intelligence." },
   { type: "web_widget", label: "Web Widget", icon: Code, color: "text-cyan-500", bgColor: "bg-cyan-500/10", description: "Embed a chat widget on any website. Copy the snippet to get started." },
 ] as const;
+
+function AgentKnowledgeBases({ agent }: { agent: any }) {
+  const { toast } = useToast();
+  const [linkDialogOpen, setLinkDialogOpen] = useState(false);
+  const [selectedKbId, setSelectedKbId] = useState("");
+
+  const { data: kbData, isLoading } = useQuery<{ links: AgentKnowledgeBase[]; knowledgeBases: KnowledgeBase[] }>({
+    queryKey: ["/api/agents", agent.id, "knowledge-bases"],
+    queryFn: async () => {
+      const res = await fetch(`/api/agents/${agent.id}/knowledge-bases`);
+      return res.json();
+    },
+    enabled: !!agent.id,
+  });
+  const linkedKbs = kbData?.links || [];
+  const linkedKbDetails = kbData?.knowledgeBases || [];
+
+  const { data: allKbs = [] } = useQuery<KnowledgeBase[]>({
+    queryKey: ["/api/knowledge-bases"],
+    enabled: linkDialogOpen,
+  });
+
+  const linkMutation = useMutation({
+    mutationFn: () =>
+      apiRequest("POST", `/api/agents/${agent.id}/knowledge-bases`, { knowledgeBaseId: selectedKbId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agent.id, "knowledge-bases"] });
+      setLinkDialogOpen(false);
+      setSelectedKbId("");
+      toast({ title: "Knowledge base linked", description: "The knowledge base has been assigned to this agent." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to link knowledge base", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const unlinkMutation = useMutation({
+    mutationFn: (linkId: string) =>
+      apiRequest("DELETE", `/api/agents/${agent.id}/knowledge-bases/${linkId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agent.id, "knowledge-bases"] });
+      toast({ title: "Knowledge base unlinked", description: "The knowledge base has been removed from this agent." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to unlink", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const linkedKbIds = new Set(linkedKbs.map((l: any) => l.knowledgeBaseId));
+  const availableKbs = allKbs.filter(kb => !linkedKbIds.has(kb.id));
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col gap-3">
+        <Skeleton className="h-8 w-48" />
+        <Skeleton className="h-24 w-full" />
+        <Skeleton className="h-24 w-full" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-2">
+          <BookOpen className="w-5 h-5 text-muted-foreground" />
+          <h3 className="text-lg font-semibold" data-testid="text-kb-section-title">Linked Knowledge Bases</h3>
+          <Badge variant="secondary" className="text-xs" data-testid="badge-kb-count">{linkedKbs.length}</Badge>
+        </div>
+        <Button size="sm" onClick={() => setLinkDialogOpen(true)} data-testid="button-link-kb">
+          <Plus className="w-4 h-4 mr-1" /> Link Knowledge Base
+        </Button>
+      </div>
+
+      {linkedKbs.length === 0 ? (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-8 gap-2">
+            <BookOpen className="w-8 h-8 text-muted-foreground" />
+            <p className="text-sm text-muted-foreground" data-testid="text-kb-empty">No knowledge bases linked to this agent yet.</p>
+            <Button size="sm" variant="outline" onClick={() => setLinkDialogOpen(true)} data-testid="button-link-kb-empty">
+              <Plus className="w-4 h-4 mr-1" /> Link one now
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {linkedKbs.map((link: any) => {
+            const kb = linkedKbDetails.find((k: KnowledgeBase) => k.id === link.knowledgeBaseId) || allKbs.find((k: KnowledgeBase) => k.id === link.knowledgeBaseId);
+            return (
+              <Card key={link.id} data-testid={`card-kb-link-${link.id}`}>
+                <CardHeader className="pb-2">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <BookOpen className="w-4 h-4 text-muted-foreground" />
+                      <CardTitle className="text-sm font-bold" data-testid={`text-kb-name-${link.id}`}>
+                        {kb?.name || link.knowledgeBaseId}
+                      </CardTitle>
+                      {kb?.status && (
+                        <Badge variant={kb.status === "active" ? "default" : "secondary"} className="text-[10px]">
+                          {kb.status}
+                        </Badge>
+                      )}
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => unlinkMutation.mutate(link.id)}
+                      disabled={unlinkMutation.isPending}
+                      data-testid={`button-unlink-kb-${link.id}`}
+                    >
+                      <XCircle className="w-4 h-4 mr-1" /> Unlink
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-2">
+                  {kb?.industry && (
+                    <Badge variant="outline" className="text-[10px] w-fit" data-testid={`badge-kb-industry-${link.id}`}>
+                      {kb.industry}
+                    </Badge>
+                  )}
+                  <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                    <span data-testid={`text-kb-sources-${link.id}`}>{kb?.totalSources ?? 0} sources</span>
+                    <span data-testid={`text-kb-chunks-${link.id}`}>{kb?.totalChunks ?? 0} chunks</span>
+                  </div>
+                  <Link href={`/knowledge-bases/${link.knowledgeBaseId}`}>
+                    <Button size="sm" variant="outline" data-testid={`button-view-kb-${link.id}`}>
+                      <Eye className="w-4 h-4 mr-1" /> View Knowledge Base
+                    </Button>
+                  </Link>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      <Dialog open={linkDialogOpen} onOpenChange={setLinkDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Link Knowledge Base</DialogTitle>
+            <DialogDescription>
+              Select a knowledge base to link to this agent. The agent will use it for RAG retrieval.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2">
+              <Label>Knowledge Base</Label>
+              <Select value={selectedKbId} onValueChange={setSelectedKbId}>
+                <SelectTrigger data-testid="select-kb-to-link">
+                  <SelectValue placeholder="Select a knowledge base" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableKbs.length === 0 ? (
+                    <SelectItem value="__none" disabled>No available knowledge bases</SelectItem>
+                  ) : (
+                    availableKbs.map(kb => (
+                      <SelectItem key={kb.id} value={kb.id} data-testid={`option-kb-${kb.id}`}>
+                        {kb.name} ({kb.industry})
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setLinkDialogOpen(false)} data-testid="button-cancel-link-kb">Cancel</Button>
+            <Button
+              onClick={() => linkMutation.mutate()}
+              disabled={!selectedKbId || selectedKbId === "__none" || linkMutation.isPending}
+              data-testid="button-confirm-link-kb"
+            >
+              {linkMutation.isPending ? <><Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> Linking...</> : <><Plus className="w-3.5 h-3.5 mr-1" /> Link</>}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
 
 function AgentChannels({ agent }: { agent: any }) {
   const { toast } = useToast();

@@ -2782,6 +2782,7 @@ interface AgentProposal {
   policyConstraints?: string[];
   mcpToolBindings?: Array<{ server: string; tool: string }>;
   suggestedRagPipeline?: string | null;
+  suggestedKnowledgeBases?: Array<{ id: string; name: string }>;
 }
 
 interface PipelineEdge {
@@ -3134,8 +3135,8 @@ function AgentProposalCard({ agent, index, isOrchestrator, isSelected, onToggle,
                 </div>
               </CollapsibleSection>
             )}
-            {((agent.matchedSkills && agent.matchedSkills.length > 0) || (agent.matchedOntologyConcepts && agent.matchedOntologyConcepts.length > 0) || (agent.policyConstraints && agent.policyConstraints.length > 0) || (agent.complianceTags && agent.complianceTags.length > 0) || agent.suggestedRagPipeline) && (
-              <CollapsibleSection title="Platform Intelligence" icon={<Brain className="w-3 h-3" />} defaultOpen={false} count={(agent.matchedSkills?.length || 0) + (agent.matchedOntologyConcepts?.length || 0) + (agent.policyConstraints?.length || 0) + (agent.complianceTags?.length || 0) + (agent.suggestedRagPipeline ? 1 : 0)} testId={`section-intelligence-${isOrchestrator ? "orch" : index}`}>
+            {((agent.matchedSkills && agent.matchedSkills.length > 0) || (agent.matchedOntologyConcepts && agent.matchedOntologyConcepts.length > 0) || (agent.policyConstraints && agent.policyConstraints.length > 0) || (agent.complianceTags && agent.complianceTags.length > 0) || agent.suggestedRagPipeline || (agent.suggestedKnowledgeBases && agent.suggestedKnowledgeBases.length > 0)) && (
+              <CollapsibleSection title="Platform Intelligence" icon={<Brain className="w-3 h-3" />} defaultOpen={false} count={(agent.matchedSkills?.length || 0) + (agent.matchedOntologyConcepts?.length || 0) + (agent.policyConstraints?.length || 0) + (agent.complianceTags?.length || 0) + (agent.suggestedRagPipeline ? 1 : 0) + (agent.suggestedKnowledgeBases?.length || 0)} testId={`section-intelligence-${isOrchestrator ? "orch" : index}`}>
                 <div className="flex flex-col gap-2">
                   {(agent.matchedSkills && agent.matchedSkills.length > 0) && (
                     <div className="flex flex-col gap-1" data-testid={`enrichment-skills-${isOrchestrator ? "orch" : index}`}>
@@ -3181,6 +3182,16 @@ function AgentProposalCard({ agent, index, isOrchestrator, isSelected, onToggle,
                     <div className="flex flex-col gap-1" data-testid={`enrichment-rag-${isOrchestrator ? "orch" : index}`}>
                       <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">RAG Pipeline</span>
                       <Badge variant="outline" className="text-[9px] text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-800 w-fit">{agent.suggestedRagPipeline}</Badge>
+                    </div>
+                  )}
+                  {agent.suggestedKnowledgeBases && agent.suggestedKnowledgeBases.length > 0 && (
+                    <div className="flex flex-col gap-1" data-testid={`enrichment-kb-${isOrchestrator ? "orch" : index}`}>
+                      <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Knowledge Bases</span>
+                      <div className="flex flex-wrap gap-1">
+                        {agent.suggestedKnowledgeBases.map((kb, j) => (
+                          <Badge key={j} variant="outline" className="text-[9px] text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800">{kb.name}</Badge>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -3503,6 +3514,7 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
       policyConstraints: [...(p.policyConstraints || [])],
       mcpToolBindings: (p.mcpToolBindings || []).map(b => ({ ...b })),
       suggestedRagPipeline: p.suggestedRagPipeline || null,
+      suggestedKnowledgeBases: (p.suggestedKnowledgeBases || []).map(kb => ({ ...kb })),
       systemPrompt: p.systemPrompt || "",
     };
   }

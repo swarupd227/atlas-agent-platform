@@ -1924,4 +1924,79 @@ export const insertAgentChannelSchema = createInsertSchema(agentChannels).omit({
 export type InsertAgentChannel = z.infer<typeof insertAgentChannelSchema>;
 export type AgentChannel = typeof agentChannels.$inferSelect;
 
+// ==========================================
+// Knowledge Base Tables
+// ==========================================
+
+export const knowledgeBases = pgTable("knowledge_bases", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  description: text("description"),
+  industry: text("industry").notNull().default("general"),
+  status: text("status").notNull().default("active"),
+  vectorDbType: text("vector_db_type").notNull().default("pgvector"),
+  vectorDbConfig: jsonb("vector_db_config").notNull().default(sql`'{}'::jsonb`),
+  embeddingModel: text("embedding_model").notNull().default("text-embedding-3-small"),
+  embeddingDimensions: integer("embedding_dimensions").notNull().default(1536),
+  chunkSize: integer("chunk_size").notNull().default(512),
+  chunkOverlap: integer("chunk_overlap").notNull().default(50),
+  totalSources: integer("total_sources").notNull().default(0),
+  totalChunks: integer("total_chunks").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertKnowledgeBaseSchema = createInsertSchema(knowledgeBases).omit({ id: true, createdAt: true, updatedAt: true, totalSources: true, totalChunks: true });
+export type InsertKnowledgeBase = z.infer<typeof insertKnowledgeBaseSchema>;
+export type KnowledgeBase = typeof knowledgeBases.$inferSelect;
+
+export const knowledgeSources = pgTable("knowledge_sources", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  knowledgeBaseId: varchar("knowledge_base_id").notNull(),
+  name: text("name").notNull(),
+  sourceType: text("source_type").notNull(),
+  status: text("status").notNull().default("pending"),
+  content: text("content"),
+  metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+  fileSize: integer("file_size"),
+  mimeType: text("mime_type"),
+  url: text("url"),
+  chunkCount: integer("chunk_count").notNull().default(0),
+  errorMessage: text("error_message"),
+  processedAt: timestamp("processed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertKnowledgeSourceSchema = createInsertSchema(knowledgeSources).omit({ id: true, createdAt: true, processedAt: true, chunkCount: true });
+export type InsertKnowledgeSource = z.infer<typeof insertKnowledgeSourceSchema>;
+export type KnowledgeSource = typeof knowledgeSources.$inferSelect;
+
+export const knowledgeChunks = pgTable("knowledge_chunks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  knowledgeBaseId: varchar("knowledge_base_id").notNull(),
+  sourceId: varchar("source_id").notNull(),
+  content: text("content").notNull(),
+  chunkIndex: integer("chunk_index").notNull(),
+  metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+  tokenCount: integer("token_count"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertKnowledgeChunkSchema = createInsertSchema(knowledgeChunks).omit({ id: true, createdAt: true });
+export type InsertKnowledgeChunk = z.infer<typeof insertKnowledgeChunkSchema>;
+export type KnowledgeChunk = typeof knowledgeChunks.$inferSelect;
+
+export const agentKnowledgeBases = pgTable("agent_knowledge_bases", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  agentId: varchar("agent_id").notNull(),
+  knowledgeBaseId: varchar("knowledge_base_id").notNull(),
+  priority: integer("priority").notNull().default(1),
+  retrievalConfig: jsonb("retrieval_config").notNull().default(sql`'{"topK": 5, "scoreThreshold": 0.7}'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAgentKnowledgeBaseSchema = createInsertSchema(agentKnowledgeBases).omit({ id: true, createdAt: true });
+export type InsertAgentKnowledgeBase = z.infer<typeof insertAgentKnowledgeBaseSchema>;
+export type AgentKnowledgeBase = typeof agentKnowledgeBases.$inferSelect;
+
 export * from "./models/chat";

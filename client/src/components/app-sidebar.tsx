@@ -75,6 +75,7 @@ export function AppSidebar() {
     { title: "Overview", url: "/dashboard", icon: LayoutDashboard },
     { title: "Outcomes", url: "/outcomes", icon: Target },
     { title: "Agents", url: "/agents", icon: Bot },
+    { title: "Knowledge", url: "/knowledge-bases", icon: BookOpen },
     { title: "Deployments", url: "/deployments", icon: Rocket },
     { title: "Monitor", url: "/monitor", icon: Activity },
     { title: "Governance", url: "/governance", icon: Shield },
