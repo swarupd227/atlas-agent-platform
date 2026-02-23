@@ -1102,8 +1102,8 @@ export default function OutcomeDetail() {
             {recomputing ? "Recomputing..." : "Recompute"}
           </Button>
           <Link href={`/agents/wizard?outcomeId=${outcomeId}&outcomeName=${encodeURIComponent(outcome.name)}`}>
-            <Button variant="outline" data-testid="button-create-agent-from-outcome">
-              <Bot className="w-4 h-4 mr-1.5" /> Create Agent
+            <Button variant="ghost" size="sm" className="text-muted-foreground" data-testid="button-create-agent-from-outcome">
+              <Bot className="w-3.5 h-3.5 mr-1" /> Add Agent Manually
             </Button>
           </Link>
           <Button variant="outline" onClick={exportAuditBundle} data-testid="button-export-audit-bundle">
