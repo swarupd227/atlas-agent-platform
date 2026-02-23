@@ -438,6 +438,7 @@ export default function OutcomeDetail() {
   const [reportOpen, setReportOpen] = useState(false);
   const [reportGenerating, setReportGenerating] = useState(false);
   const [reportContent, setReportContent] = useState<string | null>(null);
+  const [reportPeriod, setReportPeriod] = useState("Last 30 days");
   const [createKpiOpen, setCreateKpiOpen] = useState(false);
   const [editContractOpen, setEditContractOpen] = useState(false);
   const [editContractData, setEditContractData] = useState<Record<string, any>>({});
@@ -862,16 +863,30 @@ export default function OutcomeDetail() {
   const billableEventsCount = outcomeEvents?.filter(e => e.billable).length || 0;
   const estimatedRevenue = billableEventsCount * (outcome.pricePerUnit || 0);
 
+  const hasReportData = boundAgents.length > 0 || totalEventsCount > 0 || (evidence?.correlatedMetrics?.totalRuns || 0) > 0;
+
   async function generateCustomerReport() {
     if (!outcome) return;
     setReportGenerating(true);
     try {
+      const metrics = evidence?.correlatedMetrics;
+      const dq = evidence?.dataQuality;
+      const executionStats = metrics ? {
+        totalRuns: metrics.totalRuns || 0,
+        successfulRuns: (metrics.totalRuns || 0) - (metrics.failedRuns || 0),
+        failedRuns: metrics.failedRuns || 0,
+        avgLatencyMs: Math.round(metrics.avgLatency || 0),
+        totalEvents: dq?.totalEvents || totalEventsCount,
+        billableEvents: dq?.billableEvents || billableEventsCount,
+        totalCost: boundAgents.reduce((sum, a) => sum + (a.costPerRun || 0) * (a.totalRuns || 0), 0),
+      } : undefined;
+
       const res = await apiRequest("POST", "/api/ai/customer-value-report", {
-        outcomeId: outcome.id,
         outcomeName: outcome.name,
         outcomeDescription: outcome.description,
-        industry: industry?.id || "",
         industryLabel: industry?.label || "General",
+        reportDate: new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }),
+        reportPeriod,
         kpis: (kpis || []).map(k => ({
           name: k.name,
           unit: k.unit,
@@ -882,7 +897,14 @@ export default function OutcomeDetail() {
           confidence: k.confidence,
           benchmark: getIndustryBenchmark(industry?.id || "", k.name, k.unit),
         })),
-        agents: boundAgents.map(a => ({ name: a.name, type: a.agentType, successRate: a.successRate, healthScore: a.healthScore })),
+        agents: boundAgents.map(a => ({
+          name: a.name,
+          type: a.agentType,
+          successRate: a.successRate,
+          healthScore: a.healthScore,
+          totalRuns: a.totalRuns || 0,
+        })),
+        executionStats,
         revenue: {
           pricePerUnit: outcome.pricePerUnit,
           billingModel: (outcome as any).billingModel || outcome.pricingModel,
@@ -901,11 +923,12 @@ export default function OutcomeDetail() {
 
   function downloadReport() {
     if (!reportContent || !outcome) return;
-    const blob = new Blob([reportContent], { type: "text/plain" });
+    const header = `${outcome.name} — Customer Value Report\nGenerated: ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}\nPeriod: ${reportPeriod}\nIndustry: ${industry?.label || "General"}\n${"=".repeat(60)}\n\n`;
+    const blob = new Blob([header + reportContent], { type: "text/markdown" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${outcome.name.replace(/\s+/g, "-")}-customer-value-report.txt`;
+    a.download = `${outcome.name.replace(/\s+/g, "-")}-value-report-${new Date().toISOString().slice(0, 10)}.md`;
     a.click();
     URL.revokeObjectURL(url);
     toast({ title: "Report downloaded" });
@@ -2443,7 +2466,7 @@ export default function OutcomeDetail() {
         </TabsContent>
       </Tabs>
 
-      <Dialog open={reportOpen} onOpenChange={setReportOpen}>
+      <Dialog open={reportOpen} onOpenChange={(open) => { setReportOpen(open); if (!open) setReportContent(null); }}>
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -2452,46 +2475,93 @@ export default function OutcomeDetail() {
             </DialogTitle>
           </DialogHeader>
           {!reportContent ? (
-            <div className="flex flex-col items-center justify-center py-12 gap-4">
+            <div className="flex flex-col items-center justify-center py-8 gap-5">
               <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center">
                 <Sparkles className="w-7 h-7 text-primary" />
               </div>
               <div className="text-center flex flex-col gap-1">
                 <h3 className="text-base font-semibold">Generate Value Report</h3>
                 <p className="text-sm text-muted-foreground max-w-md">
-                  Create a customer-facing report summarizing KPI performance, agent contributions, and business impact using {industry?.label || "industry"} terminology.
+                  AI-generated business report using real execution data, KPI performance, and agent metrics for {industry?.label || "your industry"}.
                 </p>
               </div>
-              <Button onClick={generateCustomerReport} disabled={reportGenerating} data-testid="button-generate-report">
-                {reportGenerating ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
-                    Generating report...
-                  </>
+              <div className="flex flex-col items-center gap-3 w-full max-w-xs">
+                <div className="flex flex-col gap-1.5 w-full">
+                  <label className="text-xs font-medium text-muted-foreground">Reporting Period</label>
+                  <select
+                    value={reportPeriod}
+                    onChange={(e) => setReportPeriod(e.target.value)}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    data-testid="select-report-period"
+                  >
+                    <option value="Last 7 days">Last 7 days</option>
+                    <option value="Last 30 days">Last 30 days</option>
+                    <option value="Last 90 days">Last 90 days</option>
+                    <option value="All time">All time</option>
+                  </select>
+                </div>
+                {!hasReportData ? (
+                  <div className="text-center p-3 rounded-md bg-muted/50 w-full">
+                    <p className="text-xs text-muted-foreground">
+                      Not enough data to generate a report. Deploy agents and run them to start collecting execution data.
+                    </p>
+                  </div>
                 ) : (
-                  <>
-                    <Sparkles className="w-4 h-4 mr-1.5" />
-                    Generate Report
-                  </>
+                  <div className="text-xs text-muted-foreground text-center space-y-0.5">
+                    <p>{boundAgents.length} agent{boundAgents.length !== 1 ? "s" : ""} · {totalEventsCount} event{totalEventsCount !== 1 ? "s" : ""} · {evidence?.correlatedMetrics?.totalRuns || 0} run{(evidence?.correlatedMetrics?.totalRuns || 0) !== 1 ? "s" : ""}</p>
+                  </div>
                 )}
-              </Button>
+                <Button onClick={generateCustomerReport} disabled={reportGenerating || !hasReportData} className="w-full" data-testid="button-generate-report">
+                  {reportGenerating ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                      Generating report...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4 mr-1.5" />
+                      Generate Report
+                    </>
+                  )}
+                </Button>
+              </div>
             </div>
           ) : (
             <div className="flex flex-col gap-4">
+              <div className="flex items-center gap-3 text-xs text-muted-foreground border-b pb-3">
+                <span className="font-medium text-foreground">{outcome.name}</span>
+                <span>·</span>
+                <span>{new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}</span>
+                <span>·</span>
+                <span>{reportPeriod}</span>
+                {industry?.label && (
+                  <>
+                    <span>·</span>
+                    <Badge variant="outline" className="text-[10px] h-4">{industry.label}</Badge>
+                  </>
+                )}
+              </div>
               <div className="prose prose-sm dark:prose-invert max-w-none" data-testid="report-content">
                 {reportContent.split("\n").map((line: string, i: number) => {
                   if (line.startsWith("# ")) return <h2 key={i} className="text-lg font-semibold mt-4 mb-2">{line.slice(2)}</h2>;
                   if (line.startsWith("## ")) return <h3 key={i} className="text-base font-semibold mt-3 mb-1">{line.slice(3)}</h3>;
                   if (line.startsWith("### ")) return <h4 key={i} className="text-sm font-semibold mt-2 mb-1">{line.slice(4)}</h4>;
-                  if (line.startsWith("- ")) return <li key={i} className="text-sm text-muted-foreground ml-4">{line.slice(2)}</li>;
-                  if (line.startsWith("**") && line.endsWith("**")) return <p key={i} className="text-sm font-semibold">{line.slice(2, -2)}</p>;
+                  if (line.startsWith("- ")) {
+                    const rendered = line.slice(2).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+                    return <li key={i} className="text-sm text-muted-foreground ml-4" dangerouslySetInnerHTML={{ __html: rendered }} />;
+                  }
+                  if (/^\d+\.\s/.test(line)) {
+                    const rendered = line.replace(/^\d+\.\s/, "").replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+                    return <li key={i} className="text-sm text-muted-foreground ml-4 list-decimal" dangerouslySetInnerHTML={{ __html: rendered }} />;
+                  }
                   if (line.trim() === "") return <div key={i} className="h-2" />;
-                  return <p key={i} className="text-sm text-muted-foreground">{line}</p>;
+                  const rendered = line.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+                  return <p key={i} className="text-sm text-muted-foreground" dangerouslySetInnerHTML={{ __html: rendered }} />;
                 })}
               </div>
               <div className="flex items-center gap-2 flex-wrap border-t pt-4">
                 <Button variant="outline" size="sm" onClick={downloadReport} data-testid="button-download-report">
-                  <Download className="w-3.5 h-3.5 mr-1.5" /> Download PDF
+                  <Download className="w-3.5 h-3.5 mr-1.5" /> Download Report
                 </Button>
                 <Button variant="outline" size="sm" onClick={() => { navigator.clipboard.writeText(reportContent); toast({ title: "Report copied to clipboard" }); }} data-testid="button-copy-report">
                   Copy to Clipboard

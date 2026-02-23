@@ -6826,26 +6826,53 @@ CRITICAL GUIDELINES
 
   app.post("/api/ai/customer-value-report", async (req, res) => {
     try {
-      const { outcomeName, outcomeDescription, industry, industryLabel, kpis, agents, revenue, regulatoryFrameworks } = req.body;
+      const { outcomeName, outcomeDescription, industryLabel, kpis, agents, revenue, regulatoryFrameworks, reportDate, reportPeriod, executionStats } = req.body;
 
       const kpiSummary = (kpis || []).map((k: any) => {
         const bmText = k.benchmark ? ` (Industry benchmark: ${k.benchmark.benchmark} ${k.benchmark.unit}, Source: ${k.benchmark.source})` : "";
-        return `- ${k.name}: Current ${k.currentValue} ${k.unit}, Target ${k.target} ${k.unit}, Trend: ${k.trend || "stable"}${bmText}`;
+        const progress = k.target ? `${Math.round(((k.currentValue || 0) / k.target) * 100)}% of target` : "";
+        return `- ${k.name}: Current ${k.currentValue} ${k.unit}, Target ${k.target} ${k.unit}, Progress: ${progress}, Trend: ${k.trend || "stable"}${bmText}`;
       }).join("\n");
 
-      const agentSummary = (agents || []).map((a: any) => `- ${a.name} (${a.type}): ${a.successRate}% success, Health ${a.healthScore}`).join("\n");
+      const agentSummary = (agents || []).map((a: any) => `- ${a.name} (${a.type}): ${a.successRate}% success rate, Health score ${a.healthScore}/100, Total runs: ${a.totalRuns || 0}`).join("\n");
+
+      const execSummary = executionStats ? `
+Execution Summary (${reportPeriod || "All time"}):
+- Total agent runs: ${executionStats.totalRuns}
+- Successful runs: ${executionStats.successfulRuns} (${executionStats.totalRuns > 0 ? Math.round((executionStats.successfulRuns / executionStats.totalRuns) * 100) : 0}%)
+- Failed runs: ${executionStats.failedRuns}
+- Average latency: ${executionStats.avgLatencyMs}ms
+- Total outcome events: ${executionStats.totalEvents}
+- Billable events: ${executionStats.billableEvents}
+- Total cost: $${executionStats.totalCost?.toFixed(2) || "0.00"}` : "Execution data: Not yet available";
 
       const completion = await openai.chat.completions.create({
         model: "gpt-4.1-mini",
         messages: [
           {
             role: "system",
-            content: `You are a business report writer for the ${industryLabel} industry. Generate a professional customer-facing quarterly value report. Use industry-specific terminology and benchmarks. Format with markdown headers (#, ##, ###), bullet points (-), and bold text (**text**). Include sections for: Executive Summary, KPI Performance vs Industry Benchmarks, Agent Contribution Highlights, Regulatory Compliance Status, Business Impact & ROI, and Recommendations.`
+            content: `You are a business report writer for the ${industryLabel} industry. Today's date is ${reportDate || new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}. This report covers the period: ${reportPeriod || "All time"}.
+
+CRITICAL RULES:
+- Use ONLY the data provided below. Do NOT invent dates, statistics, percentages, or numbers.
+- If a metric has no data or is zero, say "Data not yet available" or "No activity recorded" — never fabricate values.
+- Use the exact date provided above for the report header. Never use any other date.
+- Format with markdown: # for title, ## for sections, ### for subsections, - for bullet points, **bold** for emphasis.
+
+Include these sections:
+1. Executive Summary (2-3 sentences summarizing the outcome status and key metrics)
+2. KPI Performance (using the exact numbers provided)
+3. Agent Performance & Reliability (using exact execution stats)
+4. Business Impact & ROI (using actual revenue and event data)
+5. Compliance & Governance Status
+6. Recommendations (actionable, based on the actual data trends)`
           },
           {
             role: "user",
             content: `Generate a customer value report for outcome "${outcomeName}".
 
+Report Date: ${reportDate || new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}
+Reporting Period: ${reportPeriod || "All time"}
 Description: ${outcomeDescription || "N/A"}
 Industry: ${industryLabel}
 Regulatory Frameworks: ${(regulatoryFrameworks || []).join(", ") || "None specified"}
@@ -6856,16 +6883,16 @@ ${kpiSummary || "No KPIs defined"}
 Contributing Agents:
 ${agentSummary || "No agents assigned"}
 
+${execSummary}
+
 Revenue:
 - Billing Model: ${revenue?.billingModel || "N/A"}
 - Price per Unit: $${revenue?.pricePerUnit || 0}
-- Estimated Revenue: $${revenue?.estimatedRevenue || 0}
-
-Generate a comprehensive, professional report suitable for a quarterly business review.`
+- Estimated Revenue: $${revenue?.estimatedRevenue || 0}`
           }
         ],
         response_format: { type: "text" },
-        max_tokens: 2000,
+        max_tokens: 2500,
       });
 
       const report = completion.choices[0]?.message?.content || "Failed to generate report.";
