@@ -408,6 +408,69 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/outcomes/:id/recompute", async (req, res) => {
+    try {
+      const outcomeId = req.params.id;
+      const kpis = await storage.getKpisByOutcome(outcomeId);
+      const agents = await storage.getAgents();
+      const traces = await storage.getTraces();
+      const outcomeEvents = await storage.getOutcomeEvents();
+      const boundAgents = agents.filter(a => a.outcomeId === outcomeId);
+      const boundAgentIds = new Set(boundAgents.map(a => a.id));
+      const relevantTraces = traces.filter(t => boundAgentIds.has(t.agentId));
+      const relevantEvents = outcomeEvents.filter(e => e.outcomeId === outcomeId);
+
+      if (relevantTraces.length === 0 && relevantEvents.length === 0) {
+        return res.json({ updated: 0, totalRuns: 0, totalEvents: 0, kpis, message: "No trace or event data available to recompute from." });
+      }
+
+      const totalTraces = relevantTraces.length;
+      const failedTraces = relevantTraces.filter(t => t.status === "failed" || t.status === "error").length;
+      const updates: Array<{ id: string; name: string; oldValue: number; newValue: number; trend: string }> = [];
+
+      for (const kpi of kpis) {
+        const kpiNameLower = (kpi.name || "").toLowerCase();
+        let newValue: number | null = null;
+
+        if (kpiNameLower.includes("success") || kpiNameLower.includes("accuracy") || kpiNameLower.includes("rate")) {
+          if (totalTraces > 0) {
+            newValue = Math.round(((totalTraces - failedTraces) / totalTraces) * 10000) / 100;
+          }
+        } else if (kpiNameLower.includes("latency") || kpiNameLower.includes("time") || kpiNameLower.includes("response")) {
+          if (totalTraces > 0) {
+            newValue = Math.round(relevantTraces.reduce((s, t) => s + (t.latencyMs || 0), 0) / totalTraces);
+          }
+        } else if (kpiNameLower.includes("volume") || kpiNameLower.includes("count") || kpiNameLower.includes("throughput") ||
+                   kpiNameLower.includes("resolution") || kpiNameLower.includes("processed") || kpiNameLower.includes("moderated") ||
+                   kpiNameLower.includes("qualified") || kpiNameLower.includes("invoices")) {
+          newValue = relevantEvents.length > 0 ? relevantEvents.length : totalTraces;
+        } else if (kpiNameLower.includes("cost")) {
+          if (totalTraces > 0) {
+            newValue = parseFloat(relevantTraces.reduce((s, t) => s + (t.costUsd || 0), 0).toFixed(4));
+          }
+        }
+
+        if (newValue !== null && newValue !== kpi.currentValue) {
+          const oldValue = kpi.currentValue || 0;
+          const trend = newValue > oldValue ? "up" : newValue < oldValue ? "down" : (kpi.trend || "stable");
+          await storage.updateKpi(kpi.id, { currentValue: newValue, trend });
+          updates.push({ id: kpi.id, name: kpi.name, oldValue, newValue, trend });
+        }
+      }
+
+      const updatedKpis = await storage.getKpisByOutcome(outcomeId);
+      res.json({
+        updated: updates.length,
+        totalRuns: totalTraces,
+        totalEvents: relevantEvents.length,
+        changes: updates,
+        kpis: updatedKpis,
+      });
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
   app.get("/api/outcomes/:id/events", async (req, res) => {
     const outcomeEvents = await storage.getOutcomeEvents();
     const filtered = outcomeEvents.filter(e => e.outcomeId === req.params.id);

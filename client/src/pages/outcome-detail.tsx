@@ -709,11 +709,29 @@ export default function OutcomeDetail() {
     },
   });
 
-  const recomputeKpis = () => {
-    queryClient.invalidateQueries({ queryKey: ["/api/outcomes", outcomeId, "kpis"] });
-    queryClient.invalidateQueries({ queryKey: ["/api/outcomes", outcomeId, "evidence"] });
-    queryClient.invalidateQueries({ predicate: (query) => (query.queryKey[0] as string)?.includes?.(`/api/outcomes/${outcomeId}/snapshots`) });
-    toast({ title: "KPIs recomputed", description: "Data refreshed from latest events." });
+  const [recomputing, setRecomputing] = useState(false);
+  const recomputeKpis = async () => {
+    if (!outcomeId) return;
+    setRecomputing(true);
+    try {
+      const res = await apiRequest("POST", `/api/outcomes/${outcomeId}/recompute`);
+      const data = await res.json();
+      queryClient.invalidateQueries({ queryKey: ["/api/outcomes", outcomeId, "kpis"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/outcomes", outcomeId, "evidence"] });
+      queryClient.invalidateQueries({ predicate: (query) => (query.queryKey[0] as string)?.includes?.(`/api/outcomes/${outcomeId}/snapshots`) });
+      if (data.message) {
+        toast({ title: "No data to recompute", description: data.message });
+      } else if (data.updated > 0) {
+        const changeSummary = data.changes?.slice(0, 3).map((c: any) => `${c.name}: ${c.oldValue} → ${c.newValue}`).join(", ");
+        toast({ title: `${data.updated} KPI${data.updated > 1 ? "s" : ""} updated`, description: `From ${data.totalRuns} runs, ${data.totalEvents} events. ${changeSummary || ""}` });
+      } else {
+        toast({ title: "KPIs are current", description: `Verified against ${data.totalRuns} runs — no changes needed.` });
+      }
+    } catch (err) {
+      toast({ title: "Recompute failed", description: "Could not recalculate KPIs. Please try again.", variant: "destructive" });
+    } finally {
+      setRecomputing(false);
+    }
   };
 
   const exportAuditBundle = async () => {
@@ -1079,8 +1097,9 @@ export default function OutcomeDetail() {
               </form>
             </DialogContent>
           </Dialog>
-          <Button variant="outline" onClick={recomputeKpis} data-testid="button-recompute-now">
-            <RefreshCw className="w-4 h-4 mr-1.5" /> Recompute
+          <Button variant="outline" onClick={recomputeKpis} disabled={recomputing} data-testid="button-recompute-now">
+            <RefreshCw className={`w-4 h-4 mr-1.5 ${recomputing ? "animate-spin" : ""}`} />
+            {recomputing ? "Recomputing..." : "Recompute"}
           </Button>
           <Link href={`/agents/wizard?outcomeId=${outcomeId}&outcomeName=${encodeURIComponent(outcome.name)}`}>
             <Button variant="outline" data-testid="button-create-agent-from-outcome">
