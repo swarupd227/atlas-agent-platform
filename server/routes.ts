@@ -18515,6 +18515,85 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
     }
   });
 
+  app.get("/api/agents/:id/computed-stats", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+      const rawTraces = await storage.getTracesByAgent(req.params.id);
+      const traces = rawTraces.sort((a, b) => {
+        const ta = a.startedAt ? new Date(a.startedAt).getTime() : 0;
+        const tb = b.startedAt ? new Date(b.startedAt).getTime() : 0;
+        return ta - tb;
+      });
+      const totalRuns = traces.length;
+
+      if (totalRuns === 0) {
+        return res.json({
+          healthScore: 0,
+          successRate: 0,
+          avgLatencyMs: 0,
+          costPerRun: 0,
+          totalRuns: 0,
+          recentFailures: 0,
+          hasData: false,
+        });
+      }
+
+      const isSuccess = (s: string | null) => s === "completed" || s === "success";
+      const isFailed = (s: string | null) => s === "failed" || s === "error";
+
+      const successfulRuns = traces.filter(t => isSuccess(t.status));
+      const failedRuns = traces.filter(t => isFailed(t.status));
+      const successRate = successfulRuns.length / totalRuns;
+
+      const tracesWithLatency = traces.filter(t => t.latencyMs && t.latencyMs > 0);
+      const avgLatencyMs = tracesWithLatency.length > 0
+        ? Math.round(tracesWithLatency.reduce((sum, t) => sum + (t.latencyMs || 0), 0) / tracesWithLatency.length)
+        : 0;
+
+      const tracesWithCost = traces.filter(t => t.costUsd && t.costUsd > 0);
+      const costPerRun = tracesWithCost.length > 0
+        ? tracesWithCost.reduce((sum, t) => sum + (t.costUsd || 0), 0) / tracesWithCost.length
+        : 0;
+
+      const recentTraces = traces.slice(-10);
+      const recentFailures = recentTraces.filter(t => isFailed(t.status)).length;
+      const recentSuccessRate = recentTraces.length > 0
+        ? recentTraces.filter(t => isSuccess(t.status)).length / recentTraces.length
+        : 0;
+
+      let healthScore = Math.round(
+        (successRate * 40) +
+        (recentSuccessRate * 30) +
+        ((avgLatencyMs < 5000 ? 1 : avgLatencyMs < 15000 ? 0.7 : 0.4) * 20) +
+        ((recentFailures === 0 ? 1 : recentFailures <= 2 ? 0.6 : 0.3) * 10)
+      );
+      healthScore = Math.max(0, Math.min(100, healthScore));
+
+      await storage.updateAgent(req.params.id, {
+        healthScore,
+        successRate,
+        avgLatencyMs,
+        costPerRun,
+        totalRuns,
+      });
+
+      res.json({
+        healthScore,
+        successRate,
+        avgLatencyMs,
+        costPerRun,
+        totalRuns,
+        recentFailures,
+        totalCost: traces.reduce((sum, t) => sum + (t.costUsd || 0), 0),
+        hasData: true,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.get("/api/agents/:id/runtime-status", async (req, res) => {
     try {
       const agent = await storage.getAgent(req.params.id);

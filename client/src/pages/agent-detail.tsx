@@ -453,6 +453,21 @@ function AgentDetailInner() {
   const [evalStatus, setEvalStatus] = useState<"idle" | "running" | "passed" | "failed">("idle");
   const [evalOutput, setEvalOutput] = useState<string>("");
 
+  const { data: computedStats, isLoading: statsLoading } = useQuery<{
+    healthScore: number;
+    successRate: number;
+    avgLatencyMs: number;
+    costPerRun: number;
+    totalRuns: number;
+    recentFailures: number;
+    totalCost: number;
+    hasData: boolean;
+  }>({
+    queryKey: ["/api/agents", agentId, "computed-stats"],
+    enabled: !!agentId,
+    refetchInterval: 30000,
+  });
+
   const { data: deprecationSignals, isLoading: deprecationLoading, isError: deprecationError } = useQuery<{
     riskScore: number;
     recommendation: string;
@@ -518,6 +533,37 @@ function AgentDetailInner() {
       navigate(`/deployments/${data.id}`);
     },
     onError: () => toast({ title: "Failed to create deployment", variant: "destructive" }),
+  });
+
+  const requestApprovalMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/approvals", {
+        type: "agent_change",
+        objectType: "agent",
+        objectId: agentId,
+        objectName: agent?.name || "Agent",
+        status: "pending",
+        requestedBy: "Platform User",
+        requesterType: "human",
+        description: `Approval requested for agent "${agent?.name}" (v${agent?.currentVersion}) in ${agent?.environment} environment`,
+        riskScore: agent?.riskTier === "CRITICAL" ? 0.9 : agent?.riskTier === "HIGH" ? 0.7 : agent?.riskTier === "MEDIUM" ? 0.5 : 0.3,
+        agentId,
+        outcomeId: agent?.outcomeId || undefined,
+        environment: agent?.environment || "staging",
+        changeType: "deployment",
+        toolPermissionClass: agent?.toolAccessClass || "standard",
+        diffSummary: `Agent ${agent?.name} v${agent?.currentVersion} - ${agent?.environment} deployment approval`,
+        recommendedAction: "Review agent configuration and approve for deployment",
+      });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/approvals"] });
+      toast({ title: "Approval request created", description: `Approval #${data.id?.slice(0, 8)} is pending review in the Approvals queue.` });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to create approval request", description: err.message, variant: "destructive" });
+    },
   });
 
   const proposalMutation = useMutation({
@@ -734,8 +780,16 @@ function AgentDetailInner() {
 
       <div className="flex items-center gap-2 flex-wrap">
         <Select
-          value={agent.currentVersion || ""}
-          onValueChange={(val) => toast({ title: `Switched to version ${val}` })}
+          value={agent.currentVersion || "1.0.0"}
+          onValueChange={async (val) => {
+            try {
+              await apiRequest("PATCH", `/api/agents/${agentId}`, { currentVersion: val });
+              queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId] });
+              toast({ title: `Switched to version ${val}` });
+            } catch (err: any) {
+              toast({ title: "Failed to switch version", description: err.message, variant: "destructive" });
+            }
+          }}
         >
           <SelectTrigger className="w-auto" data-testid="select-version">
             <Badge variant="outline" className="text-xs no-default-hover-elevate no-default-active-elevate">v{agent.currentVersion}</Badge>
@@ -752,12 +806,21 @@ function AgentDetailInner() {
         </Select>
         <Select
           value={agent.environment || "staging"}
-          onValueChange={(val) => toast({ title: `Switched to environment ${val}` })}
+          onValueChange={async (val) => {
+            try {
+              await apiRequest("PATCH", `/api/agents/${agentId}`, { environment: val });
+              queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId] });
+              toast({ title: `Environment changed to ${val}`, description: val === "production" ? "Agent is now in production environment" : `Agent moved to ${val}` });
+            } catch (err: any) {
+              toast({ title: "Failed to change environment", description: err.message, variant: "destructive" });
+            }
+          }}
         >
           <SelectTrigger className="w-auto" data-testid="select-environment">
             <Badge variant="outline" className="text-xs no-default-hover-elevate no-default-active-elevate">{agent.environment}</Badge>
           </SelectTrigger>
           <SelectContent>
+            <SelectItem value="development">Development</SelectItem>
             <SelectItem value="staging">Staging</SelectItem>
             <SelectItem value="pilot">Pilot</SelectItem>
             <SelectItem value="production">Production</SelectItem>
@@ -765,11 +828,9 @@ function AgentDetailInner() {
         </Select>
         <Badge variant="outline" className="text-xs">{agent.modelProvider} / {agent.modelName}</Badge>
         {outcome && <Badge variant="outline" className="text-xs">{outcome.name}</Badge>}
-        {agent.toolAccessClass && (
-          <Badge variant="outline" className="text-xs" data-testid="badge-tool-access-class">
-            <Wrench className="w-3 h-3 mr-1" />{agent.toolAccessClass}
-          </Badge>
-        )}
+        <Badge variant="outline" className="text-xs capitalize" data-testid="badge-tool-access-class">
+          <Wrench className="w-3 h-3 mr-1" />{agent.toolAccessClass || "standard"}
+        </Badge>
         {agent.complianceTags && (agent.complianceTags as string[]).length > 0 && (agent.complianceTags as string[]).map((tag) => (
           <Badge key={tag} variant="outline" className="text-xs" data-testid={`badge-compliance-${tag}`}>
             <Tag className="w-3 h-3 mr-1" />{tag}
@@ -805,8 +866,12 @@ function AgentDetailInner() {
         <Button variant="outline" size="sm" data-testid="button-run-shadow-replay" onClick={() => { setShadowReplayOpen(true); setShadowResult(null); }}>
           <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Run Shadow Replay
         </Button>
-        <Button variant="outline" size="sm" data-testid="button-request-approval" onClick={() => toast({ title: "Approval request submitted" })} disabled={!approvalPerm.allowed} title={!approvalPerm.allowed ? "You do not have permission to request approvals" : undefined}>
-          <Shield className="w-3.5 h-3.5 mr-1.5" /> Request Approval
+        <Button variant="outline" size="sm" data-testid="button-request-approval" onClick={() => requestApprovalMutation.mutate()} disabled={!approvalPerm.allowed || requestApprovalMutation.isPending} title={!approvalPerm.allowed ? "You do not have permission to request approvals" : undefined}>
+          {requestApprovalMutation.isPending ? (
+            <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Submitting...</>
+          ) : (
+            <><Shield className="w-3.5 h-3.5 mr-1.5" /> Request Approval</>
+          )}
           {approvalPerm.allowed && approvalPerm.permission.access === "conditional" && approvalPerm.permission.annotation && (
             <Badge variant="secondary" className="text-[10px] ml-1">{approvalPerm.permission.annotation}</Badge>
           )}
@@ -913,10 +978,59 @@ function AgentDetailInner() {
 
         <TabsContent value="summary" className="flex flex-col gap-4 mt-0">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <StatCard title="Health Score" value={`${agent.healthScore}%`} icon={Activity} variant="success" testId="stat-agent-health" />
-            <StatCard title="Success Rate" value={`${((agent.successRate || 0) * 100).toFixed(1)}%`} icon={CheckCircle} variant="success" testId="stat-agent-success" />
-            <StatCard title="Avg Latency" value={`${agent.avgLatencyMs}ms`} icon={Clock} variant="default" testId="stat-agent-latency" />
-            <StatCard title="Cost / Run" value={`$${agent.costPerRun?.toFixed(3)}`} icon={DollarSign} variant="default" testId="stat-agent-cost" />
+            {statsLoading ? (
+              <>
+                {[1,2,3,4].map(i => (
+                  <Card key={i}><CardContent className="p-4"><div className="flex flex-col gap-2"><Skeleton className="h-3 w-20" /><Skeleton className="h-7 w-16" /><Skeleton className="h-3 w-24" /></div></CardContent></Card>
+                ))}
+              </>
+            ) : (() => {
+              const hs = computedStats?.hasData ? computedStats.healthScore : (agent.healthScore ?? 0);
+              const sr = computedStats?.hasData ? computedStats.successRate : (agent.successRate ?? 0);
+              const al = computedStats?.hasData ? computedStats.avgLatencyMs : (agent.avgLatencyMs ?? 0);
+              const cpr = computedStats?.hasData ? computedStats.costPerRun : (agent.costPerRun ?? 0);
+              const tr = computedStats?.hasData ? computedStats.totalRuns : (agent.totalRuns ?? 0);
+              return (
+                <>
+                  <StatCard
+                    title="Health Score"
+                    value={`${hs}%`}
+                    icon={Activity}
+                    variant={hs >= 80 ? "success" : hs >= 50 ? "warning" : "danger"}
+                    testId="stat-agent-health"
+                    subtitle={computedStats?.hasData ? `${tr} total runs` : "No execution data yet"}
+                    tooltip="Computed from success rate, recent performance, latency, and failure trends across all execution traces"
+                  />
+                  <StatCard
+                    title="Success Rate"
+                    value={`${(sr * 100).toFixed(1)}%`}
+                    icon={CheckCircle}
+                    variant={sr >= 0.9 ? "success" : sr >= 0.7 ? "warning" : "danger"}
+                    testId="stat-agent-success"
+                    subtitle={computedStats?.hasData ? `${computedStats.recentFailures} recent failures` : "No execution data yet"}
+                    tooltip="Percentage of runs that completed successfully out of all execution traces"
+                  />
+                  <StatCard
+                    title="Avg Latency"
+                    value={`${al}ms`}
+                    icon={Clock}
+                    variant={al < 5000 ? "default" : al < 15000 ? "warning" : "danger"}
+                    testId="stat-agent-latency"
+                    subtitle={computedStats?.hasData ? `Across ${tr} runs` : "No execution data yet"}
+                    tooltip="Average response time per execution, measured from trace start to completion"
+                  />
+                  <StatCard
+                    title="Cost / Run"
+                    value={`$${cpr.toFixed(3)}`}
+                    icon={DollarSign}
+                    variant="default"
+                    testId="stat-agent-cost"
+                    subtitle={computedStats?.hasData ? `$${(computedStats.totalCost || 0).toFixed(2)} total` : "No execution data yet"}
+                    tooltip="Average cost per execution based on actual API usage and token consumption"
+                  />
+                </>
+              );
+            })()}
           </div>
 
           <Card data-testid="card-runtime-config" className="border-primary/20 bg-primary/[0.02]">
