@@ -38,11 +38,15 @@ import { InfoRow, formatDate, formatMs } from "@/components/shared-utils";
 import type { RunTrace } from "@shared/schema";
 
 interface ToolCall {
-  name: string;
-  arguments: Record<string, unknown>;
-  result: unknown;
-  latencyMs: number;
-  status: string;
+  name?: string;
+  tool?: string;
+  arguments?: Record<string, unknown>;
+  input?: Record<string, unknown>;
+  result?: unknown;
+  output?: unknown;
+  latencyMs?: number;
+  status?: string;
+  server?: string;
 }
 
 interface RetrievedDoc {
@@ -190,7 +194,7 @@ function getStepTitle(step: TimelineStep): string {
     case "decision":
       return step.data.step;
     case "toolcall":
-      return step.data.name;
+      return step.data.name || step.data.tool || "Tool Call";
     case "policycheck":
       return step.data.policyName;
     case "output":
@@ -204,8 +208,11 @@ function getStepStatus(step: TimelineStep): "success" | "fail" | "neutral" {
       return step.data ? "success" : "neutral";
     case "decision":
       return "success";
-    case "toolcall":
-      return step.data.status === "success" ? "success" : "fail";
+    case "toolcall": {
+      const s = step.data.status;
+      if (!s || s === "success" || s === "completed") return "success";
+      return "fail";
+    }
     case "policycheck":
       return step.data.passed ? "success" : "fail";
     case "output":
@@ -269,19 +276,24 @@ function TimelineStepContent({ step }: { step: TimelineStep }) {
     }
     case "toolcall": {
       const tc = step.data;
+      const args = tc.arguments || tc.input;
+      const res = tc.result || tc.output;
       return (
         <div className="flex flex-col gap-2">
+          {tc.server && (
+            <span className="text-[10px] text-muted-foreground">Server: {tc.server}</span>
+          )}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
             <div className="flex flex-col gap-1">
               <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Arguments</span>
               <div className="p-2 rounded bg-background/50 text-[11px] font-mono overflow-x-auto whitespace-pre-wrap break-all">
-                {JSON.stringify(tc.arguments, null, 2)}
+                {JSON.stringify(args, null, 2)}
               </div>
             </div>
             <div className="flex flex-col gap-1">
               <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Result</span>
               <div className="p-2 rounded bg-background/50 text-[11px] font-mono overflow-x-auto whitespace-pre-wrap break-all">
-                {typeof tc.result === "string" ? tc.result : JSON.stringify(tc.result, null, 2)}
+                {typeof res === "string" ? res : JSON.stringify(res, null, 2)}
               </div>
             </div>
           </div>
@@ -512,10 +524,18 @@ export default function TraceDetail() {
                         {getStepTypeBadge(step.type)}
                         {step.type === "toolcall" && (
                           <>
-                            <Badge variant="outline" className="text-[10px]">
-                              <Timer className="w-3 h-3 mr-0.5" />
-                              {formatMs(step.data.latencyMs)}
-                            </Badge>
+                            {step.data.server && (
+                              <Badge variant="outline" className="text-[10px]">
+                                <Cpu className="w-3 h-3 mr-0.5" />
+                                {step.data.server}
+                              </Badge>
+                            )}
+                            {step.data.latencyMs != null && (
+                              <Badge variant="outline" className="text-[10px]">
+                                <Timer className="w-3 h-3 mr-0.5" />
+                                {formatMs(step.data.latencyMs)}
+                              </Badge>
+                            )}
                             <Badge variant="outline" className="text-[10px] bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20">
                               Proxied
                             </Badge>
