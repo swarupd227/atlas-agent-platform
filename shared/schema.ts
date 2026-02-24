@@ -1385,6 +1385,7 @@ export const skills = pgTable("skills", {
   userInvocable: boolean("user_invocable").default(true),
   descriptionQualityScore: real("description_quality_score"),
   industryContextId: text("industry_context_id"),
+  knowledgeQueries: jsonb("knowledge_queries").default(sql`'[]'::jsonb`),
   lastEvalPassRate: real("last_eval_pass_rate"),
   lastEvalAt: timestamp("last_eval_at"),
   createdAt: timestamp("created_at").defaultNow(),

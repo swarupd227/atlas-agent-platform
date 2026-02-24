@@ -16234,6 +16234,121 @@ Return ONLY a valid JSON object with a "skills" array.`
     }
   });
 
+  // Knowledge Graph Query Templates for Skills
+  app.get("/api/skills/:skillId/knowledge-queries", async (req, res) => {
+    try {
+      const skill = await storage.getSkill(req.params.skillId);
+      if (!skill) return res.status(404).json({ error: "Skill not found" });
+      const queries = (skill.knowledgeQueries as any[]) || [];
+      res.json(queries);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/skills/:skillId/knowledge-queries", async (req, res) => {
+    try {
+      const skill = await storage.getSkill(req.params.skillId);
+      if (!skill) return res.status(404).json({ error: "Skill not found" });
+      const { name, description, queryPattern, variables, category } = req.body;
+      if (!name || !queryPattern) return res.status(400).json({ error: "name and queryPattern are required" });
+      const existing = (skill.knowledgeQueries as any[]) || [];
+      const newTemplate = {
+        id: `kgq_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        name,
+        description: description || "",
+        queryPattern,
+        variables: variables || [],
+        category: category || "general",
+        createdAt: new Date().toISOString(),
+      };
+      const updated = await storage.updateSkill(req.params.skillId, {
+        knowledgeQueries: [...existing, newTemplate] as any,
+      });
+      res.status(201).json(newTemplate);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.patch("/api/skills/:skillId/knowledge-queries/:queryId", async (req, res) => {
+    try {
+      const skill = await storage.getSkill(req.params.skillId);
+      if (!skill) return res.status(404).json({ error: "Skill not found" });
+      const existing = (skill.knowledgeQueries as any[]) || [];
+      const idx = existing.findIndex((q: any) => q.id === req.params.queryId);
+      if (idx === -1) return res.status(404).json({ error: "Query template not found" });
+      existing[idx] = { ...existing[idx], ...req.body, id: req.params.queryId };
+      await storage.updateSkill(req.params.skillId, { knowledgeQueries: existing as any });
+      res.json(existing[idx]);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/skills/:skillId/knowledge-queries/:queryId", async (req, res) => {
+    try {
+      const skill = await storage.getSkill(req.params.skillId);
+      if (!skill) return res.status(404).json({ error: "Skill not found" });
+      const existing = (skill.knowledgeQueries as any[]) || [];
+      const filtered = existing.filter((q: any) => q.id !== req.params.queryId);
+      await storage.updateSkill(req.params.skillId, { knowledgeQueries: filtered as any });
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/knowledge-graph/query-template/execute", async (req, res) => {
+    try {
+      const { queryPattern, variables, industryId } = req.body;
+      if (!queryPattern) return res.status(400).json({ error: "queryPattern is required" });
+
+      let resolvedQuery = queryPattern as string;
+      const vars = (variables || {}) as Record<string, string>;
+      for (const [key, val] of Object.entries(vars)) {
+        resolvedQuery = resolvedQuery.replace(new RegExp(`\\{${key}\\}`, "g"), val);
+      }
+
+      const industry = industryId || "general";
+      const allConcepts = await storage.getOntologyConcepts(industry);
+      const fallbackAll = allConcepts.length === 0 ? await storage.getAllOntologyConcepts() : allConcepts;
+
+      const keywords = resolvedQuery.toLowerCase().split(/[\s,+&]+/).filter(k => k.length > 2);
+      const results = fallbackAll.filter((c: any) => {
+        const searchable = `${c.label} ${c.category} ${c.description} ${(c.tags || []).join(" ")} ${(c.synonyms || []).join(" ")} ${c.ontologyName || ""}`.toLowerCase();
+        return keywords.some(kw => searchable.includes(kw));
+      }).slice(0, 20);
+
+      const enrichedResults = await Promise.all(results.map(async (c: any) => {
+        const enhancement = await storage.getOntologyEnhancement(c.id);
+        return {
+          conceptId: c.id,
+          label: c.label,
+          category: c.category,
+          description: c.description,
+          properties: c.properties,
+          relationships: c.relationships,
+          tags: c.tags,
+          linkedRegulations: c.linkedRegulations,
+          enrichment: enhancement ? {
+            enrichedDescription: enhancement.enrichedDescription,
+            regulatoryRelevance: enhancement.regulatoryRelevance,
+            riskFactors: enhancement.riskFactors,
+          } : null,
+        };
+      }));
+
+      res.json({
+        resolvedQuery,
+        resultCount: enrichedResults.length,
+        results: enrichedResults,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Skill Chains CRUD
   app.get("/api/skill-chains", async (_req, res) => {
     const chains = await storage.getSkillChains();

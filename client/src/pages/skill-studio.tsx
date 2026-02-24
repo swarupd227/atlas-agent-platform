@@ -888,6 +888,9 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
           <TabsTrigger value="eval" data-testid="tab-eval">
             <Activity className="w-3.5 h-3.5 mr-1.5" /> Eval Results
           </TabsTrigger>
+          <TabsTrigger value="knowledge-queries" data-testid="tab-knowledge-queries">
+            <Database className="w-3.5 h-3.5 mr-1.5" /> Knowledge Queries
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="editor" className="flex-1 min-h-0 mt-0">
@@ -1612,6 +1615,14 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
             </div>
           </ScrollArea>
         </TabsContent>
+
+        <TabsContent value="knowledge-queries" className="flex-1 min-h-0 mt-0">
+          <ScrollArea className="h-full">
+            <div className="p-5 space-y-4">
+              <KnowledgeQueriesPanel skillId={id} industry={skill?.industry || "general"} />
+            </div>
+          </ScrollArea>
+        </TabsContent>
       </Tabs>
     </div>
   );
@@ -1750,6 +1761,331 @@ function SkillEvalResultsPanel({ skillId }: { skillId: string }) {
           </CardContent>
         </Card>
       )}
+    </div>
+  );
+}
+
+interface KGQueryTemplate {
+  id: string;
+  name: string;
+  description: string;
+  queryPattern: string;
+  variables: string[];
+  category: string;
+  createdAt: string;
+}
+
+function KnowledgeQueriesPanel({ skillId, industry }: { skillId: string; industry: string }) {
+  const { toast } = useToast();
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [formName, setFormName] = useState("");
+  const [formDesc, setFormDesc] = useState("");
+  const [formPattern, setFormPattern] = useState("");
+  const [formVars, setFormVars] = useState("");
+  const [formCategory, setFormCategory] = useState("regulatory");
+  const [testingId, setTestingId] = useState<string | null>(null);
+  const [testVarValues, setTestVarValues] = useState<Record<string, string>>({});
+  const [testResults, setTestResults] = useState<any>(null);
+  const [testLoading, setTestLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const { data: queries = [], isLoading, refetch } = useQuery<KGQueryTemplate[]>({
+    queryKey: ["/api/skills", skillId, "knowledge-queries"],
+  });
+
+  const resetForm = () => {
+    setFormName(""); setFormDesc(""); setFormPattern(""); setFormVars(""); setFormCategory("regulatory");
+    setShowAddForm(false); setEditingId(null);
+  };
+
+  const startEdit = (q: KGQueryTemplate) => {
+    setFormName(q.name); setFormDesc(q.description); setFormPattern(q.queryPattern);
+    setFormVars(q.variables.join(", ")); setFormCategory(q.category);
+    setEditingId(q.id); setShowAddForm(true);
+  };
+
+  const handleSave = async () => {
+    if (!formName.trim() || !formPattern.trim()) {
+      toast({ title: "Name and query pattern are required", variant: "destructive" });
+      return;
+    }
+    setSaving(true);
+    try {
+      const variables = formVars.split(",").map(v => v.trim()).filter(Boolean);
+      const body = { name: formName, description: formDesc, queryPattern: formPattern, variables, category: formCategory };
+      if (editingId) {
+        await apiRequest("PATCH", `/api/skills/${skillId}/knowledge-queries/${editingId}`, body);
+        toast({ title: "Query template updated" });
+      } else {
+        await apiRequest("POST", `/api/skills/${skillId}/knowledge-queries`, body);
+        toast({ title: "Query template added" });
+      }
+      resetForm();
+      queryClient.invalidateQueries({ queryKey: ["/api/skills", skillId, "knowledge-queries"] });
+    } catch (e: any) {
+      toast({ title: "Error saving template", description: e.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (queryId: string) => {
+    try {
+      await apiRequest("DELETE", `/api/skills/${skillId}/knowledge-queries/${queryId}`);
+      toast({ title: "Query template deleted" });
+      queryClient.invalidateQueries({ queryKey: ["/api/skills", skillId, "knowledge-queries"] });
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    }
+  };
+
+  const handleTest = async (q: KGQueryTemplate) => {
+    setTestingId(q.id);
+    setTestLoading(true);
+    setTestResults(null);
+    try {
+      const response = await apiRequest("POST", "/api/knowledge-graph/query-template/execute", {
+        queryPattern: q.queryPattern,
+        variables: testVarValues,
+        industryId: industry,
+      });
+      const data = await response.json();
+      setTestResults(data);
+    } catch (e: any) {
+      toast({ title: "Execution failed", description: e.message, variant: "destructive" });
+    } finally {
+      setTestLoading(false);
+    }
+  };
+
+  const CATEGORY_OPTIONS = [
+    { value: "regulatory", label: "Regulatory" },
+    { value: "compliance", label: "Compliance" },
+    { value: "risk", label: "Risk Assessment" },
+    { value: "domain", label: "Domain Knowledge" },
+    { value: "general", label: "General" },
+  ];
+
+  if (isLoading) return <Skeleton className="h-32" />;
+
+  return (
+    <div className="space-y-5" data-testid="panel-knowledge-queries">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="space-y-1">
+          <h3 className="text-sm font-semibold flex items-center gap-2">
+            <Database className="w-4 h-4" /> Knowledge Graph Query Templates
+          </h3>
+          <p className="text-xs text-muted-foreground">
+            Define KG queries that this skill executes at runtime. Use {"{variable}"} placeholders for dynamic parameters.
+          </p>
+        </div>
+        <Button size="sm" onClick={() => { resetForm(); setShowAddForm(true); }} data-testid="button-add-kg-query">
+          <Plus className="w-3.5 h-3.5 mr-1.5" /> Add Query Template
+        </Button>
+      </div>
+
+      <Separator />
+
+      {showAddForm && (
+        <Card className="border-primary/30" data-testid="card-kg-query-form">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm">{editingId ? "Edit" : "New"} Query Template</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Name</Label>
+                <Input
+                  value={formName}
+                  onChange={e => setFormName(e.target.value)}
+                  placeholder="e.g., Regulatory Disclosure Lookup"
+                  data-testid="input-kg-query-name"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Category</Label>
+                <Select value={formCategory} onValueChange={setFormCategory}>
+                  <SelectTrigger data-testid="select-kg-query-category">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {CATEGORY_OPTIONS.map(o => (
+                      <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Description</Label>
+              <Input
+                value={formDesc}
+                onChange={e => setFormDesc(e.target.value)}
+                placeholder="What this query retrieves from the Knowledge Graph"
+                data-testid="input-kg-query-desc"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Query Pattern</Label>
+              <Textarea
+                value={formPattern}
+                onChange={e => setFormPattern(e.target.value)}
+                placeholder="regulations applicable to {state} + {account_type}"
+                rows={3}
+                className="font-mono text-xs"
+                data-testid="input-kg-query-pattern"
+              />
+              <p className="text-[10px] text-muted-foreground">
+                Use {"{variable_name}"} for dynamic placeholders. At runtime, these are replaced with actual values from the skill context.
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Variables (comma-separated)</Label>
+              <Input
+                value={formVars}
+                onChange={e => setFormVars(e.target.value)}
+                placeholder="state, account_type"
+                data-testid="input-kg-query-vars"
+              />
+            </div>
+            <div className="flex items-center gap-2 justify-end">
+              <Button variant="ghost" size="sm" onClick={resetForm} data-testid="button-cancel-kg-query">Cancel</Button>
+              <Button size="sm" onClick={handleSave} disabled={saving} data-testid="button-save-kg-query">
+                {saving ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-1.5" />}
+                {editingId ? "Update" : "Save"} Template
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {queries.length === 0 && !showAddForm && (
+        <Card className="border-dashed">
+          <CardContent className="py-10 text-center">
+            <Database className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
+            <p className="text-sm font-medium mb-1">No Knowledge Graph queries defined</p>
+            <p className="text-xs text-muted-foreground mb-4">
+              Add query templates so this skill can dynamically retrieve domain knowledge from the Knowledge Graph at runtime.
+            </p>
+            <Button size="sm" variant="outline" onClick={() => setShowAddForm(true)} data-testid="button-add-first-query">
+              <Plus className="w-3.5 h-3.5 mr-1.5" /> Add First Query
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {queries.map(q => (
+        <Card key={q.id} data-testid={`card-kg-query-${q.id}`}>
+          <CardContent className="p-4 space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="space-y-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-medium" data-testid={`text-kg-query-name-${q.id}`}>{q.name}</span>
+                  <Badge variant="outline" className="text-[10px]">{q.category}</Badge>
+                </div>
+                {q.description && <p className="text-xs text-muted-foreground">{q.description}</p>}
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => startEdit(q)} data-testid={`button-edit-kg-query-${q.id}`}>
+                  <Pencil className="w-3.5 h-3.5" />
+                </Button>
+                <Button variant="ghost" size="icon" className="h-7 w-7 text-red-500 hover:text-red-600" onClick={() => handleDelete(q.id)} data-testid={`button-delete-kg-query-${q.id}`}>
+                  <XCircle className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+            </div>
+
+            <div className="p-2.5 rounded-md bg-muted/50 font-mono text-xs leading-relaxed" data-testid={`text-kg-query-pattern-${q.id}`}>
+              {q.queryPattern}
+            </div>
+
+            {q.variables.length > 0 && (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Variables:</span>
+                {q.variables.map(v => (
+                  <Badge key={v} variant="secondary" className="text-[10px] font-mono">{`{${v}}`}</Badge>
+                ))}
+              </div>
+            )}
+
+            <Separator />
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Test Query</span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => { if (testingId === q.id) { setTestingId(null); setTestResults(null); } else { setTestingId(q.id); setTestVarValues({}); setTestResults(null); } }}
+                  data-testid={`button-toggle-test-${q.id}`}
+                >
+                  <Play className="w-3 h-3 mr-1" /> {testingId === q.id ? "Close" : "Test"}
+                </Button>
+              </div>
+
+              {testingId === q.id && (
+                <div className="space-y-3 p-3 rounded-md border bg-muted/20">
+                  {q.variables.length > 0 && (
+                    <div className="grid grid-cols-2 gap-3">
+                      {q.variables.map(v => (
+                        <div key={v} className="space-y-1">
+                          <Label className="text-[10px] font-mono">{`{${v}}`}</Label>
+                          <Input
+                            value={testVarValues[v] || ""}
+                            onChange={e => setTestVarValues(prev => ({ ...prev, [v]: e.target.value }))}
+                            placeholder={`Enter ${v}`}
+                            className="h-8 text-xs"
+                            data-testid={`input-test-var-${v}`}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <Button size="sm" onClick={() => handleTest(q)} disabled={testLoading} data-testid={`button-execute-test-${q.id}`}>
+                    {testLoading ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Play className="w-3.5 h-3.5 mr-1.5" />}
+                    Execute Query
+                  </Button>
+
+                  {testResults && (
+                    <div className="space-y-2 mt-2">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="text-[10px]">{testResults.resultCount} results</Badge>
+                        <span className="text-[10px] text-muted-foreground font-mono">Resolved: {testResults.resolvedQuery}</span>
+                      </div>
+                      {testResults.results?.map((r: any, i: number) => (
+                        <div key={i} className="p-2.5 rounded-md bg-background border text-xs space-y-1" data-testid={`test-result-${i}`}>
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium">{r.label}</span>
+                            <Badge variant="secondary" className="text-[9px]">{r.category}</Badge>
+                          </div>
+                          <p className="text-muted-foreground text-[11px] line-clamp-2">{r.description}</p>
+                          {r.enrichment?.regulatoryRelevance && (
+                            <p className="text-[10px] text-amber-600 dark:text-amber-400">
+                              <Shield className="w-3 h-3 inline mr-1" />
+                              {r.enrichment.regulatoryRelevance}
+                            </p>
+                          )}
+                          {r.linkedRegulations && (r.linkedRegulations as any[]).length > 0 && (
+                            <div className="flex gap-1 flex-wrap mt-1">
+                              {(r.linkedRegulations as any[]).slice(0, 5).map((reg: any, ri: number) => (
+                                <Badge key={ri} variant="outline" className="text-[9px]">{typeof reg === "string" ? reg : reg.name || reg.id}</Badge>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      {testResults.resultCount === 0 && (
+                        <p className="text-xs text-muted-foreground text-center py-3">No matching concepts found. Try different variable values or check the Knowledge Graph.</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      ))}
     </div>
   );
 }
