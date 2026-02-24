@@ -285,6 +285,9 @@ After receiving tool results, provide a structured analysis with key findings, s
         completedAt: new Date().toISOString(),
         output: { analysis: planChoice.message.content },
       });
+      if (options?.conversational) {
+        (steps as any).__conversationalResponse = planChoice.message.content;
+      }
     }
 
     for (let i = 0; i < toolCalls.length; i++) {

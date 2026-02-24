@@ -19155,13 +19155,51 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
         : [];
       const webSearchEnabled = agentTools.some(t => t.name === "web_search" && t.type === "builtin");
 
+      const mcpLinks = await storage.getAgentMcpServers(agentId);
+      const mcpServerIds = mcpLinks.map(l => l.serverId);
+      const hasMcpServers = mcpServerIds.length > 0;
+
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
 
       let fullResponse = "";
 
-      if (webSearchEnabled) {
+      if (hasMcpServers) {
+        res.write(`data: ${JSON.stringify({ content: "" })}\n\n`);
+
+        const conversationHistory = existingMsgs.length > 1
+          ? existingMsgs.slice(0, -1).map(m => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`).join("\n\n")
+          : "";
+        const mcpPrompt = conversationHistory
+          ? `## Conversation History\n${conversationHistory}\n\n## Current User Message\n${content}`
+          : content;
+
+        try {
+          const result = await executePromptWithMcp(
+            agentId,
+            "playground",
+            undefined,
+            mcpServerIds,
+            mcpPrompt,
+            agent.industry || undefined,
+            systemPrompt,
+            { conversational: true },
+          );
+
+          if (!result.success && result.summary?.error) {
+            fullResponse = `I wasn't able to complete your request: ${result.summary.error}`;
+          } else {
+            fullResponse = (result as any).conversationalResponse
+              || result.summary?.analysis?.summary
+              || "I processed your request but couldn't generate a detailed response.";
+          }
+          res.write(`data: ${JSON.stringify({ content: fullResponse })}\n\n`);
+        } catch (err: any) {
+          fullResponse = `I encountered an error while processing your request: ${err.message}`;
+          res.write(`data: ${JSON.stringify({ content: fullResponse })}\n\n`);
+        }
+      } else if (webSearchEnabled) {
         const inputMessages: Array<{ role: "developer" | "user" | "assistant"; content: string }> = [
           { role: "developer", content: systemPrompt },
           ...existingMsgs.map(m => ({
