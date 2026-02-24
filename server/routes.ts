@@ -7,7 +7,7 @@ import { eq, desc } from "drizzle-orm";
 import { conversations, messages as chatMessages, outcomeContracts, kpiDefinitions } from "@shared/schema";
 import { z, ZodError } from "zod";
 import { startWorker, jobEvents } from "./worker";
-import { executePromptWithMcp, startAgentRuntime, stopAgentRuntime, getActiveRuntimes, isRuntimeActive, runtimeEvents } from "./agent-runtime";
+import { executePromptWithMcp, executeTeamPipeline, startAgentRuntime, stopAgentRuntime, getActiveRuntimes, isRuntimeActive, runtimeEvents, type RuntimeAgent } from "./agent-runtime";
 import OpenAI, { toFile } from "openai";
 import multer from "multer";
 import { checkPermission, getRequestRole, getTraceRedactionLevel, getRedactionLevel, redactPayload } from "./permissions";
@@ -18346,52 +18346,82 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       const agent = await storage.getAgent(req.params.id);
       if (!agent) return res.status(404).json({ error: "Agent not found" });
 
+      const rtConfig = (agent.runtimeConfig as Record<string, any>) || {};
+      const isTeamAgent = agent.agentType === "team" && Array.isArray(rtConfig.orchestration?.workerIds) && rtConfig.orchestration.workerIds.length > 0;
+
       const mcpLinks = await storage.getAgentMcpServers(req.params.id);
       const mcpServerIds = mcpLinks.map((l: any) => l.serverId);
 
-      if (mcpServerIds.length === 0) {
-        return res.status(400).json({ error: "No MCP Servers linked to this agent. Link an MCP Server first to enable test runs." });
-      }
-
-      const rtConfig = (agent.runtimeConfig as Record<string, any>) || {};
       const prompt = req.body?.prompt || rtConfig.prompt || agent.systemPrompt || agent.description;
       if (!prompt) {
         return res.status(400).json({ error: "Agent has no task prompt configured. Set a prompt in runtime config or provide one in the request." });
       }
 
       const richSystemPrompt = buildAgentSystemPrompt(agent);
-      const agentOntologyTags = Array.isArray(agent.ontologyTags) ? (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) : [];
-      const result = await executePromptWithMcp(
-        req.params.id,
-        "test-run",
-        undefined,
-        mcpServerIds,
-        prompt,
-        (agent as any).industry || undefined,
-        richSystemPrompt,
-        { ontologyLabels: agentOntologyTags.map(t => t.conceptLabel) },
-      );
+
+      let result: { steps: any[]; success: boolean; summary: any; promptInputs?: any };
+
+      if (isTeamAgent) {
+        const teamRuntimeAgent: RuntimeAgent = {
+          deploymentId: "test-run",
+          agentId: req.params.id,
+          agentName: agent.name,
+          blueprintId: rtConfig.orchestration?.blueprintId || undefined,
+          mcpServerIds,
+          intervalMs: 0,
+          industry: (agent as any).industry || undefined,
+          prompt,
+          agentSystemPrompt: richSystemPrompt,
+          outcomeId: (agent as any).outcomeId || undefined,
+          agentType: "team",
+          runtimeConfig: rtConfig,
+          ontologyTags: Array.isArray(agent.ontologyTags) ? (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) : [],
+        };
+        result = await executeTeamPipeline(teamRuntimeAgent);
+      } else {
+        if (mcpServerIds.length === 0) {
+          return res.status(400).json({ error: "No MCP Servers linked to this agent. Link an MCP Server first to enable test runs." });
+        }
+        const agentOntologyTags = Array.isArray(agent.ontologyTags) ? (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) : [];
+        result = await executePromptWithMcp(
+          req.params.id,
+          "test-run",
+          undefined,
+          mcpServerIds,
+          prompt,
+          (agent as any).industry || undefined,
+          richSystemPrompt,
+          { ontologyLabels: agentOntologyTags.map(t => t.conceptLabel) },
+        );
+      }
 
       const toolCalls = result.steps
         .filter((s: any) => s.type === "api_call" && s.mcpResolved)
         .map((s: any) => ({ tool: s.mcpTool, server: s.mcpServer, input: s.input, output: s.output, status: s.status, error: s.error }));
 
       const testAnalysisStep = result.steps.find((s: any) => s.type === "ai_analysis" && s.status === "completed");
-      const testAnalysisText = testAnalysisStep?.output?.summary || testAnalysisStep?.output?.analysis || result.summary?.analysis?.summary || result.summary?.analysis?.analysis || "";
+      const orchestrationSummary = result.steps.find((s: any) => s.type === "orchestration_summary")?.output?.finalOutput;
+      const testAnalysisText = testAnalysisStep?.output?.summary || testAnalysisStep?.output?.analysis || orchestrationSummary || result.summary?.analysis?.summary || result.summary?.analysis?.analysis || "";
 
       await storage.createTrace({
         agentId: req.params.id,
         environment: "test",
         status: result.success ? "completed" : "failed",
         latencyMs: result.summary?.latencyMs || 0,
-        inputSummary: `Test Run: ${prompt.length > 120 ? prompt.substring(0, 117) + "..." : prompt}`,
+        inputSummary: isTeamAgent
+          ? `Team Pipeline Test: ${agent.name} (${rtConfig.orchestration?.workerIds?.length || 0} workers)`
+          : `Test Run: ${prompt.length > 120 ? prompt.substring(0, 117) + "..." : prompt}`,
         outputSummary: typeof testAnalysisText === "string" && testAnalysisText.length > 0 ? testAnalysisText : `${toolCalls.length} tools called | ${result.summary?.passedSteps}/${result.summary?.totalSteps} steps`,
         stepsJson: result.steps,
         modelId: "gpt-4.1",
-        promptInputs: (result as any).promptInputs || {
+        promptInputs: result.promptInputs || {
           systemPrompt: richSystemPrompt || prompt,
           userMessage: prompt,
-          contextVariables: { industry: (agent as any).industry || "general", testRun: true },
+          contextVariables: {
+            industry: (agent as any).industry || "general",
+            testRun: true,
+            ...(isTeamAgent ? { teamExecution: true, workerCount: rtConfig.orchestration?.workerIds?.length || 0, pattern: rtConfig.orchestration?.pattern || "supervisor" } : {}),
+          },
         },
         toolCalls: toolCalls.length > 0 ? toolCalls : null,
       });
@@ -18400,6 +18430,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         success: result.success,
         summary: result.summary,
         steps: result.steps,
+        ...(isTeamAgent ? { teamExecution: true, workersExecuted: result.summary?.workersExecuted || 0 } : {}),
       });
     } catch (e: any) {
       res.status(500).json({ error: e.message });

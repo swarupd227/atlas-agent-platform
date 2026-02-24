@@ -11,7 +11,7 @@ const openai = new OpenAI({
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
 });
 
-interface RuntimeAgent {
+export interface RuntimeAgent {
   deploymentId: string;
   agentId: string;
   agentName: string;
@@ -553,7 +553,7 @@ After receiving tool results, provide a structured analysis with key findings, s
   };
 }
 
-async function executeTeamPipeline(teamAgent: RuntimeAgent): Promise<{ steps: any[]; success: boolean; summary: any }> {
+export async function executeTeamPipeline(teamAgent: RuntimeAgent): Promise<{ steps: any[]; success: boolean; summary: any }> {
   const allSteps: any[] = [];
   const rtConfig = teamAgent.runtimeConfig || {};
   const orch = rtConfig.orchestration || {};

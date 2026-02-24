@@ -26,6 +26,9 @@ import {
   Bot,
   Play,
   Square,
+  Users,
+  Network,
+  Layers,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -82,12 +85,25 @@ interface PromptInputs {
   contextVariables: Record<string, unknown>;
 }
 
+interface PipelineStepData {
+  name: string;
+  status: string;
+  output?: any;
+  error?: string;
+  workerSteps?: any[];
+  startedAt?: string;
+  completedAt?: string;
+}
+
 type TimelineStep =
   | { type: "prompt"; data: PromptInputs | null }
   | { type: "decision"; data: Decision; originalIndex: number }
   | { type: "toolcall"; data: ToolCall; originalIndex: number }
   | { type: "policycheck"; data: PolicyCheck; originalIndex: number }
-  | { type: "output"; data: string | null };
+  | { type: "output"; data: string | null }
+  | { type: "orchestration"; data: PipelineStepData }
+  | { type: "worker_execution"; data: PipelineStepData }
+  | { type: "orchestration_summary"; data: PipelineStepData };
 
 function buildTimelineSteps(
   promptInputs: PromptInputs | null,
@@ -95,24 +111,41 @@ function buildTimelineSteps(
   toolCalls: ToolCall[],
   policyChecks: PolicyCheck[],
   outputSummary: string | null | undefined,
+  stepsJson?: any[],
 ): TimelineStep[] {
   const steps: TimelineStep[] = [];
 
+  const isTeamPipeline = stepsJson?.some(s => s.type === "orchestration" || s.type === "worker_execution" || s.type === "orchestration_summary");
+
   steps.push({ type: "prompt", data: promptInputs });
 
-  const maxInterleave = Math.max(decisions.length, toolCalls.length);
-  for (let i = 0; i < maxInterleave; i++) {
-    if (i < decisions.length) {
-      steps.push({ type: "decision", data: decisions[i], originalIndex: i });
+  if (isTeamPipeline && stepsJson) {
+    for (const s of stepsJson) {
+      if (s.type === "orchestration") {
+        steps.push({ type: "orchestration", data: s });
+      } else if (s.type === "worker_execution") {
+        steps.push({ type: "worker_execution", data: s });
+      } else if (s.type === "orchestration_summary") {
+        steps.push({ type: "orchestration_summary", data: s });
+      } else if (s.type === "approval_gate") {
+        steps.push({ type: "orchestration", data: { ...s, name: s.name || "Approval Gate" } });
+      }
     }
-    if (i < toolCalls.length) {
-      steps.push({ type: "toolcall", data: toolCalls[i], originalIndex: i });
+  } else {
+    const maxInterleave = Math.max(decisions.length, toolCalls.length);
+    for (let i = 0; i < maxInterleave; i++) {
+      if (i < decisions.length) {
+        steps.push({ type: "decision", data: decisions[i], originalIndex: i });
+      }
+      if (i < toolCalls.length) {
+        steps.push({ type: "toolcall", data: toolCalls[i], originalIndex: i });
+      }
     }
-  }
 
-  policyChecks.forEach((pc, i) => {
-    steps.push({ type: "policycheck", data: pc, originalIndex: i });
-  });
+    policyChecks.forEach((pc, i) => {
+      steps.push({ type: "policycheck", data: pc, originalIndex: i });
+    });
+  }
 
   steps.push({ type: "output", data: outputSummary || null });
 
@@ -130,6 +163,11 @@ function getStepDotColor(type: TimelineStep["type"]) {
       return "bg-blue-500";
     case "policycheck":
       return "bg-amber-500";
+    case "orchestration":
+    case "orchestration_summary":
+      return "bg-indigo-500";
+    case "worker_execution":
+      return "bg-cyan-500";
   }
 }
 
@@ -144,6 +182,11 @@ function getStepLineColor(type: TimelineStep["type"]) {
       return "border-blue-500/30";
     case "policycheck":
       return "border-amber-500/30";
+    case "orchestration":
+    case "orchestration_summary":
+      return "border-indigo-500/30";
+    case "worker_execution":
+      return "border-cyan-500/30";
   }
 }
 
@@ -184,6 +227,27 @@ function getStepTypeBadge(type: TimelineStep["type"]) {
           Output
         </Badge>
       );
+    case "orchestration":
+      return (
+        <Badge variant="outline" className="text-[10px] bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20">
+          <Network className="w-3 h-3 mr-0.5" />
+          Pipeline
+        </Badge>
+      );
+    case "worker_execution":
+      return (
+        <Badge variant="outline" className="text-[10px] bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border-cyan-500/20">
+          <Bot className="w-3 h-3 mr-0.5" />
+          Worker Agent
+        </Badge>
+      );
+    case "orchestration_summary":
+      return (
+        <Badge variant="outline" className="text-[10px] bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20">
+          <Layers className="w-3 h-3 mr-0.5" />
+          Pipeline Summary
+        </Badge>
+      );
   }
 }
 
@@ -199,6 +263,10 @@ function getStepTitle(step: TimelineStep): string {
       return step.data.policyName;
     case "output":
       return "Final output generated";
+    case "orchestration":
+    case "worker_execution":
+    case "orchestration_summary":
+      return step.data.name;
   }
 }
 
@@ -217,6 +285,10 @@ function getStepStatus(step: TimelineStep): "success" | "fail" | "neutral" {
       return step.data.passed ? "success" : "fail";
     case "output":
       return step.data ? "success" : "neutral";
+    case "orchestration":
+    case "worker_execution":
+    case "orchestration_summary":
+      return step.data.status === "completed" ? "success" : step.data.status === "failed" ? "fail" : "neutral";
   }
 }
 
@@ -313,12 +385,123 @@ function TimelineStepContent({ step }: { step: TimelineStep }) {
     }
     case "output":
       return step.data ? (
-        <div className="p-3 rounded-md bg-muted/40 text-xs leading-relaxed">
-          {step.data}
+        <div className="p-3 rounded-md bg-muted/40 text-xs leading-relaxed whitespace-pre-wrap">
+          {typeof step.data === "string" && step.data.startsWith("{") ? (() => {
+            try { const parsed = JSON.parse(step.data); return parsed.summary || parsed.analysis || step.data; } catch { return step.data; }
+          })() : step.data}
         </div>
       ) : (
         <p className="text-xs text-muted-foreground">No output recorded</p>
       );
+    case "orchestration": {
+      const d = step.data;
+      return (
+        <div className="flex flex-col gap-2">
+          {d.output?.pattern && (
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-muted-foreground">Pattern:</span>
+              <Badge variant="outline" className="text-[10px]">{d.output.pattern}</Badge>
+              <span className="text-[11px] text-muted-foreground">Workers:</span>
+              <Badge variant="outline" className="text-[10px]">{d.output.workerCount}</Badge>
+              {d.output.errorHandling && (
+                <>
+                  <span className="text-[11px] text-muted-foreground">Error Handling:</span>
+                  <Badge variant="outline" className="text-[10px]">{d.output.errorHandling}</Badge>
+                </>
+              )}
+            </div>
+          )}
+          {d.output?.gateType && (
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-600 border-amber-500/20">
+                <Shield className="w-3 h-3 mr-0.5" />
+                {d.output.autoApproved ? "Auto-approved" : "Manual Approval"}
+              </Badge>
+              {d.output.reason && <span className="text-[11px] text-muted-foreground">{d.output.reason}</span>}
+            </div>
+          )}
+        </div>
+      );
+    }
+    case "worker_execution": {
+      const d = step.data;
+      const workerSteps = d.workerSteps || [];
+      return (
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] text-muted-foreground">Steps:</span>
+              <Badge variant="outline" className="text-[10px]">{d.output?.passedSteps || 0}/{d.output?.stepsCount || 0}</Badge>
+            </div>
+            {d.output?.latencyMs != null && (
+              <div className="flex items-center gap-1.5">
+                <Timer className="w-3 h-3 text-muted-foreground" />
+                <span className="text-[11px] text-muted-foreground">{(d.output.latencyMs / 1000).toFixed(1)}s</span>
+              </div>
+            )}
+            {d.output?.toolsUsed?.length > 0 && (
+              <div className="flex items-center gap-1.5">
+                <Wrench className="w-3 h-3 text-muted-foreground" />
+                <span className="text-[11px] text-muted-foreground">{d.output.toolsUsed.map((t: any) => `${t.server}/${t.tool}`).join(", ")}</span>
+              </div>
+            )}
+          </div>
+          {d.output?.analysis && (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">AI Analysis</span>
+              <div className="p-3 rounded-md bg-muted/40 text-xs leading-relaxed whitespace-pre-wrap">
+                {typeof d.output.analysis === "object" ? (d.output.analysis.summary || d.output.analysis.analysis || JSON.stringify(d.output.analysis, null, 2)) : String(d.output.analysis)}
+              </div>
+            </div>
+          )}
+          {workerSteps.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Execution Steps</span>
+              <div className="flex flex-col gap-1 pl-3 border-l-2 border-cyan-500/20">
+                {workerSteps.map((ws: any, idx: number) => (
+                  <div key={idx} className="flex items-center gap-2 py-1">
+                    <div className={`w-2 h-2 rounded-full ${ws.status === "completed" ? "bg-emerald-500" : ws.status === "failed" ? "bg-red-500" : "bg-muted-foreground"}`} />
+                    <span className="text-[11px] font-medium">{ws.name}</span>
+                    <Badge variant="outline" className="text-[9px]">{ws.type}</Badge>
+                    {ws.mcpTool && <span className="text-[10px] text-muted-foreground">{ws.mcpServer}/{ws.mcpTool}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {d.error && (
+            <div className="p-2 rounded-md bg-red-500/10 text-xs text-red-600 dark:text-red-400">{d.error}</div>
+          )}
+        </div>
+      );
+    }
+    case "orchestration_summary": {
+      const d = step.data;
+      return (
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5">
+              <Users className="w-3.5 h-3.5 text-muted-foreground" />
+              <span className="text-[11px] text-muted-foreground">Workers Executed:</span>
+              <span className="text-xs font-medium">{d.output?.workersExecuted || 0}</span>
+            </div>
+            <Badge variant={d.output?.allSuccess ? "default" : "destructive"} className="text-[10px]">
+              {d.output?.allSuccess ? "All Passed" : "Has Failures"}
+            </Badge>
+          </div>
+          {d.output?.finalOutput && (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Final Pipeline Output</span>
+              <div className="p-3 rounded-md bg-muted/40 text-xs leading-relaxed whitespace-pre-wrap max-h-[300px] overflow-y-auto">
+                {typeof d.output.finalOutput === "string" && d.output.finalOutput.startsWith("{") ? (() => {
+                  try { const p = JSON.parse(d.output.finalOutput); return p.summary || p.analysis || d.output.finalOutput; } catch { return d.output.finalOutput; }
+                })() : String(d.output.finalOutput)}
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
   }
 }
 
@@ -390,7 +573,7 @@ export default function TraceDetail() {
   const totalToolLatency = toolCalls.reduce((sum, tc) => sum + (tc.latencyMs || 0), 0);
   const modelLatency = (trace.latencyMs || 0) - totalToolLatency;
 
-  const timelineSteps = buildTimelineSteps(promptInputs, decisions, toolCalls, policyChecks, trace.outputSummary);
+  const timelineSteps = buildTimelineSteps(promptInputs, decisions, toolCalls, policyChecks, trace.outputSummary, stepsJson);
 
   return (
     <div className="p-6 flex flex-col gap-6 max-w-7xl mx-auto overflow-y-auto h-full" data-testid="page-trace-detail">
