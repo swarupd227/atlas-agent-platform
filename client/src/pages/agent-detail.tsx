@@ -374,6 +374,18 @@ function AgentDetailInner() {
     },
   });
 
+  const runTestMutation = useMutation({
+    mutationFn: () =>
+      apiRequest("POST", `/api/agents/${agentId}/run-test`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId, "traces"] });
+      toast({ title: "Test run completed", description: "The agent executed a one-time test run. Check the Runs & Traces tab for results." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Test run failed", description: err.message, variant: "destructive" });
+    },
+  });
+
   const [assignMcpOpen, setAssignMcpOpen] = useState(false);
   const [selectedMcpServerId, setSelectedMcpServerId] = useState("");
 
@@ -783,8 +795,12 @@ function AgentDetailInner() {
             <><Rocket className="w-3.5 h-3.5 mr-1.5" /> Deploy & Run</>
           )}
         </Button>
-        <Button variant="outline" size="sm" data-testid="button-run-test">
-          <Play className="w-3.5 h-3.5 mr-1.5" /> Run Test
+        <Button variant="outline" size="sm" data-testid="button-run-test" onClick={() => runTestMutation.mutate()} disabled={runTestMutation.isPending}>
+          {runTestMutation.isPending ? (
+            <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Running...</>
+          ) : (
+            <><Play className="w-3.5 h-3.5 mr-1.5" /> Run Test</>
+          )}
         </Button>
         <Button variant="outline" size="sm" data-testid="button-run-shadow-replay" onClick={() => { setShadowReplayOpen(true); setShadowResult(null); }}>
           <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Run Shadow Replay

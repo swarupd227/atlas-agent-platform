@@ -18318,6 +18318,61 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
     }
   });
 
+  app.post("/api/agents/:id/run-test", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+      const mcpLinks = await storage.getAgentMcpServers(req.params.id);
+      const mcpServerIds = mcpLinks.map((l: any) => l.serverId);
+
+      if (mcpServerIds.length === 0) {
+        return res.status(400).json({ error: "No MCP Servers linked to this agent. Link an MCP Server first to enable test runs." });
+      }
+
+      const rtConfig = (agent.runtimeConfig as Record<string, any>) || {};
+      const prompt = req.body.prompt || rtConfig.prompt || agent.systemPrompt || agent.description;
+      if (!prompt) {
+        return res.status(400).json({ error: "Agent has no task prompt configured. Set a prompt in runtime config or provide one in the request." });
+      }
+
+      const richSystemPrompt = buildAgentSystemPrompt(agent);
+      const result = await executePromptWithMcp(
+        req.params.id,
+        "test-run",
+        undefined,
+        mcpServerIds,
+        prompt,
+        (agent as any).industry || undefined,
+        richSystemPrompt,
+      );
+
+      const toolCalls = result.steps
+        .filter((s: any) => s.type === "api_call" && s.mcpResolved)
+        .map((s: any) => ({ tool: s.mcpTool, server: s.mcpServer, input: s.input, status: s.status, error: s.error }));
+
+      await storage.createTrace({
+        agentId: req.params.id,
+        environment: "test",
+        status: result.success ? "completed" : "failed",
+        latencyMs: result.summary?.latencyMs || 0,
+        inputSummary: `Test Run: ${prompt.length > 120 ? prompt.substring(0, 117) + "..." : prompt}`,
+        outputSummary: result.summary?.analysis?.summary || "",
+        stepsJson: result.steps,
+        modelId: "gpt-4.1",
+        toolCalls: toolCalls.length > 0 ? toolCalls : null,
+      });
+
+      res.json({
+        success: result.success,
+        summary: result.summary,
+        steps: result.steps,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.get("/api/agents/:id/runtime-status", async (req, res) => {
     try {
       const agent = await storage.getAgent(req.params.id);
@@ -19195,6 +19250,24 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
               || "I processed your request but couldn't generate a detailed response.";
           }
           res.write(`data: ${JSON.stringify({ content: fullResponse })}\n\n`);
+
+          try {
+            const toolCalls = result.steps
+              .filter((s: any) => s.type === "api_call" && s.mcpResolved)
+              .map((s: any) => ({ tool: s.mcpTool, server: s.mcpServer, input: s.input, status: s.status, error: s.error }));
+            await storage.createTrace({
+              agentId,
+              environment: "playground",
+              status: result.success ? "completed" : "failed",
+              latencyMs: result.summary?.latencyMs || 0,
+              inputSummary: `Playground: ${content.length > 120 ? content.substring(0, 117) + "..." : content}`,
+              outputSummary: fullResponse.length > 300 ? fullResponse.substring(0, 297) + "..." : fullResponse,
+              stepsJson: result.steps,
+              modelId: "gpt-4.1",
+              toolCalls: toolCalls.length > 0 ? toolCalls : null,
+            });
+          } catch {}
+
         } catch (err: any) {
           fullResponse = `I encountered an error while processing your request: ${err.message}`;
           res.write(`data: ${JSON.stringify({ content: fullResponse })}\n\n`);

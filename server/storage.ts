@@ -806,7 +806,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getTracesByAgent(agentId: string) {
-    return db.select().from(runTraces).where(eq(runTraces.agentId, agentId));
+    return db.select().from(runTraces).where(eq(runTraces.agentId, agentId)).orderBy(desc(runTraces.startedAt));
   }
 
   async createTrace(trace: InsertRunTrace) {
