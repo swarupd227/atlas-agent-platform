@@ -3,6 +3,57 @@ import { EventEmitter } from "events";
 import OpenAI from "openai";
 import { searchKnowledgeBaseChunks } from "./embeddings";
 
+export async function executeKGQueryTemplate(
+  queryPattern: string,
+  variables: Record<string, string>,
+  industryId: string
+): Promise<{ resolvedQuery: string; resultCount: number; results: any[] }> {
+  let resolvedQuery = queryPattern;
+  for (const [key, val] of Object.entries(variables)) {
+    resolvedQuery = resolvedQuery.replace(new RegExp(`\\{${key}\\}`, "g"), val);
+  }
+
+  const unresolvedVars = resolvedQuery.match(/\{[a-zA-Z_]+\}/g);
+  if (unresolvedVars && unresolvedVars.length > 0) {
+    console.log(`[kg-query] Warning: unresolved variables in query: ${unresolvedVars.join(", ")}`);
+  }
+
+  const industry = industryId || "general";
+  const allConcepts = await storage.getOntologyConcepts(industry);
+  const fallback = allConcepts.length === 0 ? await storage.getAllOntologyConcepts() : allConcepts;
+
+  const keywords = resolvedQuery.toLowerCase().split(/[\s,+&]+/).filter(k => k.length > 2);
+  const matched = fallback.filter((c: any) => {
+    const searchable = `${c.label} ${c.category} ${c.description} ${(c.tags || []).join(" ")} ${(c.synonyms || []).join(" ")} ${c.ontologyName || ""}`.toLowerCase();
+    return keywords.some(kw => searchable.includes(kw));
+  }).slice(0, 20);
+
+  const enrichedResults = await Promise.all(matched.map(async (c: any) => {
+    const enhancement = await storage.getOntologyEnhancement(c.id);
+    return {
+      conceptId: c.id,
+      label: c.label,
+      category: c.category,
+      description: c.description,
+      properties: c.properties,
+      relationships: c.relationships,
+      tags: c.tags,
+      linkedRegulations: c.linkedRegulations,
+      enrichment: enhancement ? {
+        enrichedDescription: enhancement.enrichedDescription,
+        regulatoryRelevance: enhancement.regulatoryRelevance,
+        riskFactors: enhancement.riskFactors,
+      } : null,
+    };
+  }));
+
+  return {
+    resolvedQuery,
+    resultCount: enrichedResults.length,
+    results: enrichedResults,
+  };
+}
+
 export const runtimeEvents = new EventEmitter();
 runtimeEvents.setMaxListeners(50);
 
@@ -99,6 +150,48 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<string> {
         const mcpNote = s.requiredMcpServers?.length ? ` | Required MCP: ${s.requiredMcpServers.join(", ")}` : "";
         sections.push(`- ${s.name} (${s.domain}, v${s.version}): ${s.description}${toolsNote}${mcpNote}`);
       });
+
+      const kgResultLines: string[] = [];
+      for (const s of relevantSkills) {
+        const kgQueries = (s.knowledgeQueries as any[]) || [];
+        if (kgQueries.length === 0) continue;
+        for (const q of kgQueries) {
+          try {
+            const declaredVars = (q.variables || []) as string[];
+            const varValues: Record<string, string> = {};
+            for (const v of declaredVars) {
+              varValues[v] = agent.runtimeConfig?.[v] || agent.industry || "";
+            }
+            const result = await executeKGQueryTemplate(
+              q.queryPattern,
+              varValues,
+              agent.industry || "general"
+            );
+            if (result.resultCount > 0) {
+              kgResultLines.push(`### KG Query: "${q.name}" (from skill: ${s.name})`);
+              kgResultLines.push(`Resolved: ${result.resolvedQuery}`);
+              for (const c of result.results.slice(0, 10)) {
+                let detail = `- ${c.label} (${c.category}): ${c.description}`;
+                const regs = (c.linkedRegulations as any[]) || [];
+                if (regs.length > 0) {
+                  detail += ` | Regulations: ${regs.slice(0, 3).map((r: any) => typeof r === "string" ? r : r.name || r.id).join(", ")}`;
+                }
+                if (c.enrichment?.regulatoryRelevance) {
+                  detail += ` | Regulatory: ${c.enrichment.regulatoryRelevance}`;
+                }
+                kgResultLines.push(detail);
+              }
+            }
+          } catch (kgErr: any) {
+            console.log(`[agent-runtime] KG query "${q.name}" failed: ${kgErr.message}`);
+          }
+        }
+      }
+      if (kgResultLines.length > 0) {
+        sections.push(`\n## KNOWLEDGE GRAPH QUERY RESULTS (domain knowledge retrieved by your skills)`);
+        sections.push(`Use these results to ground your reasoning in domain-specific data:`);
+        kgResultLines.forEach(r => sections.push(r));
+      }
     }
   } catch {}
 

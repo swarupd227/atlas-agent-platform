@@ -7,7 +7,7 @@ import { eq, desc } from "drizzle-orm";
 import { conversations, messages as chatMessages, outcomeContracts, kpiDefinitions } from "@shared/schema";
 import { z, ZodError } from "zod";
 import { startWorker, jobEvents } from "./worker";
-import { executePromptWithMcp, executeTeamPipeline, startAgentRuntime, stopAgentRuntime, getActiveRuntimes, isRuntimeActive, runtimeEvents, type RuntimeAgent } from "./agent-runtime";
+import { executePromptWithMcp, executeTeamPipeline, executeKGQueryTemplate, startAgentRuntime, stopAgentRuntime, getActiveRuntimes, isRuntimeActive, runtimeEvents, type RuntimeAgent } from "./agent-runtime";
 import OpenAI, { toFile } from "openai";
 import multer from "multer";
 import { checkPermission, getRequestRole, getTraceRedactionLevel, getRedactionLevel, redactPayload } from "./permissions";
@@ -16304,46 +16304,9 @@ Return ONLY a valid JSON object with a "skills" array.`
       const { queryPattern, variables, industryId } = req.body;
       if (!queryPattern) return res.status(400).json({ error: "queryPattern is required" });
 
-      let resolvedQuery = queryPattern as string;
       const vars = (variables || {}) as Record<string, string>;
-      for (const [key, val] of Object.entries(vars)) {
-        resolvedQuery = resolvedQuery.replace(new RegExp(`\\{${key}\\}`, "g"), val);
-      }
-
-      const industry = industryId || "general";
-      const allConcepts = await storage.getOntologyConcepts(industry);
-      const fallbackAll = allConcepts.length === 0 ? await storage.getAllOntologyConcepts() : allConcepts;
-
-      const keywords = resolvedQuery.toLowerCase().split(/[\s,+&]+/).filter(k => k.length > 2);
-      const results = fallbackAll.filter((c: any) => {
-        const searchable = `${c.label} ${c.category} ${c.description} ${(c.tags || []).join(" ")} ${(c.synonyms || []).join(" ")} ${c.ontologyName || ""}`.toLowerCase();
-        return keywords.some(kw => searchable.includes(kw));
-      }).slice(0, 20);
-
-      const enrichedResults = await Promise.all(results.map(async (c: any) => {
-        const enhancement = await storage.getOntologyEnhancement(c.id);
-        return {
-          conceptId: c.id,
-          label: c.label,
-          category: c.category,
-          description: c.description,
-          properties: c.properties,
-          relationships: c.relationships,
-          tags: c.tags,
-          linkedRegulations: c.linkedRegulations,
-          enrichment: enhancement ? {
-            enrichedDescription: enhancement.enrichedDescription,
-            regulatoryRelevance: enhancement.regulatoryRelevance,
-            riskFactors: enhancement.riskFactors,
-          } : null,
-        };
-      }));
-
-      res.json({
-        resolvedQuery,
-        resultCount: enrichedResults.length,
-        results: enrichedResults,
-      });
+      const result = await executeKGQueryTemplate(queryPattern, vars, industryId || "general");
+      res.json(result);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
