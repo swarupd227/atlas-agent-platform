@@ -1165,7 +1165,7 @@ export default function OutcomeDiscover() {
         </div>
       ) : messages.length === 0 ? (
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "chat" | "record")} className="flex-1 flex flex-col">
-          <div className="flex justify-center pt-6">
+          <div className="flex justify-center pt-3">
             <TabsList>
               <TabsTrigger value="chat" data-testid="tab-chat-discovery">
                 <Sparkles className="w-4 h-4 mr-1.5" /> Chat Discovery
@@ -1176,19 +1176,19 @@ export default function OutcomeDiscover() {
             </TabsList>
           </div>
           <TabsContent value="chat" className="flex-1 flex flex-col">
-            <div className="flex-1 flex flex-col items-center justify-center p-6 gap-8 max-w-2xl mx-auto relative">
+            <div className="flex-1 flex flex-col items-center justify-center p-6 gap-5 max-w-2xl mx-auto relative">
               <div className="absolute inset-0 bg-gradient-to-b from-primary/[0.03] via-transparent to-transparent pointer-events-none" />
               <div className="absolute inset-0 pointer-events-none opacity-[0.03]" style={{ backgroundImage: "radial-gradient(circle, hsl(var(--primary)) 1px, transparent 1px)", backgroundSize: "24px 24px" }} />
-              <div className="flex flex-col items-center gap-4 text-center relative z-10" data-testid="hero-chat-discovery">
+              <div className="flex flex-col items-center gap-2.5 text-center relative z-10" data-testid="hero-chat-discovery">
                 <div className="relative">
                   <div className="absolute inset-0 rounded-full bg-gradient-to-br from-primary/25 to-violet-500/20 blur-xl scale-150" />
-                  <div className="relative w-16 h-16 rounded-full bg-gradient-to-br from-primary/15 to-violet-500/10 border border-primary/20 flex items-center justify-center">
-                    <Sparkles className="w-8 h-8 text-primary animate-pulse" />
+                  <div className="relative w-12 h-12 rounded-full bg-gradient-to-br from-primary/15 to-violet-500/10 border border-primary/20 flex items-center justify-center">
+                    <Sparkles className="w-6 h-6 text-primary animate-pulse" />
                   </div>
                 </div>
-                <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-discover-title">What business outcome do you want to achieve?</h1>
-                <p className="text-muted-foreground text-sm max-w-md leading-relaxed">
-                  Describe your business challenge in plain language. The platform will map your workflows, propose AI agent roles, define success metrics, and draft an Outcome Contract.
+                <h1 className="text-xl font-semibold tracking-tight" data-testid="text-discover-title">What business outcome do you want to achieve?</h1>
+                <p className="text-muted-foreground text-xs max-w-md leading-relaxed">
+                  Describe your business challenge in plain language. The platform will map workflows, propose agent roles, define metrics, and draft an Outcome Contract.
                 </p>
                 <div className="flex items-center gap-2 flex-wrap justify-center" data-testid="hero-feature-pills">
                   {[
@@ -1205,7 +1205,7 @@ export default function OutcomeDiscover() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full relative z-10">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full relative z-10">
                 {starterPrompts.map((sp, i) => {
                   const accentColors = [
                     "from-primary/10 to-primary/[0.02] border-l-primary/40",
@@ -1221,22 +1221,22 @@ export default function OutcomeDiscover() {
                       onClick={() => sendMessage(sp.prompt)}
                       data-testid={`card-starter-${i}`}
                     >
-                      <CardContent className={`flex items-start gap-3 p-4 border-l-2 bg-gradient-to-r ${accentColors[i % accentColors.length]}`}>
-                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${iconColors[i % iconColors.length]}`}>
-                          <sp.icon className="w-4 h-4" />
+                      <CardContent className={`flex items-center gap-2.5 p-3 border-l-2 bg-gradient-to-r ${accentColors[i % accentColors.length]}`}>
+                        <div className={`w-7 h-7 rounded-md flex items-center justify-center shrink-0 ${iconColors[i % iconColors.length]}`}>
+                          <sp.icon className="w-3.5 h-3.5" />
                         </div>
-                        <div className="flex flex-col gap-1 min-w-0 flex-1">
-                          <span className="text-sm font-medium">{sp.label}</span>
-                          <span className="text-xs text-muted-foreground line-clamp-2">{sp.prompt}</span>
+                        <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+                          <span className="text-xs font-medium">{sp.label}</span>
+                          <span className="text-[11px] text-muted-foreground line-clamp-1">{sp.prompt}</span>
                         </div>
-                        <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0 mt-2" />
+                        <ChevronRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                       </CardContent>
                     </Card>
                   );
                 })}
               </div>
 
-              <div className="flex flex-col gap-1 w-full max-w-lg">
+              <div className="flex flex-col gap-1 w-full relative z-10">
                 {voiceInput.isListening && voiceInput.interimText && (
                   <div className="flex items-center gap-1.5 px-2 py-1">
                     <span className="relative flex h-2 w-2 shrink-0">
