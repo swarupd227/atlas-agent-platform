@@ -371,7 +371,17 @@ export default function TraceDetail() {
   }
 
   const promptInputs = trace.promptInputs as PromptInputs | null;
-  const toolCalls = (trace.toolCalls as ToolCall[] | null) || [];
+  const rawToolCalls = (trace.toolCalls as ToolCall[] | null) || [];
+  const stepsJson = (trace.stepsJson as Array<{ type?: string; output?: unknown; mcpTool?: string; input?: Record<string, unknown> }> | null) || [];
+  const apiSteps = stepsJson.filter(s => s.type === "api_call");
+  const toolCalls = rawToolCalls.map((tc, i) => {
+    if (tc.output || tc.result) return tc;
+    const matchStep = apiSteps[i];
+    if (matchStep?.output) {
+      return { ...tc, output: matchStep.output };
+    }
+    return tc;
+  });
   const retrievedDocs = (trace.retrievedDocs as RetrievedDoc[] | null) || [];
   const decisions = (trace.decisions as Decision[] | null) || [];
   const policyChecks = (trace.policyChecks as PolicyCheck[] | null) || [];

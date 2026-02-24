@@ -18349,7 +18349,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
 
       const toolCalls = result.steps
         .filter((s: any) => s.type === "api_call" && s.mcpResolved)
-        .map((s: any) => ({ tool: s.mcpTool, server: s.mcpServer, input: s.input, status: s.status, error: s.error }));
+        .map((s: any) => ({ tool: s.mcpTool, server: s.mcpServer, input: s.input, output: s.output, status: s.status, error: s.error }));
 
       await storage.createTrace({
         agentId: req.params.id,
@@ -19254,7 +19254,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
           try {
             const toolCalls = result.steps
               .filter((s: any) => s.type === "api_call" && s.mcpResolved)
-              .map((s: any) => ({ tool: s.mcpTool, server: s.mcpServer, input: s.input, status: s.status, error: s.error }));
+              .map((s: any) => ({ tool: s.mcpTool, server: s.mcpServer, input: s.input, output: s.output, status: s.status, error: s.error }));
             await storage.createTrace({
               agentId,
               environment: "playground",
