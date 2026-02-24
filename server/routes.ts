@@ -18252,6 +18252,114 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
     }
   });
 
+  app.post("/api/agents/:id/deploy-and-run", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+      const mcpLinks = await storage.getAgentMcpServers(req.params.id);
+      const mcpServerIds = mcpLinks.map((l: any) => l.serverId);
+
+      const rtConfig = (agent.runtimeConfig as Record<string, any>) || {};
+      const prompt = rtConfig.prompt || agent.systemPrompt || agent.description;
+      if (!prompt) {
+        return res.status(400).json({ error: "Agent has no task prompt, system prompt, or description configured. Cannot start runtime." });
+      }
+
+      if (!rtConfig.prompt && prompt) {
+        await storage.updateAgent(req.params.id, {
+          runtimeConfig: { ...rtConfig, prompt },
+        });
+      }
+
+      const deployments = await storage.getDeployments();
+      let deployment = deployments.find(d => d.agentId === req.params.id && (d.status === "deployed" || d.status === "pending"));
+
+      if (!deployment) {
+        const industry = (agent as any).industry || req.body.industry || "technology";
+        deployment = await storage.createDeployment({
+          agentId: req.params.id,
+          agentName: agent.name,
+          environment: "production",
+          industry,
+          status: "pending",
+          version: agent.currentVersion || "1.0.0",
+          releaseNotes: `Auto-deployment for ${agent.name}`,
+          requiredApprovals: 0,
+          currentApprovals: 0,
+        });
+      }
+
+      if (deployment.status !== "deployed") {
+        const pipelineStages = Array.isArray(deployment.pipelineStages)
+          ? (deployment.pipelineStages as any[]).map(s => ({ ...s, status: "passed", completedAt: new Date().toISOString(), attestation: "Auto-approved by Deploy & Run" }))
+          : [];
+        deployment = await storage.updateDeployment(deployment.id, {
+          pipelineStages,
+          pipelineComplete: true,
+          status: "deployed",
+          deployedAt: new Date(),
+        }) as any;
+        await storage.updateAgent(req.params.id, { status: "deployed" });
+      }
+
+      const richSystemPrompt = buildAgentSystemPrompt(agent);
+      stopAgentRuntime(deployment!.id);
+      const runtimeResult = await startAgentRuntime(deployment!.id, richSystemPrompt);
+
+      res.json({
+        deployment,
+        runtimeStarted: runtimeResult.started,
+        runtimeMessage: runtimeResult.message,
+        agentStatus: "deployed",
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/agents/:id/runtime-status", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+      const deployments = await storage.getDeployments();
+      const agentDeployments = deployments
+        .filter(d => d.agentId === req.params.id)
+        .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+      const activeDeployment = agentDeployments.find(d => d.status === "deployed");
+
+      const runs = await storage.getAgentRuntimeRuns(req.params.id);
+      const recentRuns = runs
+        .sort((a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime())
+        .slice(0, 10);
+
+      const rtConfig = (agent.runtimeConfig as Record<string, any>) || {};
+      const isActive = activeDeployment ? isRuntimeActive(activeDeployment.id) : false;
+
+      const mcpLinks = await storage.getAgentMcpServers(req.params.id);
+      const hasPrompt = !!(rtConfig.prompt || agent.systemPrompt || agent.description);
+      const hasMcpServers = mcpLinks.length > 0;
+
+      res.json({
+        isActive,
+        deploymentId: activeDeployment?.id || null,
+        deploymentStatus: activeDeployment?.status || null,
+        lastRun: recentRuns[0] || null,
+        recentRuns,
+        scheduleIntervalMinutes: rtConfig.scheduleIntervalMinutes || 0,
+        readiness: {
+          hasPrompt,
+          hasMcpServers,
+          isDeployed: !!activeDeployment,
+          canRun: hasPrompt && hasMcpServers,
+        },
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // === Canary Deployment Console Routes ===
 
   app.get("/api/canary-deployments", async (req, res) => {

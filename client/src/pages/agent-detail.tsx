@@ -335,6 +335,23 @@ function AgentDetailInner() {
     queryKey: ["/api/blueprints"],
   });
   const agentBlueprint = allBlueprints?.find(b => b.agentId === agentId);
+  const { data: runtimeStatus, refetch: refetchRuntimeStatus } = useQuery<{
+    isActive: boolean;
+    deploymentId: string | null;
+    deploymentStatus: string | null;
+    lastRun: any;
+    recentRuns: any[];
+    scheduleIntervalMinutes: number;
+    readiness: { hasPrompt: boolean; hasMcpServers: boolean; isDeployed: boolean; canRun: boolean };
+  }>({
+    queryKey: ["/api/agents", agentId, "runtime-status"],
+    queryFn: async () => {
+      const res = await fetch(`/api/agents/${agentId}/runtime-status`);
+      return res.json();
+    },
+    enabled: !!agentId,
+    refetchInterval: 15000,
+  });
   const { industry } = useIndustry();
 
   const [, navigate] = useLocation();
@@ -342,6 +359,20 @@ function AgentDetailInner() {
   const deployPerm = usePermission("deploy_staging_pilot");
   const tracesPerm = usePermission("view_traces");
   const approvalPerm = usePermission("approve_changes");
+
+  const deployAndRunMutation = useMutation({
+    mutationFn: () =>
+      apiRequest("POST", `/api/agents/${agentId}/deploy-and-run`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId, "runtime-status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/deployments"] });
+      toast({ title: "Agent deployed & runtime started", description: "The agent is now running and will execute its task." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Deploy & Run failed", description: err.message, variant: "destructive" });
+    },
+  });
 
   const [assignMcpOpen, setAssignMcpOpen] = useState(false);
   const [selectedMcpServerId, setSelectedMcpServerId] = useState("");
@@ -738,6 +769,20 @@ function AgentDetailInner() {
             <MessageSquare className="w-3.5 h-3.5 mr-1.5" /> Playground
           </Button>
         </Link>
+        <Button
+          size="sm"
+          onClick={() => deployAndRunMutation.mutate()}
+          disabled={deployAndRunMutation.isPending || !runtimeStatus?.readiness?.canRun}
+          data-testid="button-deploy-and-run"
+        >
+          {deployAndRunMutation.isPending ? (
+            <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Deploying...</>
+          ) : runtimeStatus?.isActive ? (
+            <><Zap className="w-3.5 h-3.5 mr-1.5" /> Re-deploy & Run</>
+          ) : (
+            <><Rocket className="w-3.5 h-3.5 mr-1.5" /> Deploy & Run</>
+          )}
+        </Button>
         <Button variant="outline" size="sm" data-testid="button-run-test">
           <Play className="w-3.5 h-3.5 mr-1.5" /> Run Test
         </Button>

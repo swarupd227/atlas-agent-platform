@@ -21,6 +21,83 @@ interface RuntimeAgent {
   industry?: string;
   prompt: string;
   agentSystemPrompt?: string;
+  outcomeId?: string;
+  agentType?: string;
+  runtimeConfig?: Record<string, any>;
+}
+
+async function buildRuntimeContext(agent: RuntimeAgent): Promise<string> {
+  const sections: string[] = [];
+
+  if (agent.agentSystemPrompt) {
+    sections.push(agent.agentSystemPrompt);
+  }
+
+  if (agent.outcomeId) {
+    try {
+      const outcome = await storage.getOutcome(agent.outcomeId);
+      if (outcome) {
+        sections.push(`\n## OUTCOME CONTRACT`);
+        sections.push(`Name: ${outcome.name}`);
+        if (outcome.description) sections.push(`Description: ${outcome.description}`);
+        sections.push(`Risk Tier: ${outcome.riskTier}`);
+        sections.push(`Status: ${outcome.status}`);
+        if (outcome.pricingModel) sections.push(`Pricing Model: ${outcome.pricingModel}`);
+        if (outcome.riskThreshold) sections.push(`Risk Threshold: ${(outcome.riskThreshold * 100).toFixed(0)}%`);
+        if ((outcome as any).slaDescription) sections.push(`SLA: ${(outcome as any).slaDescription}`);
+
+        const kpis = await storage.getKpisByOutcome(agent.outcomeId);
+        if (kpis.length > 0) {
+          sections.push(`\n## KPI TARGETS (you must optimize for these)`);
+          kpis.forEach(kpi => {
+            const progress = kpi.target ? `${((kpi.currentValue || 0) / kpi.target * 100).toFixed(0)}%` : "N/A";
+            sections.push(`- ${kpi.name}: current=${kpi.currentValue ?? 0}, target=${kpi.target}, unit=${kpi.unit}, weight=${kpi.weight ?? 1}, progress=${progress}${kpi.slaThreshold ? `, SLA threshold=${kpi.slaThreshold}` : ""}`);
+          });
+          sections.push(`Prioritize KPIs with higher weight. Flag if any KPI is breaching its SLA threshold.`);
+        }
+      }
+    } catch (err: any) {
+      console.log(`[agent-runtime] Could not load outcome context: ${err.message}`);
+    }
+  }
+
+  try {
+    const policies = await storage.getPolicies();
+    const activePolicies = policies.filter(p => p.status === "active");
+    if (activePolicies.length > 0) {
+      sections.push(`\n## GOVERNANCE POLICIES (you must comply with these)`);
+      activePolicies.slice(0, 10).forEach(p => {
+        const policyJson = p.policyJson as any;
+        const enforcement = policyJson?.enforcement || "soft";
+        const rules = Array.isArray(policyJson?.rules) ? policyJson.rules.slice(0, 3).map((r: any) => r.description || r.name || JSON.stringify(r)).join("; ") : "";
+        sections.push(`- [${enforcement.toUpperCase()}] ${p.name} (${p.domain}): ${p.description || ""}${rules ? ` Rules: ${rules}` : ""}`);
+      });
+    }
+  } catch {}
+
+  const rtConfig = agent.runtimeConfig || {};
+  if (Array.isArray(rtConfig.kpiBindings) && rtConfig.kpiBindings.length > 0) {
+    sections.push(`\n## ASSIGNED KPI BINDINGS: ${rtConfig.kpiBindings.join(", ")}`);
+  }
+  if (Array.isArray(rtConfig.workflowSteps) && rtConfig.workflowSteps.length > 0) {
+    sections.push(`\n## WORKFLOW STEPS`);
+    rtConfig.workflowSteps.forEach((step: string, i: number) => {
+      sections.push(`${i + 1}. ${step}`);
+    });
+  }
+  if (rtConfig.estimatedImpact) {
+    sections.push(`\nExpected Impact: ${rtConfig.estimatedImpact}`);
+  }
+
+  if (agent.agentType === "team" && rtConfig.orchestration) {
+    const orch = rtConfig.orchestration;
+    sections.push(`\n## ORCHESTRATION CONFIG`);
+    sections.push(`Pattern: ${orch.pattern || "supervisor"}`);
+    if (orch.errorHandling) sections.push(`Error Handling: ${orch.errorHandling}`);
+    if (orch.handoffRules) sections.push(`Handoff Rules: ${orch.handoffRules}`);
+  }
+
+  return sections.join("\n");
 }
 
 const activeAgents = new Map<string, { timer: NodeJS.Timeout; agent: RuntimeAgent }>();
@@ -392,6 +469,210 @@ After receiving tool results, provide a structured analysis with key findings, s
   };
 }
 
+async function executeTeamPipeline(teamAgent: RuntimeAgent): Promise<{ steps: any[]; success: boolean; summary: any }> {
+  const allSteps: any[] = [];
+  const rtConfig = teamAgent.runtimeConfig || {};
+  const orch = rtConfig.orchestration || {};
+  const workerIds: string[] = Array.isArray(orch.workerIds) ? orch.workerIds : [];
+  const blueprintId = orch.blueprintId || teamAgent.blueprintId;
+
+  allSteps.push({
+    id: "team_step_1",
+    name: "Orchestrator: Initialize Pipeline",
+    type: "orchestration",
+    status: "completed",
+    startedAt: new Date().toISOString(),
+    completedAt: new Date().toISOString(),
+    output: {
+      pattern: orch.pattern || "supervisor",
+      workerCount: workerIds.length,
+      errorHandling: orch.errorHandling || "retry then escalate",
+    },
+  });
+
+  let executionOrder: Array<{ agentId: string; nodeId?: string }> = [];
+
+  if (blueprintId) {
+    try {
+      const nodes = await storage.getTeamBlueprintNodes(blueprintId);
+      const edges = await storage.getTeamBlueprintEdges(blueprintId);
+      const agentNodes = nodes.filter(n => n.nodeType === "agent" && n.refAgentId);
+      const gateNodes = nodes.filter(n => n.nodeType === "approval_gate" || n.gateType);
+
+      const visited = new Set<string>();
+      const sorted: typeof nodes[number][] = [];
+
+      const topoVisit = (nodeId: string) => {
+        if (visited.has(nodeId)) return;
+        visited.add(nodeId);
+        const incoming = edges.filter(e => e.targetNodeId === nodeId);
+        for (const edge of incoming) {
+          topoVisit(edge.sourceNodeId);
+        }
+        const node = nodes.find(n => n.id === nodeId);
+        if (node) sorted.push(node);
+      }
+
+      for (const node of nodes) {
+        topoVisit(node.id);
+      }
+
+      for (const node of sorted) {
+        if (node.nodeType === "agent" && node.refAgentId) {
+          executionOrder.push({ agentId: node.refAgentId, nodeId: node.id });
+        } else if (node.nodeType === "approval_gate" || node.gateType) {
+          allSteps.push({
+            id: `team_gate_${node.id}`,
+            name: `Approval Gate: ${node.label}`,
+            type: "approval_gate",
+            status: "completed",
+            startedAt: new Date().toISOString(),
+            completedAt: new Date().toISOString(),
+            output: { gateType: node.gateType || "manual", autoApproved: true, reason: "Runtime auto-approval for pipeline execution" },
+          });
+        }
+      }
+    } catch (err: any) {
+      console.log(`[agent-runtime] Could not load blueprint graph, falling back to workerIds: ${err.message}`);
+    }
+  }
+
+  if (executionOrder.length === 0) {
+    executionOrder = workerIds.map(id => ({ agentId: id }));
+  }
+
+  let previousOutput: string = "";
+  let allSuccess = true;
+
+  for (let i = 0; i < executionOrder.length; i++) {
+    const { agentId: workerId } = executionOrder[i];
+    const workerAgent = await storage.getAgent(workerId);
+    if (!workerAgent) {
+      allSteps.push({
+        id: `team_worker_${i}`,
+        name: `Worker ${i + 1}: Unknown Agent`,
+        type: "worker_execution",
+        status: "failed",
+        startedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        error: `Worker agent ${workerId} not found`,
+      });
+      allSuccess = false;
+      continue;
+    }
+
+    const workerRtConfig = (workerAgent.runtimeConfig as Record<string, any>) || {};
+    const workerPrompt = workerRtConfig.prompt || workerAgent.description || `Execute task for ${workerAgent.name}`;
+    const contextualPrompt = previousOutput
+      ? `${workerPrompt}\n\n## INPUT FROM PREVIOUS STAGE\n${previousOutput}`
+      : workerPrompt;
+
+    const workerMcpLinks = await storage.getAgentMcpServers(workerId);
+    const workerMcpIds = workerMcpLinks.map(l => l.serverId);
+
+    const workerRuntimeAgent: RuntimeAgent = {
+      deploymentId: teamAgent.deploymentId,
+      agentId: workerId,
+      agentName: workerAgent.name,
+      mcpServerIds: workerMcpIds.length > 0 ? workerMcpIds : teamAgent.mcpServerIds,
+      intervalMs: 0,
+      industry: teamAgent.industry,
+      prompt: contextualPrompt,
+      agentSystemPrompt: workerAgent.systemPrompt || undefined,
+      outcomeId: (workerAgent as any).outcomeId || teamAgent.outcomeId,
+      agentType: "single",
+      runtimeConfig: workerRtConfig,
+    };
+
+    const workerContext = await buildRuntimeContext(workerRuntimeAgent);
+
+    allSteps.push({
+      id: `team_worker_${i}`,
+      name: `Worker ${i + 1}: ${workerAgent.name}`,
+      type: "worker_execution",
+      status: "running",
+      startedAt: new Date().toISOString(),
+    });
+
+    try {
+      const result = await executePromptWithMcp(
+        workerId,
+        teamAgent.deploymentId,
+        undefined,
+        workerRuntimeAgent.mcpServerIds,
+        contextualPrompt,
+        teamAgent.industry,
+        workerContext || workerAgent.systemPrompt || undefined,
+      );
+
+      const lastStep = allSteps[allSteps.length - 1];
+      lastStep.status = result.success ? "completed" : "failed";
+      lastStep.completedAt = new Date().toISOString();
+      lastStep.output = {
+        stepsCount: result.steps.length,
+        passedSteps: result.summary.passedSteps,
+        failedSteps: result.summary.failedSteps,
+        latencyMs: result.summary.latencyMs,
+        toolsUsed: result.summary.toolsUsed,
+        analysis: result.summary.analysis,
+      };
+      lastStep.workerSteps = result.steps;
+
+      if (!result.success) allSuccess = false;
+
+      const analysisStep = result.steps.find((s: any) => s.type === "ai_analysis" && s.status === "completed");
+      previousOutput = analysisStep?.output?.summary || JSON.stringify(result.summary.analysis || {});
+    } catch (err: any) {
+      const lastStep = allSteps[allSteps.length - 1];
+      lastStep.status = "failed";
+      lastStep.completedAt = new Date().toISOString();
+      lastStep.error = err.message;
+      allSuccess = false;
+
+      if ((orch.errorHandling || "").includes("escalate")) {
+        allSteps.push({
+          id: `team_escalation_${i}`,
+          name: `Escalation: ${workerAgent.name} failed`,
+          type: "escalation",
+          status: "completed",
+          startedAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+          output: { reason: err.message, action: "Pipeline halted per error handling policy" },
+        });
+        break;
+      }
+    }
+  }
+
+  allSteps.push({
+    id: "team_summary",
+    name: "Orchestrator: Pipeline Summary",
+    type: "orchestration_summary",
+    status: allSuccess ? "completed" : "failed",
+    startedAt: new Date().toISOString(),
+    completedAt: new Date().toISOString(),
+    output: {
+      workersExecuted: executionOrder.length,
+      allSuccess,
+      finalOutput: previousOutput,
+    },
+  });
+
+  return {
+    steps: allSteps,
+    success: allSuccess,
+    summary: {
+      totalSteps: allSteps.length,
+      passedSteps: allSteps.filter(s => s.status === "completed").length,
+      failedSteps: allSteps.filter(s => s.status === "failed").length,
+      latencyMs: 0,
+      teamExecution: true,
+      workersExecuted: executionOrder.length,
+      pattern: orch.pattern || "supervisor",
+    },
+  };
+}
+
 async function executeAgentCycle(agent: RuntimeAgent) {
   console.log(`[agent-runtime] Executing cycle for ${agent.agentName} (deployment: ${agent.deploymentId})`);
 
@@ -400,6 +681,9 @@ async function executeAgentCycle(agent: RuntimeAgent) {
     return;
   }
 
+  const isTeam = agent.agentType === "team" && agent.runtimeConfig?.orchestration?.workerIds?.length > 0;
+  const enrichedContext = isTeam ? undefined : await buildRuntimeContext(agent);
+
   const runtimeRun = await storage.createAgentRuntimeRun({
     agentId: agent.agentId,
     deploymentId: agent.deploymentId,
@@ -407,19 +691,21 @@ async function executeAgentCycle(agent: RuntimeAgent) {
     triggerType: "scheduled",
     blueprintId: agent.blueprintId || null,
     mcpServerId: agent.mcpServerIds[0] || null,
-    inputConfig: { prompt: agent.prompt },
+    inputConfig: { prompt: agent.prompt, contextSections: enrichedContext ? ["outcome", "kpis", "policies", "workflow"] : [], teamExecution: isTeam },
   });
 
   try {
-    const result = await executePromptWithMcp(
-      agent.agentId,
-      agent.deploymentId,
-      agent.blueprintId,
-      agent.mcpServerIds,
-      agent.prompt,
-      agent.industry,
-      agent.agentSystemPrompt,
-    );
+    const result = isTeam
+      ? await executeTeamPipeline(agent)
+      : await executePromptWithMcp(
+          agent.agentId,
+          agent.deploymentId,
+          agent.blueprintId,
+          agent.mcpServerIds,
+          agent.prompt,
+          agent.industry,
+          enrichedContext || agent.agentSystemPrompt,
+        );
 
     await storage.updateAgentRuntimeRun(runtimeRun.id, {
       status: result.success ? "completed" : "failed",
@@ -505,6 +791,9 @@ export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?
     industry: deployment.industry || (agent as any).industry,
     prompt,
     agentSystemPrompt,
+    outcomeId: (agent as any).outcomeId || undefined,
+    agentType: (agent as any).agentType || "single",
+    runtimeConfig: rtConfig,
   };
 
   if (intervalMinutes > 0) {
