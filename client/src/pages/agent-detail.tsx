@@ -468,6 +468,33 @@ function AgentDetailInner() {
     refetchInterval: 30000,
   });
 
+  const { data: kpiContributions, isLoading: kpiLoading } = useQuery<{
+    outcomeId: string | null;
+    outcomeName: string;
+    kpis: Array<{
+      kpiId: string;
+      kpiName: string;
+      unit: string;
+      target: number;
+      currentValue: number;
+      baseline: number;
+      weight: number;
+      progressPct: number;
+      agentContribution: number;
+      agentSharePct: number;
+      agentTraces: number;
+      status: string;
+    }>;
+    overallContribution: number;
+    totalBoundAgents: number;
+    agentSuccessfulRuns: number;
+    agentTotalRuns: number;
+  }>({
+    queryKey: ["/api/agents", agentId, "kpi-contributions"],
+    enabled: !!agentId && !!agent?.outcomeId,
+    refetchInterval: 30000,
+  });
+
   const { data: deprecationSignals, isLoading: deprecationLoading, isError: deprecationError } = useQuery<{
     riskScore: number;
     recommendation: string;
@@ -1124,30 +1151,84 @@ function AgentDetailInner() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <Card>
               <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-medium">Outcome Contribution</CardTitle>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm font-medium">Outcome KPI Contribution</CardTitle>
+                  {kpiContributions?.kpis && kpiContributions.kpis.length > 0 && (
+                    <span className="text-xs text-muted-foreground">{kpiContributions.agentSuccessfulRuns}/{kpiContributions.agentTotalRuns} runs successful</span>
+                  )}
+                </div>
               </CardHeader>
               <CardContent className="flex flex-col gap-3">
-                {outcome ? (
-                  <div className="flex flex-col gap-2">
-                    <div className="flex items-center gap-2">
-                      <div className="w-7 h-7 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
-                        <BarChart3 className="w-3.5 h-3.5 text-primary" />
+                {!outcome ? (
+                  <p className="text-sm text-muted-foreground py-4 text-center">No outcome linked</p>
+                ) : kpiLoading ? (
+                  <div className="flex flex-col gap-3">
+                    <Skeleton className="h-4 w-48" />
+                    {[1,2,3].map(i => (
+                      <div key={i} className="flex flex-col gap-1">
+                        <Skeleton className="h-3 w-full" />
+                        <Skeleton className="h-2 w-full" />
+                        <Skeleton className="h-2 w-32" />
                       </div>
-                      <span className="text-sm font-medium">{outcome.name}</span>
+                    ))}
+                  </div>
+                ) : kpiContributions?.kpis && kpiContributions.kpis.length > 0 ? (
+                  <div className="flex flex-col gap-3">
+                    <div className="flex items-center gap-2 pb-1 border-b border-border/50">
+                      <div className="w-6 h-6 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
+                        <BarChart3 className="w-3 h-3 text-primary" />
+                      </div>
+                      <Link href={`/outcomes/${outcome.id}`}>
+                        <span className="text-xs font-medium text-primary hover:underline cursor-pointer">{outcome.name}</span>
+                      </Link>
+                      <span className="ml-auto text-xs text-muted-foreground">{kpiContributions.totalBoundAgents} agents</span>
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="p-3 rounded-md bg-muted/50">
-                        <span className="text-xs text-muted-foreground block">Monthly Revenue</span>
-                        <span className="text-lg font-semibold">${(agent.monthlyRevenue || 0).toLocaleString()}</span>
-                      </div>
-                      <div className="p-3 rounded-md bg-muted/50">
-                        <span className="text-xs text-muted-foreground block">Total Runs</span>
-                        <span className="text-lg font-semibold">{(agent.totalRuns || 0).toLocaleString()}</span>
-                      </div>
+                    {kpiContributions.kpis.map(kpi => {
+                      const statusColor = kpi.status === "met" ? "text-emerald-500" : kpi.status === "on_track" ? "text-blue-500" : kpi.status === "at_risk" ? "text-amber-500" : "text-red-500";
+                      const barColor = kpi.status === "met" ? "bg-emerald-500" : kpi.status === "on_track" ? "bg-blue-500" : kpi.status === "at_risk" ? "bg-amber-500" : "bg-red-500";
+                      const safeNum = (v: any) => (typeof v === "number" && !isNaN(v) && isFinite(v)) ? v : 0;
+                      const formatVal = (v: number, unit: string) => {
+                        const sv = safeNum(v);
+                        if (unit === "percent") return `${sv.toFixed(1)}%`;
+                        if (unit === "USD" || unit === "usd") return `$${sv.toLocaleString()}`;
+                        if (unit === "hours") return `${sv.toFixed(1)}h`;
+                        if (unit === "minutes") return `${sv.toFixed(1)}m`;
+                        return sv.toFixed(1);
+                      };
+                      const progressSafe = safeNum(kpi.progressPct);
+                      const shareSafe = safeNum(kpi.agentSharePct);
+                      return (
+                        <div key={kpi.kpiId} className="flex flex-col gap-1" data-testid={`kpi-contribution-${kpi.kpiId}`}>
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-medium truncate max-w-[60%]">{kpi.kpiName}</span>
+                            <span className={`text-[10px] font-medium uppercase ${statusColor}`}>{kpi.status.replace("_", " ")}</span>
+                          </div>
+                          <div className="relative h-2 w-full rounded-full bg-muted overflow-hidden">
+                            <div className={`absolute inset-y-0 left-0 rounded-full transition-all ${barColor}`} style={{ width: `${Math.min(100, progressSafe)}%` }} />
+                            {shareSafe > 0 && progressSafe > 0 && (
+                              <div className={`absolute inset-y-0 left-0 rounded-full ${barColor} opacity-60`} style={{ width: `${Math.min(100, progressSafe * shareSafe / 100)}%` }} />
+                            )}
+                          </div>
+                          <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                            <span>This agent: {formatVal(kpi.agentContribution, kpi.unit)} ({shareSafe}% share)</span>
+                            <span>{formatVal(kpi.currentValue, kpi.unit)} / {formatVal(kpi.target, kpi.unit)}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <div className="flex items-center justify-between pt-2 border-t border-border/50">
+                      <span className="text-xs text-muted-foreground">Overall KPI progress</span>
+                      <span className="text-sm font-semibold">{typeof kpiContributions.overallContribution === "number" && isFinite(kpiContributions.overallContribution) ? kpiContributions.overallContribution : 0}%</span>
                     </div>
                   </div>
                 ) : (
-                  <p className="text-sm text-muted-foreground py-4 text-center">No outcome linked</p>
+                  <div className="flex flex-col items-center gap-2 py-3">
+                    <BarChart3 className="w-5 h-5 text-muted-foreground/50" />
+                    <p className="text-xs text-muted-foreground text-center">No KPIs defined for this outcome yet</p>
+                    <Link href={`/outcomes/${outcome.id}`}>
+                      <Button variant="outline" size="sm" className="text-xs h-7">Add KPIs</Button>
+                    </Link>
+                  </div>
                 )}
               </CardContent>
             </Card>
