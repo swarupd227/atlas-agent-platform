@@ -4003,31 +4003,49 @@ function AgentDetailInner() {
               {shadowResult.divergences.length > 0 && (
                 <div className="flex flex-col gap-2">
                   <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Divergences</span>
-                  <div className="max-h-48 overflow-y-auto space-y-2">
+                  <div className="max-h-72 overflow-y-auto space-y-2">
                     {shadowResult.divergences.map((div, i) => {
                       const typeLabels: Record<string, string> = {
                         output_mismatch: "Output Divergence",
                         latency_spike: "Latency Spike",
                         execution_failure: "Execution Failure",
                       };
-                      const friendlyType = typeLabels[div.divergenceType] || div.divergenceType.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+                      const friendlyType = typeLabels[div.divergenceType] || div.divergenceType.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase());
+                      const origText = div.originalOutput || div.original || "No output recorded";
+                      const replayText = div.replayOutput || div.replay || "No replay output";
+                      const needsTruncation = origText.length > 120 || replayText.length > 120;
                       return (
-                        <div key={i} className="p-2.5 rounded-md bg-muted/30 space-y-1" data-testid={`divergence-${i}`}>
-                          <div className="flex items-center justify-between gap-2">
-                            <Badge variant="outline" className="text-[10px]">{friendlyType}</Badge>
-                            <span className="text-[10px] text-muted-foreground font-mono">Trace: {div.traceId.slice(0, 8)}</span>
-                          </div>
-                          <div className="grid grid-cols-2 gap-2 text-[11px]">
+                        <details key={i} className="group p-2.5 rounded-md bg-muted/30 space-y-1" data-testid={`divergence-${i}`}>
+                          <summary className="cursor-pointer list-none space-y-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <Badge variant="outline" className="text-[10px]">{friendlyType}</Badge>
+                                {needsTruncation && <span className="text-[10px] text-muted-foreground italic">Click to expand</span>}
+                              </div>
+                              <span className="text-[10px] text-muted-foreground font-mono">Trace: {div.traceId.slice(0, 8)}</span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2 text-[11px] group-open:hidden">
+                              <div>
+                                <span className="text-muted-foreground block mb-0.5">Original</span>
+                                <span className="font-mono">{origText.length > 120 ? origText.slice(0, 120) + "…" : origText}</span>
+                              </div>
+                              <div>
+                                <span className="text-muted-foreground block mb-0.5">Replay</span>
+                                <span className="font-mono">{replayText.length > 120 ? replayText.slice(0, 120) + "…" : replayText}</span>
+                              </div>
+                            </div>
+                          </summary>
+                          <div className="grid grid-cols-2 gap-2 text-[11px] pt-1">
                             <div>
                               <span className="text-muted-foreground block mb-0.5">Original</span>
-                              <span className="font-mono">{(div.originalOutput || div.original || "No output recorded").slice(0, 120)}</span>
+                              <span className="font-mono whitespace-pre-wrap break-words">{origText}</span>
                             </div>
                             <div>
                               <span className="text-muted-foreground block mb-0.5">Replay</span>
-                              <span className="font-mono">{(div.replayOutput || div.replay || "No replay output").slice(0, 120)}</span>
+                              <span className="font-mono whitespace-pre-wrap break-words">{replayText}</span>
                             </div>
                           </div>
-                        </div>
+                        </details>
                       );
                     })}
                   </div>
