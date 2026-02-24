@@ -18376,15 +18376,23 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         .filter((s: any) => s.type === "api_call" && s.mcpResolved)
         .map((s: any) => ({ tool: s.mcpTool, server: s.mcpServer, input: s.input, output: s.output, status: s.status, error: s.error }));
 
+      const testAnalysisStep = result.steps.find((s: any) => s.type === "ai_analysis" && s.status === "completed");
+      const testAnalysisText = testAnalysisStep?.output?.summary || testAnalysisStep?.output?.analysis || result.summary?.analysis?.summary || result.summary?.analysis?.analysis || "";
+
       await storage.createTrace({
         agentId: req.params.id,
         environment: "test",
         status: result.success ? "completed" : "failed",
         latencyMs: result.summary?.latencyMs || 0,
         inputSummary: `Test Run: ${prompt.length > 120 ? prompt.substring(0, 117) + "..." : prompt}`,
-        outputSummary: result.summary?.analysis?.summary || "",
+        outputSummary: typeof testAnalysisText === "string" && testAnalysisText.length > 0 ? testAnalysisText : `${toolCalls.length} tools called | ${result.summary?.passedSteps}/${result.summary?.totalSteps} steps`,
         stepsJson: result.steps,
         modelId: "gpt-4.1",
+        promptInputs: (result as any).promptInputs || {
+          systemPrompt: richSystemPrompt || prompt,
+          userMessage: prompt,
+          contextVariables: { industry: (agent as any).industry || "general", testRun: true },
+        },
         toolCalls: toolCalls.length > 0 ? toolCalls : null,
       });
 

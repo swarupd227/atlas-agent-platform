@@ -232,7 +232,7 @@ export async function executePromptWithMcp(
   industry?: string,
   agentSystemPrompt?: string,
   options?: { conversational?: boolean; ontologyLabels?: string[] },
-): Promise<{ steps: any[]; success: boolean; summary: any; conversationalResponse?: string }> {
+): Promise<{ steps: any[]; success: boolean; summary: any; promptInputs?: any; conversationalResponse?: string }> {
   const startTime = Date.now();
   const steps: any[] = [];
 
@@ -540,6 +540,15 @@ After receiving tool results, provide a structured analysis with key findings, s
       analysis: analysisOutput,
       source: "mcp_integration",
     },
+    promptInputs: {
+      systemPrompt: systemMessage,
+      userMessage: prompt,
+      contextVariables: {
+        industry: industry || "general",
+        kbContextIncluded: kbContext.length > 0,
+        toolCount: availableTools.length,
+      },
+    },
     ...(conversationalResponse ? { conversationalResponse } : {}),
   };
 }
@@ -791,16 +800,28 @@ async function executeAgentCycle(agent: RuntimeAgent) {
       completedAt: new Date(),
     });
 
+    const analysisStep = result.steps.find((s: any) => s.type === "ai_analysis" && s.status === "completed");
+    const analysisText = analysisStep?.output?.summary || analysisStep?.output?.analysis || "";
+    const outputText = result.success
+      ? (typeof analysisText === "string" && analysisText.length > 0
+        ? analysisText
+        : `${result.summary.toolsUsed?.length || 0} tools called | ${result.summary.passedSteps}/${result.summary.totalSteps} steps passed`)
+      : `Execution failed`;
+
     await storage.createTrace({
       agentId: agent.agentId,
       environment: "prod",
       status: result.success ? "completed" : "failed",
       latencyMs: result.summary.latencyMs || 0,
       inputSummary: `Scheduled: ${agent.prompt.substring(0, 100)}${agent.prompt.length > 100 ? "..." : ""}`,
-      outputSummary: result.success
-        ? `${result.summary.toolsUsed?.length || 0} tools called | ${result.summary.passedSteps}/${result.summary.totalSteps} steps passed`
-        : `Execution failed`,
+      outputSummary: outputText,
       stepsJson: result.steps,
+      promptInputs: result.promptInputs || {
+        systemPrompt: enrichedContext || agent.agentSystemPrompt || agent.prompt,
+        userMessage: agent.prompt,
+        contextVariables: { industry: agent.industry || "general", teamExecution: isTeam },
+      },
+      modelId: "gpt-4.1",
       toolCalls: result.steps.filter((s: any) => s.type === "api_call").map((s: any) => ({
         tool: s.mcpTool || s.name,
         input: s.input || {},
