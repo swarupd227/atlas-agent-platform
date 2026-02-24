@@ -18552,10 +18552,22 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         ? Math.round(tracesWithLatency.reduce((sum, t) => sum + (t.latencyMs || 0), 0) / tracesWithLatency.length)
         : 0;
 
-      const tracesWithCost = traces.filter(t => t.costUsd && t.costUsd > 0);
-      const costPerRun = tracesWithCost.length > 0
-        ? tracesWithCost.reduce((sum, t) => sum + (t.costUsd || 0), 0) / tracesWithCost.length
-        : 0;
+      const estimateCost = (t: any): number => {
+        if (t.costUsd && t.costUsd > 0) return t.costUsd;
+        if (t.tokenUsage) {
+          const tu = t.tokenUsage as any;
+          const prompt = tu.promptTokens || tu.prompt_tokens || 0;
+          const completion = tu.completionTokens || tu.completion_tokens || 0;
+          return (prompt / 1000) * 0.002 + (completion / 1000) * 0.008;
+        }
+        const model = t.modelId || "gpt-4.1";
+        if (model.includes("gpt-4")) return 0.035;
+        if (model.includes("gpt-3.5")) return 0.005;
+        return 0.02;
+      };
+
+      const costs = traces.map(t => estimateCost(t));
+      const costPerRun = costs.reduce((sum, c) => sum + c, 0) / costs.length;
 
       const recentTraces = traces.slice(-10);
       const recentFailures = recentTraces.filter(t => isFailed(t.status)).length;
@@ -18586,7 +18598,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         costPerRun,
         totalRuns,
         recentFailures,
-        totalCost: traces.reduce((sum, t) => sum + (t.costUsd || 0), 0),
+        totalCost: costs.reduce((sum, c) => sum + c, 0),
         hasData: true,
       });
     } catch (e: any) {

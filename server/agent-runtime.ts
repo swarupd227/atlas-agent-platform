@@ -416,6 +416,10 @@ After receiving tool results, provide a structured analysis with key findings, s
     error?: string;
   }> = [];
 
+  let totalPromptTokens = 0;
+  let totalCompletionTokens = 0;
+  let totalTokens = 0;
+
   try {
     const planResponse = await openai.chat.completions.create({
       model: "gpt-4.1",
@@ -426,6 +430,12 @@ After receiving tool results, provide a structured analysis with key findings, s
       tools: openaiTools.length > 0 ? openaiTools : undefined,
       max_completion_tokens: 4096,
     });
+
+    if (planResponse.usage) {
+      totalPromptTokens += planResponse.usage.prompt_tokens || 0;
+      totalCompletionTokens += planResponse.usage.completion_tokens || 0;
+      totalTokens += planResponse.usage.total_tokens || 0;
+    }
 
     const planChoice = planResponse.choices[0];
     const toolCalls = (planChoice?.message?.tool_calls || []).filter(
@@ -540,6 +550,12 @@ After receiving tool results, provide a structured analysis with key findings, s
           ...(isConversational ? {} : { response_format: { type: "json_object" as const } }),
         });
 
+        if (analysisResponse.usage) {
+          totalPromptTokens += analysisResponse.usage.prompt_tokens || 0;
+          totalCompletionTokens += analysisResponse.usage.completion_tokens || 0;
+          totalTokens += analysisResponse.usage.total_tokens || 0;
+        }
+
         const rawContent = analysisResponse.choices[0]?.message?.content || (isConversational ? "I couldn't generate a response." : "{}");
         
         let analysis: any = {};
@@ -618,6 +634,10 @@ After receiving tool results, provide a structured analysis with key findings, s
   const conversationalResponse = (steps as any).__conversationalResponse as string | undefined;
   delete (steps as any).__conversationalResponse;
 
+  const inputCostPer1k = 0.002;
+  const outputCostPer1k = 0.008;
+  const estimatedCostUsd = (totalPromptTokens / 1000) * inputCostPer1k + (totalCompletionTokens / 1000) * outputCostPer1k;
+
   return {
     steps,
     success: failedSteps.length === 0,
@@ -632,6 +652,12 @@ After receiving tool results, provide a structured analysis with key findings, s
       toolsUsed: toolCallResults.filter(r => !r.error).map(r => ({ server: r.serverName, tool: r.toolName })),
       analysis: analysisOutput,
       source: "mcp_integration",
+      costUsd: estimatedCostUsd,
+      tokenUsage: {
+        promptTokens: totalPromptTokens,
+        completionTokens: totalCompletionTokens,
+        totalTokens,
+      },
     },
     promptInputs: {
       systemPrompt: systemMessage,
@@ -906,6 +932,7 @@ async function executeAgentCycle(agent: RuntimeAgent) {
       environment: "prod",
       status: result.success ? "completed" : "failed",
       latencyMs: result.summary.latencyMs || 0,
+      costUsd: result.summary.costUsd || 0,
       inputSummary: `Scheduled: ${agent.prompt.substring(0, 100)}${agent.prompt.length > 100 ? "..." : ""}`,
       outputSummary: outputText,
       stepsJson: result.steps,
@@ -915,6 +942,7 @@ async function executeAgentCycle(agent: RuntimeAgent) {
         contextVariables: { industry: agent.industry || "general", teamExecution: isTeam },
       },
       modelId: "gpt-4.1",
+      tokenUsage: result.summary.tokenUsage || null,
       toolCalls: result.steps.filter((s: any) => s.type === "api_call").map((s: any) => ({
         tool: s.mcpTool || s.name,
         input: s.input || {},
