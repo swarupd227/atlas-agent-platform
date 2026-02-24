@@ -18236,7 +18236,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       const mcpServerIds = mcpLinks.map(l => l.serverId);
 
       const rtConfig = (agent.runtimeConfig as Record<string, any>) || {};
-      const prompt = req.body.prompt || rtConfig.prompt;
+      const prompt = req.body?.prompt || rtConfig.prompt;
       if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
         return res.status(400).json({ error: "No runtime prompt provided. Either pass a prompt in the request body or configure the agent's runtime prompt first." });
       }
@@ -18354,7 +18354,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       }
 
       const rtConfig = (agent.runtimeConfig as Record<string, any>) || {};
-      const prompt = req.body.prompt || rtConfig.prompt || agent.systemPrompt || agent.description;
+      const prompt = req.body?.prompt || rtConfig.prompt || agent.systemPrompt || agent.description;
       if (!prompt) {
         return res.status(400).json({ error: "Agent has no task prompt configured. Set a prompt in runtime config or provide one in the request." });
       }
