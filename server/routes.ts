@@ -7596,8 +7596,31 @@ Respond in JSON: { "testCases": [{ "name": string, "inputData": object, "expecte
       let policyBlocks = 0;
 
       for (const trace of filteredTraces) {
-        const originalOutput = trace.outputSummary || "";
-        const originalPrompt = (trace as any).inputPrompt || (trace as any).prompt || `Replay trace ${trace.id}`;
+        const steps = Array.isArray(trace.stepsJson) ? (trace.stepsJson as any[]) : [];
+        const analysisStep = steps.find((s: any) => s.type === "ai_analysis");
+        const originalAnalysis = analysisStep?.output?.summary || "";
+        const originalOutput = originalAnalysis || trace.outputSummary || "";
+
+        let originalPrompt = trace.inputSummary || "";
+        if (!originalPrompt) {
+          const promptInputs = trace.promptInputs as any;
+          originalPrompt = promptInputs?.prompt || promptInputs?.task || "";
+        }
+        if (!originalPrompt) {
+          const planStep = steps.find((s: any) => s.type === "planning" || s.type === "prompt_construction");
+          originalPrompt = planStep?.output?.prompt || planStep?.output?.task || "";
+        }
+        if (!originalPrompt) {
+          failCount++;
+          divergences.push({
+            traceId: trace.id,
+            originalOutput: originalOutput || "(no original output recorded)",
+            replayOutput: "Skipped: could not recover the original prompt from this trace",
+            divergenceType: "execution_failure",
+          });
+          continue;
+        }
+
         const origLatency = trace.latencyMs || 0;
         totalOrigLatency += origLatency;
 
