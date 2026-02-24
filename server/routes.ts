@@ -18515,6 +18515,91 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
     }
   });
 
+  app.get("/api/agents/:id/kpi-contributions", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+      if (!agent.outcomeId) {
+        return res.json({ outcomeId: null, kpis: [], agentContribution: 0, totalBoundAgents: 0 });
+      }
+
+      const kpis = await storage.getKpisByOutcome(agent.outcomeId);
+      const traces = await storage.getTracesByAgent(req.params.id);
+      const allAgents = await storage.getAgents();
+      const boundAgents = allAgents.filter(a => a.outcomeId === agent.outcomeId);
+      const successfulTraces = traces.filter(t => t.status === "completed" || t.status === "success");
+
+      const kpiContributions = kpis.map(kpi => {
+        const agentTraceCount = successfulTraces.length;
+        const totalBoundAgentCount = boundAgents.length || 1;
+        const successRate = traces.length > 0 ? successfulTraces.length / traces.length : 0;
+        const agentShareOfTeam = 1 / totalBoundAgentCount;
+
+        let agentContribution = 0;
+
+        if (kpi.unit === "percent") {
+          agentContribution = Math.round((kpi.target || 100) * successRate * agentShareOfTeam * 10) / 10;
+        } else if (kpi.unit === "hours" || kpi.unit === "minutes") {
+          const avgLatencyMs = traces.length > 0 ? traces.reduce((s, t) => s + (t.latencyMs || 0), 0) / traces.length : 0;
+          const latencyInUnit = kpi.unit === "hours" ? avgLatencyMs / 3600000 : avgLatencyMs / 60000;
+          const baselineVal = kpi.baseline || (kpi.target || 0) * 2;
+          const reduction = Math.max(0, baselineVal - latencyInUnit);
+          agentContribution = Math.round(reduction * agentShareOfTeam * 100) / 100;
+        } else if (kpi.unit === "USD" || kpi.unit === "usd") {
+          agentContribution = Math.round((kpi.target || 0) * successRate * agentShareOfTeam);
+        } else {
+          agentContribution = Math.round((kpi.target || 0) * successRate * agentShareOfTeam * 100) / 100;
+        }
+
+        const currentValue = kpi.currentValue || 0;
+        const estimatedCurrent = currentValue > 0 ? currentValue : Math.min(agentContribution * totalBoundAgentCount, kpi.target || 0);
+        const progressPct = kpi.target ? Math.min(100, Math.round((estimatedCurrent / kpi.target) * 1000) / 10) : 0;
+        const agentSharePct = estimatedCurrent > 0 ? Math.round((agentContribution / estimatedCurrent) * 1000) / 10 : 0;
+
+        return {
+          kpiId: kpi.id,
+          kpiName: kpi.name,
+          unit: kpi.unit,
+          target: kpi.target,
+          currentValue: Math.round(estimatedCurrent * 100) / 100,
+          baseline: kpi.baseline || 0,
+          weight: kpi.weight || 1,
+          progressPct,
+          agentContribution,
+          agentSharePct: Math.min(100, agentSharePct),
+          agentTraces: agentTraceCount,
+          status: progressPct >= 90 ? "met" : progressPct >= 60 ? "on_track" : progressPct >= 30 ? "at_risk" : "behind",
+        };
+      });
+
+      for (const kc of kpiContributions) {
+        if (kc.currentValue > 0) {
+          const kpiRecord = kpis.find(k => k.id === kc.kpiId);
+          if (kpiRecord && (!kpiRecord.currentValue || kpiRecord.currentValue === 0)) {
+            await storage.updateKpi(kc.kpiId, { currentValue: kc.currentValue });
+          }
+        }
+      }
+
+      const overallContribution = kpiContributions.length > 0
+        ? Math.round(kpiContributions.reduce((sum, k) => sum + k.progressPct * (k.weight || 1), 0) / kpiContributions.reduce((sum, k) => sum + (k.weight || 1), 0) * 10) / 10
+        : 0;
+
+      res.json({
+        outcomeId: agent.outcomeId,
+        outcomeName: (await storage.getOutcome(agent.outcomeId))?.name || "Unknown",
+        kpis: kpiContributions,
+        overallContribution,
+        totalBoundAgents: boundAgents.length,
+        agentSuccessfulRuns: successfulTraces.length,
+        agentTotalRuns: traces.length,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.get("/api/agents/:id/computed-stats", async (req, res) => {
     try {
       const agent = await storage.getAgent(req.params.id);
