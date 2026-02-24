@@ -72,6 +72,7 @@ import {
   MessageSquare,
   ChevronUp,
   Copy,
+  Rocket,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -2907,103 +2908,140 @@ function PipelineVisualization({ orchestrator, agents, pipeline }: {
   pipeline: PipelineDefinition | null;
 }) {
   const patternInfo = PATTERN_LABELS[pipeline?.pattern || "supervisor"] || PATTERN_LABELS.supervisor;
+  const totalTools = agents.reduce((sum, a) => sum + a.tools.length + (a.mcpToolBindings?.length || 0), 0) + orchestrator.tools.length + (orchestrator.mcpToolBindings?.length || 0);
 
   return (
-    <Card className="border-primary/20 bg-primary/[0.02]" data-testid="card-pipeline-visualization">
-      <CardContent className="p-4 flex flex-col gap-4">
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-2">
-            <Network className="w-4 h-4 text-primary" />
-            <span className="text-sm font-semibold">Orchestration Pipeline</span>
+    <Card className="border-primary/20 overflow-hidden" data-testid="card-pipeline-visualization">
+      <div className="relative">
+        <div className="absolute inset-0 bg-gradient-to-br from-primary/[0.03] via-transparent to-violet-500/[0.02]" />
+        <CardContent className="relative p-5 flex flex-col gap-5">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
+                <Network className="w-4 h-4 text-primary" />
+              </div>
+              <div>
+                <span className="text-sm font-semibold">Orchestration Pipeline</span>
+                <p className="text-[11px] text-muted-foreground">{pipeline?.description || patternInfo.description}</p>
+              </div>
+            </div>
+            <Badge className="text-[10px] bg-primary/10 text-primary border-primary/20 px-2.5 py-0.5" variant="outline" data-testid="badge-pipeline-pattern">
+              {patternInfo.label}
+            </Badge>
           </div>
-          <Badge variant="outline" className="text-[10px] border-primary/30 text-primary" data-testid="badge-pipeline-pattern">
-            {patternInfo.label}
-          </Badge>
-        </div>
-        <p className="text-xs text-muted-foreground">{pipeline?.description || patternInfo.description}</p>
 
-        <div className="flex flex-col items-center gap-0" data-testid="pipeline-flow-diagram">
-          <div className="flex items-center gap-2 px-4 py-2 rounded-lg border-2 border-primary/40 bg-primary/5" data-testid="pipeline-node-orchestrator">
-            <Network className="w-4 h-4 text-primary" />
-            <span className="text-xs font-semibold text-primary">{orchestrator.name}</span>
-            <Badge className="text-[8px] bg-primary/20 text-primary border-0 px-1.5">Team Agent</Badge>
-          </div>
+          <div className="flex flex-col items-center gap-0 py-2" data-testid="pipeline-flow-diagram">
+            <div className="flex items-center gap-2.5 px-5 py-2.5 rounded-xl border-2 border-primary/30 bg-gradient-to-r from-primary/[0.08] to-violet-500/5 shadow-sm shadow-primary/5" data-testid="pipeline-node-orchestrator">
+              <div className="w-7 h-7 rounded-lg bg-primary/15 flex items-center justify-center">
+                <Network className="w-3.5 h-3.5 text-primary" />
+              </div>
+              <div className="flex flex-col">
+                <span className="text-xs font-semibold text-primary leading-tight">{orchestrator.name}</span>
+                <span className="text-[9px] text-primary/60">Team Agent · Coordinator</span>
+              </div>
+            </div>
 
-          {pipeline?.pattern === "sequential" ? (
-            <div className="flex flex-col items-center gap-0">
-              {agents.map((agent, i) => (
-                <div key={i} className="flex flex-col items-center gap-0">
-                  <div className="w-px h-5 bg-muted-foreground/30" />
-                  <ChevronDown className="w-3 h-3 text-muted-foreground -mt-1 -mb-1" />
-                  <div className="w-px h-2 bg-muted-foreground/30" />
-                  <div className="flex items-center gap-1.5">
-                    {pipeline.edges.find(e => e.to === agent.name) && (
-                      <span className="text-[9px] text-muted-foreground italic hidden sm:block">
+            {pipeline?.pattern === "sequential" ? (
+              <div className="flex flex-col items-center gap-0">
+                {agents.map((agent, i) => (
+                  <div key={i} className="flex flex-col items-center gap-0">
+                    <div className="w-px h-4 bg-gradient-to-b from-primary/30 to-muted-foreground/20" />
+                    <ChevronDown className="w-3.5 h-3.5 text-primary/40 -mt-1 -mb-1" />
+                    <div className="w-px h-2 bg-muted-foreground/20" />
+                    {pipeline.edges.find(e => e.to === agent.name)?.label && (
+                      <span className="text-[9px] text-muted-foreground italic mb-1 hidden sm:block">
                         {pipeline.edges.find(e => e.to === agent.name)?.label}
                       </span>
                     )}
-                  </div>
-                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-md border border-border bg-card" data-testid={`pipeline-node-worker-${i}`}>
-                    <Bot className="w-3.5 h-3.5 text-muted-foreground" />
-                    <span className="text-xs font-medium">{agent.name}</span>
-                    <Badge variant="secondary" className="text-[8px] px-1.5">Worker {i + 1}</Badge>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="flex flex-col items-center gap-0 w-full">
-              <div className="w-px h-5 bg-muted-foreground/30" />
-              <ChevronDown className="w-3 h-3 text-muted-foreground -mt-1 -mb-1" />
-              <div className="w-px h-2 bg-muted-foreground/30" />
-
-              <div className="relative w-full max-w-2xl">
-                <div className="absolute left-1/2 -translate-x-1/2 top-0 w-[80%] h-px bg-muted-foreground/20" />
-                <div className="flex items-start justify-center gap-4 flex-wrap px-4 pt-2">
-                  {agents.map((agent, i) => {
-                    const edgeLabel = pipeline?.edges.find(e => e.to === agent.name)?.label;
-                    return (
-                      <div key={i} className="flex flex-col items-center gap-1">
-                        {edgeLabel && (
-                          <span className="text-[9px] text-muted-foreground italic text-center max-w-[120px] truncate hidden sm:block">{edgeLabel}</span>
-                        )}
-                        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border bg-card" data-testid={`pipeline-node-worker-${i}`}>
-                          <Bot className="w-3.5 h-3.5 text-muted-foreground" />
-                          <span className="text-xs font-medium">{agent.name}</span>
-                          <Badge variant="secondary" className="text-[8px] px-1.5">W{i + 1}</Badge>
-                        </div>
+                    <div className="flex items-center gap-2 px-4 py-2 rounded-lg border border-border bg-card hover:border-primary/20 transition-colors shadow-sm" data-testid={`pipeline-node-worker-${i}`}>
+                      <div className="w-6 h-6 rounded-md bg-violet-500/10 flex items-center justify-center">
+                        <Bot className="w-3 h-3 text-violet-500" />
                       </div>
-                    );
-                  })}
-                </div>
+                      <span className="text-xs font-medium">{agent.name}</span>
+                      <Badge variant="secondary" className="text-[8px] px-1.5">Step {i + 1}</Badge>
+                    </div>
+                  </div>
+                ))}
               </div>
+            ) : (
+              <div className="flex flex-col items-center gap-0 w-full">
+                <div className="w-px h-4 bg-gradient-to-b from-primary/30 to-muted-foreground/20" />
+                <ChevronDown className="w-3.5 h-3.5 text-primary/40 -mt-1 -mb-1" />
+                <div className="w-px h-2 bg-muted-foreground/20" />
 
-              {(pipeline?.pattern === "fan_out_fan_in") && (
-                <div className="flex flex-col items-center gap-0 mt-2">
-                  <div className="w-px h-3 bg-muted-foreground/30" />
-                  <div className="flex items-center gap-2 px-3 py-1 rounded-md border border-dashed border-primary/30 bg-primary/5">
-                    <ArrowRight className="w-3 h-3 text-primary" />
-                    <span className="text-[10px] text-primary font-medium">Aggregate Results</span>
+                <div className="relative w-full max-w-2xl">
+                  <div className="absolute left-1/2 -translate-x-1/2 top-0 w-[80%] h-px bg-gradient-to-r from-transparent via-primary/20 to-transparent" />
+                  <div className="flex items-start justify-center gap-3 flex-wrap px-4 pt-3">
+                    {agents.map((agent, i) => {
+                      const edgeLabel = pipeline?.edges.find(e => e.to === agent.name)?.label;
+                      return (
+                        <div key={i} className="flex flex-col items-center gap-1.5">
+                          <div className="w-px h-2 bg-primary/15" />
+                          {edgeLabel && (
+                            <span className="text-[9px] text-muted-foreground italic text-center max-w-[120px] truncate hidden sm:block">{edgeLabel}</span>
+                          )}
+                          <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card hover:border-primary/20 transition-colors shadow-sm" data-testid={`pipeline-node-worker-${i}`}>
+                            <div className="w-6 h-6 rounded-md bg-violet-500/10 flex items-center justify-center">
+                              <Bot className="w-3 h-3 text-violet-500" />
+                            </div>
+                            <span className="text-xs font-medium">{agent.name}</span>
+                            <Badge variant="secondary" className="text-[8px] px-1.5">W{i + 1}</Badge>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
-              )}
-            </div>
-          )}
-        </div>
 
-        {pipeline && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-1">
-            <div className="flex flex-col gap-1 p-2 rounded-md bg-muted/30">
-              <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Error Handling</span>
-              <span className="text-[11px]">{pipeline.errorHandling}</span>
-            </div>
-            <div className="flex flex-col gap-1 p-2 rounded-md bg-muted/30">
-              <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Handoff Rules</span>
-              <span className="text-[11px]">{pipeline.handoffRules}</span>
-            </div>
+                {(pipeline?.pattern === "fan_out_fan_in") && (
+                  <div className="flex flex-col items-center gap-0 mt-3">
+                    <div className="w-px h-3 bg-muted-foreground/20" />
+                    <div className="flex items-center gap-2 px-4 py-1.5 rounded-lg border border-dashed border-primary/30 bg-primary/5">
+                      <ArrowRight className="w-3 h-3 text-primary" />
+                      <span className="text-[10px] text-primary font-medium">Aggregate Results</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-        )}
-      </CardContent>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <div className="flex items-center gap-2 p-2.5 rounded-lg bg-muted/40 border border-border/50">
+              <Users className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+              <div className="flex flex-col">
+                <span className="text-[10px] text-muted-foreground">Agents</span>
+                <span className="text-xs font-semibold">{agents.length + 1}</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 p-2.5 rounded-lg bg-muted/40 border border-border/50">
+              <Wrench className="w-3.5 h-3.5 text-orange-500 shrink-0" />
+              <div className="flex flex-col">
+                <span className="text-[10px] text-muted-foreground">Tools</span>
+                <span className="text-xs font-semibold">{totalTools}</span>
+              </div>
+            </div>
+            {pipeline && (
+              <>
+                <div className="flex items-center gap-2 p-2.5 rounded-lg bg-muted/40 border border-border/50">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                  <div className="flex flex-col min-w-0">
+                    <span className="text-[10px] text-muted-foreground">Errors</span>
+                    <span className="text-[11px] font-medium truncate">{pipeline.errorHandling}</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 p-2.5 rounded-lg bg-muted/40 border border-border/50">
+                  <Workflow className="w-3.5 h-3.5 text-cyan-500 shrink-0" />
+                  <div className="flex flex-col min-w-0">
+                    <span className="text-[10px] text-muted-foreground">Handoff</span>
+                    <span className="text-[11px] font-medium truncate">{pipeline.handoffRules}</span>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </CardContent>
+      </div>
     </Card>
   );
 }
@@ -3201,9 +3239,16 @@ function AgentProposalCard({ agent, index, isOrchestrator, isSelected, onToggle,
     setEditData(prev => ({ ...prev, kpiBindings: prev.kpiBindings.filter((_, i) => i !== idx) }));
   }
 
+  const riskColors = {
+    LOW: { bg: "bg-emerald-500/10", text: "text-emerald-600 dark:text-emerald-400", border: "border-emerald-500/20", icon: "text-emerald-500" },
+    MEDIUM: { bg: "bg-amber-500/10", text: "text-amber-600 dark:text-amber-400", border: "border-amber-500/20", icon: "text-amber-500" },
+    HIGH: { bg: "bg-red-500/10", text: "text-red-600 dark:text-red-400", border: "border-red-500/20", icon: "text-red-500" },
+  };
+  const risk = riskColors[agent.riskTier as keyof typeof riskColors] || riskColors.MEDIUM;
+
   return (
     <Card
-      className={`transition-all ${isOrchestrator ? "border-primary/30 bg-primary/[0.02]" : ""} ${isSelected ? "ring-1 ring-primary/40" : "opacity-60"} ${isDragging ? "opacity-30 scale-95" : ""}`}
+      className={`transition-all duration-200 ${isOrchestrator ? "border-primary/25" : ""} ${isSelected ? "ring-1 ring-primary/40 shadow-sm" : "opacity-60"} ${isDragging ? "opacity-30 scale-95" : ""} hover:shadow-md`}
       data-testid={isOrchestrator ? "card-orchestrator-proposal" : `card-agent-proposal-${index}`}
       draggable={!isOrchestrator && !!onDragStart}
       onDragStart={onDragStart}
@@ -3227,8 +3272,13 @@ function AgentProposalCard({ agent, index, isOrchestrator, isSelected, onToggle,
           >
             {isSelected && <CheckCircle className="w-3.5 h-3.5" />}
           </button>
-          {isOrchestrator ? <Network className="w-4 h-4 text-primary" /> : <Bot className="w-4 h-4 text-primary" />}
-          <span className="flex-1 truncate">{agent.name}</span>
+          <div className={`w-7 h-7 rounded-lg ${isOrchestrator ? "bg-primary/10" : risk.bg} flex items-center justify-center shrink-0`}>
+            {isOrchestrator ? <Network className="w-3.5 h-3.5 text-primary" /> : <Bot className={`w-3.5 h-3.5 ${risk.icon}`} />}
+          </div>
+          <div className="flex flex-col min-w-0 flex-1">
+            <span className="truncate text-sm font-semibold leading-tight">{agent.name}</span>
+            <span className="text-[10px] text-muted-foreground truncate">{agent.role}</span>
+          </div>
           {isOrchestrator && (
             <Badge className="text-[9px] bg-primary/15 text-primary border-primary/20" variant="outline">Team Agent</Badge>
           )}
@@ -3252,21 +3302,23 @@ function AgentProposalCard({ agent, index, isOrchestrator, isSelected, onToggle,
           </div>
         </CardTitle>
       </CardHeader>
-      <CardContent className="p-4 pt-0 flex flex-col gap-2">
+      <CardContent className="p-4 pt-0 flex flex-col gap-2.5">
         {!expanded ? (
           <>
-            <p className="text-xs text-muted-foreground">{agent.description}</p>
-            <div className="flex items-center gap-2 flex-wrap">
-              <Badge variant="outline" className="text-[10px]">{agent.riskTier} Risk</Badge>
+            <p className="text-xs text-muted-foreground leading-relaxed">{agent.description}</p>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <Badge variant="outline" className={`text-[10px] ${risk.text} ${risk.border}`}>{agent.riskTier} Risk</Badge>
               <Badge variant="outline" className="text-[10px]">{agent.autonomyMode}</Badge>
-              <Badge variant="outline" className="text-[10px]">{agent.modelProvider}/{agent.modelName}</Badge>
+              <Badge variant="outline" className="text-[10px] text-muted-foreground">{agent.modelProvider}/{agent.modelName}</Badge>
               {agent.templateMatch && (
                 <Badge variant="secondary" className="text-[10px]">Template: {agent.templateMatch}</Badge>
               )}
             </div>
-            <div className="flex items-center gap-2 p-2 rounded-md bg-green-500/5 border border-green-500/10 flex-wrap">
-              <TrendingUp className="w-3.5 h-3.5 text-green-500 shrink-0" />
-              <span className="text-[11px] text-green-700 dark:text-green-300">{agent.estimatedImpact}</span>
+            <div className="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-gradient-to-r from-emerald-500/5 to-green-500/5 border border-emerald-500/15" data-testid={`estimated-impact-${isOrchestrator ? "orch" : index}`}>
+              <div className="w-6 h-6 rounded-md bg-emerald-500/10 flex items-center justify-center shrink-0">
+                <TrendingUp className="w-3 h-3 text-emerald-500" />
+              </div>
+              <span className="text-[11px] text-emerald-700 dark:text-emerald-300 leading-snug">{agent.estimatedImpact}</span>
             </div>
             <CollapsibleSection title="Role & Workflow" icon={<Workflow className="w-3 h-3" />} defaultOpen={false} count={agent.workflowSteps.length} testId={`section-workflow-${isOrchestrator ? "orch" : index}`}>
               <div className="flex flex-col gap-2">
@@ -4252,50 +4304,82 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
   }
 
   if (!generated) {
+    const featureChips = [
+      { icon: Network, label: "Orchestrator", color: "text-blue-500 bg-blue-500/10 border-blue-500/20" },
+      { icon: Bot, label: "Worker Agents", color: "text-violet-500 bg-violet-500/10 border-violet-500/20" },
+      { icon: Wrench, label: "MCP Tools", color: "text-orange-500 bg-orange-500/10 border-orange-500/20" },
+      { icon: BarChart3, label: "KPI Bindings", color: "text-emerald-500 bg-emerald-500/10 border-emerald-500/20" },
+      { icon: Workflow, label: "Pipeline Graph", color: "text-cyan-500 bg-cyan-500/10 border-cyan-500/20" },
+    ];
+
     return (
-      <Card className={isAwaitingPlan ? "border-primary/20 bg-primary/[0.02]" : ""}>
-        <CardContent className="flex flex-col items-center justify-center py-10 gap-5">
-          <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
-            <Sparkles className="w-8 h-8 text-primary" />
-          </div>
-          <div className="text-center flex flex-col gap-1.5">
-            <h3 className="text-lg font-semibold">Generate Agent Development Plan</h3>
-            <p className="text-sm text-muted-foreground max-w-lg">
-              AI will analyze your outcome contract and {kpis.length} KPI{kpis.length !== 1 ? "s" : ""} to propose a multi-agent pipeline — complete with an orchestrator, worker agents, workflows, tools, and autonomy levels.
-            </p>
-          </div>
-          {isPendingValidation && (
-            <div className="flex items-center gap-2 p-3 rounded-md bg-amber-500/5 border border-amber-500/10 max-w-md flex-wrap" data-testid="notice-pending-validation">
-              <Shield className="w-4 h-4 text-amber-500 shrink-0" />
-              <div className="flex flex-col gap-0.5">
-                <span className="text-xs font-medium">Pending Expert Validation</span>
-                <span className="text-[11px] text-muted-foreground">This outcome is awaiting expert review. You can still generate proposals, but agents should only be created after validation.</span>
+      <Card className={`overflow-hidden ${isAwaitingPlan ? "border-primary/30" : "border-border"}`}>
+        <div className="relative">
+          <div className="absolute inset-0 bg-gradient-to-br from-primary/[0.04] via-transparent to-violet-500/[0.04]" />
+          <div className="absolute inset-0 opacity-[0.015] dark:opacity-[0.03]" style={{
+            backgroundImage: `radial-gradient(circle at 1px 1px, currentColor 1px, transparent 0)`,
+            backgroundSize: '24px 24px',
+          }} />
+          <CardContent className="relative flex flex-col items-center justify-center py-14 gap-6">
+            <div className="relative">
+              <div className="absolute inset-0 rounded-full bg-gradient-to-br from-primary/20 via-violet-500/20 to-cyan-500/20 blur-xl scale-150 animate-pulse" />
+              <div className="relative w-20 h-20 rounded-full bg-gradient-to-br from-primary/15 via-violet-500/10 to-primary/15 border border-primary/20 flex items-center justify-center shadow-lg shadow-primary/5">
+                <Sparkles className="w-9 h-9 text-primary" />
               </div>
             </div>
-          )}
-          {isValidated && (
-            <div className="flex items-center gap-2 p-3 rounded-md bg-green-500/5 border border-green-500/10 max-w-md flex-wrap" data-testid="notice-validated">
-              <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
-              <span className="text-xs text-green-700 dark:text-green-300">Outcome validated by expert — ready for agent creation</span>
+            <div className="text-center flex flex-col gap-2 max-w-xl">
+              <h3 className="text-xl font-semibold tracking-tight">Generate Agent Development Plan</h3>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                AI will analyze your outcome contract and {kpis.length} KPI{kpis.length !== 1 ? "s" : ""} to design a complete multi-agent system — orchestrator, specialized workers, tool bindings, and deployment pipeline.
+              </p>
             </div>
-          )}
-          <Button size="lg" onClick={generateProposals} disabled={generating} data-testid="button-generate-proposals" className="px-8">
-            {generating ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Analyzing outcome & KPIs...
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-4 h-4 mr-2" />
-                Generate Agent Development Plan
-              </>
+            <div className="flex items-center gap-2 flex-wrap justify-center" data-testid="feature-chips">
+              {featureChips.map((chip) => (
+                <div key={chip.label} className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-medium ${chip.color}`}>
+                  <chip.icon className="w-3 h-3" />
+                  {chip.label}
+                </div>
+              ))}
+            </div>
+            {isPendingValidation && (
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-500/5 border border-amber-500/15 max-w-md flex-wrap" data-testid="notice-pending-validation">
+                <Shield className="w-4 h-4 text-amber-500 shrink-0" />
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-xs font-medium">Pending Expert Validation</span>
+                  <span className="text-[11px] text-muted-foreground">This outcome is awaiting expert review. You can still generate proposals, but agents should only be created after validation.</span>
+                </div>
+              </div>
             )}
-          </Button>
-          {kpis.length === 0 && (
-            <p className="text-xs text-amber-600 dark:text-amber-400">Define KPIs first for better agent proposals</p>
-          )}
-        </CardContent>
+            {isValidated && (
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-green-500/5 border border-green-500/15 max-w-md flex-wrap" data-testid="notice-validated">
+                <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
+                <span className="text-xs text-green-700 dark:text-green-300">Outcome validated by expert — ready for agent creation</span>
+              </div>
+            )}
+            <Button
+              size="lg"
+              onClick={generateProposals}
+              disabled={generating}
+              data-testid="button-generate-proposals"
+              className="px-8 shadow-lg shadow-primary/20"
+            >
+              {generating ? (
+                <>
+                  <Loader2 className="w-5 h-5 mr-2.5 animate-spin" />
+                  Analyzing outcome & KPIs...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-5 h-5 mr-2.5" />
+                  Generate Agent Development Plan
+                </>
+              )}
+            </Button>
+            {kpis.length === 0 && (
+              <p className="text-xs text-amber-600 dark:text-amber-400">Define KPIs first for better agent proposals</p>
+            )}
+          </CardContent>
+        </div>
       </Card>
     );
   }
@@ -4304,18 +4388,23 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-3">
         <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div>
-            <h3 className="text-sm font-semibold">Multi-Agent Development Plan</h3>
-            <p className="text-xs text-muted-foreground">AI-generated orchestrated pipeline to deliver this outcome. Edit agents, reorder, or provide feedback to regenerate.</p>
-            {lastSaved && (
-              <div className="flex items-center gap-1.5 mt-1" data-testid="text-plan-saved-status">
-                <CheckCircle className="w-3 h-3 text-green-500" />
-                <span className="text-[11px] text-muted-foreground">
-                  Plan saved {new Date(lastSaved).toLocaleDateString()} at {new Date(lastSaved).toLocaleTimeString()}
-                </span>
-                {dirty && <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 text-amber-600 border-amber-300">Unsaved changes</Badge>}
-              </div>
-            )}
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary/15 to-violet-500/10 border border-primary/15 flex items-center justify-center shadow-sm shadow-primary/5">
+              <Sparkles className="w-5 h-5 text-primary" />
+            </div>
+            <div>
+              <h3 className="text-base font-semibold tracking-tight">Multi-Agent Development Plan</h3>
+              <p className="text-xs text-muted-foreground">AI-generated orchestrated pipeline. Edit agents, reorder, or regenerate with feedback.</p>
+              {lastSaved && (
+                <div className="flex items-center gap-1.5 mt-0.5" data-testid="text-plan-saved-status">
+                  <CheckCircle className="w-3 h-3 text-green-500" />
+                  <span className="text-[11px] text-muted-foreground">
+                    Saved {new Date(lastSaved).toLocaleDateString()} at {new Date(lastSaved).toLocaleTimeString()}
+                  </span>
+                  {dirty && <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 text-amber-600 border-amber-300">Unsaved changes</Badge>}
+                </div>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
             <Button variant="ghost" size="sm" onClick={undo} disabled={undoStack.length === 0} data-testid="button-undo" className="h-8 w-8 p-0">
@@ -4408,52 +4497,66 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
             <PipelineVisualization orchestrator={orchestrator} agents={proposals} pipeline={pipeline} />
           )}
 
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <div className="flex items-center gap-3">
-              <span className="text-xs text-muted-foreground" data-testid="text-selected-count">
-                {totalSelected} of {(orchestrator ? 1 : 0) + proposals.length} selected
-              </span>
-              <div className="flex items-center gap-1">
-                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={selectAll} data-testid="button-select-all">
-                  Select All
-                </Button>
-                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={deselectAll} data-testid="button-deselect-all">
-                  Deselect All
+          <div className="rounded-lg border border-primary/15 bg-gradient-to-r from-primary/[0.02] to-transparent p-3 flex flex-col gap-3">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1.5">
+                    <div className={`w-2 h-2 rounded-full ${totalSelected > 0 ? "bg-primary animate-pulse" : "bg-muted-foreground/30"}`} />
+                    <span className="text-xs font-medium" data-testid="text-selected-count">
+                      {totalSelected} of {(orchestrator ? 1 : 0) + proposals.length} selected
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={selectAll} data-testid="button-select-all">
+                      Select All
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={deselectAll} data-testid="button-deselect-all">
+                      Deselect All
+                    </Button>
+                  </div>
+                </div>
+                <Button
+                  onClick={createSelectedAgents}
+                  disabled={creating || totalSelected === 0}
+                  data-testid="button-create-selected-agents"
+                  className="shadow-md shadow-primary/15"
+                  size="lg"
+                >
+                  {creating ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Creating Team Agent...
+                    </>
+                  ) : orchestratorSelected && orchestrator && selectedIndices.size > 0 ? (
+                    <>
+                      <Rocket className="w-4 h-4 mr-2" />
+                      Create Team Agent ({selectedIndices.size} worker{selectedIndices.size > 1 ? "s" : ""})
+                    </>
+                  ) : (
+                    <>
+                      <Rocket className="w-4 h-4 mr-2" />
+                      Create {totalSelected} Selected Agent{totalSelected > 1 ? "s" : ""}
+                    </>
+                  )}
                 </Button>
               </div>
-            </div>
-            <Button
-              onClick={createSelectedAgents}
-              disabled={creating || totalSelected === 0}
-              data-testid="button-create-selected-agents"
-            >
-              {creating ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
-                  Creating Team Agent...
-                </>
-              ) : orchestratorSelected && orchestrator && selectedIndices.size > 0 ? (
-                <>
-                  <Plus className="w-4 h-4 mr-1.5" />
-                  Create Team Agent ({selectedIndices.size} worker{selectedIndices.size > 1 ? "s" : ""})
-                </>
-              ) : (
-                <>
-                  <Plus className="w-4 h-4 mr-1.5" />
-                  Create {totalSelected} Selected Agent{totalSelected > 1 ? "s" : ""}
-                </>
-              )}
-            </Button>
-          </div>
 
-          {orchestratorSelected && selectedIndices.size > 0 && orchestrator && (
-            <div className="flex items-center gap-2 p-2 rounded-md bg-primary/5 border border-primary/10">
-              <Network className="w-3.5 h-3.5 text-primary shrink-0" />
-              <span className="text-[11px] text-muted-foreground">
-                This will create a <strong className="text-foreground">Team Agent</strong> with the orchestrator as coordinator, {selectedIndices.size} worker agent{selectedIndices.size > 1 ? "s" : ""} as members, and a team blueprint with the pipeline graph. The team will appear in Agent Teams and its blueprint in the Team Graph Editor.
-              </span>
-            </div>
-          )}
+              {orchestratorSelected && selectedIndices.size > 0 && orchestrator && (
+                <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-primary/5 border border-primary/10">
+                  <Network className="w-4 h-4 text-primary shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <span className="text-[11px] text-muted-foreground">
+                      Creates <strong className="text-foreground">{orchestrator.name}</strong> as coordinator with {selectedIndices.size} worker{selectedIndices.size > 1 ? "s" : ""}, team blueprint, and pipeline graph.
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Badge variant="outline" className="text-[9px] text-primary border-primary/20">
+                      <Users className="w-2.5 h-2.5 mr-1" />{selectedIndices.size + 1}
+                    </Badge>
+                  </div>
+                </div>
+              )}
+          </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {orchestrator && (
