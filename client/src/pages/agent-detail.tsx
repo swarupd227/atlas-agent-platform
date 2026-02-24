@@ -426,7 +426,7 @@ function AgentDetailInner() {
   const [shadowTimeWindow, setShadowTimeWindow] = useState("24h");
   const [shadowEnvironment, setShadowEnvironment] = useState("staging");
   const [shadowSampleSize, setShadowSampleSize] = useState("10");
-  const [shadowResult, setShadowResult] = useState<{ status: string; summary: string; tracesReplayed: number; passRate: number; divergences: Array<{ traceId: string; original: string; replay: string; divergenceType: string }> } | null>(null);
+  const [shadowResult, setShadowResult] = useState<{ status: string; summary: string; tracesReplayed: number; passRate: number; divergences: Array<{ traceId: string; originalOutput?: string; replayOutput?: string; original?: string; replay?: string; divergenceType: string }> } | null>(null);
   const [blueprintView, setBlueprintView] = useState<"graph" | "json">("graph");
   const [diffVersionA, setDiffVersionA] = useState("");
   const [diffVersionB, setDiffVersionB] = useState("");
@@ -4004,24 +4004,32 @@ function AgentDetailInner() {
                 <div className="flex flex-col gap-2">
                   <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Divergences</span>
                   <div className="max-h-48 overflow-y-auto space-y-2">
-                    {shadowResult.divergences.map((div, i) => (
-                      <div key={i} className="p-2.5 rounded-md bg-muted/30 space-y-1" data-testid={`divergence-${i}`}>
-                        <div className="flex items-center justify-between gap-2">
-                          <Badge variant="outline" className="text-[10px]">{div.divergenceType}</Badge>
-                          <span className="text-[10px] text-muted-foreground font-mono">{div.traceId.slice(0, 8)}</span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2 text-[11px]">
-                          <div>
-                            <span className="text-muted-foreground block mb-0.5">Original</span>
-                            <span className="font-mono">{(div.original || "N/A").slice(0, 80)}</span>
+                    {shadowResult.divergences.map((div, i) => {
+                      const typeLabels: Record<string, string> = {
+                        output_mismatch: "Output Divergence",
+                        latency_spike: "Latency Spike",
+                        execution_failure: "Execution Failure",
+                      };
+                      const friendlyType = typeLabels[div.divergenceType] || div.divergenceType.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+                      return (
+                        <div key={i} className="p-2.5 rounded-md bg-muted/30 space-y-1" data-testid={`divergence-${i}`}>
+                          <div className="flex items-center justify-between gap-2">
+                            <Badge variant="outline" className="text-[10px]">{friendlyType}</Badge>
+                            <span className="text-[10px] text-muted-foreground font-mono">Trace: {div.traceId.slice(0, 8)}</span>
                           </div>
-                          <div>
-                            <span className="text-muted-foreground block mb-0.5">Replay</span>
-                            <span className="font-mono">{(div.replay || "N/A").slice(0, 80)}</span>
+                          <div className="grid grid-cols-2 gap-2 text-[11px]">
+                            <div>
+                              <span className="text-muted-foreground block mb-0.5">Original</span>
+                              <span className="font-mono">{(div.originalOutput || div.original || "No output recorded").slice(0, 120)}</span>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground block mb-0.5">Replay</span>
+                              <span className="font-mono">{(div.replayOutput || div.replay || "No replay output").slice(0, 120)}</span>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}
