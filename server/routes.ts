@@ -18337,6 +18337,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       }
 
       const richSystemPrompt = buildAgentSystemPrompt(agent);
+      const agentOntologyTags = Array.isArray(agent.ontologyTags) ? (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) : [];
       const result = await executePromptWithMcp(
         req.params.id,
         "test-run",
@@ -18345,6 +18346,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         prompt,
         (agent as any).industry || undefined,
         richSystemPrompt,
+        { ontologyLabels: agentOntologyTags.map(t => t.conceptLabel) },
       );
 
       const toolCalls = result.steps
@@ -19231,6 +19233,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
           : content;
 
         try {
+          const playgroundOntologyTags = Array.isArray(agent.ontologyTags) ? (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) : [];
           const result = await executePromptWithMcp(
             agentId,
             "playground",
@@ -19239,7 +19242,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
             mcpPrompt,
             agent.industry || undefined,
             systemPrompt,
-            { conversational: true },
+            { conversational: true, ontologyLabels: playgroundOntologyTags.map(t => t.conceptLabel) },
           );
 
           if (!result.success && result.summary?.error) {

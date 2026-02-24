@@ -24,6 +24,8 @@ interface RuntimeAgent {
   outcomeId?: string;
   agentType?: string;
   runtimeConfig?: Record<string, any>;
+  ontologyTags?: Array<{ conceptId: string; conceptLabel: string }>;
+  complianceTags?: string[];
 }
 
 async function buildRuntimeContext(agent: RuntimeAgent): Promise<string> {
@@ -74,6 +76,72 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<string> {
       });
     }
   } catch {}
+
+  try {
+    const allSkills = await storage.getSkills();
+    const agentIndustry = agent.industry?.toLowerCase();
+    const ontologyLabels = (agent.ontologyTags || []).map(t => t.conceptLabel.toLowerCase());
+    const relevantSkills = allSkills.filter(s => {
+      if (s.status !== "active") return false;
+      if (agentIndustry && s.industry.toLowerCase() === agentIndustry) return true;
+      if (ontologyLabels.length > 0) {
+        const skillTags = (s.tags || []).map((t: string) => t.toLowerCase());
+        const skillDomain = s.domain.toLowerCase();
+        return ontologyLabels.some(label => skillTags.includes(label) || skillDomain.includes(label));
+      }
+      return false;
+    }).slice(0, 10);
+
+    if (relevantSkills.length > 0) {
+      sections.push(`\n## AGENT SKILLS (capabilities you have)`);
+      relevantSkills.forEach(s => {
+        const toolsNote = s.allowedTools?.length ? ` | Allowed tools: ${s.allowedTools.join(", ")}` : "";
+        const mcpNote = s.requiredMcpServers?.length ? ` | Required MCP: ${s.requiredMcpServers.join(", ")}` : "";
+        sections.push(`- ${s.name} (${s.domain}, v${s.version}): ${s.description}${toolsNote}${mcpNote}`);
+      });
+    }
+  } catch {}
+
+  if (agent.ontologyTags && agent.ontologyTags.length > 0) {
+    try {
+      const conceptDetails: string[] = [];
+      for (const tag of agent.ontologyTags.slice(0, 10)) {
+        const concept = await storage.getOntologyConcept(tag.conceptId);
+        if (concept) {
+          let detail = `- ${concept.label} (${concept.category}): ${concept.description}`;
+          const rels = concept.relationships as Array<{ target: string; type: string }> | null;
+          if (rels && rels.length > 0) {
+            detail += ` | Relationships: ${rels.slice(0, 5).map(r => `${r.type} → ${r.target}`).join(", ")}`;
+          }
+          if (concept.synonyms && concept.synonyms.length > 0) {
+            detail += ` | Also known as: ${concept.synonyms.join(", ")}`;
+          }
+          conceptDetails.push(detail);
+
+          const enhancement = await storage.getOntologyEnhancement(tag.conceptId);
+          if (enhancement) {
+            if (enhancement.regulatoryRelevance) {
+              conceptDetails.push(`  Regulatory relevance: ${enhancement.regulatoryRelevance}`);
+            }
+            if (enhancement.implementationGuidance) {
+              conceptDetails.push(`  Implementation guidance: ${enhancement.implementationGuidance}`);
+            }
+          }
+        }
+      }
+      if (conceptDetails.length > 0) {
+        sections.push(`\n## DOMAIN ONTOLOGY (your domain vocabulary and concepts)`);
+        sections.push(`Use these concepts to ground your reasoning in domain-specific language:`);
+        conceptDetails.forEach(d => sections.push(d));
+      }
+    } catch {}
+  }
+
+  if (agent.complianceTags && agent.complianceTags.length > 0) {
+    sections.push(`\n## COMPLIANCE TAGS`);
+    sections.push(`This agent is tagged with the following compliance classifications: ${agent.complianceTags.join(", ")}`);
+    sections.push(`Ensure all outputs and decisions respect these compliance requirements.`);
+  }
 
   const rtConfig = agent.runtimeConfig || {};
   if (Array.isArray(rtConfig.kpiBindings) && rtConfig.kpiBindings.length > 0) {
@@ -163,7 +231,7 @@ export async function executePromptWithMcp(
   prompt: string,
   industry?: string,
   agentSystemPrompt?: string,
-  options?: { conversational?: boolean },
+  options?: { conversational?: boolean; ontologyLabels?: string[] },
 ): Promise<{ steps: any[]; success: boolean; summary: any; conversationalResponse?: string }> {
   const startTime = Date.now();
   const steps: any[] = [];
@@ -213,10 +281,14 @@ export async function executePromptWithMcp(
   try {
     const linkedKbs = await storage.getAgentKnowledgeBases(agentId);
     if (linkedKbs.length > 0) {
+      const ontologyLabels = options?.ontologyLabels || [];
+      const augmentedQuery = ontologyLabels.length > 0
+        ? `${prompt}\n\nDomain concepts: ${ontologyLabels.join(", ")}`
+        : prompt;
       const kbChunks: string[] = [];
       for (const link of linkedKbs.slice(0, 3)) {
         try {
-          const chunks = await searchKnowledgeBaseChunks(link.knowledgeBaseId, prompt, 5, 0.3);
+          const chunks = await searchKnowledgeBaseChunks(link.knowledgeBaseId, augmentedQuery, 5, 0.3);
           if (chunks.length > 0) {
             kbChunks.push(`--- Knowledge Base: ${link.knowledgeBaseId} ---\n${chunks.map((c: any) => c.content).join("\n\n")}`);
           }
@@ -708,6 +780,7 @@ async function executeAgentCycle(agent: RuntimeAgent) {
           agent.prompt,
           agent.industry,
           enrichedContext || agent.agentSystemPrompt,
+          { ontologyLabels: (agent.ontologyTags || []).map(t => t.conceptLabel) },
         );
 
     await storage.updateAgentRuntimeRun(runtimeRun.id, {
@@ -784,6 +857,11 @@ export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?
   const blueprints = await storage.getBlueprints();
   const agentBlueprint = blueprints.find(b => b.agentId === deployment.agentId);
 
+  const rawOntologyTags = (agent as any).ontologyTags;
+  const ontologyTags = Array.isArray(rawOntologyTags) ? rawOntologyTags as Array<{ conceptId: string; conceptLabel: string }> : undefined;
+  const rawComplianceTags = (agent as any).complianceTags;
+  const complianceTags = Array.isArray(rawComplianceTags) && rawComplianceTags.length > 0 ? rawComplianceTags as string[] : undefined;
+
   const runtimeAgent: RuntimeAgent = {
     deploymentId,
     agentId: deployment.agentId,
@@ -797,6 +875,8 @@ export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?
     outcomeId: (agent as any).outcomeId || undefined,
     agentType: (agent as any).agentType || "single",
     runtimeConfig: rtConfig,
+    ontologyTags,
+    complianceTags,
   };
 
   if (intervalMinutes > 0) {
