@@ -5,24 +5,17 @@ import {
   ArrowLeft,
   Terminal,
   Clock,
-  DollarSign,
   Cpu,
-  MessageSquare,
   Wrench,
-  FileText,
   GitBranch,
   Shield,
   CheckCircle,
   XCircle,
-  AlertTriangle,
   ChevronRight,
   ChevronDown,
-  Zap,
   Brain,
-  Search,
-  BarChart3,
+  MessageSquare,
   Timer,
-  Hash,
   Bot,
   Play,
   Square,
@@ -35,9 +28,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Separator } from "@/components/ui/separator";
 import { StatusBadge } from "@/components/status-badge";
-import { InfoRow, formatDate, formatMs } from "@/components/shared-utils";
+import { formatDate, formatMs } from "@/components/shared-utils";
 import type { RunTrace } from "@shared/schema";
 
 interface ToolCall {
@@ -52,12 +44,6 @@ interface ToolCall {
   server?: string;
 }
 
-interface RetrievedDoc {
-  source: string;
-  title: string;
-  relevanceScore: number;
-  snippet: string;
-}
 
 interface Decision {
   step: string;
@@ -73,11 +59,6 @@ interface PolicyCheck {
   checkedAt: string;
 }
 
-interface TokenUsage {
-  promptTokens: number;
-  completionTokens: number;
-  totalTokens: number;
-}
 
 interface PromptInputs {
   systemPrompt: string;
@@ -555,7 +536,7 @@ export default function TraceDetail() {
 
   const promptInputs = trace.promptInputs as PromptInputs | null;
   const rawToolCalls = (trace.toolCalls as ToolCall[] | null) || [];
-  const stepsJson = (trace.stepsJson as Array<{ type?: string; output?: unknown; mcpTool?: string; input?: Record<string, unknown> }> | null) || [];
+  const stepsJson = (trace.stepsJson as Array<{ type?: string; output?: unknown; mcpTool?: string; mcpServer?: string; input?: Record<string, unknown>; startedAt?: string; completedAt?: string; name?: string; status?: string; workerSteps?: any[] }> | null) || [];
   const apiSteps = stepsJson.filter(s => s.type === "api_call");
   const toolCalls = rawToolCalls.map((tc, i) => {
     if (tc.output || tc.result) return tc;
@@ -565,13 +546,33 @@ export default function TraceDetail() {
     }
     return tc;
   });
-  const retrievedDocs = (trace.retrievedDocs as RetrievedDoc[] | null) || [];
   const decisions = (trace.decisions as Decision[] | null) || [];
   const policyChecks = (trace.policyChecks as PolicyCheck[] | null) || [];
-  const tokenUsage = trace.tokenUsage as TokenUsage | null;
 
-  const totalToolLatency = toolCalls.reduce((sum, tc) => sum + (tc.latencyMs || 0), 0);
-  const modelLatency = (trace.latencyMs || 0) - totalToolLatency;
+  const mcpCallSteps = stepsJson.filter(s => s.type === "api_call" && s.mcpTool);
+  const mcpCallCount = mcpCallSteps.length;
+  const isTeamPipeline = stepsJson.some(s => s.type === "orchestration" || s.type === "worker_execution");
+  const workerSteps = stepsJson.filter(s => s.type === "worker_execution");
+
+  const computedDuration = (() => {
+    if (trace.latencyMs && trace.latencyMs > 0) return trace.latencyMs;
+    if (stepsJson.length > 0) {
+      const first = stepsJson[0];
+      const last = stepsJson[stepsJson.length - 1];
+      if (first?.startedAt && last?.completedAt) {
+        return new Date(last.completedAt).getTime() - new Date(first.startedAt).getTime();
+      }
+    }
+    if (trace.startedAt && trace.endedAt) {
+      return new Date(trace.endedAt).getTime() - new Date(trace.startedAt).getTime();
+    }
+    return 0;
+  })();
+
+  const completedSteps = stepsJson.filter(s => s.status === "completed").length;
+  const totalSteps = stepsJson.length;
+
+  const mcpServers = Array.from(new Set(mcpCallSteps.map(s => s.mcpServer).filter(Boolean))) as string[];
 
   const timelineSteps = buildTimelineSteps(promptInputs, decisions, toolCalls, policyChecks, trace.outputSummary, stepsJson);
 
@@ -601,6 +602,16 @@ export default function TraceDetail() {
               )}
               <Badge variant="outline" className="text-[10px]" data-testid="badge-env">{trace.environment}</Badge>
               <StatusBadge status={trace.status} />
+              {trace.costUsd != null && trace.costUsd > 0 && (
+                <Badge variant="outline" className="text-[10px]" data-testid="badge-cost">
+                  ${trace.costUsd.toFixed(4)}
+                </Badge>
+              )}
+              {(trace.tokenUsage as any)?.totalTokens > 0 && (
+                <Badge variant="outline" className="text-[10px]" data-testid="badge-tokens">
+                  {((trace.tokenUsage as any).totalTokens as number).toLocaleString()} tokens
+                </Badge>
+              )}
             </div>
           </div>
         </div>
@@ -613,65 +624,53 @@ export default function TraceDetail() {
               <Clock className="w-3.5 h-3.5" />
               <span className="text-[11px]">Duration</span>
             </div>
-            <span className="text-lg font-semibold" data-testid="stat-duration">{formatMs(trace.latencyMs)}</span>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4 flex flex-col gap-1">
-            <div className="flex items-center gap-1.5 text-muted-foreground">
-              <DollarSign className="w-3.5 h-3.5" />
-              <span className="text-[11px]">Cost</span>
-            </div>
-            <span className="text-lg font-semibold" data-testid="stat-cost">${trace.costUsd?.toFixed(4)}</span>
+            <span className="text-lg font-semibold" data-testid="stat-duration">{computedDuration > 0 ? formatMs(computedDuration) : "\u2014"}</span>
+            {trace.startedAt && (
+              <span className="text-[10px] text-muted-foreground">{formatDate(trace.startedAt)}</span>
+            )}
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-4 flex flex-col gap-1">
             <div className="flex items-center gap-1.5 text-muted-foreground">
               <Wrench className="w-3.5 h-3.5" />
-              <span className="text-[11px]">Tool Calls</span>
+              <span className="text-[11px]">MCP Tool Calls</span>
             </div>
-            <span className="text-lg font-semibold" data-testid="stat-tool-calls">{toolCalls.length}</span>
+            <span className="text-lg font-semibold" data-testid="stat-tool-calls">{mcpCallCount}</span>
+            {mcpServers.length > 0 && (
+              <span className="text-[10px] text-muted-foreground truncate">{mcpServers.join(", ")}</span>
+            )}
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-4 flex flex-col gap-1">
             <div className="flex items-center gap-1.5 text-muted-foreground">
-              <Hash className="w-3.5 h-3.5" />
-              <span className="text-[11px]">Tokens</span>
+              <Play className="w-3.5 h-3.5" />
+              <span className="text-[11px]">Execution Steps</span>
             </div>
-            <span className="text-lg font-semibold" data-testid="stat-tokens">{tokenUsage ? tokenUsage.totalTokens.toLocaleString() : "\u2014"}</span>
+            <span className="text-lg font-semibold" data-testid="stat-steps">
+              {totalSteps > 0 ? `${completedSteps}/${totalSteps}` : "\u2014"}
+            </span>
+            <span className="text-[10px] text-muted-foreground">
+              {totalSteps === 0 ? "No steps recorded" : completedSteps === totalSteps ? "All passed" : `${totalSteps - completedSteps} pending/failed`}
+            </span>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4 flex flex-col gap-1">
+            <div className="flex items-center gap-1.5 text-muted-foreground">
+              {isTeamPipeline ? <Users className="w-3.5 h-3.5" /> : <Brain className="w-3.5 h-3.5" />}
+              <span className="text-[11px]">{isTeamPipeline ? "Pipeline" : "Execution Type"}</span>
+            </div>
+            <span className="text-lg font-semibold" data-testid="stat-type">
+              {isTeamPipeline ? `${workerSteps.length} Workers` : "Single Agent"}
+            </span>
+            <span className="text-[10px] text-muted-foreground">
+              {isTeamPipeline ? "Team orchestration" : trace.modelId || "AI-powered"}
+            </span>
           </CardContent>
         </Card>
       </div>
-
-      <Card data-testid="section-execution-summary">
-        <CardHeader className="pb-3">
-          <div className="flex items-center gap-2">
-            <BarChart3 className="w-4 h-4 text-muted-foreground" />
-            <CardTitle className="text-sm font-medium">Execution Summary</CardTitle>
-          </div>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-0">
-          <InfoRow label="Agent ID" value={<span className="font-mono text-xs">{trace.agentId.substring(0, 12)}...</span>} testId="info-agent-id" />
-          {trace.versionId && <InfoRow label="Version" value={trace.versionId} testId="info-version" />}
-          <InfoRow label="Environment" value={<Badge variant="outline" className="text-[10px]">{trace.environment}</Badge>} testId="info-env" />
-          <InfoRow label="Status" value={<StatusBadge status={trace.status} />} testId="info-status" />
-          <InfoRow label="Model" value={trace.modelId || "\u2014"} testId="info-model" />
-          <InfoRow label="Started" value={formatDate(trace.startedAt)} testId="info-started" />
-          <InfoRow label="Ended" value={formatDate(trace.endedAt)} testId="info-ended" />
-          <InfoRow label="Duration" value={formatMs(trace.latencyMs)} testId="info-duration" />
-          <InfoRow label="Cost" value={`$${trace.costUsd?.toFixed(4)}`} testId="info-cost" />
-          {tokenUsage && (
-            <>
-              <InfoRow label="Prompt Tokens" value={tokenUsage.promptTokens.toLocaleString()} testId="info-prompt-tokens" />
-              <InfoRow label="Completion Tokens" value={tokenUsage.completionTokens.toLocaleString()} testId="info-completion-tokens" />
-              <InfoRow label="Total Tokens" value={tokenUsage.totalTokens.toLocaleString()} testId="info-total-tokens" />
-            </>
-          )}
-          {trace.outputSummary && <InfoRow label="Output" value={trace.outputSummary} testId="info-output" />}
-        </CardContent>
-      </Card>
 
       <Card data-testid="execution-timeline">
         <CardHeader className="pb-3">
@@ -769,98 +768,6 @@ export default function TraceDetail() {
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card data-testid="section-retrieved-docs">
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <Search className="w-4 h-4 text-muted-foreground" />
-                <CardTitle className="text-sm font-medium">Retrieved Documents</CardTitle>
-              </div>
-              <Badge variant="outline" className="text-[10px]">{retrievedDocs.length} docs</Badge>
-            </div>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-2">
-            {retrievedDocs.length > 0 ? retrievedDocs.map((doc, i) => (
-              <div key={i} className="flex flex-col gap-1.5 p-3 rounded-md bg-muted/30" data-testid={`retrieved-doc-${i}`}>
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <div className="flex flex-col min-w-0">
-                    <span className="text-xs font-medium truncate">{doc.title}</span>
-                    <span className="text-[11px] text-muted-foreground truncate">{doc.source}</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <span className="text-[10px] text-muted-foreground">Relevance</span>
-                    <div className="w-16">
-                      <Progress value={doc.relevanceScore * 100} className="h-1.5" />
-                    </div>
-                    <span className="text-[10px] font-medium w-8 text-right">{(doc.relevanceScore * 100).toFixed(0)}%</span>
-                  </div>
-                </div>
-                <div className="p-2 rounded bg-background/50 text-[11px] text-muted-foreground leading-relaxed">
-                  {doc.snippet}
-                </div>
-              </div>
-            )) : (
-              <p className="text-sm text-muted-foreground py-4 text-center">No documents retrieved</p>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card data-testid="section-cost-latency">
-          <CardHeader className="pb-3">
-            <div className="flex items-center gap-2">
-              <Zap className="w-4 h-4 text-muted-foreground" />
-              <CardTitle className="text-sm font-medium">Cost & Latency Breakdown</CardTitle>
-            </div>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-3">
-            <div className="flex flex-col gap-1.5">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[11px] text-muted-foreground">Model Inference</span>
-                <span className="text-xs font-medium">{formatMs(modelLatency > 0 ? modelLatency : 0)}</span>
-              </div>
-              <Progress value={trace.latencyMs ? (Math.max(0, modelLatency) / trace.latencyMs) * 100 : 0} className="h-2" />
-            </div>
-            {toolCalls.length > 0 && (
-              <div className="flex flex-col gap-1.5">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[11px] text-muted-foreground">Tool Calls (total)</span>
-                  <span className="text-xs font-medium">{formatMs(totalToolLatency)}</span>
-                </div>
-                <Progress value={trace.latencyMs ? (totalToolLatency / trace.latencyMs) * 100 : 0} className="h-2" />
-              </div>
-            )}
-            <Separator />
-            <div className="flex flex-col gap-1">
-              {toolCalls.map((tc, i) => (
-                <div key={i} className="flex items-center justify-between gap-2 py-1">
-                  <span className="text-[11px] text-muted-foreground font-mono">{tc.name}</span>
-                  <span className="text-[11px] font-medium">{formatMs(tc.latencyMs)}</span>
-                </div>
-              ))}
-            </div>
-            {tokenUsage && (
-              <>
-                <Separator />
-                <div className="flex flex-col gap-1">
-                  <div className="flex items-center justify-between gap-2 py-1">
-                    <span className="text-[11px] text-muted-foreground">Prompt tokens</span>
-                    <span className="text-[11px] font-medium">{tokenUsage.promptTokens.toLocaleString()}</span>
-                  </div>
-                  <div className="flex items-center justify-between gap-2 py-1">
-                    <span className="text-[11px] text-muted-foreground">Completion tokens</span>
-                    <span className="text-[11px] font-medium">{tokenUsage.completionTokens.toLocaleString()}</span>
-                  </div>
-                  <div className="flex items-center justify-between gap-2 py-1 font-medium">
-                    <span className="text-[11px] text-muted-foreground">Total</span>
-                    <span className="text-[11px]">{tokenUsage.totalTokens.toLocaleString()}</span>
-                  </div>
-                </div>
-              </>
-            )}
-          </CardContent>
-        </Card>
-      </div>
     </div>
   );
 }
