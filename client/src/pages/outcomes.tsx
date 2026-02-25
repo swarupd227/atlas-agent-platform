@@ -14,9 +14,7 @@ import {
   BarChart3,
   Lock,
   GitBranch,
-  Shield,
   Sparkles,
-  CheckCircle,
   XCircle,
   Activity,
   Users,
@@ -25,7 +23,6 @@ import {
   ChevronDown,
   ChevronUp,
   SlidersHorizontal,
-  CircleDot,
   Download,
   RefreshCw,
   Filter,
@@ -268,12 +265,6 @@ export default function Outcomes() {
   const { data: agents } = useQuery<Agent[]>({
     queryKey: ["/api/agents"],
   });
-  const { data: driftSignals } = useQuery<Array<{ id: string; agentId: string; agentName: string; metric: string; driftPercent: number; severity: string }>>({
-    queryKey: ["/api/drift-signals"],
-  });
-  const { data: backendRiskDrivers } = useQuery<Array<{ type: string; label: string; severity: string; detail: string }>>({
-    queryKey: ["/api/outcome-risk-drivers"],
-  });
   const { data: outcomeEvents } = useQuery<Array<{ id: string; outcomeId: string; billable: boolean; amount: number }>>({
     queryKey: ["/api/outcome-events"],
   });
@@ -414,50 +405,6 @@ export default function Outcomes() {
   const onTrackKpis = allKpiStats.filter((k) => k.attainment >= 80 && k.attainment < 100);
   const exceededKpis = allKpiStats.filter((k) => k.attainment >= 100);
 
-  const riskDrivers: Array<{ type: string; label: string; severity: "critical" | "high" | "medium" | "low"; detail: string }> = [];
-  if (driftSignals) {
-    driftSignals
-      .filter((d) => d.severity === "critical" || d.severity === "high")
-      .slice(0, 3)
-      .forEach((d) => {
-        riskDrivers.push({
-          type: "drift",
-          label: `${d.agentName} drift`,
-          severity: d.severity as "critical" | "high",
-          detail: `${d.metric} drifted ${Math.abs(d.driftPercent).toFixed(1)}%`,
-        });
-      });
-  }
-  if (backendRiskDrivers) {
-    backendRiskDrivers.forEach((d) => {
-      riskDrivers.push({
-        type: d.type,
-        label: d.label,
-        severity: d.severity as "critical" | "high" | "medium" | "low",
-        detail: d.detail,
-      });
-    });
-  }
-  if (atRiskKpis.length > 0) {
-    riskDrivers.push({
-      type: "kpi",
-      label: `${atRiskKpis.length} KPI(s) at risk`,
-      severity: atRiskKpis.some((k) => k.attainment < 50) ? "critical" : "high",
-      detail: atRiskKpis.map((k) => k.name).slice(0, 3).join(", "),
-    });
-  }
-  if (disputedRevenue > 0) {
-    riskDrivers.push({
-      type: "billing",
-      label: "Revenue disputed",
-      severity: "medium",
-      detail: `$${disputedRevenue.toLocaleString()} in dispute`,
-    });
-  }
-  riskDrivers.sort((a, b) => {
-    const order = { critical: 0, high: 1, medium: 2, low: 3 };
-    return (order[a.severity] ?? 4) - (order[b.severity] ?? 4);
-  });
 
   const getAgentsForOutcome = (outcomeId: string) => {
     return (agents || []).filter((a) => a.outcomeId === outcomeId);
@@ -698,148 +645,6 @@ export default function Outcomes() {
               })}
             </div>
           )}
-        </CardContent>
-      </Card>
-
-      {/* === SLA STATUS + RISK DRIVERS (side-by-side) === */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* SLA Status Overview */}
-        <Card data-testid="section-sla-status">
-          <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2 space-y-0">
-            <CardTitle className="text-sm font-medium">SLA Status</CardTitle>
-            <Shield className="w-4 h-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent className="p-4 pt-0">
-            <div className="flex flex-col gap-2">
-              {outcomes?.map((outcome) => {
-                const sla = (outcome.slaConfig || {}) as Record<string, number>;
-                const outcomeKpis = kpis?.filter((k) => k.outcomeId === outcome.id) || [];
-                const avgAttainment = outcomeKpis.length > 0
-                  ? outcomeKpis.reduce((s, k) => s + (k.target > 0 ? ((k.currentValue || 0) / k.target) * 100 : 0), 0) / outcomeKpis.length
-                  : 0;
-                const slaTarget = sla.minSuccessRate ? sla.minSuccessRate * 100 : 90;
-                const slaStatus = avgAttainment >= slaTarget ? "green" : avgAttainment >= slaTarget * 0.95 ? "yellow" : "red";
-                const statusColors = {
-                  green: "bg-emerald-500 dark:bg-emerald-400",
-                  yellow: "bg-amber-500 dark:bg-amber-400",
-                  red: "bg-red-500 dark:bg-red-400",
-                };
-                return (
-                  <Link key={outcome.id} href={`/outcomes/${outcome.id}`}>
-                    <div className="flex items-center gap-3 p-2 rounded-md hover-elevate cursor-pointer" data-testid={`sla-row-${outcome.id}`}>
-                      <div className={`w-3 h-3 rounded-full shrink-0 ${statusColors[slaStatus]}`} />
-                      <div className="flex flex-col min-w-0 flex-1">
-                        <span className="text-xs font-medium truncate">{outcome.name}</span>
-                        <span className="text-[10px] text-muted-foreground">
-                          {avgAttainment.toFixed(1)}% attainment
-                          {sla.minSuccessRate ? ` (SLA: ${(sla.minSuccessRate * 100).toFixed(0)}%)` : ""}
-                        </span>
-                      </div>
-                      <Badge variant="outline" className="text-[10px] shrink-0">
-                        {outcomeKpis.length} KPIs
-                      </Badge>
-                    </div>
-                  </Link>
-                );
-              })}
-              {(!outcomes || outcomes.length === 0) && (
-                <span className="text-xs text-muted-foreground py-4 text-center">No contracts yet</span>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Top Risk Drivers */}
-        <Card data-testid="section-risk-drivers">
-          <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2 space-y-0">
-            <CardTitle className="text-sm font-medium">Top Risk Drivers</CardTitle>
-            <AlertTriangle className="w-4 h-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent className="p-4 pt-0">
-            <div className="flex flex-col gap-2">
-              {riskDrivers.length > 0 ? (
-                riskDrivers.map((risk, i) => {
-                  const severityColors = {
-                    critical: "text-red-600 dark:text-red-400 bg-red-500/10",
-                    high: "text-amber-600 dark:text-amber-400 bg-amber-500/10",
-                    medium: "text-yellow-600 dark:text-yellow-400 bg-yellow-500/10",
-                    low: "text-blue-600 dark:text-blue-400 bg-blue-500/10",
-                  };
-                  const RiskIcon = risk.type === "drift" ? Activity : risk.type === "tool_failure" ? Zap : risk.type === "policy_violation" ? Shield : risk.type === "kpi" ? AlertTriangle : DollarSign;
-                  return (
-                    <div key={i} className="flex items-center gap-3 p-2 rounded-md" data-testid={`risk-driver-${i}`}>
-                      <div className={`flex items-center justify-center w-7 h-7 rounded-md shrink-0 ${severityColors[risk.severity]}`}>
-                        <RiskIcon className="w-3.5 h-3.5" />
-                      </div>
-                      <div className="flex flex-col min-w-0 flex-1">
-                        <span className="text-xs font-medium">{risk.label}</span>
-                        <span className="text-[10px] text-muted-foreground">{risk.detail}</span>
-                      </div>
-                      <Badge variant="outline" className="text-[10px] shrink-0 capitalize">{risk.severity}</Badge>
-                    </div>
-                  );
-                })
-              ) : (
-                <div className="flex items-center gap-2 py-4 justify-center">
-                  <CheckCircle className="w-4 h-4 text-emerald-500 dark:text-emerald-400" />
-                  <span className="text-xs text-muted-foreground">No critical risks detected</span>
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* === AGENTS CONTRIBUTING === */}
-      <Card data-testid="section-agents-contributing">
-        <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2 space-y-0">
-          <CardTitle className="text-sm font-medium">Agents Contributing to KPIs</CardTitle>
-          <Users className="w-4 h-4 text-muted-foreground" />
-        </CardHeader>
-        <CardContent className="p-4 pt-0">
-          <div className="flex flex-col gap-3">
-            {outcomes?.map((outcome) => {
-              const boundAgents = getAgentsForOutcome(outcome.id);
-              const attribution = (outcome.attributionRules || {}) as Record<string, unknown>;
-              const agentWeights = (attribution.agentWeights || {}) as Record<string, number>;
-              const model = (attribution.model || "equal") as string;
-              if (boundAgents.length === 0) return null;
-              return (
-                <div key={outcome.id} className="flex flex-col gap-2" data-testid={`attribution-${outcome.id}`}>
-                  <div className="flex items-center gap-2">
-                    <CircleDot className="w-3 h-3 text-muted-foreground" />
-                    <span className="text-xs font-medium">{outcome.name}</span>
-                    <Badge variant="outline" className="text-[10px] capitalize">{model.replace(/_/g, " ")}</Badge>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 pl-5">
-                    {boundAgents.map((agent) => {
-                      const weight = agentWeights[agent.id] || (model === "equal" ? Math.round(100 / boundAgents.length) : 0);
-                      return (
-                        <Link key={agent.id} href={`/agents/${agent.id}`}>
-                          <div className="flex items-center gap-2 p-2 rounded-md border hover-elevate cursor-pointer" data-testid={`agent-attribution-${agent.id}`}>
-                            <div className="flex items-center justify-center w-6 h-6 rounded-md bg-primary/10 shrink-0">
-                              <Zap className="w-3 h-3 text-primary" />
-                            </div>
-                            <div className="flex flex-col min-w-0 flex-1">
-                              <span className="text-xs font-medium truncate">{agent.name}</span>
-                              <span className="text-[10px] text-muted-foreground">{agent.environment || "staging"}</span>
-                            </div>
-                            <span className="text-xs font-semibold text-primary shrink-0">{weight}%</span>
-                          </div>
-                        </Link>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
-            {(agents || []).filter((a) => a.outcomeId).length === 0 && (
-              <div className="flex items-center gap-2 py-4 justify-center">
-                <Users className="w-4 h-4 text-muted-foreground/50" />
-                <span className="text-xs text-muted-foreground">No agents bound to outcomes yet</span>
-              </div>
-            )}
-          </div>
         </CardContent>
       </Card>
 

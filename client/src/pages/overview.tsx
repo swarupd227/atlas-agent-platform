@@ -4,24 +4,15 @@ import {
   Target,
   Bot,
   AlertTriangle,
-  TrendingUp,
   TrendingDown,
-  DollarSign,
-  Activity,
   CheckCircle,
   Clock,
   ArrowRight,
   Sparkles,
-  Shield,
-  Server,
   Wifi,
   WifiOff,
   FlaskConical,
   CircleAlert,
-  Minus,
-  Wrench,
-  Gauge,
-  ArrowUpDown,
   Brain,
   BookOpen,
   Trophy,
@@ -33,30 +24,18 @@ import {
   Workflow,
   Plug,
   ChevronDown,
+  HeartPulse,
+  Zap,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/status-badge";
 import { ErrorState } from "@/components/error-state";
 import { Link } from "wouter";
 import { useRole, type RoleId } from "@/components/role-provider";
 import { useIndustry } from "@/components/industry-provider";
-import {
-  PortfolioSummaryBar,
-  OutcomePortfolioCard,
-  WaterfallChart,
-  RiskExposurePanel,
-} from "@/components/outcome-cockpit";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 
 interface KpiSummary {
   id: string;
@@ -106,26 +85,6 @@ interface ApprovalItem {
   environment: string | null;
 }
 
-interface OutcomePortfolioItem {
-  id: string;
-  name: string;
-  status: string;
-  riskTier: string;
-  confidence: number;
-  confidenceTrajectory: number[];
-  kpis: Array<{ id: string; name: string; current: number; target: number; unit: string; trend: string }>;
-  valueDelivered: number;
-  valueCommitted: number;
-  agentCount: number;
-}
-
-interface RiskExposureItem {
-  category: string;
-  count: number;
-  severity: string;
-  items: Array<{ name: string; detail: string }>;
-}
-
 interface OverviewData {
   outcomeHealth: OutcomeHealth[];
   agentsAtRisk: AgentAtRisk[];
@@ -147,20 +106,6 @@ interface OverviewData {
     activeAgents: number;
     totalAgents: number;
   };
-  portfolio?: {
-    committedValue: number;
-    valueDelivered: number;
-    valueAtRisk: number;
-    projectedGap: number;
-  };
-  outcomePortfolio?: OutcomePortfolioItem[];
-  waterfall?: {
-    grossEvents: number;
-    exclusions: number;
-    netBillable: number;
-    revenueRecognized: number;
-  };
-  riskExposure?: RiskExposureItem[];
 }
 
 interface PolicyViolation {
@@ -178,14 +123,12 @@ interface PolicyViolation {
 interface RoleWidgetConfig {
   title: string;
   description: string;
-  showOutcomeCockpit: boolean;
-  showOutcomeHealth: boolean;
+  showNeedsAttention: boolean;
   showAgentsAtRisk: boolean;
   showApprovalQueue: boolean;
   showFinancialSnapshot: boolean;
   showSystemStatus: boolean;
   showPolicyViolations: boolean;
-  outcomeCompact: boolean;
   approvalProminent: boolean;
   financialProminent: boolean;
   systemProminent: boolean;
@@ -271,106 +214,92 @@ const TECHNOLOGY_STACK = [
 
 const ROLE_WIDGETS: Record<RoleId, RoleWidgetConfig> = {
   admin: {
-    title: "Outcome Portfolio",
-    description: "Adaptive autonomy calibrated to industry risk, regulatory requirements, and real-time context",
-    showOutcomeCockpit: true,
-    showOutcomeHealth: false,
+    title: "Platform Overview",
+    description: "Operational cockpit — outcomes, agents, and system health at a glance",
+    showNeedsAttention: true,
     showAgentsAtRisk: true,
     showApprovalQueue: true,
     showFinancialSnapshot: false,
     showSystemStatus: true,
     showPolicyViolations: false,
-    outcomeCompact: false,
     approvalProminent: false,
     financialProminent: false,
     systemProminent: false,
   },
   outcome_owner: {
-    title: "Outcome Portfolio",
-    description: "Industry-contextualized value delivery and agent commitment tracking",
-    showOutcomeCockpit: true,
-    showOutcomeHealth: false,
+    title: "Outcome Overview",
+    description: "Outcome delivery health and items needing your attention",
+    showNeedsAttention: true,
     showAgentsAtRisk: false,
     showApprovalQueue: true,
     showFinancialSnapshot: false,
     showSystemStatus: false,
     showPolicyViolations: false,
-    outcomeCompact: false,
     approvalProminent: false,
     financialProminent: false,
     systemProminent: false,
   },
   agent_engineer: {
     title: "Agent Engineer Dashboard",
-    description: "Industry-aware agent performance, context engineering, and skill development",
-    showOutcomeCockpit: false,
-    showOutcomeHealth: true,
+    description: "Agent performance and operational health",
+    showNeedsAttention: true,
     showAgentsAtRisk: true,
     showApprovalQueue: false,
     showFinancialSnapshot: false,
     showSystemStatus: true,
     showPolicyViolations: false,
-    outcomeCompact: true,
     approvalProminent: false,
     financialProminent: false,
     systemProminent: false,
   },
   ops_sre: {
     title: "Ops / SRE Dashboard",
-    description: "Industry-regulated operations, adaptive autonomy monitoring, and incident response",
-    showOutcomeCockpit: false,
-    showOutcomeHealth: false,
+    description: "System operations, incidents, and infrastructure health",
+    showNeedsAttention: true,
     showAgentsAtRisk: true,
     showApprovalQueue: true,
     showFinancialSnapshot: false,
     showSystemStatus: true,
     showPolicyViolations: false,
-    outcomeCompact: false,
     approvalProminent: false,
     financialProminent: false,
     systemProminent: true,
   },
   compliance_security: {
     title: "Compliance / Security Dashboard",
-    description: "Regulatory framework enforcement, policy-as-code governance, and audit compliance",
-    showOutcomeCockpit: false,
-    showOutcomeHealth: false,
+    description: "Policy enforcement, audit compliance, and regulatory adherence",
+    showNeedsAttention: true,
     showAgentsAtRisk: false,
     showApprovalQueue: true,
     showFinancialSnapshot: false,
     showSystemStatus: true,
     showPolicyViolations: true,
-    outcomeCompact: false,
     approvalProminent: false,
     financialProminent: false,
     systemProminent: false,
   },
   expert_validator: {
     title: "Expert Validator Dashboard",
-    description: "Context-aware approvals calibrated to industry risk and regulatory requirements",
-    showOutcomeCockpit: false,
-    showOutcomeHealth: false,
+    description: "Pending approvals and items requiring expert review",
+    showNeedsAttention: true,
     showAgentsAtRisk: true,
     showApprovalQueue: true,
     showFinancialSnapshot: false,
     showSystemStatus: false,
     showPolicyViolations: false,
-    outcomeCompact: false,
     approvalProminent: true,
     financialProminent: false,
     systemProminent: false,
   },
   finance: {
-    title: "Outcome Portfolio",
-    description: "Outcome-driven value delivery, financial attribution, and industry-contextualized revenue",
-    showOutcomeCockpit: true,
-    showOutcomeHealth: false,
+    title: "Finance Overview",
+    description: "Revenue, billing status, and outcome financial performance",
+    showNeedsAttention: true,
     showAgentsAtRisk: false,
     showApprovalQueue: false,
-    showFinancialSnapshot: false,
+    showFinancialSnapshot: true,
     showSystemStatus: false,
     showPolicyViolations: false,
-    outcomeCompact: false,
     approvalProminent: false,
     financialProminent: true,
     systemProminent: false,
@@ -425,19 +354,6 @@ function dueIn(dateStr: string) {
   return `${Math.floor(hours / 24)}d left`;
 }
 
-function TrendIcon({ trend }: { trend: string | null }) {
-  if (trend === "up") return <TrendingUp className="w-3 h-3 text-emerald-500" />;
-  if (trend === "down") return <TrendingDown className="w-3 h-3 text-red-500" />;
-  return <Minus className="w-3 h-3 text-muted-foreground" />;
-}
-
-const RISK_CATEGORY_ICONS: Record<string, typeof AlertTriangle> = {
-  "Agent Drift": Activity,
-  "Tool Failures": Wrench,
-  "SLA Pressure": Clock,
-  "Cost Overruns": DollarSign,
-};
-
 function CollapsibleDetail({ title, defaultOpen = false, children }: { title: string; defaultOpen?: boolean; children: ReactNode }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
@@ -459,133 +375,224 @@ function CollapsibleDetail({ title, defaultOpen = false, children }: { title: st
   );
 }
 
-function OutcomeCockpitView({ data, isFinanceRole }: { data: OverviewData; isFinanceRole: boolean }) {
-  const [sortBy, setSortBy] = useState<"confidence" | "risk" | "value">("confidence");
+function PlatformPulseStrip({ data }: { data: OverviewData }) {
+  const activeOutcomes = data.outcomeHealth.filter((o) => o.status === "active" || o.status === "agents_assigned").length;
+  const totalOutcomes = data.outcomeHealth.length;
 
-  const portfolio = data.portfolio || { committedValue: 0, valueDelivered: 0, valueAtRisk: 0, projectedGap: 0 };
-  const outcomes = data.outcomePortfolio || [];
-  const waterfall = data.waterfall || { grossEvents: 0, exclusions: 0, netBillable: 0, revenueRecognized: 0 };
-  const riskExposure = data.riskExposure || [];
+  const overallHealth = data.outcomeHealth.length > 0
+    ? data.outcomeHealth.reduce((sum, o) => {
+        if (o.kpis.length === 0) return sum + 100;
+        const avg = o.kpis.reduce((s, k) => s + k.progress, 0) / o.kpis.length;
+        return sum + avg;
+      }, 0) / data.outcomeHealth.length
+    : 0;
 
-  const riskOrder: Record<string, number> = { CRITICAL: 0, critical: 0, HIGH: 1, high: 1, MEDIUM: 2, medium: 2, LOW: 3, low: 3 };
+  const atRiskKpis = data.outcomeHealth.reduce((count, o) => {
+    return count + o.kpis.filter((k) => k.progress < 80).length;
+  }, 0);
+  const overdueApprovals = data.approvalQueue.items.filter(
+    (a) => a.dueDate && new Date(a.dueDate).getTime() < Date.now()
+  ).length;
+  const agentsWithIncidents = data.agentsAtRisk.filter((a) => a.openIncidents > 0).length;
+  const attentionCount = atRiskKpis + overdueApprovals + agentsWithIncidents;
 
-  const sortedOutcomes = [...outcomes].sort((a, b) => {
-    if (sortBy === "confidence") return a.confidence - b.confidence;
-    if (sortBy === "risk") return (riskOrder[a.riskTier] ?? 99) - (riskOrder[b.riskTier] ?? 99);
-    if (sortBy === "value") return b.valueDelivered - a.valueDelivered;
-    return 0;
-  });
-
-  const riskCategories = riskExposure.map((r) => ({
-    category: r.category,
-    icon: RISK_CATEGORY_ICONS[r.category] || AlertTriangle,
-    count: r.count,
-    severity: r.severity as "low" | "medium" | "high" | "critical",
-    items: r.items,
-  }));
-
-  const waterfallSteps = [
-    { label: "Gross Events", value: waterfall.grossEvents, type: "gross" as const },
-    { label: "Exclusions", value: waterfall.exclusions, type: "deduction" as const },
-    { label: "Net Billable", value: waterfall.netBillable, type: "net" as const },
-    { label: "Revenue", value: waterfall.revenueRecognized, type: "net" as const },
-  ];
+  const healthColor = overallHealth >= 80
+    ? "text-emerald-600 dark:text-emerald-400"
+    : overallHealth >= 60
+      ? "text-amber-600 dark:text-amber-400"
+      : "text-red-600 dark:text-red-400";
+  const healthBg = overallHealth >= 80
+    ? "bg-emerald-500/10"
+    : overallHealth >= 60
+      ? "bg-amber-500/10"
+      : "bg-red-500/10";
 
   return (
-    <div className="flex flex-col gap-6">
-      <PortfolioSummaryBar
-        committedValue={portfolio.committedValue}
-        valueDelivered={portfolio.valueDelivered}
-        valueAtRisk={portfolio.valueAtRisk}
-        projectedGap={portfolio.projectedGap}
-      />
-
-      <div className="flex flex-col gap-3">
-        <div className="flex items-center justify-between gap-2 flex-wrap">
-          <h2 className="text-sm font-medium text-muted-foreground" data-testid="text-outcome-portfolio-heading">
-            Agent Outcome Contracts
-          </h2>
-          <div className="flex items-center gap-2 flex-wrap">
-            <Select value={sortBy} onValueChange={(v) => setSortBy(v as typeof sortBy)}>
-              <SelectTrigger className="h-8 w-36 text-xs" data-testid="select-sort-outcomes">
-                <ArrowUpDown className="w-3 h-3 mr-1" />
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="confidence">By Confidence</SelectItem>
-                <SelectItem value="risk">By Risk</SelectItem>
-                <SelectItem value="value">By Value</SelectItem>
-              </SelectContent>
-            </Select>
-            <Link href="/outcomes">
-              <Button variant="ghost" size="sm" data-testid="link-view-all-outcomes">
-                View All <ArrowRight className="w-3.5 h-3.5 ml-1" />
-              </Button>
-            </Link>
-          </div>
-        </div>
-        {sortedOutcomes.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" data-testid="grid-outcome-portfolio">
-            {sortedOutcomes.map((outcome) => (
-              <Link key={outcome.id} href={`/outcomes/${outcome.id}`}>
-                <OutcomePortfolioCard outcome={outcome} />
-              </Link>
-            ))}
-          </div>
-        ) : (
-          <Card>
-            <CardContent className="p-6 flex flex-col items-center justify-center gap-3">
-              <Target className="w-8 h-8 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground text-center">
-                No outcome contracts yet. Create your first to start tracking agent commitments.
-              </p>
-              <Link href="/outcomes/discover">
-                <Button size="sm" data-testid="button-create-first-outcome-cockpit">
-                  <Sparkles className="w-3.5 h-3.5 mr-1" />
-                  Create Outcome
-                </Button>
-              </Link>
-            </CardContent>
-          </Card>
-        )}
-      </div>
-
-      <CollapsibleDetail title="Financial & Risk Details">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <Card data-testid="card-financial-waterfall">
-            <CardHeader className="p-4 pb-2">
-              <div className="flex items-center justify-between gap-2">
-                <CardTitle className="text-sm font-medium">Financial Attribution</CardTitle>
-                <Link href="/billing">
-                  <Button variant="ghost" size="sm" data-testid="link-waterfall-billing">
-                    View Billing <ArrowRight className="w-3.5 h-3.5 ml-1" />
-                  </Button>
-                </Link>
+    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4" data-testid="section-platform-pulse">
+      <Link href="/outcomes">
+        <Card className="hover-elevate cursor-pointer h-full" data-testid="pulse-active-outcomes">
+          <CardContent className="p-4">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex flex-col gap-1">
+                <span className="text-xs text-muted-foreground">Active Outcomes</span>
+                <span className="text-2xl font-semibold tracking-tight">{activeOutcomes}</span>
+                <span className="text-xs text-muted-foreground">{totalOutcomes} total</span>
               </div>
-            </CardHeader>
-            <CardContent className="p-4 pt-2">
-              <WaterfallChart steps={waterfallSteps} />
-            </CardContent>
-          </Card>
+              <div className="flex items-center justify-center w-9 h-9 rounded-md bg-primary/10 shrink-0">
+                <Target className="w-4 h-4 text-primary" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </Link>
 
-          {riskCategories.length > 0 ? (
-            <RiskExposurePanel risks={riskCategories} />
-          ) : (
-            <Card data-testid="card-no-risk">
-              <CardHeader className="p-4 pb-2">
-                <CardTitle className="text-sm font-medium">Risk Exposure</CardTitle>
-              </CardHeader>
-              <CardContent className="p-4 pt-2">
-                <div className="flex items-center gap-3 p-4 rounded-md bg-emerald-500/5">
-                  <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                  <span className="text-xs text-muted-foreground">No significant risk exposure detected</span>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-        </div>
-      </CollapsibleDetail>
+      <Card data-testid="pulse-overall-health">
+        <CardContent className="p-4">
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex flex-col gap-1">
+              <span className="text-xs text-muted-foreground">Overall Health</span>
+              <span className={`text-2xl font-semibold tracking-tight ${healthColor}`}>
+                {overallHealth.toFixed(0)}%
+              </span>
+              <span className="text-xs text-muted-foreground">KPI attainment avg</span>
+            </div>
+            <div className={`flex items-center justify-center w-9 h-9 rounded-md shrink-0 ${healthBg}`}>
+              <HeartPulse className={`w-4 h-4 ${healthColor}`} />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Link href="/agents">
+        <Card className="hover-elevate cursor-pointer h-full" data-testid="pulse-agents-running">
+          <CardContent className="p-4">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex flex-col gap-1">
+                <span className="text-xs text-muted-foreground">Agents Running</span>
+                <span className="text-2xl font-semibold tracking-tight">
+                  {data.systemStatus.activeAgents}
+                </span>
+                <span className="text-xs text-muted-foreground">{data.systemStatus.totalAgents} total</span>
+              </div>
+              <div className="flex items-center justify-center w-9 h-9 rounded-md bg-primary/10 shrink-0">
+                <Bot className="w-4 h-4 text-primary" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </Link>
+
+      <Card data-testid="pulse-attention-items">
+        <CardContent className="p-4">
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex flex-col gap-1">
+              <span className="text-xs text-muted-foreground">Needs Attention</span>
+              <span className={`text-2xl font-semibold tracking-tight ${attentionCount > 0 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                {attentionCount}
+              </span>
+              <div className="flex items-center gap-2 flex-wrap">
+                {atRiskKpis > 0 && <span className="text-[10px] text-muted-foreground">{atRiskKpis} KPIs</span>}
+                {overdueApprovals > 0 && <span className="text-[10px] text-muted-foreground">{overdueApprovals} approvals</span>}
+                {agentsWithIncidents > 0 && <span className="text-[10px] text-muted-foreground">{agentsWithIncidents} agents</span>}
+                {attentionCount === 0 && <span className="text-[10px] text-muted-foreground">All clear</span>}
+              </div>
+            </div>
+            <div className={`flex items-center justify-center w-9 h-9 rounded-md shrink-0 ${attentionCount > 0 ? "bg-amber-500/10" : "bg-emerald-500/10"}`}>
+              <AlertTriangle className={`w-4 h-4 ${attentionCount > 0 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}`} />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
     </div>
+  );
+}
+
+interface AttentionItem {
+  id: string;
+  type: "outcome" | "agent" | "approval";
+  label: string;
+  detail: string;
+  severity: number;
+  href: string;
+  icon: typeof AlertTriangle;
+  badgeLabel: string;
+  badgeClass: string;
+}
+
+function NeedsAttentionSection({ data }: { data: OverviewData }) {
+  const items: AttentionItem[] = [];
+
+  data.approvalQueue.items.forEach((a) => {
+    if (a.dueDate && new Date(a.dueDate).getTime() < Date.now()) {
+      items.push({
+        id: `approval-${a.id}`,
+        type: "approval",
+        label: a.objectName || a.type,
+        detail: `Overdue approval — ${a.type.replace(/_/g, " ")}`,
+        severity: 0,
+        href: `/approvals/${a.id}`,
+        icon: Clock,
+        badgeLabel: "Overdue",
+        badgeClass: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20",
+      });
+    }
+  });
+
+  data.outcomeHealth.forEach((o) => {
+    const worstKpi = o.kpis.filter((k) => k.progress < 80).sort((a, b) => a.progress - b.progress)[0];
+    if (worstKpi) {
+      items.push({
+        id: `outcome-${o.id}`,
+        type: "outcome",
+        label: o.name,
+        detail: `${worstKpi.name} at ${worstKpi.progress.toFixed(0)}% (target: ${worstKpi.target} ${worstKpi.unit})`,
+        severity: 1,
+        href: `/outcomes/${o.id}`,
+        icon: TrendingDown,
+        badgeLabel: "At Risk",
+        badgeClass: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20",
+      });
+    }
+  });
+
+  data.agentsAtRisk.forEach((a) => {
+    if (a.openIncidents > 0 || (a.lastDrift && Math.abs(a.lastDrift.driftPercent) > 10)) {
+      items.push({
+        id: `agent-${a.id}`,
+        type: "agent",
+        label: a.name,
+        detail: a.openIncidents > 0
+          ? `${a.openIncidents} open incident${a.openIncidents > 1 ? "s" : ""}`
+          : `Drift: ${a.lastDrift!.driftPercent}%`,
+        severity: 2,
+        href: `/agents/${a.id}`,
+        icon: Zap,
+        badgeLabel: a.openIncidents > 0 ? "Incidents" : "Drifting",
+        badgeClass: a.openIncidents > 0
+          ? "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20"
+          : "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20",
+      });
+    }
+  });
+
+  items.sort((a, b) => a.severity - b.severity);
+  const visible = items.slice(0, 5);
+
+  return (
+    <Card data-testid="section-needs-attention">
+      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
+        <CardTitle className="text-sm font-medium">Needs Attention</CardTitle>
+        {items.length > 5 && (
+          <Badge variant="secondary" className="text-[10px]">{items.length} total</Badge>
+        )}
+      </CardHeader>
+      <CardContent className="flex flex-col gap-1.5">
+        {visible.length > 0 ? (
+          visible.map((item) => (
+            <Link key={item.id} href={item.href}>
+              <div
+                className="flex items-center gap-3 p-2.5 rounded-md hover-elevate cursor-pointer"
+                data-testid={`attention-item-${item.id}`}
+              >
+                <item.icon className="w-4 h-4 text-muted-foreground shrink-0" />
+                <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+                  <span className="text-xs font-medium truncate">{item.label}</span>
+                  <span className="text-[11px] text-muted-foreground truncate">{item.detail}</span>
+                </div>
+                <Badge variant="outline" className={`text-[10px] shrink-0 ${item.badgeClass}`}>
+                  {item.badgeLabel}
+                </Badge>
+              </div>
+            </Link>
+          ))
+        ) : (
+          <div className="flex items-center gap-3 p-4 rounded-md bg-emerald-500/5">
+            <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <span className="text-xs text-muted-foreground">All systems healthy — nothing needs your attention right now</span>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -655,88 +662,6 @@ function PolicyViolationsSection({ violations, isLoading }: { violations: Policy
         )}
       </CardContent>
     </Card>
-  );
-}
-
-function OutcomeHealthSection({ outcomes, compact }: { outcomes: OutcomeHealth[]; compact: boolean }) {
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <h2 className="text-sm font-medium text-muted-foreground">Outcome Health</h2>
-        <Link href="/outcomes">
-          <Button variant="ghost" size="sm" data-testid="link-view-outcomes">
-            View All <ArrowRight className="w-3.5 h-3.5 ml-1" />
-          </Button>
-        </Link>
-      </div>
-      <div className={`grid gap-4 ${compact ? "grid-cols-1 md:grid-cols-2 xl:grid-cols-4" : "grid-cols-1 md:grid-cols-2 xl:grid-cols-3"}`} data-testid="grid-outcome-health">
-        {outcomes.map((outcome) => (
-          <Link key={outcome.id} href={`/outcomes/${outcome.id}`}>
-            <Card className="hover-elevate cursor-pointer h-full" data-testid={`tile-outcome-${outcome.id}`}>
-              <CardContent className="p-4 flex flex-col gap-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex flex-col gap-0.5 min-w-0">
-                    <span className="text-sm font-medium truncate">{outcome.name}</span>
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <StatusBadge status={outcome.status} />
-                      {!compact && (
-                        <Badge
-                          variant="outline"
-                          className={`text-[10px] ${
-                            outcome.slaStatus === "breach"
-                              ? "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20"
-                              : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
-                          }`}
-                          data-testid={`sla-status-${outcome.id}`}
-                        >
-                          SLA: {outcome.slaStatus === "breach" ? "Breach" : "Healthy"}
-                        </Badge>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex flex-col items-end gap-0.5 shrink-0">
-                    <span className="text-lg font-semibold">{Math.round(outcome.confidence * 100)}%</span>
-                    <span className="text-[10px] text-muted-foreground">confidence</span>
-                  </div>
-                </div>
-                {!compact && outcome.kpis.length > 0 && (
-                  <div className="flex flex-col gap-2">
-                    {outcome.kpis.slice(0, 3).map((kpi) => (
-                      <div key={kpi.id} className="flex flex-col gap-1">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-1 min-w-0">
-                            <TrendIcon trend={kpi.trend} />
-                            <span className="text-[11px] text-muted-foreground truncate">{kpi.name}</span>
-                          </div>
-                          <span className="text-[11px] font-medium shrink-0">
-                            {kpi.current.toLocaleString()} / {kpi.target.toLocaleString()} {kpi.unit}
-                          </span>
-                        </div>
-                        <Progress value={kpi.progress} className="h-1" />
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {compact && outcome.kpis.length > 0 && (
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {outcome.kpis.slice(0, 3).map((kpi) => (
-                      <div key={kpi.id} className="flex items-center gap-1">
-                        <TrendIcon trend={kpi.trend} />
-                        <span className="text-[11px] text-muted-foreground">{kpi.name}:</span>
-                        <span className="text-[11px] font-medium">{kpi.current.toLocaleString()}/{kpi.target.toLocaleString()}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {outcome.kpis.length === 0 && (
-                  <p className="text-[11px] text-muted-foreground">No KPIs configured</p>
-                )}
-              </CardContent>
-            </Card>
-          </Link>
-        ))}
-      </div>
-    </div>
   );
 }
 
@@ -1103,7 +1028,7 @@ export default function Overview() {
     );
   }
 
-  const hasOutcomes = data.outcomeHealth.length > 0 || (data.outcomePortfolio && data.outcomePortfolio.length > 0);
+  const hasOutcomes = data.outcomeHealth.length > 0;
 
   if (!hasOutcomes && data.agentsAtRisk.length === 0) {
     return (
@@ -1139,12 +1064,10 @@ export default function Overview() {
     <div className="flex flex-col gap-6 p-6" data-testid="page-overview">
       <PlatformHero industry={industry} role={role} config={config} />
 
-      {config.showOutcomeCockpit && (
-        <OutcomeCockpitView data={data} isFinanceRole={role.id === "finance"} />
-      )}
+      <PlatformPulseStrip data={data} />
 
-      {config.showOutcomeHealth && (
-        <OutcomeHealthSection outcomes={data.outcomeHealth} compact={config.outcomeCompact} />
+      {config.showNeedsAttention && (
+        <NeedsAttentionSection data={data} />
       )}
 
       {(showAgentsAndApprovalRow || config.approvalProminent) && (
@@ -1173,8 +1096,8 @@ export default function Overview() {
         </CollapsibleDetail>
       )}
 
-      {(config.financialProminent && !config.showOutcomeCockpit) && (
-        <CollapsibleDetail title="Financial Details">
+      {config.financialProminent && (
+        <CollapsibleDetail title="Financial Details" defaultOpen>
           <div className="grid grid-cols-1 gap-4">
             <FinancialSnapshotSection financialSnapshot={data.financialSnapshot} prominent={true} />
           </div>
