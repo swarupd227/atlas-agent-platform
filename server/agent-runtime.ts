@@ -270,6 +270,8 @@ interface AvailableTool {
   toolName: string;
   toolDescription: string;
   toolInputSchema: any;
+  toolEndpoint?: string;
+  toolMethod?: string;
 }
 
 async function gatherAvailableTools(mcpServerIds: string[]): Promise<AvailableTool[]> {
@@ -279,6 +281,7 @@ async function gatherAvailableTools(mcpServerIds: string[]): Promise<AvailableTo
     if (!server || !server.url) continue;
     const tools = await storage.getMcpServerTools(serverId);
     for (const tool of tools) {
+      const ann = (tool.annotations && typeof tool.annotations === "object") ? tool.annotations as Record<string, any> : {};
       availableTools.push({
         serverId,
         serverName: server.name,
@@ -286,6 +289,8 @@ async function gatherAvailableTools(mcpServerIds: string[]): Promise<AvailableTo
         toolName: tool.name,
         toolDescription: tool.description || "",
         toolInputSchema: tool.inputSchema || {},
+        toolEndpoint: ann.endpoint || undefined,
+        toolMethod: ann.method || undefined,
       });
     }
   }
@@ -307,13 +312,42 @@ function buildOpenAITools(availableTools: AvailableTool[]): OpenAI.ChatCompletio
 
 async function callMcpTool(tool: AvailableTool, args: Record<string, any>): Promise<any> {
   const baseUrl = tool.serverUrl.replace(/\/$/, "");
-  const qs = new URLSearchParams(
-    Object.fromEntries(Object.entries(args).map(([k, v]) => [k, String(v)]))
-  ).toString();
-  const fetchUrl = qs ? `${baseUrl}?${qs}` : baseUrl;
-  const res = await fetch(fetchUrl);
+  let endpointPath = tool.toolEndpoint ? `/${tool.toolEndpoint.replace(/^\//, "")}` : "";
+  const method = (tool.toolMethod || "GET").toUpperCase();
+
+  const remainingArgs = { ...args };
+  const missingPathParams: string[] = [];
+  endpointPath = endpointPath.replace(/\{(\w+)\}/g, (_match, paramName) => {
+    const val = remainingArgs[paramName];
+    if (val == null) {
+      missingPathParams.push(paramName);
+      return paramName;
+    }
+    delete remainingArgs[paramName];
+    return String(val);
+  });
+  if (missingPathParams.length > 0) {
+    throw new Error(`MCP tool ${tool.toolName} missing required path params: ${missingPathParams.join(", ")}`);
+  }
+
+  let fetchUrl = `${baseUrl}${endpointPath}`;
+  const fetchOpts: RequestInit = { method };
+
+  if (method === "POST" || method === "PUT" || method === "PATCH") {
+    fetchOpts.headers = { "Content-Type": "application/json" };
+    fetchOpts.body = JSON.stringify(remainingArgs);
+  } else {
+    const qs = new URLSearchParams(
+      Object.fromEntries(Object.entries(remainingArgs).map(([k, v]) => [k, String(v)]))
+    ).toString();
+    if (qs) fetchUrl += `?${qs}`;
+  }
+
+  const res = await fetch(fetchUrl, fetchOpts);
   if (!res.ok) throw new Error(`MCP API ${tool.serverName}/${tool.toolName} returned ${res.status}`);
-  return res.json();
+  const contentType = res.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) return res.json();
+  return { status: res.status, message: await res.text() };
 }
 
 export async function executePromptWithMcp(

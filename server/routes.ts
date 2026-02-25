@@ -12,6 +12,10 @@ import OpenAI, { toFile } from "openai";
 import multer from "multer";
 import { checkPermission, getRequestRole, getTraceRedactionLevel, getRedactionLevel, redactPayload } from "./permissions";
 import { registerKnowledgeBaseRoutes } from "./kb-routes";
+import adobeAnalyticsRouter from "./mock-mcp/adobe-analytics";
+import marketoRouter from "./mock-mcp/marketo";
+import salesforceRouter from "./mock-mcp/salesforce";
+import { registerMockMcpServers, seedMarketingDemo } from "./mock-mcp/register";
 import type { RedactionLevel } from "./permissions";
 import {
   insertOutcomeContractSchema,
@@ -210,6 +214,35 @@ export async function registerRoutes(
 ): Promise<Server> {
 
   registerKnowledgeBaseRoutes(app);
+  app.use("/api/mock/adobe", adobeAnalyticsRouter);
+  app.use("/api/mock/marketo", marketoRouter);
+  app.use("/api/mock/salesforce", salesforceRouter);
+
+  app.post("/api/mock-mcp/register", async (_req, res) => {
+    try {
+      const result = await registerMockMcpServers();
+      res.json({ success: true, ...result, message: `Registered ${result.servers.length} MCP servers with ${result.tools} tools` });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  app.post("/api/mock-mcp/seed-demo", async (_req, res) => {
+    try {
+      const result = await seedMarketingDemo();
+      res.json({
+        success: true,
+        message: `Marketing Lead Management demo seeded successfully`,
+        servers: result.servers.map((s: any) => ({ id: s.id, name: s.name })),
+        tools: result.tools,
+        outcome: { id: result.outcome.id, name: result.outcome.name },
+        agents: result.agents.map((a: any) => ({ id: a.id, name: a.name, type: a.type })),
+        kpis: result.kpis.map((k: any) => ({ id: k.id, name: k.name, target: k.target, unit: k.unit })),
+      });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
 
   app.get("/api/outcomes", async (_req, res) => {
     const outcomes = await storage.getOutcomes();
