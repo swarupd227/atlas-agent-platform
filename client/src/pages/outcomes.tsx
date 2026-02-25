@@ -22,6 +22,7 @@ import {
   Gauge,
   ChevronDown,
   ChevronUp,
+  ChevronRight,
   SlidersHorizontal,
   Download,
   RefreshCw,
@@ -165,7 +166,7 @@ function ConfidenceDot({ value }: { value: number }) {
   return (
     <div className="flex items-center gap-1">
       <div className={`w-2 h-2 rounded-full ${color}`} />
-      <span className="text-[10px] text-muted-foreground">{(value * 100).toFixed(0)}%</span>
+      <span className="text-xs text-muted-foreground">{(value * 100).toFixed(0)}%</span>
     </div>
   );
 }
@@ -226,7 +227,7 @@ function SlaTrafficLight({ outcome, kpis, agents }: { outcome: OutcomeContract; 
   return (
     <div className="flex items-center gap-1.5" data-testid={`sla-status-${outcome.id}`}>
       <div className={`w-2.5 h-2.5 rounded-full ${colors[worst]}`} />
-      <span className="text-[11px] text-muted-foreground">SLA</span>
+      <span className="text-xs text-muted-foreground">SLA</span>
       <div className="flex items-center gap-0.5 ml-1">
         {checks.map((c, i) => (
           <div key={i} className={`w-1.5 h-1.5 rounded-full ${colors[c.status]}`} title={`${c.label}: ${c.status}`} />
@@ -244,7 +245,7 @@ export default function Outcomes() {
   const [filterBillingModel, setFilterBillingModel] = useState("all");
   const [, navigate] = useLocation();
   const [simulateOpen, setSimulateOpen] = useState(false);
-  const [expandedKpis, setExpandedKpis] = useState(true);
+  const [expandedKpis, setExpandedKpis] = useState(false);
   const [recomputingKpis, setRecomputingKpis] = useState(false);
   const { toast } = useToast();
   const outcomesPerm = usePermission("create_modify_outcomes");
@@ -252,6 +253,8 @@ export default function Outcomes() {
   const industryId = industry?.id || "";
 
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [showAllOutcomes, setShowAllOutcomes] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
 
   const { data: outcomes, isLoading } = useQuery<OutcomeContract[]>({
     queryKey: ["/api/outcomes"],
@@ -347,6 +350,15 @@ export default function Outcomes() {
   });
 
   const hasActiveFilters = filterRiskTier !== "all" || filterStatus !== "all" || filterOwner !== "all" || filterBillingModel !== "all";
+  const activeFilterCount = [filterRiskTier, filterStatus, filterOwner, filterBillingModel].filter(v => v !== "all").length;
+
+  const sorted = [...(filtered || [])].sort((a, b) => {
+    const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    return dateB - dateA;
+  });
+  const hasMoreOutcomes = sorted.length > 6;
+  const visibleOutcomes = showAllOutcomes ? sorted : sorted.slice(0, 6);
 
   const handleExportJson = () => {
     if (!outcomes || !kpis) return;
@@ -469,7 +481,7 @@ export default function Outcomes() {
             <Button onClick={() => navigate("/outcomes/discover")} data-testid="button-create-outcome">
               <Plus className="w-4 h-4 mr-1.5" /> New Contract
               {outcomesPerm.permission.access === "conditional" && outcomesPerm.permission.annotation && (
-                <Badge variant="secondary" className="text-[10px] ml-1">{outcomesPerm.permission.annotation}</Badge>
+                <Badge variant="secondary" className="text-xs ml-1">{outcomesPerm.permission.annotation}</Badge>
               )}
             </Button>
           )}
@@ -514,10 +526,10 @@ export default function Outcomes() {
                 <span className="text-xs text-muted-foreground">Overall KPI Attainment</span>
                 <span className="text-2xl font-semibold tracking-tight">{overallAttainment.toFixed(1)}%</span>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <Badge variant="outline" className="text-[10px]" data-testid="badge-exceeded">{exceededKpis.length} exceeded</Badge>
-                  <Badge variant="outline" className="text-[10px]" data-testid="badge-on-track">{onTrackKpis.length} on track</Badge>
+                  <Badge variant="outline" className="text-xs" data-testid="badge-exceeded">{exceededKpis.length} exceeded</Badge>
+                  <Badge variant="outline" className="text-xs" data-testid="badge-on-track">{onTrackKpis.length} on track</Badge>
                   {atRiskKpis.length > 0 && (
-                    <Badge variant="destructive" className="text-[10px]" data-testid="badge-at-risk">{atRiskKpis.length} at risk</Badge>
+                    <Badge variant="destructive" className="text-xs" data-testid="badge-at-risk">{atRiskKpis.length} at risk</Badge>
                   )}
                 </div>
               </div>
@@ -552,16 +564,16 @@ export default function Outcomes() {
                 <div className="flex items-center gap-3 flex-wrap">
                   <div className="flex items-center gap-1">
                     <div className="w-2 h-2 rounded-full bg-emerald-500 dark:bg-emerald-400" />
-                    <span className="text-[10px] text-muted-foreground">${billedRevenue.toLocaleString()} billed</span>
+                    <span className="text-xs text-muted-foreground">${billedRevenue.toLocaleString()} billed</span>
                   </div>
                   <div className="flex items-center gap-1">
                     <div className="w-2 h-2 rounded-full bg-amber-500 dark:bg-amber-400" />
-                    <span className="text-[10px] text-muted-foreground">${pendingRevenue.toLocaleString()} pending</span>
+                    <span className="text-xs text-muted-foreground">${pendingRevenue.toLocaleString()} pending</span>
                   </div>
                   {disputedRevenue > 0 && (
                     <div className="flex items-center gap-1">
                       <div className="w-2 h-2 rounded-full bg-red-500 dark:bg-red-400" />
-                      <span className="text-[10px] text-muted-foreground">${disputedRevenue.toLocaleString()} disputed</span>
+                      <span className="text-xs text-muted-foreground">${disputedRevenue.toLocaleString()} disputed</span>
                     </div>
                   )}
                 </div>
@@ -602,7 +614,7 @@ export default function Outcomes() {
             <div className="flex items-center gap-2">
               <BarChart3 className="w-4 h-4 text-muted-foreground" />
               <span className="text-sm font-medium">KPI Performance</span>
-              <Badge variant="outline" className="text-[10px]">{kpis?.length || 0} KPIs</Badge>
+              <Badge variant="outline" className="text-xs">{kpis?.length || 0} KPIs</Badge>
             </div>
             {expandedKpis ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
           </button>
@@ -633,7 +645,7 @@ export default function Outcomes() {
                               {" "}/ {kpi.target} {kpi.unit}
                             </span>
                           </span>
-                          <span className="text-[10px] text-muted-foreground truncate">{outcomeName}</span>
+                          <span className="text-xs text-muted-foreground truncate">{outcomeName}</span>
                         </div>
                       </div>
                       <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -662,57 +674,16 @@ export default function Outcomes() {
             />
           </div>
 
-          <Select value={filterRiskTier} onValueChange={setFilterRiskTier}>
-            <SelectTrigger className="w-[130px]" data-testid="filter-risk-tier">
-              <SelectValue placeholder="Risk Tier" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Risk Tiers</SelectItem>
-              <SelectItem value="LOW">Low</SelectItem>
-              <SelectItem value="MEDIUM">Medium</SelectItem>
-              <SelectItem value="HIGH">High</SelectItem>
-              <SelectItem value="CRITICAL">Critical</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <Select value={filterStatus} onValueChange={setFilterStatus}>
-            <SelectTrigger className="w-[120px]" data-testid="filter-status">
-              <SelectValue placeholder="Status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Statuses</SelectItem>
-              <SelectItem value="active">Active</SelectItem>
-              <SelectItem value="draft">Draft</SelectItem>
-              <SelectItem value="paused">Paused</SelectItem>
-              <SelectItem value="completed">Completed</SelectItem>
-            </SelectContent>
-          </Select>
-
-          {uniqueOwners.length > 0 && (
-            <Select value={filterOwner} onValueChange={setFilterOwner}>
-              <SelectTrigger className="w-[130px]" data-testid="filter-owner">
-                <SelectValue placeholder="Owner" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Owners</SelectItem>
-                {uniqueOwners.map((owner) => (
-                  <SelectItem key={owner} value={owner}>{owner}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-
-          <Select value={filterBillingModel} onValueChange={setFilterBillingModel}>
-            <SelectTrigger className="w-[150px]" data-testid="filter-billing-model">
-              <SelectValue placeholder="Billing Model" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Models</SelectItem>
-              <SelectItem value="PER_OUTCOME_EVENT">Per Event</SelectItem>
-              <SelectItem value="FIXED_MONTHLY">Fixed Monthly</SelectItem>
-              <SelectItem value="TIERED">Tiered</SelectItem>
-            </SelectContent>
-          </Select>
+          <Button
+            variant={showFilters || hasActiveFilters ? "secondary" : "outline"}
+            size="sm"
+            onClick={() => setShowFilters(!showFilters)}
+            data-testid="button-toggle-filters"
+          >
+            <Filter className="w-3.5 h-3.5 mr-1" />
+            Filters{activeFilterCount > 0 && ` (${activeFilterCount})`}
+            <ChevronRight className={`w-3.5 h-3.5 ml-0.5 transition-transform duration-150 ${showFilters ? "rotate-90" : ""}`} />
+          </Button>
 
           {hasActiveFilters && (
             <Button
@@ -727,7 +698,7 @@ export default function Outcomes() {
               data-testid="button-clear-filters"
             >
               <XCircle className="w-3.5 h-3.5 mr-1" />
-              Clear Filters
+              Clear
             </Button>
           )}
 
@@ -753,10 +724,66 @@ export default function Outcomes() {
             </Button>
           </div>
         </div>
+
+        {showFilters && (
+          <div className="flex items-center gap-3 flex-wrap" data-testid="section-filter-dropdowns">
+            <Select value={filterRiskTier} onValueChange={setFilterRiskTier}>
+              <SelectTrigger className="w-[130px]" data-testid="filter-risk-tier">
+                <SelectValue placeholder="Risk Tier" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Risk Tiers</SelectItem>
+                <SelectItem value="LOW">Low</SelectItem>
+                <SelectItem value="MEDIUM">Medium</SelectItem>
+                <SelectItem value="HIGH">High</SelectItem>
+                <SelectItem value="CRITICAL">Critical</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Select value={filterStatus} onValueChange={setFilterStatus}>
+              <SelectTrigger className="w-[120px]" data-testid="filter-status">
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Statuses</SelectItem>
+                <SelectItem value="active">Active</SelectItem>
+                <SelectItem value="draft">Draft</SelectItem>
+                <SelectItem value="paused">Paused</SelectItem>
+                <SelectItem value="completed">Completed</SelectItem>
+              </SelectContent>
+            </Select>
+
+            {uniqueOwners.length > 0 && (
+              <Select value={filterOwner} onValueChange={setFilterOwner}>
+                <SelectTrigger className="w-[130px]" data-testid="filter-owner">
+                  <SelectValue placeholder="Owner" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Owners</SelectItem>
+                  {uniqueOwners.map((owner) => (
+                    <SelectItem key={owner} value={owner}>{owner}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+
+            <Select value={filterBillingModel} onValueChange={setFilterBillingModel}>
+              <SelectTrigger className="w-[150px]" data-testid="filter-billing-model">
+                <SelectValue placeholder="Billing Model" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Models</SelectItem>
+                <SelectItem value="PER_OUTCOME_EVENT">Per Event</SelectItem>
+                <SelectItem value="FIXED_MONTHLY">Fixed Monthly</SelectItem>
+                <SelectItem value="TIERED">Tiered</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {filtered?.map((outcome) => {
+        {visibleOutcomes.map((outcome) => {
           const outcomeKpis = kpis?.filter((k) => k.outcomeId === outcome.id) || [];
           const avgProgress = outcomeKpis.length
             ? outcomeKpis.reduce((sum, k) => sum + (k.target ? ((k.currentValue || 0) / k.target) * 100 : 0), 0) / outcomeKpis.length
@@ -775,7 +802,7 @@ export default function Outcomes() {
                       <div className="flex flex-col min-w-0">
                         <span className="text-sm font-semibold truncate">{outcome.name}</span>
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="text-[11px] text-muted-foreground">v{outcome.version}</span>
+                          <span className="text-xs text-muted-foreground">v{outcome.version}</span>
                           <RiskHeatBadge level={outcome.riskTier || "medium"} />
                           {(() => {
                             const regs = industry?.regulatoryFrameworks?.slice(0, 3) || [];
@@ -784,7 +811,7 @@ export default function Outcomes() {
                               <div className="flex items-center gap-1 flex-wrap" data-testid={`regulatory-tags-${outcome.id}`}>
                                 <Gavel className="w-3 h-3 text-muted-foreground shrink-0" />
                                 {regs.map(reg => (
-                                  <Badge key={reg} variant="outline" className="text-[9px] bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20">{reg}</Badge>
+                                  <Badge key={reg} variant="outline" className="text-xs bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20">{reg}</Badge>
                                 ))}
                               </div>
                             );
@@ -804,19 +831,19 @@ export default function Outcomes() {
                         return (
                           <div key={kpi.id} className="flex items-center gap-2">
                             <ProgressRing value={kpiPct} size={24} strokeWidth={2} />
-                            <span className="text-[11px] text-muted-foreground truncate flex-1">{kpi.name}</span>
+                            <span className="text-xs text-muted-foreground truncate flex-1">{kpi.name}</span>
                             {(() => {
                               const bm = getIndustryBenchmark(industryId, kpi.name, kpi.unit);
                               if (!bm) return null;
                               const isInverse = kpi.name.includes("Time") || kpi.name.includes("Latency");
                               const isBetter = isInverse ? (kpi.currentValue || 0) < bm.benchmark : (kpi.currentValue || 0) > bm.benchmark;
                               return (
-                                <span className={`text-[9px] ${isBetter ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`} data-testid={`benchmark-indicator-${kpi.id}`}>
+                                <span className={`text-xs ${isBetter ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`} data-testid={`benchmark-indicator-${kpi.id}`}>
                                   {isBetter ? "above" : "below"} avg
                                 </span>
                               );
                             })()}
-                            <span className="text-[11px] tabular-nums shrink-0">
+                            <span className="text-xs tabular-nums shrink-0">
                               {(kpi.currentValue || 0).toLocaleString()}/{kpi.target.toLocaleString()}
                             </span>
                           </div>
@@ -842,11 +869,11 @@ export default function Outcomes() {
                   <div className="flex items-center gap-3 flex-wrap pt-1 border-t">
                     <div className="flex items-center gap-1">
                       <BarChart3 className="w-3 h-3 text-muted-foreground" />
-                      <span className="text-[11px] text-muted-foreground">{outcomeKpis.length} KPIs</span>
+                      <span className="text-xs text-muted-foreground">{outcomeKpis.length} KPIs</span>
                     </div>
                     <div className="flex items-center gap-1">
                       <DollarSign className="w-3 h-3 text-muted-foreground" />
-                      <span className="text-[11px] text-muted-foreground">
+                      <span className="text-xs text-muted-foreground">
                         {outcome.currency || "$"}{outcome.pricePerUnit}/unit
                       </span>
                     </div>
@@ -854,7 +881,7 @@ export default function Outcomes() {
                     {boundAgents.length > 0 && (
                       <div className="flex items-center gap-1">
                         <Users className="w-3 h-3 text-muted-foreground" />
-                        <span className="text-[11px] text-muted-foreground">{boundAgents.length} agents</span>
+                        <span className="text-xs text-muted-foreground">{boundAgents.length} agents</span>
                       </div>
                     )}
                   </div>
@@ -872,7 +899,7 @@ export default function Outcomes() {
                         };
                         const cfg = bsConfig[bs] || bsConfig.no_invoices;
                         return (
-                          <Badge variant="outline" className={`text-[10px] border ${cfg.cls}`} data-testid={`billing-status-${outcome.id}`}>
+                          <Badge variant="outline" className={`text-xs border ${cfg.cls}`} data-testid={`billing-status-${outcome.id}`}>
                             {cfg.label}
                           </Badge>
                         );
@@ -911,7 +938,7 @@ export default function Outcomes() {
                   </div>
                   {waterfallOutcome === outcome.id && (
                     <div className="pt-2 border-t" data-testid={`waterfall-drilldown-${outcome.id}`}>
-                      <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider mb-1 block">Revenue Flow</span>
+                      <span className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-1 block">Revenue Flow</span>
                       <WaterfallChart steps={getOutcomeWaterfallSteps(outcome.id)} />
                     </div>
                   )}
@@ -922,7 +949,22 @@ export default function Outcomes() {
         })}
       </div>
 
-      {filtered?.length === 0 && !hasActiveFilters && !search && (
+      {hasMoreOutcomes && (
+        <div className="flex justify-center">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-xs px-3"
+            onClick={() => setShowAllOutcomes(!showAllOutcomes)}
+            data-testid="toggle-show-all-outcomes"
+          >
+            {showAllOutcomes ? "Show less" : `Show all ${sorted.length} outcomes`}
+            <ChevronRight className={`w-3.5 h-3.5 ml-0.5 transition-transform duration-150 ${showAllOutcomes ? "rotate-90" : ""}`} />
+          </Button>
+        </div>
+      )}
+
+      {sorted.length === 0 && !hasActiveFilters && !search && (
         <div className="flex flex-col items-center justify-center py-16 gap-4" data-testid="empty-state-outcomes">
           <div className="flex items-center justify-center w-14 h-14 rounded-md bg-primary/10">
             <Target className="w-7 h-7 text-primary" />
@@ -941,7 +983,7 @@ export default function Outcomes() {
           </Link>
         </div>
       )}
-      {filtered?.length === 0 && (hasActiveFilters || search) && (
+      {sorted.length === 0 && (hasActiveFilters || search) && (
         <div className="flex flex-col items-center justify-center py-12 gap-3" data-testid="empty-state-filtered">
           <Filter className="w-10 h-10 text-muted-foreground/50" />
           <p className="text-sm text-muted-foreground">No outcome contracts match your filters</p>
@@ -1090,26 +1132,26 @@ function ScenarioPlanner({
           <span className="text-xs font-medium">Projected Impact on "{outcome?.name}"</span>
           <div className="grid grid-cols-3 gap-3">
             <div className="flex flex-col gap-1 text-center">
-              <span className="text-[10px] text-muted-foreground">KPI Change</span>
+              <span className="text-xs text-muted-foreground">KPI Change</span>
               <span className={`text-sm font-semibold ${impact.kpiDelta >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
                 {impact.kpiDelta >= 0 ? "+" : ""}{impact.kpiDelta}%
               </span>
             </div>
             <div className="flex flex-col gap-1 text-center">
-              <span className="text-[10px] text-muted-foreground">Cost Impact</span>
+              <span className="text-xs text-muted-foreground">Cost Impact</span>
               <span className={`text-sm font-semibold ${impact.costDelta <= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
                 {impact.costDelta >= 0 ? "+" : ""}{impact.costDelta}%
               </span>
             </div>
             <div className="flex flex-col gap-1 text-center">
-              <span className="text-[10px] text-muted-foreground">Latency</span>
+              <span className="text-xs text-muted-foreground">Latency</span>
               <span className={`text-sm font-semibold ${impact.latencyDelta >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
                 {impact.latencyDelta >= 0 ? "+" : ""}{impact.latencyDelta}%
               </span>
             </div>
           </div>
           <div className="flex flex-col gap-2 pt-2 border-t">
-            <span className="text-[10px] text-muted-foreground">Affected KPIs ({outcomeKpis.length})</span>
+            <span className="text-xs text-muted-foreground">Affected KPIs ({outcomeKpis.length})</span>
             {outcomeKpis.map((kpi) => {
               const currentAtt = kpi.target > 0 ? ((kpi.currentValue || 0) / kpi.target) * 100 : 0;
               const projected = Math.min(120, Math.max(0, currentAtt + impact.kpiDelta));
@@ -1117,9 +1159,9 @@ function ScenarioPlanner({
                 <div key={kpi.id} className="flex items-center justify-between gap-2" data-testid={`sim-kpi-${kpi.id}`}>
                   <span className="text-xs truncate flex-1">{kpi.name}</span>
                   <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-[10px] text-muted-foreground">{currentAtt.toFixed(0)}%</span>
+                    <span className="text-xs text-muted-foreground">{currentAtt.toFixed(0)}%</span>
                     <ArrowRight className="w-3 h-3 text-muted-foreground" />
-                    <span className={`text-[10px] font-medium ${projected >= 100 ? "text-emerald-600 dark:text-emerald-400" : projected >= 80 ? "text-blue-600 dark:text-blue-400" : "text-amber-600 dark:text-amber-400"}`}>
+                    <span className={`text-xs font-medium ${projected >= 100 ? "text-emerald-600 dark:text-emerald-400" : projected >= 80 ? "text-blue-600 dark:text-blue-400" : "text-amber-600 dark:text-amber-400"}`}>
                       {projected.toFixed(0)}%
                     </span>
                   </div>
@@ -1129,7 +1171,7 @@ function ScenarioPlanner({
           </div>
           <div className="flex items-center justify-between gap-2 pt-2 border-t">
             <span className="text-xs text-muted-foreground">Affected Agents: {outcomeAgents.length}</span>
-            <Badge variant="outline" className="text-[10px] capitalize">Risk: {impact.risk}</Badge>
+            <Badge variant="outline" className="text-xs capitalize">Risk: {impact.risk}</Badge>
           </div>
         </div>
       )}
