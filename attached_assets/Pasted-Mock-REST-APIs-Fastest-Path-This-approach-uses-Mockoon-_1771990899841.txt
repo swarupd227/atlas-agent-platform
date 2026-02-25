@@ -1,0 +1,80 @@
+Mock REST APIs (Fastest Path)
+
+This approach uses Mockoon (open-source, runs locally or in Docker) to stand up fake REST endpoints that mimic the Marketo, Salesforce, and Adobe Analytics APIs. Atlas calls these endpoints through its Integration Mesh. The data is pre-built JSON files with realistic Fitch-style marketing data.
+
+What You Need
+Mockoon CLI — npm install -g @mockoon/cli (or Docker: mockoon/cli). This runs headless mock API servers from JSON config files.
+Faker.js / Mockaroo — to generate 1,000 realistic lead records with Fitch-appropriate fields (company names from financial services, job titles like “Head of Research”, email domains, engagement scores).
+
+Step-by-Step Setup
+
+1	Generate the Lead Dataset (2 hours)
+Use a script (Python with Faker, or Mockaroo.com) to create a leads.json file with 1,000 records. Each record should include: id, firstName, lastName, email, company, jobTitle, businessLine (Ratings/Solutions/Learning/CreditSights), leadSource (webinar/whitepaper/conference/website), engagementScore (0–100), marketoId, salesforceContactId, isRatedEntity (boolean), region (AMER/EMEA/APAC), lastActivityDate, and an array of activityHistory entries (email opens, page visits, content downloads).
+
+Example data generation script (Python):
+from faker import Faker
+import json, random
+
+fake = Faker()
+biz_lines = ['Ratings','Solutions','Learning','CreditSights']
+sources = ['webinar','whitepaper','conference','website']
+titles = ['Head of Research','CIO','Portfolio Mgr',
+          'Credit Analyst','VP Risk','CFO']
+fin_companies = ['BlackRock','Vanguard','JP Morgan AM',
+  'State Street','Pimco','Allianz','AXA','HSBC AM',
+  'Nomura','DBS Bank','Schroders','Fidelity']
+
+leads = []
+for i in range(1000):
+    co = random.choice(fin_companies)
+    leads.append({
+        'id': f'LEAD-{i+1:04d}',
+        'firstName': fake.first_name(),
+        'lastName': fake.last_name(),
+        'email': f'{fake.user_name()}@{co.lower().replace(" ","")}.com',
+        'company': co,
+        'jobTitle': random.choice(titles),
+        'businessLine': random.choice(biz_lines),
+        'leadSource': random.choice(sources),
+        'engagementScore': random.randint(10, 98),
+        'isRatedEntity': random.random() < 0.15,
+        'region': random.choice(['AMER','EMEA','APAC']),
+    })
+
+with open('leads.json','w') as f:
+    json.dump(leads, f, indent=2)
+
+2	Create Mockoon Configuration Files (3 hours)
+Build three separate Mockoon environment files — one per system. Each file defines the REST endpoints that Atlas will call.
+
+Marketo Mock (Port 3001)
+Endpoints to create:
+GET /rest/v1/leads.json?filterType=id&filterValues=... — Returns lead records from your dataset. Supports filtering by ID, email, or listId.
+POST /rest/v1/leads.json — Accepts lead updates (score changes, status transitions). Returns success response with updated records.
+GET /rest/asset/v1/smartLists.json — Returns pre-built smart lists: “High Intent – Ratings,” “Webinar Attendees Q1 2026,” etc.
+POST /rest/v1/campaigns/{id}/trigger.json — Simulates triggering a nurture stream. Returns 200 with campaign execution confirmation.
+GET /rest/v1/activities.json — Returns engagement activity history (email opens, clicks, page visits) for specified leads.
+
+Salesforce Mock (Port 3002)
+Endpoints to create:
+GET /services/data/v59.0/query/?q=SELECT... — Accepts SOQL-like queries. Parses the query string and returns matching records from your dataset. Supports Contact, Lead, Account, Opportunity, and Campaign objects.
+POST /services/data/v59.0/sobjects/Lead/ — Creates a new lead. Returns a Salesforce-style ID (001xxxxxxxxxxxx).
+PATCH /services/data/v59.0/sobjects/Lead/{id} — Updates lead fields (Owner, Status, Score). Returns 204 No Content on success.
+POST /services/data/v59.0/sobjects/Task/ — Creates follow-up tasks assigned to sales reps. Used by the routing agent.
+
+Adobe Analytics Mock (Port 3003)
+Endpoints to create:
+POST /api/2.0/reports — Returns web analytics data: page views by URL, referral sources, conversion funnel steps, time-on-page. Filter by date range and segment.
+GET /api/2.0/segments — Returns pre-built visitor segments: “Ratings Content Consumers,” “Webinar Registrants,” “High Engagement Visitors.”
+
+Mockoon CLI command to start all three simultaneously:
+# Start all mock servers
+mockoon-cli start \
+  --data ./marketo-mock.json --port 3001 &
+mockoon-cli start \
+  --data ./salesforce-mock.json --port 3002 &
+mockoon-cli start \
+  --data ./adobe-mock.json --port 3003 &
+
+# Or via Docker Compose (recommended):
+docker compose up -d
