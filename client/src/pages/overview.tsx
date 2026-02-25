@@ -339,17 +339,17 @@ function PulseCard({ label, value, sub, icon: Icon, iconClass, iconBg, href, too
         <TooltipTrigger asChild>
           <div
             onClick={() => navigate(href)}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg border bg-card hover-elevate cursor-pointer min-w-0"
+            className="flex items-center gap-3 px-4 py-3 rounded-lg border bg-card hover-elevate cursor-pointer min-w-0"
             data-testid={testId}
           >
-            <div className={`flex items-center justify-center w-6 h-6 rounded-md shrink-0 ${iconBg}`}>
-              <Icon className={`w-3 h-3 ${iconClass}`} />
+            <div className={`flex items-center justify-center w-8 h-8 rounded-md shrink-0 ${iconBg}`}>
+              <Icon className={`w-4 h-4 ${iconClass}`} />
             </div>
             <div className="flex flex-col min-w-0">
-              <span className="text-[9px] text-muted-foreground leading-none">{label}</span>
+              <span className="text-xs text-muted-foreground leading-none">{label}</span>
               <div className="flex items-baseline gap-1">
-                <span className={`text-base font-semibold leading-tight ${iconClass}`}>{value}</span>
-                {sub && <span className="text-[9px] text-muted-foreground">{sub}</span>}
+                <span className={`text-lg font-semibold leading-tight ${iconClass}`}>{value}</span>
+                {sub && <span className="text-xs text-muted-foreground">{sub}</span>}
               </div>
             </div>
           </div>
@@ -465,29 +465,29 @@ function NeedsAttentionSection({ data }: { data: OverviewData }) {
   const visible = items.slice(0, 3);
 
   return (
-    <div className="rounded-lg border bg-card px-3 py-2" data-testid="section-needs-attention">
-      <div className="flex items-center justify-between gap-2 mb-1">
-        <span className="text-xs font-medium">Needs Attention</span>
+    <div className="rounded-lg border bg-card px-4 py-3" data-testid="section-needs-attention">
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <span className="text-sm font-medium">Needs Attention</span>
         {items.length > 3 && (
-          <Badge variant="secondary" className="text-[9px]">{items.length} total</Badge>
+          <Badge variant="secondary" className="text-xs">{items.length} total</Badge>
         )}
       </div>
-      <div className="flex flex-col gap-0.5">
+      <div className="flex flex-col gap-1">
         {visible.length > 0 ? (
           visible.map((item) => (
             <Link key={item.id} href={item.href}>
-              <div className="flex items-center gap-2 px-2 py-1 rounded-md hover-elevate cursor-pointer" data-testid={`attention-item-${item.id}`}>
-                <item.icon className="w-3 h-3 text-muted-foreground shrink-0" />
-                <span className="text-[11px] font-medium truncate">{item.label}</span>
-                <span className="text-[10px] text-muted-foreground truncate hidden sm:inline">{item.detail}</span>
-                <Badge variant="outline" className={`text-[9px] shrink-0 ml-auto ${item.badgeClass}`}>{item.badgeLabel}</Badge>
+              <div className="flex items-center gap-2 px-2 py-1.5 rounded-md hover-elevate cursor-pointer" data-testid={`attention-item-${item.id}`}>
+                <item.icon className="w-4 h-4 text-muted-foreground shrink-0" />
+                <span className="text-sm font-medium truncate">{item.label}</span>
+                <span className="text-xs text-muted-foreground truncate hidden sm:inline">{item.detail}</span>
+                <Badge variant="outline" className={`text-xs shrink-0 ml-auto ${item.badgeClass}`}>{item.badgeLabel}</Badge>
               </div>
             </Link>
           ))
         ) : (
-          <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-emerald-500/5">
-            <CheckCircle className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
-            <span className="text-[11px] text-muted-foreground">All systems healthy</span>
+          <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-emerald-500/5">
+            <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <span className="text-sm text-muted-foreground">All systems healthy</span>
           </div>
         )}
       </div>
@@ -499,28 +499,28 @@ function CollapsibleSection({ title, badge, defaultOpen = false, viewAllHref, ch
   const [open, setOpen] = useState(defaultOpen);
   return (
     <div className="rounded-lg border bg-card">
-      <div className="flex items-center justify-between px-3 py-2">
+      <div className="flex items-center justify-between px-4 py-2.5">
         <button
           type="button"
           onClick={() => setOpen(!open)}
-          className="flex items-center gap-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+          className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
           data-testid={`toggle-${title.toLowerCase().replace(/\s+/g, "-")}`}
         >
-          <ChevronRight className={`w-3 h-3 transition-transform duration-150 ${open ? "rotate-90" : ""}`} />
+          <ChevronRight className={`w-4 h-4 transition-transform duration-150 ${open ? "rotate-90" : ""}`} />
           <span>{title}</span>
           {badge !== undefined && (
-            <Badge variant="secondary" className="text-[9px] ml-1">{badge}</Badge>
+            <Badge variant="secondary" className="text-xs ml-1">{badge}</Badge>
           )}
         </button>
         {viewAllHref && (
           <Link href={viewAllHref}>
-            <Button variant="ghost" size="sm" className="h-5 text-[10px] px-2" data-testid={`link-viewall-${title.toLowerCase().replace(/\s+/g, "-")}`}>
-              View All <ArrowRight className="w-3 h-3 ml-0.5" />
+            <Button variant="ghost" size="sm" className="h-7 text-xs px-2" data-testid={`link-viewall-${title.toLowerCase().replace(/\s+/g, "-")}`}>
+              View All <ArrowRight className="w-3.5 h-3.5 ml-0.5" />
             </Button>
           </Link>
         )}
       </div>
-      {open && <div className="px-3 pb-3">{children}</div>}
+      {open && <div className="px-4 pb-3">{children}</div>}
     </div>
   );
 }
@@ -532,17 +532,17 @@ function PolicyViolationsInline({ violations, isLoading }: { violations: PolicyV
       {violations.length > 0 ? (
         violations.slice(0, 3).map((v) => (
           <Link key={v.id} href={`/agents/${v.agentId}`}>
-            <div className="flex items-center gap-2 px-2 py-1 rounded-md hover-elevate cursor-pointer" data-testid={`violation-preview-${v.id}`}>
-              <CircleAlert className="w-3 h-3 text-red-500 shrink-0" />
-              <span className="text-[11px] font-medium truncate flex-1">{v.policyName}</span>
-              <Badge variant="outline" className="text-[9px]">{v.agentName}</Badge>
+            <div className="flex items-center gap-2 px-2 py-1.5 rounded-md hover-elevate cursor-pointer" data-testid={`violation-preview-${v.id}`}>
+              <CircleAlert className="w-4 h-4 text-red-500 shrink-0" />
+              <span className="text-sm font-medium truncate flex-1">{v.policyName}</span>
+              <Badge variant="outline" className="text-xs">{v.agentName}</Badge>
             </div>
           </Link>
         ))
       ) : (
-        <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-emerald-500/5">
-          <CheckCircle className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
-          <span className="text-[11px] text-muted-foreground">No violations</span>
+        <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-emerald-500/5">
+          <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+          <span className="text-sm text-muted-foreground">No violations</span>
         </div>
       )}
     </div>
@@ -556,25 +556,25 @@ function AgentsAtRiskInline({ agents }: { agents: AgentAtRisk[] }) {
         <div className="flex flex-col gap-1">
           {agents.slice(0, 4).map((agent) => (
             <Link key={agent.id} href={`/agents/${agent.id}`}>
-              <div className="flex items-center gap-2 px-2 py-1 rounded-md hover-elevate cursor-pointer" data-testid={`link-agent-${agent.id}`}>
+              <div className="flex items-center gap-2 px-2 py-1.5 rounded-md hover-elevate cursor-pointer" data-testid={`link-agent-${agent.id}`}>
                 <StatusBadge status={agent.riskTier} />
-                <span className="text-[11px] font-medium truncate flex-1">{agent.name}</span>
+                <span className="text-sm font-medium truncate flex-1">{agent.name}</span>
                 {agent.lastDrift && (
-                  <span className={`text-[10px] ${agent.lastDrift.driftPercent < 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                  <span className={`text-xs ${agent.lastDrift.driftPercent < 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`}>
                     {agent.lastDrift.driftPercent > 0 ? "+" : ""}{agent.lastDrift.driftPercent}%
                   </span>
                 )}
                 {agent.openIncidents > 0 && (
-                  <Badge variant="outline" className="text-[9px] bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20">{agent.openIncidents} inc</Badge>
+                  <Badge variant="outline" className="text-xs bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20">{agent.openIncidents} inc</Badge>
                 )}
               </div>
             </Link>
           ))}
         </div>
       ) : (
-        <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-emerald-500/5">
-          <CheckCircle className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
-          <span className="text-[11px] text-muted-foreground">All agents healthy</span>
+        <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-emerald-500/5">
+          <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+          <span className="text-sm text-muted-foreground">All agents healthy</span>
         </div>
       )}
     </div>
@@ -588,11 +588,11 @@ function ApprovalQueueInline({ approvalQueue }: { approvalQueue: OverviewData["a
         <>
           {approvalQueue.items.slice(0, 3).map((a) => (
             <Link key={a.id} href={`/approvals/${a.id}`}>
-              <div className="flex items-center gap-2 px-2 py-1 rounded-md hover-elevate cursor-pointer" data-testid={`approval-preview-${a.id}`}>
-                <Clock className="w-3 h-3 text-muted-foreground shrink-0" />
-                <span className="text-[11px] font-medium truncate flex-1">{a.objectName || a.type}</span>
+              <div className="flex items-center gap-2 px-2 py-1.5 rounded-md hover-elevate cursor-pointer" data-testid={`approval-preview-${a.id}`}>
+                <Clock className="w-4 h-4 text-muted-foreground shrink-0" />
+                <span className="text-sm font-medium truncate flex-1">{a.objectName || a.type}</span>
                 {a.dueDate && (
-                  <Badge variant="outline" className={`text-[9px] shrink-0 ${new Date(a.dueDate).getTime() < Date.now() ? "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20" : "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20"}`}>
+                  <Badge variant="outline" className={`text-xs shrink-0 ${new Date(a.dueDate).getTime() < Date.now() ? "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20" : "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20"}`}>
                     {dueIn(a.dueDate)}
                   </Badge>
                 )}
@@ -601,9 +601,9 @@ function ApprovalQueueInline({ approvalQueue }: { approvalQueue: OverviewData["a
           ))}
         </>
       ) : (
-        <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-emerald-500/5">
-          <CheckCircle className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
-          <span className="text-[11px] text-muted-foreground">No pending approvals</span>
+        <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-emerald-500/5">
+          <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+          <span className="text-sm text-muted-foreground">No pending approvals</span>
         </div>
       )}
     </div>
@@ -612,22 +612,22 @@ function ApprovalQueueInline({ approvalQueue }: { approvalQueue: OverviewData["a
 
 function FinancialInline({ financialSnapshot }: { financialSnapshot: OverviewData["financialSnapshot"] }) {
   return (
-    <div className="flex items-center gap-3 flex-wrap" data-testid="card-financial-snapshot">
-      <div className="flex items-baseline gap-1">
-        <span className="text-[9px] text-muted-foreground uppercase">Billed</span>
-        <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400" data-testid="text-billed-amount">{formatCurrency(financialSnapshot.billed)}</span>
+    <div className="flex items-center gap-4 flex-wrap" data-testid="card-financial-snapshot">
+      <div className="flex items-baseline gap-1.5">
+        <span className="text-xs text-muted-foreground uppercase">Billed</span>
+        <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400" data-testid="text-billed-amount">{formatCurrency(financialSnapshot.billed)}</span>
       </div>
-      <div className="flex items-baseline gap-1">
-        <span className="text-[9px] text-muted-foreground uppercase">Pending</span>
-        <span className="text-xs font-semibold text-amber-600 dark:text-amber-400" data-testid="text-pending-amount">{formatCurrency(financialSnapshot.pending)}</span>
+      <div className="flex items-baseline gap-1.5">
+        <span className="text-xs text-muted-foreground uppercase">Pending</span>
+        <span className="text-sm font-semibold text-amber-600 dark:text-amber-400" data-testid="text-pending-amount">{formatCurrency(financialSnapshot.pending)}</span>
       </div>
-      <div className="flex items-baseline gap-1">
-        <span className="text-[9px] text-muted-foreground uppercase">Disputed</span>
-        <span className="text-xs font-semibold text-red-600 dark:text-red-400" data-testid="text-disputed-amount">{formatCurrency(financialSnapshot.disputed)}</span>
+      <div className="flex items-baseline gap-1.5">
+        <span className="text-xs text-muted-foreground uppercase">Disputed</span>
+        <span className="text-sm font-semibold text-red-600 dark:text-red-400" data-testid="text-disputed-amount">{formatCurrency(financialSnapshot.disputed)}</span>
       </div>
-      <div className="flex items-baseline gap-1">
-        <span className="text-[9px] text-muted-foreground uppercase">Revenue</span>
-        <span className="text-xs font-semibold" data-testid="text-total-revenue-30d">{formatCurrency(financialSnapshot.totalRevenue30d)}</span>
+      <div className="flex items-baseline gap-1.5">
+        <span className="text-xs text-muted-foreground uppercase">Revenue</span>
+        <span className="text-sm font-semibold" data-testid="text-total-revenue-30d">{formatCurrency(financialSnapshot.totalRevenue30d)}</span>
       </div>
     </div>
   );
@@ -636,25 +636,25 @@ function FinancialInline({ financialSnapshot }: { financialSnapshot: OverviewDat
 function SystemStatusInline({ systemStatus }: { systemStatus: OverviewData["systemStatus"] }) {
   return (
     <div className="flex items-center gap-4 flex-wrap" data-testid="card-system-status">
-      <div className="flex items-center gap-1" data-testid="status-tool-error-rate">
-        <AlertTriangle className="w-3 h-3 text-muted-foreground" />
-        <span className="text-[9px] text-muted-foreground uppercase">Err</span>
-        <span className={`text-xs font-semibold ${systemStatus.toolErrorRate > 5 ? "text-red-600 dark:text-red-400" : ""}`}>{systemStatus.toolErrorRate}%</span>
+      <div className="flex items-center gap-1.5" data-testid="status-tool-error-rate">
+        <AlertTriangle className="w-4 h-4 text-muted-foreground" />
+        <span className="text-xs text-muted-foreground uppercase">Error Rate</span>
+        <span className={`text-sm font-semibold ${systemStatus.toolErrorRate > 5 ? "text-red-600 dark:text-red-400" : ""}`}>{systemStatus.toolErrorRate}%</span>
       </div>
-      <div className="flex items-center gap-1" data-testid="status-queue-depth">
-        <Clock className="w-3 h-3 text-muted-foreground" />
-        <span className="text-[9px] text-muted-foreground uppercase">Queue</span>
-        <span className={`text-xs font-semibold ${systemStatus.queueDepth > 10 ? "text-amber-600 dark:text-amber-400" : ""}`}>{systemStatus.queueDepth}</span>
+      <div className="flex items-center gap-1.5" data-testid="status-queue-depth">
+        <Clock className="w-4 h-4 text-muted-foreground" />
+        <span className="text-xs text-muted-foreground uppercase">Queue</span>
+        <span className={`text-sm font-semibold ${systemStatus.queueDepth > 10 ? "text-amber-600 dark:text-amber-400" : ""}`}>{systemStatus.queueDepth}</span>
       </div>
-      <div className="flex items-center gap-1" data-testid="status-eval-backlog">
-        <FlaskConical className="w-3 h-3 text-muted-foreground" />
-        <span className="text-[9px] text-muted-foreground uppercase">Eval</span>
-        <span className={`text-xs font-semibold ${systemStatus.evalBacklog > 5 ? "text-amber-600 dark:text-amber-400" : ""}`}>{systemStatus.evalBacklog}</span>
+      <div className="flex items-center gap-1.5" data-testid="status-eval-backlog">
+        <FlaskConical className="w-4 h-4 text-muted-foreground" />
+        <span className="text-xs text-muted-foreground uppercase">Eval Backlog</span>
+        <span className={`text-sm font-semibold ${systemStatus.evalBacklog > 5 ? "text-amber-600 dark:text-amber-400" : ""}`}>{systemStatus.evalBacklog}</span>
       </div>
-      <div className="flex items-center gap-1" data-testid="status-connector-health">
-        {systemStatus.connectorHealth >= 80 ? <Wifi className="w-3 h-3 text-muted-foreground" /> : <WifiOff className="w-3 h-3 text-red-500" />}
-        <span className="text-[9px] text-muted-foreground uppercase">Conn</span>
-        <span className={`text-xs font-semibold ${systemStatus.connectorHealth < 80 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`}>{systemStatus.connectorHealth}%</span>
+      <div className="flex items-center gap-1.5" data-testid="status-connector-health">
+        {systemStatus.connectorHealth >= 80 ? <Wifi className="w-4 h-4 text-muted-foreground" /> : <WifiOff className="w-4 h-4 text-red-500" />}
+        <span className="text-xs text-muted-foreground uppercase">Connectors</span>
+        <span className={`text-sm font-semibold ${systemStatus.connectorHealth < 80 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`}>{systemStatus.connectorHealth}%</span>
       </div>
     </div>
   );
@@ -667,9 +667,9 @@ function PlatformHero({ industry, role, config }: { industry: any; role: any; co
         <h1 className="text-lg font-semibold tracking-tight whitespace-nowrap" data-testid="text-dashboard-title">
           {config.title}
         </h1>
-        <Badge variant="outline" className="text-[10px] shrink-0" data-testid="badge-role-label">{role.label}</Badge>
+        <Badge variant="outline" className="text-xs shrink-0" data-testid="badge-role-label">{role.label}</Badge>
         {industry && (
-          <Badge variant="secondary" className="text-[10px] shrink-0" data-testid="badge-industry-label">
+          <Badge variant="secondary" className="text-xs shrink-0" data-testid="badge-industry-label">
             {industry.shortLabel}
           </Badge>
         )}
@@ -725,7 +725,7 @@ function TechnologyStackSection() {
               <span className="text-xs text-muted-foreground leading-relaxed">{tech.description}</span>
               <div className="flex flex-wrap gap-1 mt-1">
                 {tech.tags.map((tag) => (
-                  <Badge key={tag} variant="outline" className="text-[10px]">{tag}</Badge>
+                  <Badge key={tag} variant="outline" className="text-xs">{tag}</Badge>
                 ))}
               </div>
             </CardContent>
