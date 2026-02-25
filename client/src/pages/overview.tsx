@@ -23,11 +23,10 @@ import {
   Lock,
   Workflow,
   Plug,
-  ChevronDown,
   HeartPulse,
   Zap,
 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -129,9 +128,6 @@ interface RoleWidgetConfig {
   showFinancialSnapshot: boolean;
   showSystemStatus: boolean;
   showPolicyViolations: boolean;
-  approvalProminent: boolean;
-  financialProminent: boolean;
-  systemProminent: boolean;
 }
 
 const PLATFORM_CAPABILITIES = [
@@ -215,32 +211,26 @@ const TECHNOLOGY_STACK = [
 const ROLE_WIDGETS: Record<RoleId, RoleWidgetConfig> = {
   admin: {
     title: "Platform Overview",
-    description: "Operational cockpit — outcomes, agents, and system health at a glance",
+    description: "Outcomes, agents, and system health at a glance",
     showNeedsAttention: true,
     showAgentsAtRisk: true,
     showApprovalQueue: true,
     showFinancialSnapshot: false,
     showSystemStatus: true,
     showPolicyViolations: false,
-    approvalProminent: false,
-    financialProminent: false,
-    systemProminent: false,
   },
   outcome_owner: {
     title: "Outcome Overview",
-    description: "Outcome delivery health and items needing your attention",
+    description: "Outcome delivery health and items needing attention",
     showNeedsAttention: true,
     showAgentsAtRisk: false,
     showApprovalQueue: true,
     showFinancialSnapshot: false,
     showSystemStatus: false,
     showPolicyViolations: false,
-    approvalProminent: false,
-    financialProminent: false,
-    systemProminent: false,
   },
   agent_engineer: {
-    title: "Agent Engineer Dashboard",
+    title: "Agent Engineer",
     description: "Agent performance and operational health",
     showNeedsAttention: true,
     showAgentsAtRisk: true,
@@ -248,12 +238,9 @@ const ROLE_WIDGETS: Record<RoleId, RoleWidgetConfig> = {
     showFinancialSnapshot: false,
     showSystemStatus: true,
     showPolicyViolations: false,
-    approvalProminent: false,
-    financialProminent: false,
-    systemProminent: false,
   },
   ops_sre: {
-    title: "Ops / SRE Dashboard",
+    title: "Ops / SRE",
     description: "System operations, incidents, and infrastructure health",
     showNeedsAttention: true,
     showAgentsAtRisk: true,
@@ -261,12 +248,9 @@ const ROLE_WIDGETS: Record<RoleId, RoleWidgetConfig> = {
     showFinancialSnapshot: false,
     showSystemStatus: true,
     showPolicyViolations: false,
-    approvalProminent: false,
-    financialProminent: false,
-    systemProminent: true,
   },
   compliance_security: {
-    title: "Compliance / Security Dashboard",
+    title: "Compliance / Security",
     description: "Policy enforcement, audit compliance, and regulatory adherence",
     showNeedsAttention: true,
     showAgentsAtRisk: false,
@@ -274,12 +258,9 @@ const ROLE_WIDGETS: Record<RoleId, RoleWidgetConfig> = {
     showFinancialSnapshot: false,
     showSystemStatus: true,
     showPolicyViolations: true,
-    approvalProminent: false,
-    financialProminent: false,
-    systemProminent: false,
   },
   expert_validator: {
-    title: "Expert Validator Dashboard",
+    title: "Expert Validator",
     description: "Pending approvals and items requiring expert review",
     showNeedsAttention: true,
     showAgentsAtRisk: true,
@@ -287,44 +268,35 @@ const ROLE_WIDGETS: Record<RoleId, RoleWidgetConfig> = {
     showFinancialSnapshot: false,
     showSystemStatus: false,
     showPolicyViolations: false,
-    approvalProminent: true,
-    financialProminent: false,
-    systemProminent: false,
   },
   finance: {
     title: "Finance Overview",
-    description: "Revenue, billing status, and outcome financial performance",
+    description: "Revenue, billing status, and financial performance",
     showNeedsAttention: true,
     showAgentsAtRisk: false,
     showApprovalQueue: false,
     showFinancialSnapshot: true,
     showSystemStatus: false,
     showPolicyViolations: false,
-    approvalProminent: false,
-    financialProminent: true,
-    systemProminent: false,
   },
 };
 
 function OverviewSkeleton() {
   return (
-    <div className="flex flex-col gap-6 p-6" data-testid="overview-skeleton">
-      <div className="flex items-center justify-between gap-4">
-        <Skeleton className="h-8 w-64" />
-        <Skeleton className="h-9 w-48" />
+    <div className="flex flex-col gap-3 p-4" data-testid="overview-skeleton">
+      <div className="flex items-center justify-between gap-3">
+        <Skeleton className="h-6 w-48" />
+        <Skeleton className="h-8 w-36" />
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
         {Array.from({ length: 4 }).map((_, i) => (
-          <Card key={i}><CardContent className="p-5"><Skeleton className="h-28 w-full" /></CardContent></Card>
+          <Card key={i}><CardContent className="p-3"><Skeleton className="h-12 w-full" /></CardContent></Card>
         ))}
       </div>
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card className="lg:col-span-2"><CardContent className="p-6"><Skeleton className="h-48 w-full" /></CardContent></Card>
-        <Card><CardContent className="p-6"><Skeleton className="h-48 w-full" /></CardContent></Card>
-      </div>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {Array.from({ length: 2 }).map((_, i) => (
-          <Card key={i}><CardContent className="p-6"><Skeleton className="h-36 w-full" /></CardContent></Card>
+      <Card><CardContent className="p-3"><Skeleton className="h-24 w-full" /></CardContent></Card>
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <Card key={i}><CardContent className="p-3"><Skeleton className="h-32 w-full" /></CardContent></Card>
         ))}
       </div>
     </div>
@@ -354,26 +326,6 @@ function dueIn(dateStr: string) {
   return `${Math.floor(hours / 24)}d left`;
 }
 
-function CollapsibleDetail({ title, defaultOpen = false, children }: { title: string; defaultOpen?: boolean; children: ReactNode }) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <div>
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className="flex items-center gap-2 w-full py-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
-        data-testid={`toggle-${title.toLowerCase().replace(/\s+/g, "-")}`}
-      >
-        <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${open ? "" : "-rotate-90"}`} />
-        <span>{title}</span>
-        {!open && (
-          <span className="text-[10px] text-muted-foreground/60 ml-auto">Click to expand</span>
-        )}
-      </button>
-      {open && <div className="animate-in fade-in-0 slide-in-from-top-1 duration-200">{children}</div>}
-    </div>
-  );
-}
 
 function PlatformPulseStrip({ data }: { data: OverviewData }) {
   const activeOutcomes = data.outcomeHealth.filter((o) => o.status === "active" || o.status === "agents_assigned").length;
@@ -408,18 +360,20 @@ function PlatformPulseStrip({ data }: { data: OverviewData }) {
       : "bg-red-500/10";
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4" data-testid="section-platform-pulse">
+    <div className="grid grid-cols-2 xl:grid-cols-4 gap-3" data-testid="section-platform-pulse">
       <Link href="/outcomes">
         <Card className="hover-elevate cursor-pointer h-full" data-testid="pulse-active-outcomes">
-          <CardContent className="p-4">
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex flex-col gap-1">
-                <span className="text-xs text-muted-foreground">Active Outcomes</span>
-                <span className="text-2xl font-semibold tracking-tight">{activeOutcomes}</span>
-                <span className="text-xs text-muted-foreground">{totalOutcomes} total</span>
+          <CardContent className="p-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex flex-col">
+                <span className="text-[10px] text-muted-foreground">Active Outcomes</span>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-xl font-semibold tracking-tight">{activeOutcomes}</span>
+                  <span className="text-[10px] text-muted-foreground">/ {totalOutcomes}</span>
+                </div>
               </div>
-              <div className="flex items-center justify-center w-9 h-9 rounded-md bg-primary/10 shrink-0">
-                <Target className="w-4 h-4 text-primary" />
+              <div className="flex items-center justify-center w-7 h-7 rounded-md bg-primary/10 shrink-0">
+                <Target className="w-3.5 h-3.5 text-primary" />
               </div>
             </div>
           </CardContent>
@@ -427,17 +381,18 @@ function PlatformPulseStrip({ data }: { data: OverviewData }) {
       </Link>
 
       <Card data-testid="pulse-overall-health">
-        <CardContent className="p-4">
-          <div className="flex items-start justify-between gap-2">
-            <div className="flex flex-col gap-1">
-              <span className="text-xs text-muted-foreground">Overall Health</span>
-              <span className={`text-2xl font-semibold tracking-tight ${healthColor}`}>
-                {overallHealth.toFixed(0)}%
-              </span>
-              <span className="text-xs text-muted-foreground">KPI attainment avg</span>
+        <CardContent className="p-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex flex-col">
+              <span className="text-[10px] text-muted-foreground">Overall Health</span>
+              <div className="flex items-baseline gap-1.5">
+                <span className={`text-xl font-semibold tracking-tight ${healthColor}`}>
+                  {overallHealth.toFixed(0)}%
+                </span>
+              </div>
             </div>
-            <div className={`flex items-center justify-center w-9 h-9 rounded-md shrink-0 ${healthBg}`}>
-              <HeartPulse className={`w-4 h-4 ${healthColor}`} />
+            <div className={`flex items-center justify-center w-7 h-7 rounded-md shrink-0 ${healthBg}`}>
+              <HeartPulse className={`w-3.5 h-3.5 ${healthColor}`} />
             </div>
           </div>
         </CardContent>
@@ -445,17 +400,17 @@ function PlatformPulseStrip({ data }: { data: OverviewData }) {
 
       <Link href="/agents">
         <Card className="hover-elevate cursor-pointer h-full" data-testid="pulse-agents-running">
-          <CardContent className="p-4">
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex flex-col gap-1">
-                <span className="text-xs text-muted-foreground">Agents Running</span>
-                <span className="text-2xl font-semibold tracking-tight">
-                  {data.systemStatus.activeAgents}
-                </span>
-                <span className="text-xs text-muted-foreground">{data.systemStatus.totalAgents} total</span>
+          <CardContent className="p-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex flex-col">
+                <span className="text-[10px] text-muted-foreground">Agents Running</span>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-xl font-semibold tracking-tight">{data.systemStatus.activeAgents}</span>
+                  <span className="text-[10px] text-muted-foreground">/ {data.systemStatus.totalAgents}</span>
+                </div>
               </div>
-              <div className="flex items-center justify-center w-9 h-9 rounded-md bg-primary/10 shrink-0">
-                <Bot className="w-4 h-4 text-primary" />
+              <div className="flex items-center justify-center w-7 h-7 rounded-md bg-primary/10 shrink-0">
+                <Bot className="w-3.5 h-3.5 text-primary" />
               </div>
             </div>
           </CardContent>
@@ -463,22 +418,21 @@ function PlatformPulseStrip({ data }: { data: OverviewData }) {
       </Link>
 
       <Card data-testid="pulse-attention-items">
-        <CardContent className="p-4">
-          <div className="flex items-start justify-between gap-2">
-            <div className="flex flex-col gap-1">
-              <span className="text-xs text-muted-foreground">Needs Attention</span>
-              <span className={`text-2xl font-semibold tracking-tight ${attentionCount > 0 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}`}>
-                {attentionCount}
-              </span>
-              <div className="flex items-center gap-2 flex-wrap">
-                {atRiskKpis > 0 && <span className="text-[10px] text-muted-foreground">{atRiskKpis} KPIs</span>}
-                {overdueApprovals > 0 && <span className="text-[10px] text-muted-foreground">{overdueApprovals} approvals</span>}
-                {agentsWithIncidents > 0 && <span className="text-[10px] text-muted-foreground">{agentsWithIncidents} agents</span>}
-                {attentionCount === 0 && <span className="text-[10px] text-muted-foreground">All clear</span>}
+        <CardContent className="p-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex flex-col">
+              <span className="text-[10px] text-muted-foreground">Needs Attention</span>
+              <div className="flex items-baseline gap-1.5">
+                <span className={`text-xl font-semibold tracking-tight ${attentionCount > 0 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                  {attentionCount}
+                </span>
+                <span className="text-[10px] text-muted-foreground">
+                  {attentionCount === 0 ? "all clear" : "items"}
+                </span>
               </div>
             </div>
-            <div className={`flex items-center justify-center w-9 h-9 rounded-md shrink-0 ${attentionCount > 0 ? "bg-amber-500/10" : "bg-emerald-500/10"}`}>
-              <AlertTriangle className={`w-4 h-4 ${attentionCount > 0 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}`} />
+            <div className={`flex items-center justify-center w-7 h-7 rounded-md shrink-0 ${attentionCount > 0 ? "bg-amber-500/10" : "bg-emerald-500/10"}`}>
+              <AlertTriangle className={`w-3.5 h-3.5 ${attentionCount > 0 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}`} />
             </div>
           </div>
         </CardContent>
@@ -560,37 +514,37 @@ function NeedsAttentionSection({ data }: { data: OverviewData }) {
 
   return (
     <Card data-testid="section-needs-attention">
-      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
-        <CardTitle className="text-sm font-medium">Needs Attention</CardTitle>
-        {items.length > 5 && (
-          <Badge variant="secondary" className="text-[10px]">{items.length} total</Badge>
-        )}
-      </CardHeader>
-      <CardContent className="flex flex-col gap-1.5">
-        {visible.length > 0 ? (
-          visible.map((item) => (
-            <Link key={item.id} href={item.href}>
-              <div
-                className="flex items-center gap-3 p-2.5 rounded-md hover-elevate cursor-pointer"
-                data-testid={`attention-item-${item.id}`}
-              >
-                <item.icon className="w-4 h-4 text-muted-foreground shrink-0" />
-                <div className="flex flex-col gap-0.5 min-w-0 flex-1">
-                  <span className="text-xs font-medium truncate">{item.label}</span>
-                  <span className="text-[11px] text-muted-foreground truncate">{item.detail}</span>
+      <CardContent className="p-3">
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <span className="text-xs font-medium">Needs Attention</span>
+          {items.length > 5 && (
+            <Badge variant="secondary" className="text-[10px]">{items.length} total</Badge>
+          )}
+        </div>
+        <div className="flex flex-col gap-1">
+          {visible.length > 0 ? (
+            visible.map((item) => (
+              <Link key={item.id} href={item.href}>
+                <div
+                  className="flex items-center gap-2 px-2 py-1.5 rounded-md hover-elevate cursor-pointer"
+                  data-testid={`attention-item-${item.id}`}
+                >
+                  <item.icon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                  <span className="text-[11px] font-medium truncate">{item.label}</span>
+                  <span className="text-[10px] text-muted-foreground truncate hidden sm:inline">{item.detail}</span>
+                  <Badge variant="outline" className={`text-[9px] shrink-0 ml-auto ${item.badgeClass}`}>
+                    {item.badgeLabel}
+                  </Badge>
                 </div>
-                <Badge variant="outline" className={`text-[10px] shrink-0 ${item.badgeClass}`}>
-                  {item.badgeLabel}
-                </Badge>
-              </div>
-            </Link>
-          ))
-        ) : (
-          <div className="flex items-center gap-3 p-4 rounded-md bg-emerald-500/5">
-            <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-            <span className="text-xs text-muted-foreground">All systems healthy — nothing needs your attention right now</span>
-          </div>
-        )}
+              </Link>
+            ))
+          ) : (
+            <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-emerald-500/5">
+              <CheckCircle className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              <span className="text-[11px] text-muted-foreground">All systems healthy</span>
+            </div>
+          )}
+        </div>
       </CardContent>
     </Card>
   );
@@ -599,11 +553,8 @@ function NeedsAttentionSection({ data }: { data: OverviewData }) {
 function PolicyViolationsSection({ violations, isLoading }: { violations: PolicyViolation[]; isLoading: boolean }) {
   if (isLoading) {
     return (
-      <Card data-testid="card-policy-violations">
-        <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
-          <CardTitle className="text-sm font-medium">Recent Policy Violations</CardTitle>
-        </CardHeader>
-        <CardContent>
+      <Card data-testid="card-policy-violations" className="h-full">
+        <CardContent className="p-3">
           <Skeleton className="h-24 w-full" />
         </CardContent>
       </Card>
@@ -611,55 +562,42 @@ function PolicyViolationsSection({ violations, isLoading }: { violations: Policy
   }
 
   return (
-    <Card data-testid="card-policy-violations">
-      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
-        <div className="flex items-center gap-2 flex-wrap">
-          <CardTitle className="text-sm font-medium">Recent Policy Violations</CardTitle>
-          {violations.length > 0 && (
-            <Badge variant="secondary" className="text-[10px]">{violations.length}</Badge>
+    <Card data-testid="card-policy-violations" className="h-full">
+      <CardContent className="p-3">
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs font-medium">Policy Violations</span>
+            {violations.length > 0 && (
+              <Badge variant="secondary" className="text-[9px]">{violations.length}</Badge>
+            )}
+          </div>
+          <Link href="/governance">
+            <Button variant="ghost" size="sm" className="h-6 text-[10px] px-2" data-testid="link-view-governance">
+              View All <ArrowRight className="w-3 h-3 ml-0.5" />
+            </Button>
+          </Link>
+        </div>
+        <div className="flex flex-col gap-1">
+          {violations.length > 0 ? (
+            violations.slice(0, 3).map((violation) => (
+              <Link key={violation.id} href={`/agents/${violation.agentId}`}>
+                <div
+                  className="flex items-center gap-2 px-2 py-1.5 rounded-md hover-elevate cursor-pointer"
+                  data-testid={`violation-preview-${violation.id}`}
+                >
+                  <CircleAlert className="w-3 h-3 text-red-500 shrink-0" />
+                  <span className="text-[11px] font-medium truncate flex-1">{violation.policyName}</span>
+                  <Badge variant="outline" className="text-[9px]">{violation.agentName}</Badge>
+                </div>
+              </Link>
+            ))
+          ) : (
+            <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-emerald-500/5">
+              <CheckCircle className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              <span className="text-[11px] text-muted-foreground">No violations</span>
+            </div>
           )}
         </div>
-        <Link href="/governance">
-          <Button variant="ghost" size="sm" data-testid="link-view-governance">
-            View All <ArrowRight className="w-3.5 h-3.5 ml-1" />
-          </Button>
-        </Link>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-2">
-        {violations.length > 0 ? (
-          violations.slice(0, 5).map((violation) => (
-            <Link key={violation.id} href={`/agents/${violation.agentId}`}>
-              <div
-                className="flex flex-col gap-1.5 p-2.5 rounded-md hover-elevate cursor-pointer"
-                data-testid={`violation-preview-${violation.id}`}
-              >
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <span className="text-xs font-medium truncate">{violation.policyName}</span>
-                  <Badge
-                    variant="outline"
-                    className="text-[10px] bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20"
-                  >
-                    <CircleAlert className="w-2.5 h-2.5 mr-0.5" />
-                    {violation.severity}
-                  </Badge>
-                </div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-[11px] text-muted-foreground truncate">{violation.rule}</span>
-                </div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <Badge variant="outline" className="text-[10px]">{violation.agentName}</Badge>
-                  <Badge variant="outline" className="text-[10px]">{violation.action}</Badge>
-                  <span className="text-[10px] text-muted-foreground">{timeAgo(violation.timestamp)}</span>
-                </div>
-              </div>
-            </Link>
-          ))
-        ) : (
-          <div className="flex items-center gap-3 p-4 rounded-md bg-emerald-500/5">
-            <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-            <span className="text-xs text-muted-foreground">No recent policy violations</span>
-          </div>
-        )}
       </CardContent>
     </Card>
   );
@@ -667,73 +605,65 @@ function PolicyViolationsSection({ violations, isLoading }: { violations: Policy
 
 function AgentsAtRiskSection({ agents }: { agents: AgentAtRisk[] }) {
   return (
-    <Card className="lg:col-span-2" data-testid="card-agents-at-risk">
-      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
-        <CardTitle className="text-sm font-medium">Agents At Risk</CardTitle>
-        <Link href="/agents">
-          <Button variant="ghost" size="sm" data-testid="link-view-agents">
-            View All <ArrowRight className="w-3.5 h-3.5 ml-1" />
-          </Button>
-        </Link>
-      </CardHeader>
-      <CardContent>
+    <Card data-testid="card-agents-at-risk" className="h-full">
+      <CardContent className="p-3">
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <span className="text-xs font-medium">Agents At Risk</span>
+          <Link href="/agents">
+            <Button variant="ghost" size="sm" className="h-6 text-[10px] px-2" data-testid="link-view-agents">
+              View All <ArrowRight className="w-3 h-3 ml-0.5" />
+            </Button>
+          </Link>
+        </div>
         {agents.length > 0 ? (
           <div className="overflow-x-auto">
-            <table className="w-full text-xs" data-testid="table-agents-at-risk">
+            <table className="w-full text-[11px]" data-testid="table-agents-at-risk">
               <thead>
                 <tr className="border-b">
-                  <th className="text-left py-2 pr-3 font-medium text-muted-foreground">Agent</th>
-                  <th className="text-left py-2 pr-3 font-medium text-muted-foreground">Env</th>
-                  <th className="text-left py-2 pr-3 font-medium text-muted-foreground">Risk</th>
-                  <th className="text-right py-2 pr-3 font-medium text-muted-foreground">Drift</th>
-                  <th className="text-right py-2 pr-3 font-medium text-muted-foreground">Incidents</th>
-                  <th className="text-right py-2 pr-3 font-medium text-muted-foreground">p95 Lat</th>
-                  <th className="text-right py-2 font-medium text-muted-foreground">Cost/Run</th>
+                  <th className="text-left py-1 pr-2 font-medium text-muted-foreground">Agent</th>
+                  <th className="text-left py-1 pr-2 font-medium text-muted-foreground">Risk</th>
+                  <th className="text-right py-1 pr-2 font-medium text-muted-foreground">Drift</th>
+                  <th className="text-right py-1 font-medium text-muted-foreground">Inc.</th>
                 </tr>
               </thead>
               <tbody>
-                {agents.map((agent) => (
+                {agents.slice(0, 5).map((agent) => (
                   <tr key={agent.id} className="border-b last:border-0">
-                    <td className="py-2 pr-3">
+                    <td className="py-1 pr-2">
                       <Link href={`/agents/${agent.id}`}>
-                        <span className="font-medium hover:underline cursor-pointer" data-testid={`link-agent-${agent.id}`}>
+                        <span className="font-medium hover:underline cursor-pointer truncate block max-w-[140px]" data-testid={`link-agent-${agent.id}`}>
                           {agent.name}
                         </span>
                       </Link>
                     </td>
-                    <td className="py-2 pr-3">
-                      <Badge variant="outline" className="text-[10px]">{agent.environment || "staging"}</Badge>
-                    </td>
-                    <td className="py-2 pr-3">
+                    <td className="py-1 pr-2">
                       <StatusBadge status={agent.riskTier} />
                     </td>
-                    <td className="py-2 pr-3 text-right">
+                    <td className="py-1 pr-2 text-right">
                       {agent.lastDrift ? (
                         <span className={agent.lastDrift.driftPercent < 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}>
                           {agent.lastDrift.driftPercent > 0 ? "+" : ""}{agent.lastDrift.driftPercent}%
                         </span>
                       ) : (
-                        <span className="text-muted-foreground">-</span>
+                        <span className="text-muted-foreground">—</span>
                       )}
                     </td>
-                    <td className="py-2 pr-3 text-right">
+                    <td className="py-1 text-right">
                       {agent.openIncidents > 0 ? (
                         <span className="text-red-600 dark:text-red-400 font-medium">{agent.openIncidents}</span>
                       ) : (
                         <span className="text-muted-foreground">0</span>
                       )}
                     </td>
-                    <td className="py-2 pr-3 text-right">{agent.p95Latency}ms</td>
-                    <td className="py-2 text-right">{formatCurrency(agent.costPerRun)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         ) : (
-          <div className="flex items-center gap-3 p-4 rounded-md bg-emerald-500/5">
-            <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-            <span className="text-xs text-muted-foreground">All agents are operating within safe parameters</span>
+          <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-emerald-500/5">
+            <CheckCircle className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <span className="text-[11px] text-muted-foreground">All agents healthy</span>
           </div>
         )}
       </CardContent>
@@ -741,117 +671,52 @@ function AgentsAtRiskSection({ agents }: { agents: AgentAtRisk[] }) {
   );
 }
 
-function ApprovalQueueSection({ approvalQueue, prominent }: { approvalQueue: OverviewData["approvalQueue"]; prominent: boolean }) {
+function ApprovalQueueSection({ approvalQueue }: { approvalQueue: OverviewData["approvalQueue"] }) {
   return (
-    <Card className={prominent ? "lg:col-span-2" : ""} data-testid="card-approval-queue">
-      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
-        <div className="flex items-center gap-2 flex-wrap">
-          <CardTitle className="text-sm font-medium">Approval Queue</CardTitle>
-          {approvalQueue.totalPending > 0 && (
-            <Badge variant="secondary" className="text-[10px]">{approvalQueue.totalPending}</Badge>
-          )}
+    <Card data-testid="card-approval-queue" className="h-full">
+      <CardContent className="p-3">
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs font-medium">Approval Queue</span>
+            {approvalQueue.totalPending > 0 && (
+              <Badge variant="secondary" className="text-[9px]">{approvalQueue.totalPending}</Badge>
+            )}
+          </div>
+          <Link href="/approvals">
+            <Button variant="ghost" size="sm" className="h-6 text-[10px] px-2" data-testid="link-view-approvals">
+              View All <ArrowRight className="w-3 h-3 ml-0.5" />
+            </Button>
+          </Link>
         </div>
-        <Link href="/approvals">
-          <Button variant="ghost" size="sm" data-testid="link-view-approvals">
-            View All <ArrowRight className="w-3.5 h-3.5 ml-1" />
-          </Button>
-        </Link>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-2">
-        {approvalQueue.items.length > 0 ? (
-          (prominent ? approvalQueue.items : approvalQueue.items).map((approval) => (
-            <Link key={approval.id} href={`/approvals/${approval.id}`}>
-              <div
-                className="flex flex-col gap-1.5 p-2.5 rounded-md hover-elevate cursor-pointer"
-                data-testid={`approval-preview-${approval.id}`}
-              >
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <span className="text-xs font-medium truncate">{approval.objectName || approval.type}</span>
+        <div className="flex flex-col gap-1">
+          {approvalQueue.items.length > 0 ? (
+            approvalQueue.items.slice(0, 4).map((approval) => (
+              <Link key={approval.id} href={`/approvals/${approval.id}`}>
+                <div
+                  className="flex items-center gap-2 px-2 py-1.5 rounded-md hover-elevate cursor-pointer"
+                  data-testid={`approval-preview-${approval.id}`}
+                >
+                  <Clock className="w-3 h-3 text-muted-foreground shrink-0" />
+                  <span className="text-[11px] font-medium truncate flex-1">{approval.objectName || approval.type}</span>
                   {approval.dueDate && (
                     <Badge
                       variant="outline"
-                      className={`text-[10px] ${
+                      className={`text-[9px] shrink-0 ${
                         new Date(approval.dueDate).getTime() < Date.now()
                           ? "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20"
                           : "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20"
                       }`}
                     >
-                      <Clock className="w-2.5 h-2.5 mr-0.5" />
                       {dueIn(approval.dueDate)}
                     </Badge>
                   )}
                 </div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <Badge variant="outline" className="text-[10px]">{approval.type.replace(/_/g, " ")}</Badge>
-                  {approval.environment && (
-                    <Badge variant="outline" className="text-[10px]">{approval.environment}</Badge>
-                  )}
-                  {approval.createdAt && (
-                    <span className="text-[10px] text-muted-foreground">{timeAgo(approval.createdAt)}</span>
-                  )}
-                </div>
-              </div>
-            </Link>
-          ))
-        ) : (
-          <div className="flex items-center gap-3 p-4 rounded-md bg-emerald-500/5">
-            <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-            <span className="text-xs text-muted-foreground">No pending approvals</span>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function FinancialSnapshotSection({ financialSnapshot, prominent }: { financialSnapshot: OverviewData["financialSnapshot"]; prominent: boolean }) {
-  return (
-    <Card className={prominent ? "lg:col-span-2" : ""} data-testid="card-financial-snapshot">
-      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
-        <CardTitle className="text-sm font-medium">Financial Snapshot</CardTitle>
-        <Link href="/billing">
-          <Button variant="ghost" size="sm" data-testid="link-view-billing">
-            View Billing <ArrowRight className="w-3.5 h-3.5 ml-1" />
-          </Button>
-        </Link>
-      </CardHeader>
-      <CardContent>
-        <div className="flex flex-col gap-4">
-          <p className="text-[11px] text-muted-foreground">Last 30 days</p>
-          <div className={`grid gap-3 ${prominent ? "grid-cols-2 md:grid-cols-4" : "grid-cols-3"}`}>
-            <div className="flex flex-col gap-1 p-3 rounded-md bg-emerald-500/5">
-              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Billed</span>
-              <span className="text-lg font-semibold text-emerald-600 dark:text-emerald-400" data-testid="text-billed-amount">
-                {formatCurrency(financialSnapshot.billed)}
-              </span>
-            </div>
-            <div className="flex flex-col gap-1 p-3 rounded-md bg-amber-500/5">
-              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Pending</span>
-              <span className="text-lg font-semibold text-amber-600 dark:text-amber-400" data-testid="text-pending-amount">
-                {formatCurrency(financialSnapshot.pending)}
-              </span>
-            </div>
-            <div className="flex flex-col gap-1 p-3 rounded-md bg-red-500/5">
-              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Disputed</span>
-              <span className="text-lg font-semibold text-red-600 dark:text-red-400" data-testid="text-disputed-amount">
-                {formatCurrency(financialSnapshot.disputed)}
-              </span>
-            </div>
-            {prominent && (
-              <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/50">
-                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Revenue (30d)</span>
-                <span className="text-lg font-semibold" data-testid="text-total-revenue-30d-prominent">
-                  {formatCurrency(financialSnapshot.totalRevenue30d)}
-                </span>
-              </div>
-            )}
-          </div>
-          {!prominent && financialSnapshot.totalRevenue30d > 0 && (
-            <div className="flex items-center justify-between gap-2 pt-1">
-              <span className="text-xs text-muted-foreground">Total Revenue (30d)</span>
-              <span className="text-sm font-medium" data-testid="text-total-revenue-30d">
-                {formatCurrency(financialSnapshot.totalRevenue30d)}
-              </span>
+              </Link>
+            ))
+          ) : (
+            <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-emerald-500/5">
+              <CheckCircle className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              <span className="text-[11px] text-muted-foreground">No pending approvals</span>
             </div>
           )}
         </div>
@@ -860,65 +725,102 @@ function FinancialSnapshotSection({ financialSnapshot, prominent }: { financialS
   );
 }
 
-function SystemStatusSection({ systemStatus, prominent }: { systemStatus: OverviewData["systemStatus"]; prominent: boolean }) {
+function FinancialSnapshotSection({ financialSnapshot }: { financialSnapshot: OverviewData["financialSnapshot"] }) {
   return (
-    <Card className={prominent ? "lg:col-span-2" : ""} data-testid="card-system-status">
-      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
-        <CardTitle className="text-sm font-medium">System Status</CardTitle>
-        <Link href="/monitor">
-          <Button variant="ghost" size="sm" data-testid="link-view-monitor">
-            View Monitor <ArrowRight className="w-3.5 h-3.5 ml-1" />
-          </Button>
-        </Link>
-      </CardHeader>
-      <CardContent>
-        <div className={`grid gap-3 ${prominent ? "grid-cols-2 md:grid-cols-4" : "grid-cols-2"}`}>
-          <div className="flex flex-col gap-1.5 p-3 rounded-md bg-muted/50" data-testid="status-tool-error-rate">
-            <div className="flex items-center gap-1.5">
-              <AlertTriangle className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Error Rate</span>
-            </div>
-            <span className={`text-lg font-semibold ${systemStatus.toolErrorRate > 5 ? "text-red-600 dark:text-red-400" : "text-foreground"}`}>
-              {systemStatus.toolErrorRate}%
+    <Card data-testid="card-financial-snapshot" className="h-full">
+      <CardContent className="p-3">
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <span className="text-xs font-medium">Financial (30d)</span>
+          <Link href="/billing">
+            <Button variant="ghost" size="sm" className="h-6 text-[10px] px-2" data-testid="link-view-billing">
+              Billing <ArrowRight className="w-3 h-3 ml-0.5" />
+            </Button>
+          </Link>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="flex flex-col gap-0.5 p-2 rounded-md bg-emerald-500/5">
+            <span className="text-[9px] text-muted-foreground uppercase tracking-wider">Billed</span>
+            <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400" data-testid="text-billed-amount">
+              {formatCurrency(financialSnapshot.billed)}
             </span>
           </div>
-          <div className="flex flex-col gap-1.5 p-3 rounded-md bg-muted/50" data-testid="status-queue-depth">
-            <div className="flex items-center gap-1.5">
-              <Clock className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Queue Depth</span>
-            </div>
-            <span className={`text-lg font-semibold ${systemStatus.queueDepth > 10 ? "text-amber-600 dark:text-amber-400" : "text-foreground"}`}>
-              {systemStatus.queueDepth}
+          <div className="flex flex-col gap-0.5 p-2 rounded-md bg-amber-500/5">
+            <span className="text-[9px] text-muted-foreground uppercase tracking-wider">Pending</span>
+            <span className="text-sm font-semibold text-amber-600 dark:text-amber-400" data-testid="text-pending-amount">
+              {formatCurrency(financialSnapshot.pending)}
             </span>
           </div>
-          <div className="flex flex-col gap-1.5 p-3 rounded-md bg-muted/50" data-testid="status-eval-backlog">
-            <div className="flex items-center gap-1.5">
-              <FlaskConical className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Eval Backlog</span>
-            </div>
-            <span className={`text-lg font-semibold ${systemStatus.evalBacklog > 5 ? "text-amber-600 dark:text-amber-400" : "text-foreground"}`}>
-              {systemStatus.evalBacklog}
+          <div className="flex flex-col gap-0.5 p-2 rounded-md bg-red-500/5">
+            <span className="text-[9px] text-muted-foreground uppercase tracking-wider">Disputed</span>
+            <span className="text-sm font-semibold text-red-600 dark:text-red-400" data-testid="text-disputed-amount">
+              {formatCurrency(financialSnapshot.disputed)}
             </span>
           </div>
-          <div className="flex flex-col gap-1.5 p-3 rounded-md bg-muted/50" data-testid="status-connector-health">
-            <div className="flex items-center gap-1.5">
-              {systemStatus.connectorHealth >= 80 ? (
-                <Wifi className="w-3.5 h-3.5 text-muted-foreground" />
-              ) : (
-                <WifiOff className="w-3.5 h-3.5 text-red-500" />
-              )}
-              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Connectors</span>
-            </div>
-            <span className={`text-lg font-semibold ${systemStatus.connectorHealth < 80 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`}>
-              {systemStatus.connectorHealth}%
+          <div className="flex flex-col gap-0.5 p-2 rounded-md bg-muted/50">
+            <span className="text-[9px] text-muted-foreground uppercase tracking-wider">Revenue</span>
+            <span className="text-sm font-semibold" data-testid="text-total-revenue-30d">
+              {formatCurrency(financialSnapshot.totalRevenue30d)}
             </span>
           </div>
         </div>
-        <div className="flex items-center justify-between gap-2 mt-3 pt-3 border-t">
-          <span className="text-xs text-muted-foreground">Active Agents</span>
-          <span className="text-xs font-medium">
-            {systemStatus.activeAgents} / {systemStatus.totalAgents}
-          </span>
+      </CardContent>
+    </Card>
+  );
+}
+
+function SystemStatusSection({ systemStatus }: { systemStatus: OverviewData["systemStatus"] }) {
+  return (
+    <Card data-testid="card-system-status" className="h-full">
+      <CardContent className="p-3">
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <span className="text-xs font-medium">System Status</span>
+          <Link href="/monitor">
+            <Button variant="ghost" size="sm" className="h-6 text-[10px] px-2" data-testid="link-view-monitor">
+              Monitor <ArrowRight className="w-3 h-3 ml-0.5" />
+            </Button>
+          </Link>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="flex items-center gap-2 p-2 rounded-md bg-muted/50" data-testid="status-tool-error-rate">
+            <AlertTriangle className="w-3 h-3 text-muted-foreground shrink-0" />
+            <div className="flex flex-col">
+              <span className="text-[9px] text-muted-foreground uppercase">Error Rate</span>
+              <span className={`text-sm font-semibold ${systemStatus.toolErrorRate > 5 ? "text-red-600 dark:text-red-400" : "text-foreground"}`}>
+                {systemStatus.toolErrorRate}%
+              </span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 p-2 rounded-md bg-muted/50" data-testid="status-queue-depth">
+            <Clock className="w-3 h-3 text-muted-foreground shrink-0" />
+            <div className="flex flex-col">
+              <span className="text-[9px] text-muted-foreground uppercase">Queue</span>
+              <span className={`text-sm font-semibold ${systemStatus.queueDepth > 10 ? "text-amber-600 dark:text-amber-400" : "text-foreground"}`}>
+                {systemStatus.queueDepth}
+              </span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 p-2 rounded-md bg-muted/50" data-testid="status-eval-backlog">
+            <FlaskConical className="w-3 h-3 text-muted-foreground shrink-0" />
+            <div className="flex flex-col">
+              <span className="text-[9px] text-muted-foreground uppercase">Eval Backlog</span>
+              <span className={`text-sm font-semibold ${systemStatus.evalBacklog > 5 ? "text-amber-600 dark:text-amber-400" : "text-foreground"}`}>
+                {systemStatus.evalBacklog}
+              </span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 p-2 rounded-md bg-muted/50" data-testid="status-connector-health">
+            {systemStatus.connectorHealth >= 80 ? (
+              <Wifi className="w-3 h-3 text-muted-foreground shrink-0" />
+            ) : (
+              <WifiOff className="w-3 h-3 text-red-500 shrink-0" />
+            )}
+            <div className="flex flex-col">
+              <span className="text-[9px] text-muted-foreground uppercase">Connectors</span>
+              <span className={`text-sm font-semibold ${systemStatus.connectorHealth < 80 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                {systemStatus.connectorHealth}%
+              </span>
+            </div>
+          </div>
         </div>
       </CardContent>
     </Card>
@@ -927,26 +829,22 @@ function SystemStatusSection({ systemStatus, prominent }: { systemStatus: Overvi
 
 function PlatformHero({ industry, role, config }: { industry: any; role: any; config: RoleWidgetConfig }) {
   return (
-    <div className="flex items-center justify-between gap-4 flex-wrap">
-      <div className="flex flex-col gap-1">
-        <div className="flex items-center gap-2 flex-wrap">
-          <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-dashboard-title">
-            {config.title}
-          </h1>
-          <Badge variant="outline" className="text-[10px]" data-testid="badge-role-label">{role.label}</Badge>
-          {industry && (
-            <Badge variant="secondary" className="text-[10px]" data-testid="badge-industry-label">
-              {industry.shortLabel}
-            </Badge>
-          )}
-        </div>
-        <p className="text-sm text-muted-foreground" data-testid="text-dashboard-description">
-          {config.description}
-        </p>
+    <div className="flex items-center justify-between gap-3">
+      <div className="flex items-center gap-2 min-w-0">
+        <h1 className="text-lg font-semibold tracking-tight whitespace-nowrap" data-testid="text-dashboard-title">
+          {config.title}
+        </h1>
+        <Badge variant="outline" className="text-[10px] shrink-0" data-testid="badge-role-label">{role.label}</Badge>
+        {industry && (
+          <Badge variant="secondary" className="text-[10px] shrink-0" data-testid="badge-industry-label">
+            {industry.shortLabel}
+          </Badge>
+        )}
+        <span className="text-xs text-muted-foreground hidden md:inline truncate">{config.description}</span>
       </div>
       <Link href="/outcomes/discover">
-        <Button data-testid="button-discover-cta">
-          <Sparkles className="w-4 h-4 mr-1.5" />
+        <Button size="sm" data-testid="button-discover-cta">
+          <Sparkles className="w-3.5 h-3.5 mr-1" />
           Outcome Builder
         </Button>
       </Link>
@@ -1032,11 +930,11 @@ export default function Overview() {
 
   if (!hasOutcomes && data.agentsAtRisk.length === 0) {
     return (
-      <div className="flex flex-col gap-6 p-6" data-testid="page-overview">
+      <div className="flex flex-col gap-3 p-4" data-testid="page-overview">
         <PlatformHero industry={industry} role={role} config={config} />
         <KeyCapabilitiesSection />
         <TechnologyStackSection />
-        <div className="flex flex-col items-center justify-center py-12 gap-4" data-testid="empty-state">
+        <div className="flex flex-col items-center justify-center py-8 gap-3" data-testid="empty-state">
           <div className="flex items-center justify-center w-14 h-14 rounded-md bg-primary/10">
             <Target className="w-7 h-7 text-primary" />
           </div>
@@ -1057,72 +955,41 @@ export default function Overview() {
     );
   }
 
-  const showAgentsAndApprovalRow = config.showAgentsAtRisk || config.showApprovalQueue;
-  const showFinancialAndSystemRow = config.showFinancialSnapshot || config.showSystemStatus;
+  const detailPanels: ReactNode[] = [];
+
+  if (config.showAgentsAtRisk) {
+    detailPanels.push(<AgentsAtRiskSection key="agents" agents={data.agentsAtRisk} />);
+  }
+  if (config.showApprovalQueue) {
+    detailPanels.push(<ApprovalQueueSection key="approvals" approvalQueue={data.approvalQueue} />);
+  }
+  if (config.showPolicyViolations) {
+    detailPanels.push(<PolicyViolationsSection key="violations" violations={violations || []} isLoading={violationsLoading} />);
+  }
+  if (config.showFinancialSnapshot) {
+    detailPanels.push(<FinancialSnapshotSection key="financial" financialSnapshot={data.financialSnapshot} />);
+  }
+  if (config.showSystemStatus) {
+    detailPanels.push(<SystemStatusSection key="system" systemStatus={data.systemStatus} />);
+  }
+
+  const gridCols = detailPanels.length >= 3
+    ? "grid-cols-1 md:grid-cols-2 xl:grid-cols-3"
+    : detailPanels.length === 2
+      ? "grid-cols-1 md:grid-cols-2"
+      : "grid-cols-1";
 
   return (
-    <div className="flex flex-col gap-6 p-6" data-testid="page-overview">
+    <div className="flex flex-col gap-3 p-4" data-testid="page-overview">
       <PlatformHero industry={industry} role={role} config={config} />
-
       <PlatformPulseStrip data={data} />
-
       {config.showNeedsAttention && (
         <NeedsAttentionSection data={data} />
       )}
-
-      {(showAgentsAndApprovalRow || config.approvalProminent) && (
-        <CollapsibleDetail title="Agents & Approvals" defaultOpen={config.approvalProminent}>
-          {showAgentsAndApprovalRow && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              {config.showAgentsAtRisk && (
-                <AgentsAtRiskSection agents={data.agentsAtRisk} />
-              )}
-              {config.showApprovalQueue && !config.approvalProminent && (
-                <ApprovalQueueSection approvalQueue={data.approvalQueue} prominent={false} />
-              )}
-            </div>
-          )}
-          {config.approvalProminent && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
-              <ApprovalQueueSection approvalQueue={data.approvalQueue} prominent={true} />
-            </div>
-          )}
-        </CollapsibleDetail>
-      )}
-
-      {config.showPolicyViolations && (
-        <CollapsibleDetail title="Policy Violations">
-          <PolicyViolationsSection violations={violations || []} isLoading={violationsLoading} />
-        </CollapsibleDetail>
-      )}
-
-      {config.financialProminent && (
-        <CollapsibleDetail title="Financial Details" defaultOpen>
-          <div className="grid grid-cols-1 gap-4">
-            <FinancialSnapshotSection financialSnapshot={data.financialSnapshot} prominent={true} />
-          </div>
-        </CollapsibleDetail>
-      )}
-
-      {showFinancialAndSystemRow && !config.financialProminent && (
-        <CollapsibleDetail title="Financial & System Status">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {config.showFinancialSnapshot && (
-              <FinancialSnapshotSection financialSnapshot={data.financialSnapshot} prominent={false} />
-            )}
-            {config.showSystemStatus && (
-              <SystemStatusSection systemStatus={data.systemStatus} prominent={config.systemProminent} />
-            )}
-          </div>
-        </CollapsibleDetail>
-      )}
-
-      {config.showSystemStatus && !showFinancialAndSystemRow && (
-        <CollapsibleDetail title="System Status">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <SystemStatusSection systemStatus={data.systemStatus} prominent={config.systemProminent} />
-          </div>
-        </CollapsibleDetail>
+      {detailPanels.length > 0 && (
+        <div className={`grid gap-3 ${gridCols}`}>
+          {detailPanels}
+        </div>
       )}
     </div>
   );
