@@ -6513,7 +6513,14 @@ Respond with a JSON object:
       "suggestedRagPipeline": "string | null",
       "suggestedKnowledgeBases": [{"id": "string - KB id", "name": "string"}],
       "complianceTags": ["string - regulatory framework tags"],
-      "systemPrompt": "string - detailed industry-aware system prompt"
+      "systemPrompt": "string - detailed industry-aware system prompt",
+      "outputSchema": {
+        "type": "record_list | summary",
+        "description": "string - what each record represents, e.g. 'scored lead with qualification decision'",
+        "fields": [
+          {"name": "string - field name e.g. 'id'", "type": "string | number | boolean", "description": "string"}
+        ]
+      }
     }
   ],
   "pipeline": {
@@ -6540,7 +6547,8 @@ CRITICAL GUIDELINES
 9. REGULATORY AWARENESS: Include applicable regulatory frameworks as complianceTags. Reference linkedRegulations from ontology concepts.
 10. SYSTEM PROMPTS: Generate detailed, industry-specific system prompts that reference the agent's domain, ontology concepts, compliance requirements, and KPI responsibilities.
 11. Propose 2-4 worker agents + 1 orchestrator.
-12. KNOWLEDGE BASE GROUNDING: Assign relevant Knowledge Bases from the registry to agents that need domain-specific RAG grounding. Use exact KB IDs and names. Agents doing research, analysis, or compliance checks benefit most from KB linkage.`;
+12. KNOWLEDGE BASE GROUNDING: Assign relevant Knowledge Bases from the registry to agents that need domain-specific RAG grounding. Use exact KB IDs and names. Agents doing research, analysis, or compliance checks benefit most from KB linkage.
+13. STRUCTURED OUTPUT SCHEMA: For each worker agent that retrieves, processes, scores, or classifies batches of data records (leads, transactions, claims, patients, items, etc.), you MUST define an outputSchema with type="record_list". The fields array should describe the per-record structured output the agent must produce — include id, name/label, score (0-100), decision/classification, reasoning, and any domain-specific fields (e.g. escalation, riskLevel). Workers that only produce aggregate summaries or single metrics should use type="summary". The description should clearly state what each record represents. This enables the platform to render per-record results as interactive data tables.`;
 
       const response = await openai.chat.completions.create({
         model: "gpt-4.1",
@@ -6581,6 +6589,7 @@ CRITICAL GUIDELINES
           suggestedKnowledgeBases: Array.isArray(a.suggestedKnowledgeBases) ? a.suggestedKnowledgeBases : [],
           systemPrompt: a.systemPrompt || "",
           templateMatch: a.templateMatch || null,
+          outputSchema: a.outputSchema || null,
         };
       }
 
@@ -6657,6 +6666,11 @@ CRITICAL GUIDELINES
         complianceTags: z.array(z.string()).optional(),
         systemPrompt: z.string().optional(),
         suggestedRagPipeline: z.string().nullable().optional(),
+        outputSchema: z.object({
+          type: z.string(),
+          description: z.string(),
+          fields: z.array(z.object({ name: z.string(), type: z.string(), description: z.string() })),
+        }).nullable().optional(),
       });
       const bodySchema = z.object({
         outcomeId: z.string(),
@@ -6719,6 +6733,17 @@ CRITICAL GUIDELINES
           lines.push(`\nOrchestration Pattern: ${pipeline.pattern || "supervisor"}`);
           if (pipeline.errorHandling) lines.push(`Error Handling: ${pipeline.errorHandling}`);
           if (pipeline.handoffRules) lines.push(`Handoff Rules: ${pipeline.handoffRules}`);
+        }
+        if (agent.outputSchema && agent.outputSchema.type === "record_list" && agent.outputSchema.fields?.length) {
+          lines.push(`\n═══ STRUCTURED OUTPUT REQUIREMENTS ═══`);
+          lines.push(`You MUST produce per-record structured output for every ${agent.outputSchema.description || "data record"} you process.`);
+          lines.push(`After your natural language summary, output a JSON block wrapped in \`\`\`json ... \`\`\` markers containing a "processedRecords" array.`);
+          lines.push(`Each element in the array must have these fields:`);
+          for (const field of agent.outputSchema.fields) {
+            lines.push(`  - ${field.name} (${field.type}): ${field.description}`);
+          }
+          lines.push(`Process EVERY record from the data — do not summarize or skip any.`);
+          lines.push(`The platform will render this as an interactive data table for review.`);
         }
         return lines.join("\n");
       }
@@ -6807,6 +6832,7 @@ CRITICAL GUIDELINES
             matchedSkills: worker.matchedSkills || [],
             suggestedRagPipeline: worker.suggestedRagPipeline || null,
             mcpToolBindings: worker.mcpToolBindings || [],
+            outputSchema: worker.outputSchema || null,
           },
         });
         createdWorkers.push(workerAgent);

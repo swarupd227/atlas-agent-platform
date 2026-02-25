@@ -22,11 +22,19 @@ import {
   Users,
   Network,
   Layers,
+  Search,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  Download,
+  Table2,
+  ChevronLeft,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/status-badge";
 import { formatDate, formatMs } from "@/components/shared-utils";
@@ -85,6 +93,225 @@ type TimelineStep =
   | { type: "orchestration"; data: PipelineStepData }
   | { type: "worker_execution"; data: PipelineStepData }
   | { type: "orchestration_summary"; data: PipelineStepData };
+
+const DECISION_COLORS: Record<string, string> = {
+  approve: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+  approved: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+  mql: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+  sal: "bg-blue-500/15 text-blue-600 dark:text-blue-400",
+  qualified: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+  escalate: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+  escalation: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+  review: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+  "needs review": "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+  reject: "bg-red-500/15 text-red-600 dark:text-red-400",
+  rejected: "bg-red-500/15 text-red-600 dark:text-red-400",
+  fail: "bg-red-500/15 text-red-600 dark:text-red-400",
+  failed: "bg-red-500/15 text-red-600 dark:text-red-400",
+  disqualified: "bg-red-500/15 text-red-600 dark:text-red-400",
+};
+
+function getScoreColor(score: number): string {
+  if (score >= 70) return "text-emerald-600 dark:text-emerald-400";
+  if (score >= 40) return "text-amber-600 dark:text-amber-400";
+  return "text-red-600 dark:text-red-400";
+}
+
+function StructuredOutputTable({ records }: { records: any[] }) {
+  const [searchTerm, setSearchTerm] = useState("");
+  const [sortCol, setSortCol] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [page, setPage] = useState(0);
+  const perPage = 25;
+
+  if (!records || records.length === 0) return null;
+
+  const columnSet = new Set<string>();
+  for (const rec of records) {
+    for (const key of Object.keys(rec)) {
+      if (key !== "__meta") columnSet.add(key);
+    }
+  }
+  const columns = Array.from(columnSet);
+
+  const toDisplayString = (val: any): string => {
+    if (val == null) return "";
+    if (typeof val === "object") return JSON.stringify(val);
+    return String(val);
+  };
+
+  const decisionCols = new Set<string>();
+  const scoreCols = new Set<string>();
+  const boolCols = new Set<string>();
+
+  for (const col of columns) {
+    const sampleVals = records.slice(0, 10).map(r => r[col]);
+    const colLower = col.toLowerCase();
+    if (colLower.includes("decision") || colLower.includes("classification") || colLower.includes("status") || colLower.includes("action")) {
+      decisionCols.add(col);
+    }
+    if (colLower.includes("score") || colLower.includes("rating")) {
+      if (sampleVals.some(v => typeof v === "number")) scoreCols.add(col);
+    }
+    if (sampleVals.every(v => typeof v === "boolean")) boolCols.add(col);
+  }
+
+  let filtered = records;
+  if (searchTerm) {
+    const term = searchTerm.toLowerCase();
+    filtered = records.filter(r =>
+      columns.some(c => toDisplayString(r[c]).toLowerCase().includes(term))
+    );
+  }
+
+  if (sortCol) {
+    filtered = [...filtered].sort((a, b) => {
+      const va = a[sortCol!];
+      const vb = b[sortCol!];
+      if (va == null && vb == null) return 0;
+      if (va == null) return 1;
+      if (vb == null) return -1;
+      if (typeof va === "number" && typeof vb === "number") return sortDir === "asc" ? va - vb : vb - va;
+      return sortDir === "asc" ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
+    });
+  }
+
+  const totalPages = Math.ceil(filtered.length / perPage);
+  const pageRecords = filtered.slice(page * perPage, (page + 1) * perPage);
+
+  const handleSort = (col: string) => {
+    if (sortCol === col) {
+      setSortDir(d => d === "asc" ? "desc" : "asc");
+    } else {
+      setSortCol(col);
+      setSortDir("asc");
+    }
+    setPage(0);
+  };
+
+  const exportCsv = () => {
+    const header = columns.join(",");
+    const rows = filtered.map(r => columns.map(c => {
+      const str = toDisplayString(r[c]);
+      return str.includes(",") || str.includes('"') || str.includes("\n") ? `"${str.replace(/"/g, '""')}"` : str;
+    }).join(","));
+    const csv = [header, ...rows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "structured_output.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const formatColName = (col: string) => {
+    return col.replace(/([A-Z])/g, " $1").replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase()).trim();
+  };
+
+  const renderCell = (col: string, val: any) => {
+    if (val == null) return <span className="text-muted-foreground">—</span>;
+    if (boolCols.has(col)) {
+      return val ? (
+        <span className="text-emerald-600 dark:text-emerald-400 font-medium">Yes</span>
+      ) : (
+        <span className="text-muted-foreground">No</span>
+      );
+    }
+    if (decisionCols.has(col)) {
+      const key = String(val).toLowerCase();
+      const colorClass = DECISION_COLORS[key] || "bg-muted text-muted-foreground";
+      return <Badge className={`text-[10px] font-medium ${colorClass}`} data-testid={`badge-decision-${key}`}>{String(val)}</Badge>;
+    }
+    if (scoreCols.has(col) && typeof val === "number") {
+      return <span className={`font-mono font-semibold ${getScoreColor(val)}`}>{val}</span>;
+    }
+    const str = toDisplayString(val);
+    if (str.length > 80) return <span title={str}>{str.slice(0, 77)}...</span>;
+    return <span>{str}</span>;
+  };
+
+  return (
+    <div className="flex flex-col gap-2" data-testid="structured-output-table">
+      <div className="flex items-center gap-2 justify-between flex-wrap">
+        <div className="flex items-center gap-2">
+          <Table2 className="w-3.5 h-3.5 text-cyan-500" />
+          <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Structured Output</span>
+          <Badge variant="outline" className="text-[10px]" data-testid="badge-record-count">{filtered.length} record{filtered.length !== 1 ? "s" : ""}</Badge>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
+            <Input
+              className="h-7 pl-7 text-xs w-48"
+              placeholder="Filter records..."
+              value={searchTerm}
+              onChange={(e) => { setSearchTerm(e.target.value); setPage(0); }}
+              data-testid="input-structured-search"
+            />
+          </div>
+          <Button variant="ghost" size="sm" className="h-7 text-[11px]" onClick={exportCsv} data-testid="button-export-csv">
+            <Download className="w-3 h-3 mr-1" /> CSV
+          </Button>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto rounded-md border border-border/50">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="bg-muted/40 border-b border-border/50">
+              {columns.map(col => (
+                <th
+                  key={col}
+                  className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground cursor-pointer hover:text-foreground select-none whitespace-nowrap"
+                  onClick={() => handleSort(col)}
+                  data-testid={`header-${col}`}
+                >
+                  <div className="flex items-center gap-1">
+                    {formatColName(col)}
+                    {sortCol === col ? (
+                      sortDir === "asc" ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                    ) : (
+                      <ArrowUpDown className="w-3 h-3 opacity-30" />
+                    )}
+                  </div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {pageRecords.map((record, idx) => (
+              <tr key={idx} className="border-b border-border/30 hover:bg-muted/20 transition-colors" data-testid={`row-record-${idx}`}>
+                {columns.map(col => (
+                  <td key={col} className="px-3 py-1.5 whitespace-nowrap max-w-[300px] overflow-hidden text-ellipsis">
+                    {renderCell(col, record[col])}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between px-1">
+          <span className="text-[10px] text-muted-foreground">
+            Showing {page * perPage + 1}–{Math.min((page + 1) * perPage, filtered.length)} of {filtered.length}
+          </span>
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} data-testid="button-prev-page">
+              <ChevronLeft className="w-3.5 h-3.5" />
+            </Button>
+            <span className="text-[10px] text-muted-foreground px-2">Page {page + 1} of {totalPages}</span>
+            <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1} data-testid="button-next-page">
+              <ChevronRight className="w-3.5 h-3.5" />
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function buildTimelineSteps(
   promptInputs: PromptInputs | null,
@@ -364,16 +591,23 @@ function TimelineStepContent({ step }: { step: TimelineStep }) {
         </div>
       );
     }
-    case "output":
+    case "output": {
+      let outputParsed: any = null;
+      if (typeof step.data === "string" && step.data.startsWith("{")) {
+        try { outputParsed = JSON.parse(step.data); } catch {}
+      }
+      const outputStructured = outputParsed?.structuredOutput || outputParsed?.processedRecords;
       return step.data ? (
-        <div className="p-3 rounded-md bg-muted/40 text-xs leading-relaxed whitespace-pre-wrap">
-          {typeof step.data === "string" && step.data.startsWith("{") ? (() => {
-            try { const parsed = JSON.parse(step.data); return parsed.summary || parsed.analysis || step.data; } catch { return step.data; }
-          })() : step.data}
+        <div className="flex flex-col gap-3">
+          <div className="p-3 rounded-md bg-muted/40 text-xs leading-relaxed whitespace-pre-wrap">
+            {outputParsed ? (outputParsed.summary || outputParsed.analysis || step.data) : step.data}
+          </div>
+          {Array.isArray(outputStructured) && outputStructured.length > 0 && <StructuredOutputTable records={outputStructured} />}
         </div>
       ) : (
         <p className="text-xs text-muted-foreground">No output recorded</p>
       );
+    }
     case "orchestration": {
       const d = step.data;
       return (
@@ -435,6 +669,10 @@ function TimelineStepContent({ step }: { step: TimelineStep }) {
               </div>
             </div>
           )}
+          {(() => {
+            const structured = d.output?.structuredOutput || d.output?.analysis?.structuredOutput || d.output?.analysis?.processedRecords;
+            return Array.isArray(structured) && structured.length > 0 ? <StructuredOutputTable records={structured} /> : null;
+          })()}
           {workerSteps.length > 0 && (
             <div className="flex flex-col gap-1.5">
               <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Execution Steps</span>

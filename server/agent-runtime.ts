@@ -358,7 +358,7 @@ export async function executePromptWithMcp(
   prompt: string,
   industry?: string,
   agentSystemPrompt?: string,
-  options?: { conversational?: boolean; ontologyLabels?: string[] },
+  options?: { conversational?: boolean; ontologyLabels?: string[]; runtimeConfig?: Record<string, any> },
 ): Promise<{ steps: any[]; success: boolean; summary: any; promptInputs?: any; conversationalResponse?: string }> {
   const startTime = Date.now();
   const steps: any[] = [];
@@ -570,9 +570,35 @@ After receiving tool results, provide a structured analysis with key findings, s
 
       try {
         const isConversational = options?.conversational === true;
+
+        const hasRecordData = toolCallResults.some(r => {
+          if (r.error) return false;
+          const res = r.result;
+          if (!res) return false;
+          if (Array.isArray(res) && res.length > 5) return true;
+          if (typeof res === "object") {
+            for (const key of Object.keys(res)) {
+              if (Array.isArray(res[key]) && res[key].length > 5) return true;
+            }
+          }
+          return false;
+        });
+
+        const runtimeConfig = (options as any)?.runtimeConfig || {};
+        const outputSchema = runtimeConfig?.outputSchema;
+        const hasOutputSchema = outputSchema && outputSchema.type === "record_list" && Array.isArray(outputSchema.fields) && outputSchema.fields.length > 0;
+
+        let structuredOutputInstructions = "";
+        if (hasOutputSchema) {
+          const fieldDescs = outputSchema.fields.map((f: any) => `${f.name} (${f.type}): ${f.description}`).join("; ");
+          structuredOutputInstructions = ` IMPORTANT: You MUST also include a "processedRecords" field as a JSON array where each element represents one ${outputSchema.description || "processed record"} with these fields: ${fieldDescs}. Process EVERY record from the data — do not skip or summarize them into fewer entries.`;
+        } else if (hasRecordData) {
+          structuredOutputInstructions = ` If the tool results contain multiple data records (e.g. leads, items, transactions), also include a "processedRecords" field as a JSON array where each element has: id, name (string identifier), score (number 0-100 if applicable), decision (string classification/action), reasoning (1-2 sentence explanation). Process every record from the data.`;
+        }
+
         const analysisPrompt = isConversational
           ? `Now respond to the user's original question using the tool results above. Write a helpful, detailed, conversational response in natural language. Include specific data points (numbers, measurements, values) from the tool results. Format your response nicely — use line breaks for readability if the answer is long. Do NOT respond in JSON. Respond as a knowledgeable assistant speaking directly to the user.`
-          : "Now analyze the tool results above. Respond in JSON format with fields: summary (string), severity (low/medium/high), riskFactors (array of strings), findings (array of key observations), and recommendedActions (array of strings).";
+          : `Now analyze the tool results above. Respond in JSON format with fields: summary (string), severity (low/medium/high), riskFactors (array of strings), findings (array of key observations), and recommendedActions (array of strings).${structuredOutputInstructions}`;
         const analysisMessages = [
           ...toolResultMessages,
           { role: "user" as const, content: analysisPrompt },
@@ -580,7 +606,7 @@ After receiving tool results, provide a structured analysis with key findings, s
         const analysisResponse = await openai.chat.completions.create({
           model: "gpt-4.1",
           messages: analysisMessages,
-          max_completion_tokens: 4096,
+          max_completion_tokens: hasRecordData || hasOutputSchema ? 16384 : 4096,
           ...(isConversational ? {} : { response_format: { type: "json_object" as const } }),
         });
 
@@ -601,6 +627,10 @@ After receiving tool results, provide a structured analysis with key findings, s
           } catch {
             analysis = { summary: rawContent };
           }
+        }
+
+        if (analysis.processedRecords && Array.isArray(analysis.processedRecords)) {
+          analysis.structuredOutput = analysis.processedRecords;
         }
 
         const lastStep = steps[steps.length - 1];
@@ -840,18 +870,24 @@ export async function executeTeamPipeline(teamAgent: RuntimeAgent): Promise<{ st
         contextualPrompt,
         teamAgent.industry,
         workerContext || workerAgent.systemPrompt || undefined,
+        { runtimeConfig: workerRtConfig },
       );
 
       const lastStep = allSteps[allSteps.length - 1];
       lastStep.status = result.success ? "completed" : "failed";
       lastStep.completedAt = new Date().toISOString();
+
+      const workerAnalysis = result.summary.analysis || {};
+      const structuredOutput = workerAnalysis.structuredOutput || workerAnalysis.processedRecords || null;
+
       lastStep.output = {
         stepsCount: result.steps.length,
         passedSteps: result.summary.passedSteps,
         failedSteps: result.summary.failedSteps,
         latencyMs: result.summary.latencyMs,
         toolsUsed: result.summary.toolsUsed,
-        analysis: result.summary.analysis,
+        analysis: workerAnalysis,
+        ...(structuredOutput ? { structuredOutput } : {}),
       };
       lastStep.workerSteps = result.steps;
 
@@ -942,7 +978,7 @@ async function executeAgentCycle(agent: RuntimeAgent) {
           agent.prompt,
           agent.industry,
           enrichedContext || agent.agentSystemPrompt,
-          { ontologyLabels: (agent.ontologyTags || []).map(t => t.conceptLabel) },
+          { ontologyLabels: (agent.ontologyTags || []).map(t => t.conceptLabel), runtimeConfig: agent.runtimeConfig || {} },
         );
 
     await storage.updateAgentRuntimeRun(runtimeRun.id, {

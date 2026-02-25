@@ -73,6 +73,7 @@ import {
   ChevronUp,
   Copy,
   Rocket,
+  Table2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -3425,6 +3426,27 @@ function AgentProposalCard({ agent, index, isOrchestrator, isSelected, onToggle,
                       </div>
                     </div>
                   )}
+                </div>
+              </CollapsibleSection>
+            )}
+            {(agent as any).outputSchema && (agent as any).outputSchema.type === "record_list" && (
+              <CollapsibleSection title="Structured Output Schema" icon={<Table2 className="w-3 h-3" />} defaultOpen={false} count={(agent as any).outputSchema.fields?.length || 0} testId={`section-output-schema-${isOrchestrator ? "orch" : index}`}>
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="text-[9px] bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border-cyan-500/20">{(agent as any).outputSchema.type}</Badge>
+                    <span className="text-[10px] text-muted-foreground">{(agent as any).outputSchema.description}</span>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Output Fields</span>
+                    <div className="flex flex-wrap gap-1">
+                      {((agent as any).outputSchema.fields || []).map((f: any, j: number) => (
+                        <Badge key={j} variant="outline" className="text-[9px]" title={`${f.type}: ${f.description}`}>
+                          {f.name} <span className="text-muted-foreground ml-0.5">({f.type})</span>
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">The runtime will render per-record results as an interactive data table in the trace viewer.</p>
                 </div>
               </CollapsibleSection>
             )}
