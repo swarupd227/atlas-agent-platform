@@ -373,10 +373,10 @@ function PlatformPulseStrip({ data }: { data: OverviewData }) {
       }, 0) / data.outcomeHealth.length
     : 0;
 
-  const atRiskKpis = data.outcomeHealth.reduce((count, o) => count + o.kpis.filter((k) => k.progress < 80).length, 0);
+  const outcomesAtRisk = data.outcomeHealth.filter((o) => o.kpis.some((k) => k.progress < 80)).length;
   const overdueApprovals = data.approvalQueue.items.filter((a) => a.dueDate && new Date(a.dueDate).getTime() < Date.now()).length;
-  const agentsWithIncidents = data.agentsAtRisk.filter((a) => a.openIncidents > 0).length;
-  const attentionCount = atRiskKpis + overdueApprovals + agentsWithIncidents;
+  const agentsWithIncidents = data.agentsAtRisk.filter((a) => a.openIncidents > 0 || (a.lastDrift && Math.abs(a.lastDrift.driftPercent) > 10)).length;
+  const attentionCount = outcomesAtRisk + overdueApprovals + agentsWithIncidents;
 
   const healthColor = overallHealth >= 80 ? "text-emerald-600 dark:text-emerald-400" : overallHealth >= 60 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
   const healthBg = overallHealth >= 80 ? "bg-emerald-500/10" : overallHealth >= 60 ? "bg-amber-500/10" : "bg-red-500/10";
@@ -388,7 +388,7 @@ function PlatformPulseStrip({ data }: { data: OverviewData }) {
       <PulseCard label="Active Outcomes" value={activeOutcomes} sub={`/ ${data.outcomeHealth.length}`} icon={Target} iconClass="text-primary" iconBg="bg-primary/10" href="/outcomes" tooltip="Number of outcomes currently being tracked. Click to view all outcomes and their KPI progress." testId="pulse-active-outcomes" />
       <PulseCard label="Overall Health" value={`${overallHealth.toFixed(0)}%`} icon={HeartPulse} iconClass={healthColor} iconBg={healthBg} href="/outcomes" tooltip="Average KPI attainment across all outcomes. Green >80%, amber 60-80%, red <60%. Click to review underperforming outcomes." testId="pulse-overall-health" />
       <PulseCard label="Agents Running" value={data.systemStatus.activeAgents} sub={`/ ${data.systemStatus.totalAgents}`} icon={Bot} iconClass="text-primary" iconBg="bg-primary/10" href="/agents" tooltip="Agents actively executing. Click to view agent registry, health scores, and runtime status." testId="pulse-agents-running" />
-      <PulseCard label="Attention" value={attentionCount} sub={attentionCount === 0 ? "all clear" : "items"} icon={AlertTriangle} iconClass={attColor} iconBg={attBg} href="/approvals" tooltip={`${atRiskKpis} at-risk KPIs, ${overdueApprovals} overdue approvals, ${agentsWithIncidents} agents with incidents. Click to review pending approvals.`} testId="pulse-attention-items" />
+      <PulseCard label="Attention" value={attentionCount} sub={attentionCount === 0 ? "all clear" : "items"} icon={AlertTriangle} iconClass={attColor} iconBg={attBg} href="/approvals" tooltip={`${outcomesAtRisk} outcomes at risk, ${overdueApprovals} overdue approvals, ${agentsWithIncidents} agents with issues. Click to review pending approvals.`} testId="pulse-attention-items" />
     </div>
   );
 }
