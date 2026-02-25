@@ -6626,6 +6626,13 @@ CRITICAL GUIDELINES
         estimatedImpact: z.string().optional(),
         templateMatch: z.string().nullable().optional(),
         suggestedKnowledgeBases: z.array(z.object({ id: z.string(), name: z.string() })).optional(),
+        mcpToolBindings: z.array(z.object({ server: z.string(), tool: z.string() })).optional(),
+        matchedSkills: z.array(z.string()).optional(),
+        matchedOntologyConcepts: z.array(z.string()).optional(),
+        policyConstraints: z.array(z.string()).optional(),
+        complianceTags: z.array(z.string()).optional(),
+        systemPrompt: z.string().optional(),
+        suggestedRagPipeline: z.string().nullable().optional(),
       });
       const bodySchema = z.object({
         outcomeId: z.string(),
@@ -6645,6 +6652,27 @@ CRITICAL GUIDELINES
 
       const outcome = await storage.getOutcome(outcomeId);
       if (!outcome) return res.status(404).json({ error: "Outcome not found" });
+
+      const allMcpServers = await storage.getMcpServers();
+
+      async function linkMcpBindings(agentId: string, bindings?: Array<{ server: string; tool: string }>) {
+        if (!bindings?.length) return;
+        const serverNames = [...new Set(bindings.map(b => b.server))];
+        for (const serverName of serverNames) {
+          const matched = allMcpServers.find(s =>
+            s.name.toLowerCase().includes(serverName.toLowerCase()) ||
+            serverName.toLowerCase().includes(s.name.toLowerCase().split(" ")[0])
+          );
+          if (matched) {
+            try {
+              const existing = await storage.getAgentMcpServerByIds(agentId, matched.id);
+              if (!existing) {
+                await storage.createAgentMcpServer({ agentId, serverId: matched.id });
+              }
+            } catch {}
+          }
+        }
+      }
 
       function composeTaskPrompt(agent: z.infer<typeof agentProposalSchema>, isOrchestrator: boolean): string {
         const lines: string[] = [];
@@ -6672,6 +6700,9 @@ CRITICAL GUIDELINES
       }
 
       function composeSystemPrompt(agent: z.infer<typeof agentProposalSchema>, isOrchestrator: boolean): string {
+        if (agent.systemPrompt && agent.systemPrompt.trim().length > 0) {
+          return agent.systemPrompt;
+        }
         const industry = reqIndustry || "general";
         const lines: string[] = [];
         lines.push(`You are ${agent.name}, an AI agent operating within the ${industry} industry.`);
@@ -6705,11 +6736,17 @@ CRITICAL GUIDELINES
         outcomeId,
         toolsConfig: orchestrator.tools || [],
         systemPrompt: composeSystemPrompt(orchestrator, true),
+        complianceTags: orchestrator.complianceTags || [],
+        ontologyTags: orchestrator.matchedOntologyConcepts?.length ? { concepts: orchestrator.matchedOntologyConcepts } : {},
+        policyBindings: orchestrator.policyConstraints?.length ? { policies: orchestrator.policyConstraints } : {},
         runtimeConfig: {
           prompt: composeTaskPrompt(orchestrator, true),
           kpiBindings: orchestrator.kpiBindings || [],
           workflowSteps: orchestrator.workflowSteps || [],
           estimatedImpact: orchestrator.estimatedImpact || "",
+          matchedSkills: orchestrator.matchedSkills || [],
+          suggestedRagPipeline: orchestrator.suggestedRagPipeline || null,
+          mcpToolBindings: orchestrator.mcpToolBindings || [],
           orchestration: {
             pattern: pipeline?.pattern || "supervisor",
             description: pipeline?.description || "",
@@ -6718,6 +6755,8 @@ CRITICAL GUIDELINES
           },
         },
       });
+
+      await linkMcpBindings(teamAgent.id, orchestrator.mcpToolBindings);
 
       const createdWorkers: any[] = [];
       for (const worker of workers) {
@@ -6733,14 +6772,22 @@ CRITICAL GUIDELINES
           outcomeId,
           toolsConfig: worker.tools || [],
           systemPrompt: composeSystemPrompt(worker, false),
+          complianceTags: worker.complianceTags || [],
+          ontologyTags: worker.matchedOntologyConcepts?.length ? { concepts: worker.matchedOntologyConcepts } : {},
+          policyBindings: worker.policyConstraints?.length ? { policies: worker.policyConstraints } : {},
           runtimeConfig: {
             prompt: composeTaskPrompt(worker, false),
             kpiBindings: worker.kpiBindings || [],
             workflowSteps: worker.workflowSteps || [],
             estimatedImpact: worker.estimatedImpact || "",
+            matchedSkills: worker.matchedSkills || [],
+            suggestedRagPipeline: worker.suggestedRagPipeline || null,
+            mcpToolBindings: worker.mcpToolBindings || [],
           },
         });
         createdWorkers.push(workerAgent);
+
+        await linkMcpBindings(workerAgent.id, worker.mcpToolBindings);
 
         await storage.createAgentTeamMember({
           teamAgentId: teamAgent.id,

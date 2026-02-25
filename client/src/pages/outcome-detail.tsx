@@ -4162,19 +4162,25 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
           }
           const taskPrompt = taskLines.join("\n");
 
-          const industryLabel = industry?.id || "general";
-          const sysLines: string[] = [];
-          sysLines.push(`You are ${worker.name}, an AI agent operating within the ${industryLabel} industry.`);
-          sysLines.push(`Your role: ${worker.role || worker.description}`);
-          sysLines.push(`You are a worker agent contributing to the outcome "${outcome.name}".`);
-          if (worker.kpiBindings?.length) {
-            sysLines.push(`You are responsible for optimizing these KPIs: ${worker.kpiBindings.join(", ")}.`);
+          let finalSystemPrompt: string;
+          if (worker.systemPrompt && worker.systemPrompt.trim().length > 0) {
+            finalSystemPrompt = worker.systemPrompt;
+          } else {
+            const industryLabel = industry?.id || "general";
+            const sysLines: string[] = [];
+            sysLines.push(`You are ${worker.name}, an AI agent operating within the ${industryLabel} industry.`);
+            sysLines.push(`Your role: ${worker.role || worker.description}`);
+            sysLines.push(`You are a worker agent contributing to the outcome "${outcome.name}".`);
+            if (worker.kpiBindings?.length) {
+              sysLines.push(`You are responsible for optimizing these KPIs: ${worker.kpiBindings.join(", ")}.`);
+            }
+            if (worker.tools?.length) {
+              sysLines.push(`You have access to these tools: ${worker.tools.map(t => `${t.name} (${t.description})`).join("; ")}.`);
+            }
+            sysLines.push(`Risk tier: ${worker.riskTier || "MEDIUM"}. Autonomy mode: ${worker.autonomyMode || "assisted"}.`);
+            sysLines.push(`Always follow compliance requirements and escalate when operating outside your autonomy boundaries.`);
+            finalSystemPrompt = sysLines.join("\n");
           }
-          if (worker.tools?.length) {
-            sysLines.push(`You have access to these tools: ${worker.tools.map(t => `${t.name} (${t.description})`).join("; ")}.`);
-          }
-          sysLines.push(`Risk tier: ${worker.riskTier || "MEDIUM"}. Autonomy mode: ${worker.autonomyMode || "assisted"}.`);
-          sysLines.push(`Always follow compliance requirements and escalate when operating outside your autonomy boundaries.`);
 
           const agentRes = await apiRequest("POST", "/api/agents", {
             name: worker.name,
@@ -4187,12 +4193,18 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
             modelName: worker.modelName,
             outcomeId: outcome.id,
             toolsConfig: worker.tools,
-            systemPrompt: sysLines.join("\n"),
+            systemPrompt: finalSystemPrompt,
+            complianceTags: worker.complianceTags || [],
+            ontologyTags: worker.matchedOntologyConcepts?.length ? { concepts: worker.matchedOntologyConcepts } : {},
+            policyBindings: worker.policyConstraints?.length ? { policies: worker.policyConstraints } : {},
             runtimeConfig: {
               prompt: taskPrompt,
               kpiBindings: worker.kpiBindings || [],
               workflowSteps: worker.workflowSteps || [],
               estimatedImpact: worker.estimatedImpact || "",
+              matchedSkills: worker.matchedSkills || [],
+              suggestedRagPipeline: worker.suggestedRagPipeline || null,
+              mcpToolBindings: worker.mcpToolBindings || [],
             },
             blueprintJson: worker.workflowSteps?.length ? {
               type: "workflow",
@@ -4212,10 +4224,30 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
             } : undefined,
           });
           const createdAgent = await agentRes.json();
-          if (createdAgent?.id && worker.suggestedKnowledgeBases?.length) {
-            for (const kb of worker.suggestedKnowledgeBases) {
+          if (createdAgent?.id) {
+            if (worker.suggestedKnowledgeBases?.length) {
+              for (const kb of worker.suggestedKnowledgeBases) {
+                try {
+                  await apiRequest("POST", `/api/agents/${createdAgent.id}/knowledge-bases`, { knowledgeBaseId: kb.id });
+                } catch {}
+              }
+            }
+            if (worker.mcpToolBindings?.length) {
               try {
-                await apiRequest("POST", `/api/agents/${createdAgent.id}/knowledge-bases`, { knowledgeBaseId: kb.id });
+                const mcpServersRes = await fetch("/api/mcp-servers");
+                const mcpServers = await mcpServersRes.json();
+                const serverNames = [...new Set(worker.mcpToolBindings.map(b => b.server))];
+                for (const serverName of serverNames) {
+                  const matched = mcpServers.find((s: any) =>
+                    s.name.toLowerCase().includes(serverName.toLowerCase()) ||
+                    serverName.toLowerCase().includes(s.name.toLowerCase().split(" ")[0])
+                  );
+                  if (matched) {
+                    try {
+                      await apiRequest("POST", `/api/agents/${createdAgent.id}/mcp-servers`, { serverId: matched.id });
+                    } catch {}
+                  }
+                }
               } catch {}
             }
           }
