@@ -495,22 +495,31 @@ function NeedsAttentionSection({ data }: { data: OverviewData }) {
   );
 }
 
-function CollapsibleSection({ title, badge, defaultOpen = false, children }: { title: string; badge?: string | number; defaultOpen?: boolean; children: ReactNode }) {
+function CollapsibleSection({ title, badge, defaultOpen = false, viewAllHref, children }: { title: string; badge?: string | number; defaultOpen?: boolean; viewAllHref?: string; children: ReactNode }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
     <div className="rounded-lg border bg-card">
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className="flex items-center gap-2 w-full px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
-        data-testid={`toggle-${title.toLowerCase().replace(/\s+/g, "-")}`}
-      >
-        <ChevronRight className={`w-3 h-3 transition-transform duration-150 ${open ? "rotate-90" : ""}`} />
-        <span>{title}</span>
-        {badge !== undefined && (
-          <Badge variant="secondary" className="text-[9px] ml-1">{badge}</Badge>
+      <div className="flex items-center justify-between px-3 py-2">
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          className="flex items-center gap-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+          data-testid={`toggle-${title.toLowerCase().replace(/\s+/g, "-")}`}
+        >
+          <ChevronRight className={`w-3 h-3 transition-transform duration-150 ${open ? "rotate-90" : ""}`} />
+          <span>{title}</span>
+          {badge !== undefined && (
+            <Badge variant="secondary" className="text-[9px] ml-1">{badge}</Badge>
+          )}
+        </button>
+        {viewAllHref && (
+          <Link href={viewAllHref}>
+            <Button variant="ghost" size="sm" className="h-5 text-[10px] px-2" data-testid={`link-viewall-${title.toLowerCase().replace(/\s+/g, "-")}`}>
+              View All <ArrowRight className="w-3 h-3 ml-0.5" />
+            </Button>
+          </Link>
         )}
-      </button>
+      </div>
       {open && <div className="px-3 pb-3">{children}</div>}
     </div>
   );
@@ -535,9 +544,6 @@ function PolicyViolationsInline({ violations, isLoading }: { violations: PolicyV
           <CheckCircle className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
           <span className="text-[11px] text-muted-foreground">No violations</span>
         </div>
-      )}
-      {violations.length > 0 && (
-        <Link href="/governance"><span className="text-[10px] text-primary hover:underline cursor-pointer ml-2">View all in Governance →</span></Link>
       )}
     </div>
   );
@@ -564,7 +570,6 @@ function AgentsAtRiskInline({ agents }: { agents: AgentAtRisk[] }) {
               </div>
             </Link>
           ))}
-          <Link href="/agents"><span className="text-[10px] text-primary hover:underline cursor-pointer ml-2">View all agents →</span></Link>
         </div>
       ) : (
         <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-emerald-500/5">
@@ -594,7 +599,6 @@ function ApprovalQueueInline({ approvalQueue }: { approvalQueue: OverviewData["a
               </div>
             </Link>
           ))}
-          <Link href="/approvals"><span className="text-[10px] text-primary hover:underline cursor-pointer ml-2">View all approvals →</span></Link>
         </>
       ) : (
         <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-emerald-500/5">
@@ -625,7 +629,6 @@ function FinancialInline({ financialSnapshot }: { financialSnapshot: OverviewDat
         <span className="text-[9px] text-muted-foreground uppercase">Revenue</span>
         <span className="text-xs font-semibold" data-testid="text-total-revenue-30d">{formatCurrency(financialSnapshot.totalRevenue30d)}</span>
       </div>
-      <Link href="/billing"><span className="text-[10px] text-primary hover:underline cursor-pointer ml-auto">Billing →</span></Link>
     </div>
   );
 }
@@ -653,7 +656,6 @@ function SystemStatusInline({ systemStatus }: { systemStatus: OverviewData["syst
         <span className="text-[9px] text-muted-foreground uppercase">Conn</span>
         <span className={`text-xs font-semibold ${systemStatus.connectorHealth < 80 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`}>{systemStatus.connectorHealth}%</span>
       </div>
-      <Link href="/monitor"><span className="text-[10px] text-primary hover:underline cursor-pointer ml-auto">Monitor →</span></Link>
     </div>
   );
 }
@@ -797,27 +799,27 @@ export default function Overview() {
       )}
       <div className="flex flex-col gap-1.5">
         {config.showAgentsAtRisk && (
-          <CollapsibleSection title="Agents At Risk" badge={agentIncidents > 0 ? agentIncidents : undefined}>
+          <CollapsibleSection title="Agents At Risk" badge={agentIncidents > 0 ? agentIncidents : undefined} viewAllHref="/agents">
             <AgentsAtRiskInline agents={data.agentsAtRisk} />
           </CollapsibleSection>
         )}
         {config.showApprovalQueue && (
-          <CollapsibleSection title="Approval Queue" badge={data.approvalQueue.totalPending > 0 ? data.approvalQueue.totalPending : undefined}>
+          <CollapsibleSection title="Approval Queue" badge={data.approvalQueue.totalPending > 0 ? data.approvalQueue.totalPending : undefined} viewAllHref="/approvals">
             <ApprovalQueueInline approvalQueue={data.approvalQueue} />
           </CollapsibleSection>
         )}
         {config.showPolicyViolations && (
-          <CollapsibleSection title="Policy Violations">
+          <CollapsibleSection title="Policy Violations" viewAllHref="/governance">
             <PolicyViolationsInline violations={violations || []} isLoading={violationsLoading} />
           </CollapsibleSection>
         )}
         {config.showFinancialSnapshot && (
-          <CollapsibleSection title="Financial (30d)">
+          <CollapsibleSection title="Financial (30d)" viewAllHref="/billing">
             <FinancialInline financialSnapshot={data.financialSnapshot} />
           </CollapsibleSection>
         )}
         {config.showSystemStatus && (
-          <CollapsibleSection title="System Status">
+          <CollapsibleSection title="System Status" viewAllHref="/monitor">
             <SystemStatusInline systemStatus={data.systemStatus} />
           </CollapsibleSection>
         )}
