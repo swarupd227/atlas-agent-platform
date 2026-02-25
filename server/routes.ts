@@ -4574,6 +4574,95 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     }
   });
 
+  app.post("/api/agents/:id/save-as-template", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+
+      const { name, description, category, industry, tags, complexity, icon } = req.body;
+
+      const rtConfig = (agent.runtimeConfig as Record<string, any>) || {};
+      const compTags = Array.isArray(agent.complianceTags) ? agent.complianceTags as string[] : [];
+      const ontTags = (agent.ontologyTags as any)?.concepts || [];
+      const toolsCfg = Array.isArray(agent.toolsConfig) ? agent.toolsConfig : [];
+
+      const allTags: string[] = [...(tags || [])];
+      if (compTags.length > 0) allTags.push(...compTags);
+      if (Array.isArray(ontTags)) allTags.push(...ontTags.map((t: any) => typeof t === "string" ? t : t.conceptLabel || t));
+      const uniqueTags = [...new Set(allTags.filter(Boolean))];
+
+      let mcpServerNames: string[] = [];
+      try {
+        const mcpLinks = await storage.getAgentMcpServers(req.params.id);
+        for (const link of mcpLinks) {
+          const server = await storage.getMcpServer(link.serverId);
+          if (server) mcpServerNames.push(server.name);
+        }
+      } catch {}
+
+      let kbNames: string[] = [];
+      try {
+        const kbLinks = await storage.getAgentKnowledgeBases(req.params.id);
+        for (const link of kbLinks) {
+          const kb = await storage.getKnowledgeBase(link.knowledgeBaseId);
+          if (kb) kbNames.push(kb.name);
+        }
+      } catch {}
+
+      const blueprintJson: any = {
+        systemPrompt: agent.systemPrompt || "",
+        runtimeConfig: {
+          prompt: rtConfig.prompt || "",
+          outputSchema: rtConfig.outputSchema || null,
+          kpiBindings: rtConfig.kpiBindings || [],
+          workflowSteps: rtConfig.workflowSteps || [],
+          matchedSkills: rtConfig.matchedSkills || [],
+          mcpToolBindings: rtConfig.mcpToolBindings || [],
+        },
+        sourceAgentId: agent.id,
+        sourceAgentName: agent.name,
+        linkedMcpServers: mcpServerNames,
+        linkedKnowledgeBases: kbNames,
+      };
+
+      const preloadedSkills: any[] = [];
+      if (Array.isArray(rtConfig.matchedSkills)) {
+        for (const skill of rtConfig.matchedSkills) {
+          preloadedSkills.push({ name: typeof skill === "string" ? skill : skill.name, source: "agent_config" });
+        }
+      }
+
+      const template = await storage.createAgentTemplate({
+        name: name || `${agent.name} Template`,
+        description: description || agent.description || "",
+        category: category || "general",
+        industry: industry || "cross_industry",
+        tags: uniqueTags,
+        icon: icon || "bot",
+        complexity: complexity || "medium",
+        modelProvider: agent.modelProvider || "openai",
+        modelName: agent.modelName || "gpt-4.1",
+        toolsConfig: toolsCfg,
+        permissionsConfig: {},
+        memoryRagConfig: {},
+        blueprintJson,
+        policyBindings: agent.policyBindings || {},
+        evalBindings: {},
+        rollbackPlan: {},
+        defaultRiskTier: agent.riskTier || "MEDIUM",
+        defaultAutonomyMode: agent.autonomyMode || "assisted",
+        preloadedSkills,
+        estimatedTimeToProd: "1-2 weeks",
+        costProfile: {},
+      });
+
+      res.status(201).json(template);
+    } catch (err: any) {
+      console.error("Save as template error:", err);
+      res.status(500).json({ message: err.message || "Failed to save agent as template" });
+    }
+  });
+
   app.delete("/api/agent-templates/:id", async (req, res) => {
     const existing = await storage.getAgentTemplate(req.params.id);
     if (!existing) return res.status(404).json({ message: "Template not found" });

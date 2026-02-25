@@ -415,6 +415,15 @@ function AgentDetailInner() {
     },
   });
 
+  const [saveAsTemplateOpen, setSaveAsTemplateOpen] = useState(false);
+  const [templateName, setTemplateName] = useState("");
+  const [templateDescription, setTemplateDescription] = useState("");
+  const [templateCategory, setTemplateCategory] = useState("general");
+  const [templateIndustry, setTemplateIndustry] = useState("cross_industry");
+  const [templateTags, setTemplateTags] = useState("");
+  const [templateComplexity, setTemplateComplexity] = useState("medium");
+  const [templateIcon, setTemplateIcon] = useState("bot");
+
   const [retireDialogOpen, setRetireDialogOpen] = useState(false);
   const [retireReason, setRetireReason] = useState("");
   const [replacementAgentId, setReplacementAgentId] = useState("");
@@ -635,6 +644,21 @@ function AgentDetailInner() {
     },
     onError: (error: Error) => {
       toast({ title: "Shadow replay failed", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const saveAsTemplateMutation = useMutation({
+    mutationFn: async (data: { name: string; description: string; category: string; industry: string; tags: string[]; complexity: string; icon: string }) => {
+      const res = await apiRequest("POST", `/api/agents/${agentId}/save-as-template`, data);
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agent-templates"] });
+      setSaveAsTemplateOpen(false);
+      toast({ title: "Template created", description: `"${data.name}" saved to the Templates library.` });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to save as template", description: err.message, variant: "destructive" });
     },
   });
 
@@ -936,6 +960,21 @@ function AgentDetailInner() {
             <Power className="w-3.5 h-3.5 mr-1.5" /> Reactivate
           </Button>
         )}
+        <Button variant="outline" size="sm" data-testid="button-save-as-template" onClick={() => {
+          const compTags = Array.isArray(agent.complianceTags) ? (agent.complianceTags as string[]) : [];
+          const ontConcepts = (agent.ontologyTags as any)?.concepts || [];
+          const allTags = [...compTags, ...ontConcepts.map((t: any) => typeof t === "string" ? t : t.conceptLabel || "")].filter(Boolean);
+          setTemplateName(`${agent.name} Template`);
+          setTemplateDescription(agent.description || "");
+          setTemplateCategory("general");
+          setTemplateIndustry("cross_industry");
+          setTemplateTags(allTags.join(", "));
+          setTemplateComplexity("medium");
+          setTemplateIcon("bot");
+          setSaveAsTemplateOpen(true);
+        }}>
+          <Copy className="w-3.5 h-3.5 mr-1.5" /> Save as Template
+        </Button>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col gap-4">
@@ -4271,6 +4310,146 @@ function AgentDetailInner() {
                 </Button>
               </>
             )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={saveAsTemplateOpen} onOpenChange={setSaveAsTemplateOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Save Agent as Template</DialogTitle>
+            <DialogDescription>
+              Create a reusable template from this agent's configuration. All model settings, tools, policies, and runtime config will be captured.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="template-name">Template Name</Label>
+              <Input id="template-name" data-testid="input-template-name" value={templateName} onChange={(e) => setTemplateName(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="template-description">Description</Label>
+              <Textarea id="template-description" data-testid="input-template-description" value={templateDescription} onChange={(e) => setTemplateDescription(e.target.value)} rows={2} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Category</Label>
+                <Select value={templateCategory} onValueChange={setTemplateCategory}>
+                  <SelectTrigger data-testid="select-template-category"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="general">General</SelectItem>
+                    <SelectItem value="support">Support</SelectItem>
+                    <SelectItem value="sales">Sales</SelectItem>
+                    <SelectItem value="analytics">Analytics</SelectItem>
+                    <SelectItem value="compliance">Compliance</SelectItem>
+                    <SelectItem value="operations">Operations</SelectItem>
+                    <SelectItem value="data_processing">Data Processing</SelectItem>
+                    <SelectItem value="marketing">Marketing</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Industry</Label>
+                <Select value={templateIndustry} onValueChange={setTemplateIndustry}>
+                  <SelectTrigger data-testid="select-template-industry"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="cross_industry">Cross-Industry</SelectItem>
+                    <SelectItem value="healthcare">Healthcare</SelectItem>
+                    <SelectItem value="financial_services">Financial Services</SelectItem>
+                    <SelectItem value="manufacturing">Manufacturing</SelectItem>
+                    <SelectItem value="insurance">Insurance</SelectItem>
+                    <SelectItem value="retail">Retail</SelectItem>
+                    <SelectItem value="technology">Technology</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Complexity</Label>
+                <Select value={templateComplexity} onValueChange={setTemplateComplexity}>
+                  <SelectTrigger data-testid="select-template-complexity"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="low">Low</SelectItem>
+                    <SelectItem value="medium">Medium</SelectItem>
+                    <SelectItem value="high">High</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Icon</Label>
+                <Select value={templateIcon} onValueChange={setTemplateIcon}>
+                  <SelectTrigger data-testid="select-template-icon"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="bot">Bot</SelectItem>
+                    <SelectItem value="brain">Brain</SelectItem>
+                    <SelectItem value="zap">Zap</SelectItem>
+                    <SelectItem value="shield">Shield</SelectItem>
+                    <SelectItem value="bar-chart">Bar Chart</SelectItem>
+                    <SelectItem value="database">Database</SelectItem>
+                    <SelectItem value="users">Users</SelectItem>
+                    <SelectItem value="workflow">Workflow</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="template-tags">Tags (comma-separated)</Label>
+              <Input id="template-tags" data-testid="input-template-tags" value={templateTags} onChange={(e) => setTemplateTags(e.target.value)} placeholder="e.g. marketing, lead-scoring, financial-services" />
+            </div>
+            {agent && (
+              <div className="rounded-md border p-3 bg-muted/50 space-y-1">
+                <p className="text-xs font-medium text-muted-foreground mb-1.5">Configuration that will be captured:</p>
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="secondary" className="text-xs" data-testid="badge-template-model">
+                    <Cpu className="w-3 h-3 mr-1" />{agent.modelProvider || "openai"} / {agent.modelName || "gpt-4.1"}
+                  </Badge>
+                  {Array.isArray(agent.toolsConfig) && (agent.toolsConfig as any[]).length > 0 && (
+                    <Badge variant="secondary" className="text-xs" data-testid="badge-template-tools">
+                      <Wrench className="w-3 h-3 mr-1" />{(agent.toolsConfig as any[]).length} tools
+                    </Badge>
+                  )}
+                  {agent.systemPrompt && (
+                    <Badge variant="secondary" className="text-xs" data-testid="badge-template-prompt">
+                      <FileText className="w-3 h-3 mr-1" />System prompt
+                    </Badge>
+                  )}
+                  {agent.runtimeConfig && (
+                    <Badge variant="secondary" className="text-xs" data-testid="badge-template-runtime">
+                      <Settings className="w-3 h-3 mr-1" />Runtime config
+                    </Badge>
+                  )}
+                  <Badge variant="secondary" className="text-xs" data-testid="badge-template-risk">
+                    <Shield className="w-3 h-3 mr-1" />{agent.riskTier || "MEDIUM"} risk
+                  </Badge>
+                  <Badge variant="secondary" className="text-xs" data-testid="badge-template-autonomy">
+                    <Zap className="w-3 h-3 mr-1" />{agent.autonomyMode || "assisted"}
+                  </Badge>
+                </div>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSaveAsTemplateOpen(false)} data-testid="button-cancel-save-template">Cancel</Button>
+            <Button
+              onClick={() => saveAsTemplateMutation.mutate({
+                name: templateName,
+                description: templateDescription,
+                category: templateCategory,
+                industry: templateIndustry,
+                tags: templateTags.split(",").map(t => t.trim()).filter(Boolean),
+                complexity: templateComplexity,
+                icon: templateIcon,
+              })}
+              disabled={saveAsTemplateMutation.isPending || !templateName.trim()}
+              data-testid="button-confirm-save-template"
+            >
+              {saveAsTemplateMutation.isPending ? (
+                <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Saving...</>
+              ) : (
+                <><Copy className="w-3.5 h-3.5 mr-1.5" /> Save Template</>
+              )}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
