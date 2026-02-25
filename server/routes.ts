@@ -15,7 +15,7 @@ import { registerKnowledgeBaseRoutes } from "./kb-routes";
 import adobeAnalyticsRouter from "./mock-mcp/adobe-analytics";
 import marketoRouter from "./mock-mcp/marketo";
 import salesforceRouter from "./mock-mcp/salesforce";
-import { registerMockMcpServers, seedMarketingDemo } from "./mock-mcp/register";
+import { registerMockMcpServers } from "./mock-mcp/register";
 import type { RedactionLevel } from "./permissions";
 import {
   insertOutcomeContractSchema,
@@ -229,15 +229,12 @@ export async function registerRoutes(
 
   app.post("/api/mock-mcp/seed-demo", async (_req, res) => {
     try {
-      const result = await seedMarketingDemo();
+      const result = await registerMockMcpServers();
       res.json({
         success: true,
-        message: `Marketing Lead Management demo seeded successfully`,
-        servers: result.servers.map((s: any) => ({ id: s.id, name: s.name })),
+        message: `Registered ${result.servers.length} mock MCP servers with ${result.tools} tools`,
+        servers: result.servers.map((s: any) => ({ id: s.id, name: s.name, url: s.url })),
         tools: result.tools,
-        outcome: { id: result.outcome.id, name: result.outcome.name },
-        agents: result.agents.map((a: any) => ({ id: a.id, name: a.name, type: a.type })),
-        kpis: result.kpis.map((k: any) => ({ id: k.id, name: k.name, target: k.target, unit: k.unit })),
       });
     } catch (error: any) {
       res.status(500).json({ success: false, error: error.message });
