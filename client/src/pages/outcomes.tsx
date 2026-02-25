@@ -63,6 +63,7 @@ import {
   WaterfallChart,
   RiskHeatBadge,
 } from "@/components/outcome-cockpit";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { usePermission, PermissionGate } from "@/components/role-provider";
 import { useIndustry } from "@/components/industry-provider";
 
@@ -330,15 +331,6 @@ export default function Outcomes() {
     return "mixed";
   };
 
-  const kpiStalenessHours = (() => {
-    if (!kpis || kpis.length === 0) return 0;
-    const hasZeroConfidence = kpis.some((k) => (k.confidence || 0) === 0 && k.target > 0);
-    const hasNoProgress = kpis.every((k) => (k.currentValue || 0) === 0);
-    if (hasNoProgress && kpis.length > 0) return 48;
-    if (hasZeroConfidence) return 25;
-    return 0;
-  })();
-  const kpiStale = kpiStalenessHours > 24;
 
   const filtered = outcomes?.filter((o) => {
     if (search && !o.name.toLowerCase().includes(search.toLowerCase())) return false;
@@ -487,26 +479,6 @@ export default function Outcomes() {
           )}
         </div>
       </div>
-
-      {/* === KPI STALE WARNING BANNER === */}
-      {kpiStale && (
-        <div className="flex items-center gap-3 p-3 rounded-md bg-amber-500/10 border border-amber-500/20" data-testid="banner-kpi-stale">
-          <Clock className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
-          <span className="text-xs text-amber-700 dark:text-amber-300 flex-1">
-            KPI data may be stale — last computed over {kpiStalenessHours} hours ago.
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleRecomputeKpis}
-            disabled={recomputingKpis}
-            data-testid="button-recompute-stale"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 mr-1 ${recomputingKpis ? "animate-spin" : ""}`} />
-            Recompute
-          </Button>
-        </div>
-      )}
 
       {awaitingPlanCount > 0 && (
         <div className="flex items-center gap-3 p-3 rounded-md bg-blue-500/10 border border-blue-500/20" data-testid="banner-awaiting-agent-plan">
@@ -793,14 +765,19 @@ export default function Outcomes() {
           return (
             <Link key={outcome.id} href={`/outcomes/${outcome.id}`}>
               <Card className="hover-elevate cursor-pointer h-full" data-testid={`card-outcome-${outcome.id}`}>
-                <CardContent className="p-4 flex flex-col gap-3">
+                <CardContent className="p-4 flex flex-col gap-3 overflow-hidden">
                   <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
                       <div className="flex items-center justify-center w-8 h-8 rounded-md bg-primary/10 shrink-0">
                         <Target className="w-4 h-4 text-primary" />
                       </div>
                       <div className="flex flex-col min-w-0">
-                        <span className="text-sm font-semibold truncate">{outcome.name}</span>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="text-sm font-semibold truncate">{outcome.name}</span>
+                          </TooltipTrigger>
+                          <TooltipContent side="top">{outcome.name}</TooltipContent>
+                        </Tooltip>
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="text-xs text-muted-foreground">v{outcome.version}</span>
                           <RiskHeatBadge level={outcome.riskTier || "medium"} />
@@ -819,10 +796,17 @@ export default function Outcomes() {
                         </div>
                       </div>
                     </div>
-                    <ProgressRing value={Math.round(avgProgress)} size={40} strokeWidth={3} />
+                    <div className="shrink-0">
+                      <ProgressRing value={Math.round(avgProgress)} size={36} strokeWidth={3} />
+                    </div>
                   </div>
                   {outcome.description && (
-                    <p className="text-xs text-muted-foreground line-clamp-2">{outcome.description}</p>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <p className="text-xs text-muted-foreground line-clamp-2">{outcome.description}</p>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" className="max-w-xs">{outcome.description}</TooltipContent>
+                    </Tooltip>
                   )}
                   {outcomeKpis.length > 0 && (
                     <div className="flex flex-col gap-1.5">
@@ -830,15 +814,22 @@ export default function Outcomes() {
                         const kpiPct = kpi.target > 0 ? Math.round(((kpi.currentValue || 0) / kpi.target) * 100) : 0;
                         return (
                           <div key={kpi.id} className="flex items-center gap-2">
-                            <ProgressRing value={kpiPct} size={24} strokeWidth={2} />
-                            <span className="text-xs text-muted-foreground truncate flex-1">{kpi.name}</span>
+                            <div className="shrink-0">
+                              <ProgressRing value={kpiPct} size={24} strokeWidth={2} />
+                            </div>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="text-xs text-muted-foreground truncate flex-1">{kpi.name}</span>
+                              </TooltipTrigger>
+                              <TooltipContent side="top">{kpi.name}</TooltipContent>
+                            </Tooltip>
                             {(() => {
                               const bm = getIndustryBenchmark(industryId, kpi.name, kpi.unit);
                               if (!bm) return null;
                               const isInverse = kpi.name.includes("Time") || kpi.name.includes("Latency");
                               const isBetter = isInverse ? (kpi.currentValue || 0) < bm.benchmark : (kpi.currentValue || 0) > bm.benchmark;
                               return (
-                                <span className={`text-xs ${isBetter ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`} data-testid={`benchmark-indicator-${kpi.id}`}>
+                                <span className={`text-xs shrink-0 ${isBetter ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`} data-testid={`benchmark-indicator-${kpi.id}`}>
                                   {isBetter ? "above" : "below"} avg
                                 </span>
                               );
@@ -890,14 +881,15 @@ export default function Outcomes() {
                       <StatusBadge status={outcome.status} />
                       {(() => {
                         const bs = getOutcomeBillingStatus(outcome.id);
+                        if (bs === "no_invoices") return null;
                         const bsConfig: Record<string, { label: string; cls: string }> = {
                           paid: { label: "Paid", cls: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" },
                           pending: { label: "Pending", cls: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20" },
                           overdue: { label: "Overdue", cls: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20" },
                           mixed: { label: "Mixed", cls: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/20" },
-                          no_invoices: { label: "No Invoices", cls: "bg-muted text-muted-foreground" },
                         };
-                        const cfg = bsConfig[bs] || bsConfig.no_invoices;
+                        const cfg = bsConfig[bs];
+                        if (!cfg) return null;
                         return (
                           <Badge variant="outline" className={`text-xs border ${cfg.cls}`} data-testid={`billing-status-${outcome.id}`}>
                             {cfg.label}
