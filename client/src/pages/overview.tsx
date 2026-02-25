@@ -462,14 +462,25 @@ function NeedsAttentionSection({ data }: { data: OverviewData }) {
   });
 
   items.sort((a, b) => a.severity - b.severity);
-  const visible = items.slice(0, 3);
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded ? items : items.slice(0, 3);
+  const hasMore = items.length > 3;
 
   return (
     <div className="rounded-lg border bg-card px-4 py-3" data-testid="section-needs-attention">
       <div className="flex items-center justify-between gap-2 mb-2">
         <span className="text-sm font-semibold">Needs Attention</span>
-        {items.length > 3 && (
-          <Badge variant="secondary" className="text-xs">{items.length} total</Badge>
+        {hasMore && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs px-2"
+            onClick={() => setExpanded(!expanded)}
+            data-testid="toggle-needs-attention"
+          >
+            {expanded ? "Show less" : `Show all ${items.length}`}
+            <ChevronRight className={`w-3.5 h-3.5 ml-0.5 transition-transform duration-150 ${expanded ? "rotate-90" : ""}`} />
+          </Button>
         )}
       </div>
       <div className="flex flex-col gap-1">
