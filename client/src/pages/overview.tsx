@@ -346,10 +346,10 @@ function PulseCard({ label, value, sub, icon: Icon, iconClass, iconBg, href, too
               <Icon className={`w-4 h-4 ${iconClass}`} />
             </div>
             <div className="flex flex-col min-w-0">
-              <span className="text-xs text-muted-foreground leading-none">{label}</span>
-              <div className="flex items-baseline gap-1">
-                <span className={`text-lg font-semibold leading-tight ${iconClass}`}>{value}</span>
-                {sub && <span className="text-xs text-muted-foreground">{sub}</span>}
+              <span className="text-sm text-muted-foreground leading-none">{label}</span>
+              <div className="flex items-baseline gap-1.5">
+                <span className={`text-xl font-semibold leading-tight ${iconClass}`}>{value}</span>
+                {sub && <span className="text-sm text-muted-foreground">{sub}</span>}
               </div>
             </div>
           </div>
@@ -467,7 +467,7 @@ function NeedsAttentionSection({ data }: { data: OverviewData }) {
   return (
     <div className="rounded-lg border bg-card px-4 py-3" data-testid="section-needs-attention">
       <div className="flex items-center justify-between gap-2 mb-2">
-        <span className="text-sm font-medium">Needs Attention</span>
+        <span className="text-sm font-semibold">Needs Attention</span>
         {items.length > 3 && (
           <Badge variant="secondary" className="text-xs">{items.length} total</Badge>
         )}
@@ -476,16 +476,16 @@ function NeedsAttentionSection({ data }: { data: OverviewData }) {
         {visible.length > 0 ? (
           visible.map((item) => (
             <Link key={item.id} href={item.href}>
-              <div className="flex items-center gap-2 px-2 py-1.5 rounded-md hover-elevate cursor-pointer" data-testid={`attention-item-${item.id}`}>
+              <div className="flex items-center gap-2 px-2 py-2 rounded-md hover-elevate cursor-pointer" data-testid={`attention-item-${item.id}`}>
                 <item.icon className="w-4 h-4 text-muted-foreground shrink-0" />
                 <span className="text-sm font-medium truncate">{item.label}</span>
-                <span className="text-xs text-muted-foreground truncate hidden sm:inline">{item.detail}</span>
+                <span className="text-sm text-muted-foreground truncate hidden sm:inline">{item.detail}</span>
                 <Badge variant="outline" className={`text-xs shrink-0 ml-auto ${item.badgeClass}`}>{item.badgeLabel}</Badge>
               </div>
             </Link>
           ))
         ) : (
-          <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-emerald-500/5">
+          <div className="flex items-center gap-2 px-2 py-2 rounded-md bg-emerald-500/5">
             <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
             <span className="text-sm text-muted-foreground">All systems healthy</span>
           </div>
@@ -503,7 +503,7 @@ function CollapsibleSection({ title, badge, defaultOpen = false, viewAllHref, ch
         <button
           type="button"
           onClick={() => setOpen(!open)}
-          className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+          className="flex items-center gap-2 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors"
           data-testid={`toggle-${title.toLowerCase().replace(/\s+/g, "-")}`}
         >
           <ChevronRight className={`w-4 h-4 transition-transform duration-150 ${open ? "rotate-90" : ""}`} />
@@ -612,21 +612,21 @@ function ApprovalQueueInline({ approvalQueue }: { approvalQueue: OverviewData["a
 
 function FinancialInline({ financialSnapshot }: { financialSnapshot: OverviewData["financialSnapshot"] }) {
   return (
-    <div className="flex items-center gap-4 flex-wrap" data-testid="card-financial-snapshot">
+    <div className="flex items-center gap-5 flex-wrap" data-testid="card-financial-snapshot">
       <div className="flex items-baseline gap-1.5">
-        <span className="text-xs text-muted-foreground uppercase">Billed</span>
+        <span className="text-sm text-muted-foreground">Billed</span>
         <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400" data-testid="text-billed-amount">{formatCurrency(financialSnapshot.billed)}</span>
       </div>
       <div className="flex items-baseline gap-1.5">
-        <span className="text-xs text-muted-foreground uppercase">Pending</span>
+        <span className="text-sm text-muted-foreground">Pending</span>
         <span className="text-sm font-semibold text-amber-600 dark:text-amber-400" data-testid="text-pending-amount">{formatCurrency(financialSnapshot.pending)}</span>
       </div>
       <div className="flex items-baseline gap-1.5">
-        <span className="text-xs text-muted-foreground uppercase">Disputed</span>
+        <span className="text-sm text-muted-foreground">Disputed</span>
         <span className="text-sm font-semibold text-red-600 dark:text-red-400" data-testid="text-disputed-amount">{formatCurrency(financialSnapshot.disputed)}</span>
       </div>
       <div className="flex items-baseline gap-1.5">
-        <span className="text-xs text-muted-foreground uppercase">Revenue</span>
+        <span className="text-sm text-muted-foreground">Revenue</span>
         <span className="text-sm font-semibold" data-testid="text-total-revenue-30d">{formatCurrency(financialSnapshot.totalRevenue30d)}</span>
       </div>
     </div>
@@ -635,25 +635,25 @@ function FinancialInline({ financialSnapshot }: { financialSnapshot: OverviewDat
 
 function SystemStatusInline({ systemStatus }: { systemStatus: OverviewData["systemStatus"] }) {
   return (
-    <div className="flex items-center gap-4 flex-wrap" data-testid="card-system-status">
+    <div className="flex items-center gap-5 flex-wrap" data-testid="card-system-status">
       <div className="flex items-center gap-1.5" data-testid="status-tool-error-rate">
         <AlertTriangle className="w-4 h-4 text-muted-foreground" />
-        <span className="text-xs text-muted-foreground uppercase">Error Rate</span>
+        <span className="text-sm text-muted-foreground">Error Rate</span>
         <span className={`text-sm font-semibold ${systemStatus.toolErrorRate > 5 ? "text-red-600 dark:text-red-400" : ""}`}>{systemStatus.toolErrorRate}%</span>
       </div>
       <div className="flex items-center gap-1.5" data-testid="status-queue-depth">
         <Clock className="w-4 h-4 text-muted-foreground" />
-        <span className="text-xs text-muted-foreground uppercase">Queue</span>
+        <span className="text-sm text-muted-foreground">Queue</span>
         <span className={`text-sm font-semibold ${systemStatus.queueDepth > 10 ? "text-amber-600 dark:text-amber-400" : ""}`}>{systemStatus.queueDepth}</span>
       </div>
       <div className="flex items-center gap-1.5" data-testid="status-eval-backlog">
         <FlaskConical className="w-4 h-4 text-muted-foreground" />
-        <span className="text-xs text-muted-foreground uppercase">Eval Backlog</span>
+        <span className="text-sm text-muted-foreground">Eval Backlog</span>
         <span className={`text-sm font-semibold ${systemStatus.evalBacklog > 5 ? "text-amber-600 dark:text-amber-400" : ""}`}>{systemStatus.evalBacklog}</span>
       </div>
       <div className="flex items-center gap-1.5" data-testid="status-connector-health">
         {systemStatus.connectorHealth >= 80 ? <Wifi className="w-4 h-4 text-muted-foreground" /> : <WifiOff className="w-4 h-4 text-red-500" />}
-        <span className="text-xs text-muted-foreground uppercase">Connectors</span>
+        <span className="text-sm text-muted-foreground">Connectors</span>
         <span className={`text-sm font-semibold ${systemStatus.connectorHealth < 80 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`}>{systemStatus.connectorHealth}%</span>
       </div>
     </div>
