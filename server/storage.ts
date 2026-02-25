@@ -1,4 +1,4 @@
-import { eq, desc, inArray, and, like } from "drizzle-orm";
+import { eq, desc, inArray, and, like, or } from "drizzle-orm";
 import { createHash } from "crypto";
 import { db } from "./db";
 import {
@@ -252,6 +252,7 @@ export interface IStorage {
   deleteEvalTestCase(id: string): Promise<boolean>;
 
   updateAgent(id: string, data: Partial<Agent>): Promise<Agent | undefined>;
+  deleteAgent(id: string): Promise<boolean>;
 
   getImprovementRecommendations(): Promise<ImprovementRecommendation[]>;
   getImprovementRecommendationsByAgent(agentId: string): Promise<ImprovementRecommendation[]>;
@@ -1077,6 +1078,18 @@ export class DatabaseStorage implements IStorage {
   async updateAgent(id: string, data: Partial<Agent>) {
     const [updated] = await db.update(agents).set(data).where(eq(agents.id, id)).returning();
     return updated;
+  }
+
+  async deleteAgent(id: string): Promise<boolean> {
+    await db.delete(agentApiKeys).where(eq(agentApiKeys.agentId, id));
+    await db.delete(agentChannels).where(eq(agentChannels.agentId, id));
+    await db.delete(agentMcpServers).where(eq(agentMcpServers.agentId, id));
+    await db.delete(agentKnowledgeBases).where(eq(agentKnowledgeBases.agentId, id));
+    await db.delete(agentTeams).where(
+      or(eq(agentTeams.teamAgentId, id), eq(agentTeams.memberAgentId, id))
+    );
+    const [deleted] = await db.delete(agents).where(eq(agents.id, id)).returning();
+    return !!deleted;
   }
 
   async getImprovementRecommendations() {

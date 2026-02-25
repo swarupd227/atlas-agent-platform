@@ -1288,7 +1288,7 @@ export async function registerRoutes(
   app.post("/api/agents/bulk-action", async (req, res) => {
     try {
       const bulkActionSchema = z.object({
-        action: z.enum(["regression_eval", "freeze_deployments", "rotate_secrets", "export_audit"]),
+        action: z.enum(["regression_eval", "freeze_deployments", "rotate_secrets", "export_audit", "delete"]),
         agentIds: z.array(z.string()).min(1),
       });
       const { action, agentIds } = bulkActionSchema.parse(req.body);
@@ -1298,7 +1298,10 @@ export async function registerRoutes(
 
       for (const agent of targetAgents) {
         let actionDescription = "";
-        if (action === "regression_eval") {
+        if (action === "delete") {
+          actionDescription = `Agent "${agent.name}" deleted via bulk action`;
+          await storage.deleteAgent(agent.id);
+        } else if (action === "regression_eval") {
           actionDescription = `Regression eval triggered for agent "${agent.name}"`;
         } else if (action === "freeze_deployments") {
           actionDescription = `Deployments frozen for agent "${agent.name}"`;
@@ -1376,6 +1379,27 @@ export async function registerRoutes(
       res.json(updated);
     } catch (e) {
       handleZodError(res, e);
+    }
+  });
+
+  app.delete("/api/agents/:id", checkPermission("create_modify_blueprints"), async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+      await storage.deleteAgent(req.params.id);
+      const delTags = Array.isArray(agent.ontologyTags) ? (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) : [];
+      await storage.createAuditEvent({
+        actorType: "user",
+        actorId: "ops_user",
+        action: "delete_agent",
+        objectType: "agent",
+        objectId: agent.id,
+        details: `Agent "${agent.name}" deleted`,
+        ontologyTags: resolveOntologyTags("agent", "delete_agent", { agentOntologyTags: delTags }),
+      });
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to delete agent" });
     }
   });
 

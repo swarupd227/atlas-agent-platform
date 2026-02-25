@@ -26,6 +26,7 @@ import {
   ArrowUpDown,
   CircleDot,
   Minus,
+  Trash2,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -147,13 +148,14 @@ function getDaysSinceCompliance(lastApproval: Approval | undefined): number | nu
   return Math.floor((now.getTime() - d.getTime()) / (1000 * 60 * 60 * 24));
 }
 
-type BulkAction = "regression_eval" | "freeze_deployments" | "rotate_secrets" | "export_audit";
+type BulkAction = "regression_eval" | "freeze_deployments" | "rotate_secrets" | "export_audit" | "delete";
 
-const BULK_ACTION_META: Record<BulkAction, { label: string; description: string; icon: typeof Play }> = {
+const BULK_ACTION_META: Record<BulkAction, { label: string; description: string; icon: typeof Play; destructive?: boolean }> = {
   regression_eval: { label: "Run Regression Eval", description: "Trigger regression evaluation suites for the selected agents. This will run all bound eval suites and generate comparison reports.", icon: Play },
   freeze_deployments: { label: "Freeze Deployments", description: "Freeze all deployment pipelines for the selected agents. No new releases will be promoted until unfrozen.", icon: Pause },
   rotate_secrets: { label: "Rotate Secrets", description: "Initiate secret rotation for API keys and credentials used by the selected agents. Active sessions will be gracefully migrated.", icon: KeyRound },
   export_audit: { label: "Export Audit Bundle", description: "Generate and download a compliance audit bundle containing traces, evaluations, policy checks, and approval history for the selected agents.", icon: FileDown },
+  delete: { label: "Delete Agents", description: "Permanently delete the selected agents and all associated data including API keys, channels, MCP server links, knowledge base links, and team memberships. This action cannot be undone.", icon: Trash2, destructive: true },
 };
 
 export default function Agents() {
@@ -533,6 +535,11 @@ export default function Agents() {
                 )}
               </Button>
             )}
+            {blueprintPerm.allowed && (
+              <Button variant="outline" size="sm" className="text-red-600 dark:text-red-400 border-red-500/30 hover:bg-red-500/10" onClick={() => setBulkAction("delete")} data-testid="bulk-delete-agents">
+                <Trash2 className="w-3.5 h-3.5 mr-1" /> Delete
+              </Button>
+            )}
             <Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set())} data-testid="button-deselect-all">
               <X className="w-3.5 h-3.5 mr-1" /> Deselect
             </Button>
@@ -850,6 +857,7 @@ export default function Agents() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setBulkAction(null)} data-testid="button-cancel-bulk">Cancel</Button>
             <Button
+              variant={bulkAction && BULK_ACTION_META[bulkAction]?.destructive ? "destructive" : "default"}
               onClick={() => {
                 if (bulkAction) {
                   bulkActionMutation.mutate({ action: bulkAction, agentIds: Array.from(selectedIds) });
@@ -858,7 +866,7 @@ export default function Agents() {
               disabled={bulkActionMutation.isPending}
               data-testid="button-confirm-bulk"
             >
-              {bulkActionMutation.isPending ? "Processing..." : "Confirm"}
+              {bulkActionMutation.isPending ? "Processing..." : bulkAction === "delete" ? "Delete Permanently" : "Confirm"}
             </Button>
           </DialogFooter>
         </DialogContent>
