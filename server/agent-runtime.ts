@@ -1392,7 +1392,7 @@ async function executeAgentCycle(agent: RuntimeAgent) {
   }
 }
 
-export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?: string): Promise<{ started: boolean; message: string }> {
+export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?: string, skipInitialCycle?: boolean): Promise<{ started: boolean; message: string }> {
   if (activeAgents.has(deploymentId)) {
     return { started: false, message: "Agent runtime already running for this deployment" };
   }
@@ -1446,7 +1446,9 @@ export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?
   };
 
   if (intervalMinutes > 0) {
-    await executeAgentCycle(runtimeAgent);
+    if (!skipInitialCycle) {
+      await executeAgentCycle(runtimeAgent);
+    }
     const timer = setInterval(() => executeAgentCycle(runtimeAgent), intervalMs);
     activeAgents.set(deploymentId, { timer, agent: runtimeAgent });
     console.log(`[agent-runtime] Started runtime for ${agent.name} (every ${intervalMs / 1000}s)`);
@@ -1500,7 +1502,7 @@ export async function autoResumeRuntimes(): Promise<void> {
         if (resumeAgent?.systemPrompt) {
           resumePrompt = resumeAgent.systemPrompt;
         }
-        const result = await startAgentRuntime(dep.id, resumePrompt);
+        const result = await startAgentRuntime(dep.id, resumePrompt, true);
         if (result.started) {
           console.log(`[agent-runtime] Auto-resumed: ${dep.agentName || dep.agentId} (${dep.id})`);
         } else {

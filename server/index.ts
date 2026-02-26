@@ -5,6 +5,23 @@ import { createServer } from "http";
 import { seedDatabase } from "./seed";
 import { autoResumeRuntimes } from "./agent-runtime";
 
+process.on("uncaughtException", (err) => {
+  console.error("[CRASH] Uncaught exception:", err.message, err.stack);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[CRASH] Unhandled rejection:", reason);
+});
+process.on("SIGHUP", () => {});
+
+let serverReady = false;
+const originalExit = process.exit;
+process.exit = function patchedExit(code?: number) {
+  if (serverReady) {
+    return undefined as never;
+  }
+  return originalExit.call(process, code as any);
+} as never;
+
 const app = express();
 const httpServer = createServer(app);
 
@@ -52,7 +69,8 @@ app.use((req, res, next) => {
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
       if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+        const jsonStr = JSON.stringify(capturedJsonResponse);
+        logLine += ` :: ${jsonStr.length > 200 ? jsonStr.slice(0, 200) + "..." : jsonStr}`;
       }
 
       log(logLine);
@@ -104,9 +122,12 @@ app.use((req, res, next) => {
     },
     () => {
       log(`serving on port ${port}`);
-      autoResumeRuntimes().catch(err => {
-        console.error("[startup] Failed to auto-resume agent runtimes:", err.message);
-      });
+      serverReady = true;
+      setTimeout(() => {
+        autoResumeRuntimes().catch(err => {
+          console.error("[startup] Failed to auto-resume agent runtimes:", err.message);
+        });
+      }, 5000);
     },
   );
 })();
