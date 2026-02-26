@@ -736,12 +736,242 @@ After receiving tool results, provide a structured analysis with key findings, s
   };
 }
 
+interface ExecutionTier {
+  tierIndex: number;
+  agents: Array<{ agentId: string; nodeId?: string; agentName?: string }>;
+  gates: Array<{ nodeId: string; label: string; gateType?: string }>;
+}
+
+function computeExecutionTiers(
+  nodes: Array<{ id: string; nodeType: string; refAgentId?: string | null; label: string; gateType?: string | null }>,
+  edges: Array<{ sourceNodeId: string; targetNodeId: string }>,
+): ExecutionTier[] {
+  const inDegree = new Map<string, number>();
+  const adjacency = new Map<string, string[]>();
+  const longestPath = new Map<string, number>();
+
+  for (const node of nodes) {
+    inDegree.set(node.id, 0);
+    adjacency.set(node.id, []);
+    longestPath.set(node.id, 0);
+  }
+
+  for (const edge of edges) {
+    const targets = adjacency.get(edge.sourceNodeId);
+    if (targets) targets.push(edge.targetNodeId);
+    inDegree.set(edge.targetNodeId, (inDegree.get(edge.targetNodeId) || 0) + 1);
+  }
+
+  const queue: string[] = [];
+  for (const [nodeId, deg] of inDegree) {
+    if (deg === 0) queue.push(nodeId);
+  }
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    const neighbors = adjacency.get(current) || [];
+    for (const neighbor of neighbors) {
+      const newPath = (longestPath.get(current) || 0) + 1;
+      if (newPath > (longestPath.get(neighbor) || 0)) {
+        longestPath.set(neighbor, newPath);
+      }
+      const deg = (inDegree.get(neighbor) || 1) - 1;
+      inDegree.set(neighbor, deg);
+      if (deg === 0) queue.push(neighbor);
+    }
+  }
+
+  const tierMap = new Map<number, { agents: ExecutionTier["agents"]; gates: ExecutionTier["gates"] }>();
+  for (const node of nodes) {
+    const level = longestPath.get(node.id) || 0;
+    if (!tierMap.has(level)) {
+      tierMap.set(level, { agents: [], gates: [] });
+    }
+    const tier = tierMap.get(level)!;
+    if (node.nodeType === "agent" && node.refAgentId) {
+      tier.agents.push({ agentId: node.refAgentId, nodeId: node.id });
+    } else if (node.nodeType === "approval_gate" || node.gateType) {
+      tier.gates.push({ nodeId: node.id, label: node.label, gateType: node.gateType || undefined });
+    }
+  }
+
+  const sortedLevels = Array.from(tierMap.keys()).sort((a, b) => a - b);
+  return sortedLevels.map((level, idx) => ({
+    tierIndex: idx,
+    agents: tierMap.get(level)!.agents,
+    gates: tierMap.get(level)!.gates,
+  }));
+}
+
+function buildTiersFromParallelGroups(
+  parallelGroups: string[][],
+  workerIds: string[],
+): ExecutionTier[] {
+  const tiers: ExecutionTier[] = [];
+  for (let i = 0; i < parallelGroups.length; i++) {
+    const group = parallelGroups[i];
+    tiers.push({
+      tierIndex: i,
+      agents: group.map(agentId => ({ agentId })),
+      gates: [],
+    });
+  }
+  return tiers;
+}
+
+function buildTiersFromExecutionGraph(
+  executionGraph: Array<{ stage: number; agents: string[]; waitForAll?: boolean }>,
+): ExecutionTier[] {
+  const sorted = [...executionGraph].sort((a, b) => a.stage - b.stage);
+  return sorted.map((stage, idx) => ({
+    tierIndex: idx,
+    agents: stage.agents.map(agentId => ({ agentId })),
+    gates: [],
+  }));
+}
+
+async function executeWorkerAgent(
+  workerId: string,
+  teamAgent: RuntimeAgent,
+  previousContext: string,
+  workerIndex: number,
+): Promise<{
+  agentId: string;
+  agentName: string;
+  step: any;
+  output: string;
+  success: boolean;
+  startTime: number;
+  endTime: number;
+}> {
+  const startTime = Date.now();
+  const workerAgent = await storage.getAgent(workerId);
+
+  if (!workerAgent) {
+    const endTime = Date.now();
+    return {
+      agentId: workerId,
+      agentName: "Unknown Agent",
+      step: {
+        id: `team_worker_${workerId}_${workerIndex}`,
+        name: `Worker: Unknown Agent`,
+        type: "worker_execution",
+        status: "failed",
+        startedAt: new Date(startTime).toISOString(),
+        completedAt: new Date(endTime).toISOString(),
+        error: `Worker agent ${workerId} not found`,
+        timingMs: endTime - startTime,
+      },
+      output: "",
+      success: false,
+      startTime,
+      endTime,
+    };
+  }
+
+  const workerRtConfig = (workerAgent.runtimeConfig as Record<string, any>) || {};
+  const workerPrompt = workerRtConfig.prompt || workerAgent.description || `Execute task for ${workerAgent.name}`;
+  const contextualPrompt = previousContext
+    ? `${workerPrompt}\n\n## INPUT FROM PREVIOUS STAGE\n${previousContext}`
+    : workerPrompt;
+
+  const workerMcpLinks = await storage.getAgentMcpServers(workerId);
+  const workerMcpIds = workerMcpLinks.map(l => l.serverId);
+
+  const workerRuntimeAgent: RuntimeAgent = {
+    deploymentId: teamAgent.deploymentId,
+    agentId: workerId,
+    agentName: workerAgent.name,
+    mcpServerIds: workerMcpIds.length > 0 ? workerMcpIds : teamAgent.mcpServerIds,
+    intervalMs: 0,
+    industry: teamAgent.industry,
+    prompt: contextualPrompt,
+    agentSystemPrompt: workerAgent.systemPrompt || undefined,
+    outcomeId: (workerAgent as any).outcomeId || teamAgent.outcomeId,
+    agentType: "single",
+    runtimeConfig: workerRtConfig,
+  };
+
+  const workerContext = await buildRuntimeContext(workerRuntimeAgent);
+
+  try {
+    const result = await executePromptWithMcp(
+      workerId,
+      teamAgent.deploymentId,
+      undefined,
+      workerRuntimeAgent.mcpServerIds,
+      contextualPrompt,
+      teamAgent.industry,
+      workerContext || workerAgent.systemPrompt || undefined,
+      { runtimeConfig: workerRtConfig },
+    );
+
+    const endTime = Date.now();
+    const workerAnalysis = result.summary.analysis || {};
+    const structuredOutput = workerAnalysis.structuredOutput || workerAnalysis.processedRecords || null;
+    const analysisStep = result.steps.find((s: any) => s.type === "ai_analysis" && s.status === "completed");
+    const outputText = analysisStep?.output?.summary || JSON.stringify(result.summary.analysis || {});
+
+    return {
+      agentId: workerId,
+      agentName: workerAgent.name,
+      step: {
+        id: `team_worker_${workerId}_${workerIndex}`,
+        name: `Worker: ${workerAgent.name}`,
+        type: "worker_execution",
+        status: result.success ? "completed" : "failed",
+        startedAt: new Date(startTime).toISOString(),
+        completedAt: new Date(endTime).toISOString(),
+        timingMs: endTime - startTime,
+        parallel: false,
+        output: {
+          stepsCount: result.steps.length,
+          passedSteps: result.summary.passedSteps,
+          failedSteps: result.summary.failedSteps,
+          latencyMs: result.summary.latencyMs,
+          toolsUsed: result.summary.toolsUsed,
+          analysis: workerAnalysis,
+          ...(structuredOutput ? { structuredOutput } : {}),
+        },
+        workerSteps: result.steps,
+      },
+      output: outputText,
+      success: result.success,
+      startTime,
+      endTime,
+    };
+  } catch (err: any) {
+    const endTime = Date.now();
+    return {
+      agentId: workerId,
+      agentName: workerAgent.name,
+      step: {
+        id: `team_worker_${workerId}_${workerIndex}`,
+        name: `Worker: ${workerAgent.name}`,
+        type: "worker_execution",
+        status: "failed",
+        startedAt: new Date(startTime).toISOString(),
+        completedAt: new Date(endTime).toISOString(),
+        timingMs: endTime - startTime,
+        parallel: false,
+        error: err.message,
+      },
+      output: "",
+      success: false,
+      startTime,
+      endTime,
+    };
+  }
+}
+
 export async function executeTeamPipeline(teamAgent: RuntimeAgent): Promise<{ steps: any[]; success: boolean; summary: any }> {
+  const pipelineStartTime = Date.now();
   const allSteps: any[] = [];
   const rtConfig = teamAgent.runtimeConfig || {};
   const orch = rtConfig.orchestration || {};
   const workerIds: string[] = Array.isArray(orch.workerIds) ? orch.workerIds : [];
   const blueprintId = orch.blueprintId || teamAgent.blueprintId;
+  const errorStrategy: string = orch.errorStrategy || orch.errorHandling || "best_effort";
 
   allSteps.push({
     id: "team_step_1",
@@ -753,169 +983,285 @@ export async function executeTeamPipeline(teamAgent: RuntimeAgent): Promise<{ st
     output: {
       pattern: orch.pattern || "supervisor",
       workerCount: workerIds.length,
-      errorHandling: orch.errorHandling || "retry then escalate",
+      errorHandling: errorStrategy,
+      parallelExecution: true,
     },
   });
 
-  let executionOrder: Array<{ agentId: string; nodeId?: string }> = [];
+  let executionTiers: ExecutionTier[] = [];
 
   if (blueprintId) {
     try {
       const nodes = await storage.getTeamBlueprintNodes(blueprintId);
       const edges = await storage.getTeamBlueprintEdges(blueprintId);
-      const agentNodes = nodes.filter(n => n.nodeType === "agent" && n.refAgentId);
-      const gateNodes = nodes.filter(n => n.nodeType === "approval_gate" || n.gateType);
-
-      const visited = new Set<string>();
-      const sorted: typeof nodes[number][] = [];
-
-      const topoVisit = (nodeId: string) => {
-        if (visited.has(nodeId)) return;
-        visited.add(nodeId);
-        const incoming = edges.filter(e => e.targetNodeId === nodeId);
-        for (const edge of incoming) {
-          topoVisit(edge.sourceNodeId);
-        }
-        const node = nodes.find(n => n.id === nodeId);
-        if (node) sorted.push(node);
-      }
-
-      for (const node of nodes) {
-        topoVisit(node.id);
-      }
-
-      for (const node of sorted) {
-        if (node.nodeType === "agent" && node.refAgentId) {
-          executionOrder.push({ agentId: node.refAgentId, nodeId: node.id });
-        } else if (node.nodeType === "approval_gate" || node.gateType) {
-          allSteps.push({
-            id: `team_gate_${node.id}`,
-            name: `Approval Gate: ${node.label}`,
-            type: "approval_gate",
-            status: "completed",
-            startedAt: new Date().toISOString(),
-            completedAt: new Date().toISOString(),
-            output: { gateType: node.gateType || "manual", autoApproved: true, reason: "Runtime auto-approval for pipeline execution" },
-          });
-        }
+      if (nodes.length > 0) {
+        executionTiers = computeExecutionTiers(
+          nodes.map(n => ({
+            id: n.id,
+            nodeType: n.nodeType,
+            refAgentId: n.refAgentId,
+            label: n.label,
+            gateType: n.gateType,
+          })),
+          edges.map(e => ({
+            sourceNodeId: e.sourceNodeId,
+            targetNodeId: e.targetNodeId,
+          })),
+        );
       }
     } catch (err: any) {
-      console.log(`[agent-runtime] Could not load blueprint graph, falling back to workerIds: ${err.message}`);
+      console.log(`[agent-runtime] Could not load blueprint graph: ${err.message}`);
     }
   }
 
-  if (executionOrder.length === 0) {
-    executionOrder = workerIds.map(id => ({ agentId: id }));
+  if (executionTiers.length === 0) {
+    let teamMembers: any[] = [];
+    if (workerIds.length > 0 || Array.isArray(orch.executionGraph) || Array.isArray(orch.parallelGroups)) {
+      try {
+        const members = await storage.getAgentTeamMembers(teamAgent.agentId);
+        for (const m of members) {
+          const agent = await storage.getAgent(m.memberAgentId);
+          if (agent) teamMembers.push(agent);
+        }
+      } catch {}
+    }
+
+    function resolveRoleToId(roleName: string): string | null {
+      const match = teamMembers.find(a =>
+        a.name.toLowerCase().includes(roleName.toLowerCase()) ||
+        roleName.toLowerCase().includes(a.name.toLowerCase().split(" ")[0].toLowerCase())
+      );
+      return match ? match.id : null;
+    }
+
+    if (Array.isArray(orch.executionGraph) && orch.executionGraph.length > 0) {
+      const tiers: ExecutionTier[] = [];
+      for (let i = 0; i < orch.executionGraph.length; i++) {
+        const stage = orch.executionGraph[i];
+        const agents: ExecutionTier["agents"] = [];
+        for (const role of stage.agents) {
+          const agentId = resolveRoleToId(role);
+          if (agentId) agents.push({ agentId, agentName: role });
+        }
+        if (agents.length > 0) {
+          tiers.push({ tierIndex: i, agents, gates: [] });
+        }
+      }
+      if (tiers.length > 0) executionTiers = tiers;
+    } else if (Array.isArray(orch.parallelGroups) && orch.parallelGroups.length > 0) {
+      const tiers: ExecutionTier[] = [];
+      for (let i = 0; i < orch.parallelGroups.length; i++) {
+        const group = orch.parallelGroups[i];
+        const agents: ExecutionTier["agents"] = [];
+        for (const role of group) {
+          const agentId = resolveRoleToId(role);
+          if (agentId) agents.push({ agentId, agentName: role });
+        }
+        if (agents.length > 0) {
+          tiers.push({ tierIndex: i, agents, gates: [] });
+        }
+      }
+      if (tiers.length > 0) executionTiers = tiers;
+    }
   }
 
-  let previousOutput: string = "";
-  let allSuccess = true;
+  if (executionTiers.length === 0 && workerIds.length > 0) {
+    executionTiers = [{
+      tierIndex: 0,
+      agents: workerIds.map(id => ({ agentId: id })),
+      gates: [],
+    }];
+  }
 
-  for (let i = 0; i < executionOrder.length; i++) {
-    const { agentId: workerId } = executionOrder[i];
-    const workerAgent = await storage.getAgent(workerId);
-    if (!workerAgent) {
+  allSteps.push({
+    id: "team_step_tiers",
+    name: "Orchestrator: Execution Plan",
+    type: "orchestration",
+    status: "completed",
+    startedAt: new Date().toISOString(),
+    completedAt: new Date().toISOString(),
+    output: {
+      tierCount: executionTiers.length,
+      tiers: executionTiers.map(t => ({
+        tier: t.tierIndex,
+        agentCount: t.agents.length,
+        gateCount: t.gates.length,
+        parallel: t.agents.length > 1,
+      })),
+    },
+  });
+
+  let previousContext: string = "";
+  let allSuccess = true;
+  let totalWorkersExecuted = 0;
+  let shouldHalt = false;
+
+  for (const tier of executionTiers) {
+    if (shouldHalt) break;
+
+    for (const gate of tier.gates) {
       allSteps.push({
-        id: `team_worker_${i}`,
-        name: `Worker ${i + 1}: Unknown Agent`,
-        type: "worker_execution",
-        status: "failed",
+        id: `team_gate_${gate.nodeId}`,
+        name: `Approval Gate: ${gate.label}`,
+        type: "approval_gate",
+        status: "completed",
         startedAt: new Date().toISOString(),
         completedAt: new Date().toISOString(),
-        error: `Worker agent ${workerId} not found`,
+        output: { gateType: gate.gateType || "manual", autoApproved: true, reason: "Runtime auto-approval for pipeline execution" },
       });
-      allSuccess = false;
-      continue;
     }
 
-    const workerRtConfig = (workerAgent.runtimeConfig as Record<string, any>) || {};
-    const workerPrompt = workerRtConfig.prompt || workerAgent.description || `Execute task for ${workerAgent.name}`;
-    const contextualPrompt = previousOutput
-      ? `${workerPrompt}\n\n## INPUT FROM PREVIOUS STAGE\n${previousOutput}`
-      : workerPrompt;
+    if (tier.agents.length === 0) continue;
 
-    const workerMcpLinks = await storage.getAgentMcpServers(workerId);
-    const workerMcpIds = workerMcpLinks.map(l => l.serverId);
+    const isParallelTier = tier.agents.length > 1;
 
-    const workerRuntimeAgent: RuntimeAgent = {
-      deploymentId: teamAgent.deploymentId,
-      agentId: workerId,
-      agentName: workerAgent.name,
-      mcpServerIds: workerMcpIds.length > 0 ? workerMcpIds : teamAgent.mcpServerIds,
-      intervalMs: 0,
-      industry: teamAgent.industry,
-      prompt: contextualPrompt,
-      agentSystemPrompt: workerAgent.systemPrompt || undefined,
-      outcomeId: (workerAgent as any).outcomeId || teamAgent.outcomeId,
-      agentType: "single",
-      runtimeConfig: workerRtConfig,
-    };
+    if (isParallelTier) {
+      allSteps.push({
+        id: `team_tier_${tier.tierIndex}_fork`,
+        name: `Tier ${tier.tierIndex + 1}: Fork (${tier.agents.length} agents in parallel)`,
+        type: "parallel_fork",
+        status: "completed",
+        startedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        output: { agentCount: tier.agents.length, tierIndex: tier.tierIndex },
+      });
+    }
 
-    const workerContext = await buildRuntimeContext(workerRuntimeAgent);
+    const workerPromises = tier.agents.map((agentEntry, idx) =>
+      executeWorkerAgent(agentEntry.agentId, teamAgent, previousContext, totalWorkersExecuted + idx)
+    );
 
-    allSteps.push({
-      id: `team_worker_${i}`,
-      name: `Worker ${i + 1}: ${workerAgent.name}`,
-      type: "worker_execution",
-      status: "running",
-      startedAt: new Date().toISOString(),
-    });
+    let results: Awaited<ReturnType<typeof executeWorkerAgent>>[];
 
-    try {
-      const result = await executePromptWithMcp(
-        workerId,
-        teamAgent.deploymentId,
-        undefined,
-        workerRuntimeAgent.mcpServerIds,
-        contextualPrompt,
-        teamAgent.industry,
-        workerContext || workerAgent.systemPrompt || undefined,
-        { runtimeConfig: workerRtConfig },
+    if (errorStrategy === "fail_fast" && isParallelTier) {
+      results = await Promise.all(
+        workerPromises.map(p =>
+          p.catch(err => ({
+            agentId: "unknown",
+            agentName: "Unknown",
+            step: {
+              id: `team_worker_error`,
+              name: "Worker: Error",
+              type: "worker_execution",
+              status: "failed" as const,
+              startedAt: new Date().toISOString(),
+              completedAt: new Date().toISOString(),
+              error: err.message,
+              timingMs: 0,
+              parallel: isParallelTier,
+            },
+            output: "",
+            success: false,
+            startTime: Date.now(),
+            endTime: Date.now(),
+          }))
+        )
       );
+    } else {
+      results = await Promise.all(
+        workerPromises.map(p =>
+          p.catch(err => ({
+            agentId: "unknown",
+            agentName: "Unknown",
+            step: {
+              id: `team_worker_error`,
+              name: "Worker: Error",
+              type: "worker_execution",
+              status: "failed" as const,
+              startedAt: new Date().toISOString(),
+              completedAt: new Date().toISOString(),
+              error: err.message,
+              timingMs: 0,
+              parallel: isParallelTier,
+            },
+            output: "",
+            success: false,
+            startTime: Date.now(),
+            endTime: Date.now(),
+          }))
+        )
+      );
+    }
 
-      const lastStep = allSteps[allSteps.length - 1];
-      lastStep.status = result.success ? "completed" : "failed";
-      lastStep.completedAt = new Date().toISOString();
+    for (const result of results) {
+      result.step.parallel = isParallelTier;
+      result.step.tierIndex = tier.tierIndex;
+      allSteps.push(result.step);
+    }
 
-      const workerAnalysis = result.summary.analysis || {};
-      const structuredOutput = workerAnalysis.structuredOutput || workerAnalysis.processedRecords || null;
+    totalWorkersExecuted += tier.agents.length;
 
-      lastStep.output = {
-        stepsCount: result.steps.length,
-        passedSteps: result.summary.passedSteps,
-        failedSteps: result.summary.failedSteps,
-        latencyMs: result.summary.latencyMs,
-        toolsUsed: result.summary.toolsUsed,
-        analysis: workerAnalysis,
-        ...(structuredOutput ? { structuredOutput } : {}),
-      };
-      lastStep.workerSteps = result.steps;
-
-      if (!result.success) allSuccess = false;
-
-      const analysisStep = result.steps.find((s: any) => s.type === "ai_analysis" && s.status === "completed");
-      previousOutput = analysisStep?.output?.summary || JSON.stringify(result.summary.analysis || {});
-    } catch (err: any) {
-      const lastStep = allSteps[allSteps.length - 1];
-      lastStep.status = "failed";
-      lastStep.completedAt = new Date().toISOString();
-      lastStep.error = err.message;
+    const tierFailed = results.some(r => !r.success);
+    if (tierFailed) {
       allSuccess = false;
 
-      if ((orch.errorHandling || "").includes("escalate")) {
+      if (errorStrategy === "fail_fast") {
+        const failedAgents = results.filter(r => !r.success).map(r => r.agentName);
         allSteps.push({
-          id: `team_escalation_${i}`,
-          name: `Escalation: ${workerAgent.name} failed`,
+          id: `team_escalation_tier_${tier.tierIndex}`,
+          name: `Escalation: Tier ${tier.tierIndex + 1} failed (fail_fast)`,
           type: "escalation",
           status: "completed",
           startedAt: new Date().toISOString(),
           completedAt: new Date().toISOString(),
-          output: { reason: err.message, action: "Pipeline halted per error handling policy" },
+          output: {
+            reason: `Agents failed: ${failedAgents.join(", ")}`,
+            action: "Pipeline halted per fail_fast error strategy",
+          },
         });
-        break;
+        shouldHalt = true;
+      } else if (errorStrategy.includes("escalate")) {
+        const failedAgents = results.filter(r => !r.success).map(r => r.agentName);
+        allSteps.push({
+          id: `team_escalation_tier_${tier.tierIndex}`,
+          name: `Escalation: Tier ${tier.tierIndex + 1} had failures`,
+          type: "escalation",
+          status: "completed",
+          startedAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+          output: {
+            reason: `Agents failed: ${failedAgents.join(", ")}`,
+            action: "Pipeline halted per error handling policy",
+          },
+        });
+        shouldHalt = true;
+      }
+    }
+
+    if (isParallelTier) {
+      const mergedOutputParts: string[] = [];
+      for (const result of results) {
+        if (result.output && result.success) {
+          mergedOutputParts.push(`## OUTPUT FROM ${result.agentName}\n${result.output}`);
+        }
+      }
+      previousContext = mergedOutputParts.length > 0
+        ? mergedOutputParts.join("\n\n---\n\n")
+        : previousContext;
+
+      allSteps.push({
+        id: `team_tier_${tier.tierIndex}_join`,
+        name: `Tier ${tier.tierIndex + 1}: Join (merged ${results.filter(r => r.success).length}/${results.length} outputs)`,
+        type: "parallel_join",
+        status: "completed",
+        startedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        output: {
+          mergedAgents: results.filter(r => r.success).map(r => r.agentName),
+          failedAgents: results.filter(r => !r.success).map(r => r.agentName),
+          tierIndex: tier.tierIndex,
+        },
+      });
+    } else {
+      const singleResult = results[0];
+      if (singleResult && singleResult.success) {
+        previousContext = singleResult.output;
       }
     }
   }
+
+  const pipelineEndTime = Date.now();
+  const totalLatencyMs = pipelineEndTime - pipelineStartTime;
 
   allSteps.push({
     id: "team_summary",
@@ -925,9 +1271,14 @@ export async function executeTeamPipeline(teamAgent: RuntimeAgent): Promise<{ st
     startedAt: new Date().toISOString(),
     completedAt: new Date().toISOString(),
     output: {
-      workersExecuted: executionOrder.length,
+      workersExecuted: totalWorkersExecuted,
+      tiersExecuted: executionTiers.length,
       allSuccess,
-      finalOutput: previousOutput,
+      finalOutput: previousContext,
+      parallelTiers: executionTiers.filter(t => t.agents.length > 1).length,
+      sequentialTiers: executionTiers.filter(t => t.agents.length === 1).length,
+      errorStrategy,
+      totalLatencyMs,
     },
   });
 
@@ -938,10 +1289,13 @@ export async function executeTeamPipeline(teamAgent: RuntimeAgent): Promise<{ st
       totalSteps: allSteps.length,
       passedSteps: allSteps.filter(s => s.status === "completed").length,
       failedSteps: allSteps.filter(s => s.status === "failed").length,
-      latencyMs: 0,
+      latencyMs: totalLatencyMs,
       teamExecution: true,
-      workersExecuted: executionOrder.length,
+      workersExecuted: totalWorkersExecuted,
       pattern: orch.pattern || "supervisor",
+      parallelTiers: executionTiers.filter(t => t.agents.length > 1).length,
+      tiersExecuted: executionTiers.length,
+      errorStrategy,
     },
   };
 }

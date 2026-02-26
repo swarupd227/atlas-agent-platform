@@ -29,6 +29,7 @@ import {
   Download,
   Table2,
   ChevronLeft,
+  GitFork,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -92,7 +93,10 @@ type TimelineStep =
   | { type: "output"; data: string | null }
   | { type: "orchestration"; data: PipelineStepData }
   | { type: "worker_execution"; data: PipelineStepData }
-  | { type: "orchestration_summary"; data: PipelineStepData };
+  | { type: "orchestration_summary"; data: PipelineStepData }
+  | { type: "parallel_group"; data: PipelineStepData[] }
+  | { type: "parallel_fork"; data: PipelineStepData }
+  | { type: "parallel_join"; data: PipelineStepData };
 
 const DECISION_COLORS: Record<string, string> = {
   approve: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
@@ -328,15 +332,53 @@ function buildTimelineSteps(
   steps.push({ type: "prompt", data: promptInputs });
 
   if (isTeamPipeline && stepsJson) {
-    for (const s of stepsJson) {
-      if (s.type === "orchestration") {
+    const relevantSteps = stepsJson.filter(s =>
+      s.type === "orchestration" || s.type === "worker_execution" ||
+      s.type === "orchestration_summary" || s.type === "approval_gate" ||
+      s.type === "parallel_fork" || s.type === "parallel_join"
+    );
+
+    let i = 0;
+    while (i < relevantSteps.length) {
+      const s = relevantSteps[i];
+      if (s.type === "worker_execution") {
+        const parallelGroup: PipelineStepData[] = [s];
+        let j = i + 1;
+        while (j < relevantSteps.length && relevantSteps[j].type === "worker_execution") {
+          const current = relevantSteps[j];
+          const prevInGroup = parallelGroup[parallelGroup.length - 1];
+          const prevEnd = prevInGroup.completedAt ? new Date(prevInGroup.completedAt).getTime() : Infinity;
+          const currStart = current.startedAt ? new Date(current.startedAt).getTime() : 0;
+          if (currStart < prevEnd) {
+            parallelGroup.push(current);
+            j++;
+          } else {
+            break;
+          }
+        }
+        if (parallelGroup.length > 1) {
+          steps.push({ type: "parallel_group", data: parallelGroup });
+        } else {
+          steps.push({ type: "worker_execution", data: s });
+        }
+        i = j;
+      } else if (s.type === "orchestration") {
         steps.push({ type: "orchestration", data: s });
-      } else if (s.type === "worker_execution") {
-        steps.push({ type: "worker_execution", data: s });
+        i++;
       } else if (s.type === "orchestration_summary") {
         steps.push({ type: "orchestration_summary", data: s });
+        i++;
       } else if (s.type === "approval_gate") {
         steps.push({ type: "orchestration", data: { ...s, name: s.name || "Approval Gate" } });
+        i++;
+      } else if (s.type === "parallel_fork") {
+        steps.push({ type: "parallel_fork", data: s });
+        i++;
+      } else if (s.type === "parallel_join") {
+        steps.push({ type: "parallel_join", data: s });
+        i++;
+      } else {
+        i++;
       }
     }
   } else {
@@ -376,6 +418,11 @@ function getStepDotColor(type: TimelineStep["type"]) {
       return "bg-indigo-500";
     case "worker_execution":
       return "bg-cyan-500";
+    case "parallel_group":
+      return "bg-violet-500";
+    case "parallel_fork":
+    case "parallel_join":
+      return "bg-violet-400";
   }
 }
 
@@ -395,6 +442,11 @@ function getStepLineColor(type: TimelineStep["type"]) {
       return "border-indigo-500/30";
     case "worker_execution":
       return "border-cyan-500/30";
+    case "parallel_group":
+      return "border-violet-500/30";
+    case "parallel_fork":
+    case "parallel_join":
+      return "border-violet-400/30";
   }
 }
 
@@ -456,6 +508,27 @@ function getStepTypeBadge(type: TimelineStep["type"]) {
           Pipeline Summary
         </Badge>
       );
+    case "parallel_group":
+      return (
+        <Badge variant="outline" className="text-[10px] bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20">
+          <GitFork className="w-3 h-3 mr-0.5" />
+          Parallel Execution
+        </Badge>
+      );
+    case "parallel_fork":
+      return (
+        <Badge variant="outline" className="text-[10px] bg-violet-400/10 text-violet-600 dark:text-violet-400 border-violet-400/20">
+          <GitFork className="w-3 h-3 mr-0.5" />
+          Fork
+        </Badge>
+      );
+    case "parallel_join":
+      return (
+        <Badge variant="outline" className="text-[10px] bg-violet-400/10 text-violet-600 dark:text-violet-400 border-violet-400/20">
+          <GitFork className="w-3 h-3 mr-0.5 rotate-180" />
+          Join
+        </Badge>
+      );
   }
 }
 
@@ -475,6 +548,12 @@ function getStepTitle(step: TimelineStep): string {
     case "worker_execution":
     case "orchestration_summary":
       return step.data.name;
+    case "parallel_group":
+      return `${step.data.length} agents running in parallel`;
+    case "parallel_fork":
+      return step.data.name || "Parallel Fork";
+    case "parallel_join":
+      return step.data.name || "Parallel Join";
   }
 }
 
@@ -497,7 +576,62 @@ function getStepStatus(step: TimelineStep): "success" | "fail" | "neutral" {
     case "worker_execution":
     case "orchestration_summary":
       return step.data.status === "completed" ? "success" : step.data.status === "failed" ? "fail" : "neutral";
+    case "parallel_group": {
+      const allCompleted = step.data.every(d => d.status === "completed");
+      const anyFailed = step.data.some(d => d.status === "failed");
+      return anyFailed ? "fail" : allCompleted ? "success" : "neutral";
+    }
+    case "parallel_fork":
+    case "parallel_join":
+      return step.data.status === "completed" ? "success" : "neutral";
   }
+}
+
+function ParallelTimingBar({ workers }: { workers: PipelineStepData[] }) {
+  const times = workers.map(w => ({
+    name: w.name,
+    start: w.startedAt ? new Date(w.startedAt).getTime() : 0,
+    end: w.completedAt ? new Date(w.completedAt).getTime() : 0,
+    status: w.status,
+  })).filter(t => t.start > 0 && t.end > 0);
+
+  if (times.length === 0) return null;
+
+  const globalStart = Math.min(...times.map(t => t.start));
+  const globalEnd = Math.max(...times.map(t => t.end));
+  const totalDuration = globalEnd - globalStart;
+
+  if (totalDuration <= 0) return null;
+
+  return (
+    <div className="flex flex-col gap-1.5 mt-2" data-testid="parallel-timing-chart">
+      <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider">Concurrent Timing</span>
+      <div className="flex flex-col gap-1">
+        {times.map((t, idx) => {
+          const leftPct = ((t.start - globalStart) / totalDuration) * 100;
+          const widthPct = ((t.end - t.start) / totalDuration) * 100;
+          const durationMs = t.end - t.start;
+          return (
+            <div key={idx} className="flex items-center gap-2" data-testid={`timing-bar-${idx}`}>
+              <span className="text-[10px] text-muted-foreground w-24 truncate text-right shrink-0">{t.name}</span>
+              <div className="flex-1 h-5 bg-muted/30 rounded-md relative overflow-hidden">
+                <div
+                  className={`absolute top-0 h-full rounded-md ${t.status === "failed" ? "bg-red-500/60" : "bg-cyan-500/60"}`}
+                  style={{ left: `${leftPct}%`, width: `${Math.max(widthPct, 1)}%` }}
+                />
+                <span className="absolute inset-0 flex items-center justify-center text-[9px] font-medium text-foreground/70">
+                  {(durationMs / 1000).toFixed(1)}s
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <span className="text-[10px] text-muted-foreground text-right">
+        Total wall time: {(totalDuration / 1000).toFixed(1)}s
+      </span>
+    </div>
+  );
 }
 
 function TimelineStepContent({ step }: { step: TimelineStep }) {
@@ -718,6 +852,105 @@ function TimelineStepContent({ step }: { step: TimelineStep }) {
               </div>
             </div>
           )}
+        </div>
+      );
+    }
+    case "parallel_group": {
+      const workers = step.data;
+      return (
+        <div className="flex flex-col gap-4" data-testid="parallel-group-content">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {workers.map((w, idx) => {
+              const workerSteps = w.workerSteps || [];
+              const wStatus = w.status === "completed" ? "success" : w.status === "failed" ? "fail" : "neutral";
+              const durationMs = w.startedAt && w.completedAt
+                ? new Date(w.completedAt).getTime() - new Date(w.startedAt).getTime()
+                : w.output?.latencyMs;
+              return (
+                <Card key={idx} data-testid={`parallel-worker-card-${idx}`}>
+                  <CardContent className="p-3 flex flex-col gap-2">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-1.5">
+                        <Bot className="w-3.5 h-3.5 text-cyan-500" />
+                        <span className="text-xs font-medium">{w.name}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <Badge variant="outline" className="text-[10px] bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20">
+                          <GitFork className="w-3 h-3 mr-0.5" />
+                          Parallel
+                        </Badge>
+                        {wStatus === "success" && (
+                          <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">
+                            <CheckCircle className="w-3 h-3 mr-0.5" />
+                            Success
+                          </Badge>
+                        )}
+                        {wStatus === "fail" && (
+                          <Badge variant="outline" className="text-[10px] bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20">
+                            <XCircle className="w-3 h-3 mr-0.5" />
+                            Failed
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[11px] text-muted-foreground">Steps:</span>
+                        <Badge variant="outline" className="text-[10px]">{w.output?.passedSteps || 0}/{w.output?.stepsCount || 0}</Badge>
+                      </div>
+                      {durationMs != null && (
+                        <div className="flex items-center gap-1.5">
+                          <Timer className="w-3 h-3 text-muted-foreground" />
+                          <span className="text-[11px] text-muted-foreground">{(durationMs / 1000).toFixed(1)}s</span>
+                        </div>
+                      )}
+                      {w.output?.toolsUsed?.length > 0 && (
+                        <div className="flex items-center gap-1.5">
+                          <Wrench className="w-3 h-3 text-muted-foreground" />
+                          <span className="text-[10px] text-muted-foreground">{w.output.toolsUsed.map((t: any) => `${t.server}/${t.tool}`).join(", ")}</span>
+                        </div>
+                      )}
+                    </div>
+                    {w.output?.analysis && (
+                      <div className="p-2 rounded-md bg-muted/40 text-[11px] leading-relaxed whitespace-pre-wrap max-h-[120px] overflow-y-auto">
+                        {typeof w.output.analysis === "object" ? (w.output.analysis.summary || w.output.analysis.analysis || JSON.stringify(w.output.analysis, null, 2)) : String(w.output.analysis)}
+                      </div>
+                    )}
+                    {workerSteps.length > 0 && (
+                      <div className="flex flex-col gap-1 pl-2 border-l-2 border-cyan-500/20">
+                        {workerSteps.map((ws: any, wsIdx: number) => (
+                          <div key={wsIdx} className="flex items-center gap-2 py-0.5">
+                            <div className={`w-1.5 h-1.5 rounded-full ${ws.status === "completed" ? "bg-emerald-500" : ws.status === "failed" ? "bg-red-500" : "bg-muted-foreground"}`} />
+                            <span className="text-[10px] font-medium">{ws.name}</span>
+                            <Badge variant="outline" className="text-[9px]">{ws.type}</Badge>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {w.error && (
+                      <div className="p-2 rounded-md bg-red-500/10 text-[11px] text-red-600 dark:text-red-400">{w.error}</div>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+          <ParallelTimingBar workers={workers} />
+        </div>
+      );
+    }
+    case "parallel_fork":
+    case "parallel_join": {
+      const forkData = step.data;
+      const agents = forkData.output?.agents || forkData.output?.mergedAgents || [];
+      const isFork = step.type === "parallel_fork";
+      return (
+        <div className="flex items-center gap-2 flex-wrap" data-testid={`${step.type}-content`}>
+          <GitFork className={`w-4 h-4 text-violet-500 ${isFork ? "" : "rotate-180"}`} />
+          <span className="text-xs text-muted-foreground">
+            {isFork ? "Forking execution to" : "Joining results from"}{" "}
+            <span className="font-medium text-foreground">{Array.isArray(agents) ? agents.join(", ") : `${forkData.output?.agentCount || "multiple"} agents`}</span>
+          </span>
         </div>
       );
     }

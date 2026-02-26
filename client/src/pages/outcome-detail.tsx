@@ -2898,6 +2898,9 @@ interface PipelineDefinition {
   edges: PipelineEdge[];
   errorHandling: string;
   handoffRules: string;
+  patternReasoning?: string;
+  parallelGroups?: string[][];
+  executionGraph?: Array<{ stage: number; agents: string[]; waitForAll: boolean }>;
 }
 
 const PATTERN_LABELS: Record<string, { label: string; icon: string; description: string }> = {
@@ -2907,6 +2910,80 @@ const PATTERN_LABELS: Record<string, { label: string; icon: string; description:
   supervisor: { label: "Supervisor / Delegator", icon: "⊛", description: "Orchestrator dynamically delegates tasks based on context" },
 };
 
+function ExecutionGraphPreview({ orchestrator, agents, pipeline }: {
+  orchestrator: AgentProposal;
+  agents: AgentProposal[];
+  pipeline: PipelineDefinition;
+}) {
+  const tiers = pipeline.executionGraph && pipeline.executionGraph.length > 0
+    ? pipeline.executionGraph
+    : pipeline.parallelGroups && pipeline.parallelGroups.length > 0
+      ? pipeline.parallelGroups.map((group, i) => ({ stage: i, agents: group, waitForAll: true }))
+      : null;
+
+  if (!tiers || tiers.length === 0) return null;
+
+  return (
+    <div className="flex flex-col items-center gap-0 w-full" data-testid="execution-graph-preview">
+      {tiers.map((tier, tierIdx) => {
+        const isParallel = tier.agents.length > 1;
+        return (
+          <div key={tierIdx} className="flex flex-col items-center gap-0 w-full">
+            {tierIdx > 0 && (
+              <>
+                <div className="w-px h-3 bg-gradient-to-b from-primary/30 to-muted-foreground/20" />
+                <ChevronDown className="w-3.5 h-3.5 text-primary/40 -mt-1 -mb-1" />
+                <div className="w-px h-2 bg-muted-foreground/20" />
+                {tier.waitForAll && tierIdx > 0 && (
+                  <span className="text-[8px] text-muted-foreground/60 mb-1">wait for all</span>
+                )}
+              </>
+            )}
+            {isParallel ? (
+              <div className="relative w-full max-w-2xl">
+                <div className="border border-dashed border-primary/20 rounded-lg p-3 bg-primary/[0.02]">
+                  <div className="flex items-center justify-center gap-1 mb-2">
+                    <Badge variant="outline" className="text-[8px] px-1.5 py-0 h-4 text-primary border-primary/20" data-testid={`badge-parallel-tier-${tierIdx}`}>
+                      Stage {tierIdx + 1} · Parallel
+                    </Badge>
+                  </div>
+                  <div className="flex items-start justify-center gap-3 flex-wrap">
+                    {tier.agents.map((agentRole, aIdx) => {
+                      const matchedAgent = agents.find(a => a.role === agentRole || a.name === agentRole);
+                      return (
+                        <div key={aIdx} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card shadow-sm" data-testid={`exec-graph-node-${tierIdx}-${aIdx}`}>
+                          <div className="w-5 h-5 rounded-md bg-violet-500/10 flex items-center justify-center">
+                            <Bot className="w-3 h-3 text-violet-500" />
+                          </div>
+                          <span className="text-[11px] font-medium">{matchedAgent?.name || agentRole}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 px-4 py-2 rounded-lg border border-border bg-card shadow-sm" data-testid={`exec-graph-node-${tierIdx}-0`}>
+                <div className="w-5 h-5 rounded-md bg-violet-500/10 flex items-center justify-center">
+                  <Bot className="w-3 h-3 text-violet-500" />
+                </div>
+                <span className="text-[11px] font-medium">
+                  {(() => {
+                    const agentRole = tier.agents[0];
+                    const matchedAgent = agents.find(a => a.role === agentRole || a.name === agentRole);
+                    return matchedAgent?.name || agentRole;
+                  })()}
+                </span>
+                <Badge variant="secondary" className="text-[8px] px-1.5">Stage {tierIdx + 1}</Badge>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function PipelineVisualization({ orchestrator, agents, pipeline }: {
   orchestrator: AgentProposal;
   agents: AgentProposal[];
@@ -2914,6 +2991,12 @@ function PipelineVisualization({ orchestrator, agents, pipeline }: {
 }) {
   const patternInfo = PATTERN_LABELS[pipeline?.pattern || "supervisor"] || PATTERN_LABELS.supervisor;
   const totalTools = agents.reduce((sum, a) => sum + a.tools.length + (a.mcpToolBindings?.length || 0), 0) + orchestrator.tools.length + (orchestrator.mcpToolBindings?.length || 0);
+  const [reasoningOpen, setReasoningOpen] = useState(false);
+
+  const hasExecutionTiers = pipeline && (
+    (pipeline.executionGraph && pipeline.executionGraph.length > 0) ||
+    (pipeline.parallelGroups && pipeline.parallelGroups.length > 0)
+  );
 
   return (
     <Card className="border-primary/20 overflow-hidden" data-testid="card-pipeline-visualization">
@@ -2935,6 +3018,28 @@ function PipelineVisualization({ orchestrator, agents, pipeline }: {
             </Badge>
           </div>
 
+          {pipeline?.patternReasoning && (
+            <div className="rounded-lg border border-border/60 bg-muted/20" data-testid="section-pattern-reasoning">
+              <button
+                type="button"
+                onClick={() => setReasoningOpen(!reasoningOpen)}
+                className="flex items-center gap-2 w-full px-3 py-2 text-left hover:bg-muted/30 transition-colors rounded-lg"
+                data-testid="button-toggle-pattern-reasoning"
+              >
+                <Lightbulb className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                <span className="text-[11px] font-medium flex-1">Why this pattern?</span>
+                <ChevronDown className={`w-3 h-3 text-muted-foreground transition-transform ${reasoningOpen ? "rotate-180" : ""}`} />
+              </button>
+              {reasoningOpen && (
+                <div className="px-3 pb-3 pt-0">
+                  <p className="text-[11px] text-muted-foreground leading-relaxed" data-testid="text-pattern-reasoning">
+                    {pipeline.patternReasoning}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="flex flex-col items-center gap-0 py-2" data-testid="pipeline-flow-diagram">
             <div className="flex items-center gap-2.5 px-5 py-2.5 rounded-xl border-2 border-primary/30 bg-gradient-to-r from-primary/[0.08] to-violet-500/5 shadow-sm shadow-primary/5" data-testid="pipeline-node-orchestrator">
               <div className="w-7 h-7 rounded-lg bg-primary/15 flex items-center justify-center">
@@ -2946,16 +3051,26 @@ function PipelineVisualization({ orchestrator, agents, pipeline }: {
               </div>
             </div>
 
-            {pipeline?.pattern === "sequential" ? (
+            <div className="w-px h-4 bg-gradient-to-b from-primary/30 to-muted-foreground/20" />
+            <ChevronDown className="w-3.5 h-3.5 text-primary/40 -mt-1 -mb-1" />
+            <div className="w-px h-2 bg-muted-foreground/20" />
+
+            {hasExecutionTiers ? (
+              <ExecutionGraphPreview orchestrator={orchestrator} agents={agents} pipeline={pipeline!} />
+            ) : pipeline?.pattern === "sequential" ? (
               <div className="flex flex-col items-center gap-0">
                 {agents.map((agent, i) => (
                   <div key={i} className="flex flex-col items-center gap-0">
-                    <div className="w-px h-4 bg-gradient-to-b from-primary/30 to-muted-foreground/20" />
-                    <ChevronDown className="w-3.5 h-3.5 text-primary/40 -mt-1 -mb-1" />
-                    <div className="w-px h-2 bg-muted-foreground/20" />
-                    {pipeline.edges.find(e => e.to === agent.name)?.label && (
+                    {i > 0 && (
+                      <>
+                        <div className="w-px h-4 bg-gradient-to-b from-primary/30 to-muted-foreground/20" />
+                        <ChevronDown className="w-3.5 h-3.5 text-primary/40 -mt-1 -mb-1" />
+                        <div className="w-px h-2 bg-muted-foreground/20" />
+                      </>
+                    )}
+                    {pipeline!.edges.find(e => e.to === agent.name)?.label && (
                       <span className="text-[9px] text-muted-foreground italic mb-1 hidden sm:block">
-                        {pipeline.edges.find(e => e.to === agent.name)?.label}
+                        {pipeline!.edges.find(e => e.to === agent.name)?.label}
                       </span>
                     )}
                     <div className="flex items-center gap-2 px-4 py-2 rounded-lg border border-border bg-card hover:border-primary/20 transition-colors shadow-sm" data-testid={`pipeline-node-worker-${i}`}>
@@ -2970,10 +3085,6 @@ function PipelineVisualization({ orchestrator, agents, pipeline }: {
               </div>
             ) : (
               <div className="flex flex-col items-center gap-0 w-full">
-                <div className="w-px h-4 bg-gradient-to-b from-primary/30 to-muted-foreground/20" />
-                <ChevronDown className="w-3.5 h-3.5 text-primary/40 -mt-1 -mb-1" />
-                <div className="w-px h-2 bg-muted-foreground/20" />
-
                 <div className="relative w-full max-w-2xl">
                   <div className="absolute left-1/2 -translate-x-1/2 top-0 w-[80%] h-px bg-gradient-to-r from-transparent via-primary/20 to-transparent" />
                   <div className="flex items-start justify-center gap-3 flex-wrap px-4 pt-3">

@@ -6614,8 +6614,11 @@ Respond with a JSON object:
   ],
   "pipeline": {
     "pattern": "sequential | parallel | fan_out_fan_in | supervisor",
+    "patternReasoning": "string - explain WHY this pattern was chosen based on KPI dependencies, agent roles, and data flow analysis",
     "description": "string",
     "edges": [{"from": "string", "to": "string", "label": "string", "type": "sequential | parallel | conditional"}],
+    "parallelGroups": [["string - agent roles that execute concurrently"], ["string - next group after previous completes"]],
+    "executionGraph": [{"stage": 0, "agents": ["string - agent roles in this tier"], "waitForAll": true}],
     "errorHandling": "string",
     "handoffRules": "string"
   }
@@ -6637,7 +6640,35 @@ CRITICAL GUIDELINES
 10. SYSTEM PROMPTS: Generate detailed, industry-specific system prompts that reference the agent's domain, ontology concepts, compliance requirements, and KPI responsibilities.
 11. Propose 2-4 worker agents + 1 orchestrator.
 12. KNOWLEDGE BASE GROUNDING: Assign relevant Knowledge Bases from the registry to agents that need domain-specific RAG grounding. Use exact KB IDs and names. Agents doing research, analysis, or compliance checks benefit most from KB linkage.
-13. STRUCTURED OUTPUT SCHEMA: For each worker agent that retrieves, processes, scores, or classifies batches of data records (leads, transactions, claims, patients, items, etc.), you MUST define an outputSchema with type="record_list". The fields array should describe the per-record structured output the agent must produce — include id, name/label, score (0-100), decision/classification, reasoning, and any domain-specific fields (e.g. escalation, riskLevel). Workers that only produce aggregate summaries or single metrics should use type="summary". The description should clearly state what each record represents. This enables the platform to render per-record results as interactive data tables.`;
+13. STRUCTURED OUTPUT SCHEMA: For each worker agent that retrieves, processes, scores, or classifies batches of data records (leads, transactions, claims, patients, items, etc.), you MUST define an outputSchema with type="record_list". The fields array should describe the per-record structured output the agent must produce — include id, name/label, score (0-100), decision/classification, reasoning, and any domain-specific fields (e.g. escalation, riskLevel). Workers that only produce aggregate summaries or single metrics should use type="summary". The description should clearly state what each record represents. This enables the platform to render per-record results as interactive data tables.
+
+═══════════════════════════════════════════
+ORCHESTRATION PATTERN SELECTION (CRITICAL)
+═══════════════════════════════════════════
+You MUST intelligently select the pipeline pattern based on the KPI structure, agent dependencies, and data flow. Do NOT default to sequential. Analyze the agents you propose and pick the best pattern:
+
+- "sequential": Use when each agent's output is the direct input for the next agent. Ideal for data transformation chains, enrichment pipelines, or step-by-step processing where order matters. Example: Data Collector → Enricher → Scorer → Reporter.
+- "parallel": Use when agents work on independent sub-tasks that do NOT depend on each other's output. Ideal for multi-channel analysis, parallel data collection from different sources, or independent KPI tracking. Example: Email Analyzer + Social Media Monitor + CRM Scanner all run simultaneously.
+- "fan_out_fan_in": Use when a single dataset or task needs to be processed by multiple agents independently, then their results aggregated. Ideal for scoring + review + compliance checks on the same data, multi-perspective analysis, or parallel validation. Example: Lead data → [Lead Scorer, Compliance Checker, Risk Assessor] → Report Aggregator.
+- "supervisor": Use when the orchestrator needs to dynamically decide which agents to call based on intermediate results. Ideal for complex reasoning, conditional branching, exception handling, or adaptive workflows. Example: Orchestrator evaluates initial analysis, then routes to specialist agents based on findings.
+
+For "patternReasoning", explain your choice by referencing:
+  - Whether agent outputs feed into each other (sequential dependency) or are independent
+  - Whether multiple agents need the same input data (fan-out signal)
+  - Whether results need aggregation (fan-in signal)
+  - KPI independence (separate KPIs tracked by separate agents = parallel opportunity)
+
+For "parallelGroups", define execution tiers as arrays of agent role names:
+  - Each inner array contains agents that can run concurrently (no mutual dependencies)
+  - Arrays are ordered: the first group runs first, then the second group after all in the first complete, etc.
+  - Example: [["Lead Scorer", "Compliance Checker"], ["Report Generator"]] means Lead Scorer and Compliance Checker run in parallel, then Report Generator runs after both complete.
+  - For sequential patterns, each group should contain exactly one agent role.
+
+For "executionGraph", provide an explicit stage-by-stage execution plan:
+  - stage: zero-indexed tier number
+  - agents: array of agent role names that execute in this tier
+  - waitForAll: true if the next tier must wait for ALL agents in this tier to complete (default true for fan_out_fan_in, configurable for others)
+  - This must be consistent with parallelGroups but provides additional control metadata.`;
 
       const response = await openai.chat.completions.create({
         model: "gpt-4.1",
@@ -6682,12 +6713,27 @@ CRITICAL GUIDELINES
         };
       }
 
+      function normalizePipeline(p: any): any {
+        if (!p) return null;
+        return {
+          ...p,
+          pattern: p.pattern || "sequential",
+          patternReasoning: p.patternReasoning || "",
+          description: p.description || "",
+          edges: Array.isArray(p.edges) ? p.edges : [],
+          parallelGroups: Array.isArray(p.parallelGroups) ? p.parallelGroups : [],
+          executionGraph: Array.isArray(p.executionGraph) ? p.executionGraph : [],
+          errorHandling: p.errorHandling || "",
+          handoffRules: p.handoffRules || "",
+        };
+      }
+
       let result: any;
       if (parsed && parsed.orchestrator && parsed.agents) {
         result = {
           orchestrator: normalizeAgent(parsed.orchestrator),
           agents: (Array.isArray(parsed.agents) ? parsed.agents : [parsed.agents]).map(normalizeAgent),
-          pipeline: parsed.pipeline || null,
+          pipeline: normalizePipeline(parsed.pipeline),
         };
       } else if (Array.isArray(parsed)) {
         result = { agents: parsed.map(normalizeAgent), orchestrator: null, pipeline: null };
@@ -6768,8 +6814,15 @@ CRITICAL GUIDELINES
         workers: z.array(agentProposalSchema).min(1),
         pipeline: z.object({
           pattern: z.string().optional(),
+          patternReasoning: z.string().optional(),
           description: z.string().optional(),
           edges: z.array(z.any()).optional(),
+          parallelGroups: z.array(z.array(z.string())).optional(),
+          executionGraph: z.array(z.object({
+            stage: z.number(),
+            agents: z.array(z.string()),
+            waitForAll: z.boolean().optional(),
+          })).optional(),
           errorHandling: z.string().optional(),
           handoffRules: z.string().optional(),
         }).nullable().optional(),
@@ -6887,9 +6940,12 @@ CRITICAL GUIDELINES
           mcpToolBindings: orchestrator.mcpToolBindings || [],
           orchestration: {
             pattern: pipeline?.pattern || "supervisor",
+            patternReasoning: pipeline?.patternReasoning || "",
             description: pipeline?.description || "",
             errorHandling: pipeline?.errorHandling || "retry then escalate",
             handoffRules: pipeline?.handoffRules || "pass output as input",
+            parallelGroups: pipeline?.parallelGroups || [],
+            executionGraph: pipeline?.executionGraph || [],
           },
         },
       });
@@ -6975,62 +7031,151 @@ CRITICAL GUIDELINES
       });
 
       const workerNodes: any[] = [];
-      const isSequential = pipeline?.pattern === "sequential";
-      for (let i = 0; i < createdWorkers.length; i++) {
-        const posX = isSequential ? 400 : 150 + i * Math.floor(600 / Math.max(createdWorkers.length, 1));
-        const posY = isSequential ? 150 + i * 120 : 220;
-        const node = await storage.createTeamBlueprintNode({
-          blueprintId: blueprint.id,
-          nodeType: "internal_agent",
-          label: createdWorkers[i].name,
-          positionX: posX,
-          positionY: posY,
-          refAgentId: createdWorkers[i].id,
-          config: { role: "worker", workerIndex: i },
-        });
-        workerNodes.push(node);
+
+      const pGroups = pipeline?.parallelGroups;
+      const execGraph = pipeline?.executionGraph;
+      const hasParallelInfo = (pGroups && pGroups.length > 0) || (execGraph && execGraph.length > 0);
+
+      let tiers: Array<{ agents: string[] }> = [];
+      if (execGraph && execGraph.length > 0) {
+        tiers = execGraph.map(eg => ({ agents: eg.agents }));
+      } else if (pGroups && pGroups.length > 0) {
+        tiers = pGroups.map(group => ({ agents: group }));
       }
 
-      if (isSequential) {
-        const firstEdgeLabel = pipeline?.edges?.find((e: any) => e.from === "orchestrator" || e.from === orchestrator.name)?.label;
-        await storage.createTeamBlueprintEdge({
-          blueprintId: blueprint.id,
-          sourceNodeId: orchestratorNode.id,
-          targetNodeId: workerNodes[0].id,
-          label: firstEdgeLabel || "dispatch",
-          failureMode: "escalate",
-        });
-        for (let i = 0; i < workerNodes.length - 1; i++) {
-          const edgeLabel = pipeline?.edges?.find((e: any) => e.to === createdWorkers[i + 1].name)?.label;
-          await storage.createTeamBlueprintEdge({
-            blueprintId: blueprint.id,
-            sourceNodeId: workerNodes[i].id,
-            targetNodeId: workerNodes[i + 1].id,
-            label: edgeLabel || "handoff",
-            failureMode: pipeline?.errorHandling?.includes("retry") ? "retry" : "escalate",
-          });
-        }
-      } else {
-        for (let i = 0; i < workerNodes.length; i++) {
-          const edgeLabel = pipeline?.edges?.find((e: any) => e.to === createdWorkers[i].name)?.label;
-          await storage.createTeamBlueprintEdge({
-            blueprintId: blueprint.id,
-            sourceNodeId: orchestratorNode.id,
-            targetNodeId: workerNodes[i].id,
-            label: edgeLabel || "delegate",
-            failureMode: "escalate",
-          });
+      if (hasParallelInfo && tiers.length > 0) {
+        let yOffset = 150;
+        const tierNodes: Array<any[]> = [];
+
+        for (let tierIdx = 0; tierIdx < tiers.length; tierIdx++) {
+          const tier = tiers[tierIdx];
+          const tierAgentNodes: any[] = [];
+          const agentCount = tier.agents.length;
+          const startX = agentCount === 1 ? 400 : 400 - ((agentCount - 1) * 130);
+
+          for (let j = 0; j < tier.agents.length; j++) {
+            const agentRole = tier.agents[j];
+            const workerIdx = createdWorkers.findIndex(w =>
+              w.name.toLowerCase().includes(agentRole.toLowerCase()) ||
+              agentRole.toLowerCase().includes(w.name.toLowerCase().split(" ")[0].toLowerCase())
+            );
+            const worker = workerIdx >= 0 ? createdWorkers[workerIdx] : createdWorkers[j + tierNodes.flat().length];
+            if (!worker) continue;
+
+            const node = await storage.createTeamBlueprintNode({
+              blueprintId: blueprint.id,
+              nodeType: "internal_agent",
+              label: worker.name,
+              positionX: startX + j * 260,
+              positionY: yOffset,
+              refAgentId: worker.id,
+              config: { role: "worker", workerIndex: workerIdx >= 0 ? workerIdx : j, tier: tierIdx, parallel: agentCount > 1 },
+            });
+            tierAgentNodes.push(node);
+            workerNodes.push(node);
+          }
+          tierNodes.push(tierAgentNodes);
+          yOffset += 140;
         }
 
-        if (pipeline?.pattern === "fan_out_fan_in") {
-          for (let i = 0; i < workerNodes.length; i++) {
+        if (tierNodes[0]?.length > 0) {
+          for (const node of tierNodes[0]) {
             await storage.createTeamBlueprintEdge({
               blueprintId: blueprint.id,
-              sourceNodeId: workerNodes[i].id,
+              sourceNodeId: orchestratorNode.id,
+              targetNodeId: node.id,
+              label: tierNodes[0].length > 1 ? "fork" : "dispatch",
+              failureMode: "escalate",
+            });
+          }
+        }
+
+        for (let t = 0; t < tierNodes.length - 1; t++) {
+          const currentTier = tierNodes[t];
+          const nextTier = tierNodes[t + 1];
+          for (const src of currentTier) {
+            for (const tgt of nextTier) {
+              await storage.createTeamBlueprintEdge({
+                blueprintId: blueprint.id,
+                sourceNodeId: src.id,
+                targetNodeId: tgt.id,
+                label: currentTier.length > 1 ? "join → fork" : "handoff",
+                failureMode: pipeline?.errorHandling?.includes("retry") ? "retry" : "escalate",
+              });
+            }
+          }
+        }
+
+        if (pipeline?.pattern === "fan_out_fan_in" && tierNodes.length > 0) {
+          const lastTier = tierNodes[tierNodes.length - 1];
+          for (const node of lastTier) {
+            await storage.createTeamBlueprintEdge({
+              blueprintId: blueprint.id,
+              sourceNodeId: node.id,
               targetNodeId: orchestratorNode.id,
               label: "return results",
               failureMode: "escalate",
             });
+          }
+        }
+      } else {
+        const isSequential = pipeline?.pattern === "sequential";
+        for (let i = 0; i < createdWorkers.length; i++) {
+          const posX = isSequential ? 400 : 150 + i * Math.floor(600 / Math.max(createdWorkers.length, 1));
+          const posY = isSequential ? 150 + i * 120 : 220;
+          const node = await storage.createTeamBlueprintNode({
+            blueprintId: blueprint.id,
+            nodeType: "internal_agent",
+            label: createdWorkers[i].name,
+            positionX: posX,
+            positionY: posY,
+            refAgentId: createdWorkers[i].id,
+            config: { role: "worker", workerIndex: i },
+          });
+          workerNodes.push(node);
+        }
+
+        if (isSequential) {
+          const firstEdgeLabel = pipeline?.edges?.find((e: any) => e.from === "orchestrator" || e.from === orchestrator.name)?.label;
+          await storage.createTeamBlueprintEdge({
+            blueprintId: blueprint.id,
+            sourceNodeId: orchestratorNode.id,
+            targetNodeId: workerNodes[0].id,
+            label: firstEdgeLabel || "dispatch",
+            failureMode: "escalate",
+          });
+          for (let i = 0; i < workerNodes.length - 1; i++) {
+            const edgeLabel = pipeline?.edges?.find((e: any) => e.to === createdWorkers[i + 1].name)?.label;
+            await storage.createTeamBlueprintEdge({
+              blueprintId: blueprint.id,
+              sourceNodeId: workerNodes[i].id,
+              targetNodeId: workerNodes[i + 1].id,
+              label: edgeLabel || "handoff",
+              failureMode: pipeline?.errorHandling?.includes("retry") ? "retry" : "escalate",
+            });
+          }
+        } else {
+          for (let i = 0; i < workerNodes.length; i++) {
+            const edgeLabel = pipeline?.edges?.find((e: any) => e.to === createdWorkers[i].name)?.label;
+            await storage.createTeamBlueprintEdge({
+              blueprintId: blueprint.id,
+              sourceNodeId: orchestratorNode.id,
+              targetNodeId: workerNodes[i].id,
+              label: edgeLabel || "delegate",
+              failureMode: "escalate",
+            });
+          }
+
+          if (pipeline?.pattern === "fan_out_fan_in") {
+            for (let i = 0; i < workerNodes.length; i++) {
+              await storage.createTeamBlueprintEdge({
+                blueprintId: blueprint.id,
+                sourceNodeId: workerNodes[i].id,
+                targetNodeId: orchestratorNode.id,
+                label: "return results",
+                failureMode: "escalate",
+              });
+            }
           }
         }
       }

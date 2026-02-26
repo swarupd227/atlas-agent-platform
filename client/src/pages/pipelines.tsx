@@ -53,6 +53,9 @@ import {
   ArrowLeft,
   Settings2,
   Pause,
+  GitFork,
+  GitMerge,
+  Layers,
 } from "lucide-react";
 
 interface PipelineStage {
@@ -61,6 +64,8 @@ interface PipelineStage {
   label: string;
   stageType: "agent" | "approval_gate" | "parallel_group";
   order: number;
+  parentGroupId?: string;
+  children?: string[];
   config: {
     inputMapping?: string;
     outputMapping?: string;
@@ -140,6 +145,16 @@ export default function Pipelines() {
   const [newStageAgentId, setNewStageAgentId] = useState<string | null>(null);
   const [newStageType, setNewStageType] = useState<"agent" | "approval_gate">("agent");
 
+  const [addParallelGroupOpen, setAddParallelGroupOpen] = useState(false);
+  const [parallelGroupLabel, setParallelGroupLabel] = useState("Parallel Group");
+  const [parallelGroupAgents, setParallelGroupAgents] = useState<Array<{ label: string; agentId: string | null }>>([
+    { label: "Agent 1", agentId: null },
+    { label: "Agent 2", agentId: null },
+  ]);
+  const [addChildStageGroupId, setAddChildStageGroupId] = useState<string | null>(null);
+  const [childStageLabel, setChildStageLabel] = useState("Agent Stage");
+  const [childStageAgentId, setChildStageAgentId] = useState<string | null>(null);
+
   const [editStageId, setEditStageId] = useState<string | null>(null);
   const [editStageLabel, setEditStageLabel] = useState("");
   const [editStageAgentId, setEditStageAgentId] = useState<string | null>(null);
@@ -162,10 +177,18 @@ export default function Pipelines() {
     [pipelines, selectedPipelineId]
   );
 
-  const stages: PipelineStage[] = useMemo(
+  const allStages: PipelineStage[] = useMemo(
     () => (selectedPipeline?.stages as PipelineStage[] || []).sort((a, b) => a.order - b.order),
     [selectedPipeline]
   );
+
+  const stages: PipelineStage[] = useMemo(
+    () => allStages.filter((s) => !s.parentGroupId),
+    [allStages]
+  );
+
+  const getChildStages = (groupId: string): PipelineStage[] =>
+    allStages.filter((s) => s.parentGroupId === groupId).sort((a, b) => a.order - b.order);
 
   const { data: runs = [], isLoading: runsLoading } = useQuery<PipelineRun[]>({
     queryKey: ["/api/pipelines", selectedPipelineId, "runs"],
@@ -292,28 +315,205 @@ export default function Pipelines() {
     setAddStageOpen(true);
   }
 
+  function handleOpenAddParallelGroup() {
+    setParallelGroupLabel("Parallel Group");
+    setParallelGroupAgents([
+      { label: "Agent 1", agentId: null },
+      { label: "Agent 2", agentId: null },
+    ]);
+    setAddParallelGroupOpen(true);
+  }
+
+  function confirmAddParallelGroup() {
+    if (!selectedPipeline) return;
+    const currentStages = (selectedPipeline.stages as PipelineStage[]) || [];
+    const groupId = generateId();
+    const childIds: string[] = [];
+    const childStages: PipelineStage[] = parallelGroupAgents.map((agent, i) => {
+      const childId = generateId();
+      childIds.push(childId);
+      return {
+        id: childId,
+        agentId: agent.agentId,
+        label: agent.label || `Agent ${i + 1}`,
+        stageType: "agent" as const,
+        order: i,
+        parentGroupId: groupId,
+        config: {},
+      };
+    });
+
+    const groupStage: PipelineStage = {
+      id: groupId,
+      agentId: null,
+      label: parallelGroupLabel || "Parallel Group",
+      stageType: "parallel_group",
+      order: stages.length,
+      children: childIds,
+      config: {},
+    };
+
+    const updatedStages = [...currentStages, groupStage, ...childStages];
+
+    const currentConnections = (selectedPipeline.connections as PipelineConnection[]) || [];
+    const newConnections = [...currentConnections];
+    const topLevelStages = currentStages.filter((s) => !s.parentGroupId);
+    if (topLevelStages.length > 0) {
+      const lastStage = topLevelStages[topLevelStages.length - 1];
+      if (lastStage.stageType === "parallel_group" && lastStage.children) {
+        lastStage.children.forEach((childId) => {
+          childIds.forEach((targetChildId) => {
+            newConnections.push({
+              id: generateId(),
+              sourceStageId: childId,
+              targetStageId: targetChildId,
+            });
+          });
+        });
+      } else {
+        childIds.forEach((childId) => {
+          newConnections.push({
+            id: generateId(),
+            sourceStageId: lastStage.id,
+            targetStageId: childId,
+          });
+        });
+      }
+    }
+
+    updatePipelineMutation.mutate({
+      id: selectedPipeline.id,
+      data: { stages: updatedStages, connections: newConnections },
+    });
+    setAddParallelGroupOpen(false);
+  }
+
+  function handleAddChildToGroup(groupId: string) {
+    setAddChildStageGroupId(groupId);
+    setChildStageLabel("Agent Stage");
+    setChildStageAgentId(null);
+  }
+
+  function confirmAddChildStage() {
+    if (!selectedPipeline || !addChildStageGroupId) return;
+    const currentStages = (selectedPipeline.stages as PipelineStage[]) || [];
+    const group = currentStages.find((s) => s.id === addChildStageGroupId);
+    if (!group) return;
+
+    const childId = generateId();
+    const existingChildren = currentStages.filter((s) => s.parentGroupId === addChildStageGroupId);
+    const newChild: PipelineStage = {
+      id: childId,
+      agentId: childStageAgentId,
+      label: childStageLabel || "Agent Stage",
+      stageType: "agent",
+      order: existingChildren.length,
+      parentGroupId: addChildStageGroupId,
+      config: {},
+    };
+
+    const updatedChildren = [...(group.children || []), childId];
+    const updatedStages = currentStages.map((s) =>
+      s.id === addChildStageGroupId ? { ...s, children: updatedChildren } : s
+    );
+    updatedStages.push(newChild);
+
+    const currentConnections = (selectedPipeline.connections as PipelineConnection[]) || [];
+    const newConnections = [...currentConnections];
+    const topLevelStages = updatedStages.filter((s) => !s.parentGroupId).sort((a, b) => a.order - b.order);
+    const groupIndex = topLevelStages.findIndex((s) => s.id === addChildStageGroupId);
+
+    if (groupIndex > 0) {
+      const prevStage = topLevelStages[groupIndex - 1];
+      if (prevStage.stageType === "parallel_group") {
+        const prevChildren = updatedStages.filter((s) => s.parentGroupId === prevStage.id);
+        for (const pc of prevChildren) {
+          newConnections.push({ id: generateId(), sourceStageId: pc.id, targetStageId: childId });
+        }
+      } else {
+        newConnections.push({ id: generateId(), sourceStageId: prevStage.id, targetStageId: childId });
+      }
+    }
+
+    if (groupIndex < topLevelStages.length - 1) {
+      const nextStage = topLevelStages[groupIndex + 1];
+      if (nextStage.stageType === "parallel_group") {
+        const nextChildren = updatedStages.filter((s) => s.parentGroupId === nextStage.id);
+        for (const nc of nextChildren) {
+          newConnections.push({ id: generateId(), sourceStageId: childId, targetStageId: nc.id });
+        }
+      } else {
+        newConnections.push({ id: generateId(), sourceStageId: childId, targetStageId: nextStage.id });
+      }
+    }
+
+    updatePipelineMutation.mutate({
+      id: selectedPipeline.id,
+      data: { stages: updatedStages, connections: newConnections },
+    });
+    setAddChildStageGroupId(null);
+  }
+
+  function handleRemoveChildStage(groupId: string, childId: string) {
+    if (!selectedPipeline) return;
+    const currentStages = (selectedPipeline.stages as PipelineStage[]) || [];
+    const group = currentStages.find((s) => s.id === groupId);
+    if (!group) return;
+
+    const updatedChildren = (group.children || []).filter((id) => id !== childId);
+    if (updatedChildren.length < 1) {
+      handleRemoveStage(groupId);
+      return;
+    }
+
+    const updatedStages = currentStages
+      .filter((s) => s.id !== childId)
+      .map((s) => s.id === groupId ? { ...s, children: updatedChildren } : s);
+
+    const currentConnections = (selectedPipeline.connections as PipelineConnection[]) || [];
+    const updatedConnections = currentConnections.filter(
+      (c) => c.sourceStageId !== childId && c.targetStageId !== childId
+    );
+
+    updatePipelineMutation.mutate({
+      id: selectedPipeline.id,
+      data: { stages: updatedStages, connections: updatedConnections },
+    });
+  }
+
   function confirmAddStage() {
     if (!selectedPipeline) return;
     const currentStages = (selectedPipeline.stages as PipelineStage[]) || [];
+    const topLevel = currentStages.filter((s) => !s.parentGroupId);
     const newStage: PipelineStage = {
       id: generateId(),
       agentId: newStageType === "agent" ? newStageAgentId : null,
       label: newStageLabel || (newStageType === "agent" ? "Agent Stage" : "Approval Gate"),
       stageType: newStageType,
-      order: currentStages.length,
+      order: topLevel.length,
       config: newStageType === "approval_gate" ? { approvalRequired: true } : {},
     };
     const updatedStages = [...currentStages, newStage];
 
     const currentConnections = (selectedPipeline.connections as PipelineConnection[]) || [];
     const newConnections = [...currentConnections];
-    if (currentStages.length > 0) {
-      const lastStage = currentStages[currentStages.length - 1];
-      newConnections.push({
-        id: generateId(),
-        sourceStageId: lastStage.id,
-        targetStageId: newStage.id,
-      });
+    if (topLevel.length > 0) {
+      const lastStage = topLevel[topLevel.length - 1];
+      if (lastStage.stageType === "parallel_group" && lastStage.children) {
+        lastStage.children.forEach((childId) => {
+          newConnections.push({
+            id: generateId(),
+            sourceStageId: childId,
+            targetStageId: newStage.id,
+          });
+        });
+      } else {
+        newConnections.push({
+          id: generateId(),
+          sourceStageId: lastStage.id,
+          targetStageId: newStage.id,
+        });
+      }
     }
 
     updatePipelineMutation.mutate({
@@ -328,12 +528,18 @@ export default function Pipelines() {
   function handleRemoveStage(stageId: string) {
     if (!selectedPipeline) return;
     const currentStages = (selectedPipeline.stages as PipelineStage[]) || [];
+    const stageToRemove = currentStages.find((s) => s.id === stageId);
+    const idsToRemove = new Set<string>([stageId]);
+    if (stageToRemove?.stageType === "parallel_group" && stageToRemove.children) {
+      stageToRemove.children.forEach((childId) => idsToRemove.add(childId));
+    }
     const updatedStages = currentStages
-      .filter((s) => s.id !== stageId)
-      .map((s, i) => ({ ...s, order: i }));
+      .filter((s) => !idsToRemove.has(s.id))
+      .filter((s) => s.parentGroupId !== stageId)
+      .map((s, i) => ({ ...s, order: s.parentGroupId ? s.order : i }));
     const currentConnections = (selectedPipeline.connections as PipelineConnection[]) || [];
     const updatedConnections = currentConnections.filter(
-      (c) => c.sourceStageId !== stageId && c.targetStageId !== stageId
+      (c) => !idsToRemove.has(c.sourceStageId) && !idsToRemove.has(c.targetStageId)
     );
     updatePipelineMutation.mutate({
       id: selectedPipeline.id,
@@ -605,61 +811,139 @@ export default function Pipelines() {
                       <ArrowDown className="w-4 h-4 text-muted-foreground" />
                     </div>
                   )}
-                  <Card data-testid={`pipeline-stage-${stage.id}`}>
-                    <CardContent className="p-4">
-                      <div className="flex flex-wrap items-start justify-between gap-2">
-                        <div className="flex items-start gap-3">
-                          <div className="mt-0.5">
-                            {stage.stageType === "approval_gate" ? (
-                              <ShieldCheck className="w-5 h-5 text-amber-600 dark:text-amber-400" />
-                            ) : (
-                              <Bot className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-                            )}
+
+                  {stage.stageType === "parallel_group" ? (
+                    <div className="w-full" data-testid={`pipeline-stage-${stage.id}`}>
+                      <div className="flex flex-col items-center py-1">
+                        <GitFork className="w-4 h-4 text-muted-foreground" />
+                        <span className="text-[10px] text-muted-foreground mt-0.5">Fork</span>
+                      </div>
+                      <div className="border-2 border-dashed border-muted-foreground/30 rounded-md p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                          <div className="flex items-center gap-2">
+                            <Layers className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                            <span className="text-xs font-medium" data-testid={`text-stage-label-${stage.id}`}>{stage.label}</span>
+                            <Badge variant="outline" className="text-[10px]">Parallel Group</Badge>
                           </div>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs text-muted-foreground">Stage {index + 1}</span>
-                              <Badge variant="outline" className="text-[10px]">
-                                {stage.stageType === "approval_gate" ? "Approval Gate" : "Agent"}
-                              </Badge>
-                            </div>
-                            <p className="text-sm font-medium mt-0.5" data-testid={`text-stage-label-${stage.id}`}>
-                              {stage.label}
-                            </p>
-                            {stage.stageType === "agent" && (
-                              <p className="text-xs text-muted-foreground mt-1" data-testid={`text-stage-agent-${stage.id}`}>
-                                {getAgentName(stage.agentId) || "Select Agent"}
-                              </p>
-                            )}
-                            {stage.stageType === "approval_gate" && (
-                              <div className="flex items-center gap-1.5 mt-1">
-                                <ShieldCheck className="w-3 h-3 text-amber-600 dark:text-amber-400" />
-                                <span className="text-xs text-muted-foreground">Human Approval Required</span>
-                              </div>
-                            )}
+                          <div className="flex items-center gap-1">
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              onClick={() => handleAddChildToGroup(stage.id)}
+                              data-testid={`button-add-child-${stage.id}`}
+                            >
+                              <Plus className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              onClick={() => handleRemoveStage(stage.id)}
+                              data-testid={`button-remove-stage-${stage.id}`}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
                           </div>
                         </div>
-                        <div className="flex items-center gap-1">
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            onClick={() => openEditStage(stage)}
-                            data-testid={`button-edit-stage-${stage.id}`}
-                          >
-                            <Settings2 className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            onClick={() => handleRemoveStage(stage.id)}
-                            data-testid={`button-remove-stage-${stage.id}`}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
+                        <div className="flex flex-wrap gap-3 justify-center">
+                          {getChildStages(stage.id).map((child) => (
+                            <Card key={child.id} className="flex-1 min-w-[140px] max-w-[220px]" data-testid={`pipeline-stage-${child.id}`}>
+                              <CardContent className="p-3">
+                                <div className="flex flex-wrap items-start justify-between gap-1">
+                                  <div className="flex items-start gap-2 flex-1 min-w-0">
+                                    <Bot className="w-4 h-4 text-blue-600 dark:text-blue-400 mt-0.5 shrink-0" />
+                                    <div className="min-w-0">
+                                      <p className="text-xs font-medium truncate" data-testid={`text-stage-label-${child.id}`}>{child.label}</p>
+                                      <p className="text-[10px] text-muted-foreground truncate mt-0.5" data-testid={`text-stage-agent-${child.id}`}>
+                                        {getAgentName(child.agentId) || "Select Agent"}
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-0.5">
+                                    <Button
+                                      size="icon"
+                                      variant="ghost"
+                                      onClick={() => openEditStage(child)}
+                                      data-testid={`button-edit-stage-${child.id}`}
+                                    >
+                                      <Settings2 className="w-3.5 h-3.5" />
+                                    </Button>
+                                    <Button
+                                      size="icon"
+                                      variant="ghost"
+                                      onClick={() => handleRemoveChildStage(stage.id, child.id)}
+                                      data-testid={`button-remove-stage-${child.id}`}
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </Button>
+                                  </div>
+                                </div>
+                              </CardContent>
+                            </Card>
+                          ))}
                         </div>
                       </div>
-                    </CardContent>
-                  </Card>
+                      <div className="flex flex-col items-center py-1">
+                        <GitMerge className="w-4 h-4 text-muted-foreground" />
+                        <span className="text-[10px] text-muted-foreground mt-0.5">Join</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <Card data-testid={`pipeline-stage-${stage.id}`}>
+                      <CardContent className="p-4">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="flex items-start gap-3">
+                            <div className="mt-0.5">
+                              {stage.stageType === "approval_gate" ? (
+                                <ShieldCheck className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+                              ) : (
+                                <Bot className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                              )}
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs text-muted-foreground">Stage {index + 1}</span>
+                                <Badge variant="outline" className="text-[10px]">
+                                  {stage.stageType === "approval_gate" ? "Approval Gate" : "Agent"}
+                                </Badge>
+                              </div>
+                              <p className="text-sm font-medium mt-0.5" data-testid={`text-stage-label-${stage.id}`}>
+                                {stage.label}
+                              </p>
+                              {stage.stageType === "agent" && (
+                                <p className="text-xs text-muted-foreground mt-1" data-testid={`text-stage-agent-${stage.id}`}>
+                                  {getAgentName(stage.agentId) || "Select Agent"}
+                                </p>
+                              )}
+                              {stage.stageType === "approval_gate" && (
+                                <div className="flex items-center gap-1.5 mt-1">
+                                  <ShieldCheck className="w-3 h-3 text-amber-600 dark:text-amber-400" />
+                                  <span className="text-xs text-muted-foreground">Human Approval Required</span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              onClick={() => openEditStage(stage)}
+                              data-testid={`button-edit-stage-${stage.id}`}
+                            >
+                              <Settings2 className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              onClick={() => handleRemoveStage(stage.id)}
+                              data-testid={`button-remove-stage-${stage.id}`}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
                 </div>
               ))}
 
@@ -686,6 +970,10 @@ export default function Pipelines() {
                   <DropdownMenuItem onClick={() => handleAddStage("approval_gate")} data-testid="menu-add-approval-gate">
                     <ShieldCheck className="w-4 h-4 mr-2" />
                     Add Approval Gate
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleOpenAddParallelGroup} data-testid="menu-add-parallel-group">
+                    <Layers className="w-4 h-4 mr-2" />
+                    Add Parallel Group
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -1003,7 +1291,7 @@ export default function Pipelines() {
                 data-testid="input-edit-stage-label"
               />
             </div>
-            {stages.find((s) => s.id === editStageId)?.stageType === "agent" && (
+            {allStages.find((s) => s.id === editStageId)?.stageType === "agent" && (
               <div className="space-y-2">
                 <Label>Agent</Label>
                 <Select
@@ -1074,6 +1362,156 @@ export default function Pipelines() {
               {startRunMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
               <Play className="w-4 h-4 mr-1" />
               Start Run
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={addParallelGroupOpen} onOpenChange={setAddParallelGroupOpen}>
+        <DialogContent data-testid="dialog-add-parallel-group">
+          <DialogHeader>
+            <DialogTitle>Add Parallel Group</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="parallel-group-label">Group Label</Label>
+              <Input
+                id="parallel-group-label"
+                placeholder="Parallel Group"
+                value={parallelGroupLabel}
+                onChange={(e) => setParallelGroupLabel(e.target.value)}
+                data-testid="input-parallel-group-label"
+              />
+            </div>
+            <Separator />
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Label>Parallel Agents</Label>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setParallelGroupAgents([...parallelGroupAgents, { label: `Agent ${parallelGroupAgents.length + 1}`, agentId: null }])}
+                  data-testid="button-add-parallel-agent"
+                >
+                  <Plus className="w-3.5 h-3.5 mr-1" />
+                  Add Agent
+                </Button>
+              </div>
+              <div className="space-y-3">
+                {parallelGroupAgents.map((agent, i) => (
+                  <div key={i} className="flex items-end gap-2">
+                    <div className="flex-1 space-y-1">
+                      <Label className="text-[10px] text-muted-foreground">Label</Label>
+                      <Input
+                        value={agent.label}
+                        onChange={(e) => {
+                          const updated = [...parallelGroupAgents];
+                          updated[i] = { ...updated[i], label: e.target.value };
+                          setParallelGroupAgents(updated);
+                        }}
+                        data-testid={`input-parallel-agent-label-${i}`}
+                      />
+                    </div>
+                    <div className="flex-1 space-y-1">
+                      <Label className="text-[10px] text-muted-foreground">Agent</Label>
+                      <Select
+                        value={agent.agentId || ""}
+                        onValueChange={(v) => {
+                          const updated = [...parallelGroupAgents];
+                          updated[i] = { ...updated[i], agentId: v || null };
+                          setParallelGroupAgents(updated);
+                        }}
+                      >
+                        <SelectTrigger data-testid={`select-parallel-agent-${i}`}>
+                          <SelectValue placeholder="Select agent" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {agents.map((a) => (
+                            <SelectItem key={a.id} value={a.id}>
+                              {a.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {parallelGroupAgents.length > 2 && (
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => setParallelGroupAgents(parallelGroupAgents.filter((_, j) => j !== i))}
+                        data-testid={`button-remove-parallel-agent-${i}`}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddParallelGroupOpen(false)} data-testid="button-cancel-parallel-group">
+              Cancel
+            </Button>
+            <Button
+              onClick={confirmAddParallelGroup}
+              disabled={parallelGroupAgents.length < 2 || !parallelGroupLabel.trim() || updatePipelineMutation.isPending}
+              data-testid="button-confirm-parallel-group"
+            >
+              {updatePipelineMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
+              <Layers className="w-4 h-4 mr-1" />
+              Add Group
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!addChildStageGroupId} onOpenChange={(open) => { if (!open) setAddChildStageGroupId(null); }}>
+        <DialogContent data-testid="dialog-add-child-stage">
+          <DialogHeader>
+            <DialogTitle>Add Agent to Parallel Group</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="child-stage-label">Label</Label>
+              <Input
+                id="child-stage-label"
+                placeholder="Agent Stage"
+                value={childStageLabel}
+                onChange={(e) => setChildStageLabel(e.target.value)}
+                data-testid="input-child-stage-label"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Agent</Label>
+              <Select
+                value={childStageAgentId || ""}
+                onValueChange={(v) => setChildStageAgentId(v || null)}
+              >
+                <SelectTrigger data-testid="select-child-stage-agent">
+                  <SelectValue placeholder="Select an agent" />
+                </SelectTrigger>
+                <SelectContent>
+                  {agents.map((a) => (
+                    <SelectItem key={a.id} value={a.id}>
+                      {a.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddChildStageGroupId(null)} data-testid="button-cancel-child-stage">
+              Cancel
+            </Button>
+            <Button
+              onClick={confirmAddChildStage}
+              disabled={!childStageLabel.trim() || updatePipelineMutation.isPending}
+              data-testid="button-confirm-child-stage"
+            >
+              {updatePipelineMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
+              Add Agent
             </Button>
           </DialogFooter>
         </DialogContent>
