@@ -121,6 +121,121 @@ function getScoreColor(score: number): string {
   return "text-red-600 dark:text-red-400";
 }
 
+function getSeverityStyle(severity: string): string {
+  switch (severity?.toLowerCase()) {
+    case "low": return "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20";
+    case "medium": return "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20";
+    case "high": return "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20";
+    default: return "bg-muted text-muted-foreground";
+  }
+}
+
+function FormattedAnalysisOutput({ data, compact = false }: { data: any; compact?: boolean }) {
+  let parsed: any = null;
+
+  if (typeof data === "string") {
+    if (data.startsWith("{") || data.startsWith("[")) {
+      try { parsed = JSON.parse(data); } catch {}
+    }
+    if (!parsed) {
+      return (
+        <div className="p-3 rounded-md bg-muted/40 text-xs leading-relaxed whitespace-pre-wrap" data-testid="output-text">
+          {data}
+        </div>
+      );
+    }
+  } else if (typeof data === "object" && data !== null) {
+    parsed = data;
+  } else {
+    return <p className="text-xs text-muted-foreground">No output recorded</p>;
+  }
+
+  const analysisText = parsed.summary || parsed.analysis;
+  const severity = parsed.severity;
+  const riskFactors = Array.isArray(parsed.riskFactors) ? parsed.riskFactors : [];
+  const findings = Array.isArray(parsed.findings) ? parsed.findings : [];
+  const recommendedActions = Array.isArray(parsed.recommendedActions) ? parsed.recommendedActions : [];
+  const structuredRecords = parsed.structuredOutput || parsed.processedRecords;
+  const citations = parsed.citations;
+
+  const hasStructuredFields = severity || riskFactors.length > 0 || findings.length > 0 || recommendedActions.length > 0;
+
+  if (!analysisText && !hasStructuredFields && !Array.isArray(structuredRecords)) {
+    return (
+      <div className="p-3 rounded-md bg-muted/40 text-xs leading-relaxed whitespace-pre-wrap" data-testid="output-text">
+        {typeof data === "string" ? data : JSON.stringify(data, null, 2)}
+      </div>
+    );
+  }
+
+  return (
+    <div className={`flex flex-col ${compact ? "gap-2" : "gap-3"}`} data-testid="formatted-analysis-output">
+      {analysisText && (
+        <div className="flex flex-col gap-1.5">
+          {!compact && <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Analysis Summary</span>}
+          <div className="p-3 rounded-md bg-muted/40 text-xs leading-relaxed whitespace-pre-wrap" data-testid="output-analysis-summary">
+            {typeof analysisText === "string" ? analysisText : JSON.stringify(analysisText, null, 2)}
+          </div>
+        </div>
+      )}
+
+      {(severity || riskFactors.length > 0) && (
+        <div className="flex items-center gap-2 flex-wrap">
+          {severity && (
+            <Badge variant="outline" className={`text-[10px] ${getSeverityStyle(severity)}`} data-testid="output-severity">
+              <Shield className="w-3 h-3 mr-0.5" />
+              Severity: {severity.charAt(0).toUpperCase() + severity.slice(1)}
+            </Badge>
+          )}
+          {riskFactors.map((rf: string, i: number) => (
+            <Badge key={i} variant="outline" className="text-[10px] bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" data-testid={`output-risk-factor-${i}`}>
+              {rf}
+            </Badge>
+          ))}
+        </div>
+      )}
+
+      {findings.length > 0 && !compact && (
+        <div className="flex flex-col gap-1.5">
+          <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Key Findings</span>
+          <ul className="flex flex-col gap-1 pl-1">
+            {findings.map((f: string, i: number) => (
+              <li key={i} className="flex items-start gap-2 text-xs" data-testid={`output-finding-${i}`}>
+                <CheckCircle className="w-3 h-3 mt-0.5 text-cyan-500 shrink-0" />
+                <span>{f}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {recommendedActions.length > 0 && !compact && (
+        <div className="flex flex-col gap-1.5">
+          <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Recommended Actions</span>
+          <ul className="flex flex-col gap-1 pl-1">
+            {recommendedActions.map((a: string, i: number) => (
+              <li key={i} className="flex items-start gap-2 text-xs" data-testid={`output-action-${i}`}>
+                <ChevronRight className="w-3 h-3 mt-0.5 text-emerald-500 shrink-0" />
+                <span>{a}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {citations && !compact && (
+        <div className="p-2 rounded-md bg-muted/30 text-[11px] text-muted-foreground" data-testid="output-citations">
+          <span className="font-medium">Citations: </span>{typeof citations === "string" ? citations : JSON.stringify(citations)}
+        </div>
+      )}
+
+      {Array.isArray(structuredRecords) && structuredRecords.length > 0 && (
+        <StructuredOutputTable records={structuredRecords} />
+      )}
+    </div>
+  );
+}
+
 function StructuredOutputTable({ records }: { records: any[] }) {
   const [searchTerm, setSearchTerm] = useState("");
   const [sortCol, setSortCol] = useState<string | null>(null);
@@ -726,18 +841,8 @@ function TimelineStepContent({ step }: { step: TimelineStep }) {
       );
     }
     case "output": {
-      let outputParsed: any = null;
-      if (typeof step.data === "string" && step.data.startsWith("{")) {
-        try { outputParsed = JSON.parse(step.data); } catch {}
-      }
-      const outputStructured = outputParsed?.structuredOutput || outputParsed?.processedRecords;
       return step.data ? (
-        <div className="flex flex-col gap-3">
-          <div className="p-3 rounded-md bg-muted/40 text-xs leading-relaxed whitespace-pre-wrap">
-            {outputParsed ? (outputParsed.summary || outputParsed.analysis || step.data) : step.data}
-          </div>
-          {Array.isArray(outputStructured) && outputStructured.length > 0 && <StructuredOutputTable records={outputStructured} />}
-        </div>
+        <FormattedAnalysisOutput data={step.data} />
       ) : (
         <p className="text-xs text-muted-foreground">No output recorded</p>
       );
@@ -798,15 +903,9 @@ function TimelineStepContent({ step }: { step: TimelineStep }) {
           {d.output?.analysis && (
             <div className="flex flex-col gap-1.5">
               <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">AI Analysis</span>
-              <div className="p-3 rounded-md bg-muted/40 text-xs leading-relaxed whitespace-pre-wrap">
-                {typeof d.output.analysis === "object" ? (d.output.analysis.summary || d.output.analysis.analysis || JSON.stringify(d.output.analysis, null, 2)) : String(d.output.analysis)}
-              </div>
+              <FormattedAnalysisOutput data={d.output.analysis} />
             </div>
           )}
-          {(() => {
-            const structured = d.output?.structuredOutput || d.output?.analysis?.structuredOutput || d.output?.analysis?.processedRecords;
-            return Array.isArray(structured) && structured.length > 0 ? <StructuredOutputTable records={structured} /> : null;
-          })()}
           {workerSteps.length > 0 && (
             <div className="flex flex-col gap-1.5">
               <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Execution Steps</span>
@@ -845,11 +944,7 @@ function TimelineStepContent({ step }: { step: TimelineStep }) {
           {d.output?.finalOutput && (
             <div className="flex flex-col gap-1.5">
               <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Final Pipeline Output</span>
-              <div className="p-3 rounded-md bg-muted/40 text-xs leading-relaxed whitespace-pre-wrap max-h-[300px] overflow-y-auto">
-                {typeof d.output.finalOutput === "string" && d.output.finalOutput.startsWith("{") ? (() => {
-                  try { const p = JSON.parse(d.output.finalOutput); return p.summary || p.analysis || d.output.finalOutput; } catch { return d.output.finalOutput; }
-                })() : String(d.output.finalOutput)}
-              </div>
+              <FormattedAnalysisOutput data={d.output.finalOutput} />
             </div>
           )}
         </div>
@@ -912,8 +1007,8 @@ function TimelineStepContent({ step }: { step: TimelineStep }) {
                       )}
                     </div>
                     {w.output?.analysis && (
-                      <div className="p-2 rounded-md bg-muted/40 text-[11px] leading-relaxed whitespace-pre-wrap max-h-[120px] overflow-y-auto">
-                        {typeof w.output.analysis === "object" ? (w.output.analysis.summary || w.output.analysis.analysis || JSON.stringify(w.output.analysis, null, 2)) : String(w.output.analysis)}
+                      <div className="max-h-[200px] overflow-y-auto">
+                        <FormattedAnalysisOutput data={w.output.analysis} compact />
                       </div>
                     )}
                     {workerSteps.length > 0 && (
