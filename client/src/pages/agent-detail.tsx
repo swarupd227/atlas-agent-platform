@@ -71,6 +71,9 @@ import {
   Circle,
   Globe,
   HelpCircle,
+  Target,
+  ListOrdered,
+  Crosshair,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -132,6 +135,99 @@ class AgentDetailErrorBoundary extends Component<{ children: ReactNode }, { hasE
     }
     return this.props.children;
   }
+}
+
+const TASK_SECTION_LABELS: Record<string, { icon: any; color: string }> = {
+  "role": { icon: Bot, color: "text-cyan-500" },
+  "goal": { icon: Target, color: "text-emerald-500" },
+  "workflow steps": { icon: ListOrdered, color: "text-violet-500" },
+  "available tools": { icon: Wrench, color: "text-amber-500" },
+  "kpis to optimize": { icon: BarChart3, color: "text-blue-500" },
+  "expected impact": { icon: TrendingUp, color: "text-emerald-500" },
+  "orchestration pattern": { icon: Network, color: "text-violet-500" },
+  "error handling": { icon: AlertTriangle, color: "text-amber-500" },
+  "handoff rules": { icon: ArrowRight, color: "text-red-500" },
+  "constraints": { icon: Shield, color: "text-red-500" },
+  "compliance": { icon: ShieldCheck, color: "text-blue-500" },
+  "output format": { icon: FileText, color: "text-cyan-500" },
+  "context": { icon: BookOpen, color: "text-muted-foreground" },
+  "schedule": { icon: Clock, color: "text-muted-foreground" },
+};
+
+function FormattedTaskPrompt({ prompt }: { prompt: string }) {
+  const sectionPattern = /(?:^|\.\s+|\n)(?=(?:Role|Goal|Workflow Steps|Available Tools|KPIs to optimize|Expected Impact|Orchestration Pattern|Error Handling|Handoff Rules|Constraints|Compliance|Output Format|Context|Schedule):)/i;
+
+  const rawSections = prompt.split(sectionPattern).filter(s => s.trim());
+
+  if (rawSections.length <= 1) {
+    const inlinePattern = /(Role|Goal|Workflow Steps|Available Tools|KPIs to optimize|Expected Impact|Orchestration Pattern|Error Handling|Handoff Rules|Constraints|Compliance|Output Format|Context|Schedule):\s*/gi;
+    const parts: { label: string; content: string }[] = [];
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+    const labelPositions: { label: string; index: number; endIndex: number }[] = [];
+
+    while ((match = inlinePattern.exec(prompt)) !== null) {
+      labelPositions.push({ label: match[1], index: match.index, endIndex: match.index + match[0].length });
+    }
+
+    if (labelPositions.length === 0) {
+      return <p className="text-xs font-medium leading-relaxed">{prompt}</p>;
+    }
+
+    if (labelPositions[0].index > 0) {
+      const preamble = prompt.substring(0, labelPositions[0].index).trim();
+      if (preamble) parts.push({ label: "", content: preamble });
+    }
+
+    for (let i = 0; i < labelPositions.length; i++) {
+      const endOfContent = i + 1 < labelPositions.length ? labelPositions[i + 1].index : prompt.length;
+      let content = prompt.substring(labelPositions[i].endIndex, endOfContent).trim();
+      if (content.endsWith(".")) content = content.slice(0, -1).trim();
+      parts.push({ label: labelPositions[i].label, content });
+    }
+
+    if (parts.length === 0) {
+      return <p className="text-xs font-medium leading-relaxed">{prompt}</p>;
+    }
+
+    return (
+      <div className="flex flex-col gap-2.5" data-testid="formatted-task-prompt">
+        {parts.map((part, idx) => {
+          if (!part.label) {
+            return <p key={idx} className="text-xs leading-relaxed text-muted-foreground">{part.content}</p>;
+          }
+          const sectionMeta = TASK_SECTION_LABELS[part.label.toLowerCase()] || { icon: ChevronRight, color: "text-muted-foreground" };
+          const Icon = sectionMeta.icon;
+          const isNumberedList = /\d+\.\s/.test(part.content);
+
+          return (
+            <div key={idx} className="flex flex-col gap-1" data-testid={`task-section-${part.label.toLowerCase().replace(/\s+/g, "-")}`}>
+              <div className="flex items-center gap-1.5">
+                <Icon className={`w-3.5 h-3.5 ${sectionMeta.color} shrink-0`} />
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{part.label}</span>
+              </div>
+              <div className="pl-5">
+                {isNumberedList ? (
+                  <ol className="flex flex-col gap-0.5 list-none">
+                    {part.content.split(/(?=\d+\.\s)/).filter(s => s.trim()).map((item, i) => (
+                      <li key={i} className="text-xs leading-relaxed flex items-start gap-1.5">
+                        <span className="text-[10px] font-semibold text-primary/60 mt-0.5 shrink-0">{i + 1}.</span>
+                        <span>{item.replace(/^\d+\.\s*/, "").trim()}</span>
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <p className="text-xs leading-relaxed">{part.content}</p>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  return <p className="text-xs font-medium leading-relaxed">{prompt}</p>;
 }
 
 function McpServerLinkCard({ link, server, onUnlink, unlinking }: {
@@ -1131,9 +1227,9 @@ function AgentDetailInner() {
                   const rc = (agent.runtimeConfig as Record<string, any>) || {};
                   const hasConfig = !!rc?.prompt;
                   return hasConfig ? (
-                    <div className="flex flex-col gap-1.5 p-2.5 rounded-md bg-muted/30">
+                    <div className="flex flex-col gap-2 p-2.5 rounded-md bg-muted/30" data-testid="text-rt-prompt">
                       <span className="text-xs text-muted-foreground">What this agent does when it runs</span>
-                      <p className="text-xs font-medium leading-relaxed" data-testid="text-rt-prompt">{rc.prompt}</p>
+                      <FormattedTaskPrompt prompt={rc.prompt} />
                       <div className="flex items-center gap-1.5 mt-1">
                         <Clock className="w-3 h-3 text-muted-foreground" />
                         <span className="text-[10px] text-muted-foreground" data-testid="text-rt-interval">
