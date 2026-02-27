@@ -15,26 +15,37 @@
 8. [Agent Registry](#8-agent-registry)
 9. [Agent Design Wizard](#9-agent-design-wizard)
 10. [Multi-Agent Orchestration](#10-multi-agent-orchestration)
-11. [Templates](#11-templates)
-12. [Blueprint Studio](#12-blueprint-studio)
-13. [Evaluation Studio](#13-evaluation-studio)
-14. [Shadow Replay](#14-shadow-replay)
-15. [Deployments & Release Orchestrator](#15-deployments--release-orchestrator)
-16. [Monitor](#16-monitor)
-17. [Optimization (Patch Center)](#17-optimization-patch-center)
-18. [Ops & Self-Healing Loop](#18-ops--self-healing-loop)
-19. [Governance](#19-governance)
-20. [Audit Trail](#20-audit-trail)
-21. [Approvals](#21-approvals)
-22. [Approval Gates](#22-approval-gates)
-23. [Billing & Metering](#23-billing--metering)
-24. [MCP Integration Suite](#24-mcp-integration-suite)
-25. [MCP Apps](#25-mcp-apps)
-26. [Marketplace](#26-marketplace)
-27. [Admin](#27-admin)
-28. [API Reference](#28-api-reference)
-29. [Data Model](#29-data-model)
-30. [Security & Compliance](#30-security--compliance)
+11. [Multi-Agent Pipeline Orchestrator](#11-multi-agent-pipeline-orchestrator)
+12. [Templates](#12-templates)
+13. [Agent Skills Library](#13-agent-skills-library)
+14. [Blueprint Studio](#14-blueprint-studio)
+15. [Knowledge Base System](#15-knowledge-base-system)
+16. [Context Engineering Studio](#16-context-engineering-studio)
+17. [Memory Architecture Manager](#17-memory-architecture-manager)
+18. [RAG Pipeline Designer](#18-rag-pipeline-designer)
+19. [Ontology Explorer & Knowledge Graph](#19-ontology-explorer--knowledge-graph)
+20. [Evaluation Studio](#20-evaluation-studio)
+21. [Shadow Replay](#21-shadow-replay)
+22. [Deployments & Release Orchestrator](#22-deployments--release-orchestrator)
+23. [Canary Deployment Console](#23-canary-deployment-console)
+24. [Monitor](#24-monitor)
+25. [Optimization (Patch Center)](#25-optimization-patch-center)
+26. [Ops & Self-Healing Loop](#26-ops--self-healing-loop)
+27. [Autonomy Engine & Oversight Console](#27-autonomy-engine--oversight-console)
+28. [Governance](#28-governance)
+29. [Audit Trail](#29-audit-trail)
+30. [Approvals](#30-approvals)
+31. [Approval Gates](#31-approval-gates)
+32. [Billing & Metering](#32-billing--metering)
+33. [MCP Integration Suite](#33-mcp-integration-suite)
+34. [MCP Apps](#34-mcp-apps)
+35. [Marketplace](#35-marketplace)
+36. [Agent API Gateway](#36-agent-api-gateway)
+37. [Mock MCP Servers](#37-mock-mcp-servers)
+38. [Admin](#38-admin)
+39. [API Reference](#39-api-reference)
+40. [Data Model](#40-data-model)
+41. [Security & Compliance](#41-security--compliance)
 
 ---
 
@@ -73,13 +84,17 @@ ALMP (Agent Lifecycle Management Platform) is an enterprise-grade platform for m
 
 ### Navigation
 
-The platform uses a collapsible sidebar organized into two groups:
+The platform uses a collapsible sidebar organized into Primary and Advanced groups:
 
-**Platform Navigation**
-- Overview, Outcome Builder, Outcomes, Agents, Templates, Blueprints, Evals, Deployments, Monitor
+**Primary Navigation**
+- Overview, Outcomes, Agents, Knowledge, Deployments, Monitor, Governance, Integrations
 
-**Operations & Management**
-- Optimization, Ops, Self-Heal, Governance, Audit Trail, Approvals, Approval Gates, Billing, MCP Apps, Marketplace, Integrations, Admin
+**Advanced Navigation (grouped)**
+- **Build**: Pipelines, Blueprints, Templates, Skills, Context Studio, Memory Manager, RAG Pipeline, Knowledge Graph
+- **Evaluate**: Evaluations, Golden Datasets
+- **Operate**: Shadow Replay, Canary Deployment, Optimization, Healing Center, Runbooks
+- **Govern**: Autonomy Engine, Oversight Console, Approvals, Audit Trail
+- **System**: Billing, Ontology, Admin
 
 ### First Steps
 
@@ -341,6 +356,10 @@ The wizard includes an "AI Enhance" feature that analyzes your configuration and
 
 Create and manage composite agent teams where multiple agents collaborate on complex tasks.
 
+### Industry Provider
+
+The platform scopes the entire experience to specific industries (Financial Services, Healthcare, Insurance, Manufacturing, Retail, Technology/SaaS). The Industry Provider system adapts UI defaults, compliance rules, ontology terms, and agent behavior to sector-specific standards.
+
 **Team Configuration**
 - Team name, description, and orchestration strategy.
 - Member management with role assignments:
@@ -391,7 +410,35 @@ Manage external agents connected via Google's Agent-to-Agent (A2A) communication
 
 ---
 
-## 11. Templates
+## 11. Multi-Agent Pipeline Orchestrator
+
+Visual workflow editor for designing and executing multi-agent pipelines with sequential agent stages, approval gates, parallel groups, and AI-simulated scenario execution.
+
+### Pipeline Editor
+
+- **Visual Stage Builder**: Drag-and-drop editor for composing pipeline stages with sequential agents, approval gates, and parallel groups.
+- **Stage Types**:
+  - **Agent Stage**: Single worker agent executing a specific task.
+  - **Approval Gate**: Human review checkpoint between stages.
+  - **Parallel Group**: Multiple agents running concurrently with fork/join semantics.
+- **AI Pattern Recommendation**: AI proposal generator analyzes KPI dependencies and agent roles to recommend the optimal orchestration pattern (sequential, parallel, fan_out_fan_in, supervisor) with `patternReasoning`, `parallelGroups` (execution tiers), and `executionGraph`.
+
+### Pipeline Execution Runtime
+
+- **Tier-Based Execution**: The runtime engine computes execution tiers from blueprint DAGs, running independent agents concurrently via `Promise.all` with structured context merging.
+- **Context Cascading**: Each worker receives the output from previous stages as `## INPUT FROM PREVIOUS STAGE`, enabling sequential reasoning across the pipeline.
+- **Record ID Continuity**: Structured records (`processedRecords`) from each worker are automatically enriched into downstream context as `## STRUCTURED RECORDS FROM [Agent Name]` with the full JSON record set, ensuring downstream agents reference the exact same record IDs for end-to-end traceability.
+- **Error Strategies**: `fail_fast` (halt on first failure) and `best_effort` (continue despite failures) with escalation support.
+- **Fork/Join Visualization**: Parallel execution is visualized with fork/join markers in traces and Gantt-style timing bars showing actual concurrency.
+
+### Pipeline Simulation
+
+- **AI Scenario Simulation**: Simulate pipeline execution with AI-generated stage outputs before running real agents.
+- **Stage Advancement**: Manual or automated advancement through pipeline stages with approval gates.
+
+---
+
+## 12. Templates
 
 A library of reusable agent templates to accelerate agent creation.
 
@@ -404,7 +451,28 @@ A library of reusable agent templates to accelerate agent creation.
 
 ---
 
-## 12. Blueprint Studio
+## 13. Agent Skills Library
+
+A catalog of composable, versioned skill units with industry-organized browsing, search, and AI enhancement/generation capabilities, including real-time policy validation.
+
+### Features
+
+- **Skill Catalog**: Browse skills organized by industry vertical with search and filtering.
+- **Skill Detail**: Full skill configuration including description, industry tags, MCP tool dependencies, and version history.
+- **Skill Versioning**: Create and manage skill versions with changelog tracking.
+- **Knowledge Queries**: Define RAG queries for skills to link them to knowledge base sources.
+- **Dependency Validation**: Automatic checking for broken MCP tool/server references in skills.
+- **Skill Evaluation**: Run skill-specific evaluations to assess quality and correctness.
+
+### AI-Powered Skill Management
+
+- **AI Skill Generation**: Generate new skills from natural language descriptions using AI.
+- **AI Skill Enhancement**: Analyze existing skills and propose improvements for prompt optimization, tool selection, and coverage.
+- **Skill Composer**: Combine multiple skills into composite capabilities.
+
+---
+
+## 14. Blueprint Studio
 
 Visual editor for creating, versioning, and compiling agent blueprints.
 
@@ -455,7 +523,112 @@ Visual editor for creating, versioning, and compiling agent blueprints.
 
 ---
 
-## 13. Evaluation Studio
+## 15. Knowledge Base System
+
+Vector-embedded document collections for RAG grounding, supporting various ingestion modes, OpenAI embeddings, and pgvector for similarity search. Agents can be linked to knowledge bases for runtime context injection.
+
+### Knowledge Base Management
+
+- **KB List**: Browse all knowledge bases with document count, total chunks, and status indicators.
+- **Create KB**: Define a new knowledge base with name, description, embedding model, and chunking configuration.
+- **KB Detail**: Full management view with source documents, search testing, and agent linkage.
+
+### Ingestion Modes
+
+- **File Upload**: Upload documents (PDF, TXT, MD, DOCX) with automatic chunking and embedding.
+- **URL Scraping**: Provide URLs for automatic content extraction and indexing.
+- **Manual Text Entry**: Paste or type text content directly for embedding.
+- **Structured Data Import**: Import JSON or tabular data as structured knowledge entries.
+
+### Search & Query
+
+- **Vector Search**: Semantic similarity search across embedded documents using pgvector.
+- **RAG-Powered Q&A**: Ask natural language questions and receive AI-generated answers grounded in the knowledge base content.
+- **Agent Linking**: Link knowledge bases to agents so they receive relevant context at runtime.
+
+---
+
+## 16. Context Engineering Studio
+
+Systematic management of how agents acquire and utilize context, featuring context source inventory, priority matrix, and budget visualization.
+
+### Features
+
+- **Source Inventory**: Catalog of all context sources available to agents (knowledge bases, MCP resources, memory stores, tools).
+- **Priority Matrix**: Configure priority rankings for context sources to control which information agents receive first when context windows are limited.
+- **Budget Visualizer**: Token budget allocation visualization showing how context window capacity is distributed across sources.
+- **Compilation Preview**: Preview the compiled context that an agent would receive at runtime.
+
+### Industry Presets
+
+- Pre-configured context profiles for Healthcare, Financial Services, Insurance, and other verticals with appropriate source priorities and compliance-aware token budgets.
+
+### AI Context Optimization
+
+- **Automatic Optimization**: AI-powered analysis of context profiles to suggest improvements for token efficiency, source relevance, and coverage gaps.
+
+---
+
+## 17. Memory Architecture Manager
+
+Defines agent memory management with industry-specific retention and governance policies.
+
+### Memory Tiers
+
+- **Working Memory**: Short-term context for the current execution session.
+- **Episodic Memory**: Historical interaction records with decay and retention rules.
+- **Semantic Memory**: Long-term factual knowledge and learned patterns.
+
+### Features
+
+- **Capacity Management**: Configure storage limits and eviction policies per memory tier.
+- **Retention Policies**: Define industry-specific retention rules based on regulations (HIPAA, PCI-DSS, SEC, GDPR).
+- **Forgetting Policies**: Automated data purging based on regulatory requirements and governance rules.
+- **Memory Entry Exploration**: Browse, search, and inspect individual memory entries across all tiers.
+- **AI Memory Rule Suggestions**: AI-generated retention and governance rules based on the agent's industry and regulatory context.
+
+---
+
+## 18. RAG Pipeline Designer
+
+Advanced configuration of Retrieval-Augmented Generation pipelines for controlling how agents retrieve industry-specific knowledge at runtime.
+
+### Features
+
+- **Knowledge Source Management**: Configure document stores, databases, and knowledge graphs as retrieval sources.
+- **Retrieval Strategy Selection**: Choose between Vector search, GraphRAG, Hybrid, or custom retrieval strategies.
+- **Chunking Strategy Optimization**: Configure chunk size, overlap, and splitting strategies for optimal retrieval quality.
+- **Pipeline CRUD**: Create, update, and delete RAG pipeline configurations.
+
+---
+
+## 19. Ontology Explorer & Knowledge Graph
+
+Industry knowledge graph browser with concept management, AI-enhanced descriptions, and relationship mapping.
+
+### Ontology Explorer
+
+- **Concept Browser**: Browse industry-standard and custom-extension ontology concepts with hierarchical navigation.
+- **Concept Detail**: View concept descriptions, relationships, and linked agents/tools.
+- **Search**: Full-text search across ontology terms and concepts.
+- **Bulk Import**: Import ontology concepts in bulk via structured data.
+
+### Knowledge Graph Builder
+
+- **Relationship Mapping**: Define parent/child/related relationships between ontology concepts.
+- **AI Enrichment**: AI-powered concept description enhancement and relationship suggestions.
+- **Sub-Domain Generation**: AI-generated sub-domain ontologies for specialized industry verticals.
+
+### MCP-Ontology Parameter Matching
+
+- **Cross-Reference Engine**: Automatically compare MCP server tool parameters and resource names against ontology concepts.
+- **Auto-Linking**: Suggest and apply mappings between tool parameters and ontology terms.
+- **Mismatch Flagging**: Identify and highlight parameters that lack ontology coverage for governance review.
+- **Semantic Validation**: Validate text content against ontology semantic constraints.
+
+---
+
+## 20. Evaluation Studio
 
 Comprehensive evaluation management for measuring agent quality and detecting regressions.
 
@@ -489,7 +662,7 @@ Comprehensive evaluation management for measuring agent quality and detecting re
 
 ---
 
-## 14. Shadow Replay
+## 21. Shadow Replay
 
 Replay production traces against candidate agent versions for safe comparison and validation before deployment.
 
@@ -503,7 +676,7 @@ Replay production traces against candidate agent versions for safe comparison an
 
 ---
 
-## 15. Deployments & Release Orchestrator
+## 22. Deployments & Release Orchestrator
 
 Manage the deployment lifecycle of agents across environments with built-in safety mechanisms.
 
@@ -549,7 +722,21 @@ Orchestrated deployment through stages:
 
 ---
 
-## 16. Monitor
+## 23. Canary Deployment Console
+
+Manages graduated rollouts of agent versions with industry-specific safety controls, KPI comparison, and auto-promotion/rollback rules.
+
+### Features
+
+- **Traffic Stage Management**: Configure graduated traffic shifting stages (e.g., 5% → 25% → 50% → 100%) with monitoring windows at each stage.
+- **KPI Comparison**: Side-by-side comparison of baseline (current production) vs. candidate (new version) performance across all configured KPIs.
+- **Blast Radius Analysis**: Automated analysis of the potential impact scope if the candidate version exhibits issues.
+- **Industry-Specific Safety Gates**: Compliance-aware promotion rules that enforce additional checks for regulated industries (e.g., Fair Lending review for financial services canary deployments).
+- **Auto-Promotion/Rollback**: Configurable thresholds that automatically promote the candidate to full production or roll back on failure detection, based on error rate, latency, and KPI degradation.
+
+---
+
+## 24. Monitor
 
 Real-time observability dashboard for agent health, performance, and compliance.
 
@@ -606,7 +793,7 @@ Deep-dive into execution traces:
 
 ---
 
-## 17. Optimization (Patch Center)
+## 25. Optimization (Patch Center)
 
 AI-driven autonomous optimization and self-healing capabilities.
 
@@ -628,7 +815,7 @@ AI-driven autonomous optimization and self-healing capabilities.
 
 ---
 
-## 18. Ops & Self-Healing Loop
+## 26. Ops & Self-Healing Loop
 
 ### Ops Dashboard
 
@@ -658,7 +845,27 @@ Automated actions triggered by specific conditions:
 
 ---
 
-## 19. Governance
+## 27. Autonomy Engine & Oversight Console
+
+### Autonomy Engine
+
+Dynamic, context-aware human oversight system implementing the platform's 80% autonomous / 20% expert validation philosophy with granular control.
+
+- **Risk Dimension Matrix**: Multi-axis risk assessment considering regulatory impact, data sensitivity, financial exposure, and operational criticality.
+- **Autonomy Spectrum**: Configurable autonomy levels per agent ranging from fully autonomous to fully supervised, with intermediate levels for different action types.
+- **Autonomous Decision Tiers**: Define which decisions agents can make independently vs. which require human review, based on risk scores and action types.
+- **Override Calendar**: Schedule temporary autonomy overrides for planned maintenance windows, audit periods, or regulatory review cycles.
+
+### Oversight Console
+
+- **Expert Intervention Thresholds**: Configure confidence score thresholds below which agents must escalate to human reviewers.
+- **Real-Time Intervention Feed**: Live feed of agent decisions requiring human review with context, risk assessment, and recommended actions.
+- **Intervention History**: Complete audit trail of all human interventions with outcomes and response times.
+- **Escalation Chains**: Define escalation paths for different risk categories and business domains.
+
+---
+
+## 28. Governance
 
 Certified Agent Compliance Layer for policy management and enforcement.
 
@@ -704,7 +911,7 @@ Certified Agent Compliance Layer for policy management and enforcement.
 
 ---
 
-## 20. Audit Trail
+## 29. Audit Trail
 
 Immutable, hash-chained audit log for all platform actions.
 
@@ -722,7 +929,7 @@ Immutable, hash-chained audit log for all platform actions.
 
 ---
 
-## 21. Approvals
+## 30. Approvals
 
 Expert validation queue for the 20% human oversight requirement.
 
@@ -750,7 +957,7 @@ Expert validation queue for the 20% human oversight requirement.
 
 ---
 
-## 22. Approval Gates
+## 31. Approval Gates
 
 Unified MCP elicitation and ALMP supervision experience combining expert validation with MCP elicitation flows.
 
@@ -772,7 +979,7 @@ Unified MCP elicitation and ALMP supervision experience combining expert validat
 
 ---
 
-## 23. Billing & Metering
+## 32. Billing & Metering
 
 Outcome-based billing system where customers pay for measurable results.
 
@@ -818,7 +1025,7 @@ The billing system processes outcome events through a pipeline:
 
 ---
 
-## 24. MCP Integration Suite
+## 33. MCP Integration Suite
 
 Comprehensive Model Context Protocol (MCP) integration for managing servers, tools, resources, and prompts.
 
@@ -906,7 +1113,7 @@ Central page for managing all integration points:
 
 ---
 
-## 25. MCP Apps
+## 34. MCP Apps
 
 Interactive HTML applications rendered inline within ALMP run and approval screens, powered by MCP servers.
 
@@ -927,7 +1134,7 @@ Interactive HTML applications rendered inline within ALMP run and approval scree
 
 ---
 
-## 26. Marketplace
+## 35. Marketplace
 
 Discover, publish, and install MCP servers, tools, and agent templates from the community.
 
@@ -941,7 +1148,41 @@ Discover, publish, and install MCP servers, tools, and agent templates from the 
 
 ---
 
-## 27. Admin
+## 36. Agent API Gateway
+
+Exposes deployed agents as REST API endpoints for external invocation, with API key management, execution tracing, policy checks, and cost tracking.
+
+### Features
+
+- **Agent Invocation Endpoint**: External systems can invoke agents via `POST /api/gateway/v1/invoke/:agentId` with structured input payloads.
+- **Agent Discovery Endpoint**: Public metadata discovery for agents via `GET /api/gateway/v1/agents/:agentId`, returning agent capabilities, input schema, and status.
+- **API Key Management**: Generate, rotate, and revoke API keys for gateway access with per-key rate limiting and usage tracking.
+- **Execution Tracing**: Every gateway invocation generates a full execution trace linked to the invoking API key for audit and debugging.
+- **Policy Enforcement**: All gateway invocations pass through the same governance policy checks as internal executions.
+- **Cost Tracking**: Token usage and cost attribution per API key and per invocation for billing and chargeback.
+
+---
+
+## 37. Mock MCP Servers
+
+Built-in mock REST APIs simulating real enterprise systems for demonstration and testing purposes.
+
+### Available Mock Servers
+
+- **Salesforce CRM**: Simulates Salesforce record queries, contact/lead lookups, task creation, and opportunity management with deterministic financial services lead data.
+- **Marketo**: Simulates marketing automation lead management, campaign engagement data, and lead scoring with realistic inbound lead records.
+- **Adobe Analytics**: Simulates analytics report execution and data retrieval with configurable metrics and dimensions.
+
+### Features
+
+- **Deterministic Data**: Mock servers return consistent, realistic data for reproducible demonstrations and testing.
+- **Financial Services Domain**: Lead data is pre-configured with financial services domain attributes (segments, compliance flags, risk ratings, regulatory triggers).
+- **Demo Seeding**: Automated demo setup via `POST /api/mock-mcp/seed-demo` to populate the platform with realistic agent configurations, MCP server registrations, and sample data.
+- **Tool Registration**: Mock servers register their tools in the MCP Tool Registry, making them available for agent blueprints and pipeline execution.
+
+---
+
+## 38. Admin
 
 Platform administration for system-level configuration and management.
 
@@ -958,7 +1199,7 @@ Platform administration for system-level configuration and management.
 
 ---
 
-## 28. API Reference
+## 39. API Reference
 
 The platform exposes a comprehensive REST API. Below are the implemented endpoint groups:
 
@@ -1139,16 +1380,107 @@ The platform exposes a comprehensive REST API. Below are the implemented endpoin
 | PUT | `/api/platform-settings/:key` | Update platform setting |
 | GET | `/api/overview` | Get overview dashboard data |
 
+### Knowledge Bases
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/knowledge-bases` | List all knowledge bases |
+| POST | `/api/knowledge-bases` | Create knowledge base |
+| GET | `/api/knowledge-bases/:id` | Get knowledge base detail |
+| PATCH | `/api/knowledge-bases/:id` | Update knowledge base |
+| DELETE | `/api/knowledge-bases/:id` | Delete knowledge base |
+| POST | `/api/knowledge-bases/:id/sources/upload` | Upload file for ingestion |
+| POST | `/api/knowledge-bases/:id/sources/url` | Ingest content from URL |
+| POST | `/api/knowledge-bases/:id/sources/text` | Ingest manual text entry |
+| POST | `/api/knowledge-bases/:id/sources/structured` | Import structured JSON/table data |
+| POST | `/api/knowledge-bases/:id/search` | Vector similarity search |
+| POST | `/api/knowledge-bases/:id/query` | RAG-powered Q&A query |
+| GET | `/api/agents/:agentId/knowledge-bases` | List linked KBs for an agent |
+
+### Agent Skills
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/skills` | List all skills |
+| POST | `/api/skills` | Create skill |
+| GET | `/api/skills/:id` | Get skill detail |
+| PATCH | `/api/skills/:id` | Update skill |
+| POST | `/api/skills/:id/eval/run` | Run skill-specific evaluation |
+| POST | `/api/skills/:skillId/versions` | Create skill version |
+| POST | `/api/skills/:skillId/knowledge-queries` | Define RAG queries for skill |
+
+### Context Engineering
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/context-profiles` | List context profiles |
+| POST | `/api/context-profiles` | Create context profile |
+| PATCH | `/api/context-profiles/:id` | Update context profile |
+| POST | `/api/context-profiles/:id/optimize` | AI-powered context optimization |
+
+### Memory Architecture
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/memory-profiles` | List memory strategy profiles |
+| POST | `/api/memory-profiles` | Create memory strategy |
+| POST | `/api/ai/suggest-memory-rules` | AI-generated retention rules |
+
+### Ontology & Knowledge Graph
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/ontology/terms` | Search ontology terms |
+| GET | `/api/ontology/concepts` | List graph concepts |
+| POST | `/api/ontology/concepts/bulk` | Bulk import ontology concepts |
+| POST | `/api/ontology/match-parameters` | Match MCP tool params to ontology |
+| POST | `/api/ontology/validate-text` | Validate text against semantic constraints |
+| GET | `/api/ontology/parameter-matches/:serverId` | Get MCP-to-Ontology mapping |
+
+### RAG Pipelines
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/rag-pipelines` | List RAG pipeline configurations |
+| POST | `/api/rag-pipelines` | Create RAG pipeline |
+| PATCH | `/api/rag-pipelines/:id` | Update RAG pipeline |
+| DELETE | `/api/rag-pipelines/:id` | Delete RAG pipeline |
+
+### Canary Deployments
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/canary-deployments` | List canary deployments |
+| POST | `/api/canary-deployments` | Create canary deployment |
+| PATCH | `/api/canary-deployments/:id` | Update canary deployment |
+
+### Multi-Agent Pipelines
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/pipelines` | List pipelines |
+| POST | `/api/pipelines/:id/runs` | Execute a pipeline |
+| POST | `/api/pipeline-runs/:id/advance` | Advance to next pipeline stage |
+| POST | `/api/pipeline-runs/:id/simulate-stage` | AI simulation of pipeline stage |
+
+### Agent API Gateway
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/api/gateway/v1/invoke/:agentId` | Invoke agent via external API |
+| GET | `/api/gateway/v1/agents/:agentId` | Public agent metadata discovery |
+
 ### AI Endpoints
 | Method | Endpoint | Description |
 |---|---|---|
 | POST | `/api/ai/chat` | Conversational AI for Outcome Builder |
 | POST | `/api/ai/enhance-agent` | AI agent enhancement suggestions |
 | POST | `/api/ai/generate-test-cases` | AI-generated evaluation test cases |
+| POST | `/api/ai/generate-golden-dataset` | AI-generated golden evaluation datasets |
+| POST | `/api/ai/generate-golden-test-cases` | AI-generated golden test cases |
+| POST | `/api/ai/enhance-golden-test-case` | AI enhancement of golden test cases |
+| POST | `/api/ai/suggest-memory-rules` | AI-generated memory retention rules |
+| POST | `/api/agents/bulk-create-from-plan` | Create multiple agents from natural language plan |
+
+### Mock MCP & Demo
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/api/mock-mcp/seed-demo` | Seed platform with demo data |
 
 ---
 
-## 29. Data Model
+## 40. Data Model
 
 The platform uses a comprehensive PostgreSQL schema managed by Drizzle ORM. Key entities:
 
@@ -1162,6 +1494,16 @@ The platform uses a comprehensive PostgreSQL schema managed by Drizzle ORM. Key 
 | **Blueprints** | Versioned agent configuration snapshots |
 | **EvalSuites** | Evaluation test suites with scorers and thresholds |
 | **Releases** | Deployment records with environment, strategy, and status |
+| **Skills** | Composable, versioned skill units with industry tags and MCP dependencies |
+| **KnowledgeBases** | Vector-embedded document collections for RAG grounding |
+| **KnowledgeDocuments** | Individual documents within knowledge bases with chunks and embeddings |
+| **ContextProfiles** | Context engineering configurations with source priorities and token budgets |
+| **MemoryProfiles** | Memory architecture strategies with tiered retention policies |
+| **RagPipelines** | RAG pipeline configurations with retrieval strategies |
+| **OntologyConcepts** | Industry knowledge graph concepts with relationships |
+| **CanaryDeployments** | Graduated rollout configurations with traffic stages and promotion rules |
+| **Pipelines** | Multi-agent pipeline definitions with stage configurations |
+| **PipelineRuns** | Pipeline execution records with stage-by-stage results |
 
 ### Governance Entities
 
@@ -1212,7 +1554,7 @@ The platform uses a comprehensive PostgreSQL schema managed by Drizzle ORM. Key 
 
 ---
 
-## 30. Security & Compliance
+## 41. Security & Compliance
 
 ### Authentication & Authorization
 
