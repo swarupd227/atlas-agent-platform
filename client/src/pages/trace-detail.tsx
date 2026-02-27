@@ -134,8 +134,9 @@ function FormattedAnalysisOutput({ data, compact = false }: { data: any; compact
   let parsed: any = null;
 
   if (typeof data === "string") {
-    if (data.startsWith("{") || data.startsWith("[")) {
-      try { parsed = JSON.parse(data); } catch {}
+    const trimmed = data.trimStart();
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+      try { parsed = JSON.parse(trimmed); } catch {}
     }
     if (!parsed) {
       return (

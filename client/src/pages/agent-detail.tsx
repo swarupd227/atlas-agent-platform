@@ -155,79 +155,77 @@ const TASK_SECTION_LABELS: Record<string, { icon: any; color: string }> = {
 };
 
 function FormattedTaskPrompt({ prompt }: { prompt: string }) {
-  const sectionPattern = /(?:^|\.\s+|\n)(?=(?:Role|Goal|Workflow Steps|Available Tools|KPIs to optimize|Expected Impact|Orchestration Pattern|Error Handling|Handoff Rules|Constraints|Compliance|Output Format|Context|Schedule):)/i;
+  const inlinePattern = /(Role|Goal|Workflow Steps|Available Tools|KPIs to optimize|Expected Impact|Orchestration Pattern|Error Handling|Handoff Rules|Constraints|Compliance|Output Format|Context|Schedule):\s*/gi;
+  const parts: { label: string; content: string }[] = [];
+  let match: RegExpExecArray | null;
+  const labelPositions: { label: string; index: number; endIndex: number }[] = [];
 
-  const rawSections = prompt.split(sectionPattern).filter(s => s.trim());
-
-  if (rawSections.length <= 1) {
-    const inlinePattern = /(Role|Goal|Workflow Steps|Available Tools|KPIs to optimize|Expected Impact|Orchestration Pattern|Error Handling|Handoff Rules|Constraints|Compliance|Output Format|Context|Schedule):\s*/gi;
-    const parts: { label: string; content: string }[] = [];
-    let lastIndex = 0;
-    let match: RegExpExecArray | null;
-    const labelPositions: { label: string; index: number; endIndex: number }[] = [];
-
-    while ((match = inlinePattern.exec(prompt)) !== null) {
-      labelPositions.push({ label: match[1], index: match.index, endIndex: match.index + match[0].length });
-    }
-
-    if (labelPositions.length === 0) {
-      return <p className="text-xs font-medium leading-relaxed">{prompt}</p>;
-    }
-
-    if (labelPositions[0].index > 0) {
-      const preamble = prompt.substring(0, labelPositions[0].index).trim();
-      if (preamble) parts.push({ label: "", content: preamble });
-    }
-
-    for (let i = 0; i < labelPositions.length; i++) {
-      const endOfContent = i + 1 < labelPositions.length ? labelPositions[i + 1].index : prompt.length;
-      let content = prompt.substring(labelPositions[i].endIndex, endOfContent).trim();
-      if (content.endsWith(".")) content = content.slice(0, -1).trim();
-      parts.push({ label: labelPositions[i].label, content });
-    }
-
-    if (parts.length === 0) {
-      return <p className="text-xs font-medium leading-relaxed">{prompt}</p>;
-    }
-
-    return (
-      <div className="flex flex-col gap-2.5" data-testid="formatted-task-prompt">
-        {parts.map((part, idx) => {
-          if (!part.label) {
-            return <p key={idx} className="text-xs leading-relaxed text-muted-foreground">{part.content}</p>;
-          }
-          const sectionMeta = TASK_SECTION_LABELS[part.label.toLowerCase()] || { icon: ChevronRight, color: "text-muted-foreground" };
-          const Icon = sectionMeta.icon;
-          const isNumberedList = /\d+\.\s/.test(part.content);
-
-          return (
-            <div key={idx} className="flex flex-col gap-1" data-testid={`task-section-${part.label.toLowerCase().replace(/\s+/g, "-")}`}>
-              <div className="flex items-center gap-1.5">
-                <Icon className={`w-3.5 h-3.5 ${sectionMeta.color} shrink-0`} />
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{part.label}</span>
-              </div>
-              <div className="pl-5">
-                {isNumberedList ? (
-                  <ol className="flex flex-col gap-0.5 list-none">
-                    {part.content.split(/(?=\d+\.\s)/).filter(s => s.trim()).map((item, i) => (
-                      <li key={i} className="text-xs leading-relaxed flex items-start gap-1.5">
-                        <span className="text-[10px] font-semibold text-primary/60 mt-0.5 shrink-0">{i + 1}.</span>
-                        <span>{item.replace(/^\d+\.\s*/, "").trim()}</span>
-                      </li>
-                    ))}
-                  </ol>
-                ) : (
-                  <p className="text-xs leading-relaxed">{part.content}</p>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    );
+  while ((match = inlinePattern.exec(prompt)) !== null) {
+    labelPositions.push({ label: match[1], index: match.index, endIndex: match.index + match[0].length });
   }
 
-  return <p className="text-xs font-medium leading-relaxed">{prompt}</p>;
+  if (labelPositions.length === 0) {
+    return <p className="text-xs font-medium leading-relaxed">{prompt}</p>;
+  }
+
+  if (labelPositions[0].index > 0) {
+    const preamble = prompt.substring(0, labelPositions[0].index).trim();
+    if (preamble) parts.push({ label: "", content: preamble });
+  }
+
+  for (let i = 0; i < labelPositions.length; i++) {
+    const endOfContent = i + 1 < labelPositions.length ? labelPositions[i + 1].index : prompt.length;
+    let content = prompt.substring(labelPositions[i].endIndex, endOfContent).trim();
+    if (content.endsWith(".")) content = content.slice(0, -1).trim();
+    parts.push({ label: labelPositions[i].label, content });
+  }
+
+  if (parts.length === 0) {
+    return <p className="text-xs font-medium leading-relaxed">{prompt}</p>;
+  }
+
+  return (
+    <div className="flex flex-col gap-2.5" data-testid="formatted-task-prompt">
+      {parts.map((part, idx) => {
+        if (!part.label) {
+          return <p key={idx} className="text-xs leading-relaxed text-muted-foreground">{part.content}</p>;
+        }
+        const sectionMeta = TASK_SECTION_LABELS[part.label.toLowerCase()] || { icon: ChevronRight, color: "text-muted-foreground" };
+        const Icon = sectionMeta.icon;
+        const isNumberedList = /\d+\.\s/.test(part.content);
+        const isCommaList = !isNumberedList && part.content.includes(",") && part.content.split(",").length >= 3;
+
+        return (
+          <div key={idx} className="flex flex-col gap-1" data-testid={`task-section-${part.label.toLowerCase().replace(/\s+/g, "-")}`}>
+            <div className="flex items-center gap-1.5">
+              <Icon className={`w-3.5 h-3.5 ${sectionMeta.color} shrink-0`} />
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{part.label}</span>
+            </div>
+            <div className="pl-5">
+              {isNumberedList ? (
+                <ol className="flex flex-col gap-0.5 list-none">
+                  {part.content.split(/(?=\d+\.\s)/).filter(s => s.trim()).map((item, i) => (
+                    <li key={i} className="text-xs leading-relaxed flex items-start gap-1.5">
+                      <span className="text-[10px] font-semibold text-primary/60 mt-0.5 shrink-0">{i + 1}.</span>
+                      <span>{item.replace(/^\d+\.\s*/, "").trim()}</span>
+                    </li>
+                  ))}
+                </ol>
+              ) : isCommaList ? (
+                <div className="flex flex-wrap gap-1">
+                  {part.content.split(",").map((item, i) => (
+                    <Badge key={i} variant="outline" className="text-[10px] font-normal">{item.trim()}</Badge>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs leading-relaxed">{part.content}</p>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 function McpServerLinkCard({ link, server, onUnlink, unlinking }: {
