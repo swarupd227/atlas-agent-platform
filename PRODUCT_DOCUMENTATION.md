@@ -264,9 +264,20 @@ The Agent Cockpit is a comprehensive dashboard for a single agent, organized int
 - Memory and context settings.
 - Tool assignments.
 
-**Runs Tab**
+**Runs & Traces Tab**
 - Paginated list of execution traces with status, duration, token usage, and cost.
 - Click-through to detailed Run Detail or Trace Detail views.
+- **Formatted Trace Output**: AI-generated output is rendered as structured, readable content rather than raw JSON blobs. The rendering engine handles three data formats:
+  - **Pure JSON**: Objects starting with `{` or `[` are parsed and displayed with severity badges, key findings lists, recommended actions, and structured record tables.
+  - **Mixed Content**: Plain text interspersed with markdown ` ```json ``` ` code blocks is split into prose paragraphs and extracted record tables.
+  - **Inline Embedded JSON**: Analysis strings containing embedded `processedRecords` JSON are automatically detected and extracted into sortable, filterable data tables.
+- **Structured Output Table**: Records extracted from agent output are displayed in a sortable, searchable table with CSV export, column-based sorting, and text filtering.
+
+**Agent Task Display**
+- **Formatted Task Prompts**: Agent task prompts are parsed by section labels (Role, Goal, Workflow Steps, Available Tools, KPIs, Constraints, etc.) and rendered with contextual icons and proper formatting.
+- Prose sections (Role, Goal, Expected Impact, Error Handling, Handoff Rules) render as readable paragraphs.
+- Short-item list sections (Available Tools, KPIs to Optimize, Constraints) render as badge pills for quick scanning.
+- Numbered workflow steps render as ordered lists with step indicators.
 
 **Evaluations Tab**
 - Linked evaluation suites with pass/fail rates.
@@ -337,6 +348,12 @@ Create and manage composite agent teams where multiple agents collaborate on com
   - **Member**: Contributing agent that handles specific subtasks.
   - **Observer**: Monitoring agent that logs activity without active participation.
 - Team blueprint with graph-based orchestration model.
+
+**Pipeline Record ID Continuity**
+- When worker agents in a pipeline produce structured records (e.g., `processedRecords`), those records are automatically enriched into the context passed to downstream workers.
+- Each worker's structured output is appended as a labeled `## STRUCTURED RECORDS FROM [Agent Name]` section with the full JSON record set, ensuring downstream agents can reference the exact same record IDs.
+- This guarantees logical traceability across pipeline stages: if Worker 1 (Lead Scoring) produces `LEAD-0001` through `LEAD-0020`, Worker 2 (Compliance Screening) and Worker 3 (Lead Routing) will reference those same IDs rather than generating their own.
+- The enrichment happens automatically in the pipeline runtime without requiring any configuration from the user.
 
 **Team Graph Editor**
 - Visual canvas for designing agent collaboration flows.
@@ -578,6 +595,14 @@ Deep-dive into execution traces:
 - Token usage breakdown.
 - Policy check results.
 - Cost attribution.
+- **Formatted Analysis Output**: The trace output section renders AI-generated analysis as structured content with:
+  - Analysis text displayed as readable prose paragraphs.
+  - Severity badges with color-coded indicators (Low/Medium/High/Critical).
+  - Key findings extracted and rendered as bulleted lists.
+  - Recommended actions displayed as actionable items.
+  - Citations shown as reference annotations.
+  - Embedded `processedRecords` extracted from analysis text and rendered as sortable, filterable structured tables with CSV export.
+  - Nested JSON code blocks within analysis strings are automatically parsed and their records surfaced alongside the text.
 
 ---
 
@@ -1232,4 +1257,4 @@ The platform uses a comprehensive PostgreSQL schema managed by Drizzle ORM. Key 
 
 ---
 
-*This documentation reflects the current state of the ALMP platform. Features and capabilities are subject to ongoing development and enhancement.*
+*This documentation reflects the current state of the ALMP platform as of February 2026. Features and capabilities are subject to ongoing development and enhancement.*
