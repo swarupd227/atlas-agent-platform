@@ -3,7 +3,7 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { useLocation, useSearch } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { AgentTemplate, OutcomeContract } from "@shared/schema";
+import type { AgentTemplate, OutcomeContract, KpiDefinition } from "@shared/schema";
 import { useIndustry, type IndustryId } from "@/components/industry-provider";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -665,6 +665,19 @@ export default function AgentWizard() {
   }, [chatMessages]);
 
   const [outcomeLockedFromUrl, setOutcomeLockedFromUrl] = useState(false);
+  const [fromOutcome, setFromOutcome] = useState(false);
+  const [outcomePrePopulated, setOutcomePrePopulated] = useState(false);
+
+  const outcomeIdForKpis = wizardState.outcomeId;
+  const { data: outcomeKpis } = useQuery<KpiDefinition[]>({
+    queryKey: ["/api/outcomes", outcomeIdForKpis, "kpis"],
+    queryFn: async () => {
+      const res = await fetch(`/api/outcomes/${outcomeIdForKpis}/kpis`);
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: !!outcomeIdForKpis && fromOutcome,
+  });
 
   useEffect(() => {
     if (industry?.id && wizardState.industryId !== industry.id) {
@@ -680,9 +693,14 @@ export default function AgentWizard() {
     const descParam = params.get("description");
     const riskParam = params.get("riskTier");
     const autonomyParam = params.get("autonomyMode");
+    const fromOutcomeParam = params.get("fromOutcome");
+    const industryIdParam = params.get("industryId");
     if (outcomeIdParam) {
       updateState({ outcomeId: outcomeIdParam });
       setOutcomeLockedFromUrl(true);
+    }
+    if (fromOutcomeParam === "true") {
+      setFromOutcome(true);
     }
     if (nameParam) updateState({ name: nameParam });
     else if (outcomeNameParam && !wizardState.name) {
@@ -691,7 +709,76 @@ export default function AgentWizard() {
     if (descParam) updateState({ description: descParam });
     if (riskParam) updateState({ riskTier: riskParam });
     if (autonomyParam) updateState({ autonomyMode: autonomyParam });
+    if (industryIdParam) updateState({ industryId: industryIdParam });
   }, [searchParams]);
+
+  useEffect(() => {
+    if (!fromOutcome || outcomePrePopulated || !outcomeKpis || !wizardState.outcomeId) return;
+    const linkedOutcome = outcomes?.find((o) => o.id === wizardState.outcomeId);
+    if (!linkedOutcome) return;
+
+    setOutcomePrePopulated(true);
+
+    const kpiSummary = outcomeKpis.map(k => `${k.name}: target ${k.target} ${k.unit}`).join("; ");
+    const currentDesc = wizardState.description;
+    const enrichedDesc = currentDesc
+      ? `${currentDesc}\n\nKPI Targets: ${kpiSummary}`
+      : `Agent for outcome "${linkedOutcome.name}". KPI Targets: ${kpiSummary}`;
+
+    const slaConfig = linkedOutcome.slaConfig as Record<string, unknown> | null;
+    const approvalGates = linkedOutcome.approvalGates as string[] | null;
+
+    const outcomeStopConditions: string[] = [];
+    const outcomeEscalationTriggers: string[] = [];
+
+    if (linkedOutcome.riskTier === "HIGH" || linkedOutcome.riskTier === "CRITICAL") {
+      outcomeStopConditions.push("Outcome KPI breach threshold exceeded");
+      outcomeEscalationTriggers.push("Compliance or regulatory constraint violation");
+    }
+    if (linkedOutcome.maxDriftPercent && linkedOutcome.maxDriftPercent < 15) {
+      outcomeStopConditions.push(`Drift exceeds ${linkedOutcome.maxDriftPercent}% from baseline`);
+    }
+    if (slaConfig && typeof slaConfig === "object") {
+      if ((slaConfig as any).successRate) {
+        outcomeEscalationTriggers.push(`Success rate drops below ${(slaConfig as any).successRate}%`);
+      }
+    }
+    if (Array.isArray(approvalGates) && approvalGates.length > 0) {
+      outcomeEscalationTriggers.push("Approval gate triggered — requires human review");
+    }
+
+    for (const kpi of outcomeKpis) {
+      if (kpi.slaThreshold != null) {
+        outcomeEscalationTriggers.push(`KPI "${kpi.name}" breaches SLA threshold (${kpi.slaThreshold} ${kpi.unit})`);
+      }
+    }
+
+    const existingStop = wizardState.guardrailsConfig.stopConditions;
+    const existingEscal = wizardState.guardrailsConfig.escalationTriggers;
+    const mergedStop = [...new Set([...existingStop, ...outcomeStopConditions])];
+    const mergedEscal = [...new Set([...existingEscal, ...outcomeEscalationTriggers])];
+
+    const kpiThresholds = outcomeKpis
+      .filter(k => k.slaThreshold != null)
+      .map(k => k.slaThreshold!);
+    const minThreshold = kpiThresholds.length > 0 ? Math.min(...kpiThresholds) : null;
+    const pilotThreshold = minThreshold != null ? Math.max(Math.round(minThreshold * 0.9), 50) : wizardState.evalSuiteConfig.pilotThreshold;
+    const prodThreshold = minThreshold != null ? Math.max(Math.round(minThreshold), 70) : wizardState.evalSuiteConfig.prodThreshold;
+
+    updateState({
+      description: enrichedDesc,
+      guardrailsConfig: {
+        ...wizardState.guardrailsConfig,
+        stopConditions: mergedStop,
+        escalationTriggers: mergedEscal,
+      },
+      evalSuiteConfig: {
+        ...wizardState.evalSuiteConfig,
+        pilotThreshold,
+        prodThreshold,
+      },
+    });
+  }, [fromOutcome, outcomeKpis, outcomes, wizardState.outcomeId, outcomePrePopulated]);
 
   useEffect(() => {
     if (outcomeLockedFromUrl && outcomes && wizardState.outcomeId && !wizardState.owner) {
@@ -1135,6 +1222,33 @@ export default function AgentWizard() {
         ))}
       </div>
 
+      {fromOutcome && wizardState.outcomeId && (() => {
+        const lo = outcomes?.find((o) => o.id === wizardState.outcomeId);
+        return lo ? (
+          <Card className="border-primary/30 bg-primary/5 mb-4" data-testid="banner-outcome-context">
+            <CardContent className="flex items-start gap-3 p-3">
+              <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0 mt-0.5">
+                <Target className="w-4 h-4 text-primary" />
+              </div>
+              <div className="flex flex-col gap-1 flex-1 min-w-0">
+                <p className="text-sm font-medium" data-testid="text-outcome-name">Creating agent for: {lo.name}</p>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Badge variant="outline" className="text-[10px]">Risk: {lo.riskTier}</Badge>
+                  {outcomeKpis && outcomeKpis.length > 0 && (
+                    <span className="text-[11px] text-muted-foreground" data-testid="text-outcome-kpi-count">
+                      {outcomeKpis.length} KPI{outcomeKpis.length !== 1 ? "s" : ""}: {outcomeKpis.slice(0, 3).map(k => `${k.name} (${k.target} ${k.unit})`).join(", ")}{outcomeKpis.length > 3 ? ` +${outcomeKpis.length - 3} more` : ""}
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Risk tier, guardrails, and evaluation thresholds have been pre-populated from the outcome contract.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        ) : null;
+      })()}
+
       <div className="min-h-[400px]">
         {currentStep === 0 && (
           <Step1IndustryDefine state={wizardState} updateState={updateState} outcomes={outcomes} outcomeLockedFromUrl={outcomeLockedFromUrl} domainGlossary={domainGlossary} ontologyConceptCount={ontologyConcepts?.length || 0} />
@@ -1177,6 +1291,8 @@ export default function AgentWizard() {
             domainGlossary={domainGlossary}
             glossaryConceptCount={ontologyConcepts?.length || 0}
             industryLabel={industry?.label || "Industry"}
+            fromOutcome={fromOutcome}
+            outcomeKpis={outcomeKpis}
           />
         )}
       </div>
@@ -4182,6 +4298,8 @@ function StepReview({
   domainGlossary,
   glossaryConceptCount,
   industryLabel,
+  fromOutcome,
+  outcomeKpis,
 }: {
   state: WizardState;
   onCreate: () => void;
@@ -4190,6 +4308,8 @@ function StepReview({
   domainGlossary?: string;
   glossaryConceptCount?: number;
   industryLabel?: string;
+  fromOutcome?: boolean;
+  outcomeKpis?: KpiDefinition[];
 }) {
   const linkedOutcome = outcomes?.find((o) => o.id === state.outcomeId);
 
@@ -4199,6 +4319,55 @@ function StepReview({
       <p className="text-sm text-muted-foreground">
         Review your agent configuration before creating.
       </p>
+
+      {fromOutcome && linkedOutcome && (
+        <Card className="border-primary/30 bg-primary/5" data-testid="review-outcome-requirements">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium flex items-center gap-2">
+              <Target className="w-4 h-4 text-primary" />
+              Outcome Requirements Inherited
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-2 text-sm">
+            <div className="flex justify-between gap-4">
+              <span className="text-muted-foreground">Linked Outcome</span>
+              <span className="font-medium">{linkedOutcome.name}</span>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span className="text-muted-foreground">Outcome Risk Tier</span>
+              <Badge variant="outline" className="text-[10px]">{linkedOutcome.riskTier}</Badge>
+            </div>
+            {outcomeKpis && outcomeKpis.length > 0 && (
+              <div className="flex flex-col gap-1">
+                <span className="text-muted-foreground">KPI Targets</span>
+                <div className="flex flex-wrap gap-1 mt-0.5">
+                  {outcomeKpis.map((k) => (
+                    <Badge key={k.id} variant="secondary" className="text-[10px] font-normal">
+                      {k.name}: {k.target} {k.unit}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+            {state.guardrailsConfig.stopConditions.length > 0 && (
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Stop Conditions</span>
+                <span className="font-medium text-right">{state.guardrailsConfig.stopConditions.length} inherited</span>
+              </div>
+            )}
+            {state.guardrailsConfig.escalationTriggers.length > 0 && (
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Escalation Triggers</span>
+                <span className="font-medium text-right">{state.guardrailsConfig.escalationTriggers.length} inherited</span>
+              </div>
+            )}
+            <div className="flex justify-between gap-4">
+              <span className="text-muted-foreground">Eval Thresholds</span>
+              <span className="font-medium">Pilot: {state.evalSuiteConfig.pilotThreshold}% | Prod: {state.evalSuiteConfig.prodThreshold}%</span>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader className="pb-3">

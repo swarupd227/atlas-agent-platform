@@ -1103,7 +1103,7 @@ export default function OutcomeDetail() {
             <RefreshCw className={`w-4 h-4 mr-1.5 ${recomputing ? "animate-spin" : ""}`} />
             {recomputing ? "Recomputing..." : "Recompute"}
           </Button>
-          <Link href={`/agents/wizard?outcomeId=${outcomeId}&outcomeName=${encodeURIComponent(outcome.name)}`}>
+          <Link href={`/agents/wizard?outcomeId=${outcomeId}&outcomeName=${encodeURIComponent(outcome.name)}&riskTier=${encodeURIComponent(outcome.riskTier)}${outcome.industryId ? `&industryId=${encodeURIComponent(outcome.industryId)}` : ""}&fromOutcome=true&description=${encodeURIComponent(`Agent created for outcome: ${outcome.name}. ${outcome.description || ""}`.trim())}`}>
             <Button variant="ghost" size="sm" className="text-muted-foreground" data-testid="button-create-agent-from-outcome">
               <Bot className="w-3.5 h-3.5 mr-1" /> Add Agent Manually
             </Button>
@@ -1260,18 +1260,25 @@ export default function OutcomeDetail() {
               <Bot className="w-5 h-5 text-blue-500" />
             </div>
             <div className="flex flex-col gap-0.5 flex-1 min-w-0">
-              <p className="text-sm font-medium" data-testid="text-awaiting-plan-title">Next step: Generate an Agent Development Plan</p>
+              <p className="text-sm font-medium" data-testid="text-awaiting-plan-title">Next step: Create agents for this outcome</p>
               <p className="text-xs text-muted-foreground">
-                AI will analyze your outcome contract and KPIs to propose an orchestrated multi-agent pipeline.
+                Use AI to generate a full multi-agent plan, or manually create a single agent with outcome constraints pre-loaded.
               </p>
             </div>
-            <Button
-              size="sm"
-              onClick={() => setActiveTab("agent-map")}
-              data-testid="button-go-to-agent-proposals"
-            >
-              <Sparkles className="w-3.5 h-3.5 mr-1.5" /> Generate Agent Plan
-            </Button>
+            <div className="flex items-center gap-2 shrink-0">
+              <Button
+                size="sm"
+                onClick={() => setActiveTab("agent-map")}
+                data-testid="button-go-to-agent-proposals"
+              >
+                <Sparkles className="w-3.5 h-3.5 mr-1.5" /> Use AI Plan
+              </Button>
+              <Link href={`/agents/wizard?outcomeId=${outcomeId}&outcomeName=${encodeURIComponent(outcome.name)}&riskTier=${encodeURIComponent(outcome.riskTier)}${outcome.industryId ? `&industryId=${encodeURIComponent(outcome.industryId)}` : ""}&fromOutcome=true&description=${encodeURIComponent(`Agent created for outcome: ${outcome.name}. ${outcome.description || ""}`.trim())}`}>
+                <Button size="sm" variant="outline" data-testid="button-create-agent-for-outcome">
+                  <Bot className="w-3.5 h-3.5 mr-1.5" /> Create Manually
+                </Button>
+              </Link>
+            </div>
           </CardContent>
         </Card>
       )}

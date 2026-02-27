@@ -34,6 +34,7 @@ The Nous Agent Orchestrator utilizes a modern web stack: React, Vite, Tailwind C
 - **Canary Deployment Console**: Graduated rollouts with industry-specific safety controls, KPI comparison (baseline vs. candidate), blast radius analysis, and auto-promotion/rollback rules.
 - **Autonomy Engine & Oversight Console**: Dynamic human oversight with risk dimension matrix, autonomy spectrum, expert intervention thresholds, and override calendar.
 - **Formatted Output Rendering**: Trace outputs and agent task prompts are rendered as structured, readable content (severity badges, key findings, recommended actions, structured record tables) instead of raw JSON blobs. Supports three formats: pure JSON, mixed text + markdown code blocks, and inline embedded JSON.
+- **Outcome-to-Agent Traceability**: When creating an agent from an outcome contract (via "Add Agent Manually" or "Create Manually" buttons), the wizard inherits structured outcome specifications: risk tier, KPI targets, compliance guardrails (stop conditions, escalation triggers from SLA thresholds and approval gates), and evaluation thresholds derived from KPI SLA values. An outcome context banner displays the linked outcome and inherited requirements throughout the wizard, with a full "Outcome Requirements Inherited" summary card in the review step.
 
 **Technical Implementations**:
 - **Adaptive Autonomy Engine**: Dynamic, context-aware human oversight with a risk dimension matrix, autonomy spectrum, and override calendar.
