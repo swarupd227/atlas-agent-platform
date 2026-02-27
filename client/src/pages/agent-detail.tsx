@@ -193,7 +193,10 @@ function FormattedTaskPrompt({ prompt }: { prompt: string }) {
         const sectionMeta = TASK_SECTION_LABELS[part.label.toLowerCase()] || { icon: ChevronRight, color: "text-muted-foreground" };
         const Icon = sectionMeta.icon;
         const isNumberedList = /\d+\.\s/.test(part.content);
-        const isCommaList = !isNumberedList && part.content.includes(",") && part.content.split(",").length >= 3;
+        const badgeSections = new Set(["available tools", "kpis to optimize", "constraints"]);
+        const commaItems = part.content.split(",").map(s => s.trim());
+        const avgItemLen = commaItems.reduce((sum, s) => sum + s.length, 0) / commaItems.length;
+        const isCommaList = !isNumberedList && commaItems.length >= 3 && avgItemLen < 50 && badgeSections.has(part.label.toLowerCase());
 
         return (
           <div key={idx} className="flex flex-col gap-1" data-testid={`task-section-${part.label.toLowerCase().replace(/\s+/g, "-")}`}>
