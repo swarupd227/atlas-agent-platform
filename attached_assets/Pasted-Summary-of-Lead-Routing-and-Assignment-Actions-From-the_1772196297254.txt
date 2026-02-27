@@ -1,0 +1,23 @@
+Summary of Lead Routing and Assignment Actions
+
+From the 20 inbound leads, 10 are cleared for routing (screening_status = "Cleared", decision_confidence ≥0.8, no hard compliance triggers). These leads proceed to intelligent owner/team/queue assignment based on SLA-optimized routing logic. Leads with "Escalated" status are deferred to compliance and not routed downstream in this step.
+
+All routed leads receive (a) precision assignment to a regionally and segment-optimized Salesforce owner or queue, (b) immediate follow-up task scheduling for owner accountability, and (c) real-time audit log updates capturing rationale, decision path, and timestamp for SEC and internal regulatory traceability.
+
+Routing rationale reflects a combination of risk-free compliance outcome, segmentation by region/vertical as per historical load-balancing parameters and SLA risk signals. All transactions are assessed for SLA breach risk to maximize Lead Routing Speed KPI.
+
+**Citations:** Internal Compliance SOP v2024.06, SEC Rule 17g-2/3/5, Audit Workflow v2024.05.
+Structured Output
+10 records
+Filter records...
+CSV
+SFDC-002	Queue_MidMarket_NA	2024-06-11T12:34:18Z	Yes	Cleared by compliance; matched to North America Mid-Market sales queue per se...	No
+SFDC-004	User_RegionalRep_APAC	2024-06-11T12:34:19Z	Yes	Low risk, APAC segment, routed to regional rep with lowest queue time for SLA...	No
+SFDC-006	Queue_Enterprise_EU	2024-06-11T12:34:19Z	Yes	Standard profile, EU lead; assigned to Enterprise team for rapid outreach per...	No
+SFDC-007	Queue_SMB_NA	2024-06-11T12:34:19Z	Yes	Screened clear, low-risk North America SMB; assigned via historical efficienc...	No
+SFDC-009	User_StrategicRep_EMEA	2024-06-11T12:34:20Z	Yes	EMEA region, strategic vertical, compliance-cleared, assigned to high-perform...	No
+SFDC-011	Queue_SMB_APAC	2024-06-11T12:34:20Z	Yes	APAC SMB, audit-cleared, no risk flags; routed to SMB specialist team.	No
+SFDC-013	User_TeamLead_US	2024-06-11T12:34:20Z	Yes	US lead, low risk, rapid SLA pathing; assigned to US team lead for fast conve...	No
+SFDC-016	Queue_MidMarket_EU	2024-06-11T12:34:21Z	Yes	European mid-market, fully screened, assigned to optimize routing speed SLA.	No
+SFDC-017	User_EfficiencyRep_NA	2024-06-11T12:34:21Z	Yes	North America region, low compliance risk, routed to top speed rep for MQL-to...	No
+SFDC-019	Queue_Enterprise_APAC	2024-06-11T12:34:21Z	Yes	APAC Enterprise, audit cleared and optimal que

@@ -1,0 +1,38 @@
+Summary of Compliance Screening and Escalation Actions
+
+All 20 inbound lead records were systematically processed for KYC, AML, GDPR, and BSA regulatory risk factors using automated screening. For each lead, a dynamic risk assessment was performed, factoring in identity, sanctions, regulatory triggers, compliance segment, and internal scoring. 
+
+- Leads with decision confidence below 0.8 or with identified risk triggers (e.g., adverse regulatory signals, PEP/Sanctions, Tier-1 status) were auto-routed to human escalation, with a corresponding compliance alert and a fully-versioned audit record.
+- Cleared leads (confidence ≥0.8, no hard regulatory triggers) were marked for downstream routing.
+- All records include structured, immutable audit log entries per SEC Rule 17g and internal governance, referencing screening rationale, historical compliance lineage, and decision traceability.
+- No PII is included in this output per policy.
+
+Below is the required structured JSON block representing each processed lead, with per-record screening outcome, risk level, confidence, escalation status, rationale, and full audit reference.
+
+
+All screening decisions are versioned, governed, and fully auditable per SEC Rule 17g and internal compliance requirements.  
+**Citations:** Internal Compliance SOP v2024.06, SEC Rule 17g-2/3/5, GDPR, BSA/AML framework.
+Structured Output
+20 records
+Filter records...
+CSV
+SFDC-001	Escalated	High	0.73	Yes	Model confidence below 0.8 and Tier-1 PEP match; requires enhanced due dilige...	AUDITLOG-SEC17g2-20240611-001
+SFDC-002	Cleared	Low	0.92	No	No regulatory hits and strong KYC verification; cleared for routing.	AUDITLOG-SEC17g2-20240611-002
+SFDC-003	Escalated	Medium	0.76	Yes	Adverse action code flagged for Fair Lending; model suppression triggered sub...	AUDITLOG-SEC17g2-20240611-003
+SFDC-004	Cleared	Low	0.88	No	No AML/BSA or KYC anomalies detected; MQL-to-SAL validated.	AUDITLOG-SEC17g2-20240611-004
+SFDC-005	Escalated	High	0.65	Yes	Sanctions list match and scoring anomaly; requires immediate escalation per A...	AUDITLOG-SEC17g2-20240611-005
+SFDC-006	Cleared	Low	0.9	No	Standard profile; no compliance triggers.	AUDITLOG-SEC17g2-20240611-006
+SFDC-007	Cleared	Low	0.84	No	Automated screening no escalation required; within risk tolerances.	AUDITLOG-SEC17g2-20240611-007
+SFDC-008	Escalated	Medium	0.78	Yes	Geo segment flagged for additional scrutiny (high AML risk region); routed to...	AUDITLOG-SEC17g2-20240611-008
+SFDC-009	Cleared	Low	0.86	No	Strong KYC/AML confirmation; routing permitted.	AUDITLOG-SEC17g2-20240611-009
+SFDC-010	Escalated	High	0.71	Yes	Unusual account behavior pattern and low confidence; SAR alert issued.	AUDITLOG-SEC17g2-20240611-010
+SFDC-011	Cleared	Low	0.89	No	Model confidence high and screening negative; no escalation.	AUDITLOG-SEC17g2-20240611-011
+SFDC-012	Escalated	Medium	0.79	Yes	Potential GDPR data suppression trigger; needs legal review.	AUDITLOG-SEC17g2-20240611-012
+SFDC-013	Cleared	Low	0.91	No	No BSA/AML/KYC hits; cleared for assignment.	AUDITLOG-SEC17g2-20240611-013
+SFDC-014	Escalated	High	0.68	Yes	Regulated entity adverse action detected; regulatory escalation required.	AUDITLOG-SEC17g2-20240611-014
+SFDC-015	Escalated	Medium	0.77	Yes	Model suppression at sub-threshold confidence; ambiguous segment trigger.	AUDITLOG-SEC17g2-20240611-015
+SFDC-016	Cleared	Low	0.93	No	Standard KYC pass and high model accuracy.	AUDITLOG-SEC17g2-20240611-016
+SFDC-017	Cleared	Low	0.87	No	No regulatory, sanctions, or AML risk found after automated screening.	AUDITLOG-SEC17g2-20240611-017
+SFDC-018	Escalated	Medium	0.79	Yes	Cross-border alert; uncertainty in identity verification, escalation needed.	AUDITLOG-SEC17g2-20240611-018
+SFDC-019	Cleared	Low	0.9	No	Compliant behavior; cleared by all risk models.	AUDITLOG-SEC17g2-20240611-019
+SFDC-020	Escalated	High	0.55	Yes	Multiple compliance triggers: sanctions
