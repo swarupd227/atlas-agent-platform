@@ -231,6 +231,113 @@ function FormattedTaskPrompt({ prompt }: { prompt: string }) {
   );
 }
 
+function FormattedTraceOutput({ output }: { output: string }) {
+  let parsed: any = null;
+  const trimmed = output.trimStart();
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try { parsed = JSON.parse(trimmed); } catch {}
+  }
+
+  if (!parsed) {
+    return <p className="text-xs bg-muted/30 p-2 rounded-md whitespace-pre-wrap">{output}</p>;
+  }
+
+  const analysisText = parsed.summary || parsed.analysis;
+  const severity = parsed.severity;
+  const riskFactors = Array.isArray(parsed.riskFactors) ? parsed.riskFactors : [];
+  const findings = Array.isArray(parsed.findings) ? parsed.findings : [];
+  const recommendedActions = Array.isArray(parsed.recommendedActions) ? parsed.recommendedActions : [];
+  const structuredRecords = parsed.structuredOutput || parsed.processedRecords;
+
+  const hasStructuredFields = severity || riskFactors.length > 0 || findings.length > 0 || recommendedActions.length > 0;
+
+  if (!analysisText && !hasStructuredFields && !Array.isArray(structuredRecords)) {
+    return <p className="text-xs bg-muted/30 p-2 rounded-md whitespace-pre-wrap">{output}</p>;
+  }
+
+  return (
+    <div className="flex flex-col gap-2" data-testid="formatted-trace-output">
+      {analysisText && (
+        <div className="p-2 rounded-md bg-muted/30 text-xs leading-relaxed whitespace-pre-wrap">
+          {typeof analysisText === "string" ? analysisText : JSON.stringify(analysisText, null, 2)}
+        </div>
+      )}
+
+      {(severity || riskFactors.length > 0) && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {severity && (
+            <Badge variant="outline" className={`text-[10px] ${
+              severity === "low" ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" :
+              severity === "medium" ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20" :
+              severity === "high" ? "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20" : ""
+            }`}>
+              <Shield className="w-3 h-3 mr-0.5" />
+              Severity: {severity.charAt(0).toUpperCase() + severity.slice(1)}
+            </Badge>
+          )}
+          {riskFactors.map((rf: string, i: number) => (
+            <Badge key={i} variant="outline" className="text-[10px] bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20">{rf}</Badge>
+          ))}
+        </div>
+      )}
+
+      {findings.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Key Findings</span>
+          <ul className="flex flex-col gap-0.5 pl-1">
+            {findings.map((f: string, i: number) => (
+              <li key={i} className="flex items-start gap-1.5 text-xs">
+                <CheckCircle className="w-3 h-3 mt-0.5 text-cyan-500 shrink-0" />
+                <span>{f}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {recommendedActions.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Recommended Actions</span>
+          <ul className="flex flex-col gap-0.5 pl-1">
+            {recommendedActions.map((a: string, i: number) => (
+              <li key={i} className="flex items-start gap-1.5 text-xs">
+                <ChevronRight className="w-3 h-3 mt-0.5 text-emerald-500 shrink-0" />
+                <span>{a}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {Array.isArray(structuredRecords) && structuredRecords.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Processed Records ({structuredRecords.length})</span>
+          <div className="max-h-[300px] overflow-y-auto rounded-md border">
+            <table className="w-full text-[11px]">
+              <thead className="bg-muted/50 sticky top-0">
+                <tr>
+                  {Object.keys(structuredRecords[0]).map(key => (
+                    <th key={key} className="px-2 py-1 text-left font-medium text-muted-foreground">{key}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {structuredRecords.map((record: any, ri: number) => (
+                  <tr key={ri} className="border-t border-muted/30">
+                    {Object.values(record).map((val: any, vi: number) => (
+                      <td key={vi} className="px-2 py-1 max-w-[200px] truncate">{typeof val === "boolean" ? (val ? "Yes" : "No") : String(val ?? "")}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function McpServerLinkCard({ link, server, onUnlink, unlinking }: {
   link: AgentMcpServer;
   server?: McpServer;
@@ -1633,7 +1740,7 @@ function AgentDetailInner() {
                         {trace.outputSummary && (
                           <div className="flex flex-col gap-1">
                             <span className="text-[11px] font-medium text-muted-foreground">Output</span>
-                            <p className="text-xs bg-muted/30 p-2 rounded-md">{trace.outputSummary}</p>
+                            <FormattedTraceOutput output={trace.outputSummary} />
                           </div>
                         )}
 
