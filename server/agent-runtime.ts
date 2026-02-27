@@ -910,7 +910,15 @@ async function executeWorkerAgent(
     const workerAnalysis = result.summary.analysis || {};
     const structuredOutput = workerAnalysis.structuredOutput || workerAnalysis.processedRecords || null;
     const analysisStep = result.steps.find((s: any) => s.type === "ai_analysis" && s.status === "completed");
-    const outputText = analysisStep?.output?.summary || JSON.stringify(result.summary.analysis || {});
+    const analysisSummary = analysisStep?.output?.summary || analysisStep?.output?.analysis;
+    const outputText = typeof analysisSummary === "string" && analysisSummary.length > 0
+      ? analysisSummary
+      : JSON.stringify(result.summary.analysis || {});
+
+    let enrichedOutput = outputText;
+    if (Array.isArray(structuredOutput) && structuredOutput.length > 0) {
+      enrichedOutput = `${outputText}\n\n## STRUCTURED RECORDS FROM ${workerAgent.name} (${structuredOutput.length} records)\nThese are the exact record IDs and details processed by this agent. Downstream agents MUST reference these same record IDs for traceability.\n\`\`\`json\n${JSON.stringify({ processedRecords: structuredOutput }, null, 2)}\n\`\`\``;
+    }
 
     return {
       agentId: workerId,
@@ -935,7 +943,7 @@ async function executeWorkerAgent(
         },
         workerSteps: result.steps,
       },
-      output: outputText,
+      output: enrichedOutput,
       success: result.success,
       startTime,
       endTime,
