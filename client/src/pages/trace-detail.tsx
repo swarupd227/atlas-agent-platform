@@ -130,6 +130,51 @@ function getSeverityStyle(severity: string): string {
   }
 }
 
+function extractEmbeddedRecords(text: string): { textContent: string; records: any[] | null } {
+  const codeBlockRegex = /```(?:json)?\s*\n?([\s\S]*?)```/g;
+  let match: RegExpExecArray | null;
+  const jsonBlocks: any[] = [];
+  let cleaned = text;
+
+  while ((match = codeBlockRegex.exec(text)) !== null) {
+    try {
+      const blockParsed = JSON.parse(match[1].trim());
+      jsonBlocks.push(blockParsed);
+      cleaned = cleaned.replace(match[0], "");
+    } catch {}
+  }
+
+  if (jsonBlocks.length === 0) {
+    const inlineJsonRegex = /(\{[\s\S]*"processedRecords"\s*:\s*\[[\s\S]*\][\s\S]*\})/;
+    const inlineMatch = text.match(inlineJsonRegex);
+    if (inlineMatch) {
+      try {
+        const inlineParsed = JSON.parse(inlineMatch[1]);
+        jsonBlocks.push(inlineParsed);
+        cleaned = cleaned.replace(inlineMatch[0], "");
+      } catch {}
+    }
+  }
+
+  let records: any[] | null = null;
+  let hasAnalysisFields = false;
+  for (const block of jsonBlocks) {
+    const recs = block.processedRecords || block.structuredOutput || (Array.isArray(block) ? block : null);
+    if (Array.isArray(recs) && recs.length > 0) {
+      records = recs;
+    }
+    if (block.summary || block.analysis || block.severity || block.findings || block.recommendedActions) {
+      hasAnalysisFields = true;
+    }
+  }
+
+  if (jsonBlocks.length > 0 && !records && !hasAnalysisFields) {
+    cleaned = text;
+  }
+
+  return { textContent: cleaned.trim(), records };
+}
+
 function FormattedAnalysisOutput({ data, compact = false }: { data: any; compact?: boolean }) {
   let parsed: any = null;
 
@@ -139,6 +184,19 @@ function FormattedAnalysisOutput({ data, compact = false }: { data: any; compact
       try { parsed = JSON.parse(trimmed); } catch {}
     }
     if (!parsed) {
+      const { textContent, records } = extractEmbeddedRecords(data);
+      if (records && records.length > 0) {
+        return (
+          <div className="flex flex-col gap-3" data-testid="formatted-analysis-output">
+            {textContent && (
+              <div className="p-3 rounded-md bg-muted/40 text-xs leading-relaxed whitespace-pre-wrap" data-testid="output-text">
+                {textContent}
+              </div>
+            )}
+            <StructuredOutputTable records={records} />
+          </div>
+        );
+      }
       return (
         <div className="p-3 rounded-md bg-muted/40 text-xs leading-relaxed whitespace-pre-wrap" data-testid="output-text">
           {data}

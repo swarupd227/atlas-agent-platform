@@ -231,15 +231,126 @@ function FormattedTaskPrompt({ prompt }: { prompt: string }) {
   );
 }
 
-function FormattedTraceOutput({ output }: { output: string }) {
-  let parsed: any = null;
-  const trimmed = output.trimStart();
+function extractMixedContent(text: string): { textParts: string[]; embeddedRecords: any[] | null; parsed: any | null } {
+  const trimmed = text.trimStart();
   if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-    try { parsed = JSON.parse(trimmed); } catch {}
+    try {
+      const p = JSON.parse(trimmed);
+      return { textParts: [], embeddedRecords: null, parsed: p };
+    } catch {}
   }
 
-  if (!parsed) {
+  const codeBlockRegex = /```(?:json)?\s*\n?([\s\S]*?)```/g;
+  let match: RegExpExecArray | null;
+  const jsonBlocks: any[] = [];
+  let cleanedText = text;
+
+  while ((match = codeBlockRegex.exec(text)) !== null) {
+    try {
+      const blockParsed = JSON.parse(match[1].trim());
+      jsonBlocks.push(blockParsed);
+      cleanedText = cleanedText.replace(match[0], "");
+    } catch {}
+  }
+
+  if (jsonBlocks.length === 0) {
+    const inlineJsonRegex = /(\{[\s\S]*"processedRecords"\s*:\s*\[[\s\S]*\][\s\S]*\})/;
+    const inlineMatch = text.match(inlineJsonRegex);
+    if (inlineMatch) {
+      try {
+        const inlineParsed = JSON.parse(inlineMatch[1]);
+        jsonBlocks.push(inlineParsed);
+        cleanedText = cleanedText.replace(inlineMatch[0], "");
+      } catch {}
+    }
+  }
+
+  let records: any[] | null = null;
+  let embeddedParsed: any | null = null;
+  for (const block of jsonBlocks) {
+    const recs = block.processedRecords || block.structuredOutput || (Array.isArray(block) ? block : null);
+    if (Array.isArray(recs) && recs.length > 0) {
+      records = recs;
+    }
+    if (block.summary || block.analysis || block.severity || block.findings || block.recommendedActions) {
+      embeddedParsed = block;
+    }
+  }
+
+  if (embeddedParsed && !records) {
+    const recs = embeddedParsed.processedRecords || embeddedParsed.structuredOutput;
+    if (Array.isArray(recs) && recs.length > 0) records = recs;
+    return { textParts: [], embeddedRecords: records, parsed: embeddedParsed };
+  }
+
+  if (jsonBlocks.length > 0 && !records && !embeddedParsed) {
+    cleanedText = text;
+  }
+
+  const textParts = cleanedText.split(/\n\n+/).map(s => s.trim()).filter(s => s.length > 0);
+  return { textParts, embeddedRecords: records, parsed: null };
+}
+
+function RecordsTable({ records }: { records: any[] }) {
+  const keys = Object.keys(records[0]);
+  return (
+    <div className="max-h-[300px] overflow-y-auto rounded-md border">
+      <table className="w-full text-[11px]">
+        <thead className="bg-muted/50 sticky top-0">
+          <tr>
+            {keys.map(key => (
+              <th key={key} className="px-2 py-1.5 text-left font-medium text-muted-foreground whitespace-nowrap">{key.replace(/_/g, " ")}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {records.map((record: any, ri: number) => (
+            <tr key={ri} className="border-t border-muted/30 hover:bg-muted/20">
+              {keys.map((key) => {
+                const val = record[key];
+                return (
+                  <td key={key} className="px-2 py-1.5 max-w-[250px]">
+                    {typeof val === "boolean" ? (
+                      <Badge variant="outline" className={`text-[9px] ${val ? "bg-emerald-500/15 text-emerald-600 border-emerald-500/20" : "bg-red-500/15 text-red-600 border-red-500/20"}`}>
+                        {val ? "Yes" : "No"}
+                      </Badge>
+                    ) : (
+                      <span className="line-clamp-2">{String(val ?? "")}</span>
+                    )}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function FormattedTraceOutput({ output }: { output: string }) {
+  const { textParts, embeddedRecords, parsed } = extractMixedContent(output);
+
+  if (!parsed && textParts.length === 0 && !embeddedRecords) {
     return <p className="text-xs bg-muted/30 p-2 rounded-md whitespace-pre-wrap">{output}</p>;
+  }
+
+  if (textParts.length > 0 || embeddedRecords) {
+    return (
+      <div className="flex flex-col gap-2" data-testid="formatted-trace-output">
+        {textParts.length > 0 && (
+          <div className="p-2 rounded-md bg-muted/30 text-xs leading-relaxed whitespace-pre-wrap">
+            {textParts.join("\n\n")}
+          </div>
+        )}
+        {embeddedRecords && embeddedRecords.length > 0 && (
+          <div className="flex flex-col gap-1">
+            <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Processed Records ({embeddedRecords.length})</span>
+            <RecordsTable records={embeddedRecords} />
+          </div>
+        )}
+      </div>
+    );
   }
 
   const analysisText = parsed.summary || parsed.analysis;
@@ -312,26 +423,7 @@ function FormattedTraceOutput({ output }: { output: string }) {
       {Array.isArray(structuredRecords) && structuredRecords.length > 0 && (
         <div className="flex flex-col gap-1">
           <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Processed Records ({structuredRecords.length})</span>
-          <div className="max-h-[300px] overflow-y-auto rounded-md border">
-            <table className="w-full text-[11px]">
-              <thead className="bg-muted/50 sticky top-0">
-                <tr>
-                  {Object.keys(structuredRecords[0]).map(key => (
-                    <th key={key} className="px-2 py-1 text-left font-medium text-muted-foreground">{key}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {structuredRecords.map((record: any, ri: number) => (
-                  <tr key={ri} className="border-t border-muted/30">
-                    {Object.values(record).map((val: any, vi: number) => (
-                      <td key={vi} className="px-2 py-1 max-w-[200px] truncate">{typeof val === "boolean" ? (val ? "Yes" : "No") : String(val ?? "")}</td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <RecordsTable records={structuredRecords} />
         </div>
       )}
     </div>
