@@ -209,17 +209,27 @@ function FormattedAnalysisOutput({ data, compact = false }: { data: any; compact
     return <p className="text-xs text-muted-foreground">No output recorded</p>;
   }
 
-  const analysisText = parsed.summary || parsed.analysis;
+  const rawAnalysis = parsed.summary || parsed.analysis;
   const severity = parsed.severity;
   const riskFactors = Array.isArray(parsed.riskFactors) ? parsed.riskFactors : [];
   const findings = Array.isArray(parsed.findings) ? parsed.findings : [];
   const recommendedActions = Array.isArray(parsed.recommendedActions) ? parsed.recommendedActions : [];
-  const structuredRecords = parsed.structuredOutput || parsed.processedRecords;
+  let structuredRecords = parsed.structuredOutput || parsed.processedRecords;
   const citations = parsed.citations;
+
+  let analysisText = rawAnalysis;
+  let inlineRecords: any[] | null = null;
+  if (typeof rawAnalysis === "string" && (rawAnalysis.includes("```") || rawAnalysis.includes('"processedRecords"'))) {
+    const { textContent, records } = extractEmbeddedRecords(rawAnalysis);
+    analysisText = textContent || rawAnalysis;
+    if (records && records.length > 0) inlineRecords = records;
+  }
+
+  const allRecords = Array.isArray(structuredRecords) && structuredRecords.length > 0 ? structuredRecords : inlineRecords;
 
   const hasStructuredFields = severity || riskFactors.length > 0 || findings.length > 0 || recommendedActions.length > 0;
 
-  if (!analysisText && !hasStructuredFields && !Array.isArray(structuredRecords)) {
+  if (!analysisText && !hasStructuredFields && !allRecords) {
     return (
       <div className="p-3 rounded-md bg-muted/40 text-xs leading-relaxed whitespace-pre-wrap" data-testid="output-text">
         {typeof data === "string" ? data : JSON.stringify(data, null, 2)}
@@ -288,8 +298,8 @@ function FormattedAnalysisOutput({ data, compact = false }: { data: any; compact
         </div>
       )}
 
-      {Array.isArray(structuredRecords) && structuredRecords.length > 0 && (
-        <StructuredOutputTable records={structuredRecords} />
+      {Array.isArray(allRecords) && allRecords.length > 0 && (
+        <StructuredOutputTable records={allRecords} />
       )}
     </div>
   );

@@ -291,6 +291,37 @@ function extractMixedContent(text: string): { textParts: string[]; embeddedRecor
   return { textParts, embeddedRecords: records, parsed: null };
 }
 
+function extractEmbeddedFromText(text: string): { textContent: string; records: any[] | null } {
+  const codeBlockRegex = /```(?:json)?\s*\n?([\s\S]*?)```/g;
+  let match: RegExpExecArray | null;
+  let cleaned = text;
+  let records: any[] | null = null;
+
+  while ((match = codeBlockRegex.exec(text)) !== null) {
+    try {
+      const blockParsed = JSON.parse(match[1].trim());
+      const recs = blockParsed.processedRecords || blockParsed.structuredOutput || (Array.isArray(blockParsed) ? blockParsed : null);
+      if (Array.isArray(recs) && recs.length > 0) records = recs;
+      cleaned = cleaned.replace(match[0], "");
+    } catch {}
+  }
+
+  if (!records) {
+    const inlineJsonRegex = /(\{[\s\S]*"processedRecords"\s*:\s*\[[\s\S]*\][\s\S]*\})/;
+    const inlineMatch = text.match(inlineJsonRegex);
+    if (inlineMatch) {
+      try {
+        const inlineParsed = JSON.parse(inlineMatch[1]);
+        const recs = inlineParsed.processedRecords || inlineParsed.structuredOutput;
+        if (Array.isArray(recs) && recs.length > 0) records = recs;
+        cleaned = cleaned.replace(inlineMatch[0], "");
+      } catch {}
+    }
+  }
+
+  return { textContent: cleaned.trim(), records };
+}
+
 function RecordsTable({ records }: { records: any[] }) {
   const keys = Object.keys(records[0]);
   return (
@@ -353,16 +384,26 @@ function FormattedTraceOutput({ output }: { output: string }) {
     );
   }
 
-  const analysisText = parsed.summary || parsed.analysis;
+  const rawAnalysis = parsed.summary || parsed.analysis;
   const severity = parsed.severity;
   const riskFactors = Array.isArray(parsed.riskFactors) ? parsed.riskFactors : [];
   const findings = Array.isArray(parsed.findings) ? parsed.findings : [];
   const recommendedActions = Array.isArray(parsed.recommendedActions) ? parsed.recommendedActions : [];
-  const structuredRecords = parsed.structuredOutput || parsed.processedRecords;
+  let structuredRecords = parsed.structuredOutput || parsed.processedRecords;
+
+  let analysisText = rawAnalysis;
+  let inlineRecords: any[] | null = null;
+  if (typeof rawAnalysis === "string" && (rawAnalysis.includes("```") || rawAnalysis.includes('"processedRecords"'))) {
+    const { textContent, records } = extractEmbeddedFromText(rawAnalysis);
+    analysisText = textContent || rawAnalysis;
+    if (records && records.length > 0) inlineRecords = records;
+  }
+
+  const allRecords = Array.isArray(structuredRecords) && structuredRecords.length > 0 ? structuredRecords : inlineRecords;
 
   const hasStructuredFields = severity || riskFactors.length > 0 || findings.length > 0 || recommendedActions.length > 0;
 
-  if (!analysisText && !hasStructuredFields && !Array.isArray(structuredRecords)) {
+  if (!analysisText && !hasStructuredFields && !allRecords) {
     return <p className="text-xs bg-muted/30 p-2 rounded-md whitespace-pre-wrap">{output}</p>;
   }
 
@@ -420,10 +461,10 @@ function FormattedTraceOutput({ output }: { output: string }) {
         </div>
       )}
 
-      {Array.isArray(structuredRecords) && structuredRecords.length > 0 && (
+      {Array.isArray(allRecords) && allRecords.length > 0 && (
         <div className="flex flex-col gap-1">
-          <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Processed Records ({structuredRecords.length})</span>
-          <RecordsTable records={structuredRecords} />
+          <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Processed Records ({allRecords.length})</span>
+          <RecordsTable records={allRecords} />
         </div>
       )}
     </div>
