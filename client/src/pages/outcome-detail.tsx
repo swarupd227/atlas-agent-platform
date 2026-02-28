@@ -658,6 +658,33 @@ export default function OutcomeDetail() {
     enabled: !!outcomeId,
   });
 
+  const { data: killChainAlerts } = useQuery<{
+    alerts: Array<{
+      alertId: string;
+      severity: string;
+      agentId: string;
+      agentName: string;
+      driftMetric: string;
+      driftPercent: number;
+      driftSeverity: string;
+      suiteName: string;
+      threatenedKpis: Array<{
+        kpiName: string;
+        currentValue: number;
+        slaThreshold: number;
+        headroom: number;
+        unit: string;
+      }>;
+      recommendedAction: string;
+      detectedAt: string;
+    }>;
+    summary: { critical: number; warning: number; watch: number; total: number };
+  }>({
+    queryKey: ["/api/outcomes", outcomeId, "kill-chain-alerts"],
+    enabled: !!outcomeId,
+    refetchInterval: 60000,
+  });
+
   const { data: financialLedger } = useQuery<{
     pipeline: Array<{
       stage: string;
@@ -1162,8 +1189,14 @@ export default function OutcomeDetail() {
           title="KPIs Tracked"
           value={kpis?.length || 0}
           icon={BarChart3}
-          subtitle={!kpis?.length ? "Define KPIs below" : `${breachCount} breaching SLA`}
-          variant={breachCount > 0 ? "danger" : "default"}
+          subtitle={!kpis?.length ? "Define KPIs below" : (() => {
+            const driftThreatenedCount = killChainAlerts?.alerts ? new Set(killChainAlerts.alerts.flatMap(a => a.threatenedKpis.map(t => t.kpiName))).size : 0;
+            const parts: string[] = [];
+            if (breachCount > 0) parts.push(`${breachCount} breaching SLA`);
+            if (driftThreatenedCount > 0) parts.push(`${driftThreatenedCount} threatened by drift`);
+            return parts.length > 0 ? parts.join(", ") : "All within SLA";
+          })()}
+          variant={breachCount > 0 ? "danger" : (killChainAlerts?.summary?.critical || 0) > 0 ? "danger" : (killChainAlerts?.summary?.warning || 0) > 0 ? "warning" : "default"}
           testId="stat-kpis-count"
           tooltip="Number of Key Performance Indicators being monitored for this outcome."
         />
@@ -1171,8 +1204,13 @@ export default function OutcomeDetail() {
           title="Bound Agents"
           value={boundAgents.length}
           icon={Bot}
-          subtitle={boundAgents.length === 0 ? "Assign agents via Create Agent" : agentContributions?.summary?.underperformingCount ? `${agentContributions.summary.underperformingCount} underperforming` : "All healthy"}
-          variant={boundAgents.length === 0 ? "default" : agentContributions?.summary?.underperformingCount ? "warning" : "success"}
+          subtitle={boundAgents.length === 0 ? "Assign agents via Create Agent" : (() => {
+            const driftingCount = killChainAlerts?.alerts ? new Set(killChainAlerts.alerts.map(a => a.agentId)).size : 0;
+            if (driftingCount > 0) return `${driftingCount} drifting`;
+            if (agentContributions?.summary?.underperformingCount) return `${agentContributions.summary.underperformingCount} underperforming`;
+            return "All healthy";
+          })()}
+          variant={boundAgents.length === 0 ? "default" : (killChainAlerts?.summary?.critical || 0) > 0 ? "danger" : (killChainAlerts?.summary?.warning || 0) > 0 ? "warning" : agentContributions?.summary?.underperformingCount ? "warning" : "success"}
           testId="stat-bound-agents"
           tooltip="Agents assigned to deliver this outcome. Use the Agent Development Plan to create a team."
         />
@@ -1195,6 +1233,90 @@ export default function OutcomeDetail() {
           tooltip="Maximum acceptable risk level. Agents auto-pause if risk exceeds this threshold."
         />
       </div>
+
+      {killChainAlerts && killChainAlerts.alerts.length > 0 && killChainAlerts.alerts.some(a => a.severity === "critical" || a.severity === "warning") && (
+        <Card
+          className={`border ${killChainAlerts.summary.critical > 0 ? "border-destructive/50 bg-destructive/5" : "border-amber-500/50 bg-amber-500/5"}`}
+          data-testid="banner-kill-chain-alerts"
+        >
+          <CardContent className="p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${killChainAlerts.summary.critical > 0 ? "bg-destructive/10" : "bg-amber-500/10"}`}>
+                  <Zap className={`w-4 h-4 ${killChainAlerts.summary.critical > 0 ? "text-destructive" : "text-amber-500"}`} />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold flex items-center gap-2" data-testid="text-kill-chain-title">
+                    Kill-Chain Alerts
+                    {killChainAlerts.summary.critical > 0 && (
+                      <Badge variant="destructive" className="text-[9px]" data-testid="badge-critical-count">{killChainAlerts.summary.critical} critical</Badge>
+                    )}
+                    {killChainAlerts.summary.warning > 0 && (
+                      <Badge variant="outline" className="text-[9px] border-amber-500/50 text-amber-600" data-testid="badge-warning-count">{killChainAlerts.summary.warning} warning</Badge>
+                    )}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">Agent drift detected that threatens outcome SLA — immediate attention recommended</p>
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setActiveTab("risk-remediation")}
+                data-testid="button-investigate-alerts"
+              >
+                <Search className="w-3 h-3 mr-1" /> Investigate
+              </Button>
+            </div>
+
+            <div className="space-y-2">
+              {killChainAlerts.alerts
+                .filter(a => a.severity === "critical" || a.severity === "warning")
+                .map((alert) => (
+                <div
+                  key={alert.alertId}
+                  className={`flex items-start gap-3 p-2.5 rounded-md border ${alert.severity === "critical" ? "border-destructive/30 bg-destructive/5" : "border-amber-500/20 bg-amber-500/5"}`}
+                  data-testid={`alert-row-${alert.alertId}`}
+                >
+                  <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${alert.severity === "critical" ? "bg-destructive/15 text-destructive" : "bg-amber-500/15 text-amber-600"}`}>
+                    <AlertTriangle className="w-3 h-3" />
+                  </div>
+                  <div className="flex-1 min-w-0 space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Link href={`/agents/${alert.agentId}`} data-testid={`link-agent-${alert.agentId}`}>
+                        <span className="text-xs font-medium text-primary hover:underline cursor-pointer">
+                          {alert.agentName}
+                        </span>
+                      </Link>
+                      <Badge variant="outline" className="text-[9px]">
+                        {alert.driftMetric === "pass_rate" ? "Pass Rate" : alert.driftMetric === "avg_latency" ? "Latency" : "Hallucination"} ↓{alert.driftPercent}%
+                      </Badge>
+                      <Badge variant={alert.severity === "critical" ? "destructive" : "outline"} className="text-[9px]">
+                        {alert.severity}
+                      </Badge>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {alert.threatenedKpis.map((tk) => (
+                        <span key={tk.kpiName} className="text-[10px] text-muted-foreground">
+                          <span className="font-medium text-foreground">{tk.kpiName}</span>: {tk.currentValue}{tk.unit === "percent" || tk.unit === "%" ? "%" : ` ${tk.unit}`} → SLA {tk.slaThreshold}{tk.unit === "percent" || tk.unit === "%" ? "%" : ` ${tk.unit}`}
+                          <span className={`ml-0.5 font-medium ${tk.headroom <= 0 ? "text-destructive" : tk.headroom < 2 ? "text-amber-600" : "text-muted-foreground"}`}>
+                            ({tk.headroom <= 0 ? "BREACHED" : `${tk.headroom.toFixed(1)} headroom`})
+                          </span>
+                        </span>
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground italic">{alert.recommendedAction}</p>
+                  </div>
+                  <Link href={`/agents/${alert.agentId}`} data-testid={`link-view-agent-${alert.agentId}`}>
+                    <Button variant="ghost" size="sm" className="shrink-0" data-testid={`button-view-agent-${alert.agentId}`}>
+                      View Agent <ArrowRight className="w-3 h-3 ml-1" />
+                    </Button>
+                  </Link>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <OutcomeProgressStepper outcome={outcome} hasAgentPlan={hasAgentPlan} hasDeployedAgents={hasDeployedAgents} />
 

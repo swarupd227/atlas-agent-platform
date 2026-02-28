@@ -5627,6 +5627,228 @@ Guidelines:
     }
   });
 
+  app.get("/api/outcomes/:id/kill-chain-alerts", async (req, res) => {
+    try {
+      const { id } = req.params;
+      if (!id || typeof id !== "string") return res.status(400).json({ error: "Missing outcome ID" });
+      const outcome = await storage.getOutcome(id);
+      if (!outcome) return res.status(404).json({ error: "Outcome not found" });
+
+      const kpis = await storage.getKpisByOutcome(outcome.id);
+      const allAgents = await storage.getAgents();
+      const boundAgents = allAgents.filter(a => a.outcomeId === outcome.id);
+      const evalSuites = await storage.getEvalSuites();
+
+      interface DriftSignal {
+        metric: string;
+        driftPercent: number;
+        driftSeverity: string;
+        baseline: number;
+        current: number;
+        status: string;
+        detectedAt: string;
+        suiteName: string;
+      }
+
+      const agentDriftMap = new Map<string, DriftSignal[]>();
+
+      for (const agent of boundAgents) {
+        const agentSuites = evalSuites.filter(s => s.agentId === agent.id);
+        const drifts: DriftSignal[] = [];
+
+        for (const suite of agentSuites) {
+          const runs = await storage.getEvalRunsBySuite(suite.id);
+          if (runs.length < 2) continue;
+          const sorted = [...runs].sort((a, b) =>
+            new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime()
+          );
+          const latest = sorted[0];
+          const previous = sorted.slice(1, 6);
+          if (previous.length === 0) continue;
+
+          const baselinePassRate = previous.reduce((sum, r) => sum + (r.passRate || 0), 0) / previous.length;
+          const currentPassRate = latest.passRate || 0;
+          if (baselinePassRate > 0) {
+            const drift = ((baselinePassRate - currentPassRate) / baselinePassRate) * 100;
+            if (drift > 2) {
+              drifts.push({
+                metric: "pass_rate",
+                driftPercent: Math.round(drift * 100) / 100,
+                driftSeverity: drift > 15 ? "critical" : drift > 8 ? "high" : drift > 4 ? "medium" : "low",
+                baseline: baselinePassRate,
+                current: currentPassRate,
+                status: "degraded",
+                detectedAt: latest.startedAt ? new Date(latest.startedAt).toISOString() : new Date().toISOString(),
+                suiteName: suite.name,
+              });
+            }
+          }
+
+          const baselineLatency = previous.reduce((sum, r) => sum + (r.avgLatencyMs || 0), 0) / previous.length;
+          const currentLatency = latest.avgLatencyMs || 0;
+          if (baselineLatency > 0) {
+            const latDrift = ((currentLatency - baselineLatency) / baselineLatency) * 100;
+            if (latDrift > 10) {
+              drifts.push({
+                metric: "avg_latency",
+                driftPercent: Math.round(latDrift * 100) / 100,
+                driftSeverity: latDrift > 50 ? "critical" : latDrift > 25 ? "high" : "medium",
+                baseline: baselineLatency,
+                current: currentLatency,
+                status: "degraded",
+                detectedAt: latest.startedAt ? new Date(latest.startedAt).toISOString() : new Date().toISOString(),
+                suiteName: suite.name,
+              });
+            }
+          }
+
+          if (suite.type === "red_team" || suite.type === "accuracy" || suite.type === "faithfulness") {
+            const bPass = previous.reduce((s, r) => s + (r.passRate || 0), 0) / previous.length;
+            const cPass = latest.passRate || 0;
+            if (bPass > 0) {
+              const hDrift = ((bPass - cPass) / bPass) * 100;
+              if (hDrift > 3) {
+                drifts.push({
+                  metric: "hallucination",
+                  driftPercent: Math.round(hDrift * 100) / 100,
+                  driftSeverity: hDrift > 20 ? "critical" : hDrift > 10 ? "high" : hDrift > 5 ? "medium" : "low",
+                  baseline: bPass,
+                  current: cPass,
+                  status: "degraded",
+                  detectedAt: latest.startedAt ? new Date(latest.startedAt).toISOString() : new Date().toISOString(),
+                  suiteName: suite.name,
+                });
+              }
+            }
+          }
+        }
+
+        if (drifts.length > 0) {
+          agentDriftMap.set(agent.id, drifts);
+        }
+      }
+
+      const percentUnits = ["percent", "%", "percentage", "rate", "ratio", "pct"];
+      const inverseUnits = ["ms", "seconds", "minutes", "latency", "time", "cost", "usd", "eur"];
+
+      interface KillChainAlert {
+        alertId: string;
+        severity: string;
+        agentId: string;
+        agentName: string;
+        driftMetric: string;
+        driftPercent: number;
+        driftSeverity: string;
+        suiteName: string;
+        threatenedKpis: Array<{
+          kpiName: string;
+          currentValue: number;
+          slaThreshold: number;
+          headroom: number;
+          unit: string;
+        }>;
+        recommendedAction: string;
+        detectedAt: string;
+      }
+
+      const alerts: KillChainAlert[] = [];
+
+      for (const [agentId, drifts] of agentDriftMap.entries()) {
+        const agent = boundAgents.find(a => a.id === agentId)!;
+
+        for (const drift of drifts) {
+          const threatenedKpis: KillChainAlert["threatenedKpis"] = [];
+
+          for (const kpi of kpis) {
+            if (kpi.slaThreshold == null || kpi.slaThreshold <= 0) continue;
+            const currentVal = kpi.currentValue ?? kpi.target ?? 0;
+            const isInverse = inverseUnits.includes(kpi.unit.toLowerCase());
+            const isPct = percentUnits.includes(kpi.unit.toLowerCase()) || (!isInverse && kpi.slaThreshold <= 100);
+
+            let headroom: number;
+            if (isInverse) {
+              headroom = kpi.slaThreshold - currentVal;
+            } else {
+              headroom = currentVal - kpi.slaThreshold;
+            }
+
+            const isRelevantDrift =
+              (drift.metric === "pass_rate" && isPct) ||
+              (drift.metric === "avg_latency" && isInverse) ||
+              (drift.metric === "hallucination" && isPct);
+
+            if (!isRelevantDrift) continue;
+
+            const headroomPct = kpi.slaThreshold > 0 ? (Math.abs(headroom) / kpi.slaThreshold) * 100 : 0;
+            const isThreatened = headroom < (isPct ? 5 : kpi.slaThreshold * 0.1);
+
+            if (isThreatened || drift.driftPercent > 5) {
+              threatenedKpis.push({
+                kpiName: kpi.name,
+                currentValue: Math.round(currentVal * 100) / 100,
+                slaThreshold: kpi.slaThreshold,
+                headroom: Math.round(headroom * 100) / 100,
+                unit: kpi.unit,
+              });
+            }
+          }
+
+          if (threatenedKpis.length === 0) continue;
+
+          const minHeadroom = Math.min(...threatenedKpis.map(t => t.headroom));
+          let severity: string;
+          if (minHeadroom <= 0) {
+            severity = "critical";
+          } else if (minHeadroom < 2 || drift.driftSeverity === "critical") {
+            severity = "critical";
+          } else if (minHeadroom < 5 || drift.driftSeverity === "high") {
+            severity = "warning";
+          } else {
+            severity = "watch";
+          }
+
+          let recommendedAction: string;
+          if (severity === "critical") {
+            recommendedAction = `Immediately investigate ${agent.name} — ${drift.metric} drift of ${drift.driftPercent}% threatens SLA breach. Consider pausing or rolling back recent changes.`;
+          } else if (severity === "warning") {
+            recommendedAction = `Monitor ${agent.name} closely — ${drift.metric} degradation detected. Review recent evaluation runs and consider preventive action.`;
+          } else {
+            recommendedAction = `Watch ${agent.name} — minor ${drift.metric} drift detected. No immediate action required but schedule a review.`;
+          }
+
+          alerts.push({
+            alertId: `kc-${agentId}-${drift.metric}-${drift.suiteName}`,
+            severity,
+            agentId,
+            agentName: agent.name,
+            driftMetric: drift.metric,
+            driftPercent: drift.driftPercent,
+            driftSeverity: drift.driftSeverity,
+            suiteName: drift.suiteName,
+            threatenedKpis,
+            recommendedAction,
+            detectedAt: drift.detectedAt,
+          });
+        }
+      }
+
+      const severityOrder: Record<string, number> = { critical: 0, warning: 1, watch: 2 };
+      alerts.sort((a, b) => (severityOrder[a.severity] ?? 3) - (severityOrder[b.severity] ?? 3));
+
+      const summary = {
+        critical: alerts.filter(a => a.severity === "critical").length,
+        warning: alerts.filter(a => a.severity === "warning").length,
+        watch: alerts.filter(a => a.severity === "watch").length,
+        total: alerts.length,
+      };
+
+      res.json({ alerts, summary });
+    } catch (e) {
+      console.error("Kill-chain alerts error:", e);
+      res.status(500).json({ error: "Failed to compute kill-chain alerts" });
+    }
+  });
+
   app.get("/api/monitor/impact", async (_req, res) => {
     try {
       const outcomes = await storage.getOutcomes();
