@@ -178,6 +178,7 @@ const categoryLabels: Record<string, string> = {
 
 const industryLabels: Record<string, string> = {
   cross_industry: "Cross-Industry",
+  custom: "Cross-Industry",
   technology: "Technology",
   financial_services: "Financial Services",
   insurance: "Insurance",
@@ -283,11 +284,12 @@ export default function Templates() {
   });
 
   const recommendedTemplates = templates?.filter((t) => {
-    if (!industry || industry.id === "custom") return false;
+    if (!industry) return false;
+    if (industry.id === "custom") return t.industry === "cross_industry";
     return t.industry === industry.id || t.industry === "cross_industry";
   }) || [];
 
-  const showRecommended = industry && industry.id !== "custom" && recommendedTemplates.length > 0 && industryFilter === "all" && !searchQuery;
+  const showRecommended = industry && recommendedTemplates.length > 0 && industryFilter === "all" && !searchQuery;
 
   const categories = Array.from(new Set(templates?.map((t) => t.category) || []));
   const industries = Array.from(new Set(templates?.map((t) => t.industry || "cross_industry") || []));

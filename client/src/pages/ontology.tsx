@@ -684,7 +684,7 @@ export default function OntologyExplorer() {
     return map;
   }, [categories]);
 
-  if (!industry || industry.id === "custom") {
+  if (!industry) {
     return (
       <div className="flex items-center justify-center h-full p-8" data-testid="ontology-no-industry">
         <Card className="max-w-md w-full">
@@ -712,6 +712,7 @@ export default function OntologyExplorer() {
   }
 
   if (concepts.length === 0 && !generateMutation.isPending) {
+    const isCustom = industry.id === "custom";
     return (
       <div className="flex items-center justify-center h-full p-8" data-testid="ontology-unavailable">
         <Card className="max-w-lg w-full">
@@ -720,18 +721,34 @@ export default function OntologyExplorer() {
               <Sparkles className="w-8 h-8 text-primary" />
             </div>
             <div className="space-y-2">
-              <h2 className="text-lg font-semibold" data-testid="text-generate-ontology-title">Generate {industry.ontology || industry.label} Ontology</h2>
+              <h2 className="text-lg font-semibold" data-testid="text-generate-ontology-title">
+                {isCustom ? "Build Your Cross-Industry Ontology" : `Generate ${industry.ontology || industry.label} Ontology`}
+              </h2>
               <p className="text-sm text-muted-foreground max-w-sm">
-                No ontology concepts exist for {industry.label} yet. Use AI to generate a comprehensive domain ontology with categories, concepts, properties, and relationships specific to this industry.
+                {isCustom
+                  ? "No ontology concepts yet. Start building your cross-industry ontology by adding concepts manually or generating a domain with AI."
+                  : `No ontology concepts exist for ${industry.label} yet. Use AI to generate a comprehensive domain ontology with categories, concepts, properties, and relationships specific to this industry.`}
               </p>
             </div>
-            <Button
-              onClick={() => generateMutation.mutate()}
-              data-testid="button-generate-ontology"
-            >
-              <Wand2 className="w-4 h-4 mr-2" />
-              Generate with AI
-            </Button>
+            <div className="flex items-center gap-3">
+              {isCustom && (
+                <Button
+                  variant="outline"
+                  onClick={() => setAddDialogOpen(true)}
+                  data-testid="button-add-first-concept"
+                >
+                  <Plus className="w-4 h-4 mr-2" />
+                  Add First Concept
+                </Button>
+              )}
+              <Button
+                onClick={() => generateMutation.mutate()}
+                data-testid="button-generate-ontology"
+              >
+                <Wand2 className="w-4 h-4 mr-2" />
+                Generate with AI
+              </Button>
+            </div>
           </CardContent>
         </Card>
       </div>

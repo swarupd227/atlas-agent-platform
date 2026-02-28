@@ -187,7 +187,7 @@ export function IndustryWorkspaceSelector() {
                     onClick={handleContinueToConfig}
                     data-testid="button-continue-workspace"
                   >
-                    {selectedId === "custom" ? "Activate Custom Workspace" : `Configure ${selected.shortLabel}`}
+                    {selectedId === "custom" ? "Activate Cross-Industry Workspace" : `Configure ${selected.shortLabel}`}
                     <ArrowRight className="h-4 w-4 ml-2" />
                   </Button>
                 </div>

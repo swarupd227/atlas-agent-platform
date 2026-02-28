@@ -201,6 +201,7 @@ const categoryLabels: Record<string, string> = {
 
 const industryLabels: Record<string, string> = {
   cross_industry: "Cross-Industry",
+  custom: "Cross-Industry",
   technology: "Technology",
   financial_services: "Financial Services",
   insurance: "Insurance",
