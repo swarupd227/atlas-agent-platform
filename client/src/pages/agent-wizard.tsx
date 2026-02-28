@@ -66,6 +66,10 @@ import {
   Eye,
   Building2,
   X,
+  ChevronDown,
+  ChevronRight,
+  ArrowRightLeft,
+  CheckCircle,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -215,6 +219,36 @@ interface WizardState {
   contextBudget: Array<{ category: string; pct: number; tokens: number }>;
   memoryGovernanceRules: Array<{ rule: string; regulation: string; type: string }>;
   industryAutoApplied: boolean;
+}
+
+interface DynamicPresetAdjustment {
+  field: string;
+  from: string;
+  to: string;
+  reason: string;
+  source: "ontology" | "outcome";
+}
+
+interface DynamicPresetResponse {
+  preset: {
+    riskTier: string;
+    autonomyMode: string;
+    guardrailsConfig: {
+      stopConditions: string[];
+      escalationTriggers: string[];
+      forbiddenOutputs: string[];
+      allowedActions: string[];
+    };
+  };
+  contextConfig: {
+    recommendedModel: { provider: string; model: string };
+    memoryGovernance: Array<{ rule: string; regulation: string; type: string }>;
+    contextBudget: Array<{ category: string; pct: number; tokens: number }>;
+  };
+  contextPriority: string[];
+  adjustments: DynamicPresetAdjustment[];
+  ontologyGuardrails: Array<{ text: string; type: string; source: string; conceptLabel: string; regulation: string }>;
+  isDynamic: boolean;
 }
 
 interface ChatMessage {
@@ -667,6 +701,54 @@ export default function AgentWizard() {
   const [outcomeLockedFromUrl, setOutcomeLockedFromUrl] = useState(false);
   const [fromOutcome, setFromOutcome] = useState(false);
   const [outcomePrePopulated, setOutcomePrePopulated] = useState(false);
+  const [dynamicAdjustments, setDynamicAdjustments] = useState<DynamicPresetAdjustment[]>([]);
+  const [dynamicOntologyGuardrails, setDynamicOntologyGuardrails] = useState<Array<{ text: string; type: string; source: string; conceptLabel: string; regulation: string }>>([]);
+  const [isDynamicPreset, setIsDynamicPreset] = useState(false);
+  const [dynamicPresetLoading, setDynamicPresetLoading] = useState(false);
+  const [adjustmentsExpanded, setAdjustmentsExpanded] = useState(false);
+
+  const fetchAndApplyDynamicPresets = async (indId: string, ontTags: OntologyTag[], outcomeIdVal?: string) => {
+    try {
+      setDynamicPresetLoading(true);
+      const tagParam = ontTags.map((t) => t.conceptId).join(",");
+      const params = new URLSearchParams();
+      if (tagParam) params.set("ontologyTags", tagParam);
+      if (outcomeIdVal) params.set("outcomeId", outcomeIdVal);
+      const res = await fetch(`/api/industries/${indId}/dynamic-presets?${params.toString()}`);
+      if (!res.ok) return null;
+      const data: DynamicPresetResponse = await res.json();
+      return data;
+    } catch {
+      return null;
+    } finally {
+      setDynamicPresetLoading(false);
+    }
+  };
+
+  const applyDynamicPreset = (data: DynamicPresetResponse, overrideIndustryId?: string) => {
+    const ctx = INDUSTRY_CONTEXT_CONFIG[overrideIndustryId || wizardState.industryId || ""];
+    const industryTools: ToolConfig[] = ctx?.mcpTools?.map((t) => ({ ...t })) || [];
+    updateState({
+      riskTier: data.preset.riskTier,
+      autonomyMode: data.preset.autonomyMode,
+      modelName: data.contextConfig.recommendedModel.model,
+      modelProvider: data.contextConfig.recommendedModel.provider,
+      guardrailsConfig: {
+        ...wizardState.guardrailsConfig,
+        stopConditions: data.preset.guardrailsConfig.stopConditions,
+        escalationTriggers: data.preset.guardrailsConfig.escalationTriggers,
+        forbiddenOutputs: data.preset.guardrailsConfig.forbiddenOutputs,
+        allowedActions: data.preset.guardrailsConfig.allowedActions,
+      },
+      toolsConfig: [...wizardState.toolsConfig.filter((t) => !industryTools.some((it) => it.name === t.name)), ...industryTools],
+      contextBudget: data.contextConfig.contextBudget,
+      memoryGovernanceRules: data.contextConfig.memoryGovernance,
+      industryAutoApplied: true,
+    });
+    setDynamicAdjustments(data.adjustments);
+    setDynamicOntologyGuardrails(data.ontologyGuardrails || []);
+    setIsDynamicPreset(data.isDynamic);
+  };
 
   const outcomeIdForKpis = wizardState.outcomeId;
   const { data: outcomeKpis } = useQuery<KpiDefinition[]>({
@@ -684,24 +766,32 @@ export default function AgentWizard() {
       const preset = INDUSTRY_PRESETS[industry.id];
       const ctx = INDUSTRY_CONTEXT_CONFIG[industry.id];
       if (preset && ctx && !wizardState.industryAutoApplied) {
-        const industryTools: ToolConfig[] = ctx.mcpTools.map((t) => ({ ...t }));
-        updateState({
-          industryId: industry.id,
-          riskTier: preset.riskTier,
-          autonomyMode: preset.autonomyMode,
-          modelName: ctx.recommendedModel.model,
-          modelProvider: ctx.recommendedModel.provider,
-          guardrailsConfig: {
-            ...wizardState.guardrailsConfig,
-            stopConditions: preset.stopConditions,
-            escalationTriggers: preset.escalationTriggers,
-            forbiddenOutputs: preset.forbiddenOutputs,
-            allowedActions: preset.allowedActions,
-          },
-          toolsConfig: [...wizardState.toolsConfig, ...industryTools.filter((t) => !wizardState.toolsConfig.some((existing) => existing.name === t.name))],
-          contextBudget: ctx.contextBudgetPreset,
-          memoryGovernanceRules: ctx.memoryGovernance,
-          industryAutoApplied: true,
+        updateState({ industryId: industry.id });
+        fetchAndApplyDynamicPresets(industry.id, wizardState.ontologyTags, wizardState.outcomeId || undefined).then((data) => {
+          if (data) {
+            applyDynamicPreset(data, industry.id);
+          } else {
+            const industryTools: ToolConfig[] = ctx.mcpTools.map((t) => ({ ...t }));
+            updateState({
+              riskTier: preset.riskTier,
+              autonomyMode: preset.autonomyMode,
+              modelName: ctx.recommendedModel.model,
+              modelProvider: ctx.recommendedModel.provider,
+              guardrailsConfig: {
+                ...wizardState.guardrailsConfig,
+                stopConditions: preset.stopConditions,
+                escalationTriggers: preset.escalationTriggers,
+                forbiddenOutputs: preset.forbiddenOutputs,
+                allowedActions: preset.allowedActions,
+              },
+              toolsConfig: [...wizardState.toolsConfig, ...industryTools.filter((t) => !wizardState.toolsConfig.some((existing) => existing.name === t.name))],
+              contextBudget: ctx.contextBudgetPreset,
+              memoryGovernanceRules: ctx.memoryGovernance,
+              industryAutoApplied: true,
+            });
+            setDynamicAdjustments([]);
+            setIsDynamicPreset(false);
+          }
         });
       } else {
         updateState({ industryId: industry.id });
@@ -710,6 +800,27 @@ export default function AgentWizard() {
       updateState({ industryId: industry.id });
     }
   }, [industry?.id]);
+
+  const ontologyTagsRef = useRef(JSON.stringify(wizardState.ontologyTags.map((t) => t.conceptId).sort()));
+  const outcomeIdRef = useRef(wizardState.outcomeId);
+  useEffect(() => {
+    const currentTags = JSON.stringify(wizardState.ontologyTags.map((t) => t.conceptId).sort());
+    const tagsChanged = currentTags !== ontologyTagsRef.current;
+    const outcomeChanged = wizardState.outcomeId !== outcomeIdRef.current;
+    ontologyTagsRef.current = currentTags;
+    outcomeIdRef.current = wizardState.outcomeId;
+
+    if ((tagsChanged || outcomeChanged) && wizardState.industryAutoApplied && wizardState.industryId && wizardState.industryId !== "custom" && wizardState.industryId !== "cross_industry") {
+      fetchAndApplyDynamicPresets(wizardState.industryId, wizardState.ontologyTags, wizardState.outcomeId || undefined).then((data) => {
+        if (data) {
+          applyDynamicPreset(data, wizardState.industryId);
+          if (data.adjustments.length > 0) {
+            toast({ title: "Presets updated", description: `${data.adjustments.length} setting(s) adjusted based on your ontology tags and outcome requirements` });
+          }
+        }
+      });
+    }
+  }, [JSON.stringify(wizardState.ontologyTags.map((t) => t.conceptId).sort()), wizardState.outcomeId]);
 
   useEffect(() => {
     const params = new URLSearchParams(searchParams);
@@ -1297,7 +1408,7 @@ export default function AgentWizard() {
           <Step2IndustryTools state={wizardState} updateState={updateState} ontologyConcepts={ontologyConcepts || []} />
         )}
         {currentStep === 3 && (
-          <Step3IndustryGovernance state={wizardState} updateState={updateState} />
+          <Step3IndustryGovernance state={wizardState} updateState={updateState} ontologyGuardrails={dynamicOntologyGuardrails} />
         )}
         {currentStep === 4 && (
           <Step4MemoryContext state={wizardState} updateState={updateState} />
@@ -1319,6 +1430,8 @@ export default function AgentWizard() {
             industryLabel={industry?.label || "Industry"}
             fromOutcome={fromOutcome}
             outcomeKpis={outcomeKpis}
+            isDynamicPreset={isDynamicPreset}
+            dynamicAdjustmentCount={dynamicAdjustments.length}
           />
         )}
       </div>
@@ -1711,56 +1824,127 @@ function Step1IndustryDefine({
                   <div className="flex items-center gap-2 min-w-0">
                     <industry.icon className="h-4 w-4 shrink-0" style={{ color: industry.color }} />
                     <div className="min-w-0">
-                      <p className="text-sm font-medium">{state.industryAutoApplied ? `${industry.label} Defaults Active` : `Auto-Configure for ${industry.label}`}</p>
+                      <p className="text-sm font-medium">
+                        {state.industryAutoApplied ? `${industry.label} Defaults Active` : `Auto-Configure for ${industry.label}`}
+                        {isDynamicPreset && dynamicAdjustments.length > 0 && (
+                          <Badge variant="secondary" className="ml-2 text-[10px] bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300" data-testid="badge-dynamic-adjustments-count">
+                            {dynamicAdjustments.length} adjustment{dynamicAdjustments.length !== 1 ? "s" : ""}
+                          </Badge>
+                        )}
+                      </p>
                       <p className="text-xs text-muted-foreground">
-                        {state.industryAutoApplied ? "Industry defaults were auto-applied on entry. Click to re-apply if you've customized." : "Apply recommended model, industry MCP tools, compliance guardrails, context budget, and memory governance"}
+                        {state.industryAutoApplied
+                          ? isDynamicPreset
+                            ? "Dynamically tailored from ontology tags and outcome requirements"
+                            : "Industry defaults were auto-applied on entry. Click to re-apply if you've customized."
+                          : "Apply recommended model, industry MCP tools, compliance guardrails, context budget, and memory governance"}
                       </p>
                     </div>
                   </div>
                   <Button
                     size="sm"
                     variant={state.industryAutoApplied ? "outline" : "default"}
-                    onClick={() => {
-                      const preset = INDUSTRY_PRESETS[industry.id];
-                      const ctx = INDUSTRY_CONTEXT_CONFIG[industry.id];
-                      if (!ctx) return;
-                      const industryTools: ToolConfig[] = ctx.mcpTools.map((t) => ({
-                        ...t,
-                      }));
-                      updateState({
-                        industryId: industry.id,
-                        riskTier: preset.riskTier,
-                        autonomyMode: preset.autonomyMode,
-                        modelName: ctx.recommendedModel.model,
-                        modelProvider: ctx.recommendedModel.provider,
-                        guardrailsConfig: {
-                          ...state.guardrailsConfig,
-                          stopConditions: preset.stopConditions,
-                          escalationTriggers: preset.escalationTriggers,
-                          forbiddenOutputs: preset.forbiddenOutputs,
-                          allowedActions: preset.allowedActions,
-                        },
-                        toolsConfig: [...state.toolsConfig, ...industryTools.filter((t) => !state.toolsConfig.some((existing) => existing.name === t.name))],
-                        contextBudget: ctx.contextBudgetPreset,
-                        memoryGovernanceRules: ctx.memoryGovernance,
-                        industryAutoApplied: true,
-                      });
+                    disabled={dynamicPresetLoading}
+                    onClick={async () => {
+                      const data = await fetchAndApplyDynamicPresets(industry.id, state.ontologyTags, state.outcomeId || undefined);
+                      if (data) {
+                        applyDynamicPreset(data, industry.id);
+                        toast({ title: data.isDynamic ? "Dynamic presets applied" : "Industry defaults applied", description: data.isDynamic ? `${data.adjustments.length} setting(s) tailored to your ontology and outcome context` : "Standard industry configuration applied" });
+                      } else {
+                        const preset = INDUSTRY_PRESETS[industry.id];
+                        const ctx = INDUSTRY_CONTEXT_CONFIG[industry.id];
+                        if (!ctx) return;
+                        const industryTools: ToolConfig[] = ctx.mcpTools.map((t) => ({ ...t }));
+                        updateState({
+                          industryId: industry.id,
+                          riskTier: preset.riskTier,
+                          autonomyMode: preset.autonomyMode,
+                          modelName: ctx.recommendedModel.model,
+                          modelProvider: ctx.recommendedModel.provider,
+                          guardrailsConfig: { ...state.guardrailsConfig, stopConditions: preset.stopConditions, escalationTriggers: preset.escalationTriggers, forbiddenOutputs: preset.forbiddenOutputs, allowedActions: preset.allowedActions },
+                          toolsConfig: [...state.toolsConfig, ...industryTools.filter((t) => !state.toolsConfig.some((existing) => existing.name === t.name))],
+                          contextBudget: ctx.contextBudgetPreset,
+                          memoryGovernanceRules: ctx.memoryGovernance,
+                          industryAutoApplied: true,
+                        });
+                        setDynamicAdjustments([]);
+                        setIsDynamicPreset(false);
+                      }
                     }}
                     data-testid="button-auto-configure-industry"
                   >
-                    <Sparkles className="h-3.5 w-3.5 mr-1.5" />
+                    {dynamicPresetLoading ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5 mr-1.5" />}
                     {state.industryAutoApplied ? "Re-apply Defaults" : "Auto-Configure from Industry"}
                   </Button>
                 </div>
                 {state.industryAutoApplied && (
                   <div className="flex items-center gap-2 flex-wrap">
-                    <Badge variant="outline" className="text-[10px] border-green-500/30 text-green-600 dark:text-green-400">
+                    <Badge variant="outline" className={`text-[10px] ${isDynamicPreset ? "border-purple-500/30 text-purple-600 dark:text-purple-400" : "border-green-500/30 text-green-600 dark:text-green-400"}`}>
                       <Check className="w-2.5 h-2.5 mr-1" />
-                      Industry context applied
+                      {isDynamicPreset ? "Dynamic presets active" : "Industry context applied"}
                     </Badge>
                     <Badge variant="outline" className="text-[10px]">{INDUSTRY_CONTEXT_CONFIG[industry.id]?.mcpTools.length || 0} tools</Badge>
                     <Badge variant="outline" className="text-[10px]">{INDUSTRY_CONTEXT_CONFIG[industry.id]?.memoryGovernance.length || 0} governance rules</Badge>
                     <Badge variant="outline" className="text-[10px]">{INDUSTRY_CONTEXT_CONFIG[industry.id]?.compliancePrerequisites.length || 0} compliance items</Badge>
+                  </div>
+                )}
+                {state.industryAutoApplied && dynamicAdjustments.length > 0 && (
+                  <div className="border-t pt-3" data-testid="section-preset-adjustments">
+                    <button
+                      className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors w-full text-left"
+                      onClick={() => setAdjustmentsExpanded(!adjustmentsExpanded)}
+                      data-testid="button-toggle-adjustments"
+                    >
+                      {adjustmentsExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                      Preset Adjustments ({dynamicAdjustments.length})
+                    </button>
+                    {adjustmentsExpanded && (
+                      <div className="mt-2 space-y-1.5">
+                        {(() => {
+                          const ontAdj = dynamicAdjustments.filter((a) => a.source === "ontology");
+                          const outAdj = dynamicAdjustments.filter((a) => a.source === "outcome");
+                          return (
+                            <>
+                              {ontAdj.length > 0 && (
+                                <div>
+                                  <p className="text-[10px] font-semibold text-purple-600 dark:text-purple-400 uppercase tracking-wide mb-1">From Ontology</p>
+                                  {ontAdj.map((adj, i) => (
+                                    <div key={`ont-${i}`} className="flex items-start gap-2 py-1 text-xs" data-testid={`adjustment-ontology-${i}`}>
+                                      <ArrowRightLeft className="h-3 w-3 mt-0.5 text-purple-500 shrink-0" />
+                                      <div className="min-w-0">
+                                        <span className="font-medium">{adj.field}</span>
+                                        <span className="text-muted-foreground"> {adj.from} → {adj.to}</span>
+                                        <p className="text-[10px] text-muted-foreground mt-0.5">{adj.reason}</p>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              {outAdj.length > 0 && (
+                                <div>
+                                  <p className="text-[10px] font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wide mb-1">From Outcome Requirements</p>
+                                  {outAdj.map((adj, i) => (
+                                    <div key={`out-${i}`} className="flex items-start gap-2 py-1 text-xs" data-testid={`adjustment-outcome-${i}`}>
+                                      <ArrowRightLeft className="h-3 w-3 mt-0.5 text-blue-500 shrink-0" />
+                                      <div className="min-w-0">
+                                        <span className="font-medium">{adj.field}</span>
+                                        <span className="text-muted-foreground"> {adj.from} → {adj.to}</span>
+                                        <p className="text-[10px] text-muted-foreground mt-0.5">{adj.reason}</p>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {state.industryAutoApplied && !isDynamicPreset && (
+                  <div className="text-[10px] text-muted-foreground italic border-t pt-2">
+                    Add ontology tags or bind an outcome to get tailored presets instead of static industry defaults
                   </div>
                 )}
               </div>
@@ -3409,6 +3593,7 @@ function StringListCard({
   onRemove,
   placeholder,
   testIdPrefix,
+  ontologyItems,
 }: {
   title: string;
   icon: LucideIcon;
@@ -3417,13 +3602,21 @@ function StringListCard({
   onRemove: (idx: number) => void;
   placeholder: string;
   testIdPrefix: string;
+  ontologyItems?: Array<{ text: string; conceptLabel: string }>;
 }) {
   const [inputVal, setInputVal] = useState("");
+  const ontologyTexts = new Set((ontologyItems || []).map((o) => o.text));
+  const ontologyMap = new Map((ontologyItems || []).map((o) => [o.text, o.conceptLabel]));
   return (
     <Card>
       <CardHeader className="flex flex-row items-center gap-2 pb-3">
         <Icon className="w-4 h-4 text-muted-foreground" />
         <CardTitle className="text-sm font-medium">{title}</CardTitle>
+        {ontologyItems && ontologyItems.length > 0 && (
+          <Badge variant="secondary" className="text-[10px] bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 ml-auto">
+            {ontologyItems.length} from ontology
+          </Badge>
+        )}
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         <div className="flex items-center gap-2">
@@ -3458,7 +3651,14 @@ function StringListCard({
         )}
         {items.map((item, i) => (
           <div key={i} className="flex items-center justify-between gap-2 text-sm">
-            <span data-testid={`text-${testIdPrefix}-${i}`}>{item}</span>
+            <div className="flex items-center gap-1.5 min-w-0 flex-1">
+              <span data-testid={`text-${testIdPrefix}-${i}`} className="truncate">{item}</span>
+              {ontologyTexts.has(item) && (
+                <Badge variant="secondary" className="text-[9px] bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 shrink-0" data-testid={`badge-ontology-${testIdPrefix}-${i}`}>
+                  {ontologyMap.get(item) || "Ontology"}
+                </Badge>
+              )}
+            </div>
             <Button
               variant="ghost"
               size="icon"
@@ -3633,9 +3833,11 @@ function PolicyBindingsCard({
 function Step3IndustryGovernance({
   state,
   updateState,
+  ontologyGuardrails,
 }: {
   state: WizardState;
   updateState: (u: Partial<WizardState>) => void;
+  ontologyGuardrails?: Array<{ text: string; type: string; source: string; conceptLabel: string; regulation: string }>;
 }) {
   const { data: policies, isLoading: policiesLoading } = useQuery<Array<{
     id: string;
@@ -3772,6 +3974,7 @@ function Step3IndustryGovernance({
         onRemove={(idx) => removeItem("stopConditions", idx)}
         placeholder="e.g., PII detected in output"
         testIdPrefix="stop-condition"
+        ontologyItems={(ontologyGuardrails || []).filter((g) => g.type === "stopCondition").map((g) => ({ text: g.text, conceptLabel: g.conceptLabel }))}
       />
 
       <StringListCard
@@ -3782,6 +3985,7 @@ function Step3IndustryGovernance({
         onRemove={(idx) => removeItem("escalationTriggers", idx)}
         placeholder="e.g., Write action to production DB"
         testIdPrefix="escalation-trigger"
+        ontologyItems={(ontologyGuardrails || []).filter((g) => g.type === "escalationTrigger").map((g) => ({ text: g.text, conceptLabel: g.conceptLabel }))}
       />
 
       <StringListCard
@@ -3792,6 +3996,7 @@ function Step3IndustryGovernance({
         onRemove={(idx) => removeItem("forbiddenOutputs", idx)}
         placeholder="e.g., Never output raw SQL queries"
         testIdPrefix="forbidden-output"
+        ontologyItems={(ontologyGuardrails || []).filter((g) => g.type === "forbiddenOutput").map((g) => ({ text: g.text, conceptLabel: g.conceptLabel }))}
       />
 
       <StringListCard
@@ -4326,6 +4531,8 @@ function StepReview({
   industryLabel,
   fromOutcome,
   outcomeKpis,
+  isDynamicPreset,
+  dynamicAdjustmentCount,
 }: {
   state: WizardState;
   onCreate: () => void;
@@ -4336,6 +4543,8 @@ function StepReview({
   industryLabel?: string;
   fromOutcome?: boolean;
   outcomeKpis?: KpiDefinition[];
+  isDynamicPreset?: boolean;
+  dynamicAdjustmentCount?: number;
 }) {
   const linkedOutcome = outcomes?.find((o) => o.id === state.outcomeId);
 
@@ -4760,6 +4969,17 @@ function StepReview({
                     <span className="text-muted-foreground ml-auto text-right">{check.detail}</span>
                   </div>
                 ))}
+                <div className="flex items-center gap-2 text-xs border-t pt-1 mt-1" data-testid="check-preset-source">
+                  {isDynamicPreset ? (
+                    <CheckCircle className="w-3.5 h-3.5 text-purple-500 shrink-0" />
+                  ) : (
+                    <Info className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                  )}
+                  <span className={isDynamicPreset ? "text-purple-600 dark:text-purple-400 font-medium" : "text-muted-foreground"}>Preset Source</span>
+                  <span className="text-muted-foreground ml-auto text-right">
+                    {isDynamicPreset ? `Dynamic (${dynamicAdjustmentCount || 0} adjustments)` : "Static industry defaults"}
+                  </span>
+                </div>
               </div>
             </CardContent>
           </Card>

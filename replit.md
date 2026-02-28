@@ -1,66 +1,65 @@
 # Nous Agent Orchestrator
 
 ## Overview
-Nous Agent Orchestrator is an AI agent lifecycle management platform designed for 80% autonomous execution and 20% expert validation. Its primary goal is to embed compliance frameworks, policies, and industry-specific ontologies directly into AI agent behavior. The platform offers tools for agent creation, deployment, monitoring, and governance, aiming to automate and optimize the AI agent lifecycle across six key industry verticals: Healthcare, Financial Services (including Credit Rating), Manufacturing, Insurance, Retail, and Technology/SaaS. It enables AI agents to reason within specific industry contexts, driving business value and efficient AI operations.
+Nous Agent Orchestrator is an AI agent lifecycle management platform designed for autonomous execution and expert validation. It embeds compliance frameworks, policies, and industry-specific ontologies into AI agent behavior. The platform provides tools for agent creation, deployment, monitoring, and governance, aiming to automate and optimize the AI agent lifecycle across Healthcare, Financial Services, Manufacturing, Insurance, Retail, and Technology/SaaS verticals. Its purpose is to enable AI agents to reason within specific industry contexts, driving business value and efficient AI operations.
 
 ## User Preferences
 I prefer that you ask me before making any major changes to the codebase. When suggesting code, please provide clear explanations for the choices made. I value an iterative development approach, where we can discuss and refine solutions progressively.
 
 ## System Architecture
-The Nous Agent Orchestrator utilizes a modern web stack: React, Vite, Tailwind CSS, shadcn/ui, and wouter for the frontend; Express.js for the backend REST API; and PostgreSQL with Drizzle ORM for database management.
+The Nous Agent Orchestrator uses a modern web stack with React, Vite, Tailwind CSS, shadcn/ui, and wouter for the frontend; Express.js for the backend REST API; and PostgreSQL with Drizzle ORM for database management.
 
 **UI/UX Design Principles**:
-- **Outcome-first navigation**: Prioritizes KPI delivery status.
-- **Evidence-by-default**: For approvals, including configuration differences and blast radius analysis.
-- **Autonomy with guardrails**: Policies are checked before actions.
-- **Time travel**: For agent timelines, aggregating version changes and audit events.
+- Outcome-first navigation for KPI delivery.
+- Evidence-by-default for approvals and blast radius analysis.
+- Autonomy with guardrails through policy checks.
+- Time travel for agent timelines and audit events.
 
 **Core Features**:
-- **Agent Lifecycle Management**: Covers creation, deployment, monitoring, and governance of agents.
-- **Blueprint Studio**: A visual editor for creating, versioning, and compiling auditable agent blueprints, including static checks, approval flows, compliance annotations, and industry constraint enforcement through graph-based orchestration.
-- **Industry-Governed Deployment Pipeline**: Features a Release Orchestrator with industry-specific mandatory pipeline stages, auto-rollback triggers, and deployment evidence packages, enforced by a regulatory policy-as-code engine.
-- **Real Agent Runtime**: Deployed agents execute blueprints as background workers, resolving API calls via registered MCP Server integrations, and tracking execution history with real weather data, severity analysis, and compliance checks.
-- **Shadow Replay Studio**: Enables zero-risk agent deployment via production trace replay, offering trace libraries, replay configuration, semantic diff viewing, and compliance checkpoints, including live agent testing with external APIs.
+- **Agent Lifecycle Management**: Comprehensive tools for agent creation, deployment, monitoring, and governance.
+- **Blueprint Studio**: Visual editor for auditable agent blueprints, including versioning, static checks, approval flows, compliance annotations, and graph-based orchestration.
+- **Industry-Governed Deployment Pipeline**: Features a Release Orchestrator with industry-specific stages, auto-rollback, and regulatory policy-as-code enforcement.
+- **Real Agent Runtime**: Deployed agents execute blueprints as background workers, resolving API calls via registered integrations, and tracking execution with compliance checks.
+- **Shadow Replay Studio**: Enables zero-risk agent deployment via production trace replay, offering trace libraries, replay configuration, and compliance checkpoints.
 - **Canary Deployment Console**: Manages graduated rollouts with industry-specific safety controls, KPI comparison, and auto-promotion/rollback rules.
-- **Governance**: Certified Agent Compliance Layer with policy management, enforcement, and immutable audit trails, including regulatory compliance tools.
-- **Optimization & Healing**: Features autonomous optimization, self-healing, AI-proposed changes, experiment management, and closed-loop autonomous remediation with industry-aware diagnosis.
-- **Knowledge Base System**: Vector-embedded document collections for RAG grounding, supporting various ingestion modes, OpenAI embeddings, and pgvector for similarity search. Agents can be linked to KBs for runtime context injection.
-- **Outcome Builder**: Conversational AI for defining goals and drafting outcome contracts, with AI-generated agent development plans, platform intelligence-enriched plan generation using all platform resources, and structured output schema generation for worker agents.
-- **Team-Based Multi-Agent Orchestration**: Supports the creation and management of Team Agents with worker agents, blueprints, and graph configurations.
-- **Agent Skills Library**: A catalog of composable, versioned skill units with industry-organized browsing, search, and AI enhancement/generation capabilities, including real-time policy validation.
-- **Context Engineering Studio**: Manages how agents acquire and utilize context, featuring context source inventory, priority matrix, and budget visualizer.
-- **Multi-Agent Pipeline Orchestrator**: Visual workflow editor for designing and executing multi-agent pipelines with sequential agent stages, approval gates, parallel groups, and AI-simulated scenario execution. **Parallel Execution Support** — The runtime engine computes execution tiers from blueprint DAGs, running independent agents concurrently via `Promise.all` with structured context merging (`## OUTPUT FROM [Agent Name]`). Supports `fail_fast` and `best_effort` error strategies. Fork/join markers in traces. **Pipeline Record ID Continuity** — Structured records (processedRecords) from each worker are automatically enriched into downstream context as `## STRUCTURED RECORDS FROM [Agent Name]`, ensuring downstream agents reference the same record IDs for end-to-end traceability.
-- **Agent API Gateway**: Exposes deployed agents as REST API endpoints for external invocation, with API key management, execution tracing, policy checks, and cost tracking.
-- **Canary Deployment Console**: Graduated rollouts with industry-specific safety controls, KPI comparison (baseline vs. candidate), blast radius analysis, and auto-promotion/rollback rules.
-- **Autonomy Engine & Oversight Console**: Dynamic human oversight with risk dimension matrix, autonomy spectrum, expert intervention thresholds, and override calendar.
-- **Formatted Output Rendering**: Trace outputs and agent task prompts are rendered as structured, readable content (severity badges, key findings, recommended actions, structured record tables) instead of raw JSON blobs. Supports three formats: pure JSON, mixed text + markdown code blocks, and inline embedded JSON.
-- **Outcome-to-Agent Traceability**: When creating an agent from an outcome contract (via "Add Agent Manually" or "Create Manually" buttons), the wizard inherits structured outcome specifications: risk tier, KPI targets, compliance guardrails (stop conditions, escalation triggers from SLA thresholds and approval gates), and evaluation thresholds derived from KPI SLA values. An outcome context banner displays the linked outcome and inherited requirements throughout the wizard, with a full "Outcome Requirements Inherited" summary card in the review step.
-- **Cross-Industry Workspace**: The former "Custom" workspace is now labeled "Cross-Industry" for consistency with the `cross_industry` value used in templates, skills, and policies. Cross-Industry workspace users can access the Ontology Explorer to build their own ontology from scratch (manually or via AI generation), removing the previous dead-end block.
-- **Bidirectional KPI Binding**: When an agent's configuration is changed via PATCH `/api/agents/:id` and the agent is bound to an outcome (has `outcomeId`), the system automatically: (1) creates a structured `agent.config_changed` audit event with changed fields, (2) triggers KPI recomputation via the shared `recomputeOutcomeKpis()` helper, (3) creates a `kpi.auto_reeval` audit event with KPI change details and breach status, (4) returns `reEvaluationTriggered` and `kpiReEvaluation` in the PATCH response. On the agent detail page, config save mutations show a toast with KPI re-evaluation results, and a KPI Impact card persists in the linked outcome section (sourced from audit events for reload persistence). On the outcome detail page's KPI Delivery tab, a "Recent Re-Evaluations" feed shows `agent.config_changed` and `kpi.auto_reeval` audit events with agent links, changed fields, KPI change badges, and timestamps.
-- **Outcome-Driven Deployment Guardrails**: `GET /api/agents/:id/deployment-recommendation` analyzes the agent's bound outcome KPI SLA thresholds and risk tier to compute a deployment strategy recommendation. If any percentage-based KPI has `slaThreshold ≥ 95%`, direct deploy is blocked; `≥ 99%` triggers mandatory canary with 1% start traffic and strict rollback triggers. On the agent detail page, the Deploy button shows an SLA badge and opens a "Deployment Strategy Recommendation" dialog with canary config details and two options (recommended canary vs. deploy anyway). In the Release Wizard, selecting an SLA-bound agent auto-populates canary strategy and tighter rollback thresholds, shows an advisory banner, and warns with red text if the user switches to "Direct". POST `/api/deployments` returns `strategyWarning` for direct deploys against strict-SLA outcomes.
-- **Kill-Chain Alerts**: `GET /api/outcomes/:id/kill-chain-alerts` correlates bound agent drift signals (pass rate drops, latency increases, hallucination drift from eval suite baselines) with outcome KPI SLA thresholds to produce proactive kill-chain alerts. Each alert traces: agent drift → threatened KPIs → SLA headroom → recommended action. Severity: `critical` (headroom < 2% or SLA breached), `warning` (headroom < 5%), `watch` (drift detected, SLA safe). The outcome detail page shows a prominent alert banner between stat cards and progress stepper with color-coded rows per alert (red for critical, amber for warning), drift metric badges, KPI headroom details, agent links, and an "Investigate" button that switches to the Risk & Remediation tab. Stat cards are enhanced: "KPIs Tracked" shows "X threatened by drift" count, "Bound Agents" shows "X drifting" count with danger/warning variants. Auto-refreshes every 60s.
-- **Industry Contextualization (Structural)**: Industry requirements are now structural rather than decorative across three key screens: (1) **Agent Wizard Auto-Apply** — entering the wizard in an industry workspace (not custom/cross_industry) auto-applies industry presets (risk tier, guardrails, model, tools, memory governance, context budget) via useEffect; the "Auto-Configure" button becomes "Re-apply Defaults"; auto-apply only fires once per wizard session (`industryAutoApplied` flag). (2) **Agent Wizard Review Step** — an "Industry Compliance Readiness" card in StepReview evaluates the agent against 6 industry requirements (risk tier, guardrails, ontology tags, industry tools, memory governance, context budget) with a progress bar, score badge, and per-check green/amber indicators; <50% score shows a prominent compliance warning. (3) **Eval Studio Industry Readiness** — per-suite badges (green "ready" or amber "gap") computed from scorer type and regulatory template tag coverage; a gap banner appears when >50% of suites lack industry coverage. (4) **Deployments Pre-Deploy Check** — the Release Wizard shows an "Industry Pre-Deploy Check" card when an industry-specific agent is selected, checking ontology tags, risk tier, eval suites, and rollback triggers with a pass/fail score badge.
-- **Ontology Structural Enforcement**: Ontology concepts now function as structural constraints rather than decorative metadata across four layers: (1) **Prescriptive Prompt Vocabulary** — agent system prompts include `### REQUIRED VOCABULARY` (canonical concept labels agents MUST use) and `### DEPRECATED TERMS` (synonyms to avoid, mapped to canonical forms); instruction upgraded from advisory "ground your reasoning" to prescriptive "you MUST use canonical terms". (2) **Post-Execution Compliance Check** — `checkOntologyCompliance()` in `agent-runtime.ts` runs after every execution, comparing output text against the agent's ontology tags; produces a 0-100% compliance score based on canonical vs. deprecated term usage ratio; results annotated in execution trace validation step and summary. (3) **KB Ontology Alignment** — `computeOntologyAlignment()` in `kb-routes.ts` scores document sources after ingestion; `GET /api/knowledge-bases/:id/ontology-alignment` returns per-source and aggregate scores; KB detail page shows color-coded alignment badges (green ≥80%, amber 50-80%, red <50%) with mismatch tooltips; KB list cards show aggregate alignment badges. (4) **Eval Ontology Compliance Scorer** — baseline eval runs in `worker.ts` check `actual_output` against agent ontology tags; per-case `ontologyCompliance` stored in `scorerOutputs`; per-run aggregate stored in `resultsJson`; eval detail page shows compliance stat card, summary with deprecated terms list, and per-case badges; suite cards show purple "Ontology" badge when scorer is active. (5) **Agent Detail Compliance Dashboard** — `GET /api/agents/:id/ontology-compliance` aggregates compliance from recent traces; `OntologyComplianceCard` on agent detail Ontology tab shows avg score, trend (improving/stable/declining), required/deprecated term counts, top non-standard terms with correction suggestions, and a mini bar chart of recent run scores.
+- **Governance**: Certified Agent Compliance Layer with policy management, enforcement, and immutable audit trails.
+- **Optimization & Healing**: Autonomous optimization, self-healing, AI-proposed changes, and closed-loop autonomous remediation.
+- **Knowledge Base System**: Vector-embedded document collections for RAG grounding, supporting various ingestion modes and pgvector for similarity search.
+- **Outcome Builder**: Conversational AI for defining goals, drafting outcome contracts, and generating AI agent development plans with structured output schemas.
+- **Team-Based Multi-Agent Orchestration**: Supports management of Team Agents with worker agents, blueprints, and graph configurations.
+- **Agent Skills Library**: A catalog of composable, versioned skill units with industry-organized browsing and AI enhancement/generation capabilities.
+- **Context Engineering Studio**: Manages how agents acquire and utilize context with inventory, priority matrix, and budget visualizer.
+- **Multi-Agent Pipeline Orchestrator**: Visual workflow editor for designing and executing multi-agent pipelines with sequential stages, approval gates, parallel groups, and AI-simulated scenario execution. Supports parallel execution with `Promise.all` and structured context merging.
+- **Agent API Gateway**: Exposes deployed agents as REST API endpoints with API key management, execution tracing, and cost tracking.
+- **Autonomy Engine & Oversight Console**: Dynamic human oversight with risk dimension matrix, autonomy spectrum, and expert intervention thresholds.
+- **Formatted Output Rendering**: Trace outputs and agent task prompts are rendered as structured, readable content with support for JSON, mixed text/markdown, and inline embedded JSON.
+- **Outcome-to-Agent Traceability**: Links agent creation to outcome contracts, inheriting structured specifications like risk tier, KPI targets, and compliance guardrails.
+- **Cross-Industry Workspace**: Provides access to an Ontology Explorer for building custom ontologies.
+- **Bidirectional KPI Binding**: Automatically triggers KPI recomputation and audit events upon agent configuration changes.
+- **Outcome-Driven Deployment Guardrails**: Analyzes outcome KPI SLA thresholds to recommend and enforce deployment strategies (e.g., mandatory canary deployments for high-SLA agents).
+- **Kill-Chain Alerts**: Correlates agent drift signals with outcome KPI SLA thresholds to generate proactive alerts and recommended actions.
+- **Industry Contextualization (Structural + Dynamic)**: Auto-applies industry presets in agent wizards, evaluates industry compliance readiness, and dynamically computes presets based on ontology concepts and outcome KPIs.
+- **Ontology Structural Enforcement**: Ontology concepts function as structural constraints across prescriptive prompt vocabulary, post-execution compliance checks, KB ontology alignment, and evaluation studio scoring.
 
 **Technical Implementations**:
-- **Adaptive Autonomy Engine**: Dynamic, context-aware human oversight with a risk dimension matrix, autonomy spectrum, and override calendar.
-- **AI Endpoints**: Dedicated APIs for conversational design, template matching, outcome discovery, AI-generated test cases, skill generation, skill enhancement, and TTS narration.
+- **Adaptive Autonomy Engine**: Dynamic, context-aware human oversight.
+- **AI Endpoints**: Dedicated APIs for conversational design, template matching, outcome discovery, and AI-generated content.
 - **Immutable Audit Log**: Hash-chained for integrity verification.
-- **Tool Proxy Control Point**: Unified proxy for MCP tool calls and A2A delegations.
-- **Ontology Explorer & Knowledge Graph Builder**: Industry knowledge graph browser with concept details, search, AI-enhanced descriptions, and AI-powered relationship suggestions and sub-domain ontology generation.
-- **Memory Architecture Manager**: Defines agent memory management with industry-specific retention and governance.
-- **RAG Pipeline Manager**: Configures how agents retrieve industry-specific knowledge at runtime.
-- **MCP-Ontology Parameter Matching**: Cross-references MCP server tool parameters and resource names against ontology concepts, auto-linking and flagging mismatches.
-- **Mock MCP Servers**: Built-in mock REST APIs simulating Marketo, Salesforce CRM, and Adobe Analytics for demonstration purposes, with deterministic financial services lead data.
+- **Tool Proxy Control Point**: Unified proxy for tool calls and A2A delegations.
+- **Ontology Explorer & Knowledge Graph Builder**: Industry knowledge graph browser with AI-enhanced capabilities.
+- **Memory Architecture Manager**: Defines agent memory management with industry-specific retention.
+- **RAG Pipeline Manager**: Configures how agents retrieve industry-specific knowledge.
+- **MCP-Ontology Parameter Matching**: Cross-references tool parameters against ontology concepts.
+- **Mock MCP Servers**: Built-in mock REST APIs for demonstration purposes.
 
 ## External Dependencies
 - **OpenAI**: Used for TTS narration, AI skill generation/enhancement, conversational design, and other AI features.
 - **PostgreSQL**: Primary database for the platform.
-- **Express.js**: Backend framework for the REST API.
-- **React**: Frontend library for building user interfaces.
-- **Vite**: Frontend build tool for faster development.
-- **Tailwind CSS**: Utility-first CSS framework for styling.
+- **Express.js**: Backend framework.
+- **React**: Frontend library.
+- **Vite**: Frontend build tool.
+- **Tailwind CSS**: Utility-first CSS framework.
 - **shadcn/ui**: UI component library.
 - **wouter**: Routing library for the frontend.
-- **Drizzle ORM**: Object-Relational Mapper for database interactions.
+- **Drizzle ORM**: Object-Relational Mapper.
 - **Web Audio API**: Used for background music in the product demo player.

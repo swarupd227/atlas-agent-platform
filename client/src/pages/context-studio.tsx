@@ -87,6 +87,14 @@ const INDUSTRY_PRESETS: Record<string, string[]> = {
     "Regulatory Context", "Industry Ontology", "Skill Instructions",
     "System Instructions", "Conversation History", "Tool Descriptions", "Retrieved Knowledge",
   ],
+  manufacturing: [
+    "System Instructions", "Tool Descriptions", "Industry Ontology",
+    "Skill Instructions", "Regulatory Context", "Conversation History", "Retrieved Knowledge",
+  ],
+  retail: [
+    "Conversation History", "Tool Descriptions", "Skill Instructions",
+    "System Instructions", "Industry Ontology", "Retrieved Knowledge", "Regulatory Context",
+  ],
 };
 
 const TASK_TYPES = [
@@ -358,10 +366,49 @@ export default function ContextStudioPage() {
     updatePriorityOrder(order);
   }
 
-  function applyPreset(preset: string) {
-    const order = INDUSTRY_PRESETS[preset];
-    if (order) updatePriorityOrder(order);
-    toast({ title: `Applied ${preset.replace("_", " ")} preset` });
+  const [dynamicPresetLoading, setDynamicPresetLoading] = useState(false);
+  const [dynamicPresetAdjustments, setDynamicPresetAdjustments] = useState<Array<{ field: string; from: string; to: string; reason: string; source: string }>>([]);
+  const [isDynamicPreset, setIsDynamicPreset] = useState(false);
+
+  async function applyPreset(preset: string) {
+    setDynamicPresetLoading(true);
+    try {
+      const res = await fetch(`/api/industries/${preset}/dynamic-presets`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.contextPriority && data.contextPriority.length > 0) {
+          updatePriorityOrder(data.contextPriority);
+        }
+        if (data.contextConfig?.contextBudget && activeProfile) {
+          const newAllocations: Record<string, number> = {};
+          for (const item of data.contextConfig.contextBudget) {
+            const tokensForCat = Math.round((item.pct / 100) * totalCapacity);
+            newAllocations[item.category] = tokensForCat;
+          }
+          updateProfileMutation.mutate({
+            id: activeProfile.id,
+            updates: { budgetAllocations: newAllocations },
+          });
+        }
+        setDynamicPresetAdjustments(data.adjustments || []);
+        setIsDynamicPreset(data.isDynamic || false);
+        toast({ title: data.isDynamic ? `Dynamic ${preset.replace("_", " ")} preset applied` : `Applied ${preset.replace("_", " ")} preset`, description: data.isDynamic ? `${data.adjustments.length} adjustment(s) from ontology/outcome context` : undefined });
+      } else {
+        const order = INDUSTRY_PRESETS[preset];
+        if (order) updatePriorityOrder(order);
+        setDynamicPresetAdjustments([]);
+        setIsDynamicPreset(false);
+        toast({ title: `Applied ${preset.replace("_", " ")} preset` });
+      }
+    } catch {
+      const order = INDUSTRY_PRESETS[preset];
+      if (order) updatePriorityOrder(order);
+      setDynamicPresetAdjustments([]);
+      setIsDynamicPreset(false);
+      toast({ title: `Applied ${preset.replace("_", " ")} preset` });
+    } finally {
+      setDynamicPresetLoading(false);
+    }
   }
 
   function toggleSection(category: string) {
@@ -575,32 +622,73 @@ export default function ContextStudioPage() {
 
           <TabsContent value="priority-matrix" className="mt-0">
             <div className="flex flex-col gap-4">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-sm font-medium text-muted-foreground">Industry Presets:</span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => applyPreset("healthcare")}
-                  data-testid="button-preset-healthcare"
-                >
-                  Healthcare Default
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => applyPreset("financial_services")}
-                  data-testid="button-preset-financial"
-                >
-                  Financial Services Default
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => applyPreset("insurance")}
-                  data-testid="button-preset-insurance"
-                >
-                  Insurance Default
-                </Button>
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-medium text-muted-foreground">Industry Presets:</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={dynamicPresetLoading}
+                    onClick={() => applyPreset("healthcare")}
+                    data-testid="button-preset-healthcare"
+                  >
+                    {dynamicPresetLoading ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : null}
+                    Healthcare
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={dynamicPresetLoading}
+                    onClick={() => applyPreset("financial_services")}
+                    data-testid="button-preset-financial"
+                  >
+                    {dynamicPresetLoading ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : null}
+                    Financial Services
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={dynamicPresetLoading}
+                    onClick={() => applyPreset("insurance")}
+                    data-testid="button-preset-insurance"
+                  >
+                    {dynamicPresetLoading ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : null}
+                    Insurance
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={dynamicPresetLoading}
+                    onClick={() => applyPreset("manufacturing")}
+                    data-testid="button-preset-manufacturing"
+                  >
+                    {dynamicPresetLoading ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : null}
+                    Manufacturing
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={dynamicPresetLoading}
+                    onClick={() => applyPreset("retail")}
+                    data-testid="button-preset-retail"
+                  >
+                    {dynamicPresetLoading ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : null}
+                    Retail
+                  </Button>
+                </div>
+                {isDynamicPreset && dynamicPresetAdjustments.length > 0 && (
+                  <div className="flex items-center gap-2 text-xs bg-purple-50 dark:bg-purple-900/20 rounded-md px-3 py-1.5" data-testid="banner-dynamic-preset-active">
+                    <Sparkles className="h-3.5 w-3.5 text-purple-500 shrink-0" />
+                    <span className="text-purple-700 dark:text-purple-300 font-medium">
+                      Dynamically adjusted — {dynamicPresetAdjustments.length} setting{dynamicPresetAdjustments.length !== 1 ? "s" : ""} tailored from ontology/outcome context
+                    </span>
+                  </div>
+                )}
+                {!isDynamicPreset && (
+                  <p className="text-[10px] text-muted-foreground italic">
+                    Link ontology tags or an outcome to agents for tailored context allocation
+                  </p>
+                )}
               </div>
               <div className="flex flex-col gap-2">
                 {priorityOrder.map((cat, index) => {

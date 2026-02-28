@@ -20939,6 +20939,287 @@ Return ONLY valid JSON array, no explanation.`;
     }
   });
 
+  // ── Dynamic Industry Preset Computation ──
+  app.get("/api/industries/:industryId/dynamic-presets", async (req, res) => {
+    try {
+      const { industryId } = req.params;
+      const ontologyTagsParam = (req.query.ontologyTags as string) || "";
+      const outcomeId = req.query.outcomeId as string | undefined;
+      const tagIds = ontologyTagsParam ? ontologyTagsParam.split(",").filter(Boolean) : [];
+
+      const STATIC_PRESETS: Record<string, { riskTier: string; autonomyMode: string; stopConditions: string[]; escalationTriggers: string[]; forbiddenOutputs: string[]; allowedActions: string[] }> = {
+        financial_services: { riskTier: "HIGH", autonomyMode: "assisted", stopConditions: ["PII detected in output", "Transaction amount exceeds threshold", "Regulatory compliance check failed"], escalationTriggers: ["Write to production trading system", "Customer complaint escalation", "Fraud detection signal"], forbiddenOutputs: ["Raw account numbers", "Unmasked SSN or tax IDs", "Investment advice without disclaimers"], allowedActions: ["Read customer records", "Generate compliance reports", "Query market data feeds"] },
+        healthcare: { riskTier: "HIGH", autonomyMode: "manual", stopConditions: ["PHI detected outside secure boundary", "Clinical decision without validation", "Patient safety signal detected"], escalationTriggers: ["Adverse event signal", "Medication interaction warning", "Abnormal lab result flagged"], forbiddenOutputs: ["Unredacted PHI", "Autonomous clinical diagnoses", "Treatment recommendations without clinician review"], allowedActions: ["Read de-identified patient data", "Generate clinical summaries", "Query formulary database"] },
+        manufacturing: { riskTier: "MEDIUM", autonomyMode: "assisted", stopConditions: ["Safety interlock override attempted", "Production parameter out of range", "Equipment fault detected"], escalationTriggers: ["Quality non-conformance detected", "Emergency stop triggered", "Calibration overdue"], forbiddenOutputs: ["Override safety interlocks", "Bypass quality hold", "Modify emergency stop configuration"], allowedActions: ["Read sensor data", "Generate production reports", "Query maintenance schedules"] },
+        retail: { riskTier: "MEDIUM", autonomyMode: "autonomous", stopConditions: ["Payment card data detected in output", "Price manipulation detected", "Inventory discrepancy above threshold"], escalationTriggers: ["High-value refund request", "Suspected fraud pattern", "Customer data deletion request"], forbiddenOutputs: ["Unmasked credit card numbers", "Raw customer passwords", "Competitor price comparisons without context"], allowedActions: ["Read product catalog", "Update order status", "Query inventory levels"] },
+        insurance: { riskTier: "HIGH", autonomyMode: "assisted", stopConditions: ["PII detected in output", "Unfair denial pattern detected", "Policy limit exceeded"], escalationTriggers: ["High-value claim flagged", "Fraud indicator detected", "Regulatory inquiry received"], forbiddenOutputs: ["Raw policyholder SSN", "Unauthorized policy modifications", "Bad faith claim denials"], allowedActions: ["Read policy records", "Generate claims reports", "Query actuarial models"] },
+      };
+
+      const STATIC_CONTEXT: Record<string, { recommendedModel: { provider: string; model: string }; memoryGovernance: Array<{ rule: string; regulation: string; type: string }>; contextBudget: Array<{ category: string; pct: number; tokens: number }> }> = {
+        financial_services: { recommendedModel: { provider: "openai", model: "gpt-4.1" }, memoryGovernance: [{ rule: "Retain BSA/AML records for 5 years minimum", regulation: "BSA/AML", type: "retention" }, { rule: "Customer identity records retained for 5 years after account closure", regulation: "CIP", type: "retention" }, { rule: "Erase personal data within 30 days of valid GDPR request", regulation: "GDPR", type: "erasure" }, { rule: "Transaction logs immutable once committed", regulation: "SOX", type: "immutability" }], contextBudget: [{ category: "System Instructions", pct: 20, tokens: 1640 }, { category: "Industry Ontology", pct: 22, tokens: 1802 }, { category: "Regulatory Context", pct: 18, tokens: 1475 }, { category: "Skill Instructions", pct: 14, tokens: 1147 }, { category: "Conversation History", pct: 10, tokens: 819 }, { category: "Retrieved Knowledge", pct: 10, tokens: 819 }, { category: "Tool Descriptions", pct: 6, tokens: 490 }] },
+        healthcare: { recommendedModel: { provider: "openai", model: "gpt-4.1" }, memoryGovernance: [{ rule: "Retain medical records for minimum 6 years (varies by state)", regulation: "HIPAA", type: "retention" }, { rule: "PHI must be encrypted at rest and in transit", regulation: "HIPAA Security Rule", type: "encryption" }, { rule: "Right to access personal health records within 30 days", regulation: "HIPAA", type: "access" }, { rule: "Minimum necessary standard for PHI disclosure", regulation: "HIPAA Privacy Rule", type: "access_control" }], contextBudget: [{ category: "System Instructions", pct: 18, tokens: 1475 }, { category: "Industry Ontology", pct: 20, tokens: 1638 }, { category: "Regulatory Context", pct: 20, tokens: 1638 }, { category: "Skill Instructions", pct: 15, tokens: 1229 }, { category: "Conversation History", pct: 10, tokens: 819 }, { category: "Retrieved Knowledge", pct: 12, tokens: 983 }, { category: "Tool Descriptions", pct: 5, tokens: 410 }] },
+        manufacturing: { recommendedModel: { provider: "openai", model: "gpt-4o" }, memoryGovernance: [{ rule: "Retain quality records per ISO 9001 (minimum 3 years)", regulation: "ISO 9001", type: "retention" }, { rule: "Safety incident records retained for 10 years", regulation: "OSHA", type: "retention" }, { rule: "Production batch records retained for product lifecycle", regulation: "GMP", type: "retention" }], contextBudget: [{ category: "System Instructions", pct: 22, tokens: 1802 }, { category: "Industry Ontology", pct: 18, tokens: 1475 }, { category: "Regulatory Context", pct: 12, tokens: 983 }, { category: "Skill Instructions", pct: 18, tokens: 1475 }, { category: "Conversation History", pct: 8, tokens: 655 }, { category: "Retrieved Knowledge", pct: 14, tokens: 1147 }, { category: "Tool Descriptions", pct: 8, tokens: 655 }] },
+        insurance: { recommendedModel: { provider: "anthropic", model: "claude-3.5-sonnet" }, memoryGovernance: [{ rule: "Claims records retained for statute of limitations + 3 years", regulation: "State Insurance Laws", type: "retention" }, { rule: "Underwriting records retained for policy lifetime + 7 years", regulation: "NAIC Model Laws", type: "retention" }, { rule: "GDPR erasure within 30 days for EU policyholders", regulation: "GDPR", type: "erasure" }], contextBudget: [{ category: "System Instructions", pct: 20, tokens: 1638 }, { category: "Industry Ontology", pct: 20, tokens: 1638 }, { category: "Regulatory Context", pct: 18, tokens: 1475 }, { category: "Skill Instructions", pct: 14, tokens: 1147 }, { category: "Conversation History", pct: 10, tokens: 819 }, { category: "Retrieved Knowledge", pct: 12, tokens: 983 }, { category: "Tool Descriptions", pct: 6, tokens: 490 }] },
+        retail: { recommendedModel: { provider: "openai", model: "gpt-4o" }, memoryGovernance: [{ rule: "PCI data must not be stored after transaction completion", regulation: "PCI DSS", type: "deletion" }, { rule: "Customer data erasure within 45 days of CCPA request", regulation: "CCPA", type: "erasure" }, { rule: "Behavioral tracking data retained max 13 months", regulation: "GDPR/ePrivacy", type: "retention" }], contextBudget: [{ category: "System Instructions", pct: 20, tokens: 1638 }, { category: "Industry Ontology", pct: 15, tokens: 1229 }, { category: "Regulatory Context", pct: 10, tokens: 819 }, { category: "Skill Instructions", pct: 18, tokens: 1475 }, { category: "Conversation History", pct: 15, tokens: 1229 }, { category: "Retrieved Knowledge", pct: 14, tokens: 1147 }, { category: "Tool Descriptions", pct: 8, tokens: 655 }] },
+      };
+
+      const STATIC_PRIORITY: Record<string, string[]> = {
+        healthcare: ["Regulatory Context", "Skill Instructions", "Industry Ontology", "Conversation History", "Tool Descriptions", "Retrieved Knowledge", "System Instructions"],
+        financial_services: ["Regulatory Context", "System Instructions", "Industry Ontology", "Skill Instructions", "Conversation History", "Tool Descriptions", "Retrieved Knowledge"],
+        insurance: ["Regulatory Context", "Industry Ontology", "Skill Instructions", "System Instructions", "Conversation History", "Tool Descriptions", "Retrieved Knowledge"],
+        manufacturing: ["System Instructions", "Industry Ontology", "Skill Instructions", "Regulatory Context", "Retrieved Knowledge", "Conversation History", "Tool Descriptions"],
+        retail: ["System Instructions", "Skill Instructions", "Conversation History", "Retrieved Knowledge", "Industry Ontology", "Regulatory Context", "Tool Descriptions"],
+      };
+
+      const RISK_HIERARCHY: Record<string, number> = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
+      const RISK_LABELS = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
+
+      const basePreset = STATIC_PRESETS[industryId] || { riskTier: "MEDIUM", autonomyMode: "assisted", stopConditions: [], escalationTriggers: [], forbiddenOutputs: [], allowedActions: [] };
+      const baseContext = STATIC_CONTEXT[industryId] || { recommendedModel: { provider: "openai", model: "gpt-4o" }, memoryGovernance: [], contextBudget: [{ category: "System Instructions", pct: 20, tokens: 1638 }, { category: "Industry Ontology", pct: 15, tokens: 1229 }, { category: "Regulatory Context", pct: 15, tokens: 1229 }, { category: "Skill Instructions", pct: 15, tokens: 1229 }, { category: "Conversation History", pct: 12, tokens: 983 }, { category: "Retrieved Knowledge", pct: 15, tokens: 1229 }, { category: "Tool Descriptions", pct: 8, tokens: 655 }] };
+      const basePriority = STATIC_PRIORITY[industryId] || ["System Instructions", "Industry Ontology", "Regulatory Context", "Skill Instructions", "Conversation History", "Retrieved Knowledge", "Tool Descriptions"];
+
+      const result = {
+        riskTier: basePreset.riskTier,
+        autonomyMode: basePreset.autonomyMode,
+        stopConditions: [...basePreset.stopConditions],
+        escalationTriggers: [...basePreset.escalationTriggers],
+        forbiddenOutputs: [...basePreset.forbiddenOutputs],
+        allowedActions: [...basePreset.allowedActions],
+      };
+      const ctxResult = {
+        recommendedModel: { ...baseContext.recommendedModel },
+        memoryGovernance: [...baseContext.memoryGovernance],
+        contextBudget: baseContext.contextBudget.map((b) => ({ ...b })),
+      };
+      let contextPriority = [...basePriority];
+      const adjustments: Array<{ field: string; from: string; to: string; reason: string; source: "ontology" | "outcome" }> = [];
+      const ontologyGuardrails: Array<{ text: string; type: "stopCondition" | "escalationTrigger" | "forbiddenOutput"; source: "ontology"; conceptLabel: string; regulation: string }> = [];
+
+      if (tagIds.length > 0) {
+        const allConcepts = await db.select().from(
+          (await import("@shared/schema")).ontologyConcepts
+        );
+        const matchedConcepts = allConcepts.filter((c) =>
+          tagIds.includes(c.id) || tagIds.includes(c.label)
+        );
+
+        const allEnhancements = await db.select().from(
+          (await import("@shared/schema")).ontologyEnhancements
+        );
+        const conceptIds = matchedConcepts.map((c) => c.id);
+        const matchedEnhancements = allEnhancements.filter((e) =>
+          conceptIds.includes(e.conceptId)
+        );
+
+        let hasRiskConcepts = false;
+        let hasComplianceConcepts = false;
+        let regulatoryConceptCount = 0;
+
+        for (const concept of matchedConcepts) {
+          const cat = (concept.category || "").toLowerCase();
+          if (cat.includes("risk") || cat.includes("safety") || cat.includes("security")) {
+            hasRiskConcepts = true;
+          }
+          if (cat.includes("compliance") || cat.includes("regulatory") || cat.includes("governance") || cat.includes("audit")) {
+            hasComplianceConcepts = true;
+          }
+        }
+
+        for (const enh of matchedEnhancements) {
+          const concept = matchedConcepts.find((c) => c.id === enh.conceptId);
+          const conceptLabel = concept?.label || "Unknown concept";
+
+          if (enh.regulatoryRelevance && enh.regulatoryRelevance.trim().length > 0) {
+            regulatoryConceptCount++;
+            const regText = enh.regulatoryRelevance;
+            const guardrailStop = `Halt if ${conceptLabel} regulatory requirements are not met per ${regText.substring(0, 80)}`;
+            if (!result.stopConditions.includes(guardrailStop)) {
+              result.stopConditions.push(guardrailStop);
+              ontologyGuardrails.push({ text: guardrailStop, type: "stopCondition", source: "ontology", conceptLabel, regulation: regText.substring(0, 80) });
+            }
+            const guardrailEscalation = `Escalate when ${conceptLabel} compliance cannot be verified`;
+            if (!result.escalationTriggers.includes(guardrailEscalation)) {
+              result.escalationTriggers.push(guardrailEscalation);
+              ontologyGuardrails.push({ text: guardrailEscalation, type: "escalationTrigger", source: "ontology", conceptLabel, regulation: regText.substring(0, 80) });
+            }
+          }
+
+          if (enh.dataHandlingConsiderations && enh.dataHandlingConsiderations.trim().length > 0) {
+            const dhText = enh.dataHandlingConsiderations;
+            const forbiddenOutput = `Do not expose raw ${conceptLabel} data without proper redaction per ${dhText.substring(0, 60)}`;
+            if (!result.forbiddenOutputs.includes(forbiddenOutput)) {
+              result.forbiddenOutputs.push(forbiddenOutput);
+              ontologyGuardrails.push({ text: forbiddenOutput, type: "forbiddenOutput", source: "ontology", conceptLabel, regulation: dhText.substring(0, 60) });
+            }
+
+            const govRule = { rule: `${conceptLabel}: ${dhText.substring(0, 100)}`, regulation: conceptLabel, type: "data_handling" };
+            if (!ctxResult.memoryGovernance.some((r) => r.rule === govRule.rule)) {
+              ctxResult.memoryGovernance.push(govRule);
+            }
+          }
+        }
+
+        if (hasRiskConcepts || hasComplianceConcepts) {
+          const currentRiskLevel = RISK_HIERARCHY[result.riskTier] || 2;
+          const targetRiskLevel = Math.min(4, currentRiskLevel + 1);
+          if (targetRiskLevel > currentRiskLevel) {
+            const newRiskTier = RISK_LABELS[targetRiskLevel - 1];
+            adjustments.push({ field: "riskTier", from: result.riskTier, to: newRiskTier, reason: `Agent handles ${hasRiskConcepts ? "risk management" : ""}${hasRiskConcepts && hasComplianceConcepts ? " and " : ""}${hasComplianceConcepts ? "compliance/governance" : ""} concepts requiring elevated oversight`, source: "ontology" });
+            result.riskTier = newRiskTier;
+          }
+
+          if (result.autonomyMode === "autonomous") {
+            adjustments.push({ field: "autonomyMode", from: "autonomous", to: "assisted", reason: "Risk/compliance ontology concepts require human-in-the-loop oversight", source: "ontology" });
+            result.autonomyMode = "assisted";
+          }
+        }
+
+        if (regulatoryConceptCount > 0) {
+          const regBudgetItem = ctxResult.contextBudget.find((b) => b.category === "Regulatory Context");
+          const ontBudgetItem = ctxResult.contextBudget.find((b) => b.category === "Industry Ontology");
+          if (regBudgetItem) {
+            const boost = Math.min(10, regulatoryConceptCount * 3);
+            const oldPct = regBudgetItem.pct;
+            regBudgetItem.pct = Math.min(35, regBudgetItem.pct + boost);
+            regBudgetItem.tokens = Math.round(regBudgetItem.pct * 81.9);
+            if (regBudgetItem.pct > oldPct) {
+              adjustments.push({ field: "contextBudget.RegulatoryContext", from: `${oldPct}%`, to: `${regBudgetItem.pct}%`, reason: `${regulatoryConceptCount} ontology concept(s) have regulatory relevance data requiring more context space`, source: "ontology" });
+            }
+          }
+          if (ontBudgetItem && matchedConcepts.length > 3) {
+            const oldPct = ontBudgetItem.pct;
+            ontBudgetItem.pct = Math.min(30, ontBudgetItem.pct + 5);
+            ontBudgetItem.tokens = Math.round(ontBudgetItem.pct * 81.9);
+            if (ontBudgetItem.pct > oldPct) {
+              adjustments.push({ field: "contextBudget.IndustryOntology", from: `${oldPct}%`, to: `${ontBudgetItem.pct}%`, reason: `${matchedConcepts.length} ontology tags selected — more context needed for domain vocabulary`, source: "ontology" });
+            }
+          }
+
+          const regIdx = contextPriority.indexOf("Regulatory Context");
+          if (regIdx > 0) {
+            contextPriority.splice(regIdx, 1);
+            contextPriority.unshift("Regulatory Context");
+            adjustments.push({ field: "contextPriority", from: `Regulatory Context at position ${regIdx + 1}`, to: "Regulatory Context at position 1", reason: "Ontology tags with regulatory relevance require prioritized compliance context", source: "ontology" });
+          }
+        }
+
+        if (ontologyGuardrails.length > 0) {
+          adjustments.push({ field: "guardrails", from: `${basePreset.stopConditions.length + basePreset.escalationTriggers.length + basePreset.forbiddenOutputs.length} industry defaults`, to: `${result.stopConditions.length + result.escalationTriggers.length + result.forbiddenOutputs.length} total (${ontologyGuardrails.length} from ontology)`, reason: "Ontology regulatory enhancements and data handling rules generated additional guardrails", source: "ontology" });
+        }
+      }
+
+      if (outcomeId) {
+        const outcome = await storage.getOutcomeContract(outcomeId);
+        if (outcome) {
+          const kpis = await db.select().from(kpiDefinitions).where(eq(kpiDefinitions.outcomeId, outcomeId));
+
+          if (outcome.riskTier) {
+            const outcomeRiskLevel = RISK_HIERARCHY[outcome.riskTier] || 2;
+            const currentRiskLevel = RISK_HIERARCHY[result.riskTier] || 2;
+            if (outcomeRiskLevel > currentRiskLevel) {
+              const newRiskTier = RISK_LABELS[outcomeRiskLevel - 1];
+              adjustments.push({ field: "riskTier", from: result.riskTier, to: newRiskTier, reason: `Bound outcome "${outcome.name}" has ${outcome.riskTier} risk tier — escalating agent risk to match`, source: "outcome" });
+              result.riskTier = newRiskTier;
+            }
+          }
+
+          const strictSlaKpis = kpis.filter((k) => k.slaThreshold !== null && k.slaThreshold !== undefined && k.slaThreshold >= 95);
+          const veryStrictSlaKpis = kpis.filter((k) => k.slaThreshold !== null && k.slaThreshold !== undefined && k.slaThreshold >= 99);
+
+          if (veryStrictSlaKpis.length > 0) {
+            if (result.autonomyMode !== "manual") {
+              adjustments.push({ field: "autonomyMode", from: result.autonomyMode, to: "manual", reason: `KPI "${veryStrictSlaKpis[0].name}" has ≥99% SLA threshold — manual oversight required`, source: "outcome" });
+              result.autonomyMode = "manual";
+            }
+            if (ctxResult.recommendedModel.model !== "gpt-4.1") {
+              adjustments.push({ field: "recommendedModel", from: ctxResult.recommendedModel.model, to: "gpt-4.1", reason: `KPI "${veryStrictSlaKpis[0].name}" has ≥99% SLA — using highest-accuracy model`, source: "outcome" });
+              ctxResult.recommendedModel = { provider: "openai", model: "gpt-4.1" };
+            }
+          } else if (strictSlaKpis.length > 0) {
+            if (result.autonomyMode === "autonomous") {
+              adjustments.push({ field: "autonomyMode", from: "autonomous", to: "assisted", reason: `KPI "${strictSlaKpis[0].name}" has ≥95% SLA threshold — human-in-the-loop recommended`, source: "outcome" });
+              result.autonomyMode = "assisted";
+            }
+            if (ctxResult.recommendedModel.model === "gpt-4o-mini" || ctxResult.recommendedModel.model === "gpt-3.5-turbo") {
+              adjustments.push({ field: "recommendedModel", from: ctxResult.recommendedModel.model, to: "gpt-4.1", reason: `Strict SLA thresholds (≥95%) require higher-accuracy model`, source: "outcome" });
+              ctxResult.recommendedModel = { provider: "openai", model: "gpt-4.1" };
+            }
+          }
+
+          if (kpis.length > 3) {
+            const sysBudgetItem = ctxResult.contextBudget.find((b) => b.category === "System Instructions");
+            if (sysBudgetItem) {
+              const oldPct = sysBudgetItem.pct;
+              sysBudgetItem.pct = Math.min(30, sysBudgetItem.pct + 5);
+              sysBudgetItem.tokens = Math.round(sysBudgetItem.pct * 81.9);
+              if (sysBudgetItem.pct > oldPct) {
+                adjustments.push({ field: "contextBudget.SystemInstructions", from: `${oldPct}%`, to: `${sysBudgetItem.pct}%`, reason: `${kpis.length} KPIs bound — more system instruction context for behavioral control`, source: "outcome" });
+              }
+            }
+          }
+
+          if (strictSlaKpis.length > 0) {
+            for (const kpi of strictSlaKpis.slice(0, 3)) {
+              const stopCond = `Halt if ${kpi.name} drops below ${kpi.slaThreshold}% SLA threshold`;
+              if (!result.stopConditions.includes(stopCond)) {
+                result.stopConditions.push(stopCond);
+              }
+              const escalation = `Escalate when ${kpi.name} is within 2% of SLA breach (${kpi.slaThreshold}%)`;
+              if (!result.escalationTriggers.includes(escalation)) {
+                result.escalationTriggers.push(escalation);
+              }
+            }
+            adjustments.push({ field: "guardrails", from: "industry defaults", to: `Added ${Math.min(strictSlaKpis.length, 3)} KPI-specific stop conditions and escalation triggers`, reason: `Strict SLA thresholds on KPIs require proactive halt/escalation guardrails`, source: "outcome" });
+          }
+        }
+      }
+
+      const totalPctAfter = ctxResult.contextBudget.reduce((s, b) => s + b.pct, 0);
+      if (totalPctAfter > 100) {
+        const excess = totalPctAfter - 100;
+        const convItem = ctxResult.contextBudget.find((b) => b.category === "Conversation History");
+        const toolItem = ctxResult.contextBudget.find((b) => b.category === "Tool Descriptions");
+        let reduced = 0;
+        if (convItem && convItem.pct > 5) {
+          const canReduce = Math.min(excess - reduced, convItem.pct - 5);
+          convItem.pct -= canReduce;
+          convItem.tokens = Math.round(convItem.pct * 81.9);
+          reduced += canReduce;
+        }
+        if (reduced < excess && toolItem && toolItem.pct > 3) {
+          const canReduce = Math.min(excess - reduced, toolItem.pct - 3);
+          toolItem.pct -= canReduce;
+          toolItem.tokens = Math.round(toolItem.pct * 81.9);
+        }
+      }
+
+      res.json({
+        preset: {
+          riskTier: result.riskTier,
+          autonomyMode: result.autonomyMode,
+          guardrailsConfig: {
+            stopConditions: result.stopConditions,
+            escalationTriggers: result.escalationTriggers,
+            forbiddenOutputs: result.forbiddenOutputs,
+            allowedActions: result.allowedActions,
+          },
+        },
+        contextConfig: {
+          recommendedModel: ctxResult.recommendedModel,
+          memoryGovernance: ctxResult.memoryGovernance,
+          contextBudget: ctxResult.contextBudget,
+        },
+        contextPriority,
+        adjustments,
+        ontologyGuardrails,
+        isDynamic: adjustments.length > 0,
+      });
+    } catch (error: any) {
+      console.error("Dynamic preset error:", error);
+      res.status(500).json({ error: "Failed to compute dynamic presets" });
+    }
+  });
+
   // Start the job worker
   startWorker();
 
