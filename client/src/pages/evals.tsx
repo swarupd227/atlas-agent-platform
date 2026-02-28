@@ -480,6 +480,30 @@ export default function Evals() {
               )}
             </div>
 
+            {industryAssurance && industryAssurance.primaryIndustry && (() => {
+              const gapCount = filtered.filter(s => {
+                const si = (s as any).industry as IndustryId | null || getIndustryFromTags(s.coverageTags);
+                if (!si) return true;
+                const scorers = industryScorers.filter(sc => sc.industry === si);
+                const regs = regulatoryTemplates.filter(t => t.industry === si);
+                const tags = (s.coverageTags || []).map(t => t.toLowerCase());
+                const hasScorer = scorers.some(sc => tags.some(t => t.includes(sc.type.split("_")[0]) || sc.name.toLowerCase().split(" ").some(w => t.includes(w))));
+                const hasRegCoverage = regs.some(r => tags.some(t => r.tags.some(rt => t.includes(rt))));
+                return !hasScorer && !hasRegCoverage;
+              }).length;
+              const total = filtered.length;
+              if (total === 0 || gapCount <= Math.floor(total * 0.5)) return null;
+              return (
+                <div className="flex items-start gap-2.5 p-3 rounded-md border border-amber-500/30 bg-amber-500/5" data-testid="banner-industry-assurance-gap">
+                  <ShieldAlert className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-xs font-medium">{industryLabels[industryAssurance.primaryIndustry]} Assurance Gap</span>
+                    <span className="text-[11px] text-muted-foreground">{gapCount} of {total} suites lack industry-specific test coverage — open suites with amber badges to see what's missing in the Industry Assurance tab</span>
+                  </div>
+                </div>
+              );
+            })()}
+
             {filtered.length === 0 ? (
               <Card>
                 <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
@@ -503,6 +527,16 @@ export default function Evals() {
                       const delta = sparkData.length >= 2
                         ? ((sparkData[sparkData.length - 1] - sparkData[sparkData.length - 2]) * 100)
                         : null;
+                      const suiteIndustry = (suite as any).industry as IndustryId | null || getIndustryFromTags(suite.coverageTags);
+                      const suiteIndustryReady = (() => {
+                        if (!suiteIndustry) return null;
+                        const scorers = industryScorers.filter(s => s.industry === suiteIndustry);
+                        const regs = regulatoryTemplates.filter(t => t.industry === suiteIndustry);
+                        const tags = (suite.coverageTags || []).map(t => t.toLowerCase());
+                        const hasScorer = scorers.some(s => tags.some(t => t.includes(s.type.split("_")[0]) || s.name.toLowerCase().split(" ").some(w => t.includes(w))));
+                        const hasRegCoverage = regs.some(r => tags.some(t => r.tags.some(rt => t.includes(rt))));
+                        return hasScorer || hasRegCoverage ? "ready" : "gap";
+                      })();
                       return (
                         <Link key={suite.id} href={`/evals/${suite.id}`}>
                           <Card className="hover-elevate cursor-pointer" data-testid={`card-eval-suite-${suite.id}`}>
@@ -510,11 +544,23 @@ export default function Evals() {
                               <CardTitle className="text-sm font-medium truncate" data-testid={`text-suite-name-${suite.id}`}>
                                 {suite.name}
                               </CardTitle>
-                              {suite.type && (
-                                <Badge variant="outline" className={`text-[10px] shrink-0 ${typeColors[suite.type] || ""}`} data-testid={`badge-suite-type-${suite.id}`}>
-                                  {suite.type}
-                                </Badge>
-                              )}
+                              <div className="flex items-center gap-1 shrink-0">
+                                {suiteIndustryReady === "ready" && (
+                                  <Badge variant="outline" className="text-[9px] border-green-500/30 text-green-600 dark:text-green-400" data-testid={`badge-industry-ready-${suite.id}`}>
+                                    <CheckCircle className="w-2.5 h-2.5 mr-0.5" />{industryLabels[suiteIndustry!]}
+                                  </Badge>
+                                )}
+                                {suiteIndustryReady === "gap" && (
+                                  <Badge variant="outline" className="text-[9px] border-amber-500/30 text-amber-600 dark:text-amber-400" data-testid={`badge-industry-gap-${suite.id}`}>
+                                    <AlertTriangle className="w-2.5 h-2.5 mr-0.5" />{industryLabels[suiteIndustry!]}
+                                  </Badge>
+                                )}
+                                {suite.type && (
+                                  <Badge variant="outline" className={`text-[10px] shrink-0 ${typeColors[suite.type] || ""}`} data-testid={`badge-suite-type-${suite.id}`}>
+                                    {suite.type}
+                                  </Badge>
+                                )}
+                              </div>
                             </CardHeader>
                             <CardContent className="flex flex-col gap-3">
                               <div className="flex items-center justify-between gap-2 flex-wrap">

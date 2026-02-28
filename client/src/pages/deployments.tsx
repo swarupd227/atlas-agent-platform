@@ -487,6 +487,52 @@ function CreateReleaseWizard({
                 </div>
               </div>
             )}
+            {selectedAgent && (() => {
+              const agentIndustry = getIndustryFromAgent(selectedAgent);
+              if (!agentIndustry) return null;
+              const stages = mandatoryPipelineStages[agentIndustry] || [];
+              const rollbackTriggers = industryRollbackTriggers[agentIndustry] || [];
+              const ontologyTags = (selectedAgent.ontologyTags as Array<{ conceptId: string; label?: string }>) || [];
+              const hasOntology = ontologyTags.length > 0;
+              const riskTier = selectedAgent.riskTier || "MEDIUM";
+              const agentEvalSuites = evalSuites?.filter(s => s.agentId === selectedAgent.id) || [];
+              const hasEvalSuites = agentEvalSuites.length > 0;
+
+              const checks = [
+                { label: "Ontology Tags", met: hasOntology, detail: hasOntology ? `${ontologyTags.length} domain concepts` : "No domain ontology tags assigned" },
+                { label: "Risk Tier", met: riskTier === "HIGH" || riskTier === "CRITICAL", detail: `${riskTier} (${stages.length > 0 ? stages.length + " mandatory stages" : "check pipeline"})` },
+                { label: "Eval Suites", met: hasEvalSuites, detail: hasEvalSuites ? `${agentEvalSuites.length} active suites` : "No eval suites configured for this agent" },
+                { label: "Rollback Triggers", met: rollbackTriggers.length > 0, detail: `${rollbackTriggers.length} industry-specific triggers defined` },
+              ];
+              const metCount = checks.filter(c => c.met).length;
+
+              return (
+                <div className="flex flex-col gap-2 p-3 rounded-md border border-border bg-muted/20" data-testid="card-industry-predeploy-check">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Factory className="w-3.5 h-3.5 text-muted-foreground" />
+                      <span className="text-xs font-medium">{industryLabels[agentIndustry]} Pre-Deploy Check</span>
+                    </div>
+                    <Badge variant={metCount === checks.length ? "default" : "outline"} className="text-[9px]" data-testid="badge-predeploy-score">
+                      {metCount}/{checks.length} passed
+                    </Badge>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    {checks.map((check) => (
+                      <div key={check.label} className="flex items-center gap-1.5 text-[11px]" data-testid={`predeploy-check-${check.label.toLowerCase().replace(/\s+/g, "-")}`}>
+                        {check.met ? (
+                          <CheckCircle className="w-3 h-3 text-green-500 shrink-0" />
+                        ) : (
+                          <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />
+                        )}
+                        <span className={check.met ? "text-muted-foreground" : "font-medium"}>{check.label}</span>
+                        <span className="text-muted-foreground ml-auto">{check.detail}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
             <div className="grid grid-cols-2 gap-4">
               <div className="flex flex-col gap-2">
                 <Label>Target Environment</Label>

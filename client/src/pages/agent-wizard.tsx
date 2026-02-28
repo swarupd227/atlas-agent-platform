@@ -680,7 +680,33 @@ export default function AgentWizard() {
   });
 
   useEffect(() => {
-    if (industry?.id && wizardState.industryId !== industry.id) {
+    if (industry?.id && industry.id !== "custom" && industry.id !== "cross_industry" && wizardState.industryId !== industry.id) {
+      const preset = INDUSTRY_PRESETS[industry.id];
+      const ctx = INDUSTRY_CONTEXT_CONFIG[industry.id];
+      if (preset && ctx && !wizardState.industryAutoApplied) {
+        const industryTools: ToolConfig[] = ctx.mcpTools.map((t) => ({ ...t }));
+        updateState({
+          industryId: industry.id,
+          riskTier: preset.riskTier,
+          autonomyMode: preset.autonomyMode,
+          modelName: ctx.recommendedModel.model,
+          modelProvider: ctx.recommendedModel.provider,
+          guardrailsConfig: {
+            ...wizardState.guardrailsConfig,
+            stopConditions: preset.stopConditions,
+            escalationTriggers: preset.escalationTriggers,
+            forbiddenOutputs: preset.forbiddenOutputs,
+            allowedActions: preset.allowedActions,
+          },
+          toolsConfig: [...wizardState.toolsConfig, ...industryTools.filter((t) => !wizardState.toolsConfig.some((existing) => existing.name === t.name))],
+          contextBudget: ctx.contextBudgetPreset,
+          memoryGovernanceRules: ctx.memoryGovernance,
+          industryAutoApplied: true,
+        });
+      } else {
+        updateState({ industryId: industry.id });
+      }
+    } else if (industry?.id && wizardState.industryId !== industry.id) {
       updateState({ industryId: industry.id });
     }
   }, [industry?.id]);
@@ -1685,9 +1711,9 @@ function Step1IndustryDefine({
                   <div className="flex items-center gap-2 min-w-0">
                     <industry.icon className="h-4 w-4 shrink-0" style={{ color: industry.color }} />
                     <div className="min-w-0">
-                      <p className="text-sm font-medium">Auto-Configure for {industry.label}</p>
+                      <p className="text-sm font-medium">{state.industryAutoApplied ? `${industry.label} Defaults Active` : `Auto-Configure for ${industry.label}`}</p>
                       <p className="text-xs text-muted-foreground">
-                        Apply recommended model, industry MCP tools, compliance guardrails, context budget, and memory governance
+                        {state.industryAutoApplied ? "Industry defaults were auto-applied on entry. Click to re-apply if you've customized." : "Apply recommended model, industry MCP tools, compliance guardrails, context budget, and memory governance"}
                       </p>
                     </div>
                   </div>
@@ -4668,6 +4694,77 @@ function StepReview({
       </Card>
 
       <PerformanceSimulation state={state} />
+
+      {industryLabel && industryLabel !== "Custom" && industryLabel !== "Cross-Industry" && (() => {
+        const iid = state.industryId || "";
+        const preset = INDUSTRY_PRESETS[iid];
+        const ctx = INDUSTRY_CONTEXT_CONFIG[iid];
+        if (!preset || !ctx) return null;
+
+        const checks: Array<{ label: string; met: boolean; detail: string }> = [];
+
+        const riskOrder: Record<string, number> = { LOW: 0, MEDIUM: 1, HIGH: 2, CRITICAL: 3 };
+        const riskMet = (riskOrder[state.riskTier] || 0) >= (riskOrder[preset.riskTier] || 0);
+        checks.push({ label: "Risk Tier", met: riskMet, detail: riskMet ? `${state.riskTier} (meets ${preset.riskTier} baseline)` : `${state.riskTier} is below recommended ${preset.riskTier}` });
+
+        const hasGuardrails = state.guardrailsConfig.stopConditions.length > 0 || state.guardrailsConfig.escalationTriggers.length > 0;
+        checks.push({ label: "Guardrails", met: hasGuardrails, detail: hasGuardrails ? `${state.guardrailsConfig.stopConditions.length} stop conditions, ${state.guardrailsConfig.escalationTriggers.length} escalation triggers` : "No stop conditions or escalation triggers configured" });
+
+        const hasOntology = state.ontologyTags.length > 0;
+        checks.push({ label: "Ontology Tags", met: hasOntology, detail: hasOntology ? `${state.ontologyTags.length} domain concepts tagged` : "No domain ontology concepts assigned" });
+
+        const industryToolNames = ctx.mcpTools.map(t => t.name.toLowerCase());
+        const matchingTools = state.toolsConfig.filter(t => industryToolNames.includes(t.name.toLowerCase()));
+        const hasTools = matchingTools.length > 0;
+        checks.push({ label: "Industry Tools", met: hasTools, detail: hasTools ? `${matchingTools.length}/${ctx.mcpTools.length} industry tools configured` : `No industry-specific tools (${ctx.mcpTools.length} available)` });
+
+        const hasMemGov = state.memoryGovernanceRules.length > 0;
+        checks.push({ label: "Memory Governance", met: hasMemGov, detail: hasMemGov ? `${state.memoryGovernanceRules.length} governance rules active` : "No data retention or protection rules configured" });
+
+        const hasBudget = state.contextBudget.length > 0;
+        checks.push({ label: "Context Budget", met: hasBudget, detail: hasBudget ? `${state.contextBudget.length} budget allocations defined` : "No context budget allocation configured" });
+
+        const metCount = checks.filter(c => c.met).length;
+        const total = checks.length;
+        const pct = Math.round((metCount / total) * 100);
+        const isLow = pct < 50;
+
+        return (
+          <Card className={`border ${isLow ? "border-amber-500/50 bg-amber-500/5" : pct === 100 ? "border-green-500/30 bg-green-500/5" : "border-border"}`} data-testid="card-industry-compliance-readiness">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <Shield className="w-4 h-4" style={{ color: pct === 100 ? "var(--color-green-500, #22c55e)" : "var(--color-amber-500, #f59e0b)" }} />
+                {industryLabel} Compliance Readiness
+                <Badge variant={pct === 100 ? "default" : isLow ? "destructive" : "outline"} className="text-[10px] ml-auto" data-testid="badge-compliance-score">
+                  {metCount}/{total} met
+                </Badge>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-1.5">
+              <Progress value={pct} className="h-1.5" />
+              {isLow && (
+                <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1" data-testid="text-compliance-warning">
+                  <AlertTriangle className="w-3 h-3 shrink-0" />
+                  This agent may not meet {industryLabel} compliance standards
+                </p>
+              )}
+              <div className="flex flex-col gap-1 mt-1">
+                {checks.map((check) => (
+                  <div key={check.label} className="flex items-center gap-2 text-xs" data-testid={`check-${check.label.toLowerCase().replace(/\s+/g, "-")}`}>
+                    {check.met ? (
+                      <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" />
+                    ) : (
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                    )}
+                    <span className={check.met ? "text-muted-foreground" : "text-foreground font-medium"}>{check.label}</span>
+                    <span className="text-muted-foreground ml-auto text-right">{check.detail}</span>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       <Card className="border-amber-500/30 bg-amber-500/5">
         <CardContent className="flex items-start gap-3 pt-4">
