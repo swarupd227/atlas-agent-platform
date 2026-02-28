@@ -155,6 +155,8 @@ export default function EvalDetail() {
   const [envThresholdsForm, setEnvThresholdsForm] = useState<Record<string, Record<string, unknown>>>({});
   const [triageStatusFilter, setTriageStatusFilter] = useState("all");
   const [triageSearch, setTriageSearch] = useState("");
+  const [driftData, setDriftData] = useState<any>(null);
+  const [driftLoading, setDriftLoading] = useState(false);
   const [expandedScorerOutputs, setExpandedScorerOutputs] = useState<Set<string>>(new Set());
   const [diffRunA, setDiffRunA] = useState<string>("");
   const [diffRunB, setDiffRunB] = useState<string>("");
@@ -353,6 +355,19 @@ export default function EvalDetail() {
     },
   });
 
+  const setIndustryFrameworkMutation = useMutation({
+    mutationFn: async (industryId: string) => {
+      await apiRequest("PUT", `/api/evals/${id}`, { industry: industryId });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/evals", id] });
+      toast({ title: "Industry framework set", description: "Industry evaluation framework has been configured for this suite." });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to set industry framework", description: error.message, variant: "destructive" });
+    },
+  });
+
   const seedRegulatoryMutation = useMutation({
     mutationFn: async (templates: typeof regulatoryTemplates) => {
       await apiRequest("POST", `/api/evals/${id}/seed-regulatory`, { templates });
@@ -363,6 +378,27 @@ export default function EvalDetail() {
     },
     onError: (error: Error) => {
       toast({ title: "Failed to seed regulatory cases", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const syncProductionFeedbackMutation = useMutation({
+    mutationFn: async () => {
+      const ontTags = suite?.ontologyTags as Record<string, unknown> | null;
+      const outcomeId = ontTags?.outcomeId as string;
+      if (!outcomeId) throw new Error("No outcome linked to this suite");
+      const res = await apiRequest("POST", `/api/outcomes/${outcomeId}/sync-eval-feedback`, { days: 30 });
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/evals", id, "test-cases"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/evals", id] });
+      toast({
+        title: "Production feedback synced",
+        description: `Created ${data.created} test cases from ${data.totalRejectedEvents} rejected events and ${data.totalDisputes} billing disputes.`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to sync production feedback", description: error.message, variant: "destructive" });
     },
   });
 
@@ -588,14 +624,291 @@ export default function EvalDetail() {
                     {highCases.length} high severity
                   </Badge>
                 )}
+                {(() => {
+                  const feedbackCases = testCases?.filter(tc => tc.origin === "production_feedback") || [];
+                  if (feedbackCases.length > 0) {
+                    return (
+                      <Badge variant="outline" className="text-[10px] bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/20" data-testid="badge-production-feedback-count">
+                        <Zap className="w-3 h-3 mr-1" />
+                        {feedbackCases.length} production feedback
+                      </Badge>
+                    );
+                  }
+                  return null;
+                })()}
                 {generatedAt && (
                   <span className="text-xs text-muted-foreground" data-testid="text-kpi-generated-at">Generated {formatDate(generatedAt)}</span>
                 )}
+              </div>
+              <div className="flex items-center gap-2 pt-1">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  data-testid="button-sync-production-feedback"
+                  onClick={() => syncProductionFeedbackMutation.mutate()}
+                  disabled={syncProductionFeedbackMutation.isPending}
+                >
+                  {syncProductionFeedbackMutation.isPending ? (
+                    <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                  ) : (
+                    <Zap className="w-3.5 h-3.5 mr-1.5" />
+                  )}
+                  {syncProductionFeedbackMutation.isPending ? "Syncing..." : "Sync Production Feedback"}
+                </Button>
+                <span className="text-xs text-muted-foreground" data-testid="text-sync-description">
+                  Import rejected events and billing disputes as ground-truth test cases
+                </span>
               </div>
             </CardContent>
           </Card>
         );
       })()}
+
+      {(() => {
+        const resultsJson = latestRun?.resultsJson as Record<string, any> | null;
+        const industryData = resultsJson?.industryScores;
+        if (!industryData) return null;
+        const overallScore = industryData.overallScore as number;
+        const dimensions = industryData.dimensions as Record<string, { avgScore: number; casesEvaluated: number; weight: number }>;
+        const dimensionNames = industryData.dimensionNames as Record<string, string>;
+        const framework = industryData.framework as string;
+        const industry = industryData.industry as string;
+        return (
+          <Card data-testid="card-industry-scores-summary">
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+              <div className="flex items-center gap-2">
+                <Factory className="w-4 h-4 text-blue-500" />
+                <CardTitle className="text-sm font-medium">Industry Evaluation Scores</CardTitle>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <Badge variant="outline" className="text-[10px]" data-testid="badge-industry-framework">{framework}</Badge>
+                <Badge
+                  variant="outline"
+                  className={`text-[10px] ${overallScore >= 80 ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" : overallScore >= 60 ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20" : "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20"}`}
+                  data-testid="badge-industry-overall-score"
+                >
+                  {overallScore}% overall
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
+              <div className="flex items-center gap-4 flex-wrap">
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-xs text-muted-foreground">Industry</span>
+                  <span className="text-sm font-medium" data-testid="text-industry-name">{framework}</span>
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-xs text-muted-foreground">Overall Score</span>
+                  <span className={`text-sm font-medium ${overallScore >= 80 ? "text-emerald-600 dark:text-emerald-400" : overallScore >= 60 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"}`} data-testid="text-industry-overall-score">{overallScore}%</span>
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-xs text-muted-foreground">Dimensions</span>
+                  <span className="text-sm font-medium" data-testid="text-industry-dimension-count">{Object.keys(dimensions).length}</span>
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-xs text-muted-foreground">Cases Evaluated</span>
+                  <span className="text-sm font-medium" data-testid="text-industry-cases">{industryData.casesEvaluated}</span>
+                </div>
+              </div>
+              <Progress
+                value={overallScore}
+                className={`h-2 ${overallScore >= 80 ? "[&>div]:bg-emerald-500" : overallScore >= 60 ? "[&>div]:bg-amber-500" : "[&>div]:bg-red-500"}`}
+              />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                {Object.entries(dimensions).map(([dimId, dimData]) => {
+                  const dimName = dimensionNames[dimId] || dimId;
+                  const dimScore = dimData.avgScore;
+                  const dimColor = dimScore >= 80 ? "text-emerald-600 dark:text-emerald-400" : dimScore >= 60 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
+                  const dimProgressColor = dimScore >= 80 ? "[&>div]:bg-emerald-500" : dimScore >= 60 ? "[&>div]:bg-amber-500" : "[&>div]:bg-red-500";
+                  return (
+                    <div key={dimId} className="flex flex-col gap-1.5 p-3 rounded-md border" data-testid={`industry-dim-${dimId}`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-medium" data-testid={`text-dim-name-${dimId}`}>{dimName}</span>
+                        <span className={`text-xs font-medium ${dimColor}`} data-testid={`text-dim-score-${dimId}`}>{dimScore}%</span>
+                      </div>
+                      <Progress value={dimScore} className={`h-1.5 ${dimProgressColor}`} />
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[10px] text-muted-foreground">Weight: {dimData.weight}</span>
+                        <span className="text-[10px] text-muted-foreground">{dimData.casesEvaluated} cases</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })()}
+
+      {(() => {
+        const resultsJson = latestRun?.resultsJson as Record<string, any> | null;
+        const outcomeData = resultsJson?.outcomeAlignment;
+        if (!outcomeData) return null;
+        const overallPassRate = outcomeData.overallKpiPassRate as number;
+        const avgScore = outcomeData.avgKpiScore as number;
+        const kpiSummaries = outcomeData.kpiSummaries as Array<any>;
+        return (
+          <Card data-testid="card-outcome-alignment-summary">
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+              <div className="flex items-center gap-2">
+                <Target className="w-4 h-4 text-purple-500" />
+                <CardTitle className="text-sm font-medium">Outcome Alignment Scores</CardTitle>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <Badge
+                  variant="outline"
+                  className={`text-[10px] ${overallPassRate >= 80 ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" : overallPassRate >= 60 ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20" : "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20"}`}
+                  data-testid="badge-outcome-pass-rate"
+                >
+                  {Math.round(overallPassRate)}% KPI pass rate
+                </Badge>
+                <Badge variant="outline" className="text-[10px]" data-testid="badge-outcome-avg-score">
+                  Avg score: {Math.round(avgScore * 100)}%
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
+              <Progress
+                value={overallPassRate}
+                className={`h-2 ${overallPassRate >= 80 ? "[&>div]:bg-purple-500" : overallPassRate >= 60 ? "[&>div]:bg-amber-500" : "[&>div]:bg-red-500"}`}
+              />
+              {kpiSummaries && kpiSummaries.length > 0 && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                  {kpiSummaries.map((kpiData: any) => {
+                    const passRate = kpiData.thresholdPassRate as number;
+                    const color = passRate >= 80 ? "text-emerald-600 dark:text-emerald-400" : passRate >= 60 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
+                    const progressColor = passRate >= 80 ? "[&>div]:bg-emerald-500" : passRate >= 60 ? "[&>div]:bg-amber-500" : "[&>div]:bg-red-500";
+                    return (
+                      <div key={kpiData.kpiId} className="flex flex-col gap-1.5 p-3 rounded-md border" data-testid={`outcome-kpi-${kpiData.kpiId}`}>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-medium" data-testid={`text-kpi-name-${kpiData.kpiId}`}>{kpiData.kpiName}</span>
+                          <span className={`text-xs font-medium ${color}`} data-testid={`text-kpi-pass-${kpiData.kpiId}`}>{Math.round(passRate)}%</span>
+                        </div>
+                        <Progress value={passRate} className={`h-1.5 ${progressColor}`} />
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[10px] text-muted-foreground">Cases: {kpiData.casesEvaluated}</span>
+                          <span className="text-[10px] text-muted-foreground">Avg score: {Math.round(kpiData.avgKpiScore * 100)}%</span>
+                          {kpiData.scenarios && (kpiData.scenarios as Array<any>).map((sc: any, idx: number) => (
+                            <span key={idx} className="text-[10px] text-muted-foreground">{sc.scenario}: {Math.round(sc.kpiScore * 100)}%</span>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        );
+      })()}
+
+      {suite?.type === "kpi_aligned" && latestRun && (
+          <Card data-testid="card-kpi-drift-impact">
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+              <div className="flex items-center gap-2">
+                <TrendingDown className="w-4 h-4 text-orange-500" />
+                <CardTitle className="text-sm font-medium">KPI Drift Impact Analysis</CardTitle>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  setDriftLoading(true);
+                  try {
+                    const res = await apiRequest("POST", `/api/evals/${suite!.id}/drift-analysis`);
+                    const data = await res.json();
+                    setDriftData(data);
+                  } catch {
+                    toast({ title: "Drift analysis failed", variant: "destructive" });
+                  } finally {
+                    setDriftLoading(false);
+                  }
+                }}
+                disabled={driftLoading}
+                data-testid="button-run-drift-analysis"
+              >
+                {driftLoading ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <GitCompare className="w-3 h-3 mr-1" />}
+                {driftLoading ? "Analyzing..." : "Run Drift Analysis"}
+              </Button>
+            </CardHeader>
+            <CardContent>
+              {!driftData ? (
+                <p className="text-xs text-muted-foreground" data-testid="text-drift-placeholder">
+                  Click "Run Drift Analysis" to compare the latest eval run against the previous run and identify KPI impact from regressions.
+                </p>
+              ) : !driftData.hasDrift ? (
+                <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400" data-testid="text-drift-none">
+                  <CheckCircle className="w-4 h-4" />
+                  <span className="text-sm">{driftData.message || "No drift detected — all test cases stable"}</span>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <Badge
+                      variant="outline"
+                      className={`text-[10px] ${driftData.overallSeverity === "critical" ? "bg-red-500/15 text-red-600 border-red-500/20" : driftData.overallSeverity === "high" ? "bg-orange-500/15 text-orange-600 border-orange-500/20" : "bg-amber-500/15 text-amber-600 border-amber-500/20"}`}
+                      data-testid="badge-drift-severity"
+                    >
+                      {driftData.overallSeverity}
+                    </Badge>
+                    <span className="text-xs text-muted-foreground" data-testid="text-drift-regression-count">
+                      {driftData.regressionCount} regression(s)
+                    </span>
+                    {driftData.passRateDrop > 0 && (
+                      <span className="text-xs text-red-600 dark:text-red-400" data-testid="text-drift-pass-rate-drop">
+                        Pass rate dropped {driftData.passRateDrop}%
+                      </span>
+                    )}
+                  </div>
+
+                  {driftData.affectedKpis?.length > 0 && (
+                    <div className="flex flex-col gap-2 pt-1">
+                      <span className="text-xs font-medium">Affected KPIs</span>
+                      {driftData.affectedKpis.map((kpi: any) => (
+                        <div key={kpi.kpiId} className="flex flex-col gap-1 p-3 rounded-md border" data-testid={`drift-kpi-${kpi.kpiId}`}>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-medium">{kpi.kpiName}</span>
+                            <div className="flex items-center gap-2">
+                              <Badge
+                                variant="outline"
+                                className={`text-[10px] ${kpi.severity === "critical" ? "bg-red-500/15 text-red-600 border-red-500/20" : kpi.severity === "high" ? "bg-orange-500/15 text-orange-600 border-orange-500/20" : "bg-amber-500/15 text-amber-600 border-amber-500/20"}`}
+                              >
+                                {kpi.severity}
+                              </Badge>
+                              {kpi.wouldBreachSla && (
+                                <Badge variant="destructive" className="text-[10px]" data-testid={`badge-sla-breach-${kpi.kpiId}`}>
+                                  SLA BREACH
+                                </Badge>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+                            <span>Score: {kpi.previousAvgScore} → {kpi.latestAvgScore}</span>
+                            <span className="text-red-600 dark:text-red-400">Drop: {kpi.scoreDrop}</span>
+                            <span>{kpi.regressionCount} case(s)</span>
+                            {kpi.threshold && <span>Threshold: {kpi.threshold}</span>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {driftData.recommendedActions?.length > 0 && (
+                    <div className="flex flex-col gap-1 pt-1">
+                      <span className="text-xs font-medium">Recommended Actions</span>
+                      {driftData.recommendedActions.map((action: string, idx: number) => (
+                        <div key={idx} className="flex items-start gap-2">
+                          <AlertTriangle className="w-3 h-3 mt-0.5 text-amber-500 flex-shrink-0" />
+                          <span className="text-xs text-muted-foreground" data-testid={`text-drift-action-${idx}`}>{action}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+      )}
 
       {(() => {
         const resultsJson = latestRun?.resultsJson as Record<string, any> | null;
@@ -2072,6 +2385,21 @@ export default function EvalDetail() {
                   {detectedIndustry && (
                     <Badge variant="outline" data-testid="badge-detected-industry">{industryLabels[detectedIndustry]}</Badge>
                   )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Select
+                    value={detectedIndustry || ""}
+                    onValueChange={(val) => setIndustryFrameworkMutation.mutate(val)}
+                  >
+                    <SelectTrigger className="w-[200px]" data-testid="select-industry-framework">
+                      <SelectValue placeholder="Select framework" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(industryLabels).map(([key, label]) => (
+                        <SelectItem key={key} value={key} data-testid={`option-industry-${key}`}>{label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
 

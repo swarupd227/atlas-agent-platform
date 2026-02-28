@@ -208,6 +208,85 @@ function resolveOntologyTags(
   return tags;
 }
 
+export const industryEvalFrameworks: Record<string, {
+  id: string;
+  label: string;
+  description: string;
+  dimensions: Array<{
+    id: string;
+    name: string;
+    description: string;
+    weight: number;
+    scoringCriteria: string[];
+  }>;
+}> = {
+  healthcare: {
+    id: "healthcare",
+    label: "Healthcare",
+    description: "Clinical accuracy, medication safety, PHI redaction, diagnostic reasoning, clinical guideline adherence",
+    dimensions: [
+      { id: "clinical_accuracy", name: "Clinical Accuracy", description: "Validated against clinical guidelines and medical references", weight: 2, scoringCriteria: ["Correct medical terminology", "Evidence-based recommendations", "Guideline-aligned treatment suggestions"] },
+      { id: "medication_safety", name: "Medication Safety", description: "Detects unsafe medical advice, contraindication misses, dosage errors", weight: 3, scoringCriteria: ["Dosage within safe range", "Contraindication detection", "Drug interaction warnings", "Allergy cross-reference"] },
+      { id: "phi_redaction", name: "PHI Redaction Completeness", description: "Tests PHI handling per HIPAA minimum necessary standard", weight: 2.5, scoringCriteria: ["Names redacted", "Dates generalized", "SSN/MRN removed", "Address/phone stripped"] },
+      { id: "diagnostic_reasoning", name: "Diagnostic Reasoning Quality", description: "Evaluates differential diagnosis logic and clinical reasoning chains", weight: 2, scoringCriteria: ["Differential diagnosis considered", "Red flags identified", "Appropriate referral triggers"] },
+      { id: "guideline_adherence", name: "Clinical Guideline Adherence", description: "Adherence to published clinical practice guidelines (CPGs)", weight: 1.5, scoringCriteria: ["CPG reference cited", "Recommendation matches guideline", "Deviation justified"] },
+    ],
+  },
+  financial_services: {
+    id: "financial_services",
+    label: "Financial Services",
+    description: "Regulatory compliance (GLBA, BSA/AML, SOX), calculation accuracy, disclosure completeness, fiduciary duty alignment",
+    dimensions: [
+      { id: "regulatory_compliance", name: "Regulatory Compliance Scoring", description: "BSA/AML, KYC, Fair Lending, Reg E/Z compliance checks", weight: 2.5, scoringCriteria: ["SAR filing triggers identified", "KYC verification complete", "Fair lending language used", "Reg E/Z disclosures included"] },
+      { id: "calculation_accuracy", name: "Calculation Accuracy", description: "Critical financial calculations: interest rates, APR, fees, amortization", weight: 3, scoringCriteria: ["APR within 0.01% tolerance", "Amortization schedule correct", "Fee calculations accurate", "Tax implications noted"] },
+      { id: "disclosure_completeness", name: "Disclosure Completeness", description: "Ensures all required disclosures are present and accurate", weight: 2, scoringCriteria: ["TILA disclosures present", "APR disclosed", "Total cost of credit stated", "Penalty terms explained"] },
+      { id: "fiduciary_alignment", name: "Fiduciary Duty Alignment", description: "Validates recommendations align with client best interest", weight: 2, scoringCriteria: ["Suitability assessment performed", "Conflicts disclosed", "Best interest standard met", "Risk tolerance matched"] },
+    ],
+  },
+  insurance: {
+    id: "insurance",
+    label: "Insurance",
+    description: "Claims processing accuracy, underwriting guideline adherence, NAIC compliance, policyholder communication quality",
+    dimensions: [
+      { id: "claims_accuracy", name: "Claims Processing Accuracy", description: "Validates claim assessment accuracy, coverage determination, policy interpretation", weight: 2, scoringCriteria: ["Coverage correctly determined", "Policy exclusions applied", "Deductible calculated", "Benefit limits enforced"] },
+      { id: "underwriting_adherence", name: "Underwriting Guideline Adherence", description: "Fair underwriting practices, anti-discrimination, actuarial soundness", weight: 2.5, scoringCriteria: ["Risk classification appropriate", "No prohibited factor usage", "Actuarial justification present", "Rate filing compliance"] },
+      { id: "naic_compliance", name: "NAIC Compliance", description: "Adherence to National Association of Insurance Commissioners model regulations", weight: 2, scoringCriteria: ["Model law requirements met", "Consumer protection standards", "Market conduct compliance"] },
+      { id: "policyholder_communication", name: "Policyholder Communication Quality", description: "Clear, accurate, and compliant policyholder communications", weight: 1.5, scoringCriteria: ["Plain language used", "Required notices included", "Response timeframes met", "Appeal rights explained"] },
+    ],
+  },
+  manufacturing: {
+    id: "manufacturing",
+    label: "Manufacturing",
+    description: "Safety protocol adherence, quality control precision, supply chain risk assessment accuracy",
+    dimensions: [
+      { id: "safety_protocol", name: "Safety Protocol Adherence", description: "Ensures compliance with OSHA, ISO 45001, machine safety standards", weight: 3, scoringCriteria: ["OSHA requirements referenced", "PPE requirements stated", "Lockout/tagout procedures", "Hazard communication complete"] },
+      { id: "quality_control", name: "Quality Control Precision", description: "Validates dimensional accuracy, tolerances, and QC checkpoint adherence", weight: 2, scoringCriteria: ["Tolerance class appropriate", "Measurement units correct", "QC checkpoint documented", "Non-conformance flagged"] },
+      { id: "supply_chain_risk", name: "Supply Chain Risk Assessment", description: "Accuracy of supply chain risk identification and mitigation recommendations", weight: 1.5, scoringCriteria: ["Single-source risks identified", "Lead time impacts assessed", "Alternative suppliers noted", "Geopolitical risks flagged"] },
+    ],
+  },
+  retail: {
+    id: "retail",
+    label: "Retail",
+    description: "Customer sentiment preservation, product recommendation relevance, return policy compliance",
+    dimensions: [
+      { id: "sentiment_preservation", name: "Customer Sentiment Preservation", description: "Maintains positive customer experience while enforcing policies", weight: 1.5, scoringCriteria: ["Empathetic language used", "Resolution offered", "Escalation path available", "Brand voice maintained"] },
+      { id: "recommendation_relevance", name: "Product Recommendation Relevance", description: "Accuracy and relevance of product recommendations", weight: 2, scoringCriteria: ["Preference matching", "Price range appropriate", "Availability confirmed", "Complementary items relevant"] },
+      { id: "return_policy_compliance", name: "Return Policy Compliance", description: "Accurate application of return and exchange policies", weight: 2, scoringCriteria: ["Return window verified", "Condition requirements stated", "Refund method correct", "Exceptions applied properly"] },
+    ],
+  },
+  technology_saas: {
+    id: "technology_saas",
+    label: "Technology / SaaS",
+    description: "API accuracy, error handling quality, documentation completeness, security best practices",
+    dimensions: [
+      { id: "api_accuracy", name: "API Accuracy", description: "Validates API response correctness, schema compliance, and error codes", weight: 2.5, scoringCriteria: ["Response schema valid", "Status codes correct", "Error messages descriptive", "Pagination handled"] },
+      { id: "error_handling", name: "Error Handling Quality", description: "Graceful degradation, meaningful error messages, retry logic", weight: 2, scoringCriteria: ["Graceful degradation", "Retry logic appropriate", "Error categorization correct", "User-friendly messages"] },
+      { id: "documentation_completeness", name: "Documentation Completeness", description: "Completeness and accuracy of generated documentation", weight: 1.5, scoringCriteria: ["All endpoints documented", "Examples provided", "Edge cases noted", "Authentication explained"] },
+      { id: "security_practices", name: "Security Best Practices", description: "Authentication, authorization, input sanitization, and secret management", weight: 3, scoringCriteria: ["Input sanitized", "Auth tokens validated", "Secrets not exposed", "OWASP Top 10 addressed"] },
+    ],
+  },
+};
+
 export interface KpiReEvalResult {
   kpiId: string;
   kpiName: string;
@@ -1022,6 +1101,168 @@ export async function registerRoutes(
       res.json(result);
     } catch (e) {
       handleZodError(res, e);
+    }
+  });
+
+  app.post("/api/outcomes/:id/sync-eval-feedback", async (req, res) => {
+    try {
+      const outcomeId = req.params.id;
+      const outcome = await storage.getOutcome(outcomeId);
+      if (!outcome) return res.status(404).json({ error: "Outcome not found" });
+
+      const daysCutoff = req.body.days || 30;
+      const cutoffDate = new Date(Date.now() - daysCutoff * 24 * 60 * 60 * 1000);
+
+      const allEvents = await storage.getOutcomeEventsByOutcome(outcomeId);
+      const recentEvents = allEvents.filter(e => e.createdAt && new Date(e.createdAt) >= cutoffDate);
+
+      const rejectedEvents = recentEvents.filter(e => !e.billable && e.excludeReason);
+      const allDisputes = await storage.getBillingDisputes();
+      const outcomeDisputes = allDisputes.filter(d =>
+        d.outcomeId === outcomeId && (d.status === "resolved" || d.status === "upheld")
+      );
+
+      const agents = (await storage.getAgents()).filter(a => a.outcomeId === outcomeId);
+      if (agents.length === 0) return res.json({ created: 0, message: "No agents bound to this outcome" });
+
+      const primaryAgent = agents[0];
+
+      const existingSuites = await storage.getEvalsByAgent(primaryAgent.id);
+      let kpiSuite: Awaited<ReturnType<typeof storage.createEvalSuite>> | undefined = existingSuites.find(s => s.type === "kpi_aligned");
+      if (!kpiSuite) {
+        const generated = await generateKpiAlignedEvalSuite(primaryAgent.id, outcomeId);
+        if (generated) {
+          kpiSuite = generated.suite;
+        } else {
+          kpiSuite = await storage.createEvalSuite({
+            agentId: primaryAgent.id,
+            name: `${primaryAgent.name} - Production Feedback Suite (${outcome.name})`,
+            type: "kpi_aligned",
+            totalCases: 0,
+            coverageTags: ["production_feedback", "ground_truth"],
+            ontologyTags: { kpiAligned: true, outcomeId, outcomeName: outcome.name, generatedAt: new Date().toISOString() },
+          });
+        }
+      }
+
+      const suiteId = kpiSuite!.id;
+      const suiteName = kpiSuite!.name;
+
+      const existingCases = await storage.getEvalTestCases(suiteId);
+      const existingOriginIds = new Set(
+        existingCases
+          .filter(tc => tc.origin === "production_feedback")
+          .map(tc => {
+            const input = tc.inputData as Record<string, unknown> | null;
+            return input?.sourceEventId || input?.sourceDisputeId;
+          })
+          .filter(Boolean)
+      );
+
+      const createdCases: any[] = [];
+
+      const excludeGroups = new Map<string, typeof rejectedEvents>();
+      for (const ev of rejectedEvents) {
+        const reason = ev.excludeReason || "unknown";
+        if (!excludeGroups.has(reason)) excludeGroups.set(reason, []);
+        excludeGroups.get(reason)!.push(ev);
+      }
+
+      for (const ev of rejectedEvents) {
+        if (existingOriginIds.has(ev.id)) continue;
+
+        const tc = await storage.createEvalTestCase({
+          suiteId: suiteId,
+          name: `Production Rejection: ${ev.excludeReason || "excluded"} (${ev.type})`,
+          inputData: {
+            type: "production_feedback",
+            sourceEventId: ev.id,
+            traceId: ev.traceId,
+            agentId: ev.agentId,
+            eventType: ev.type,
+            payload: ev.payload,
+            scenario: "rejected_outcome_event",
+          },
+          expectedOutput: {
+            shouldPass: false,
+            rejectionReason: ev.excludeReason,
+            expectedBehavior: `Agent output was rejected: ${ev.excludeReason}. Future runs must not reproduce this failure pattern.`,
+          },
+          tags: ["production_feedback", "ground_truth", "rejected_event", ev.excludeReason || "excluded"],
+          weight: 1.5,
+          origin: "production_feedback",
+          severity: "high",
+        });
+        createdCases.push(tc);
+      }
+
+      for (const dispute of outcomeDisputes) {
+        if (existingOriginIds.has(dispute.id)) continue;
+
+        let linkedEvent = null;
+        if (dispute.outcomeEventId) {
+          linkedEvent = await storage.getOutcomeEvent(dispute.outcomeEventId);
+        }
+
+        const tc = await storage.createEvalTestCase({
+          suiteId: suiteId,
+          name: `Billing Dispute: ${dispute.category} - ${dispute.reason.substring(0, 60)}`,
+          inputData: {
+            type: "production_feedback",
+            sourceDisputeId: dispute.id,
+            outcomeEventId: dispute.outcomeEventId,
+            invoiceId: dispute.invoiceId,
+            traceId: linkedEvent?.traceId,
+            agentId: linkedEvent?.agentId,
+            payload: linkedEvent?.payload,
+            disputeCategory: dispute.category,
+            scenario: "billing_dispute",
+          },
+          expectedOutput: {
+            shouldPass: false,
+            disputeReason: dispute.reason,
+            disputeCategory: dispute.category,
+            disputeResolution: dispute.resolution,
+            expectedBehavior: `Agent output led to billing dispute (${dispute.category}): ${dispute.reason}. Future runs must avoid this failure.`,
+          },
+          tags: ["production_feedback", "ground_truth", "billing_dispute", dispute.category],
+          weight: 2.0,
+          origin: "production_feedback",
+          severity: "critical",
+        });
+        createdCases.push(tc);
+      }
+
+      if (createdCases.length > 0) {
+        const currentCases = await storage.getEvalTestCases(suiteId);
+        await storage.updateEvalSuite(suiteId, { totalCases: currentCases.length });
+      }
+
+      const summary = {
+        suiteId: suiteId,
+        suiteName: suiteName,
+        created: createdCases.length,
+        fromRejectedEvents: rejectedEvents.filter(e => !existingOriginIds.has(e.id)).length,
+        fromDisputes: outcomeDisputes.filter(d => !existingOriginIds.has(d.id)).length,
+        totalRejectedEvents: rejectedEvents.length,
+        totalDisputes: outcomeDisputes.length,
+        excludeReasonBreakdown: Object.fromEntries(
+          Array.from(excludeGroups.entries()).map(([reason, events]) => [reason, events.length])
+        ),
+        daysCutoff,
+      };
+
+      await storage.createAuditEvent({
+        actorType: "system",
+        action: "production_feedback_synced",
+        objectType: "eval_suite",
+        objectId: suiteId,
+        details: `Synced ${createdCases.length} production feedback cases (${rejectedEvents.length} rejected events, ${outcomeDisputes.length} disputes) for outcome ${outcome.name}`,
+      });
+
+      res.json(summary);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message || "Failed to sync production feedback" });
     }
   });
 
@@ -5261,6 +5502,62 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
     const updated = await storage.updateBillingDispute(id, req.body);
     if (!updated) return res.status(404).json({ error: "Dispute not found" });
+
+    if ((updated.status === "resolved" || updated.status === "upheld") && updated.outcomeId) {
+      try {
+        const outcomeId = updated.outcomeId;
+        const agents = (await storage.getAgents()).filter(a => a.outcomeId === outcomeId);
+        if (agents.length > 0) {
+          const primaryAgent = agents[0];
+          const existingSuites = await storage.getEvalsByAgent(primaryAgent.id);
+          const kpiSuite = existingSuites.find(s => s.type === "kpi_aligned");
+          if (kpiSuite) {
+            const existingCases = await storage.getEvalTestCases(kpiSuite.id);
+            const alreadyExists = existingCases.some(tc => {
+              const input = tc.inputData as Record<string, unknown> | null;
+              return input?.sourceDisputeId === updated.id;
+            });
+            if (!alreadyExists) {
+              let linkedEvent = null;
+              if (updated.outcomeEventId) {
+                linkedEvent = await storage.getOutcomeEvent(updated.outcomeEventId);
+              }
+              await storage.createEvalTestCase({
+                suiteId: kpiSuite.id,
+                name: `Auto-Synced Dispute: ${updated.category} - ${updated.reason.substring(0, 60)}`,
+                inputData: {
+                  type: "production_feedback",
+                  sourceDisputeId: updated.id,
+                  outcomeEventId: updated.outcomeEventId,
+                  invoiceId: updated.invoiceId,
+                  traceId: linkedEvent?.traceId,
+                  agentId: linkedEvent?.agentId,
+                  payload: linkedEvent?.payload,
+                  disputeCategory: updated.category,
+                  scenario: "billing_dispute",
+                  autoSynced: true,
+                },
+                expectedOutput: {
+                  shouldPass: false,
+                  disputeReason: updated.reason,
+                  disputeCategory: updated.category,
+                  disputeResolution: updated.resolution,
+                  expectedBehavior: `Agent output led to billing dispute (${updated.category}): ${updated.reason}. Future runs must avoid this failure.`,
+                },
+                tags: ["production_feedback", "ground_truth", "billing_dispute", "auto_synced", updated.category],
+                weight: 2.0,
+                origin: "production_feedback",
+                severity: "critical",
+              });
+              const allCases = await storage.getEvalTestCases(kpiSuite.id);
+              await storage.updateEvalSuite(kpiSuite.id, { totalCases: allCases.length });
+            }
+          }
+        }
+      } catch (_autoSyncErr) {
+      }
+    }
+
     res.json(updated);
   });
 
@@ -5850,6 +6147,16 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     res.status(204).send();
   });
 
+  app.get("/api/industry-eval-frameworks", async (_req, res) => {
+    res.json(industryEvalFrameworks);
+  });
+
+  app.get("/api/industry-eval-frameworks/:industryId", async (req, res) => {
+    const framework = industryEvalFrameworks[req.params.industryId];
+    if (!framework) return res.status(404).json({ error: "Industry framework not found" });
+    res.json(framework);
+  });
+
   app.post("/api/evals/:id/seed-regulatory", async (req, res) => {
     const { templates } = req.body;
     if (!Array.isArray(templates) || templates.length === 0) {
@@ -5916,6 +6223,214 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
       res.status(201).json(result);
     } catch (e) {
       handleZodError(res, e);
+    }
+  });
+
+  app.post("/api/evals/:suiteId/drift-analysis", async (req, res) => {
+    try {
+      const suiteId = req.params.suiteId;
+      const suite = await storage.getEvalSuite(suiteId);
+      if (!suite) return res.status(404).json({ message: "Eval suite not found" });
+
+      const runs = await storage.getEvalRuns(suiteId);
+      if (runs.length < 2) {
+        return res.json({
+          hasDrift: false,
+          message: "Need at least 2 eval runs to perform drift analysis",
+          driftImpact: null,
+        });
+      }
+
+      const sortedRuns = [...runs].sort((a, b) =>
+        new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime()
+      );
+      const latestRun = sortedRuns[0];
+      const previousRun = sortedRuns[1];
+
+      const latestResults = await storage.getEvalCaseResults(latestRun.id);
+      const previousResults = await storage.getEvalCaseResults(previousRun.id);
+
+      const previousResultMap = new Map<string, typeof previousResults[0]>();
+      for (const r of previousResults) {
+        if (r.caseId) previousResultMap.set(r.caseId, r);
+      }
+
+      const regressions: Array<{
+        caseId: string;
+        caseName: string;
+        previousPassed: boolean;
+        latestPassed: boolean;
+        kpiId?: string;
+        kpiName?: string;
+        previousScore?: number;
+        latestScore?: number;
+      }> = [];
+
+      for (const latest of latestResults) {
+        if (!latest.caseId) continue;
+        const previous = previousResultMap.get(latest.caseId);
+        if (!previous) continue;
+
+        const prevScorer = (previous.scorerOutputs as any) || {};
+        const latestScorer = (latest.scorerOutputs as any) || {};
+        const prevKpi = prevScorer?.kpiScores;
+        const latestKpi = latestScorer?.kpiScores;
+
+        if (previous.passed && !latest.passed) {
+          regressions.push({
+            caseId: latest.caseId,
+            caseName: latest.caseId,
+            previousPassed: true,
+            latestPassed: false,
+            kpiId: latestKpi?.kpiId || prevKpi?.kpiId,
+            kpiName: latestKpi?.kpiName || prevKpi?.kpiName,
+            previousScore: prevKpi?.kpiScore,
+            latestScore: latestKpi?.kpiScore,
+          });
+        } else if (prevKpi?.kpiScore !== undefined && latestKpi?.kpiScore !== undefined && latestKpi.kpiScore < prevKpi.kpiScore - 0.1) {
+          regressions.push({
+            caseId: latest.caseId,
+            caseName: latest.caseId,
+            previousPassed: previous.passed || false,
+            latestPassed: latest.passed || false,
+            kpiId: latestKpi?.kpiId,
+            kpiName: latestKpi?.kpiName,
+            previousScore: prevKpi.kpiScore,
+            latestScore: latestKpi.kpiScore,
+          });
+        }
+      }
+
+      const testCases = await storage.getEvalTestCases(suiteId);
+      const caseNameMap = new Map<string, string>();
+      for (const tc of testCases) {
+        caseNameMap.set(tc.id, tc.name);
+      }
+      for (const r of regressions) {
+        r.caseName = caseNameMap.get(r.caseId) || r.caseId;
+      }
+
+      const isKpiAligned = suite.type === "kpi_aligned";
+      const ontTags = suite.ontologyTags as Record<string, any> | null;
+      const outcomeId = ontTags?.outcomeId;
+
+      let affectedKpis: Array<{
+        kpiId: string;
+        kpiName: string;
+        regressionCount: number;
+        previousAvgScore: number;
+        latestAvgScore: number;
+        scoreDrop: number;
+        threshold?: number;
+        target?: number;
+        severity: string;
+        wouldBreachSla: boolean;
+      }> = [];
+
+      if (isKpiAligned && outcomeId) {
+        const kpis = await storage.getKpisByOutcome(outcomeId);
+        const kpiMap = new Map(kpis.map(k => [k.id, k]));
+
+        const kpiRegressionGroups = new Map<string, typeof regressions>();
+        for (const r of regressions) {
+          if (!r.kpiId) continue;
+          const existing = kpiRegressionGroups.get(r.kpiId) || [];
+          existing.push(r);
+          kpiRegressionGroups.set(r.kpiId, existing);
+        }
+
+        for (const [kpiId, kpiRegs] of kpiRegressionGroups.entries()) {
+          const kpi = kpiMap.get(kpiId);
+          const kpiName = kpi?.name || kpiRegs[0]?.kpiName || kpiId;
+          const prevScores = kpiRegs.filter(r => r.previousScore !== undefined).map(r => r.previousScore!);
+          const latestScores = kpiRegs.filter(r => r.latestScore !== undefined).map(r => r.latestScore!);
+          const previousAvg = prevScores.length > 0 ? prevScores.reduce((a, b) => a + b, 0) / prevScores.length : 0;
+          const latestAvg = latestScores.length > 0 ? latestScores.reduce((a, b) => a + b, 0) / latestScores.length : 0;
+          const scoreDrop = previousAvg - latestAvg;
+
+          const threshold = kpi?.slaThreshold ?? kpi?.target ?? 0;
+          const estimatedKpiValue = kpi?.currentValue ? (kpi.currentValue as number) * (1 - scoreDrop) : 0;
+          const wouldBreachSla = threshold > 0 && estimatedKpiValue < threshold;
+
+          let severity: string;
+          if (wouldBreachSla) severity = "critical";
+          else if (scoreDrop > 0.2) severity = "high";
+          else if (scoreDrop > 0.1) severity = "warning";
+          else severity = "low";
+
+          affectedKpis.push({
+            kpiId,
+            kpiName,
+            regressionCount: kpiRegs.length,
+            previousAvgScore: Math.round(previousAvg * 100) / 100,
+            latestAvgScore: Math.round(latestAvg * 100) / 100,
+            scoreDrop: Math.round(scoreDrop * 100) / 100,
+            threshold: kpi?.slaThreshold ?? undefined,
+            target: kpi?.target ?? undefined,
+            severity,
+            wouldBreachSla,
+          });
+        }
+
+        affectedKpis.sort((a, b) => {
+          const sev = { critical: 0, high: 1, warning: 2, low: 3 };
+          return (sev[a.severity as keyof typeof sev] ?? 4) - (sev[b.severity as keyof typeof sev] ?? 4);
+        });
+      }
+
+      const passRateDrop = (previousRun.passRate ?? 0) - (latestRun.passRate ?? 0);
+      const overallSeverity = affectedKpis.some(k => k.severity === "critical") ? "critical"
+        : affectedKpis.some(k => k.severity === "high") ? "high"
+        : regressions.length > 0 ? "warning" : "none";
+
+      const driftAnalysis = {
+        hasDrift: regressions.length > 0,
+        latestRunId: latestRun.id,
+        previousRunId: previousRun.id,
+        passRateDrop: Math.round(passRateDrop * 10000) / 100,
+        regressionCount: regressions.length,
+        regressions: regressions.slice(0, 20),
+        affectedKpis,
+        overallSeverity,
+        recommendedActions: [] as string[],
+      };
+
+      if (overallSeverity === "critical") {
+        driftAnalysis.recommendedActions.push("URGENT: KPI SLA breach detected — halt deployments and investigate");
+        driftAnalysis.recommendedActions.push("Review recent agent configuration changes that may have caused regression");
+      } else if (overallSeverity === "high") {
+        driftAnalysis.recommendedActions.push("Significant score drops detected — review affected test cases");
+      }
+      if (regressions.length > 0) {
+        driftAnalysis.recommendedActions.push(`${regressions.length} test case(s) regressed — run detailed investigation`);
+      }
+      for (const kpi of affectedKpis.filter(k => k.wouldBreachSla)) {
+        driftAnalysis.recommendedActions.push(`KPI "${kpi.kpiName}" estimated to breach SLA threshold of ${kpi.threshold}`);
+      }
+
+      if (affectedKpis.some(k => k.wouldBreachSla) && suite.agentId) {
+        try {
+          await storage.createImprovementRecommendation({
+            agentId: suite.agentId,
+            type: "kpi_drift_sla_breach",
+            description: `Eval drift analysis detected KPI SLA breach risk: ${affectedKpis.filter(k => k.wouldBreachSla).map(k => k.kpiName).join(", ")}. Pass rate dropped ${driftAnalysis.passRateDrop}%. ${regressions.length} test case(s) regressed.`,
+            severity: "critical",
+            status: "pending",
+            impact: `Affected KPIs: ${affectedKpis.map(k => `${k.kpiName} (score drop: ${k.scoreDrop})`).join("; ")}`,
+            suggestedChanges: {
+              driftAnalysis: {
+                passRateDrop: driftAnalysis.passRateDrop,
+                regressionCount: driftAnalysis.regressionCount,
+                affectedKpis: affectedKpis.filter(k => k.wouldBreachSla),
+              },
+            },
+          });
+        } catch {}
+      }
+
+      res.json(driftAnalysis);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
     }
   });
 

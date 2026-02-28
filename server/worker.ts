@@ -2,6 +2,7 @@ import { storage } from "./storage";
 import type { Job } from "@shared/schema";
 import { EventEmitter } from "events";
 import { checkOntologyCompliance } from "./agent-runtime";
+import { industryEvalFrameworks } from "./routes";
 
 export const jobEvents = new EventEmitter();
 jobEvents.setMaxListeners(50);
@@ -48,6 +49,26 @@ async function processEvalBaseline(job: Job): Promise<Record<string, unknown>> {
 
   await delay(500);
 
+  const isKpiAligned = suite?.type === "kpi_aligned";
+  const suiteOntologyTags = (suite?.ontologyTags as Record<string, unknown>) || {};
+  const outcomeId = suiteOntologyTags.outcomeId as string | undefined;
+
+  let kpiDefinitionsMap: Map<string, { id: string; name: string; unit: string; target: number; slaThreshold: number | null; baseline: number | null; weight: number | null }> = new Map();
+  if (isKpiAligned && outcomeId) {
+    const kpis = await storage.getKpisByOutcome(outcomeId);
+    for (const kpi of kpis) {
+      kpiDefinitionsMap.set(kpi.id, {
+        id: kpi.id,
+        name: kpi.name,
+        unit: kpi.unit,
+        target: kpi.target,
+        slaThreshold: kpi.slaThreshold ?? null,
+        baseline: kpi.baseline ?? null,
+        weight: kpi.weight ?? null,
+      });
+    }
+  }
+
   const evalRun = await storage.createEvalRun({
     suiteId,
     status: "running",
@@ -71,20 +92,137 @@ async function processEvalBaseline(job: Job): Promise<Record<string, unknown>> {
   let totalOntologyCompliance = 0;
   let ontologyCaseCount = 0;
 
+  const suiteIndustry = suite?.industry as string | null;
+  const agentIndustry = (agent as any).industry as string | null;
+  const detectedIndustry = suiteIndustry || agentIndustry || null;
+  const industryFramework = detectedIndustry ? industryEvalFrameworks[detectedIndustry] : null;
+  const industryDimensionTotals: Record<string, { total: number; count: number; weight: number }> = {};
+  if (industryFramework) {
+    for (const dim of industryFramework.dimensions) {
+      industryDimensionTotals[dim.id] = { total: 0, count: 0, weight: dim.weight };
+    }
+  }
+
+  const kpiCaseScores: Array<{
+    kpiId: string;
+    kpiName: string;
+    scenario: string;
+    simulatedValue: number;
+    threshold: number;
+    target: number;
+    unit: string;
+    meetsThreshold: boolean;
+    meetsTarget: boolean;
+    marginPercent: number;
+    kpiScore: number;
+  }> = [];
+
   for (let i = 0; i < testCases.length; i++) {
     const tc = testCases[i];
     const latencyMs = Math.floor(300 + Math.random() * 2000);
-    const isPassed = Math.random() > 0.15;
     totalLatency += latencyMs;
+
+    const inputData = (tc.inputData as Record<string, unknown>) || {};
+    const isKpiBoundaryTest = inputData.type === "kpi_boundary_test";
+
+    let isPassed: boolean;
+    let actualOutput: Record<string, unknown>;
+    let scorerOutputs: Record<string, unknown> | undefined;
+
+    if (isKpiAligned && isKpiBoundaryTest) {
+      const kpiId = inputData.kpiId as string;
+      const kpiName = inputData.kpiName as string;
+      const scenario = inputData.scenario as string;
+      const simulatedValue = inputData.simulatedValue as number;
+      const threshold = inputData.threshold as number;
+      const target = inputData.target as number;
+      const unit = (inputData.unit as string) || "count";
+
+      const kpiDef = kpiDefinitionsMap.get(kpiId);
+      const kpiNameLower = kpiName.toLowerCase();
+      const unitLower = unit.toLowerCase();
+
+      const isLatencyType = kpiNameLower.includes("latency") || kpiNameLower.includes("time") || kpiNameLower.includes("response") || unitLower === "ms" || unitLower === "seconds";
+      const isCostType = kpiNameLower.includes("cost") || unitLower === "usd" || unitLower === "$";
+      const isLowerBetter = isLatencyType || isCostType;
+
+      let meetsThreshold: boolean;
+      let meetsTarget: boolean;
+      let marginPercent: number;
+
+      if (isLowerBetter) {
+        meetsThreshold = simulatedValue <= threshold;
+        meetsTarget = simulatedValue <= target;
+        marginPercent = threshold > 0 ? ((threshold - simulatedValue) / threshold) * 100 : 0;
+      } else {
+        meetsThreshold = simulatedValue >= threshold;
+        meetsTarget = simulatedValue >= target;
+        marginPercent = threshold > 0 ? ((simulatedValue - threshold) / threshold) * 100 : 0;
+      }
+
+      let kpiScore: number;
+      if (meetsTarget) {
+        kpiScore = 1.0;
+      } else if (meetsThreshold) {
+        const range = isLowerBetter ? (threshold - target) : (target - threshold);
+        const distFromTarget = isLowerBetter ? (simulatedValue - target) : (target - simulatedValue);
+        kpiScore = range > 0 ? Math.max(0.5, 1.0 - (distFromTarget / range) * 0.5) : 0.75;
+      } else {
+        const breachAmount = isLowerBetter ? (simulatedValue - threshold) : (threshold - simulatedValue);
+        kpiScore = Math.max(0, 0.5 - (breachAmount / (threshold || 1)) * 0.5);
+      }
+      kpiScore = Math.round(kpiScore * 100) / 100;
+
+      const expectedOutput = (tc.expectedOutput as Record<string, unknown>) || {};
+      const expectsBreach = expectedOutput.slaBreached === true;
+      const actualBreach = !meetsThreshold;
+      isPassed = (expectsBreach === actualBreach);
+
+      actualOutput = {
+        status: isPassed ? "pass" : "fail",
+        kpiMeasurement: {
+          kpiId,
+          kpiName,
+          simulatedValue,
+          threshold,
+          target,
+          unit,
+          meetsThreshold,
+          meetsTarget,
+          slaBreached: actualBreach,
+          marginPercent: Math.round(marginPercent * 100) / 100,
+        },
+        confidence: isPassed ? 0.95 : 0.4,
+      };
+
+      const kpiScoreEntry = {
+        kpiId,
+        kpiName,
+        scenario,
+        simulatedValue,
+        threshold,
+        target,
+        unit,
+        meetsThreshold,
+        meetsTarget,
+        marginPercent: Math.round(marginPercent * 100) / 100,
+        kpiScore,
+      };
+
+      scorerOutputs = {
+        kpiScores: kpiScoreEntry,
+      };
+
+      kpiCaseScores.push(kpiScoreEntry);
+    } else {
+      isPassed = Math.random() > 0.15;
+      actualOutput = isPassed
+        ? { status: "pass", matched: true, confidence: 0.85 + Math.random() * 0.15 }
+        : { status: "fail", matched: false, reason: "Output did not meet expected criteria", confidence: 0.3 + Math.random() * 0.3 };
+    }
 
     if (isPassed) passed++;
     else failed++;
-
-    const actualOutput = isPassed
-      ? { status: "pass", matched: true, confidence: 0.85 + Math.random() * 0.15 }
-      : { status: "fail", matched: false, reason: "Output did not meet expected criteria", confidence: 0.3 + Math.random() * 0.3 };
-
-    let scorerOutputs: Record<string, unknown> | undefined;
 
     if (hasOntologyTags) {
       const outputText = typeof actualOutput === "string"
@@ -93,6 +231,7 @@ async function processEvalBaseline(job: Job): Promise<Record<string, unknown>> {
       try {
         const compliance = await checkOntologyCompliance(outputText, ontologyTags);
         scorerOutputs = {
+          ...(scorerOutputs || {}),
           ontologyCompliance: {
             score: compliance.score,
             canonicalTermsUsed: compliance.canonicalTermsUsed,
@@ -105,6 +244,37 @@ async function processEvalBaseline(job: Job): Promise<Record<string, unknown>> {
         totalOntologyCompliance += compliance.score;
         ontologyCaseCount++;
       } catch {}
+    }
+
+    if (industryFramework) {
+      const dimensionScores: Record<string, { score: number; maxScore: number; passed: boolean; weight: number; criteriaResults: Array<{ criterion: string; met: boolean }> }> = {};
+      for (const dim of industryFramework.dimensions) {
+        const baseScore = isPassed ? (70 + Math.random() * 30) : (20 + Math.random() * 50);
+        const score = Math.round(baseScore * 10) / 10;
+        const criteriaResults = dim.scoringCriteria.map(criterion => ({
+          criterion,
+          met: isPassed ? Math.random() > 0.15 : Math.random() > 0.6,
+        }));
+        const dimPassed = score >= 70;
+        dimensionScores[dim.id] = {
+          score,
+          maxScore: 100,
+          passed: dimPassed,
+          weight: dim.weight,
+          criteriaResults,
+        };
+        industryDimensionTotals[dim.id].total += score;
+        industryDimensionTotals[dim.id].count += 1;
+      }
+
+      scorerOutputs = {
+        ...(scorerOutputs || {}),
+        industryScores: {
+          industry: detectedIndustry,
+          framework: industryFramework.label,
+          dimensions: dimensionScores,
+        },
+      };
     }
 
     const result = await storage.createEvalCaseResult({
@@ -138,6 +308,86 @@ async function processEvalBaseline(job: Job): Promise<Record<string, unknown>> {
     };
   }
 
+  if (isKpiAligned && kpiCaseScores.length > 0) {
+    const kpiGroupsObj: Record<string, typeof kpiCaseScores> = {};
+    for (const score of kpiCaseScores) {
+      if (!kpiGroupsObj[score.kpiId]) kpiGroupsObj[score.kpiId] = [];
+      kpiGroupsObj[score.kpiId].push(score);
+    }
+
+    const kpiSummaries: Array<Record<string, unknown>> = [];
+    let totalKpiPassRate = 0;
+    let kpiCount = 0;
+
+    const kpiIds = Object.keys(kpiGroupsObj);
+    for (const kpiId of kpiIds) {
+      const scores = kpiGroupsObj[kpiId];
+      const kpiDef = kpiDefinitionsMap.get(kpiId);
+      const avgScore = scores.reduce((s: number, sc: typeof kpiCaseScores[0]) => s + sc.kpiScore, 0) / scores.length;
+      const thresholdPassCount = scores.filter((sc: typeof kpiCaseScores[0]) => sc.meetsThreshold).length;
+      const targetPassCount = scores.filter((sc: typeof kpiCaseScores[0]) => sc.meetsTarget).length;
+      const kpiPassRate = thresholdPassCount / scores.length;
+      totalKpiPassRate += kpiPassRate;
+      kpiCount++;
+
+      kpiSummaries.push({
+        kpiId,
+        kpiName: scores[0].kpiName,
+        unit: scores[0].unit,
+        target: kpiDef?.target ?? scores[0].target,
+        slaThreshold: kpiDef?.slaThreshold ?? scores[0].threshold,
+        avgKpiScore: Math.round(avgScore * 100) / 100,
+        thresholdPassRate: Math.round(kpiPassRate * 10000) / 100,
+        targetPassRate: Math.round((targetPassCount / scores.length) * 10000) / 100,
+        casesEvaluated: scores.length,
+        scenarios: scores.map(sc => ({
+          scenario: sc.scenario,
+          simulatedValue: sc.simulatedValue,
+          meetsThreshold: sc.meetsThreshold,
+          meetsTarget: sc.meetsTarget,
+          kpiScore: sc.kpiScore,
+          marginPercent: sc.marginPercent,
+        })),
+      });
+    }
+
+    const overallKpiPassRate = kpiCount > 0 ? totalKpiPassRate / kpiCount : 0;
+
+    runResultsJson.outcomeAlignment = {
+      outcomeId,
+      outcomeName: suiteOntologyTags.outcomeName || null,
+      totalKpis: kpiCount,
+      totalKpiCases: kpiCaseScores.length,
+      overallKpiPassRate: Math.round(overallKpiPassRate * 10000) / 100,
+      avgKpiScore: Math.round((kpiCaseScores.reduce((s, sc) => s + sc.kpiScore, 0) / kpiCaseScores.length) * 100) / 100,
+      kpiSummaries,
+      evaluatedAt: new Date().toISOString(),
+    };
+  }
+
+  if (industryFramework && Object.keys(industryDimensionTotals).length > 0) {
+    const dimensionSummaries: Record<string, { avgScore: number; casesEvaluated: number; weight: number }> = {};
+    let weightedSum = 0;
+    let totalWeight = 0;
+    for (const [dimId, data] of Object.entries(industryDimensionTotals)) {
+      if (data.count > 0) {
+        const avg = Math.round((data.total / data.count) * 10) / 10;
+        dimensionSummaries[dimId] = { avgScore: avg, casesEvaluated: data.count, weight: data.weight };
+        weightedSum += avg * data.weight;
+        totalWeight += data.weight;
+      }
+    }
+    const overallIndustryScore = totalWeight > 0 ? Math.round((weightedSum / totalWeight) * 10) / 10 : 0;
+    runResultsJson.industryScores = {
+      industry: detectedIndustry,
+      framework: industryFramework.label,
+      overallScore: overallIndustryScore,
+      dimensions: dimensionSummaries,
+      dimensionNames: Object.fromEntries(industryFramework.dimensions.map(d => [d.id, d.name])),
+      casesEvaluated: testCases.length,
+    };
+  }
+
   await storage.createEvalRun({
     suiteId,
     status: "completed",
@@ -165,6 +415,8 @@ async function processEvalBaseline(job: Job): Promise<Record<string, unknown>> {
       passed,
       failed,
       avgLatencyMs: avgLatency,
+      ...(runResultsJson.outcomeAlignment ? { outcomeAlignment: runResultsJson.outcomeAlignment } : {}),
+      ...(runResultsJson.industryScores ? { industryScores: runResultsJson.industryScores } : {}),
     },
     agentId,
     blueprintId,
