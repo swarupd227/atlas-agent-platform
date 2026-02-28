@@ -935,8 +935,24 @@ function AgentDetailInner() {
     },
   });
 
+  const { data: deployRecommendation } = useQuery<{
+    agentId: string;
+    agentName: string;
+    outcomeName: string | null;
+    outcomeId: string | null;
+    riskLevel: string;
+    allowDirectDeploy: boolean;
+    slaRequirements: Array<{ kpiName: string; slaThreshold: number; target: number; unit: string }>;
+    recommended: { strategy: string; canaryConfig: any; rollbackConfig: any; reason: string };
+  }>({
+    queryKey: ["/api/agents", agentId, "deployment-recommendation"],
+    enabled: !!agentId,
+  });
+
+  const [deployStrategyDialogOpen, setDeployStrategyDialogOpen] = useState(false);
+
   const deployMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (opts?: { useRecommended?: boolean }) => {
       const existingDeps = allDeployments?.filter(d => d.agentId === agentId) || [];
       const latestVersion = existingDeps.length > 0
         ? existingDeps.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())[0]?.version || "1.0.0"
@@ -946,24 +962,40 @@ function AgentDetailInner() {
         ? `${parts[0]}.${parts[1]}.${parseInt(parts[2] || "0") + 1}`
         : "1.0.0";
 
+      const useCanary = opts?.useRecommended && deployRecommendation && !deployRecommendation.allowDirectDeploy;
       const res = await apiRequest("POST", "/api/deployments", {
         agentId,
         agentName: agent?.name || "Agent",
         environment: "production",
         version: nextVersion,
-        rolloutStrategy: "full",
+        rolloutStrategy: useCanary ? "canary" : "full",
         status: "pending",
         industry: industry?.id || (agent as any)?.industry || "technology",
+        ...(useCanary && deployRecommendation?.recommended?.canaryConfig ? { canaryConfig: deployRecommendation.recommended.canaryConfig } : {}),
+        ...(useCanary && deployRecommendation?.recommended?.rollbackConfig ? { rollbackConfig: deployRecommendation.recommended.rollbackConfig } : {}),
       });
       return res.json();
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/deployments"] });
-      toast({ title: "Deployment created", description: `Version ${data.version} created. Configure the deployment pipeline.` });
+      setDeployStrategyDialogOpen(false);
+      const strategyLabel = data.rolloutStrategy === "canary" ? "Canary deployment" : "Full deployment";
+      toast({ title: `${strategyLabel} created`, description: `Version ${data.version} created. Configure the deployment pipeline.` });
+      if (data.strategyWarning) {
+        toast({ title: "Strategy Warning", description: data.strategyWarning, variant: "destructive" });
+      }
       navigate(`/deployments/${data.id}`);
     },
     onError: () => toast({ title: "Failed to create deployment", variant: "destructive" }),
   });
+
+  const handleDeployClick = () => {
+    if (deployRecommendation && !deployRecommendation.allowDirectDeploy) {
+      setDeployStrategyDialogOpen(true);
+    } else {
+      deployMutation.mutate();
+    }
+  };
 
   const requestApprovalMutation = useMutation({
     mutationFn: async () => {
@@ -1331,13 +1363,16 @@ function AgentDetailInner() {
             }}>
               <Rocket className="w-3.5 h-3.5 mr-1.5" /> View Deployment
             </Button>
-            <Button variant="outline" size="sm" data-testid="button-new-deployment-version" disabled={!deployPerm.allowed || deployMutation.isPending} onClick={() => deployMutation.mutate()} title="Create a new deployment version">
+            <Button variant="outline" size="sm" data-testid="button-new-deployment-version" disabled={!deployPerm.allowed || deployMutation.isPending} onClick={handleDeployClick} title="Create a new deployment version">
               <Plus className="w-3.5 h-3.5" />
             </Button>
           </div>
         ) : (
-          <Button size="sm" data-testid="button-deploy" disabled={!deployPerm.allowed || deployMutation.isPending} onClick={() => deployMutation.mutate()} title={!deployPerm.allowed ? "You do not have permission to deploy" : undefined}>
+          <Button size="sm" data-testid="button-deploy" disabled={!deployPerm.allowed || deployMutation.isPending} onClick={handleDeployClick} title={!deployPerm.allowed ? "You do not have permission to deploy" : undefined}>
             <Rocket className="w-3.5 h-3.5 mr-1.5" /> {deployMutation.isPending ? "Creating..." : "Deploy"}
+            {deployRecommendation && !deployRecommendation.allowDirectDeploy && deployRecommendation.slaRequirements.length > 0 && (
+              <Badge variant="outline" className="text-[9px] ml-1 border-amber-500 text-amber-600">{Math.max(...deployRecommendation.slaRequirements.map(s => s.slaThreshold)).toFixed(1)}% SLA</Badge>
+            )}
             {deployPerm.allowed && deployPerm.permission.access === "conditional" && deployPerm.permission.annotation && (
               <Badge variant="secondary" className="text-[10px] ml-1">{deployPerm.permission.annotation}</Badge>
             )}
@@ -4882,6 +4917,79 @@ function AgentDetailInner() {
               ) : (
                 <><Copy className="w-3.5 h-3.5 mr-1.5" /> Save Template</>
               )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deployStrategyDialogOpen} onOpenChange={setDeployStrategyDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldAlert className="w-5 h-5 text-amber-500" />
+              Deployment Strategy Recommendation
+            </DialogTitle>
+            <DialogDescription>
+              {deployRecommendation?.recommended?.reason}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-3">
+            {deployRecommendation?.slaRequirements && deployRecommendation.slaRequirements.length > 0 && (
+              <div className="flex flex-col gap-1.5 p-3 rounded-md border bg-muted/30">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Outcome SLA Requirements</span>
+                <span className="text-xs font-medium">{deployRecommendation.outcomeName}</span>
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {deployRecommendation.slaRequirements.map((sla, i) => (
+                    <Badge key={i} variant="outline" className="text-[10px] border-amber-500/40" data-testid={`badge-sla-${i}`}>
+                      {sla.kpiName}: ≥{sla.slaThreshold.toFixed(1)}% (target: {sla.target} {sla.unit})
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+            {deployRecommendation?.recommended?.canaryConfig && (
+              <div className="flex flex-col gap-1.5 p-3 rounded-md border bg-green-500/5">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Recommended Canary Configuration</span>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div><span className="text-muted-foreground">Start traffic:</span> {deployRecommendation.recommended.canaryConfig.startPercent}%</div>
+                  <div><span className="text-muted-foreground">Step increment:</span> {deployRecommendation.recommended.canaryConfig.stepPercent}%</div>
+                  <div><span className="text-muted-foreground">Step interval:</span> {deployRecommendation.recommended.canaryConfig.intervalMinutes}min</div>
+                  <div><span className="text-muted-foreground">Max error rate:</span> {(deployRecommendation.recommended.canaryConfig.maxErrorRate * 100).toFixed(1)}%</div>
+                </div>
+              </div>
+            )}
+            {deployRecommendation?.recommended?.rollbackConfig && (
+              <div className="flex flex-col gap-1.5 p-3 rounded-md border bg-red-500/5">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Auto-Rollback Triggers</span>
+                <div className="flex flex-col gap-1">
+                  {deployRecommendation.recommended.rollbackConfig.triggers.map((t: any, i: number) => (
+                    <span key={i} className="text-[11px] text-muted-foreground">
+                      {t.metric.replace(/_/g, " ")}: {t.operator} {t.value} (within {t.windowMinutes}min)
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+          <DialogFooter className="flex-col gap-2 sm:flex-col">
+            <Button
+              className="w-full"
+              disabled={deployMutation.isPending}
+              onClick={() => deployMutation.mutate({ useRecommended: true })}
+              data-testid="button-deploy-canary-recommended"
+            >
+              <Rocket className="w-4 h-4 mr-1.5" />
+              {deployMutation.isPending ? "Creating..." : "Deploy with Recommended Canary"}
+            </Button>
+            <Button
+              variant="outline"
+              className="w-full border-amber-500/30 text-amber-600 hover:bg-amber-500/10"
+              disabled={deployMutation.isPending}
+              onClick={() => deployMutation.mutate()}
+              data-testid="button-deploy-full-override"
+            >
+              <AlertTriangle className="w-4 h-4 mr-1.5" />
+              Deploy Anyway (Full) — Not Recommended
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -1498,6 +1498,118 @@ export async function registerRoutes(
     res.json(versions);
   });
 
+  app.get("/api/agents/:id/deployment-recommendation", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+      const riskTier = agent.riskTier || "LOW";
+      let slaRequirements: Array<{ kpiName: string; slaThreshold: number; target: number; unit: string }> = [];
+      let outcomeName: string | null = null;
+      let maxSla = 0;
+
+      if (agent.outcomeId) {
+        const outcome = await storage.getOutcome(agent.outcomeId);
+        outcomeName = outcome?.name || null;
+        const kpis = await storage.getKpisByOutcome(agent.outcomeId);
+        const percentUnits = ["percent", "%", "percentage", "rate", "ratio", "pct"];
+        slaRequirements = kpis
+          .filter(k => k.slaThreshold != null && k.slaThreshold > 0)
+          .map(k => ({ kpiName: k.name, slaThreshold: k.slaThreshold!, target: k.target, unit: k.unit }));
+        const percentSlaKpis = slaRequirements.filter(s => percentUnits.includes(s.unit.toLowerCase()) || s.slaThreshold <= 100);
+        maxSla = percentSlaKpis.length > 0 ? Math.max(...percentSlaKpis.map(s => s.slaThreshold)) : 0;
+      }
+
+      const isHighRisk = riskTier === "HIGH" || riskTier === "CRITICAL";
+      const isStrictSla = maxSla >= 95;
+      const isVeryStrictSla = maxSla >= 99;
+
+      let strategy = "direct";
+      let reason = "No strict SLA requirements detected — direct deploy is acceptable";
+      let canaryConfig: any = undefined;
+      let rollbackConfig: any = undefined;
+      let allowDirectDeploy = true;
+
+      if (isVeryStrictSla || (isHighRisk && isStrictSla)) {
+        strategy = "canary";
+        allowDirectDeploy = false;
+        reason = isVeryStrictSla
+          ? `Outcome "${outcomeName}" requires ≥${maxSla.toFixed(1)}% SLA — canary deployment with tight rollback thresholds is mandatory`
+          : `High risk tier (${riskTier}) with ≥${maxSla.toFixed(1)}% SLA — canary deployment strongly recommended`;
+        canaryConfig = {
+          startPercent: isVeryStrictSla ? 1 : 5,
+          stepPercent: isVeryStrictSla ? 5 : 10,
+          intervalMinutes: isVeryStrictSla ? 30 : 15,
+          successThreshold: isVeryStrictSla ? 0.995 : 0.95,
+          maxErrorRate: isVeryStrictSla ? 0.005 : 0.02,
+        };
+        rollbackConfig = {
+          autoRollbackEnabled: true,
+          triggers: [
+            { metric: "eval_pass_rate_drop", operator: ">", value: isVeryStrictSla ? "2%" : "5%", windowMinutes: 15 },
+            { metric: "policy_violations", operator: ">", value: isVeryStrictSla ? "1" : "3", windowMinutes: 30 },
+            { metric: "kpi_confidence", operator: "<", value: isVeryStrictSla ? "0.95" : "0.85", windowMinutes: 30 },
+          ],
+          cooldownMinutes: isVeryStrictSla ? 5 : 10,
+        };
+      } else if (isStrictSla) {
+        strategy = "canary";
+        allowDirectDeploy = false;
+        reason = `Outcome "${outcomeName}" requires ≥${maxSla.toFixed(1)}% SLA — canary deployment recommended`;
+        canaryConfig = {
+          startPercent: 5,
+          stepPercent: 15,
+          intervalMinutes: 15,
+          successThreshold: 0.95,
+          maxErrorRate: 0.03,
+        };
+        rollbackConfig = {
+          autoRollbackEnabled: true,
+          triggers: [
+            { metric: "eval_pass_rate_drop", operator: ">", value: "5%", windowMinutes: 30 },
+            { metric: "policy_violations", operator: ">", value: "3", windowMinutes: 60 },
+            { metric: "kpi_confidence", operator: "<", value: "0.8", windowMinutes: 60 },
+          ],
+          cooldownMinutes: 10,
+        };
+      } else if (isHighRisk) {
+        strategy = "canary";
+        allowDirectDeploy = false;
+        reason = `Agent has ${riskTier} risk tier — canary deployment recommended for safety`;
+        canaryConfig = {
+          startPercent: 10,
+          stepPercent: 25,
+          intervalMinutes: 15,
+          successThreshold: 0.95,
+          maxErrorRate: 0.05,
+        };
+        rollbackConfig = {
+          autoRollbackEnabled: true,
+          triggers: [
+            { metric: "eval_pass_rate_drop", operator: ">", value: "10%", windowMinutes: 30 },
+            { metric: "policy_violations", operator: ">", value: "5", windowMinutes: 60 },
+            { metric: "kpi_confidence", operator: "<", value: "0.7", windowMinutes: 60 },
+          ],
+          cooldownMinutes: 15,
+        };
+      }
+
+      res.json({
+        agentId: agent.id,
+        agentName: agent.name,
+        outcomeName,
+        outcomeId: agent.outcomeId,
+        riskLevel: riskTier,
+        allowDirectDeploy,
+        slaRequirements,
+        recommended: { strategy, canaryConfig, rollbackConfig, reason },
+      });
+    } catch (e) {
+      console.error("[deployment-recommendation] Error:", e);
+      res.status(500).json({ error: "Failed to compute deployment recommendation" });
+    }
+  });
+
   app.get("/api/eval-suites", async (_req, res) => {
     const suites = await storage.getEvalSuites();
     res.json(suites);
@@ -1600,7 +1712,19 @@ export async function registerRoutes(
         });
       }
 
-      res.status(201).json({ ...deployment, approval });
+      let strategyWarning: string | null = null;
+      if (agent?.outcomeId && (strategy === "full" || strategy === "direct")) {
+        const kpis = await storage.getKpisByOutcome(agent.outcomeId);
+        const pctUnits = ["percent", "%", "percentage", "rate", "ratio", "pct"];
+        const slaKpis = kpis.filter(k => k.slaThreshold != null && k.slaThreshold >= 95 && (pctUnits.includes(k.unit.toLowerCase()) || k.slaThreshold <= 100));
+        if (slaKpis.length > 0) {
+          const maxSla = Math.max(...slaKpis.map(k => k.slaThreshold!));
+          const outcome = await storage.getOutcome(agent.outcomeId);
+          strategyWarning = `Direct deploy not recommended — outcome "${outcome?.name}" requires ≥${maxSla.toFixed(1)}% SLA. Consider canary deployment with tight rollback thresholds.`;
+        }
+      }
+
+      res.status(201).json({ ...deployment, approval, strategyWarning });
     } catch (e) {
       handleZodError(res, e);
     }

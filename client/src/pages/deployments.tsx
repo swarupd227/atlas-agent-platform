@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import {
   Rocket,
@@ -312,6 +312,40 @@ function CreateReleaseWizard({
   const [autopromoteRules, setAutopromoteRules] = useState<AutopromoteRule[]>([]);
 
   const selectedAgent = agents?.find((a) => a.id === formData.agentId);
+
+  const { data: deployRec } = useQuery<{
+    outcomeName: string | null;
+    outcomeId: string | null;
+    riskLevel: string;
+    allowDirectDeploy: boolean;
+    slaRequirements: Array<{ kpiName: string; slaThreshold: number; target: number; unit: string }>;
+    recommended: { strategy: string; canaryConfig: any; rollbackConfig: any; reason: string };
+  }>({
+    queryKey: ["/api/agents", formData.agentId, "deployment-recommendation"],
+    enabled: !!formData.agentId,
+  });
+
+  useEffect(() => {
+    if (deployRec && !deployRec.allowDirectDeploy && deployRec.recommended) {
+      const rec = deployRec.recommended;
+      setFormData(prev => ({
+        ...prev,
+        rolloutStrategy: rec.strategy || "canary",
+        canaryPercent: rec.canaryConfig?.startPercent || 10,
+        evalRegressionThreshold: rec.rollbackConfig?.triggers?.find((t: any) => t.metric === "eval_pass_rate_drop")
+          ? parseFloat(rec.rollbackConfig.triggers.find((t: any) => t.metric === "eval_pass_rate_drop").value) || 10
+          : 10,
+        policyViolationThreshold: rec.rollbackConfig?.triggers?.find((t: any) => t.metric === "policy_violations")
+          ? parseInt(rec.rollbackConfig.triggers.find((t: any) => t.metric === "policy_violations").value) || 5
+          : 5,
+        kpiDropThreshold: rec.rollbackConfig?.triggers?.find((t: any) => t.metric === "kpi_confidence")
+          ? parseFloat(rec.rollbackConfig.triggers.find((t: any) => t.metric === "kpi_confidence").value) || 0.7
+          : 0.7,
+        autoRollbackEnabled: true,
+      }));
+    }
+  }, [deployRec]);
+
   const requiresApproval = formData.environment === "prod" || (formData.environment === "pilot" && selectedAgent?.riskTier === "HIGH");
   const existingPendingApprovals = approvals?.filter(
     (a) =>
@@ -436,6 +470,23 @@ function CreateReleaseWizard({
                 ))}
               </select>
             </div>
+            {deployRec && !deployRec.allowDirectDeploy && (
+              <div className="flex items-start gap-2.5 p-3 rounded-md border border-amber-500/30 bg-amber-500/5" data-testid="banner-sla-recommendation">
+                <ShieldAlert className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                <div className="flex flex-col gap-1 min-w-0">
+                  <span className="text-xs font-medium">Outcome-Driven Deployment Guardrail</span>
+                  <span className="text-[11px] text-muted-foreground">{deployRec.recommended.reason}</span>
+                  <div className="flex flex-wrap gap-1 mt-0.5">
+                    {deployRec.slaRequirements.map((sla, i) => (
+                      <span key={i} className="text-[10px] px-1.5 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-700">
+                        {sla.kpiName}: ≥{sla.slaThreshold.toFixed(1)}%
+                      </span>
+                    ))}
+                  </div>
+                  <span className="text-[10px] text-muted-foreground mt-0.5">Strategy and rollback thresholds have been auto-configured. You can override, but doing so is not recommended.</span>
+                </div>
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-4">
               <div className="flex flex-col gap-2">
                 <Label>Target Environment</Label>
@@ -462,6 +513,11 @@ function CreateReleaseWizard({
                   <option value="canary">Canary</option>
                   <option value="direct">Direct with Safeguards</option>
                 </select>
+                {deployRec && !deployRec.allowDirectDeploy && formData.rolloutStrategy === "direct" && (
+                  <span className="text-[10px] text-destructive flex items-center gap-1" data-testid="warning-direct-not-recommended">
+                    <AlertTriangle className="w-3 h-3" /> Direct deploy not recommended — outcome "{deployRec.outcomeName}" requires ≥{Math.max(...deployRec.slaRequirements.map(s => s.slaThreshold)).toFixed(1)}% SLA
+                  </span>
+                )}
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -534,6 +590,15 @@ function CreateReleaseWizard({
 
         {step === 2 && (
           <div className="flex flex-col gap-4" data-testid="wizard-step-2">
+            {deployRec && !deployRec.allowDirectDeploy && (
+              <div className="flex items-center gap-2 p-2.5 rounded-md border border-amber-500/30 bg-amber-500/5" data-testid="banner-step2-sla">
+                <Shield className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                <span className="text-[11px] text-muted-foreground">
+                  Thresholds auto-configured for <span className="font-medium text-foreground">{deployRec.outcomeName}</span> SLA requirements.
+                  {deployRec.slaRequirements.map(s => ` ${s.kpiName}: ≥${s.slaThreshold.toFixed(1)}%`).join(",")}
+                </span>
+              </div>
+            )}
             <div className="flex items-center justify-between gap-2 p-3 rounded-md bg-muted/30">
               <div className="flex items-center gap-2">
                 <ShieldAlert className="w-4 h-4 text-muted-foreground" />
