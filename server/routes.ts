@@ -208,6 +208,78 @@ function resolveOntologyTags(
   return tags;
 }
 
+export interface KpiReEvalResult {
+  kpiId: string;
+  kpiName: string;
+  oldValue: number;
+  newValue: number;
+  trend: string;
+  breached: boolean;
+}
+
+export async function recomputeOutcomeKpis(outcomeId: string): Promise<{
+  updated: number;
+  totalRuns: number;
+  totalEvents: number;
+  changes: KpiReEvalResult[];
+  kpis: any[];
+}> {
+  const kpis = await storage.getKpisByOutcome(outcomeId);
+  const agents = await storage.getAgents();
+  const traces = await storage.getTraces();
+  const outcomeEvents = await storage.getOutcomeEvents();
+  const boundAgents = agents.filter(a => a.outcomeId === outcomeId);
+  const boundAgentIds = new Set(boundAgents.map(a => a.id));
+  const relevantTraces = traces.filter(t => boundAgentIds.has(t.agentId));
+  const relevantEvents = outcomeEvents.filter(e => e.outcomeId === outcomeId);
+
+  if (relevantTraces.length === 0 && relevantEvents.length === 0) {
+    return { updated: 0, totalRuns: 0, totalEvents: 0, changes: [], kpis };
+  }
+
+  const totalTraces = relevantTraces.length;
+  const failedTraces = relevantTraces.filter(t => t.status === "failed" || t.status === "error").length;
+  const changes: KpiReEvalResult[] = [];
+
+  for (const kpi of kpis) {
+    const kpiNameLower = (kpi.name || "").toLowerCase();
+    let newValue: number | null = null;
+
+    if (kpiNameLower.includes("success") || kpiNameLower.includes("accuracy") || kpiNameLower.includes("rate")) {
+      if (totalTraces > 0) {
+        newValue = Math.round(((totalTraces - failedTraces) / totalTraces) * 10000) / 100;
+      }
+    } else if (kpiNameLower.includes("latency") || kpiNameLower.includes("time") || kpiNameLower.includes("response")) {
+      if (totalTraces > 0) {
+        newValue = Math.round(relevantTraces.reduce((s, t) => s + (t.latencyMs || 0), 0) / totalTraces);
+      }
+    } else if (kpiNameLower.includes("volume") || kpiNameLower.includes("count") || kpiNameLower.includes("throughput") ||
+               kpiNameLower.includes("resolution") || kpiNameLower.includes("processed") || kpiNameLower.includes("moderated") ||
+               kpiNameLower.includes("qualified") || kpiNameLower.includes("invoices")) {
+      newValue = relevantEvents.length > 0 ? relevantEvents.length : totalTraces;
+    } else if (kpiNameLower.includes("cost")) {
+      if (totalTraces > 0) {
+        newValue = parseFloat(relevantTraces.reduce((s, t) => s + (t.costUsd || 0), 0).toFixed(4));
+      }
+    }
+
+    if (newValue !== null && newValue !== kpi.currentValue) {
+      const oldValue = kpi.currentValue || 0;
+      const trend = newValue > oldValue ? "up" : newValue < oldValue ? "down" : (kpi.trend || "stable");
+      const breached = kpi.slaThreshold != null && (
+        kpiNameLower.includes("latency") || kpiNameLower.includes("time") || kpiNameLower.includes("cost")
+          ? newValue > kpi.slaThreshold
+          : newValue < kpi.slaThreshold
+      );
+      await storage.updateKpi(kpi.id, { currentValue: newValue, trend });
+      changes.push({ kpiId: kpi.id, kpiName: kpi.name, oldValue, newValue, trend, breached });
+    }
+  }
+
+  const updatedKpis = await storage.getKpisByOutcome(outcomeId);
+  return { updated: changes.length, totalRuns: totalTraces, totalEvents: relevantEvents.length, changes, kpis: updatedKpis };
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -440,62 +512,11 @@ export async function registerRoutes(
 
   app.post("/api/outcomes/:id/recompute", async (req, res) => {
     try {
-      const outcomeId = req.params.id;
-      const kpis = await storage.getKpisByOutcome(outcomeId);
-      const agents = await storage.getAgents();
-      const traces = await storage.getTraces();
-      const outcomeEvents = await storage.getOutcomeEvents();
-      const boundAgents = agents.filter(a => a.outcomeId === outcomeId);
-      const boundAgentIds = new Set(boundAgents.map(a => a.id));
-      const relevantTraces = traces.filter(t => boundAgentIds.has(t.agentId));
-      const relevantEvents = outcomeEvents.filter(e => e.outcomeId === outcomeId);
-
-      if (relevantTraces.length === 0 && relevantEvents.length === 0) {
-        return res.json({ updated: 0, totalRuns: 0, totalEvents: 0, kpis, message: "No trace or event data available to recompute from." });
+      const result = await recomputeOutcomeKpis(req.params.id);
+      if (result.totalRuns === 0 && result.totalEvents === 0) {
+        return res.json({ ...result, message: "No trace or event data available to recompute from." });
       }
-
-      const totalTraces = relevantTraces.length;
-      const failedTraces = relevantTraces.filter(t => t.status === "failed" || t.status === "error").length;
-      const updates: Array<{ id: string; name: string; oldValue: number; newValue: number; trend: string }> = [];
-
-      for (const kpi of kpis) {
-        const kpiNameLower = (kpi.name || "").toLowerCase();
-        let newValue: number | null = null;
-
-        if (kpiNameLower.includes("success") || kpiNameLower.includes("accuracy") || kpiNameLower.includes("rate")) {
-          if (totalTraces > 0) {
-            newValue = Math.round(((totalTraces - failedTraces) / totalTraces) * 10000) / 100;
-          }
-        } else if (kpiNameLower.includes("latency") || kpiNameLower.includes("time") || kpiNameLower.includes("response")) {
-          if (totalTraces > 0) {
-            newValue = Math.round(relevantTraces.reduce((s, t) => s + (t.latencyMs || 0), 0) / totalTraces);
-          }
-        } else if (kpiNameLower.includes("volume") || kpiNameLower.includes("count") || kpiNameLower.includes("throughput") ||
-                   kpiNameLower.includes("resolution") || kpiNameLower.includes("processed") || kpiNameLower.includes("moderated") ||
-                   kpiNameLower.includes("qualified") || kpiNameLower.includes("invoices")) {
-          newValue = relevantEvents.length > 0 ? relevantEvents.length : totalTraces;
-        } else if (kpiNameLower.includes("cost")) {
-          if (totalTraces > 0) {
-            newValue = parseFloat(relevantTraces.reduce((s, t) => s + (t.costUsd || 0), 0).toFixed(4));
-          }
-        }
-
-        if (newValue !== null && newValue !== kpi.currentValue) {
-          const oldValue = kpi.currentValue || 0;
-          const trend = newValue > oldValue ? "up" : newValue < oldValue ? "down" : (kpi.trend || "stable");
-          await storage.updateKpi(kpi.id, { currentValue: newValue, trend });
-          updates.push({ id: kpi.id, name: kpi.name, oldValue, newValue, trend });
-        }
-      }
-
-      const updatedKpis = await storage.getKpisByOutcome(outcomeId);
-      res.json({
-        updated: updates.length,
-        totalRuns: totalTraces,
-        totalEvents: relevantEvents.length,
-        changes: updates,
-        kpis: updatedKpis,
-      });
+      res.json(result);
     } catch (e) {
       handleZodError(res, e);
     }
@@ -510,7 +531,13 @@ export async function registerRoutes(
   app.get("/api/outcomes/:id/audit", async (req, res) => {
     const auditEvents = await storage.getAuditEvents();
     const approvals = await storage.getApprovals();
-    const outcomeAudits = auditEvents.filter(e => e.objectId === req.params.id || e.objectType === "outcome");
+    const boundAgents = (await storage.getAgents()).filter(a => a.outcomeId === req.params.id);
+    const boundAgentIds = new Set(boundAgents.map(a => a.id));
+    const outcomeAudits = auditEvents.filter(e =>
+      e.objectId === req.params.id ||
+      e.objectType === "outcome" ||
+      (e.action === "agent.config_changed" && boundAgentIds.has(e.objectId))
+    );
     const outcomeApprovals = approvals.filter(a => a.objectId === req.params.id);
     res.json({ auditEvents: outcomeAudits, approvals: outcomeApprovals });
   });
@@ -1374,9 +1401,52 @@ export async function registerRoutes(
 
   app.patch("/api/agents/:id", async (req, res) => {
     try {
+      const existing = await storage.getAgent(req.params.id);
+      if (!existing) return res.status(404).json({ message: "Agent not found" });
+
       const updated = await storage.updateAgent(req.params.id, req.body);
       if (!updated) return res.status(404).json({ message: "Agent not found" });
-      res.json(updated);
+
+      const changedFields = Object.keys(req.body).filter(k => {
+        const oldVal = JSON.stringify((existing as any)[k]);
+        const newVal = JSON.stringify((req.body as any)[k]);
+        return oldVal !== newVal;
+      });
+
+      if (changedFields.length > 0) {
+        const changeSummary = changedFields.slice(0, 5).join(", ") + (changedFields.length > 5 ? ` +${changedFields.length - 5} more` : "");
+        const agentTags = Array.isArray(existing.ontologyTags) ? (existing.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) : [];
+        await storage.createAuditEvent({
+          actorType: "user",
+          actorId: "ops_user",
+          action: "agent.config_changed",
+          objectType: "agent",
+          objectId: existing.id,
+          details: JSON.stringify({ summary: `Agent "${existing.name}" configuration updated: ${changeSummary}`, agentName: existing.name, changedFields, outcomeId: existing.outcomeId || null }),
+          ontologyTags: resolveOntologyTags("agent", "agent.config_changed", { agentOntologyTags: agentTags }),
+        });
+      }
+
+      let reEvaluation = null;
+      if (updated.outcomeId && changedFields.length > 0) {
+        try {
+          reEvaluation = await recomputeOutcomeKpis(updated.outcomeId);
+          const breaches = reEvaluation.changes.filter(c => c.breached);
+          await storage.createAuditEvent({
+            actorType: "system",
+            actorId: "kpi_evaluator",
+            action: "kpi.auto_reeval",
+            objectType: "outcome",
+            objectId: updated.outcomeId,
+            details: JSON.stringify({ summary: `Auto re-evaluation triggered by config change on agent "${updated.name}": ${reEvaluation.changes.length} KPI(s) updated${breaches.length > 0 ? `, ${breaches.length} SLA breach(es)` : ""}`, agentName: updated.name, agentId: updated.id, changes: reEvaluation.changes, noChanges: reEvaluation.changes.length === 0 }),
+            ontologyTags: resolveOntologyTags("outcome", "kpi.auto_reeval"),
+          });
+        } catch (reEvalErr) {
+          console.error("[kpi-reeval] Auto re-evaluation failed:", reEvalErr);
+        }
+      }
+
+      res.json({ ...updated, reEvaluationTriggered: !!reEvaluation, kpiReEvaluation: reEvaluation });
     } catch (e) {
       handleZodError(res, e);
     }

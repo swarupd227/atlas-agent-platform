@@ -854,6 +854,62 @@ function AgentDetailInner() {
   });
 
   const [replacementProposal, setReplacementProposal] = useState<any>(null);
+  const [lastReEvaluation, setLastReEvaluation] = useState<{
+    timestamp: string;
+    changes: Array<{ kpiId: string; kpiName: string; oldValue: number; newValue: number; trend: string; breached: boolean }>;
+    totalRuns: number;
+  } | null>(null);
+
+  const { data: agentAuditEvents } = useQuery<Array<{ id: string; action: string; objectId: string; details: any; timestamp: string; createdAt?: string }>>({
+    queryKey: ["/api/agents", agentId, "audit-events"],
+    queryFn: async () => {
+      const res = await fetch("/api/audit-events");
+      if (!res.ok) return [];
+      const all = await res.json();
+      return (all || [])
+        .filter((e: any) => e.objectId === agentId && e.action === "agent.config_changed")
+        .sort((a: any, b: any) => new Date(b.timestamp || b.createdAt || 0).getTime() - new Date(a.timestamp || a.createdAt || 0).getTime())
+        .slice(0, 5);
+    },
+    enabled: !!agentId && !!agent?.outcomeId,
+  });
+
+  const persistedReEval = (() => {
+    if (lastReEvaluation) return lastReEvaluation;
+    if (!agentAuditEvents?.length) return null;
+    const latest = agentAuditEvents[0];
+    try {
+      const details = typeof latest.details === "string" ? JSON.parse(latest.details) : (latest.details || {});
+      if (!details.changedFields?.length) return null;
+      return { timestamp: latest.timestamp || latest.createdAt || "", changes: [] as any[], totalRuns: 0 };
+    } catch { return null; }
+  })();
+
+  const handlePatchReEvaluation = (data: any, actionLabel: string) => {
+    queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId] });
+    queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId, "audit-events"] });
+    if (data.reEvaluationTriggered && data.kpiReEvaluation) {
+      const reEval = data.kpiReEvaluation;
+      setLastReEvaluation({
+        timestamp: new Date().toISOString(),
+        changes: reEval.changes || [],
+        totalRuns: reEval.totalRuns || 0,
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId, "kpi-contributions"] });
+      const breachCount = (reEval.changes || []).filter((c: any) => c.breached).length;
+      if (reEval.changes?.length > 0) {
+        toast({
+          title: `${actionLabel} — KPIs re-evaluated`,
+          description: `${reEval.changes.length} KPI(s) updated${breachCount > 0 ? `, ${breachCount} SLA breach(es) detected` : ""}`,
+          variant: breachCount > 0 ? "destructive" : "default",
+        });
+      } else {
+        toast({ title: actionLabel, description: "KPI re-evaluation triggered — no changes detected" });
+      }
+    } else {
+      toast({ title: actionLabel });
+    }
+  };
 
   const existingRtConfig = (agent?.runtimeConfig as Record<string, any>) || {};
   const [rtPrompt, setRtPrompt] = useState(existingRtConfig?.prompt || "");
@@ -861,17 +917,18 @@ function AgentDetailInner() {
   const [rtEditing, setRtEditing] = useState(false);
 
   const rtConfigMutation = useMutation({
-    mutationFn: () =>
-      apiRequest("PATCH", `/api/agents/${agentId}`, {
+    mutationFn: async () => {
+      const res = await apiRequest("PATCH", `/api/agents/${agentId}`, {
         runtimeConfig: {
           prompt: rtPrompt.trim(),
           scheduleIntervalMinutes: rtInterval,
         },
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId] });
+      });
+      return res.json();
+    },
+    onSuccess: (data) => {
       setRtEditing(false);
-      toast({ title: "Runtime configuration saved" });
+      handlePatchReEvaluation(data, "Runtime configuration saved");
     },
     onError: (err: Error) => {
       toast({ title: "Failed to save runtime config", description: err.message, variant: "destructive" });
@@ -1018,11 +1075,10 @@ function AgentDetailInner() {
       const res = await apiRequest("PATCH", `/api/agents/${agentId}`, data);
       return res.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId] });
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
       setRetireDialogOpen(false);
-      toast({ title: "Agent status updated" });
+      handlePatchReEvaluation(data, "Agent status updated");
     },
   });
 
@@ -3200,10 +3256,50 @@ function AgentDetailInner() {
                       </div>
                     </div>
                     {outcome && (
-                      <div className="flex items-center gap-2 mt-4 pt-3 border-t flex-wrap">
-                        <span className="text-xs text-muted-foreground">Linked Outcome:</span>
-                        <span className="text-xs font-medium" data-testid="text-linked-outcome">{outcome.name}</span>
-                        <StatusBadge status={outcome.status} />
+                      <div className="flex flex-col gap-2 mt-4 pt-3 border-t">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs text-muted-foreground">Linked Outcome:</span>
+                          <Link href={`/outcomes/${outcome.id}`}>
+                            <span className="text-xs font-medium text-primary hover:underline cursor-pointer" data-testid="text-linked-outcome">{outcome.name}</span>
+                          </Link>
+                          <StatusBadge status={outcome.status} />
+                        </div>
+                        {persistedReEval && (
+                          <div className="flex items-start gap-2 p-2 rounded-md border" data-testid="card-kpi-impact">
+                            <Activity className="w-3.5 h-3.5 text-muted-foreground mt-0.5 shrink-0" />
+                            <div className="flex flex-col gap-0.5 min-w-0">
+                              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Last KPI Re-Evaluation</span>
+                              <span className="text-[11px] font-medium">
+                                {persistedReEval.changes.length > 0
+                                  ? `${persistedReEval.changes.length} KPI(s) changed`
+                                  : "Re-evaluation completed"
+                                }
+                                {persistedReEval.changes.filter(c => c.breached).length > 0 && (
+                                  <span className="text-destructive ml-1">
+                                    — {persistedReEval.changes.filter(c => c.breached).length} breach(es)
+                                  </span>
+                                )}
+                              </span>
+                              {persistedReEval.changes.length > 0 && (
+                                <div className="flex flex-wrap gap-1 mt-0.5">
+                                  {persistedReEval.changes.slice(0, 3).map((c, i) => (
+                                    <Badge key={i} variant={c.breached ? "destructive" : "outline"} className="text-[9px] font-normal">
+                                      {c.kpiName}: {c.oldValue} → {c.newValue} ({c.trend})
+                                    </Badge>
+                                  ))}
+                                </div>
+                              )}
+                              {persistedReEval.timestamp && (
+                                <span className="text-[10px] text-muted-foreground mt-0.5">
+                                  {new Date(persistedReEval.timestamp).toLocaleString()}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                        <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+                          <Zap className="w-3 h-3" /> Configuration changes auto-trigger KPI re-evaluation
+                        </p>
                       </div>
                     )}
                   </CardContent>

@@ -1579,6 +1579,85 @@ export default function OutcomeDetail() {
               );
             })}
           </div>
+
+          {(() => {
+            const reEvalEvents = (auditData?.auditEvents || [])
+              .filter(e => e.action === "agent.config_changed" || e.action === "kpi.auto_reeval")
+              .sort((a, b) => new Date(b.timestamp || b.createdAt || 0).getTime() - new Date(a.timestamp || a.createdAt || 0).getTime())
+              .slice(0, 8);
+            if (reEvalEvents.length === 0) return null;
+            return (
+              <Card data-testid="card-recent-reevaluations">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center gap-2">
+                    <Activity className="w-4 h-4 text-muted-foreground" />
+                    <CardTitle className="text-sm font-medium">Recent Re-Evaluations</CardTitle>
+                    <Badge variant="secondary" className="text-[10px] ml-auto">{reEvalEvents.length}</Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground">Agent configuration changes that triggered automatic KPI re-evaluation</p>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex flex-col gap-2">
+                    {reEvalEvents.map((evt) => {
+                      let details: any = {};
+                      try { details = typeof evt.details === "string" ? JSON.parse(evt.details) : (evt.details || {}); } catch { details = {}; }
+                      const isReEval = evt.action === "kpi.auto_reeval";
+                      const changes = details.changes || [];
+                      const breachCount = changes.filter((c: any) => c.breached).length;
+                      const changedFields = details.changedFields || [];
+                      const agentName = details.agentName || evt.objectId;
+                      const ts = evt.timestamp || evt.createdAt;
+                      return (
+                        <div key={evt.id} className="flex items-start gap-3 p-2.5 rounded-md border bg-muted/20 hover:bg-muted/40 transition-colors" data-testid={`reeval-event-${evt.id}`}>
+                          <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${isReEval ? (breachCount > 0 ? "bg-destructive/10 text-destructive" : "bg-green-500/10 text-green-600") : "bg-blue-500/10 text-blue-600"}`}>
+                            {isReEval ? <Gauge className="w-3 h-3" /> : <Bot className="w-3 h-3" />}
+                          </div>
+                          <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-xs font-medium">{isReEval ? "KPI Re-Evaluation" : "Config Changed"}</span>
+                              {agentName && (
+                                <Link href={`/agents/${isReEval ? (details.agentId || evt.objectId) : evt.objectId}`}>
+                                  <Badge variant="outline" className="text-[10px] cursor-pointer" data-testid={`link-agent-${isReEval ? (details.agentId || evt.objectId) : evt.objectId}`}>
+                                    <Bot className="w-2.5 h-2.5 mr-0.5" /> {agentName}
+                                  </Badge>
+                                </Link>
+                              )}
+                              {breachCount > 0 && (
+                                <Badge variant="destructive" className="text-[9px]">{breachCount} breach(es)</Badge>
+                              )}
+                            </div>
+                            {changedFields.length > 0 && (
+                              <span className="text-[11px] text-muted-foreground">
+                                Fields: {changedFields.join(", ")}
+                              </span>
+                            )}
+                            {changes.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-0.5">
+                                {changes.slice(0, 3).map((c: any, i: number) => (
+                                  <Badge key={i} variant={c.breached ? "destructive" : "secondary"} className="text-[9px] font-normal">
+                                    {c.kpiName}: {c.oldValue} → {c.newValue}
+                                  </Badge>
+                                ))}
+                                {changes.length > 3 && (
+                                  <Badge variant="secondary" className="text-[9px]">+{changes.length - 3} more</Badge>
+                                )}
+                              </div>
+                            )}
+                            {ts && (
+                              <span className="text-[10px] text-muted-foreground mt-0.5">
+                                <Clock className="w-2.5 h-2.5 inline mr-0.5" />
+                                {new Date(ts).toLocaleString()}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })()}
         </TabsContent>
 
         {/* Tab 2: Agent Plan & Contributions */}
