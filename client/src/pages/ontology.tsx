@@ -237,7 +237,7 @@ export default function OntologyExplorer() {
   const [kgImporting, setKgImporting] = useState(false);
   const [kgExpandedCategories, setKgExpandedCategories] = useState<Set<string>>(new Set());
 
-  const industryId = industry && industry.id !== "custom" ? industry.id : null;
+  const industryId = industry ? industry.id : null;
 
   const { data: rawConcepts = [], isLoading: conceptsLoading } = useQuery<DbOntologyConcept[]>({
     queryKey: ["/api/ontology/concepts", industryId],
@@ -584,13 +584,13 @@ export default function OntologyExplorer() {
 
   const generateMutation = useMutation({
     mutationFn: async () => {
-      if (!industry || industry.id === "custom") {
+      if (!industry) {
         throw new Error("No industry selected");
       }
       const res = await apiRequest("POST", "/api/ai/generate-ontology", {
         industryId: industry.id,
         industryName: industry.label,
-        ontologyName: industry.ontology,
+        ontologyName: industry.ontology || "Cross-Industry Ontology",
       });
       return res.json();
     },
@@ -608,7 +608,7 @@ export default function OntologyExplorer() {
 
   const kgGenerateMutation = useMutation({
     mutationFn: async () => {
-      if (!industry || industry.id === "custom") throw new Error("No industry selected");
+      if (!industry) throw new Error("No industry selected");
       const subdomain = kgSubdomain.trim();
       if (!subdomain) throw new Error("Sub-domain is required");
       const res = await apiRequest("POST", "/api/ai/generate-subdomain-ontology", {
@@ -714,44 +714,137 @@ export default function OntologyExplorer() {
   if (concepts.length === 0 && !generateMutation.isPending) {
     const isCustom = industry.id === "custom";
     return (
-      <div className="flex items-center justify-center h-full p-8" data-testid="ontology-unavailable">
-        <Card className="max-w-lg w-full">
-          <CardContent className="flex flex-col items-center gap-5 pt-8 pb-8 text-center">
-            <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
-              <Sparkles className="w-8 h-8 text-primary" />
-            </div>
-            <div className="space-y-2">
-              <h2 className="text-lg font-semibold" data-testid="text-generate-ontology-title">
-                {isCustom ? "Build Your Cross-Industry Ontology" : `Generate ${industry.ontology || industry.label} Ontology`}
-              </h2>
-              <p className="text-sm text-muted-foreground max-w-sm">
-                {isCustom
-                  ? "No ontology concepts yet. Start building your cross-industry ontology by adding concepts manually or generating a domain with AI."
-                  : `No ontology concepts exist for ${industry.label} yet. Use AI to generate a comprehensive domain ontology with categories, concepts, properties, and relationships specific to this industry.`}
-              </p>
-            </div>
-            <div className="flex items-center gap-3">
-              {isCustom && (
+      <>
+        <div className="flex items-center justify-center h-full p-8" data-testid="ontology-unavailable">
+          <Card className="max-w-lg w-full">
+            <CardContent className="flex flex-col items-center gap-5 pt-8 pb-8 text-center">
+              <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
+                <Sparkles className="w-8 h-8 text-primary" />
+              </div>
+              <div className="space-y-2">
+                <h2 className="text-lg font-semibold" data-testid="text-generate-ontology-title">
+                  {isCustom ? "Build Your Cross-Industry Ontology" : `Generate ${industry.ontology || industry.label} Ontology`}
+                </h2>
+                <p className="text-sm text-muted-foreground max-w-sm">
+                  {isCustom
+                    ? "No ontology concepts yet. Start building your cross-industry ontology by adding concepts manually or generating a domain with AI."
+                    : `No ontology concepts exist for ${industry.label} yet. Use AI to generate a comprehensive domain ontology with categories, concepts, properties, and relationships specific to this industry.`}
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                {isCustom && (
+                  <Button
+                    variant="outline"
+                    onClick={() => setAddDialogOpen(true)}
+                    data-testid="button-add-first-concept"
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    Add First Concept
+                  </Button>
+                )}
                 <Button
-                  variant="outline"
-                  onClick={() => setAddDialogOpen(true)}
-                  data-testid="button-add-first-concept"
+                  onClick={() => generateMutation.mutate()}
+                  data-testid="button-generate-ontology"
                 >
-                  <Plus className="w-4 h-4 mr-2" />
-                  Add First Concept
+                  <Wand2 className="w-4 h-4 mr-2" />
+                  Generate with AI
                 </Button>
-              )}
-              <Button
-                onClick={() => generateMutation.mutate()}
-                data-testid="button-generate-ontology"
-              >
-                <Wand2 className="w-4 h-4 mr-2" />
-                Generate with AI
-              </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+        <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
+          <DialogContent data-testid="dialog-add-custom-concept">
+            <DialogHeader>
+              <DialogTitle>Add Custom Concept</DialogTitle>
+              <DialogDescription>
+                Extend the ontology with your own domain-specific concept.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="concept-label">Label</Label>
+                <Input
+                  id="concept-label"
+                  value={newLabel}
+                  onChange={(e) => setNewLabel(e.target.value)}
+                  placeholder="e.g. Order to Cash"
+                  data-testid="input-concept-label"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="concept-category">Category</Label>
+                <Select value={newCategory} onValueChange={setNewCategory}>
+                  <SelectTrigger data-testid="select-concept-category">
+                    <SelectValue placeholder="Select category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {allCategories.map((cat) => (
+                      <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                    ))}
+                    <SelectItem value="__new__">+ New Category</SelectItem>
+                  </SelectContent>
+                </Select>
+                {newCategory === "__new__" && (
+                  <Input
+                    value={newCategoryCustom}
+                    onChange={(e) => setNewCategoryCustom(e.target.value)}
+                    placeholder="Enter new category name"
+                    className="mt-1.5"
+                    data-testid="input-new-category"
+                  />
+                )}
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="concept-description">Description</Label>
+                <Textarea
+                  id="concept-description"
+                  value={newDescription}
+                  onChange={(e) => setNewDescription(e.target.value)}
+                  placeholder="Describe this concept..."
+                  className="resize-none"
+                  data-testid="input-concept-description"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="concept-synonyms">Synonyms (comma-separated)</Label>
+                <Input
+                  id="concept-synonyms"
+                  value={newSynonyms}
+                  onChange={(e) => setNewSynonyms(e.target.value)}
+                  placeholder="e.g. O2C, order-to-cash process"
+                  data-testid="input-concept-synonyms"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="concept-tags">Tags (comma-separated)</Label>
+                <Input
+                  id="concept-tags"
+                  value={newTags}
+                  onChange={(e) => setNewTags(e.target.value)}
+                  placeholder="e.g. finance, operations, cross-industry"
+                  data-testid="input-concept-tags"
+                />
+              </div>
             </div>
-          </CardContent>
-        </Card>
-      </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={resetDialog} data-testid="button-cancel-add-concept">Cancel</Button>
+              <Button
+                onClick={handleCreateConcept}
+                disabled={createConceptMutation.isPending || !newLabel.trim() || (!newCategory || (newCategory === "__new__" && !newCategoryCustom.trim())) || !newDescription.trim()}
+                data-testid="button-save-custom-concept"
+              >
+                {createConceptMutation.isPending ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <Plus className="w-4 h-4 mr-2" />
+                )}
+                Add Concept
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </>
     );
   }
 
