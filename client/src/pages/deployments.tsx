@@ -497,12 +497,15 @@ function CreateReleaseWizard({
               const riskTier = selectedAgent.riskTier || "MEDIUM";
               const agentEvalSuites = evalSuites?.filter(s => s.agentId === selectedAgent.id) || [];
               const hasEvalSuites = agentEvalSuites.length > 0;
+              const memGovRules = (selectedAgent.memoryGovernanceRules as Array<{ rule: string; regulation: string; type: string }>) || [];
+              const hasMemoryGovernance = memGovRules.length > 0;
 
               const checks = [
                 { label: "Ontology Tags", met: hasOntology, detail: hasOntology ? `${ontologyTags.length} domain concepts` : "No domain ontology tags assigned" },
                 { label: "Risk Tier", met: riskTier === "HIGH" || riskTier === "CRITICAL", detail: `${riskTier} (${stages.length > 0 ? stages.length + " mandatory stages" : "check pipeline"})` },
                 { label: "Eval Suites", met: hasEvalSuites, detail: hasEvalSuites ? `${agentEvalSuites.length} active suites` : "No eval suites configured for this agent" },
                 { label: "Rollback Triggers", met: rollbackTriggers.length > 0, detail: `${rollbackTriggers.length} industry-specific triggers defined` },
+                { label: "Memory Governance", met: hasMemoryGovernance, detail: hasMemoryGovernance ? memGovRules.length + " retention/compliance rules" : "No memory governance rules — data retention may not comply with " + (industryLabels[agentIndustry] || "industry") + " regulations" },
               ];
               const metCount = checks.filter(c => c.met).length;
 

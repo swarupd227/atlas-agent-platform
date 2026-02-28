@@ -77,6 +77,7 @@ export interface RuntimeAgent {
   runtimeConfig?: Record<string, any>;
   ontologyTags?: Array<{ conceptId: string; conceptLabel: string }>;
   complianceTags?: string[];
+  memoryGovernanceRules?: Array<{ rule: string; regulation: string; type: string }>;
 }
 
 async function buildRuntimeContext(agent: RuntimeAgent): Promise<string> {
@@ -250,6 +251,34 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<string> {
     sections.push(`Ensure all outputs and decisions respect these compliance requirements.`);
   }
 
+  if (agent.memoryGovernanceRules && agent.memoryGovernanceRules.length > 0) {
+    sections.push("\n## MEMORY GOVERNANCE CONSTRAINTS (mandatory data handling rules)");
+    for (const rule of agent.memoryGovernanceRules) {
+      switch (rule.type) {
+        case "retention":
+          sections.push(`- RETENTION: ${rule.rule} (per ${rule.regulation})`);
+          break;
+        case "encryption":
+          sections.push(`- ENCRYPTION: ${rule.rule} — annotate protected data with [PHI-PROTECTED] markers`);
+          break;
+        case "erasure":
+          sections.push(`- ERASURE: ${rule.rule} (per ${rule.regulation}) — flag data for deletion when requested`);
+          break;
+        case "access":
+        case "access_control":
+          sections.push(`- ACCESS CONTROL: ${rule.rule}`);
+          break;
+        case "immutability":
+          sections.push(`- IMMUTABILITY: ${rule.rule} — do NOT modify committed records`);
+          break;
+        default:
+          sections.push(`- ${rule.rule}`);
+          break;
+      }
+    }
+    sections.push(`You MUST comply with ALL memory governance constraints above. Violations will be flagged in execution traces.`);
+  }
+
   const rtConfig = agent.runtimeConfig || {};
   if (Array.isArray(rtConfig.kpiBindings) && rtConfig.kpiBindings.length > 0) {
     sections.push(`\n## ASSIGNED KPI BINDINGS: ${rtConfig.kpiBindings.join(", ")}`);
@@ -419,6 +448,89 @@ export async function checkOntologyCompliance(
     canonicalCount: canonicalTermsUsed.length,
     deprecatedCount: deprecatedTermsUsed.length,
   };
+}
+
+const GOVERNANCE_PII_PATTERNS = [
+  { name: "email", regex: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g },
+  { name: "ssn", regex: /\b\d{3}[-.\s]?\d{2}[-.\s]?\d{4}\b/g },
+  { name: "phone", regex: /\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b/g },
+  { name: "credit_card", regex: /\b(?:\d{4}[-\s]?){3}\d{4}\b/g },
+];
+
+export function checkMemoryGovernanceViolations(
+  output: string,
+  rules: Array<{ rule: string; regulation: string; type: string }>
+): { violations: Array<{ pattern: string; regulation: string; count: number }> } {
+  const violations: Array<{ pattern: string; regulation: string; count: number }> = [];
+
+  for (const rule of rules) {
+    if (rule.type === "encryption") {
+      for (const piiPattern of GOVERNANCE_PII_PATTERNS) {
+        const matches = output.match(new RegExp(piiPattern.regex.source, piiPattern.regex.flags));
+        if (matches && matches.length > 0) {
+          let unprotectedCount = 0;
+          for (const match of matches) {
+            const idx = output.indexOf(match);
+            const surrounding = output.substring(Math.max(0, idx - 30), Math.min(output.length, idx + match.length + 30));
+            if (!surrounding.includes("[PHI-PROTECTED]") && !surrounding.includes("[PCI-REDACTED]")) {
+              unprotectedCount++;
+            }
+          }
+          if (unprotectedCount > 0) {
+            violations.push({ pattern: piiPattern.name, regulation: rule.regulation, count: unprotectedCount });
+          }
+        }
+      }
+    }
+
+    if (rule.regulation && rule.regulation.toUpperCase().includes("HIPAA")) {
+      const hipaaPatterns = GOVERNANCE_PII_PATTERNS.filter(p => p.name === "ssn" || p.name === "email");
+      for (const piiPattern of hipaaPatterns) {
+        const matches = output.match(new RegExp(piiPattern.regex.source, piiPattern.regex.flags));
+        if (matches && matches.length > 0) {
+          let unprotectedCount = 0;
+          for (const match of matches) {
+            const idx = output.indexOf(match);
+            const surrounding = output.substring(Math.max(0, idx - 30), Math.min(output.length, idx + match.length + 30));
+            if (!surrounding.includes("[PHI-PROTECTED]") && !surrounding.includes("[PCI-REDACTED]")) {
+              unprotectedCount++;
+            }
+          }
+          if (unprotectedCount > 0) {
+            const existing = violations.find(v => v.pattern === piiPattern.name && v.regulation === rule.regulation);
+            if (!existing) {
+              violations.push({ pattern: piiPattern.name, regulation: rule.regulation, count: unprotectedCount });
+            }
+          }
+        }
+      }
+    }
+
+    if (rule.regulation && rule.regulation.toUpperCase().includes("PCI")) {
+      const pciPattern = GOVERNANCE_PII_PATTERNS.find(p => p.name === "credit_card");
+      if (pciPattern) {
+        const matches = output.match(new RegExp(pciPattern.regex.source, pciPattern.regex.flags));
+        if (matches && matches.length > 0) {
+          let unprotectedCount = 0;
+          for (const match of matches) {
+            const idx = output.indexOf(match);
+            const surrounding = output.substring(Math.max(0, idx - 30), Math.min(output.length, idx + match.length + 30));
+            if (!surrounding.includes("[PHI-PROTECTED]") && !surrounding.includes("[PCI-REDACTED]")) {
+              unprotectedCount++;
+            }
+          }
+          if (unprotectedCount > 0) {
+            const existing = violations.find(v => v.pattern === pciPattern.name && v.regulation === rule.regulation);
+            if (!existing) {
+              violations.push({ pattern: pciPattern.name, regulation: rule.regulation, count: unprotectedCount });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return { violations };
 }
 
 export async function executePromptWithMcp(
@@ -993,6 +1105,7 @@ async function executeWorkerAgent(
     outcomeId: (workerAgent as any).outcomeId || teamAgent.outcomeId,
     agentType: "single",
     runtimeConfig: workerRtConfig,
+    memoryGovernanceRules: (workerAgent.memoryGovernanceRules as Array<{ rule: string; regulation: string; type: string }>) || undefined,
   };
 
   const workerContext = await buildRuntimeContext(workerRuntimeAgent);
@@ -1462,6 +1575,27 @@ async function executeAgentCycle(agent: RuntimeAgent) {
         : `${result.summary.toolsUsed?.length || 0} tools called | ${result.summary.passedSteps}/${result.summary.totalSteps} steps passed`)
       : `Execution failed`;
 
+    let memoryGovernanceCheck: { violations: Array<{ pattern: string; regulation: string; count: number }> } | null = null;
+    if (agent.memoryGovernanceRules && agent.memoryGovernanceRules.length > 0) {
+      try {
+        memoryGovernanceCheck = checkMemoryGovernanceViolations(outputText, agent.memoryGovernanceRules);
+        if (memoryGovernanceCheck.violations.length > 0) {
+          await storage.createAuditEvent({
+            actorType: "system",
+            actorId: "memory_governance_enforcer",
+            action: "memory_governance.violation",
+            objectType: "agent",
+            objectId: agent.agentId,
+            details: JSON.stringify({
+              summary: `Memory governance violation: ${memoryGovernanceCheck.violations.length} pattern(s) detected in agent "${agent.agentName}" output`,
+              violations: memoryGovernanceCheck.violations,
+              agentName: agent.agentName,
+            }),
+          });
+        }
+      } catch {}
+    }
+
     await storage.createTrace({
       agentId: agent.agentId,
       environment: "prod",
@@ -1471,10 +1605,13 @@ async function executeAgentCycle(agent: RuntimeAgent) {
       inputSummary: `Scheduled: ${agent.prompt.substring(0, 100)}${agent.prompt.length > 100 ? "..." : ""}`,
       outputSummary: outputText,
       stepsJson: result.steps,
-      promptInputs: result.promptInputs || {
-        systemPrompt: enrichedContext || agent.agentSystemPrompt || agent.prompt,
-        userMessage: agent.prompt,
-        contextVariables: { industry: agent.industry || "general", teamExecution: isTeam },
+      promptInputs: {
+        ...(result.promptInputs || {
+          systemPrompt: enrichedContext || agent.agentSystemPrompt || agent.prompt,
+          userMessage: agent.prompt,
+          contextVariables: { industry: agent.industry || "general", teamExecution: isTeam },
+        }),
+        ...(memoryGovernanceCheck ? { memoryGovernanceCheck } : {}),
       },
       modelId: "gpt-4.1",
       tokenUsage: result.summary.tokenUsage || null,
@@ -1554,6 +1691,7 @@ export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?
     runtimeConfig: rtConfig,
     ontologyTags,
     complianceTags,
+    memoryGovernanceRules: (agent.memoryGovernanceRules as Array<{ rule: string; regulation: string; type: string }>) || undefined,
   };
 
   if (intervalMinutes > 0) {

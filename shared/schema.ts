@@ -93,6 +93,7 @@ export const agents = pgTable("agents", {
   complianceTags: text("compliance_tags").array().default(sql`'{}'::text[]`),
   ontologyTags: jsonb("ontology_tags"),
   runtimeConfig: jsonb("runtime_config"),
+  memoryGovernanceRules: jsonb("memory_governance_rules"),
   systemPrompt: text("system_prompt"),
   department: text("department"),
   lastIncidentAt: timestamp("last_incident_at"),

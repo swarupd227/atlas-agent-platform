@@ -48,6 +48,7 @@ The Nous Agent Orchestrator uses a modern web stack with React, Vite, Tailwind C
 - **Immutable Audit Log**: Hash-chained for integrity verification.
 - **Tool Proxy Control Point**: Unified proxy for tool calls and A2A delegations.
 - **Ontology Explorer & Knowledge Graph Builder**: Industry knowledge graph browser with AI-enhanced capabilities.
+- **Memory Governance Enforcement**: Industry-specific memory retention policies (HIPAA, PCI-DSS, BSA/AML, GDPR, SOX, NAIC) are persisted on agent records as `memoryGovernanceRules` (jsonb), injected into runtime system prompts as `MEMORY GOVERNANCE CONSTRAINTS`, and enforced post-execution via `checkMemoryGovernanceViolations()` which scans output for PII/PHI/PCI pattern violations. Auto-creates linked `memory_profiles` with industry-appropriate tier configs and forgetting policies on agent creation. Memory compliance endpoint (`GET /api/agents/:id/memory-compliance`) scores governance adherence. Pre-deploy checks and deployment recommendations include memory governance validation.
 - **Memory Architecture Manager**: Defines agent memory management with industry-specific retention.
 - **RAG Pipeline Manager**: Configures how agents retrieve industry-specific knowledge.
 - **MCP-Ontology Parameter Matching**: Cross-references tool parameters against ontology concepts.

@@ -4275,6 +4275,57 @@ function AgentDetailInner() {
                     </CardContent>
                   </Card>
                 )}
+
+                {(() => {
+                  const memoryGovernanceRules = (agent.memoryGovernanceRules as Array<{ rule: string; regulation: string; type: string }>) || [];
+                  const typeColorMap: Record<string, string> = {
+                    retention: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20",
+                    encryption: "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20",
+                    erasure: "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20",
+                    access: "bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20",
+                    access_control: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+                    immutability: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border-cyan-500/20",
+                  };
+
+                  if (memoryGovernanceRules.length > 0) {
+                    return (
+                      <Card data-testid="card-memory-governance">
+                        <CardHeader className="pb-2">
+                          <CardTitle className="text-sm flex items-center gap-2">
+                            <Database className="w-4 h-4" />
+                            Memory Governance Rules
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-2">
+                          {memoryGovernanceRules.map((rule: any, i: number) => {
+                            const typeColor = typeColorMap[rule.type] || "bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/20";
+                            return (
+                              <div key={i} className="flex items-center justify-between gap-3 p-3 rounded-md border" data-testid={`memory-rule-${i}`}>
+                                <div className="flex items-center gap-3 flex-1">
+                                  <Badge variant="outline" className={`text-[10px] capitalize shrink-0 ${typeColor}`}>
+                                    {(rule.type || "general").replace(/_/g, " ")}
+                                  </Badge>
+                                  <span className="text-sm">{rule.rule || "Unnamed rule"}</span>
+                                </div>
+                                <Badge variant="outline" className="text-[10px] shrink-0">{rule.regulation}</Badge>
+                              </div>
+                            );
+                          })}
+                        </CardContent>
+                      </Card>
+                    );
+                  } else {
+                    return (
+                      <Card data-testid="card-memory-governance">
+                        <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
+                          <Database className="w-8 h-8 text-muted-foreground/50" />
+                          <p className="text-sm text-muted-foreground">No memory governance rules configured</p>
+                        </CardContent>
+                      </Card>
+                    );
+                  }
+                })()}
+                <MemoryComplianceCard agentId={agentId!} />
               </>
             );
           })()}
@@ -7220,6 +7271,50 @@ export default function AgentDetail() {
     <AgentDetailErrorBoundary>
       <AgentDetailInner />
     </AgentDetailErrorBoundary>
+  );
+}
+
+function MemoryComplianceCard({ agentId }: { agentId: string }) {
+  const { data: compliance } = useQuery<{ score: number; checks: Array<{ rule: string; status: string; detail: string }>; violations: Array<{ traceId: string; violation: string; timestamp: string }>; hasGovernanceRules: boolean; profileLinked: boolean }>({
+    queryKey: ["/api/agents", agentId, "memory-compliance"],
+    queryFn: () => fetch("/api/agents/" + agentId + "/memory-compliance").then(r => r.json()),
+    enabled: !!agentId,
+  });
+
+  if (!compliance) return null;
+
+  const scoreColor = compliance.score >= 80 ? "text-emerald-600 dark:text-emerald-400" : compliance.score >= 50 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
+  const scoreBg = compliance.score >= 80 ? "bg-emerald-500/10 border-emerald-500/20" : compliance.score >= 50 ? "bg-amber-500/10 border-amber-500/20" : "bg-red-500/10 border-red-500/20";
+
+  return (
+    <Card data-testid="card-memory-compliance">
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <CardTitle className="text-sm flex items-center gap-2"><ShieldCheck className="w-4 h-4" /> Memory Compliance</CardTitle>
+          <Badge variant="outline" className={"text-[11px] " + scoreBg + " " + scoreColor} data-testid="badge-memory-compliance-score">{compliance.score}%</Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {compliance.checks.map((check, i) => (
+          <div key={i} className="flex items-center gap-2 text-[11px]" data-testid={"memory-check-" + i}>
+            {check.status === "pass" ? <CheckCircle className="w-3 h-3 text-emerald-500 shrink-0" /> : check.status === "fail" ? <XCircle className="w-3 h-3 text-red-500 shrink-0" /> : <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />}
+            <span className="font-medium">{check.rule}</span>
+            <span className="text-muted-foreground ml-auto">{check.detail}</span>
+          </div>
+        ))}
+        {compliance.violations.length > 0 && (
+          <div className="mt-2 pt-2 border-t">
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Recent Violations</span>
+            {compliance.violations.map((v, i) => (
+              <div key={i} className="flex items-center gap-2 text-[11px] text-red-600 dark:text-red-400 mt-1">
+                <AlertTriangle className="w-3 h-3 shrink-0" />
+                <span>{v.violation}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

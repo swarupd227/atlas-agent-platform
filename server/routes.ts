@@ -1604,6 +1604,96 @@ export async function registerRoutes(
       const data = insertAgentSchema.parse(req.body);
       const agent = await storage.createAgent(data);
 
+      const hasMemGovRules = Array.isArray(req.body.memoryGovernanceRules) && req.body.memoryGovernanceRules.length > 0;
+      const hasRegulatedTags = Array.isArray(agent.complianceTags) && agent.complianceTags.some((t: string) => ["HIPAA", "PCI-DSS", "SOX", "GDPR", "BSA", "AML", "NAIC", "PCI"].includes(t.toUpperCase()));
+      if (hasMemGovRules || hasRegulatedTags) {
+        const getIndustryFromRules = (agent: any): string => {
+          const tags: string[] = [];
+          if (Array.isArray(agent.complianceTags)) tags.push(...agent.complianceTags);
+          if (Array.isArray(agent.ontologyTags)) {
+            for (const t of agent.ontologyTags) {
+              if (typeof t === "string") tags.push(t);
+              else if (t && typeof t === "object" && t.conceptLabel) tags.push(t.conceptLabel);
+              else if (t && typeof t === "object" && t.conceptId) tags.push(t.conceptId);
+            }
+          }
+          const combined = tags.join(" ").toUpperCase();
+          if (combined.includes("HIPAA")) return "healthcare";
+          if (combined.includes("BSA") || combined.includes("AML") || combined.includes("SOX") || combined.includes("CIP")) return "financial_services";
+          if (combined.includes("NAIC")) return "insurance";
+          if (combined.includes("PCI-DSS") || combined.includes("PCI")) return "retail";
+          return "general";
+        };
+
+        const industry = getIndustryFromRules(agent);
+
+        const INDUSTRY_TIER_CONFIGS: Record<string, any> = {
+          healthcare: {
+            working: { retentionDays: 1, encrypted: true, accessControl: "Role-based" },
+            episodic: { retentionDays: 2190, encrypted: true, accessControl: "Minimum necessary" },
+            semantic: { retentionDays: -1, encrypted: true, accessControl: "Role-based" },
+          },
+          financial_services: {
+            working: { retentionDays: 1, encrypted: true, accessControl: "Need-to-know" },
+            episodic: { retentionDays: 1825, encrypted: true, accessControl: "Audit-logged" },
+            semantic: { retentionDays: -1, encrypted: true, accessControl: "Segregated" },
+          },
+          insurance: {
+            working: { retentionDays: 1, encrypted: true, accessControl: "Role-based" },
+            episodic: { retentionDays: 2555, encrypted: true, accessControl: "Claims-restricted" },
+            semantic: { retentionDays: -1, encrypted: true, accessControl: "Underwriter-only" },
+          },
+        };
+        const defaultTierConfig = {
+          working: { retentionDays: 1, encrypted: false, accessControl: "Standard" },
+          episodic: { retentionDays: 90, encrypted: false, accessControl: "Standard" },
+          semantic: { retentionDays: -1, encrypted: false, accessControl: "Standard" },
+        };
+        const tierConfigs = INDUSTRY_TIER_CONFIGS[industry] || defaultTierConfig;
+
+        const combinedUpper = [
+          ...(Array.isArray(agent.complianceTags) ? agent.complianceTags : []),
+          ...(Array.isArray(agent.ontologyTags) ? (agent.ontologyTags as any[]).map((t: any) => typeof t === "string" ? t : (t?.conceptLabel || t?.conceptId || "")) : []),
+        ].join(" ").toUpperCase();
+
+        let forgettingPolicies: any[];
+        if (combinedUpper.includes("HIPAA")) {
+          forgettingPolicies = [
+            { trigger: "retention_expiry", action: "archive", afterDays: 2190 },
+            { trigger: "gdpr_erasure", action: "anonymize", afterDays: 30 },
+          ];
+        } else if (combinedUpper.includes("PCI")) {
+          forgettingPolicies = [
+            { trigger: "session_end", action: "delete", afterDays: 0 },
+            { trigger: "retention_expiry", action: "delete", afterDays: 365 },
+          ];
+        } else if (industry === "financial_services") {
+          forgettingPolicies = [
+            { trigger: "retention_expiry", action: "archive", afterDays: 1825 },
+            { trigger: "gdpr_erasure", action: "anonymize", afterDays: 30 },
+          ];
+        } else {
+          forgettingPolicies = [
+            { trigger: "retention_expiry", action: "delete", afterDays: 90 },
+          ];
+        }
+
+        try {
+          await storage.createMemoryProfile({
+            name: agent.name + " Memory Profile",
+            industry,
+            agentId: agent.id,
+            tierConfigs,
+            industryRules: hasMemGovRules ? req.body.memoryGovernanceRules : [],
+            forgettingPolicies,
+            status: "active",
+          });
+          console.log("[memory-profile] Auto-created for agent", agent.name, "industry:", industry);
+        } catch (mpErr) {
+          console.error("[memory-profile] Failed to auto-create:", mpErr);
+        }
+      }
+
       const tools = Array.isArray(agent.toolsConfig) ? agent.toolsConfig as Array<{ name?: string; description?: string }> : [];
       const bp = agent.blueprintJson && typeof agent.blueprintJson === "object" ? agent.blueprintJson as Record<string, unknown> : {};
       const workflow = (
@@ -2248,6 +2338,17 @@ export async function registerRoutes(
         };
       }
 
+      const memGovRules = (agent.memoryGovernanceRules as Array<{ rule: string; regulation: string; type: string }>) || [];
+      const allProfiles = await storage.getMemoryProfiles();
+      const hasMemoryProfile = allProfiles.some(p => p.agentId === agent.id);
+      const memoryGovernance = {
+        hasRules: memGovRules.length > 0,
+        ruleCount: memGovRules.length,
+        hasProfile: hasMemoryProfile,
+        compliant: memGovRules.length > 0 && hasMemoryProfile,
+        regulations: [...new Set(memGovRules.map(r => r.regulation))],
+      };
+
       res.json({
         agentId: agent.id,
         agentName: agent.name,
@@ -2257,10 +2358,89 @@ export async function registerRoutes(
         allowDirectDeploy,
         slaRequirements,
         recommended: { strategy, canaryConfig, rollbackConfig, reason },
+        memoryGovernance,
       });
     } catch (e) {
       console.error("[deployment-recommendation] Error:", e);
       res.status(500).json({ error: "Failed to compute deployment recommendation" });
+    }
+  });
+
+  app.get("/api/agents/:id/memory-compliance", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+      const rules = (agent.memoryGovernanceRules as Array<{ rule: string; regulation: string; type: string }>) || [];
+      const complianceTags = (agent.complianceTags as string[]) || [];
+      
+      const checks: Array<{ rule: string; status: "pass" | "warn" | "fail"; detail: string }> = [];
+      
+      if (rules.length > 0) {
+        checks.push({ rule: "Governance Rules Configured", status: "pass", detail: rules.length + " rules active" });
+      } else {
+        const needsRules = complianceTags.some(t => ["HIPAA", "PCI-DSS", "SOX", "GDPR", "BSA"].includes(t.toUpperCase()));
+        checks.push({ rule: "Governance Rules Configured", status: needsRules ? "fail" : "warn", detail: needsRules ? "Agent has compliance tags but no memory governance rules" : "No memory governance rules configured" });
+      }
+
+      const allProfiles = await storage.getMemoryProfiles();
+      const linkedProfile = allProfiles.find(p => p.agentId === agent.id);
+      if (linkedProfile) {
+        checks.push({ rule: "Memory Profile Linked", status: "pass", detail: "Profile: " + linkedProfile.name });
+      } else {
+        checks.push({ rule: "Memory Profile Linked", status: rules.length > 0 ? "warn" : "fail", detail: "No memory profile linked to agent" });
+      }
+
+      const hasRetention = rules.some(r => r.type === "retention");
+      if (hasRetention) {
+        checks.push({ rule: "Retention Policy Defined", status: "pass", detail: rules.filter(r => r.type === "retention").map(r => r.regulation).join(", ") });
+      } else if (complianceTags.length > 0) {
+        checks.push({ rule: "Retention Policy Defined", status: "warn", detail: "Compliance tags present but no retention rules" });
+      }
+
+      const needsEncryption = complianceTags.some(t => ["HIPAA", "PCI-DSS"].includes(t.toUpperCase()));
+      const hasEncryption = rules.some(r => r.type === "encryption");
+      if (needsEncryption) {
+        checks.push({ rule: "Encryption Requirements", status: hasEncryption ? "pass" : "fail", detail: hasEncryption ? "Encryption rules configured" : "HIPAA/PCI requires encryption rules" });
+      } else if (hasEncryption) {
+        checks.push({ rule: "Encryption Requirements", status: "pass", detail: "Encryption rules configured" });
+      }
+
+      const needsErasure = complianceTags.some(t => ["GDPR"].includes(t.toUpperCase()));
+      const hasErasure = rules.some(r => r.type === "erasure");
+      if (needsErasure) {
+        checks.push({ rule: "Erasure Policy (GDPR)", status: hasErasure ? "pass" : "fail", detail: hasErasure ? "Erasure policy configured" : "GDPR requires erasure policy" });
+      }
+
+      if (linkedProfile) {
+        const tierConfigs = linkedProfile.tierConfigs as any;
+        const hasEncryptedTiers = tierConfigs && (tierConfigs.working?.encrypted || tierConfigs.episodic?.encrypted);
+        if (needsEncryption) {
+          checks.push({ rule: "Tier Encryption", status: hasEncryptedTiers ? "pass" : "warn", detail: hasEncryptedTiers ? "Memory tiers configured with encryption" : "Memory tiers should have encryption enabled" });
+        }
+      }
+
+      const violations: Array<{ traceId: string; violation: string; timestamp: string }> = [];
+      try {
+        const recentEvents = await storage.getAuditEvents();
+        const govViolations = recentEvents.filter(e => 
+          e.objectId === agent.id && 
+          e.action === "memory_governance.violation"
+        ).slice(0, 5);
+        for (const ev of govViolations) {
+          const details = typeof ev.details === "string" ? JSON.parse(ev.details) : ev.details;
+          violations.push({ traceId: details?.traceId || ev.id, violation: details?.summary || "Governance violation", timestamp: ev.createdAt?.toISOString() || "" });
+        }
+      } catch {}
+
+      const passCount = checks.filter(c => c.status === "pass").length;
+      const failCount = checks.filter(c => c.status === "fail").length;
+      const score = checks.length > 0 ? Math.round((passCount / checks.length) * 100) : 0;
+
+      res.json({ score, checks, violations, hasGovernanceRules: rules.length > 0, profileLinked: !!linkedProfile });
+    } catch (e) {
+      console.error("[memory-compliance] Error:", e);
+      res.status(500).json({ error: "Failed to check memory compliance" });
     }
   });
 

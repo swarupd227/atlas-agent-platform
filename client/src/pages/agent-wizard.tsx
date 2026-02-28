@@ -1139,6 +1139,7 @@ export default function AgentWizard() {
         canarySteps: wizardState.rolloutConfig.canarySteps,
       } : null,
       runtimeConfig: autoPrompt ? { prompt: autoPrompt, scheduleIntervalMinutes: 5 } : undefined,
+      memoryGovernanceRules: wizardState.memoryGovernanceRules.length > 0 ? wizardState.memoryGovernanceRules : undefined,
     };
     createMutation.mutate(payload);
   }
