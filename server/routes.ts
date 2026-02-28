@@ -20000,33 +20000,160 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       const stages = (deployment.pipelineStages as any[]) || [];
       if (stages.length === 0) return res.status(400).json({ message: "No pipeline stages configured" });
 
-      const updatedStages = stages.map((stage: any, index: number) => {
-        if (stage.attestationType === "auto" || !stage.attestationType) {
-          return {
-            ...stage,
-            status: "completed",
-            completedAt: new Date(Date.now() + index * 2000).toISOString(),
-            completedBy: "system-auto",
-            attestation: "Automated verification passed",
-          };
+      const deployAgent = await storage.getAgent(deployment.agentId);
+      const pipelineResults: Array<{ stage: string; type: string; status: string; findings: any }> = [];
+      const updatedStages: any[] = [];
+      let pipelineHalted = false;
+
+      for (let index = 0; index < stages.length; index++) {
+        const stage = stages[index];
+        if (pipelineHalted) {
+          updatedStages.push({ ...stage, status: "skipped", attestation: "Skipped: previous critical stage failed" });
+          continue;
         }
-        if (stage.attestationType === "review") {
-          return {
-            ...stage,
-            status: "completed",
-            completedAt: new Date(Date.now() + index * 2000).toISOString(),
-            completedBy: "platform-engineer",
-            attestation: "Reviewed and approved by platform engineer",
-          };
+
+        const stageType = (stage.type || stage.name || "").toLowerCase();
+        let stageResult: { passed: boolean; findings: string[]; details: any } = { passed: true, findings: [], details: {} };
+
+        try {
+          if (stageType.includes("auto_verification") || stageType.includes("test") || stageType.includes("eval")) {
+            const evalSuites = await storage.getEvalSuites();
+            const agentSuites = evalSuites.filter(s => s.agentId === deployment.agentId);
+            if (agentSuites.length === 0) {
+              stageResult.findings.push("Warning: No eval suites configured for this agent");
+              stageResult.details = { evalSuites: 0, warning: "No eval suites configured — consider adding eval test cases" };
+            } else {
+              let totalCases = 0;
+              let passedCases = 0;
+              for (const suite of agentSuites) {
+                const runs = await storage.getEvalRuns(suite.id);
+                const latestRun = runs.length > 0 ? runs[0] : null;
+                if (latestRun) {
+                  const results = await storage.getEvalCaseResults(latestRun.id);
+                  totalCases += results.length;
+                  passedCases += results.filter(r => r.passed).length;
+                }
+              }
+              if (totalCases > 0) {
+                const passRate = Math.round((passedCases / totalCases) * 100);
+                stageResult.findings.push(`Eval results: ${passedCases}/${totalCases} test cases passed (${passRate}%)`);
+                stageResult.details = { totalCases, passedCases, passRate, evalSuites: agentSuites.length };
+                if (passRate < 50) {
+                  stageResult.passed = false;
+                  stageResult.findings.push(`FAILED: Pass rate ${passRate}% is below minimum threshold of 50%`);
+                }
+              } else {
+                stageResult.findings.push("No eval runs found — run evaluations before deploying");
+                stageResult.details = { evalSuites: agentSuites.length, totalCases: 0 };
+              }
+            }
+          } else if (stageType.includes("security") || stageType.includes("scan")) {
+            const secFindings: string[] = [];
+            const mcpLinks = await storage.getAgentMcpServers(deployment.agentId);
+            if (mcpLinks.length === 0) {
+              secFindings.push("Warning: No MCP servers linked — agent has no tool access");
+            }
+            if (mcpLinks.length > 5) {
+              secFindings.push(`Warning: Agent has access to ${mcpLinks.length} MCP servers — review for least-privilege`);
+            }
+            const agentIndustry = (deployAgent as any)?.industry || deployment.industry || "";
+            const agentCompTags = (deployAgent as any)?.complianceTags || [];
+            const regulatedIndustries = ["healthcare", "finance", "banking", "insurance", "government"];
+            const isRegulated = regulatedIndustries.some(ri => agentIndustry.toLowerCase().includes(ri)) || agentCompTags.length > 0;
+            if (isRegulated && (!agentCompTags || agentCompTags.length === 0)) {
+              secFindings.push("Warning: Regulated industry agent missing compliance tags");
+            }
+            const rtCfg = (deployAgent?.runtimeConfig as any) || {};
+            if (!rtCfg.prompt) {
+              secFindings.push("Critical: Agent has no runtime prompt configured");
+              stageResult.passed = false;
+            }
+            stageResult.findings = secFindings.length > 0 ? secFindings : ["Security scan passed — no issues found"];
+            stageResult.details = { mcpServers: mcpLinks.length, isRegulated, complianceTags: agentCompTags, findings: secFindings.length };
+          } else if (stageType.includes("compliance") || stageType.includes("check")) {
+            const agentCompTags = (deployAgent as any)?.complianceTags || [];
+            const memGovRules = (deployAgent?.memoryGovernanceRules as any[]) || [];
+            let complianceScore = 100;
+            const compFindings: string[] = [];
+            if (agentCompTags.length === 0) {
+              complianceScore -= 20;
+              compFindings.push("No compliance tags assigned (-20 points)");
+            }
+            if (memGovRules.length === 0) {
+              complianceScore -= 15;
+              compFindings.push("No memory governance rules configured (-15 points)");
+            } else {
+              const hasRetention = memGovRules.some((r: any) => r.type === "retention");
+              const hasEncryption = memGovRules.some((r: any) => r.type === "encryption");
+              if (!hasRetention) { complianceScore -= 10; compFindings.push("Missing retention policy (-10 points)"); }
+              if (!hasEncryption && agentCompTags.includes("HIPAA")) { complianceScore -= 15; compFindings.push("HIPAA agent missing encryption rule (-15 points)"); }
+            }
+            const policies = await storage.getPolicies();
+            const activePolicies = policies.filter(p => p.status === "active");
+            if (activePolicies.length === 0) {
+              complianceScore -= 10;
+              compFindings.push("No active governance policies (-10 points)");
+            }
+            stageResult.findings = compFindings.length > 0 ? compFindings : ["Full compliance — all checks passed"];
+            stageResult.findings.push(`Compliance score: ${complianceScore}/100`);
+            stageResult.details = { score: complianceScore, complianceTags: agentCompTags, memGovRules: memGovRules.length, activePolicies: activePolicies.length };
+            if (complianceScore < 40) {
+              stageResult.passed = false;
+              stageResult.findings.push("FAILED: Compliance score below minimum threshold of 40");
+            }
+          } else if (stageType.includes("staging") || stageType.includes("test_run") || stageType.includes("smoke")) {
+            const rtCfg = (deployAgent?.runtimeConfig as any) || {};
+            if (!rtCfg.prompt) {
+              stageResult.passed = false;
+              stageResult.findings.push("Cannot run staging test — no runtime prompt configured");
+            } else {
+              const mcpLinks = await storage.getAgentMcpServers(deployment.agentId);
+              if (mcpLinks.length === 0) {
+                stageResult.passed = false;
+                stageResult.findings.push("Cannot run staging test — no MCP servers linked");
+              } else {
+                stageResult.findings.push("Staging test: Agent configuration validated — prompt and MCP servers present");
+                stageResult.details = { prompt: rtCfg.prompt.substring(0, 100), mcpServers: mcpLinks.length, validConfig: true };
+              }
+            }
+          } else {
+            stageResult.findings.push(`Stage "${stage.name || stageType}" auto-verified`);
+          }
+        } catch (stageErr: any) {
+          stageResult.passed = false;
+          stageResult.findings.push(`Stage execution error: ${stageErr.message}`);
         }
-        return {
+
+        const isCritical = stage.critical === true || stageType.includes("security") || stageType.includes("compliance");
+        if (!stageResult.passed && isCritical) {
+          pipelineHalted = true;
+        }
+
+        pipelineResults.push({ stage: stage.name || stageType, type: stageType, status: stageResult.passed ? "passed" : "failed", findings: stageResult.details });
+        updatedStages.push({
           ...stage,
-          status: "completed",
-          completedAt: new Date(Date.now() + index * 2000).toISOString(),
-          completedBy: "compliance-officer",
-          attestation: "Manual attestation completed",
-        };
-      });
+          status: stageResult.passed ? "completed" : "failed",
+          completedAt: new Date().toISOString(),
+          completedBy: "pipeline-engine",
+          attestation: stageResult.findings.join("; "),
+          findings: stageResult.details,
+        });
+      }
+
+      if (pipelineHalted) {
+        const updated = await storage.updateDeployment(req.params.id, {
+          pipelineStages: updatedStages,
+          pipelineComplete: false,
+          status: "pipeline_failed",
+        });
+        return res.json({
+          ...updated,
+          pipelineHalted: true,
+          pipelineResults,
+          runtimeStarted: false,
+          runtimeMessage: "Pipeline halted — critical stage failed. Fix the issues and re-run the pipeline.",
+        });
+      }
 
       const allDeployments = await storage.getDeployments();
       const previouslyDeployed = allDeployments.filter(
@@ -20044,7 +20171,6 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         deployedAt: new Date(),
       });
 
-      const deployAgent = await storage.getAgent(deployment.agentId);
       if (deployAgent) {
         await storage.updateAgent(deployment.agentId, { status: "deployed" });
       }
@@ -20052,7 +20178,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       const runtimeResult = await startAgentRuntime(req.params.id, richSystemPrompt);
       console.log(`[deploy] Agent runtime: ${runtimeResult.message}`);
 
-      res.json({ ...updated, runtimeStarted: runtimeResult.started, runtimeMessage: runtimeResult.message });
+      res.json({ ...updated, pipelineResults, runtimeStarted: runtimeResult.started, runtimeMessage: runtimeResult.message });
     } catch (e: any) {
       res.status(500).json({ message: e.message });
     }

@@ -78,6 +78,13 @@ export interface RuntimeAgent {
   ontologyTags?: Array<{ conceptId: string; conceptLabel: string }>;
   complianceTags?: string[];
   memoryGovernanceRules?: Array<{ rule: string; regulation: string; type: string }>;
+  blueprintRequirements?: {
+    workflowSteps: string[];
+    requiredTools: string[];
+    escalationTriggers: string[];
+    outputFormat?: string;
+    complianceNodes: string[];
+  };
 }
 
 async function buildRuntimeContext(agent: RuntimeAgent): Promise<string> {
@@ -299,6 +306,81 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<string> {
     sections.push(`Pattern: ${orch.pattern || "supervisor"}`);
     if (orch.errorHandling) sections.push(`Error Handling: ${orch.errorHandling}`);
     if (orch.handoffRules) sections.push(`Handoff Rules: ${orch.handoffRules}`);
+  }
+
+  try {
+    const allProfiles = await storage.getContextProfiles();
+    const matchingProfiles = allProfiles.filter(p => {
+      if (p.status !== "active") return false;
+      if (p.agentId === agent.agentId) return true;
+      if (agent.industry && p.industry.toLowerCase() === agent.industry.toLowerCase()) return true;
+      return false;
+    });
+    if (matchingProfiles.length > 0) {
+      const profile = matchingProfiles.find(p => p.agentId === agent.agentId) || matchingProfiles[0];
+      sections.push(`\n## CONTEXT ENGINEERING PROFILE: ${profile.name}`);
+      if (profile.description) sections.push(profile.description);
+      const priorities = profile.priorityOrder as any[];
+      if (Array.isArray(priorities) && priorities.length > 0) {
+        sections.push(`\n### Priority Matrix (context source importance)`);
+        priorities.forEach((p: any, i: number) => {
+          const label = typeof p === "string" ? p : (p.source || p.name || JSON.stringify(p));
+          const weight = typeof p === "object" && p.weight ? ` (weight: ${p.weight})` : "";
+          sections.push(`${i + 1}. ${label}${weight}`);
+        });
+      }
+      const budgets = profile.budgetAllocations as Record<string, any>;
+      if (budgets && typeof budgets === "object" && Object.keys(budgets).length > 0) {
+        sections.push(`\n### Context Budget Allocation (token budget guidance)`);
+        sections.push(`Total capacity: ${profile.totalCapacity} tokens`);
+        for (const [source, allocation] of Object.entries(budgets)) {
+          const pct = typeof allocation === "number" ? `${allocation}%` : JSON.stringify(allocation);
+          sections.push(`- ${source}: ${pct}`);
+        }
+      }
+      const sources = profile.sources as any[];
+      if (Array.isArray(sources) && sources.length > 0) {
+        sections.push(`\n### Context Sources`);
+        sources.forEach((s: any) => {
+          const label = typeof s === "string" ? s : (s.name || s.type || JSON.stringify(s));
+          const instructions = typeof s === "object" && s.instructions ? ` — ${s.instructions}` : "";
+          sections.push(`- ${label}${instructions}`);
+        });
+      }
+    }
+  } catch {}
+
+  try {
+    const recentMemories = await storage.getAgentMemories(agent.agentId, "episodic", 10);
+    if (recentMemories.length > 0) {
+      sections.push(`\n## EPISODIC MEMORY (recent execution history)`);
+      sections.push(`You have executed ${recentMemories.length} previous run(s). Use this history to inform your decisions:`);
+      recentMemories.forEach((mem, i) => {
+        const age = Math.round((Date.now() - new Date(mem.createdAt!).getTime()) / 60000);
+        const ageLabel = age < 60 ? `${age}m ago` : age < 1440 ? `${Math.round(age / 60)}h ago` : `${Math.round(age / 1440)}d ago`;
+        sections.push(`- [${ageLabel}] ${mem.content}`);
+      });
+    }
+  } catch {}
+
+  if (agent.blueprintRequirements) {
+    const bp = agent.blueprintRequirements;
+    sections.push(`\n## BLUEPRINT WORKFLOW (expected execution flow)`);
+    if (bp.workflowSteps && bp.workflowSteps.length > 0) {
+      sections.push(`Follow this workflow:`);
+      bp.workflowSteps.forEach((step: string, i: number) => {
+        sections.push(`${i + 1}. ${step}`);
+      });
+    }
+    if (bp.requiredTools && bp.requiredTools.length > 0) {
+      sections.push(`\nRequired tools: ${bp.requiredTools.join(", ")}`);
+    }
+    if (bp.escalationTriggers && bp.escalationTriggers.length > 0) {
+      sections.push(`\nEscalation triggers: ${bp.escalationTriggers.join("; ")}`);
+    }
+    if (bp.outputFormat) {
+      sections.push(`\nExpected output format: ${bp.outputFormat}`);
+    }
   }
 
   return sections.join("\n");
@@ -654,20 +736,20 @@ After receiving tool results, provide a structured analysis with key findings, s
       totalTokens += planResponse.usage.total_tokens || 0;
     }
 
-    const planChoice = planResponse.choices[0];
-    const toolCalls = (planChoice?.message?.tool_calls || []).filter(
+    let currentChoice = planResponse.choices[0];
+    let currentToolCalls = (currentChoice?.message?.tool_calls || []).filter(
       (tc: any) => tc.type === "function"
     ) as Array<{ id: string; type: "function"; function: { name: string; arguments: string } }>;
 
     steps[steps.length - 1].status = "completed";
     steps[steps.length - 1].completedAt = new Date().toISOString();
     steps[steps.length - 1].output = {
-      toolCallsPlanned: toolCalls.length,
-      reasoning: planChoice?.message?.content || "Tool calls planned",
-      toolsSelected: toolCalls.map(tc => tc.function.name),
+      toolCallsPlanned: currentToolCalls.length,
+      reasoning: currentChoice?.message?.content || "Tool calls planned",
+      toolsSelected: currentToolCalls.map(tc => tc.function.name),
     };
 
-    if (toolCalls.length === 0 && planChoice?.message?.content) {
+    if (currentToolCalls.length === 0 && currentChoice?.message?.content) {
       steps.push({
         id: "step_3",
         name: "AI Analysis (No Tools Needed)",
@@ -675,59 +757,134 @@ After receiving tool results, provide a structured analysis with key findings, s
         status: "completed",
         startedAt: new Date().toISOString(),
         completedAt: new Date().toISOString(),
-        output: { analysis: planChoice.message.content },
+        output: { analysis: currentChoice.message.content },
       });
       if (options?.conversational) {
-        (steps as any).__conversationalResponse = planChoice.message.content;
+        (steps as any).__conversationalResponse = currentChoice.message.content;
       }
     }
 
-    for (let i = 0; i < toolCalls.length; i++) {
-      const tc = toolCalls[i];
-      const funcName = tc.function.name;
-      const args = JSON.parse(tc.function.arguments || "{}");
+    const MAX_TOOL_ITERATIONS = 5;
+    let iterationsUsed = 0;
+    let conversationMessages: OpenAI.ChatCompletionMessageParam[] = [
+      { role: "system", content: systemMessage },
+      { role: "user", content: prompt },
+    ];
 
-      const toolIdx = availableTools.findIndex((_, idx) => {
-        const expectedName = `mcp_${idx}_${availableTools[idx].toolName.replace(/[^a-zA-Z0-9_]/g, "_")}`;
-        return expectedName === funcName;
-      });
-      const matchedTool = toolIdx >= 0 ? availableTools[toolIdx] : null;
+    while (currentToolCalls.length > 0 && iterationsUsed < MAX_TOOL_ITERATIONS) {
+      iterationsUsed++;
+      const iterationLabel = iterationsUsed > 1 ? ` (iteration ${iterationsUsed})` : "";
 
-      const stepId = `step_${steps.length + 1}`;
-      steps.push({
-        id: stepId,
-        name: matchedTool ? `Call ${matchedTool.serverName}: ${matchedTool.toolName}` : `Call ${funcName}`,
-        type: "api_call",
-        mcpResolved: true,
-        mcpServer: matchedTool?.serverName || "unknown",
-        mcpTool: matchedTool?.toolName || funcName,
-        status: "running",
-        startedAt: new Date().toISOString(),
-        input: args,
-      });
+      const iterationStartIdx = toolCallResults.length;
 
-      if (!matchedTool) {
-        const lastStep = steps[steps.length - 1];
-        lastStep.status = "failed";
-        lastStep.error = `Could not resolve tool: ${funcName}`;
-        lastStep.completedAt = new Date().toISOString();
-        toolCallResults.push({ toolName: funcName, serverName: "unknown", args, result: null, error: "Tool not found" });
-        continue;
+      for (let i = 0; i < currentToolCalls.length; i++) {
+        const tc = currentToolCalls[i];
+        const funcName = tc.function.name;
+        let args: Record<string, any> = {};
+        try {
+          args = JSON.parse(tc.function.arguments || "{}");
+        } catch {
+          toolCallResults.push({ toolName: funcName, serverName: "unknown", args: {}, result: null, error: "Invalid tool arguments JSON" });
+          continue;
+        }
+
+        const toolIdx = availableTools.findIndex((_, idx) => {
+          const expectedName = `mcp_${idx}_${availableTools[idx].toolName.replace(/[^a-zA-Z0-9_]/g, "_")}`;
+          return expectedName === funcName;
+        });
+        const matchedTool = toolIdx >= 0 ? availableTools[toolIdx] : null;
+
+        const stepId = `step_${steps.length + 1}`;
+        steps.push({
+          id: stepId,
+          name: matchedTool ? `Call ${matchedTool.serverName}: ${matchedTool.toolName}${iterationLabel}` : `Call ${funcName}${iterationLabel}`,
+          type: "api_call",
+          mcpResolved: true,
+          mcpServer: matchedTool?.serverName || "unknown",
+          mcpTool: matchedTool?.toolName || funcName,
+          status: "running",
+          startedAt: new Date().toISOString(),
+          input: args,
+          iteration: iterationsUsed,
+        });
+
+        if (!matchedTool) {
+          const lastStep = steps[steps.length - 1];
+          lastStep.status = "failed";
+          lastStep.error = `Could not resolve tool: ${funcName}`;
+          lastStep.completedAt = new Date().toISOString();
+          toolCallResults.push({ toolName: funcName, serverName: "unknown", args, result: null, error: "Tool not found" });
+          continue;
+        }
+
+        try {
+          const result = await callMcpTool(matchedTool, args);
+          const lastStep = steps[steps.length - 1];
+          lastStep.status = "completed";
+          lastStep.completedAt = new Date().toISOString();
+          lastStep.output = { source: "mcp_integration", mcpServer: matchedTool.serverName, mcpTool: matchedTool.toolName, data: result };
+          toolCallResults.push({ toolName: matchedTool.toolName, serverName: matchedTool.serverName, args, result });
+        } catch (err: any) {
+          const lastStep = steps[steps.length - 1];
+          lastStep.status = "failed";
+          lastStep.error = err.message;
+          lastStep.completedAt = new Date().toISOString();
+          toolCallResults.push({ toolName: matchedTool.toolName, serverName: matchedTool.serverName, args, result: null, error: err.message });
+        }
       }
 
-      try {
-        const result = await callMcpTool(matchedTool, args);
-        const lastStep = steps[steps.length - 1];
-        lastStep.status = "completed";
-        lastStep.completedAt = new Date().toISOString();
-        lastStep.output = { source: "mcp_integration", mcpServer: matchedTool.serverName, mcpTool: matchedTool.toolName, data: result };
-        toolCallResults.push({ toolName: matchedTool.toolName, serverName: matchedTool.serverName, args, result });
-      } catch (err: any) {
-        const lastStep = steps[steps.length - 1];
-        lastStep.status = "failed";
-        lastStep.error = err.message;
-        lastStep.completedAt = new Date().toISOString();
-        toolCallResults.push({ toolName: matchedTool.toolName, serverName: matchedTool.serverName, args, result: null, error: err.message });
+      conversationMessages.push(
+        currentChoice!.message as OpenAI.ChatCompletionAssistantMessageParam,
+        ...currentToolCalls.map((tc, i) => {
+          const resultIdx = iterationStartIdx + i;
+          const r = toolCallResults[resultIdx];
+          return {
+            role: "tool" as const,
+            tool_call_id: tc.id,
+            content: JSON.stringify(r?.result || { error: r?.error || "No result" }),
+          };
+        }),
+      );
+
+      if (iterationsUsed < MAX_TOOL_ITERATIONS) {
+        try {
+          const continueResponse = await openai.chat.completions.create({
+            model: "gpt-4.1",
+            messages: conversationMessages,
+            tools: openaiTools.length > 0 ? openaiTools : undefined,
+            max_completion_tokens: 4096,
+          });
+
+          if (continueResponse.usage) {
+            totalPromptTokens += continueResponse.usage.prompt_tokens || 0;
+            totalCompletionTokens += continueResponse.usage.completion_tokens || 0;
+            totalTokens += continueResponse.usage.total_tokens || 0;
+          }
+
+          currentChoice = continueResponse.choices[0];
+          currentToolCalls = (currentChoice?.message?.tool_calls || []).filter(
+            (tc: any) => tc.type === "function"
+          ) as Array<{ id: string; type: "function"; function: { name: string; arguments: string } }>;
+
+          if (currentToolCalls.length > 0) {
+            steps.push({
+              id: `step_${steps.length + 1}`,
+              name: `AI Re-Planning (iteration ${iterationsUsed + 1})`,
+              type: "ai_planning",
+              status: "completed",
+              startedAt: new Date().toISOString(),
+              completedAt: new Date().toISOString(),
+              output: {
+                toolCallsPlanned: currentToolCalls.length,
+                reasoning: currentChoice?.message?.content || "Additional tool calls needed",
+                toolsSelected: currentToolCalls.map(tc => tc.function.name),
+                iteration: iterationsUsed + 1,
+              },
+            });
+          }
+        } catch {
+          break;
+        }
       }
     }
 
@@ -739,17 +896,6 @@ After receiving tool results, provide a structured analysis with key findings, s
         status: "running",
         startedAt: new Date().toISOString(),
       });
-
-      const toolResultMessages: OpenAI.ChatCompletionMessageParam[] = [
-        { role: "system", content: systemMessage },
-        { role: "user", content: prompt },
-        planChoice!.message as OpenAI.ChatCompletionAssistantMessageParam,
-        ...toolCalls.map((tc, i) => ({
-          role: "tool" as const,
-          tool_call_id: tc.id,
-          content: JSON.stringify(toolCallResults[i]?.result || { error: toolCallResults[i]?.error }),
-        })),
-      ];
 
       try {
         const isConversational = options?.conversational === true;
@@ -782,8 +928,9 @@ After receiving tool results, provide a structured analysis with key findings, s
         const analysisPrompt = isConversational
           ? `Now respond to the user's original question using the tool results above. Write a helpful, detailed, conversational response in natural language. Include specific data points (numbers, measurements, values) from the tool results. Format your response nicely — use line breaks for readability if the answer is long. Do NOT respond in JSON. Respond as a knowledgeable assistant speaking directly to the user.`
           : `Now analyze the tool results above. Respond in JSON format with fields: summary (string), severity (low/medium/high), riskFactors (array of strings), findings (array of key observations), and recommendedActions (array of strings).${structuredOutputInstructions}`;
-        const analysisMessages = [
-          ...toolResultMessages,
+        const analysisMessages: OpenAI.ChatCompletionMessageParam[] = [
+          ...conversationMessages,
+          ...(currentChoice && !currentChoice.message?.tool_calls?.length ? [currentChoice.message as OpenAI.ChatCompletionAssistantMessageParam] : []),
           { role: "user" as const, content: analysisPrompt },
         ];
         const analysisResponse = await openai.chat.completions.create({
@@ -815,6 +962,8 @@ After receiving tool results, provide a structured analysis with key findings, s
         if (analysis.processedRecords && Array.isArray(analysis.processedRecords)) {
           analysis.structuredOutput = analysis.processedRecords;
         }
+
+        analysis.iterationsUsed = iterationsUsed;
 
         const lastStep = steps[steps.length - 1];
         lastStep.status = "completed";
@@ -1622,6 +1771,41 @@ async function executeAgentCycle(agent: RuntimeAgent) {
       })),
     });
 
+    try {
+      const toolsUsed = result.steps.filter((s: any) => s.type === "api_call" && s.status === "completed").map((s: any) => s.mcpTool || s.name);
+      const memorySummary = `Execution ${result.success ? "succeeded" : "failed"}. ${result.summary.passedSteps}/${result.summary.totalSteps} steps passed. ` +
+        (toolsUsed.length > 0 ? `Tools used: ${toolsUsed.join(", ")}. ` : "") +
+        (outputText.length > 200 ? outputText.substring(0, 200) + "..." : outputText);
+      
+      let expiresAt: Date | undefined;
+      if (agent.memoryGovernanceRules && agent.memoryGovernanceRules.length > 0) {
+        const retentionRule = agent.memoryGovernanceRules.find(r => r.type === "retention");
+        if (retentionRule) {
+          const daysMatch = retentionRule.rule.match(/(\d+)\s*(?:day|year)/i);
+          if (daysMatch) {
+            const days = retentionRule.rule.toLowerCase().includes("year") ? parseInt(daysMatch[1]) * 365 : parseInt(daysMatch[1]);
+            expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+          }
+        }
+      }
+      if (!expiresAt) {
+        expiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
+      }
+
+      await storage.saveAgentMemory(agent.agentId, "episodic", memorySummary, {
+        runId: runtimeRun.id,
+        deploymentId: agent.deploymentId,
+        success: result.success,
+        toolsUsed,
+        latencyMs: result.summary.latencyMs,
+        iterationsUsed: result.summary.iterationsUsed || 1,
+      }, expiresAt);
+
+      await storage.pruneExpiredMemories(agent.agentId);
+    } catch (memErr: any) {
+      console.log(`[agent-runtime] Failed to save episodic memory: ${memErr.message}`);
+    }
+
     runtimeEvents.emit("agent_execution", {
       deploymentId: agent.deploymentId,
       agentId: agent.agentId,
@@ -1638,6 +1822,83 @@ async function executeAgentCycle(agent: RuntimeAgent) {
     });
     console.error(`[agent-runtime] ${agent.agentName} execution failed:`, err.message);
   }
+}
+
+async function resolveBlueprint(
+  blueprintJson: any,
+  availableMcpServerIds: string[],
+  complianceTags?: string[]
+): Promise<{ valid: boolean; error?: string; requirements: RuntimeAgent["blueprintRequirements"] }> {
+  const nodes = blueprintJson?.nodes || [];
+  const edges = blueprintJson?.edges || [];
+  const workflowSteps: string[] = [];
+  const requiredTools: string[] = [];
+  const escalationTriggers: string[] = [];
+  const complianceNodes: string[] = [];
+  let outputFormat: string | undefined;
+
+  for (const node of nodes) {
+    const nodeType = (node.type || node.data?.type || "").toLowerCase();
+    const nodeLabel = node.data?.label || node.label || node.id || "unknown";
+
+    if (nodeType.includes("tool") || nodeType.includes("mcp") || nodeType.includes("action")) {
+      const toolName = node.data?.toolName || node.data?.tool || nodeLabel;
+      requiredTools.push(toolName);
+      workflowSteps.push(`Use tool: ${toolName}`);
+    } else if (nodeType.includes("decision") || nodeType.includes("condition") || nodeType.includes("branch")) {
+      workflowSteps.push(`Decision point: ${nodeLabel}`);
+      const condition = node.data?.condition || node.data?.description;
+      if (condition) workflowSteps.push(`  Condition: ${condition}`);
+    } else if (nodeType.includes("output") || nodeType.includes("result")) {
+      outputFormat = node.data?.format || node.data?.description || nodeLabel;
+      workflowSteps.push(`Output: ${nodeLabel}`);
+    } else if (nodeType.includes("human") || nodeType.includes("review") || nodeType.includes("approval")) {
+      complianceNodes.push(nodeLabel);
+      escalationTriggers.push(`Escalate to human review at: ${nodeLabel}`);
+      workflowSteps.push(`Human review: ${nodeLabel}`);
+    } else if (nodeType.includes("redact") || nodeType.includes("phi") || nodeType.includes("pii") || nodeType.includes("compliance")) {
+      complianceNodes.push(nodeLabel);
+      workflowSteps.push(`Compliance step: ${nodeLabel}`);
+    } else if (nodeType.includes("input") || nodeType.includes("trigger") || nodeType.includes("start")) {
+      workflowSteps.unshift(`Start: ${nodeLabel}`);
+    } else {
+      workflowSteps.push(`${nodeLabel}`);
+    }
+  }
+
+  if (requiredTools.length > 0) {
+    if (availableMcpServerIds.length === 0) {
+      return {
+        valid: false,
+        error: `Blueprint references ${requiredTools.length} tool(s) (${requiredTools.join(", ")}) but no MCP servers are linked to this agent`,
+        requirements: { workflowSteps, requiredTools, escalationTriggers, outputFormat, complianceNodes },
+      };
+    }
+    const availableTools = await gatherAvailableTools(availableMcpServerIds);
+    const availableToolNames = availableTools.map(t => t.toolName.toLowerCase());
+    const missingTools = requiredTools.filter(t =>
+      !availableToolNames.some(at => at.includes(t.toLowerCase()) || t.toLowerCase().includes(at))
+    );
+    if (missingTools.length > 0) {
+      return {
+        valid: false,
+        error: `Blueprint references tools not available in linked MCP servers: ${missingTools.join(", ")}. Available tools: ${availableTools.map(t => t.toolName).join(", ")}`,
+        requirements: { workflowSteps, requiredTools, escalationTriggers, outputFormat, complianceNodes },
+      };
+    }
+  }
+
+  if (complianceTags && complianceTags.length > 0) {
+    const regulated = complianceTags.some(t => ["HIPAA", "PCI-DSS", "SOX", "GDPR", "BSA-AML"].includes(t));
+    if (regulated && complianceNodes.length === 0) {
+      console.log(`[agent-runtime] Warning: Regulated agent (${complianceTags.join(",")}) has blueprint with no compliance nodes (human review, PHI redaction, etc.)`);
+    }
+  }
+
+  return {
+    valid: true,
+    requirements: { workflowSteps, requiredTools, escalationTriggers, outputFormat, complianceNodes },
+  };
 }
 
 export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?: string, skipInitialCycle?: boolean): Promise<{ started: boolean; message: string }> {
@@ -1676,6 +1937,16 @@ export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?
   const rawComplianceTags = (agent as any).complianceTags;
   const complianceTags = Array.isArray(rawComplianceTags) && rawComplianceTags.length > 0 ? rawComplianceTags as string[] : undefined;
 
+  let blueprintRequirements: RuntimeAgent["blueprintRequirements"] | undefined;
+  if (agentBlueprint?.blueprintJson) {
+    const bpResult = await resolveBlueprint(agentBlueprint.blueprintJson, mcpServerIds, complianceTags);
+    if (!bpResult.valid) {
+      return { started: false, message: `Blueprint validation failed: ${bpResult.error}` };
+    }
+    blueprintRequirements = bpResult.requirements;
+    console.log(`[agent-runtime] Blueprint resolved: ${blueprintRequirements?.workflowSteps.length || 0} steps, ${blueprintRequirements?.requiredTools.length || 0} tools`);
+  }
+
   const runtimeAgent: RuntimeAgent = {
     deploymentId,
     agentId: deployment.agentId,
@@ -1692,6 +1963,7 @@ export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?
     ontologyTags,
     complianceTags,
     memoryGovernanceRules: (agent.memoryGovernanceRules as Array<{ rule: string; regulation: string; type: string }>) || undefined,
+    blueprintRequirements,
   };
 
   if (intervalMinutes > 0) {

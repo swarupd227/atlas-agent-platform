@@ -126,6 +126,8 @@ import {
   type ContextProfile, type InsertContextProfile,
   memoryProfiles,
   type MemoryProfile, type InsertMemoryProfile,
+  agentMemories,
+  type AgentMemory, type InsertAgentMemory,
   ragPipelines,
   type RagPipeline, type InsertRagPipeline,
   knowledgeConnectors, type KnowledgeConnector, type InsertKnowledgeConnector,
@@ -545,6 +547,10 @@ export interface IStorage {
   createMemoryProfile(profile: InsertMemoryProfile): Promise<MemoryProfile>;
   updateMemoryProfile(id: string, data: Partial<InsertMemoryProfile>): Promise<MemoryProfile | undefined>;
   deleteMemoryProfile(id: string): Promise<boolean>;
+
+  saveAgentMemory(agentId: string, memoryType: string, content: string, metadata?: any, expiresAt?: Date): Promise<AgentMemory>;
+  getAgentMemories(agentId: string, memoryType: string, limit?: number): Promise<AgentMemory[]>;
+  pruneExpiredMemories(agentId: string): Promise<number>;
 
   getRagPipelines(): Promise<RagPipeline[]>;
   getRagPipeline(id: string): Promise<RagPipeline | undefined>;
@@ -2156,6 +2162,27 @@ export class DatabaseStorage implements IStorage {
   async deleteMemoryProfile(id: string): Promise<boolean> {
     const result = await db.delete(memoryProfiles).where(eq(memoryProfiles.id, id));
     return (result as any).rowCount > 0;
+  }
+
+  async saveAgentMemory(agentId: string, memoryType: string, content: string, metadata?: any, expiresAt?: Date): Promise<AgentMemory> {
+    const [created] = await db.insert(agentMemories).values({ agentId, memoryType, content, metadata, expiresAt }).returning();
+    return created;
+  }
+
+  async getAgentMemories(agentId: string, memoryType: string, limit: number = 10): Promise<AgentMemory[]> {
+    return db.select().from(agentMemories)
+      .where(and(eq(agentMemories.agentId, agentId), eq(agentMemories.memoryType, memoryType)))
+      .orderBy(desc(agentMemories.createdAt))
+      .limit(limit);
+  }
+
+  async pruneExpiredMemories(agentId: string): Promise<number> {
+    const now = new Date();
+    const all = await db.select().from(agentMemories).where(eq(agentMemories.agentId, agentId));
+    const expiredIds = all.filter(m => m.expiresAt && m.expiresAt <= now).map(m => m.id);
+    if (expiredIds.length === 0) return 0;
+    await db.delete(agentMemories).where(inArray(agentMemories.id, expiredIds));
+    return expiredIds.length;
   }
 
   async getRagPipelines(): Promise<RagPipeline[]> {

@@ -1515,6 +1515,20 @@ export const insertMemoryProfileSchema = createInsertSchema(memoryProfiles).omit
 export type InsertMemoryProfile = z.infer<typeof insertMemoryProfileSchema>;
 export type MemoryProfile = typeof memoryProfiles.$inferSelect;
 
+export const agentMemories = pgTable("agent_memories", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  agentId: varchar("agent_id").notNull(),
+  memoryType: text("memory_type").notNull().default("episodic"),
+  content: text("content").notNull(),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").defaultNow(),
+  expiresAt: timestamp("expires_at"),
+});
+
+export const insertAgentMemorySchema = createInsertSchema(agentMemories).omit({ id: true, createdAt: true });
+export type InsertAgentMemory = z.infer<typeof insertAgentMemorySchema>;
+export type AgentMemory = typeof agentMemories.$inferSelect;
+
 export const ragPipelines = pgTable("rag_pipelines", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
