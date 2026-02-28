@@ -13,10 +13,11 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Search, Plus, Database, FileText, Globe, Layers,
   BookOpen, Brain, ChevronRight, Loader2, Trash2,
-  Building2, Briefcase, Heart, Factory, Shield, ShoppingCart,
+  Building2, Briefcase, Heart, Factory, Shield, ShoppingCart, ShieldCheck,
 } from "lucide-react";
 
 const INDUSTRY_CONFIG: Record<string, { label: string; icon: typeof Building2; color: string }> = {
@@ -36,6 +37,43 @@ const VECTOR_DB_LABELS: Record<string, string> = {
   qdrant: "Qdrant",
   chroma: "Chroma",
 };
+
+function KbAlignmentBadge({ kbId }: { kbId: string }) {
+  const { data } = useQuery<{ overallAlignment: number | null }>({
+    queryKey: ["/api/knowledge-bases", kbId, "ontology-alignment"],
+    queryFn: async () => {
+      const res = await fetch(`/api/knowledge-bases/${kbId}/ontology-alignment`);
+      return res.json();
+    },
+  });
+  const score = data?.overallAlignment;
+  if (score === null || score === undefined) return null;
+  let color: string;
+  let label: string;
+  if (score >= 80) {
+    color = "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300";
+    label = "Good";
+  } else if (score >= 50) {
+    color = "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300";
+    label = "Partial";
+  } else {
+    color = "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300";
+    label = "Poor";
+  }
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Badge variant="outline" className={`${color} text-[10px]`} data-testid={`badge-kb-alignment-${kbId}`}>
+          <ShieldCheck className="w-2.5 h-2.5 mr-0.5" />
+          {score}%
+        </Badge>
+      </TooltipTrigger>
+      <TooltipContent side="top">
+        <p className="text-xs">Ontology Alignment: {score}% ({label})</p>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
 
 export default function KnowledgeBases() {
   const [search, setSearch] = useState("");
@@ -235,9 +273,12 @@ export default function KnowledgeBases() {
                         <div className="text-[10px] text-muted-foreground">Vector DB</div>
                       </div>
                     </div>
-                    <div className="flex items-center justify-between text-xs text-muted-foreground pt-1">
-                      <span>{kb.embeddingModel}</span>
-                      <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
+                    <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground pt-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span>{kb.embeddingModel}</span>
+                        <KbAlignmentBadge kbId={kb.id} />
+                      </div>
+                      <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform shrink-0" />
                     </div>
                   </CardContent>
                 </Card>

@@ -1,6 +1,7 @@
 import { storage } from "./storage";
 import type { Job } from "@shared/schema";
 import { EventEmitter } from "events";
+import { checkOntologyCompliance } from "./agent-runtime";
 
 export const jobEvents = new EventEmitter();
 jobEvents.setMaxListeners(50);
@@ -65,6 +66,11 @@ async function processEvalBaseline(job: Job): Promise<Record<string, unknown>> {
   let totalLatency = 0;
   const caseResults: Array<Record<string, unknown>> = [];
 
+  const ontologyTags = (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) || [];
+  const hasOntologyTags = ontologyTags.length > 0;
+  let totalOntologyCompliance = 0;
+  let ontologyCaseCount = 0;
+
   for (let i = 0; i < testCases.length; i++) {
     const tc = testCases[i];
     const latencyMs = Math.floor(300 + Math.random() * 2000);
@@ -74,14 +80,40 @@ async function processEvalBaseline(job: Job): Promise<Record<string, unknown>> {
     if (isPassed) passed++;
     else failed++;
 
+    const actualOutput = isPassed
+      ? { status: "pass", matched: true, confidence: 0.85 + Math.random() * 0.15 }
+      : { status: "fail", matched: false, reason: "Output did not meet expected criteria", confidence: 0.3 + Math.random() * 0.3 };
+
+    let scorerOutputs: Record<string, unknown> | undefined;
+
+    if (hasOntologyTags) {
+      const outputText = typeof actualOutput === "string"
+        ? actualOutput
+        : JSON.stringify(actualOutput);
+      try {
+        const compliance = await checkOntologyCompliance(outputText, ontologyTags);
+        scorerOutputs = {
+          ontologyCompliance: {
+            score: compliance.score,
+            canonicalTermsUsed: compliance.canonicalTermsUsed,
+            deprecatedTermsUsed: compliance.deprecatedTermsUsed,
+            totalDomainMentions: compliance.totalDomainMentions,
+            canonicalCount: compliance.canonicalCount,
+            deprecatedCount: compliance.deprecatedCount,
+          },
+        };
+        totalOntologyCompliance += compliance.score;
+        ontologyCaseCount++;
+      } catch {}
+    }
+
     const result = await storage.createEvalCaseResult({
       runId: evalRun.id,
       caseId: tc.id,
       passed: isPassed,
       latencyMs,
-      actualOutput: isPassed
-        ? { status: "pass", matched: true, confidence: 0.85 + Math.random() * 0.15 }
-        : { status: "fail", matched: false, reason: "Output did not meet expected criteria", confidence: 0.3 + Math.random() * 0.3 },
+      actualOutput,
+      ...(scorerOutputs ? { scorerOutputs } : {}),
     });
 
     caseResults.push({ testCaseId: tc.id, testCaseName: tc.name, ...result });
@@ -95,6 +127,16 @@ async function processEvalBaseline(job: Job): Promise<Record<string, unknown>> {
 
   const passRate = testCases.length > 0 ? passed / testCases.length : 0;
   const avgLatency = testCases.length > 0 ? Math.round(totalLatency / testCases.length) : 0;
+  const avgOntologyCompliance = ontologyCaseCount > 0 ? Math.round(totalOntologyCompliance / ontologyCaseCount) : null;
+
+  const runResultsJson: Record<string, unknown> = {};
+  if (avgOntologyCompliance !== null) {
+    runResultsJson.ontologyCompliance = {
+      avgScore: avgOntologyCompliance,
+      casesEvaluated: ontologyCaseCount,
+      hasOntologyScorer: true,
+    };
+  }
 
   await storage.createEvalRun({
     suiteId,
@@ -104,6 +146,7 @@ async function processEvalBaseline(job: Job): Promise<Record<string, unknown>> {
     passedCases: passed,
     failedCases: failed,
     avgLatencyMs: avgLatency,
+    ...(Object.keys(runResultsJson).length > 0 ? { resultsJson: runResultsJson } : {}),
   });
 
   await storage.updateJob(job.id, { progress: 95 });

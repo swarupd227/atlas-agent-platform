@@ -16,11 +16,12 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   ArrowLeft, Upload, Globe, FileText, Layers, Database, Search,
   Plus, Loader2, Trash2, RefreshCw, CheckCircle2, XCircle,
   Clock, Bot, Link2, Unlink, Settings, MessageSquare,
-  BookOpen, Brain, AlignLeft, Table2, Send,
+  BookOpen, Brain, AlignLeft, Table2, Send, ShieldCheck,
 } from "lucide-react";
 
 function StatusBadge({ status }: { status: string }) {
@@ -37,6 +38,42 @@ function StatusBadge({ status }: { status: string }) {
       <Icon className={`w-3 h-3 mr-1 ${status === "processing" ? "animate-spin" : ""}`} />
       {status}
     </Badge>
+  );
+}
+
+function OntologyAlignmentBadge({ score, mismatches }: { score: number | null; mismatches?: Array<{ term: string; suggestedTerm: string }> }) {
+  if (score === null) return null;
+  let color: string;
+  let label: string;
+  if (score >= 80) {
+    color = "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300";
+    label = "Good";
+  } else if (score >= 50) {
+    color = "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300";
+    label = "Partial";
+  } else {
+    color = "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300";
+    label = "Poor";
+  }
+  const badge = (
+    <Badge variant="outline" className={color} data-testid="badge-ontology-alignment">
+      <ShieldCheck className="w-3 h-3 mr-1" />
+      {score}% {label}
+    </Badge>
+  );
+  if (!mismatches || mismatches.length === 0) return badge;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{badge}</TooltipTrigger>
+      <TooltipContent side="bottom" className="max-w-xs">
+        <p className="text-xs font-medium mb-1">Non-standard terms found:</p>
+        <ul className="text-xs space-y-0.5">
+          {mismatches.slice(0, 5).map((m, i) => (
+            <li key={i}>"{m.term}" → use "{m.suggestedTerm}"</li>
+          ))}
+        </ul>
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -108,6 +145,23 @@ export default function KnowledgeBaseDetail() {
   const { data: allAgents = [] } = useQuery<Agent[]>({
     queryKey: ["/api/agents"],
     enabled: linkAgentOpen,
+  });
+
+  const { data: ontologyAlignment } = useQuery<{
+    overallAlignment: number | null;
+    sources: Array<{
+      sourceId: string;
+      ontologyAlignment: number | null;
+      nonStandardTerms: Array<{ term: string; suggestedTerm: string }>;
+    }>;
+  }>({
+    queryKey: ["/api/knowledge-bases", kbId, "ontology-alignment"],
+    queryFn: async () => {
+      const res = await fetch(`/api/knowledge-bases/${kbId}/ontology-alignment`);
+      return res.json();
+    },
+    enabled: !!kbId,
+    refetchInterval: 10000,
   });
 
   const { data: embeddingStatus } = useQuery<{ total: number; withEmbeddings: number; withoutEmbeddings: number }>({
@@ -487,9 +541,14 @@ export default function KnowledgeBaseDetail() {
                         <TypeIcon className="w-4 h-4 text-muted-foreground" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-sm font-medium truncate">{source.name}</span>
                           <StatusBadge status={source.status} />
+                          {(() => {
+                            const alignment = ontologyAlignment?.sources?.find((s) => s.sourceId === source.id);
+                            if (!alignment) return null;
+                            return <OntologyAlignmentBadge score={alignment.ontologyAlignment} mismatches={alignment.nonStandardTerms} />;
+                          })()}
                         </div>
                         <div className="flex items-center gap-3 text-xs text-muted-foreground mt-0.5">
                           <span>{typeConfig.label}</span>

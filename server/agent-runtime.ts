@@ -198,6 +198,8 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<string> {
   if (agent.ontologyTags && agent.ontologyTags.length > 0) {
     try {
       const conceptDetails: string[] = [];
+      const requiredVocab: string[] = [];
+      const deprecatedTerms: Array<{ deprecated: string; useInstead: string }> = [];
       for (const tag of agent.ontologyTags.slice(0, 10)) {
         const concept = await storage.getOntologyConcept(tag.conceptId);
         if (concept) {
@@ -206,8 +208,12 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<string> {
           if (rels && rels.length > 0) {
             detail += ` | Relationships: ${rels.slice(0, 5).map(r => `${r.type} → ${r.target}`).join(", ")}`;
           }
+          requiredVocab.push(concept.label);
           if (concept.synonyms && concept.synonyms.length > 0) {
             detail += ` | Also known as: ${concept.synonyms.join(", ")}`;
+            for (const syn of concept.synonyms) {
+              deprecatedTerms.push({ deprecated: syn, useInstead: concept.label });
+            }
           }
           conceptDetails.push(detail);
 
@@ -223,9 +229,17 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<string> {
         }
       }
       if (conceptDetails.length > 0) {
-        sections.push(`\n## DOMAIN ONTOLOGY (your domain vocabulary and concepts)`);
-        sections.push(`Use these concepts to ground your reasoning in domain-specific language:`);
+        sections.push(`\n## DOMAIN ONTOLOGY (vocabulary constraints and domain concepts)`);
+        sections.push(`You MUST use the canonical terms below when discussing these domain concepts. Avoid deprecated synonyms — use the canonical form instead.`);
         conceptDetails.forEach(d => sections.push(d));
+        if (requiredVocab.length > 0) {
+          sections.push(`\n### REQUIRED VOCABULARY (always use these exact terms)`);
+          requiredVocab.forEach(v => sections.push(`- ${v}`));
+        }
+        if (deprecatedTerms.length > 0) {
+          sections.push(`\n### DEPRECATED TERMS (do NOT use these — use the canonical form)`);
+          deprecatedTerms.slice(0, 20).forEach(d => sections.push(`- "${d.deprecated}" → use "${d.useInstead}" instead`));
+        }
       }
     } catch {}
   }
@@ -348,6 +362,63 @@ async function callMcpTool(tool: AvailableTool, args: Record<string, any>): Prom
   const contentType = res.headers.get("content-type") || "";
   if (contentType.includes("application/json")) return res.json();
   return { status: res.status, message: await res.text() };
+}
+
+export interface OntologyComplianceResult {
+  score: number;
+  canonicalTermsUsed: string[];
+  deprecatedTermsUsed: Array<{ term: string; shouldUse: string }>;
+  totalDomainMentions: number;
+  canonicalCount: number;
+  deprecatedCount: number;
+}
+
+export async function checkOntologyCompliance(
+  text: string,
+  ontologyTags: Array<{ conceptId: string; conceptLabel: string }>
+): Promise<OntologyComplianceResult> {
+  const canonicalTermsUsed: string[] = [];
+  const deprecatedTermsUsed: Array<{ term: string; shouldUse: string }> = [];
+  const textLower = text.toLowerCase();
+
+  for (const tag of ontologyTags.slice(0, 15)) {
+    try {
+      const concept = await storage.getOntologyConcept(tag.conceptId);
+      if (!concept) continue;
+
+      const labelLower = concept.label.toLowerCase();
+      const labelWords = labelLower.split(/[\s_-]+/).filter((w: string) => w.length > 2);
+      const labelFound = textLower.includes(labelLower) ||
+        (labelWords.length > 1 && labelWords.every((w: string) => textLower.includes(w)));
+
+      if (labelFound) {
+        canonicalTermsUsed.push(concept.label);
+      }
+
+      if (concept.synonyms && concept.synonyms.length > 0) {
+        for (const syn of concept.synonyms) {
+          const synLower = syn.toLowerCase();
+          if (textLower.includes(synLower) && !labelFound) {
+            deprecatedTermsUsed.push({ term: syn, shouldUse: concept.label });
+          }
+        }
+      }
+    } catch {}
+  }
+
+  const totalDomainMentions = canonicalTermsUsed.length + deprecatedTermsUsed.length;
+  const score = totalDomainMentions > 0
+    ? Math.round((canonicalTermsUsed.length / totalDomainMentions) * 100)
+    : 100;
+
+  return {
+    score,
+    canonicalTermsUsed,
+    deprecatedTermsUsed,
+    totalDomainMentions,
+    canonicalCount: canonicalTermsUsed.length,
+    deprecatedCount: deprecatedTermsUsed.length,
+  };
 }
 
 export async function executePromptWithMcp(
@@ -669,20 +740,51 @@ After receiving tool results, provide a structured analysis with key findings, s
 
   const ind = industry || "general";
   const toolSources = toolCallResults.filter(r => !r.error).map(r => `${r.serverName} / ${r.toolName}`);
-  const complianceChecks = [
+  const complianceChecks: Array<{ rule: string; status: string; detail: string }> = [
     { rule: "Data Source Verification", status: "pass", detail: toolSources.length > 0 ? `Data sourced via registered MCP integrations: ${toolSources.join(", ")}` : "No external data sources used" },
     { rule: "Decision Audit Trail", status: "pass", detail: "All decision factors logged with timestamps in execution steps" },
     { rule: "AI Reasoning Logged", status: "pass", detail: "AI planning and analysis steps captured in execution trace" },
     { rule: `${ind.charAt(0).toUpperCase() + ind.slice(1)} Industry Protocol`, status: "pass", detail: "Execution complied with industry governance framework" },
   ];
 
+  let ontologyComplianceResult: OntologyComplianceResult | null = null;
+  try {
+    const agentRecord = await storage.getAgent(agentId);
+    const ontologyTags = (agentRecord?.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) || [];
+    if (ontologyTags.length > 0) {
+      const allOutputText = steps
+        .filter(s => s.status === "completed" && s.output)
+        .map(s => {
+          const out = s.output;
+          if (typeof out === "string") return out;
+          if (out.analysis) return typeof out.analysis === "string" ? out.analysis : JSON.stringify(out.analysis);
+          if (out.summary) return typeof out.summary === "string" ? out.summary : JSON.stringify(out.summary);
+          return JSON.stringify(out);
+        })
+        .join(" ");
+
+      ontologyComplianceResult = await checkOntologyCompliance(allOutputText, ontologyTags);
+
+      const vocabStatus = ontologyComplianceResult.score >= 80 ? "pass" : ontologyComplianceResult.score >= 50 ? "warn" : "fail";
+      const vocabDetail = ontologyComplianceResult.totalDomainMentions > 0
+        ? `${ontologyComplianceResult.score}% compliance — ${ontologyComplianceResult.canonicalCount} canonical terms used, ${ontologyComplianceResult.deprecatedCount} deprecated synonyms detected`
+        : `No domain vocabulary detected in output (${ontologyTags.length} ontology terms configured)`;
+      complianceChecks.push({
+        rule: "Ontology Vocabulary Compliance",
+        status: vocabStatus,
+        detail: vocabDetail,
+      });
+    }
+  } catch {}
+
   const compStep = steps[steps.length - 1];
   compStep.status = "completed";
   compStep.completedAt = new Date().toISOString();
   compStep.output = {
-    allPassed: true,
+    allPassed: complianceChecks.every(c => c.status === "pass"),
     checks: complianceChecks,
     auditId: `AUDIT-${Date.now()}`,
+    ...(ontologyComplianceResult ? { ontologyCompliance: ontologyComplianceResult } : {}),
   };
 
   const failedSteps = steps.filter(s => s.status === "failed");
@@ -722,6 +824,7 @@ After receiving tool results, provide a structured analysis with key findings, s
         completionTokens: totalCompletionTokens,
         totalTokens,
       },
+      ...(ontologyComplianceResult ? { ontologyCompliance: ontologyComplianceResult } : {}),
     },
     promptInputs: {
       systemPrompt: systemMessage,

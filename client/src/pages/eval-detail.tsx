@@ -491,7 +491,7 @@ export default function EvalDetail() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         <StatCard
           title="Total Test Cases"
           value={testCases?.length ?? 0}
@@ -528,7 +528,96 @@ export default function EvalDetail() {
           variant="default"
           testId="stat-avg-cost"
         />
+        {(() => {
+          const resultsJson = latestRun?.resultsJson as Record<string, any> | null;
+          const ontologyData = resultsJson?.ontologyCompliance;
+          if (!ontologyData) return null;
+          const score = ontologyData.avgScore as number;
+          return (
+            <StatCard
+              title="Ontology Compliance"
+              value={`${score}%`}
+              icon={BookOpen}
+              variant={score >= 80 ? "success" : score >= 50 ? "warning" : "danger"}
+              testId="stat-ontology-compliance"
+            />
+          );
+        })()}
       </div>
+
+      {(() => {
+        const resultsJson = latestRun?.resultsJson as Record<string, any> | null;
+        const ontologyData = resultsJson?.ontologyCompliance;
+        if (!ontologyData) return null;
+        const score = ontologyData.avgScore as number;
+        const casesEvaluated = ontologyData.casesEvaluated as number;
+        const deprecatedInCases = caseResults?.filter((cr) => {
+          const so = cr.scorerOutputs as Record<string, any> | null;
+          const oc = so?.ontologyCompliance;
+          return oc?.deprecatedTermsUsed?.length > 0;
+        }) || [];
+        const allDeprecated = new Map<string, string>();
+        caseResults?.forEach((cr) => {
+          const so = cr.scorerOutputs as Record<string, any> | null;
+          const oc = so?.ontologyCompliance;
+          if (oc?.deprecatedTermsUsed) {
+            (oc.deprecatedTermsUsed as Array<{ term: string; shouldUse: string }>).forEach((d) => {
+              allDeprecated.set(d.term, d.shouldUse);
+            });
+          }
+        });
+        return (
+          <Card data-testid="card-ontology-compliance-summary">
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+              <div className="flex items-center gap-2">
+                <BookOpen className="w-4 h-4 text-purple-500" />
+                <CardTitle className="text-sm font-medium">Ontology Compliance Summary</CardTitle>
+              </div>
+              <Badge
+                variant="outline"
+                className={`text-[10px] ${score >= 80 ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" : score >= 50 ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20" : "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20"}`}
+                data-testid="badge-ontology-score"
+              >
+                {score}% compliant
+              </Badge>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
+              <div className="flex items-center gap-4 flex-wrap">
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-xs text-muted-foreground">Cases Evaluated</span>
+                  <span className="text-sm font-medium" data-testid="text-ontology-cases">{casesEvaluated}</span>
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-xs text-muted-foreground">With Deprecated Terms</span>
+                  <span className="text-sm font-medium text-amber-600 dark:text-amber-400" data-testid="text-ontology-deprecated-count">{deprecatedInCases.length}</span>
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-xs text-muted-foreground">Avg Score</span>
+                  <span className="text-sm font-medium" data-testid="text-ontology-avg-score">{score}%</span>
+                </div>
+              </div>
+              <Progress
+                value={score}
+                className={`h-2 ${score >= 80 ? "[&>div]:bg-emerald-500" : score >= 50 ? "[&>div]:bg-amber-500" : "[&>div]:bg-red-500"}`}
+              />
+              {allDeprecated.size > 0 && (
+                <div className="flex flex-col gap-1.5 pt-1">
+                  <span className="text-xs text-muted-foreground font-medium">Deprecated Terms Found</span>
+                  <div className="flex flex-col gap-1">
+                    {Array.from(allDeprecated.entries()).slice(0, 8).map(([term, canonical]) => (
+                      <div key={term} className="flex items-center gap-2 text-xs" data-testid={`deprecated-term-${term}`}>
+                        <Badge variant="outline" className="text-[9px] bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20 no-default-hover-elevate no-default-active-elevate">{term}</Badge>
+                        <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0" />
+                        <Badge variant="outline" className="text-[9px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20 no-default-hover-elevate no-default-active-elevate">{canonical}</Badge>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       <Tabs defaultValue="test-cases" className="flex flex-col gap-4">
         <TabsList className="flex-wrap h-auto gap-1" data-testid="eval-tabs">
@@ -1297,7 +1386,44 @@ export default function EvalDetail() {
                                 )}
                               </div>
                             </TableCell>
-                            <TableCell><PassFailBadge passed={cr.passed} /></TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <PassFailBadge passed={cr.passed} />
+                                {(() => {
+                                  const so = cr.scorerOutputs as Record<string, any> | null;
+                                  const oc = so?.ontologyCompliance;
+                                  if (!oc || oc.score === undefined) return null;
+                                  const s = oc.score as number;
+                                  const colorCls = s >= 80
+                                    ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                                    : s >= 50
+                                      ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20"
+                                      : "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20";
+                                  return (
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <Badge variant="outline" className={`text-[9px] ${colorCls}`} data-testid={`badge-ontology-${cr.id}`}>
+                                          {s}%
+                                        </Badge>
+                                      </TooltipTrigger>
+                                      <TooltipContent side="top" className="max-w-xs">
+                                        <div className="flex flex-col gap-1 text-xs">
+                                          <span className="font-medium">Ontology Compliance: {s}%</span>
+                                          <span>Canonical: {oc.canonicalCount || 0} | Deprecated: {oc.deprecatedCount || 0}</span>
+                                          {oc.deprecatedTermsUsed?.length > 0 && (
+                                            <div className="flex flex-col gap-0.5 pt-0.5">
+                                              {(oc.deprecatedTermsUsed as Array<{ term: string; shouldUse: string }>).map((d: any, di: number) => (
+                                                <span key={di} className="text-amber-600 dark:text-amber-400">"{d.term}" should be "{d.shouldUse}"</span>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  );
+                                })()}
+                              </div>
+                            </TableCell>
                             <TableCell className="text-xs text-muted-foreground">{cr.failingStep || "\u2014"}</TableCell>
                             <TableCell className="text-xs text-muted-foreground max-w-[200px] truncate">{cr.failingReason || "\u2014"}</TableCell>
                             <TableCell>

@@ -74,6 +74,7 @@ import {
   Target,
   ListOrdered,
   Crosshair,
+  Minus,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -4512,6 +4513,8 @@ function AgentDetailInner() {
                   )}
                 </div>
 
+                <OntologyComplianceCard agentId={agentId!} hasOntologyTags={currentTags.length > 0} />
+
                 {currentTags.length > 0 ? (
                   <Card data-testid="card-current-ontology-tags">
                     <CardHeader className="flex flex-row items-center gap-2 pb-3">
@@ -7052,6 +7055,122 @@ export default function AgentDetail() {
     <AgentDetailErrorBoundary>
       <AgentDetailInner />
     </AgentDetailErrorBoundary>
+  );
+}
+
+function OntologyComplianceCard({ agentId, hasOntologyTags }: { agentId: string; hasOntologyTags: boolean }) {
+  const { data: compliance } = useQuery<{
+    hasOntology: boolean;
+    requiredTerms: string[];
+    deprecatedTerms: Array<{ deprecated: string; useInstead: string }>;
+    recentCompliance: Array<{ traceId: string; score: number; canonicalCount: number; deprecatedCount: number; timestamp: string; deprecatedTermsUsed: Array<{ term: string; shouldUse: string }> }>;
+    averageScore: number | null;
+    trend: "improving" | "declining" | "stable";
+    topNonStandardTerms: Array<{ term: string; shouldUse: string; occurrences: number }>;
+  }>({
+    queryKey: ["/api/agents", agentId, "ontology-compliance"],
+    queryFn: async () => {
+      const res = await fetch(`/api/agents/${agentId}/ontology-compliance`);
+      if (!res.ok) throw new Error("Failed to fetch ontology compliance");
+      return res.json();
+    },
+    enabled: hasOntologyTags,
+  });
+
+  if (!hasOntologyTags || !compliance?.hasOntology) return null;
+
+  const score = compliance.averageScore;
+  const hasData = compliance.recentCompliance.length > 0;
+  const scoreColor = score === null ? "text-muted-foreground" : score >= 80 ? "text-green-500" : score >= 50 ? "text-amber-500" : "text-red-500";
+  const scoreBorder = score === null ? "border-border" : score >= 80 ? "border-green-500/30" : score >= 50 ? "border-amber-500/30" : "border-red-500/30";
+
+  return (
+    <Card className={`${scoreBorder}`} data-testid="card-ontology-compliance">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium flex items-center gap-2">
+          <ShieldCheck className="w-4 h-4 text-muted-foreground" />
+          Ontology Vocabulary Compliance
+          {score !== null && (
+            <Badge
+              variant={score >= 80 ? "default" : score >= 50 ? "outline" : "destructive"}
+              className="text-[10px] ml-auto"
+              data-testid="badge-ontology-compliance-score"
+            >
+              {score}% avg
+            </Badge>
+          )}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        <div className="grid grid-cols-3 gap-2">
+          <div className="flex flex-col items-center gap-1 p-2 rounded-md bg-muted/30" data-testid="stat-ontology-score">
+            <span className="text-[10px] text-muted-foreground">Avg Score</span>
+            <span className={`text-lg font-bold ${scoreColor}`}>{score !== null ? `${score}%` : "—"}</span>
+          </div>
+          <div className="flex flex-col items-center gap-1 p-2 rounded-md bg-muted/30" data-testid="stat-ontology-trend">
+            <span className="text-[10px] text-muted-foreground">Trend</span>
+            <div className="flex items-center gap-1">
+              {compliance.trend === "improving" ? (
+                <TrendingUp className="w-4 h-4 text-green-500" />
+              ) : compliance.trend === "declining" ? (
+                <TrendingDown className="w-4 h-4 text-red-500" />
+              ) : (
+                <Minus className="w-4 h-4 text-muted-foreground" />
+              )}
+              <span className="text-xs capitalize">{compliance.trend}</span>
+            </div>
+          </div>
+          <div className="flex flex-col items-center gap-1 p-2 rounded-md bg-muted/30" data-testid="stat-ontology-runs">
+            <span className="text-[10px] text-muted-foreground">Runs</span>
+            <span className="text-lg font-bold">{compliance.recentCompliance.length}</span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span>{compliance.requiredTerms.length} required terms</span>
+          <span className="w-px h-3 bg-border" />
+          <span>{compliance.deprecatedTerms.length} deprecated synonyms mapped</span>
+        </div>
+
+        {compliance.topNonStandardTerms.length > 0 && (
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[11px] font-medium text-muted-foreground">Top Non-Standard Terms Used</span>
+            {compliance.topNonStandardTerms.map((t) => (
+              <div key={t.term} className="flex items-center gap-2 text-xs p-1.5 rounded border border-amber-500/20 bg-amber-500/5" data-testid={`nonstandard-term-${t.term}`}>
+                <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />
+                <span className="font-medium">"{t.term}"</span>
+                <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0" />
+                <span className="text-muted-foreground">use "{t.shouldUse}"</span>
+                <Badge variant="outline" className="text-[9px] ml-auto">{t.occurrences}x</Badge>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {!hasData && (
+          <p className="text-xs text-muted-foreground text-center py-2">
+            No execution data yet. Run the agent to see ontology compliance scores.
+          </p>
+        )}
+
+        {hasData && compliance.recentCompliance.length > 1 && (
+          <div className="flex flex-col gap-1">
+            <span className="text-[11px] font-medium text-muted-foreground">Recent Runs</span>
+            <div className="flex items-end gap-px h-8">
+              {compliance.recentCompliance.slice(0, 10).reverse().map((run, i) => (
+                <div
+                  key={run.traceId}
+                  className={`flex-1 rounded-t-sm ${run.score >= 80 ? "bg-green-500" : run.score >= 50 ? "bg-amber-500" : "bg-red-500"}`}
+                  style={{ height: `${Math.max(10, run.score)}%`, opacity: 0.6 + (i / 15) }}
+                  title={`${run.score}% — ${run.canonicalCount} canonical, ${run.deprecatedCount} deprecated`}
+                  data-testid={`bar-compliance-run-${i}`}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

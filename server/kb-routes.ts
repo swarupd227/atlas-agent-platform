@@ -7,6 +7,58 @@ import { sql, eq } from "drizzle-orm";
 import OpenAI from "openai";
 import { generateEmbeddings, storeChunkEmbedding } from "./embeddings";
 
+interface OntologyAlignmentResult {
+  score: number;
+  canonicalTermsFound: string[];
+  nonStandardTerms: Array<{ term: string; suggestedTerm: string }>;
+  totalTermsChecked: number;
+}
+
+async function computeOntologyAlignment(text: string, industryId: string): Promise<OntologyAlignmentResult> {
+  const concepts = await storage.getOntologyConcepts(industryId);
+  const allConcepts = concepts.length > 0 ? concepts : await storage.getAllOntologyConcepts();
+
+  if (allConcepts.length === 0) {
+    return { score: 100, canonicalTermsFound: [], nonStandardTerms: [], totalTermsChecked: 0 };
+  }
+
+  const textLower = text.toLowerCase();
+  const canonicalTermsFound: string[] = [];
+  const nonStandardTerms: Array<{ term: string; suggestedTerm: string }> = [];
+
+  for (const concept of allConcepts.slice(0, 50)) {
+    const labelLower = concept.label.toLowerCase();
+    const labelWords = labelLower.split(/[\s_-]+/).filter((w: string) => w.length > 2);
+    const labelFound = textLower.includes(labelLower) ||
+      (labelWords.length > 1 && labelWords.every((w: string) => textLower.includes(w)));
+
+    if (labelFound) {
+      canonicalTermsFound.push(concept.label);
+    }
+
+    if (concept.synonyms && concept.synonyms.length > 0) {
+      for (const syn of concept.synonyms) {
+        const synLower = syn.toLowerCase();
+        if (textLower.includes(synLower) && !labelFound) {
+          nonStandardTerms.push({ term: syn, suggestedTerm: concept.label });
+        }
+      }
+    }
+  }
+
+  const totalMentions = canonicalTermsFound.length + nonStandardTerms.length;
+  const score = totalMentions > 0
+    ? Math.round((canonicalTermsFound.length / totalMentions) * 100)
+    : 100;
+
+  return {
+    score,
+    canonicalTermsFound,
+    nonStandardTerms,
+    totalTermsChecked: totalMentions,
+  };
+}
+
 type Params = { id: string; sourceId?: string; kbId?: string; agentId?: string; linkId?: string };
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
@@ -108,10 +160,25 @@ async function processSourceInBackground(sourceId: string, kbId: string) {
       }
     }
 
+    let ontologyMeta: any = {};
+    try {
+      const alignment = await computeOntologyAlignment(text, kb.industry);
+      ontologyMeta = {
+        ontologyAlignment: alignment.score,
+        canonicalTermsFound: alignment.canonicalTermsFound,
+        nonStandardTerms: alignment.nonStandardTerms.slice(0, 10),
+        totalTermsChecked: alignment.totalTermsChecked,
+      };
+    } catch (err: any) {
+      console.log(`[kb] Ontology alignment check failed for source ${sourceId}:`, err.message);
+    }
+
+    const existingMeta = (source.metadata && typeof source.metadata === "object") ? source.metadata as Record<string, any> : {};
     await storage.updateKnowledgeSource(sourceId, {
       status: "processed",
       chunkCount: chunks.length,
       processedAt: new Date(),
+      metadata: { ...existingMeta, ...ontologyMeta },
     });
 
     const allSources = await storage.getKnowledgeSources(kbId);
@@ -436,6 +503,43 @@ export function registerKnowledgeBaseRoutes(app: Express) {
   app.get("/api/knowledge-bases/:id/agents", async (req, res) => {
     const links = await storage.getKnowledgeBaseAgents(req.params.id);
     res.json(links);
+  });
+
+  app.get("/api/knowledge-bases/:id/ontology-alignment", async (req, res) => {
+    try {
+      const kb = await storage.getKnowledgeBase(req.params.id);
+      if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
+
+      const sources = await storage.getKnowledgeSources(req.params.id);
+      const sourceAlignments = sources.map((source) => {
+        const meta = (source.metadata && typeof source.metadata === "object") ? source.metadata as Record<string, any> : {};
+        return {
+          sourceId: source.id,
+          sourceName: source.name,
+          status: source.status,
+          ontologyAlignment: meta.ontologyAlignment ?? null,
+          canonicalTermsFound: meta.canonicalTermsFound || [],
+          nonStandardTerms: meta.nonStandardTerms || [],
+          totalTermsChecked: meta.totalTermsChecked || 0,
+        };
+      });
+
+      const scored = sourceAlignments.filter((s) => s.ontologyAlignment !== null);
+      const overallAlignment = scored.length > 0
+        ? Math.round(scored.reduce((sum, s) => sum + s.ontologyAlignment, 0) / scored.length)
+        : null;
+
+      res.json({
+        knowledgeBaseId: req.params.id,
+        industry: kb.industry,
+        overallAlignment,
+        totalSources: sources.length,
+        scoredSources: scored.length,
+        sources: sourceAlignments,
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
   });
 
   app.post("/api/knowledge-bases/:id/query", async (req, res) => {

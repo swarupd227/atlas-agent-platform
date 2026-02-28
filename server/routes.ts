@@ -1610,6 +1610,117 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/agents/:id/ontology-compliance", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+      const ontologyTags = (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) || [];
+      if (ontologyTags.length === 0) {
+        return res.json({
+          agentId: agent.id,
+          hasOntology: false,
+          requiredTerms: [],
+          deprecatedTerms: [],
+          recentCompliance: [],
+          averageScore: null,
+          trend: "stable",
+          topNonStandardTerms: [],
+        });
+      }
+
+      const requiredTerms: string[] = [];
+      const deprecatedTerms: Array<{ deprecated: string; useInstead: string }> = [];
+      for (const tag of ontologyTags.slice(0, 15)) {
+        try {
+          const concept = await storage.getOntologyConcept(tag.conceptId);
+          if (concept) {
+            requiredTerms.push(concept.label);
+            if (concept.synonyms && concept.synonyms.length > 0) {
+              for (const syn of concept.synonyms) {
+                deprecatedTerms.push({ deprecated: syn, useInstead: concept.label });
+              }
+            }
+          }
+        } catch {}
+      }
+
+      const traces = await storage.getTracesByAgent(req.params.id);
+      const recentTraces = traces.slice(0, 20);
+
+      const recentCompliance: Array<{
+        traceId: string;
+        score: number;
+        canonicalCount: number;
+        deprecatedCount: number;
+        timestamp: string;
+        deprecatedTermsUsed: Array<{ term: string; shouldUse: string }>;
+      }> = [];
+
+      const topNonStandardMap: Record<string, { count: number; shouldUse: string }> = {};
+
+      for (const trace of recentTraces) {
+        const stepsJson = trace.stepsJson as any[];
+        if (!stepsJson || !Array.isArray(stepsJson)) continue;
+
+        const complianceStep = stepsJson.find(
+          (s: any) => s.type === "validation" && s.output?.ontologyCompliance
+        );
+        if (!complianceStep?.output?.ontologyCompliance) continue;
+
+        const oc = complianceStep.output.ontologyCompliance;
+        recentCompliance.push({
+          traceId: trace.id,
+          score: oc.score,
+          canonicalCount: oc.canonicalCount || 0,
+          deprecatedCount: oc.deprecatedCount || 0,
+          timestamp: trace.createdAt?.toISOString?.() || trace.createdAt || new Date().toISOString(),
+          deprecatedTermsUsed: oc.deprecatedTermsUsed || [],
+        });
+
+        for (const dt of oc.deprecatedTermsUsed || []) {
+          const key = dt.term?.toLowerCase();
+          if (key) {
+            if (!topNonStandardMap[key]) topNonStandardMap[key] = { count: 0, shouldUse: dt.shouldUse };
+            topNonStandardMap[key].count++;
+          }
+        }
+      }
+
+      const scores = recentCompliance.map(c => c.score);
+      const averageScore = scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
+
+      let trend: "improving" | "declining" | "stable" = "stable";
+      if (scores.length >= 3) {
+        const recent = scores.slice(0, Math.ceil(scores.length / 2));
+        const older = scores.slice(Math.ceil(scores.length / 2));
+        const recentAvg = recent.reduce((a, b) => a + b, 0) / recent.length;
+        const olderAvg = older.reduce((a, b) => a + b, 0) / older.length;
+        if (recentAvg - olderAvg > 5) trend = "improving";
+        else if (olderAvg - recentAvg > 5) trend = "declining";
+      }
+
+      const topNonStandardTerms = Object.entries(topNonStandardMap)
+        .map(([term, data]) => ({ term, shouldUse: data.shouldUse, occurrences: data.count }))
+        .sort((a, b) => b.occurrences - a.occurrences)
+        .slice(0, 5);
+
+      res.json({
+        agentId: agent.id,
+        hasOntology: true,
+        requiredTerms,
+        deprecatedTerms: deprecatedTerms.slice(0, 20),
+        recentCompliance: recentCompliance.slice(0, 10),
+        averageScore,
+        trend,
+        topNonStandardTerms,
+      });
+    } catch (e) {
+      console.error("[ontology-compliance] Error:", e);
+      res.status(500).json({ error: "Failed to compute ontology compliance" });
+    }
+  });
+
   app.get("/api/eval-suites", async (_req, res) => {
     const suites = await storage.getEvalSuites();
     res.json(suites);

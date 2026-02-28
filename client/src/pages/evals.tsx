@@ -10,9 +10,9 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  FlaskConical, Search, TrendingUp, TrendingDown, Bot,
+  FlaskConical, Search, TrendingUp, TrendingDown, Bot, BookOpen,
   ArrowRight, Calendar, Tag, BarChart3, AlertTriangle, CheckCircle,
-  Clock, Loader2, Shield, ShieldAlert, Bug, Play, Factory, DollarSign, Lock, BookOpen, Brain,
+  Clock, Loader2, Shield, ShieldAlert, Bug, Play, Factory, DollarSign, Lock, Brain,
 } from "lucide-react";
 import {
   industryLabels, kpiDimensions, regulatoryTemplates, industryScorers,
@@ -560,6 +560,16 @@ export default function Evals() {
                                     {suite.type}
                                   </Badge>
                                 )}
+                                {(() => {
+                                  const agentForSuite = agents?.find(a => a.id === suite.agentId);
+                                  const agentTags = (agentForSuite?.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) || [];
+                                  if (agentTags.length === 0) return null;
+                                  return (
+                                    <Badge variant="outline" className="text-[9px] border-purple-400/40 text-purple-600 dark:text-purple-400" data-testid={`badge-ontology-scorer-${suite.id}`}>
+                                      <BookOpen className="w-2.5 h-2.5 mr-0.5" />Ontology
+                                    </Badge>
+                                  );
+                                })()}
                               </div>
                             </CardHeader>
                             <CardContent className="flex flex-col gap-3">
