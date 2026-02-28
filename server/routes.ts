@@ -217,6 +217,158 @@ export interface KpiReEvalResult {
   breached: boolean;
 }
 
+export function computeConstraintGraph(
+  outcome: {
+    riskTier?: string | null;
+    approvalGates?: any;
+    pricingModel?: string | null;
+    pricePerUnit?: number | null;
+    pricingTiers?: any;
+    slaConfig?: any;
+    maxDriftPercent?: number | null;
+    autoPauseTrigger?: boolean | null;
+    riskThreshold?: number | null;
+  },
+  kpis: Array<{
+    id: string;
+    name: string;
+    unit: string;
+    target: number;
+    slaThreshold?: number | null;
+    baseline?: number | null;
+    expression?: string | null;
+  }>
+): Record<string, any> {
+  const performanceConstraints: any[] = [];
+  const latencyConstraints: any[] = [];
+  const complianceConstraints: any[] = [];
+  const commercialConstraints: any[] = [];
+
+  for (const kpi of kpis) {
+    const nameLower = (kpi.name || "").toLowerCase();
+    const unitLower = (kpi.unit || "").toLowerCase();
+
+    if (nameLower.includes("latency") || nameLower.includes("response time") || nameLower.includes("processing time") || unitLower.includes("ms") || unitLower.includes("seconds")) {
+      latencyConstraints.push({
+        source: "kpi",
+        kpiId: kpi.id,
+        kpiName: kpi.name,
+        target: kpi.target,
+        slaThreshold: kpi.slaThreshold,
+        unit: kpi.unit,
+        expression: kpi.expression,
+        propagatesTo: ["agent_design", "deployment", "self_healing"],
+      });
+    } else if (
+      nameLower.includes("accuracy") || nameLower.includes("success") ||
+      nameLower.includes("rate") || nameLower.includes("score") ||
+      nameLower.includes("quality") || nameLower.includes("resolution") ||
+      unitLower === "percent" || unitLower === "%"
+    ) {
+      performanceConstraints.push({
+        source: "kpi",
+        kpiId: kpi.id,
+        kpiName: kpi.name,
+        target: kpi.target,
+        slaThreshold: kpi.slaThreshold,
+        unit: kpi.unit,
+        baseline: kpi.baseline,
+        expression: kpi.expression,
+        propagatesTo: ["agent_design", "eval_studio", "deployment", "self_healing"],
+      });
+    } else {
+      performanceConstraints.push({
+        source: "kpi",
+        kpiId: kpi.id,
+        kpiName: kpi.name,
+        target: kpi.target,
+        slaThreshold: kpi.slaThreshold,
+        unit: kpi.unit,
+        baseline: kpi.baseline,
+        expression: kpi.expression,
+        propagatesTo: ["agent_design", "eval_studio"],
+      });
+    }
+  }
+
+  const slaConfig = (outcome.slaConfig || {}) as Record<string, any>;
+  if (slaConfig.maxP95LatencyMs) {
+    latencyConstraints.push({
+      source: "sla_config",
+      metric: "maxP95LatencyMs",
+      value: slaConfig.maxP95LatencyMs,
+      unit: "ms",
+      propagatesTo: ["agent_design", "deployment", "self_healing"],
+    });
+  }
+
+  complianceConstraints.push({
+    source: "outcome",
+    riskTier: outcome.riskTier || "MEDIUM",
+    propagatesTo: ["agent_design", "deployment", "eval_studio"],
+  });
+
+  if (outcome.approvalGates) {
+    complianceConstraints.push({
+      source: "approval_gates",
+      gates: outcome.approvalGates,
+      propagatesTo: ["agent_design", "deployment"],
+    });
+  }
+
+  if (outcome.maxDriftPercent != null) {
+    complianceConstraints.push({
+      source: "drift_policy",
+      maxDriftPercent: outcome.maxDriftPercent,
+      autoPauseTrigger: outcome.autoPauseTrigger,
+      propagatesTo: ["self_healing", "deployment"],
+    });
+  }
+
+  if (outcome.riskThreshold != null) {
+    complianceConstraints.push({
+      source: "risk_threshold",
+      threshold: outcome.riskThreshold,
+      propagatesTo: ["agent_design", "eval_studio"],
+    });
+  }
+
+  if (outcome.pricingModel) {
+    commercialConstraints.push({
+      source: "pricing",
+      pricingModel: outcome.pricingModel,
+      pricePerUnit: outcome.pricePerUnit,
+      propagatesTo: ["deployment", "self_healing"],
+    });
+  }
+
+  if (outcome.pricingTiers) {
+    commercialConstraints.push({
+      source: "pricing_tiers",
+      tiers: outcome.pricingTiers,
+      propagatesTo: ["deployment"],
+    });
+  }
+
+  return {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    performanceConstraints,
+    latencyConstraints,
+    complianceConstraints,
+    commercialConstraints,
+    summary: {
+      totalConstraints: performanceConstraints.length + latencyConstraints.length + complianceConstraints.length + commercialConstraints.length,
+      categories: {
+        performance: performanceConstraints.length,
+        latency: latencyConstraints.length,
+        compliance: complianceConstraints.length,
+        commercial: commercialConstraints.length,
+      },
+    },
+  };
+}
+
 export async function recomputeOutcomeKpis(outcomeId: string): Promise<{
   updated: number;
   totalRuns: number;
@@ -280,6 +432,184 @@ export async function recomputeOutcomeKpis(outcomeId: string): Promise<{
   return { updated: changes.length, totalRuns: totalTraces, totalEvents: relevantEvents.length, changes, kpis: updatedKpis };
 }
 
+async function generateKpiAlignedEvalSuite(agentId: string, outcomeId: string): Promise<{ suite: any; testCases: any[] } | null> {
+  const outcome = await storage.getOutcome(outcomeId);
+  if (!outcome) return null;
+
+  const kpis = await storage.getKpisByOutcome(outcomeId);
+  if (kpis.length === 0) return null;
+
+  const agent = await storage.getAgent(agentId);
+  if (!agent) return null;
+
+  const testCases: Array<{ name: string; inputData: unknown; expectedOutput: unknown; tags: string[]; weight: number; origin: string; severity: string }> = [];
+
+  for (const kpi of kpis) {
+    const kpiNameLower = (kpi.name || "").toLowerCase();
+    const threshold = kpi.slaThreshold ?? kpi.target;
+    const target = kpi.target;
+    const unit = kpi.unit || "count";
+
+    const isPercentageKpi = kpiNameLower.includes("accuracy") || kpiNameLower.includes("rate") || kpiNameLower.includes("success") ||
+      unit.toLowerCase() === "percent" || unit === "%" || unit.toLowerCase() === "percentage";
+    const isLatencyKpi = kpiNameLower.includes("latency") || kpiNameLower.includes("time") || kpiNameLower.includes("response") ||
+      unit.toLowerCase() === "ms" || unit.toLowerCase() === "seconds";
+    const isVolumeKpi = kpiNameLower.includes("volume") || kpiNameLower.includes("count") || kpiNameLower.includes("throughput") ||
+      kpiNameLower.includes("processed") || kpiNameLower.includes("qualified");
+    const isCostKpi = kpiNameLower.includes("cost") || unit.toLowerCase() === "usd" || unit === "$";
+
+    if (isPercentageKpi) {
+      const belowThreshold = Math.max(0, threshold - 1);
+      const atThreshold = threshold;
+      const aboveThreshold = Math.min(100, threshold + 1);
+
+      testCases.push({
+        name: `${kpi.name} - Below SLA Boundary (${belowThreshold}${unit})`,
+        inputData: { type: "kpi_boundary_test", kpiName: kpi.name, kpiId: kpi.id, scenario: "below_threshold", simulatedValue: belowThreshold, threshold, target, unit },
+        expectedOutput: { slaBreached: true, expectedAction: "alert_and_escalate", kpiName: kpi.name, threshold },
+        tags: ["kpi_aligned", "sla_boundary", "below_threshold", kpi.name, `threshold_${threshold}`],
+        weight: 1.5,
+        origin: "kpi_aligned",
+        severity: "critical",
+      });
+      testCases.push({
+        name: `${kpi.name} - At SLA Threshold (${atThreshold}${unit})`,
+        inputData: { type: "kpi_boundary_test", kpiName: kpi.name, kpiId: kpi.id, scenario: "at_threshold", simulatedValue: atThreshold, threshold, target, unit },
+        expectedOutput: { slaBreached: false, marginOfSafety: 0, kpiName: kpi.name, threshold },
+        tags: ["kpi_aligned", "sla_boundary", "at_threshold", kpi.name, `threshold_${threshold}`],
+        weight: 1.2,
+        origin: "kpi_aligned",
+        severity: "high",
+      });
+      testCases.push({
+        name: `${kpi.name} - Above Target (${aboveThreshold}${unit})`,
+        inputData: { type: "kpi_boundary_test", kpiName: kpi.name, kpiId: kpi.id, scenario: "above_target", simulatedValue: aboveThreshold, threshold, target, unit },
+        expectedOutput: { slaBreached: false, withinTarget: true, kpiName: kpi.name, threshold },
+        tags: ["kpi_aligned", "sla_boundary", "above_target", kpi.name, `threshold_${threshold}`],
+        weight: 1.0,
+        origin: "kpi_aligned",
+        severity: "medium",
+      });
+    } else if (isLatencyKpi) {
+      const aboveThreshold = threshold + Math.ceil(threshold * 0.1);
+      const atThreshold = threshold;
+      const belowThreshold = Math.max(0, threshold - Math.ceil(threshold * 0.1));
+
+      testCases.push({
+        name: `${kpi.name} - Exceeds SLA (${aboveThreshold}${unit})`,
+        inputData: { type: "kpi_boundary_test", kpiName: kpi.name, kpiId: kpi.id, scenario: "exceeds_threshold", simulatedValue: aboveThreshold, threshold, target, unit },
+        expectedOutput: { slaBreached: true, expectedAction: "alert_latency_breach", kpiName: kpi.name, threshold },
+        tags: ["kpi_aligned", "sla_boundary", "exceeds_threshold", kpi.name, `threshold_${threshold}ms`],
+        weight: 1.5,
+        origin: "kpi_aligned",
+        severity: "critical",
+      });
+      testCases.push({
+        name: `${kpi.name} - At SLA Limit (${atThreshold}${unit})`,
+        inputData: { type: "kpi_boundary_test", kpiName: kpi.name, kpiId: kpi.id, scenario: "at_threshold", simulatedValue: atThreshold, threshold, target, unit },
+        expectedOutput: { slaBreached: false, marginOfSafety: 0, kpiName: kpi.name, threshold },
+        tags: ["kpi_aligned", "sla_boundary", "at_threshold", kpi.name, `threshold_${threshold}ms`],
+        weight: 1.2,
+        origin: "kpi_aligned",
+        severity: "high",
+      });
+      testCases.push({
+        name: `${kpi.name} - Within Target (${belowThreshold}${unit})`,
+        inputData: { type: "kpi_boundary_test", kpiName: kpi.name, kpiId: kpi.id, scenario: "within_target", simulatedValue: belowThreshold, threshold, target, unit },
+        expectedOutput: { slaBreached: false, withinTarget: true, kpiName: kpi.name, threshold },
+        tags: ["kpi_aligned", "sla_boundary", "within_target", kpi.name, `threshold_${threshold}ms`],
+        weight: 1.0,
+        origin: "kpi_aligned",
+        severity: "medium",
+      });
+    } else if (isVolumeKpi || isCostKpi) {
+      const belowTarget = Math.max(0, Math.floor(target * 0.9));
+      const atTarget = target;
+
+      testCases.push({
+        name: `${kpi.name} - Below Target (${belowTarget} ${unit})`,
+        inputData: { type: "kpi_boundary_test", kpiName: kpi.name, kpiId: kpi.id, scenario: "below_target", simulatedValue: belowTarget, threshold, target, unit },
+        expectedOutput: { targetMet: false, gap: target - belowTarget, kpiName: kpi.name, target },
+        tags: ["kpi_aligned", "target_boundary", "below_target", kpi.name, `target_${target}`],
+        weight: 1.2,
+        origin: "kpi_aligned",
+        severity: "high",
+      });
+      testCases.push({
+        name: `${kpi.name} - At Target (${atTarget} ${unit})`,
+        inputData: { type: "kpi_boundary_test", kpiName: kpi.name, kpiId: kpi.id, scenario: "at_target", simulatedValue: atTarget, threshold, target, unit },
+        expectedOutput: { targetMet: true, kpiName: kpi.name, target },
+        tags: ["kpi_aligned", "target_boundary", "at_target", kpi.name, `target_${target}`],
+        weight: 1.0,
+        origin: "kpi_aligned",
+        severity: "medium",
+      });
+    } else {
+      testCases.push({
+        name: `${kpi.name} - SLA Boundary Test`,
+        inputData: { type: "kpi_boundary_test", kpiName: kpi.name, kpiId: kpi.id, scenario: "boundary", simulatedValue: threshold, threshold, target, unit },
+        expectedOutput: { slaBreached: false, kpiName: kpi.name, threshold, target },
+        tags: ["kpi_aligned", "sla_boundary", kpi.name, `threshold_${threshold}`],
+        weight: 1.0,
+        origin: "kpi_aligned",
+        severity: "medium",
+      });
+      testCases.push({
+        name: `${kpi.name} - Below Threshold`,
+        inputData: { type: "kpi_boundary_test", kpiName: kpi.name, kpiId: kpi.id, scenario: "below_threshold", simulatedValue: threshold * 0.9, threshold, target, unit },
+        expectedOutput: { slaBreached: true, kpiName: kpi.name, threshold },
+        tags: ["kpi_aligned", "sla_boundary", "below_threshold", kpi.name],
+        weight: 1.5,
+        origin: "kpi_aligned",
+        severity: "critical",
+      });
+    }
+  }
+
+  const suite = await storage.createEvalSuite({
+    agentId,
+    name: `${agent.name} - KPI-Aligned Suite (${outcome.name})`,
+    type: "kpi_aligned",
+    totalCases: testCases.length,
+    coverageTags: ["kpi_aligned", "sla_boundary", "outcome_driven"],
+    ontologyTags: { kpiAligned: true, outcomeId, outcomeName: outcome.name, kpiCount: kpis.length, generatedAt: new Date().toISOString() },
+  });
+
+  const createdCases = [];
+  for (const tc of testCases) {
+    const created = await storage.createEvalTestCase({
+      suiteId: suite.id,
+      name: tc.name,
+      inputData: tc.inputData as Record<string, unknown>,
+      expectedOutput: tc.expectedOutput as Record<string, unknown>,
+      tags: tc.tags,
+      weight: tc.weight,
+      origin: tc.origin,
+      severity: tc.severity,
+    });
+    createdCases.push(created);
+  }
+
+  await storage.createAuditEvent({
+    actorType: "system",
+    actorId: "kpi_eval_generator",
+    action: "eval.kpi_suite_generated",
+    objectType: "eval",
+    objectId: suite.id,
+    details: JSON.stringify({
+      summary: `KPI-aligned eval suite generated for agent "${agent.name}" from outcome "${outcome.name}" with ${testCases.length} test cases covering ${kpis.length} KPIs`,
+      agentId,
+      outcomeId,
+      outcomeName: outcome.name,
+      kpiCount: kpis.length,
+      testCaseCount: testCases.length,
+    }),
+    ontologyTags: resolveOntologyTags("eval", "eval.kpi_suite_generated"),
+  });
+
+  return { suite, testCases: createdCases };
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -327,7 +657,8 @@ export async function registerRoutes(
   app.post("/api/outcomes", checkPermission("create_modify_outcomes"), async (req, res) => {
     try {
       const data = insertOutcomeContractSchema.parse(req.body);
-      const outcome = await storage.createOutcome(data);
+      const graph = computeConstraintGraph(data, []);
+      const outcome = await storage.createOutcome({ ...data, constraintGraph: graph });
       res.status(201).json(outcome);
     } catch (e) {
       handleZodError(res, e);
@@ -351,7 +682,9 @@ export async function registerRoutes(
           const [created] = await tx.insert(kpiDefinitions).values({ ...kpi, outcomeId: outcome.id }).returning();
           createdKpis.push(created);
         }
-        return { outcome, kpis: createdKpis };
+        const graph = computeConstraintGraph(outcome, createdKpis);
+        const [updatedOutcome] = await tx.update(outcomeContracts).set({ constraintGraph: graph }).where(eq(outcomeContracts.id, outcome.id)).returning();
+        return { outcome: updatedOutcome, kpis: createdKpis };
       });
       res.status(201).json(result);
     } catch (e) {
@@ -362,9 +695,179 @@ export async function registerRoutes(
   app.patch("/api/outcomes/:id", async (req, res) => {
     try {
       const data = insertOutcomeContractSchema.partial().parse(req.body);
+      const existing = await storage.getOutcome(req.params.id);
+      if (!existing) return res.status(404).json({ message: "Not found" });
+
+      const slaFieldsChanged = !!(
+        (data.riskTier !== undefined && data.riskTier !== existing.riskTier) ||
+        (data.slaConfig !== undefined && JSON.stringify(data.slaConfig) !== JSON.stringify(existing.slaConfig)) ||
+        (data.riskThreshold !== undefined && data.riskThreshold !== existing.riskThreshold) ||
+        (data.maxDriftPercent !== undefined && data.maxDriftPercent !== existing.maxDriftPercent) ||
+        (data.autoPauseTrigger !== undefined && data.autoPauseTrigger !== existing.autoPauseTrigger) ||
+        (data.approvalGates !== undefined && JSON.stringify(data.approvalGates) !== JSON.stringify(existing.approvalGates))
+      );
+
       const updated = await storage.updateOutcome(req.params.id, data);
       if (!updated) return res.status(404).json({ message: "Not found" });
-      res.json(updated);
+      const kpis = await storage.getKpisByOutcome(req.params.id);
+      const graph = computeConstraintGraph(updated, kpis);
+      const withGraph = await storage.updateOutcome(req.params.id, { constraintGraph: graph });
+      const finalOutcome = withGraph || updated;
+
+      if (slaFieldsChanged) {
+        const allAgents = await storage.getAgents();
+        const boundAgents = allAgents.filter(a => a.outcomeId === req.params.id);
+        const nonCompliantAgents: Array<{ agentId: string; agentName: string; violations: Array<{ constraint: string; current: string; required: string; severity: string }> }> = [];
+        const RISK_LEVELS: Record<string, number> = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
+        const newRiskTier = finalOutcome.riskTier || "MEDIUM";
+        const newSlaConfig = (finalOutcome.slaConfig || {}) as Record<string, any>;
+
+        for (const agent of boundAgents) {
+          const violations: Array<{ constraint: string; current: string; required: string; severity: string }> = [];
+          if ((RISK_LEVELS[agent.riskTier] || 2) < (RISK_LEVELS[newRiskTier] || 2)) {
+            violations.push({ constraint: "Risk Tier", current: agent.riskTier, required: newRiskTier, severity: "critical" });
+          }
+          if (newSlaConfig.maxP95LatencyMs && agent.avgLatencyMs && agent.avgLatencyMs > newSlaConfig.maxP95LatencyMs) {
+            violations.push({ constraint: "P95 Latency", current: `${agent.avgLatencyMs}ms`, required: `<${newSlaConfig.maxP95LatencyMs}ms`, severity: "warning" });
+          }
+          for (const kpi of kpis) {
+            if (kpi.slaThreshold) {
+              const kpiNameLower = (kpi.name || "").toLowerCase();
+              if (agent.successRate != null && (kpiNameLower.includes("success") || kpiNameLower.includes("accuracy") || kpiNameLower.includes("rate"))) {
+                const agentRate = (agent.successRate || 0) * 100;
+                if (agentRate < kpi.slaThreshold) {
+                  violations.push({ constraint: `KPI: ${kpi.name}`, current: `${agentRate.toFixed(1)}%`, required: `>=${kpi.slaThreshold}%`, severity: "warning" });
+                }
+              }
+            }
+          }
+          if (data.autoPauseTrigger && !existing.autoPauseTrigger) {
+            if (agent.status === "active" && (agent.healthScore || 100) < ((finalOutcome.riskThreshold || 0.8) * 100)) {
+              violations.push({ constraint: "Auto-Pause Trigger", current: `Health ${agent.healthScore}%`, required: `>=${((finalOutcome.riskThreshold || 0.8) * 100).toFixed(0)}%`, severity: "warning" });
+            }
+          }
+          if (violations.length > 0) {
+            nonCompliantAgents.push({ agentId: agent.id, agentName: agent.name, violations });
+          }
+        }
+
+        const changedFields: string[] = [];
+        if (data.riskTier !== undefined && data.riskTier !== existing.riskTier) changedFields.push(`riskTier: ${existing.riskTier} -> ${data.riskTier}`);
+        if (data.riskThreshold !== undefined && data.riskThreshold !== existing.riskThreshold) changedFields.push(`riskThreshold: ${existing.riskThreshold} -> ${data.riskThreshold}`);
+        if (data.maxDriftPercent !== undefined && data.maxDriftPercent !== existing.maxDriftPercent) changedFields.push(`maxDriftPercent: ${existing.maxDriftPercent} -> ${data.maxDriftPercent}`);
+        if (data.autoPauseTrigger !== undefined && data.autoPauseTrigger !== existing.autoPauseTrigger) changedFields.push(`autoPauseTrigger: ${existing.autoPauseTrigger} -> ${data.autoPauseTrigger}`);
+        if (data.slaConfig !== undefined) changedFields.push("slaConfig updated");
+        if (data.approvalGates !== undefined) changedFields.push("approvalGates updated");
+
+        await storage.createAuditEvent({
+          actorType: "user",
+          actorId: "system",
+          action: "outcome.sla_renegotiated",
+          objectType: "outcome",
+          objectId: req.params.id,
+          details: JSON.stringify({
+            changedFields,
+            boundAgentCount: boundAgents.length,
+            nonCompliantCount: nonCompliantAgents.length,
+            nonCompliantAgents: nonCompliantAgents.map(a => ({ agentId: a.agentId, agentName: a.agentName, violationCount: a.violations.length })),
+          }),
+          ontologyTags: resolveOntologyTags("outcome", "outcome.sla_renegotiated"),
+        });
+
+        for (const agent of nonCompliantAgents) {
+          await storage.createAuditEvent({
+            actorType: "system",
+            actorId: "outcome_engine",
+            action: "agent.outcome_sla_review_required",
+            objectType: "agent",
+            objectId: agent.agentId,
+            details: JSON.stringify({
+              outcomeId: req.params.id,
+              outcomeName: finalOutcome.name,
+              violations: agent.violations,
+              message: `Outcome SLA updated — agent "${agent.agentName}" needs reconfiguration`,
+            }),
+            ontologyTags: resolveOntologyTags("agent", "agent.outcome_sla_review_required"),
+          });
+        }
+
+        res.json({ ...finalOutcome, _downstreamImpact: { boundAgentCount: boundAgents.length, nonCompliantAgents } });
+        return;
+      }
+
+      res.json(finalOutcome);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  app.get("/api/outcomes/:id/downstream-impact", async (req, res) => {
+    try {
+      const outcome = await storage.getOutcome(req.params.id);
+      if (!outcome) return res.status(404).json({ message: "Not found" });
+
+      const allAgents = await storage.getAgents();
+      const boundAgents = allAgents.filter(a => a.outcomeId === req.params.id);
+      const kpis = await storage.getKpisByOutcome(req.params.id);
+      const auditEventsAll = await storage.getAuditEvents();
+
+      const slaRenegotiationEvents = auditEventsAll.filter(
+        e => e.action === "outcome.sla_renegotiated" && e.objectId === req.params.id
+      ).sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+
+      const reviewRequiredEvents = auditEventsAll.filter(
+        e => e.action === "agent.outcome_sla_review_required" &&
+        boundAgents.some(a => a.id === e.objectId)
+      ).sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+
+      const RISK_LEVELS: Record<string, number> = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
+      const outcomeRiskLevel = RISK_LEVELS[outcome.riskTier || "MEDIUM"] || 2;
+      const slaConfig = (outcome.slaConfig || {}) as Record<string, any>;
+
+      const agentAssessments = boundAgents.map(agent => {
+        const violations: Array<{ constraint: string; current: string; required: string; severity: string }> = [];
+        if ((RISK_LEVELS[agent.riskTier] || 2) < outcomeRiskLevel) {
+          violations.push({ constraint: "Risk Tier", current: agent.riskTier, required: outcome.riskTier || "MEDIUM", severity: "critical" });
+        }
+        if (slaConfig.maxP95LatencyMs && agent.avgLatencyMs && agent.avgLatencyMs > slaConfig.maxP95LatencyMs) {
+          violations.push({ constraint: "P95 Latency", current: `${agent.avgLatencyMs}ms`, required: `<${slaConfig.maxP95LatencyMs}ms`, severity: "warning" });
+        }
+        for (const kpi of kpis) {
+          if (kpi.slaThreshold) {
+            const kpiNameLower = (kpi.name || "").toLowerCase();
+            if (agent.successRate != null && (kpiNameLower.includes("success") || kpiNameLower.includes("accuracy") || kpiNameLower.includes("rate"))) {
+              const agentRate = (agent.successRate || 0) * 100;
+              if (agentRate < kpi.slaThreshold) {
+                violations.push({ constraint: `KPI: ${kpi.name}`, current: `${agentRate.toFixed(1)}%`, required: `>=${kpi.slaThreshold}%`, severity: "warning" });
+              }
+            }
+          }
+        }
+        const lastReviewEvent = reviewRequiredEvents.find(e => e.objectId === agent.id);
+        return {
+          agentId: agent.id,
+          agentName: agent.name,
+          agentRiskTier: agent.riskTier,
+          agentStatus: agent.status,
+          violations,
+          needsReview: violations.length > 0,
+          lastFlagged: lastReviewEvent?.createdAt || null,
+        };
+      });
+
+      res.json({
+        outcomeId: req.params.id,
+        outcomeName: outcome.name,
+        outcomeRiskTier: outcome.riskTier,
+        boundAgentCount: boundAgents.length,
+        nonCompliantCount: agentAssessments.filter(a => a.needsReview).length,
+        agents: agentAssessments,
+        recentSlaChanges: slaRenegotiationEvents.slice(0, 10).map(e => {
+          let details: any = {};
+          try { details = typeof e.details === "string" ? JSON.parse(e.details) : (e.details || {}); } catch {}
+          return { id: e.id, timestamp: e.createdAt, details };
+        }),
+      });
     } catch (e) {
       handleZodError(res, e);
     }
@@ -1302,10 +1805,21 @@ export async function registerRoutes(
         ontologyTags: resolveOntologyTags("agent", "eval_baseline_enqueued", { agentOntologyTags: agentOntologyTags }),
       });
 
+      let kpiSuiteResult = null;
+      if (agent.outcomeId) {
+        try {
+          kpiSuiteResult = await generateKpiAlignedEvalSuite(agent.id, agent.outcomeId);
+        } catch (kpiErr) {
+          console.error("[kpi-eval] KPI-aligned eval suite generation failed:", kpiErr);
+        }
+      }
+
       res.status(201).json({
         ...agent,
         suiteId: suite.id,
         jobId: evalJob.id,
+        kpiAlignedSuiteId: kpiSuiteResult?.suite?.id || null,
+        kpiAlignedTestCases: kpiSuiteResult?.testCases?.length || 0,
       });
     } catch (e) {
       handleZodError(res, e);
@@ -1446,7 +1960,147 @@ export async function registerRoutes(
         }
       }
 
-      res.json({ ...updated, reEvaluationTriggered: !!reEvaluation, kpiReEvaluation: reEvaluation });
+      let kpiSuiteResult = null;
+      const outcomeNewlyBound = updated.outcomeId && (!existing.outcomeId || existing.outcomeId !== updated.outcomeId);
+      if (outcomeNewlyBound) {
+        try {
+          kpiSuiteResult = await generateKpiAlignedEvalSuite(updated.id, updated.outcomeId!);
+        } catch (kpiErr) {
+          console.error("[kpi-eval] KPI-aligned eval suite generation on binding failed:", kpiErr);
+        }
+      }
+
+      res.json({
+        ...updated,
+        reEvaluationTriggered: !!reEvaluation,
+        kpiReEvaluation: reEvaluation,
+        kpiAlignedSuiteId: kpiSuiteResult?.suite?.id || null,
+        kpiAlignedTestCases: kpiSuiteResult?.testCases?.length || 0,
+      });
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  app.post("/api/agents/:id/validate-config", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+
+      const proposedChanges = req.body;
+      const violations: Array<{ constraint: string; current: string; proposed: string; severity: string }> = [];
+
+      if (!agent.outcomeId) {
+        return res.json({ valid: true, violations: [] });
+      }
+
+      const outcome = await storage.getOutcome(agent.outcomeId);
+      if (!outcome) {
+        return res.json({ valid: true, violations: [] });
+      }
+
+      const kpis = await storage.getKpisByOutcome(agent.outcomeId);
+      const constraintGraph = outcome.constraintGraph as any;
+
+      const riskTierOrder: Record<string, number> = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
+      if (proposedChanges.riskTier && proposedChanges.riskTier !== agent.riskTier) {
+        const outcomeRiskLevel = riskTierOrder[outcome.riskTier] || 2;
+        const proposedRiskLevel = riskTierOrder[proposedChanges.riskTier] || 2;
+        if (proposedRiskLevel < outcomeRiskLevel) {
+          violations.push({
+            constraint: `Outcome "${outcome.name}" requires minimum risk tier: ${outcome.riskTier}`,
+            current: agent.riskTier,
+            proposed: proposedChanges.riskTier,
+            severity: "critical",
+          });
+        }
+      }
+
+      if (proposedChanges.autonomyMode && proposedChanges.autonomyMode !== agent.autonomyMode) {
+        const autonomyOrder: Record<string, number> = { assisted: 1, supervised: 2, autonomous: 3 };
+        const currentLevel = autonomyOrder[agent.autonomyMode] || 1;
+        const proposedLevel = autonomyOrder[proposedChanges.autonomyMode] || 1;
+        const outcomeRiskLevel = riskTierOrder[outcome.riskTier] || 2;
+        if (proposedLevel > currentLevel && outcomeRiskLevel >= 3) {
+          violations.push({
+            constraint: `Outcome "${outcome.name}" has ${outcome.riskTier} risk tier — increasing autonomy requires review`,
+            current: agent.autonomyMode,
+            proposed: proposedChanges.autonomyMode,
+            severity: "warning",
+          });
+        }
+      }
+
+      if (proposedChanges.modelName && proposedChanges.modelName !== agent.modelName) {
+        const highAccuracyKpis = kpis.filter(k => {
+          const name = (k.name || "").toLowerCase();
+          return (name.includes("accuracy") || name.includes("success") || name.includes("rate")) && k.slaThreshold && k.slaThreshold >= 99;
+        });
+        if (highAccuracyKpis.length > 0) {
+          const currentModel = (agent.modelName || "").toLowerCase();
+          const proposedModel = (proposedChanges.modelName || "").toLowerCase();
+          const premiumModels = ["gpt-4.1", "gpt-4o", "gpt-4", "claude-3-opus", "claude-3.5-sonnet"];
+          const isPremiumCurrent = premiumModels.some(m => currentModel.includes(m));
+          const isPremiumProposed = premiumModels.some(m => proposedModel.includes(m));
+          if (isPremiumCurrent && !isPremiumProposed) {
+            violations.push({
+              constraint: `KPI "${highAccuracyKpis[0].name}" requires SLA >= ${highAccuracyKpis[0].slaThreshold}% — downgrading model may breach SLA`,
+              current: agent.modelName || "unknown",
+              proposed: proposedChanges.modelName,
+              severity: "critical",
+            });
+          }
+        }
+      }
+
+      if (proposedChanges.toolsConfig !== undefined) {
+        const currentTools = Array.isArray(agent.toolsConfig) ? agent.toolsConfig : [];
+        const proposedTools = Array.isArray(proposedChanges.toolsConfig) ? proposedChanges.toolsConfig : [];
+        const currentToolNames = new Set(currentTools.map((t: any) => t.name || t));
+        const removedTools = currentTools.filter((t: any) => !proposedTools.some((pt: any) => (pt.name || pt) === (t.name || t)));
+        if (removedTools.length > 0 && kpis.length > 0) {
+          violations.push({
+            constraint: `Removing ${removedTools.length} tool(s) may affect outcome KPI performance`,
+            current: `${currentTools.length} tools configured`,
+            proposed: `${proposedTools.length} tools configured`,
+            severity: "warning",
+          });
+        }
+      }
+
+      if (proposedChanges.status === "paused" || proposedChanges.status === "retired" || proposedChanges.status === "decommissioning") {
+        const activeKpis = kpis.filter(k => k.currentValue && k.slaThreshold && k.currentValue >= k.slaThreshold * 0.9);
+        if (activeKpis.length > 0) {
+          violations.push({
+            constraint: `Agent is actively contributing to ${activeKpis.length} KPI(s) near or above SLA threshold — deactivating may cause SLA breach`,
+            current: agent.status,
+            proposed: proposedChanges.status,
+            severity: "warning",
+          });
+        }
+      }
+
+      if (constraintGraph && typeof constraintGraph === "object") {
+        const compConstraints = (constraintGraph as any).complianceConstraints;
+        if (Array.isArray(compConstraints) && compConstraints.length > 0) {
+          if (proposedChanges.complianceTags !== undefined) {
+            const proposedTags = Array.isArray(proposedChanges.complianceTags) ? proposedChanges.complianceTags : [];
+            const currentTags = Array.isArray(agent.complianceTags) ? agent.complianceTags : [];
+            const removedTags = currentTags.filter((t: string) => !proposedTags.includes(t));
+            if (removedTags.length > 0) {
+              violations.push({
+                constraint: `Outcome has compliance constraints — removing compliance tags may violate requirements`,
+                current: currentTags.join(", ") || "none",
+                proposed: proposedTags.join(", ") || "none",
+                severity: "warning",
+              });
+            }
+          }
+        }
+      }
+
+      const valid = violations.filter(v => v.severity === "critical").length === 0;
+      res.json({ valid, violations });
     } catch (e) {
       handleZodError(res, e);
     }
@@ -5945,6 +6599,110 @@ Guidelines:
 
       const severityOrder: Record<string, number> = { critical: 0, warning: 1, watch: 2 };
       alerts.sort((a, b) => (severityOrder[a.severity] ?? 3) - (severityOrder[b.severity] ?? 3));
+
+      const existingPipelines = await storage.getHealingPipelines();
+      const createdPipelineIds = new Set<string>();
+
+      for (const alert of alerts) {
+        if (alert.severity !== "critical") continue;
+
+        const dedupKey = `${alert.agentId}::${id}`;
+        const alreadyExists = existingPipelines.some(p =>
+          p.triggerSource === "outcome_sla_breach" &&
+          p.agentId === alert.agentId &&
+          p.outcomeId === id &&
+          p.status !== "resolved"
+        ) || createdPipelineIds.has(dedupKey);
+        if (alreadyExists) {
+          const existing = existingPipelines.find(p =>
+            p.triggerSource === "outcome_sla_breach" &&
+            p.agentId === alert.agentId &&
+            p.outcomeId === id &&
+            p.status !== "resolved"
+          );
+          if (existing) {
+            (alert as any).healingPipelineId = existing.id;
+          }
+          continue;
+        }
+
+        const breachedKpis = alert.threatenedKpis.filter(tk => tk.headroom <= 0);
+        const breachDescription = breachedKpis.length > 0
+          ? breachedKpis.map(tk => `${tk.kpiName}: ${tk.currentValue}${tk.unit === "percent" || tk.unit === "%" ? "%" : " " + tk.unit} (SLA: ${tk.slaThreshold})`).join("; ")
+          : alert.threatenedKpis.map(tk => `${tk.kpiName}: headroom ${tk.headroom.toFixed(1)}`).join("; ");
+
+        const pipeline = await storage.createHealingPipeline({
+          title: `SLA Breach: ${alert.agentName} — ${alert.driftMetric} drift ${alert.driftPercent}%`,
+          agentId: alert.agentId,
+          agentName: alert.agentName,
+          industry: outcome.riskTier === "CRITICAL" ? "financial_services" : "financial_services",
+          severity: "critical",
+          issueType: "sla_breach",
+          issueDescription: `Outcome SLA breach detected. ${breachDescription}. Agent ${alert.driftMetric} drifted by ${alert.driftPercent}% from baseline.`,
+          stage: "detected",
+          status: "active",
+          priority: "critical",
+          triggerSource: "outcome_sla_breach",
+          outcomeId: id,
+          diagnosisDetails: {},
+          hypothesis: {},
+          businessImpact: {},
+          remediation: {},
+          industryGuardrails: [],
+          experimentConfig: {},
+          experimentResults: {},
+          resolution: {},
+        });
+        (alert as any).healingPipelineId = pipeline.id;
+        createdPipelineIds.add(dedupKey);
+      }
+
+      for (const alert of alerts) {
+        if (alert.severity === "critical") continue;
+        if (alert.severity !== "warning") continue;
+
+        const headrooms = alert.threatenedKpis.map(tk => {
+          const sla = tk.slaThreshold > 0 ? tk.slaThreshold : 1;
+          return (tk.headroom / sla) * 100;
+        });
+        const minHeadroomPct = Math.min(...headrooms);
+
+        if (minHeadroomPct < 5) {
+          const warnDedupKey = `${alert.agentId}::${id}`;
+          const alreadyExists = existingPipelines.some(p =>
+            p.triggerSource === "outcome_sla_breach" &&
+            p.agentId === alert.agentId &&
+            p.outcomeId === id &&
+            p.status !== "resolved"
+          ) || createdPipelineIds.has(warnDedupKey);
+          if (!alreadyExists) {
+            const pipeline = await storage.createHealingPipeline({
+              title: `SLA At Risk: ${alert.agentName} — ${alert.driftMetric} drift ${alert.driftPercent}%`,
+              agentId: alert.agentId,
+              agentName: alert.agentName,
+              industry: "financial_services",
+              severity: "high",
+              issueType: "sla_headroom_low",
+              issueDescription: `SLA headroom below 5%. ${alert.threatenedKpis.map(tk => `${tk.kpiName}: headroom ${tk.headroom.toFixed(1)}`).join("; ")}`,
+              stage: "detected",
+              status: "active",
+              priority: "high",
+              triggerSource: "outcome_sla_breach",
+              outcomeId: id,
+              diagnosisDetails: {},
+              hypothesis: {},
+              businessImpact: {},
+              remediation: {},
+              industryGuardrails: [],
+              experimentConfig: {},
+              experimentResults: {},
+              resolution: {},
+            });
+            (alert as any).healingPipelineId = pipeline.id;
+            createdPipelineIds.add(warnDedupKey);
+          }
+        }
+      }
 
       const summary = {
         critical: alerts.filter(a => a.severity === "critical").length,
@@ -19761,6 +20519,8 @@ Respond in JSON:
   app.get("/api/healing-pipelines", async (req, res) => {
     try {
       const pipelines = await storage.getHealingPipelines();
+      const priorityOrder: Record<string, number> = { critical: 0, high: 1, normal: 2 };
+      pipelines.sort((a, b) => (priorityOrder[a.priority || "normal"] ?? 2) - (priorityOrder[b.priority || "normal"] ?? 2));
       res.json(pipelines);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });

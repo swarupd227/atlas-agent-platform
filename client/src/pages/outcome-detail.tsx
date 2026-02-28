@@ -573,6 +573,31 @@ export default function OutcomeDetail() {
     queryKey: ["/api/ontology-concepts/all"],
   });
 
+  const { data: downstreamImpact } = useQuery<{
+    outcomeId: string;
+    outcomeName: string;
+    outcomeRiskTier: string;
+    boundAgentCount: number;
+    nonCompliantCount: number;
+    agents: Array<{
+      agentId: string;
+      agentName: string;
+      agentRiskTier: string;
+      agentStatus: string;
+      violations: Array<{ constraint: string; current: string; required: string; severity: string }>;
+      needsReview: boolean;
+      lastFlagged: string | null;
+    }>;
+    recentSlaChanges: Array<{
+      id: string;
+      timestamp: string;
+      details: any;
+    }>;
+  }>({
+    queryKey: ["/api/outcomes", outcomeId, "downstream-impact"],
+    enabled: !!outcomeId,
+  });
+
   const { data: pageProposalData } = useQuery<any>({
     queryKey: ["/api/agent-proposals", outcomeId],
     queryFn: async () => {
@@ -677,6 +702,7 @@ export default function OutcomeDetail() {
       }>;
       recommendedAction: string;
       detectedAt: string;
+      healingPipelineId?: string;
     }>;
     summary: { critical: number; warning: number; watch: number; total: number };
   }>({
@@ -1306,14 +1332,112 @@ export default function OutcomeDetail() {
                     </div>
                     <p className="text-[10px] text-muted-foreground italic">{alert.recommendedAction}</p>
                   </div>
-                  <Link href={`/agents/${alert.agentId}`} data-testid={`link-view-agent-${alert.agentId}`}>
-                    <Button variant="ghost" size="sm" className="shrink-0" data-testid={`button-view-agent-${alert.agentId}`}>
-                      View Agent <ArrowRight className="w-3 h-3 ml-1" />
+                  <div className="flex flex-col gap-1 shrink-0">
+                    {alert.healingPipelineId && (
+                      <Link href="/healing-operations" data-testid={`link-healing-${alert.alertId}`}>
+                        <Button variant="outline" size="sm" className="w-full" data-testid={`button-healing-${alert.alertId}`}>
+                          <Wrench className="w-3 h-3 mr-1" /> Healing Pipeline
+                        </Button>
+                      </Link>
+                    )}
+                    <Link href={`/agents/${alert.agentId}`} data-testid={`link-view-agent-${alert.agentId}`}>
+                      <Button variant="ghost" size="sm" className="shrink-0" data-testid={`button-view-agent-${alert.agentId}`}>
+                        View Agent <ArrowRight className="w-3 h-3 ml-1" />
+                      </Button>
+                    </Link>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {downstreamImpact && downstreamImpact.nonCompliantCount > 0 && (
+        <Card
+          className="border border-amber-500/50 bg-amber-500/5"
+          data-testid="banner-downstream-impact"
+        >
+          <CardContent className="p-4 space-y-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 bg-amber-500/10">
+                  <AlertTriangle className="w-4 h-4 text-amber-500" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold flex items-center gap-2" data-testid="text-downstream-impact-title">
+                    Downstream Impact
+                    <Badge variant="outline" className="text-[9px] border-amber-500/50 text-amber-600" data-testid="badge-noncompliant-count">
+                      {downstreamImpact.nonCompliantCount} agent{downstreamImpact.nonCompliantCount !== 1 ? "s" : ""} need review
+                    </Badge>
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">
+                    SLA changes affect bound agents — {downstreamImpact.nonCompliantCount} of {downstreamImpact.boundAgentCount} agent{downstreamImpact.boundAgentCount !== 1 ? "s" : ""} no longer meet updated constraints
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="flex flex-col gap-2 ml-10">
+              {downstreamImpact.agents.filter(a => a.needsReview).map((agent) => (
+                <div
+                  key={agent.agentId}
+                  className="flex items-start gap-3 p-2.5 rounded-md border border-amber-500/20 bg-amber-500/5"
+                  data-testid={`downstream-agent-${agent.agentId}`}
+                >
+                  <Bot className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
+                  <div className="flex-1 min-w-0 space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Link href={`/agents/${agent.agentId}`} data-testid={`link-downstream-agent-${agent.agentId}`}>
+                        <span className="text-xs font-medium text-primary hover:underline cursor-pointer">{agent.agentName}</span>
+                      </Link>
+                      <Badge variant="outline" className="text-[9px]">{agent.agentRiskTier}</Badge>
+                      <Badge variant="outline" className="text-[9px]">{agent.agentStatus}</Badge>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {agent.violations.map((v, i) => (
+                        <div key={i} className="flex items-center gap-1 text-[10px]">
+                          <Badge
+                            variant={v.severity === "critical" ? "destructive" : "outline"}
+                            className="text-[9px]"
+                            data-testid={`badge-downstream-violation-${agent.agentId}-${i}`}
+                          >
+                            {v.severity}
+                          </Badge>
+                          <span className="font-medium">{v.constraint}:</span>
+                          <span className="text-muted-foreground">{v.current}</span>
+                          <ArrowRight className="w-2.5 h-2.5 text-muted-foreground" />
+                          <span>{v.required}</span>
+                        </div>
+                      ))}
+                    </div>
+                    {agent.lastFlagged && (
+                      <p className="text-[10px] text-muted-foreground">Flagged {relativeTime(agent.lastFlagged)}</p>
+                    )}
+                  </div>
+                  <Link href={`/agents/${agent.agentId}`}>
+                    <Button variant="outline" size="sm" data-testid={`button-review-agent-${agent.agentId}`}>
+                      Review <ArrowRight className="w-3 h-3 ml-1" />
                     </Button>
                   </Link>
                 </div>
               ))}
             </div>
+            {downstreamImpact.recentSlaChanges.length > 0 && (
+              <div className="ml-10 mt-1">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Recent SLA Changes</p>
+                <div className="flex flex-col gap-1">
+                  {downstreamImpact.recentSlaChanges.slice(0, 3).map((change) => (
+                    <div key={change.id} className="text-[10px] text-muted-foreground flex items-center gap-1.5">
+                      <History className="w-3 h-3 shrink-0" />
+                      <span>{relativeTime(change.timestamp)}</span>
+                      {change.details?.changedFields && (
+                        <span>— {(change.details.changedFields as string[]).join(", ")}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
@@ -1419,6 +1543,10 @@ export default function OutcomeDetail() {
           <TabsTrigger value="financial-ledger" data-testid="tab-financial-ledger">Financial Ledger</TabsTrigger>
           <TabsTrigger value="evidence-vault" data-testid="tab-evidence-vault">Evidence Vault</TabsTrigger>
           <TabsTrigger value="risk-remediation" data-testid="tab-risk-remediation">Risk & Remediation</TabsTrigger>
+          <TabsTrigger value="constraint-graph" data-testid="tab-constraint-graph">
+            <Network className="w-3.5 h-3.5 mr-1.5" />
+            Constraint Graph
+          </TabsTrigger>
         </TabsList>
 
         {/* Tab 1: KPI Delivery */}
@@ -2701,6 +2829,172 @@ export default function OutcomeDetail() {
               )}
             </>
           )}
+        </TabsContent>
+
+        <TabsContent value="constraint-graph" className="space-y-6" data-testid="tabcontent-constraint-graph">
+          {(() => {
+            const cg = outcome?.constraintGraph as any;
+            const propagationTargetLabels: Record<string, { label: string; icon: typeof Target }> = {
+              agent_design: { label: "Agent Design", icon: Bot },
+              eval_studio: { label: "Eval Studio", icon: FlaskConical },
+              deployment: { label: "Deployment", icon: Rocket },
+              self_healing: { label: "Self-Healing", icon: Wrench },
+            };
+            const categories = [
+              {
+                key: "performanceConstraints",
+                label: "Performance Constraints",
+                icon: Gauge,
+                color: "text-emerald-500",
+                bgColor: "bg-emerald-500/10",
+                borderColor: "border-emerald-500/20",
+                description: "KPIs with percentage, accuracy, or quality targets",
+                items: cg?.performanceConstraints || [],
+              },
+              {
+                key: "latencyConstraints",
+                label: "Latency Constraints",
+                icon: Clock,
+                color: "text-blue-500",
+                bgColor: "bg-blue-500/10",
+                borderColor: "border-blue-500/20",
+                description: "Time-based metrics and response time SLAs",
+                items: cg?.latencyConstraints || [],
+              },
+              {
+                key: "complianceConstraints",
+                label: "Compliance Constraints",
+                icon: Shield,
+                color: "text-amber-500",
+                bgColor: "bg-amber-500/10",
+                borderColor: "border-amber-500/20",
+                description: "Risk tier, approval gates, and regulatory requirements",
+                items: cg?.complianceConstraints || [],
+              },
+              {
+                key: "commercialConstraints",
+                label: "Commercial Constraints",
+                icon: DollarSign,
+                color: "text-violet-500",
+                bgColor: "bg-violet-500/10",
+                borderColor: "border-violet-500/20",
+                description: "Pricing model, unit economics, and billing tiers",
+                items: cg?.commercialConstraints || [],
+              },
+            ];
+
+            return (
+              <>
+                <div className="flex items-center justify-between gap-4 flex-wrap">
+                  <div>
+                    <h2 className="text-lg font-semibold" data-testid="text-constraint-graph-title">Constraint Graph</h2>
+                    <p className="text-sm text-muted-foreground">
+                      Typed constraint decomposition showing how outcome requirements propagate to downstream systems
+                    </p>
+                  </div>
+                  {cg?.generatedAt && (
+                    <Badge variant="outline" data-testid="badge-constraint-graph-generated">
+                      <Clock className="w-3 h-3 mr-1" />
+                      Generated {relativeTime(cg.generatedAt)}
+                    </Badge>
+                  )}
+                </div>
+
+                {cg?.summary && (
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    {categories.map((cat) => {
+                      const CatIcon = cat.icon;
+                      return (
+                        <Card key={cat.key} data-testid={`card-constraint-summary-${cat.key}`}>
+                          <CardContent className="flex items-center gap-3 p-4">
+                            <div className={`w-9 h-9 rounded-md flex items-center justify-center ${cat.bgColor}`}>
+                              <CatIcon className={`w-4.5 h-4.5 ${cat.color}`} />
+                            </div>
+                            <div>
+                              <p className="text-2xl font-bold">{cat.items.length}</p>
+                              <p className="text-xs text-muted-foreground">{cat.label.replace(" Constraints", "")}</p>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {!cg ? (
+                  <Card>
+                    <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
+                      <Network className="w-10 h-10 text-muted-foreground/40" />
+                      <p className="text-sm text-muted-foreground">No constraint graph generated yet</p>
+                      <p className="text-xs text-muted-foreground">Update the outcome or add KPIs to auto-generate the constraint graph</p>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <div className="grid gap-4 md:grid-cols-2">
+                    {categories.map((cat) => {
+                      const CatIcon = cat.icon;
+                      return (
+                        <Card key={cat.key} data-testid={`card-constraint-category-${cat.key}`}>
+                          <CardHeader className="flex flex-row items-center gap-2 pb-3">
+                            <div className={`w-8 h-8 rounded-md flex items-center justify-center ${cat.bgColor}`}>
+                              <CatIcon className={`w-4 h-4 ${cat.color}`} />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <CardTitle className="text-sm font-semibold">{cat.label}</CardTitle>
+                              <p className="text-xs text-muted-foreground">{cat.description}</p>
+                            </div>
+                            <Badge variant="secondary" className="text-[10px]">{cat.items.length}</Badge>
+                          </CardHeader>
+                          <CardContent className="space-y-3">
+                            {cat.items.length === 0 ? (
+                              <p className="text-xs text-muted-foreground py-2">No constraints in this category</p>
+                            ) : (
+                              cat.items.map((item: any, idx: number) => (
+                                <div key={idx} className={`rounded-md border p-3 space-y-2 ${cat.borderColor}`} data-testid={`constraint-item-${cat.key}-${idx}`}>
+                                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                                    <span className="text-sm font-medium">
+                                      {item.kpiName || item.metric || item.riskTier || item.pricingModel || item.source}
+                                    </span>
+                                    <Badge variant="outline" className="text-[10px]">{item.source}</Badge>
+                                  </div>
+                                  <div className="flex items-center gap-3 flex-wrap text-xs text-muted-foreground">
+                                    {item.target != null && <span>Target: <strong className="text-foreground">{item.target}{item.unit === "percent" || item.unit === "%" ? "%" : ` ${item.unit || ""}`}</strong></span>}
+                                    {item.slaThreshold != null && <span>SLA: <strong className="text-foreground">{item.slaThreshold}{item.unit === "percent" || item.unit === "%" ? "%" : ` ${item.unit || ""}`}</strong></span>}
+                                    {item.value != null && <span>Value: <strong className="text-foreground">{item.value} {item.unit || ""}</strong></span>}
+                                    {item.riskTier && <span>Risk: <strong className="text-foreground">{item.riskTier}</strong></span>}
+                                    {item.maxDriftPercent != null && <span>Max Drift: <strong className="text-foreground">{item.maxDriftPercent}%</strong></span>}
+                                    {item.threshold != null && <span>Threshold: <strong className="text-foreground">{item.threshold}</strong></span>}
+                                    {item.pricingModel && <span>Model: <strong className="text-foreground">{item.pricingModel}</strong></span>}
+                                    {item.pricePerUnit != null && <span>Unit Price: <strong className="text-foreground">${item.pricePerUnit}</strong></span>}
+                                  </div>
+                                  {item.propagatesTo && item.propagatesTo.length > 0 && (
+                                    <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                                      <ArrowRight className="w-3 h-3 text-muted-foreground" />
+                                      {item.propagatesTo.map((target: string) => {
+                                        const info = propagationTargetLabels[target];
+                                        if (!info) return null;
+                                        const TargetIcon = info.icon;
+                                        return (
+                                          <Badge key={target} variant="secondary" className="text-[10px] gap-1" data-testid={`badge-propagation-${target}`}>
+                                            <TargetIcon className="w-3 h-3" />
+                                            {info.label}
+                                          </Badge>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                              ))
+                            )}
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </TabsContent>
       </Tabs>
 

@@ -33,6 +33,7 @@ export const outcomeContracts = pgTable("outcome_contracts", {
   riskThreshold: real("risk_threshold").default(0.8),
   maxDriftPercent: real("max_drift_percent").default(10),
   autoPauseTrigger: boolean("auto_pause_trigger").default(false),
+  constraintGraph: jsonb("constraint_graph"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -1756,6 +1757,9 @@ export const healingPipelines = pgTable("healing_pipelines", {
   experimentResults: jsonb("experiment_results").notNull().default(sql`'{}'::jsonb`),
   resolution: jsonb("resolution").notNull().default(sql`'{}'::jsonb`),
   status: text("status").notNull().default("active"),
+  priority: text("priority").notNull().default("normal"),
+  triggerSource: text("trigger_source"),
+  outcomeId: varchar("outcome_id"),
   resolvedAt: timestamp("resolved_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });

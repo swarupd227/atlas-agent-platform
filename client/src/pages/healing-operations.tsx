@@ -53,6 +53,7 @@ import {
   FlaskConical,
   Rocket,
   FileCheck,
+  Target,
 } from "lucide-react";
 
 const PIPELINE_STAGES = [
@@ -389,6 +390,8 @@ export default function HealingOperations() {
           p.agentName.toLowerCase().includes(q)
       );
     }
+    const priorityOrder: Record<string, number> = { critical: 0, high: 1, normal: 2 };
+    list = [...list].sort((a, b) => (priorityOrder[a.priority || "normal"] ?? 2) - (priorityOrder[b.priority || "normal"] ?? 2));
     return list;
   }, [pipelines, statusFilter, searchQuery]);
 
@@ -549,12 +552,26 @@ export default function HealingOperations() {
                     <ChevronRight className="w-3 h-3 text-muted-foreground mt-1" />
                   </div>
                   <div className="flex flex-wrap items-center gap-1 mt-2">
+                    {p.priority && p.priority !== "normal" && (
+                      <Badge
+                        variant={p.priority === "critical" ? "destructive" : "default"}
+                        className={`text-[10px] ${p.priority === "critical" ? "bg-red-600/90 text-white" : "bg-orange-500/90 text-white"}`}
+                        data-testid={`badge-priority-${p.id}`}
+                      >
+                        {p.priority === "critical" ? "P0" : "P1"} {p.priority}
+                      </Badge>
+                    )}
                     <Badge variant={getSeverityVariant(p.severity)} className={`text-[10px] ${getSeverityColor(p.severity)}`} data-testid={`badge-severity-${p.id}`}>
                       {p.severity}
                     </Badge>
                     <Badge variant="outline" className={`text-[10px] ${getStageColor(p.stage)}`} data-testid={`badge-stage-${p.id}`}>
                       {p.stage}
                     </Badge>
+                    {p.triggerSource === "outcome_sla_breach" && (
+                      <Badge variant="outline" className="text-[10px] border-red-500/50 text-red-600 dark:text-red-400" data-testid={`badge-trigger-${p.id}`}>
+                        SLA Breach
+                      </Badge>
+                    )}
                     <Badge variant="outline" className={`text-[10px] ${getIndustryColor(p.industry)}`} data-testid={`badge-industry-${p.id}`}>
                       {p.industry.replace("_", " ")}
                     </Badge>
@@ -593,12 +610,33 @@ export default function HealingOperations() {
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
+                  {selected.priority && selected.priority !== "normal" && (
+                    <Badge
+                      variant={selected.priority === "critical" ? "destructive" : "default"}
+                      className={selected.priority === "critical" ? "bg-red-600/90 text-white" : "bg-orange-500/90 text-white"}
+                      data-testid="badge-selected-priority"
+                    >
+                      {selected.priority === "critical" ? "P0" : "P1"} {selected.priority}
+                    </Badge>
+                  )}
                   <Badge variant={getSeverityVariant(selected.severity)} className={getSeverityColor(selected.severity)} data-testid="badge-selected-severity">
                     {selected.severity}
                   </Badge>
                   <Badge variant="outline" className={getStageColor(selected.stage)} data-testid="badge-selected-stage">
                     {selected.stage}
                   </Badge>
+                  {selected.triggerSource === "outcome_sla_breach" && (
+                    <Badge variant="outline" className="border-red-500/50 text-red-600 dark:text-red-400" data-testid="badge-selected-trigger">
+                      SLA Breach
+                    </Badge>
+                  )}
+                  {selected.outcomeId && (
+                    <Link href={`/outcomes/${selected.outcomeId}`}>
+                      <Button variant="outline" size="sm" data-testid="button-view-outcome">
+                        <Target className="w-3 h-3 mr-1" /> View Outcome
+                      </Button>
+                    </Link>
+                  )}
                 </div>
               </div>
 

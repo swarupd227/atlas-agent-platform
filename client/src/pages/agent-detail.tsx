@@ -762,6 +762,34 @@ function AgentDetailInner() {
   const [templateComplexity, setTemplateComplexity] = useState("medium");
   const [templateIcon, setTemplateIcon] = useState("bot");
 
+  const [constraintViolationDialogOpen, setConstraintViolationDialogOpen] = useState(false);
+  const [constraintViolations, setConstraintViolations] = useState<Array<{ constraint: string; current: string; proposed: string; severity: string }>>([]);
+  const [pendingConfigChange, setPendingConfigChange] = useState<{ changes: Record<string, any>; onConfirm: () => void } | null>(null);
+
+  const validateAndApplyConfig = async (changes: Record<string, any>, applyFn: () => void) => {
+    if (!agent?.outcomeId) {
+      applyFn();
+      return;
+    }
+    try {
+      const res = await fetch(`/api/agents/${agentId}/validate-config`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(changes),
+      });
+      const result = await res.json();
+      if (result.violations && result.violations.length > 0) {
+        setConstraintViolations(result.violations);
+        setPendingConfigChange({ changes, onConfirm: applyFn });
+        setConstraintViolationDialogOpen(true);
+      } else {
+        applyFn();
+      }
+    } catch {
+      applyFn();
+    }
+  };
+
   const [retireDialogOpen, setRetireDialogOpen] = useState(false);
   const [retireReason, setRetireReason] = useState("");
   const [replacementAgentId, setReplacementAgentId] = useState("");
@@ -854,6 +882,19 @@ function AgentDetailInner() {
     enabled: !!agentId,
   });
 
+  const { data: outcomeSlaReviewEvents } = useQuery<Array<{ id: string; action: string; objectId: string | null; details: any; createdAt?: string }>>({
+    queryKey: ["/api/agents", agentId, "sla-review-events"],
+    queryFn: async () => {
+      const res = await fetch("/api/audit-events");
+      if (!res.ok) return [];
+      const all = await res.json();
+      return all.filter((e: any) =>
+        e.action === "agent.outcome_sla_review_required" && e.objectId === agentId
+      ).sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+    },
+    enabled: !!agentId && !!agent?.outcomeId,
+  });
+
   const [replacementProposal, setReplacementProposal] = useState<any>(null);
   const [lastReEvaluation, setLastReEvaluation] = useState<{
     timestamp: string;
@@ -917,7 +958,7 @@ function AgentDetailInner() {
   const [rtInterval, setRtInterval] = useState<number>(existingRtConfig?.scheduleIntervalMinutes || 0);
   const [rtEditing, setRtEditing] = useState(false);
 
-  const rtConfigMutation = useMutation({
+  const rtConfigMutationInner = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("PATCH", `/api/agents/${agentId}`, {
         runtimeConfig: {
@@ -935,6 +976,13 @@ function AgentDetailInner() {
       toast({ title: "Failed to save runtime config", description: err.message, variant: "destructive" });
     },
   });
+  const rtConfigMutation = {
+    ...rtConfigMutationInner,
+    mutate: () => {
+      const changes = { runtimeConfig: { prompt: rtPrompt.trim(), scheduleIntervalMinutes: rtInterval } };
+      validateAndApplyConfig(changes, () => rtConfigMutationInner.mutate());
+    },
+  };
 
   const { data: deployRecommendation } = useQuery<{
     agentId: string;
@@ -1103,7 +1151,7 @@ function AgentDetailInner() {
     onError: () => toast({ title: "Failed to complete retirement", variant: "destructive" }),
   });
 
-  const retireMutation = useMutation({
+  const retireMutationInner = useMutation({
     mutationFn: async (data: { status: string; description?: string }) => {
       const res = await apiRequest("PATCH", `/api/agents/${agentId}`, data);
       return res.json();
@@ -1114,6 +1162,12 @@ function AgentDetailInner() {
       handlePatchReEvaluation(data, "Agent status updated");
     },
   });
+  const retireMutation = {
+    ...retireMutationInner,
+    mutate: (data: { status: string; description?: string }) => {
+      validateAndApplyConfig(data, () => retireMutationInner.mutate(data));
+    },
+  };
 
   const applyRecMutation = useMutation({
     mutationFn: async (id: string) => {
@@ -1255,6 +1309,64 @@ function AgentDetailInner() {
         </div>
       </div>
 
+      {outcomeSlaReviewEvents && outcomeSlaReviewEvents.length > 0 && (() => {
+        const latestEvent = outcomeSlaReviewEvents[0];
+        let parsedDetails: any = {};
+        try { parsedDetails = typeof latestEvent.details === "string" ? JSON.parse(latestEvent.details) : (latestEvent.details || {}); } catch {}
+        const violations: Array<{ constraint: string; current: string; required: string; severity: string }> = parsedDetails.violations || [];
+        const hasCritical = violations.some(v => v.severity === "critical");
+        return (
+          <Card
+            className={`border ${hasCritical ? "border-destructive/50 bg-destructive/5" : "border-amber-500/50 bg-amber-500/5"}`}
+            data-testid="banner-outcome-sla-review"
+          >
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${hasCritical ? "bg-destructive/10" : "bg-amber-500/10"}`}>
+                    <AlertTriangle className={`w-4 h-4 ${hasCritical ? "text-destructive" : "text-amber-500"}`} />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold" data-testid="text-sla-review-title">
+                      Outcome SLA Updated — Review Your Agent Configuration
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {parsedDetails.outcomeName ? `"${parsedDetails.outcomeName}" ` : ""}constraints have changed since this agent was last configured
+                    </p>
+                  </div>
+                </div>
+                {outcome && (
+                  <Link href={`/outcomes/${outcome.id}`}>
+                    <Button variant="outline" size="sm" data-testid="button-review-outcome-sla">
+                      <Eye className="w-3 h-3 mr-1" /> Review Outcome
+                    </Button>
+                  </Link>
+                )}
+              </div>
+              {violations.length > 0 && (
+                <div className="flex flex-col gap-1.5 mt-3 pl-10">
+                  {violations.map((v, i) => (
+                    <div key={i} className="flex items-center gap-2 text-xs">
+                      <Badge
+                        variant={v.severity === "critical" ? "destructive" : "outline"}
+                        className="text-[9px]"
+                        data-testid={`badge-violation-severity-${i}`}
+                      >
+                        {v.severity}
+                      </Badge>
+                      <span className="font-medium" data-testid={`text-violation-constraint-${i}`}>{v.constraint}:</span>
+                      <span className="text-muted-foreground">current {v.current}</span>
+                      <ArrowRight className="w-3 h-3 text-muted-foreground" />
+                      <span>required {v.required}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        );
+      })()}
+
       <div className="flex items-center gap-2 flex-wrap">
         <Select
           value={agent.currentVersion || "1.0.0"}
@@ -1284,13 +1396,16 @@ function AgentDetailInner() {
         <Select
           value={agent.environment || "staging"}
           onValueChange={async (val) => {
-            try {
-              await apiRequest("PATCH", `/api/agents/${agentId}`, { environment: val });
-              queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId] });
-              toast({ title: `Environment changed to ${val}`, description: val === "production" ? "Agent is now in production environment" : `Agent moved to ${val}` });
-            } catch (err: any) {
-              toast({ title: "Failed to change environment", description: err.message, variant: "destructive" });
-            }
+            const applyChange = async () => {
+              try {
+                await apiRequest("PATCH", `/api/agents/${agentId}`, { environment: val });
+                queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId] });
+                toast({ title: `Environment changed to ${val}`, description: val === "production" ? "Agent is now in production environment" : `Agent moved to ${val}` });
+              } catch (err: any) {
+                toast({ title: "Failed to change environment", description: err.message, variant: "destructive" });
+              }
+            };
+            validateAndApplyConfig({ environment: val }, applyChange);
           }}
         >
           <SelectTrigger className="w-auto" data-testid="select-environment">
@@ -2099,7 +2214,10 @@ function AgentDetailInner() {
                       </div>
                       <div className="flex flex-col min-w-0">
                         <span className="text-xs font-medium truncate">{suite.name}</span>
-                        <span className="text-[11px] text-muted-foreground">{suite.totalCases} cases | {suite.type}</span>
+                        <span className="text-[11px] text-muted-foreground flex items-center gap-1">
+                          {suite.totalCases} cases | {suite.type}
+                          {suite.type === "kpi_aligned" && <span className="px-1 py-0.5 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 text-[9px] font-medium rounded">KPI-Aligned</span>}
+                        </span>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -5048,6 +5166,53 @@ function AgentDetailInner() {
             >
               {initiateRetirementMutation.isPending ? "Processing..." : "Begin Retirement"}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={constraintViolationDialogOpen} onOpenChange={(open) => { setConstraintViolationDialogOpen(open); if (!open) setPendingConfigChange(null); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldAlert className="w-4 h-4 text-amber-500" />
+              Outcome Constraint Violations
+            </DialogTitle>
+            <DialogDescription>
+              The proposed configuration change conflicts with bound outcome constraints. Review the violations below before proceeding.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-3 max-h-[300px] overflow-y-auto" data-testid="constraint-violations-list">
+            {constraintViolations.map((v, i) => (
+              <div key={i} className={`flex flex-col gap-1.5 p-3 rounded-md border ${v.severity === "critical" ? "bg-red-500/10 border-red-500/30" : "bg-amber-500/10 border-amber-500/30"}`} data-testid={`constraint-violation-${i}`}>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Badge variant={v.severity === "critical" ? "destructive" : "outline"} className="text-[10px] uppercase" data-testid={`badge-violation-severity-${i}`}>
+                    {v.severity === "critical" ? <XCircle className="w-3 h-3 mr-0.5" /> : <AlertTriangle className="w-3 h-3 mr-0.5" />}
+                    {v.severity}
+                  </Badge>
+                </div>
+                <p className="text-xs font-medium" data-testid={`text-violation-constraint-${i}`}>{v.constraint}</p>
+                <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                  <span>Current: <strong>{v.current}</strong></span>
+                  <ArrowRight className="w-3 h-3" />
+                  <span>Proposed: <strong>{v.proposed}</strong></span>
+                </div>
+              </div>
+            ))}
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => { setConstraintViolationDialogOpen(false); setPendingConfigChange(null); }} data-testid="button-cancel-constraint-override">
+              Cancel
+            </Button>
+            {constraintViolations.every(v => v.severity !== "critical") ? (
+              <Button variant="default" onClick={() => { setConstraintViolationDialogOpen(false); pendingConfigChange?.onConfirm(); setPendingConfigChange(null); }} data-testid="button-confirm-constraint-override">
+                Proceed Anyway
+              </Button>
+            ) : (
+              <Button variant="destructive" onClick={() => { setConstraintViolationDialogOpen(false); pendingConfigChange?.onConfirm(); setPendingConfigChange(null); }} data-testid="button-force-constraint-override">
+                <ShieldAlert className="w-3.5 h-3.5 mr-1" />
+                Override Critical Constraint
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -107,6 +107,7 @@ const typeLabels: Record<string, string> = {
   smoke: "Smoke",
   benchmark: "Benchmark",
   adversarial: "Adversarial",
+  kpi_aligned: "KPI-Aligned",
 };
 
 const scorerTypeConfig: Record<string, { label: string; icon: typeof CheckSquare; description: string }> = {
@@ -478,6 +479,12 @@ export default function EvalDetail() {
                 {typeLabels[suite.type] || suite.type}
               </Badge>
             )}
+            {(suite.type === "kpi_aligned" || (suite.ontologyTags && typeof suite.ontologyTags === "object" && (suite.ontologyTags as Record<string, unknown>).kpiAligned)) && (
+              <Badge variant="outline" className="text-[11px] bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/20" data-testid="badge-kpi-aligned">
+                <Target className="w-3 h-3 mr-1" />
+                KPI-Aligned
+              </Badge>
+            )}
           </div>
         </div>
         <Button
@@ -544,6 +551,51 @@ export default function EvalDetail() {
           );
         })()}
       </div>
+
+      {(() => {
+        const ontTags = suite.ontologyTags as Record<string, unknown> | null;
+        if (suite.type !== "kpi_aligned" && !(ontTags && ontTags.kpiAligned)) return null;
+        const outcomeName = ontTags?.outcomeName as string || "Linked Outcome";
+        const kpiCount = ontTags?.kpiCount as number || 0;
+        const generatedAt = ontTags?.generatedAt as string || "";
+        const kpiAlignedCases = testCases?.filter(tc => tc.origin === "kpi_aligned") || [];
+        const criticalCases = kpiAlignedCases.filter(tc => tc.severity === "critical");
+        const highCases = kpiAlignedCases.filter(tc => tc.severity === "high");
+        return (
+          <Card data-testid="card-kpi-aligned-info">
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+              <div className="flex items-center gap-2">
+                <Target className="w-4 h-4 text-purple-500" />
+                <CardTitle className="text-sm font-medium">KPI-Aligned Eval Suite</CardTitle>
+              </div>
+              <Badge variant="outline" className="text-[11px] bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/20" data-testid="badge-kpi-source">
+                Auto-generated from Outcome KPIs
+              </Badge>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-2">
+              <p className="text-sm text-muted-foreground" data-testid="text-kpi-aligned-description">
+                This eval suite was automatically generated from <span className="font-medium text-foreground">{outcomeName}</span> with <span className="font-medium text-foreground">{kpiCount} KPI{kpiCount !== 1 ? "s" : ""}</span>. Test cases target SLA boundary conditions to verify agent behavior at threshold limits.
+              </p>
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-xs text-muted-foreground" data-testid="text-kpi-case-count">{kpiAlignedCases.length} boundary test cases</span>
+                {criticalCases.length > 0 && (
+                  <Badge variant="outline" className="text-[10px] bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20" data-testid="badge-critical-cases">
+                    {criticalCases.length} critical
+                  </Badge>
+                )}
+                {highCases.length > 0 && (
+                  <Badge variant="outline" className="text-[10px] bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20" data-testid="badge-high-cases">
+                    {highCases.length} high severity
+                  </Badge>
+                )}
+                {generatedAt && (
+                  <span className="text-xs text-muted-foreground" data-testid="text-kpi-generated-at">Generated {formatDate(generatedAt)}</span>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       {(() => {
         const resultsJson = latestRun?.resultsJson as Record<string, any> | null;
@@ -713,6 +765,11 @@ export default function EvalDetail() {
                       <TableCell className="font-medium text-sm">
                         <span className="flex items-center gap-1.5">
                           {tc.name}
+                          {tc.origin === "kpi_aligned" && (
+                            <Badge variant="outline" className="text-[9px] bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/20 shrink-0" data-testid={`badge-kpi-origin-${tc.id}`}>
+                              KPI
+                            </Badge>
+                          )}
                           {testCaseOntologyIssues.has(tc.id) && (
                             <Tooltip>
                               <TooltipTrigger asChild>
