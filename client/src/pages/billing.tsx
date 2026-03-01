@@ -30,6 +30,11 @@ import {
   Wrench,
   Server,
   Zap,
+  Database,
+  Target,
+  RefreshCw,
+  ArrowUpRight,
+  Sparkles,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -199,6 +204,37 @@ interface MarginAlerts {
   warningCount: number;
 }
 
+interface FlywheelMetrics {
+  summary: {
+    totalGroundTruth: number;
+    positiveLabels: number;
+    negativeLabels: number;
+    goldenPromotions: number;
+    acceptanceRate: number;
+  };
+  monthlyGrowth: Array<{ month: string; positive: number; negative: number; total: number }>;
+  acceptanceTrend: Array<{ month: string; rate: number; totalEvents: number; accepted: number }>;
+  outcomeStatus: Array<{
+    outcomeId: string;
+    outcomeName: string;
+    groundTruthCases: number;
+    acceptanceRate: number;
+    evalPassRate: number;
+  }>;
+}
+
+interface AcceptancePatterns {
+  industries: Array<{
+    industry: string;
+    acceptanceRate: number;
+    totalEvents: number;
+    topRejectionReasons: Array<{ reason: string; count: number; percentOfRejections: number }>;
+    topDisputeCategories: Array<{ category: string; count: number }>;
+    distinctiveFailureModes: Array<{ reason: string; industryRate: number; overallRate: number; overRepresentationFactor: number }>;
+  }>;
+  overallAcceptanceRate: number;
+}
+
 const COLORS = ["hsl(var(--chart-1))", "hsl(var(--chart-2))", "hsl(var(--chart-3))", "hsl(var(--chart-4))", "hsl(var(--chart-5))"];
 
 export default function Billing() {
@@ -242,6 +278,16 @@ export default function Billing() {
   const { data: marginAlerts } = useQuery<MarginAlerts>({
     queryKey: [`/api/billing/margin-alerts?period=${marginPeriod}`],
     enabled: activeTab === "margins",
+  });
+
+  const { data: flywheelMetrics, isLoading: flywheelLoading } = useQuery<FlywheelMetrics>({
+    queryKey: ["/api/flywheel/metrics"],
+    enabled: activeTab === "flywheel",
+  });
+
+  const { data: acceptancePatterns } = useQuery<AcceptancePatterns>({
+    queryKey: ["/api/flywheel/acceptance-patterns"],
+    enabled: activeTab === "flywheel",
   });
 
   const isLoading = dashboardLoading || invoicesLoading;
@@ -353,6 +399,7 @@ export default function Billing() {
           <TabsTrigger value="invoices" data-testid="tab-invoices">Invoices</TabsTrigger>
           <TabsTrigger value="disputes" data-testid="tab-disputes">Disputes</TabsTrigger>
           <TabsTrigger value="margins" data-testid="tab-margins">Margins</TabsTrigger>
+          <TabsTrigger value="flywheel" data-testid="tab-flywheel">Ground Truth Flywheel</TabsTrigger>
         </TabsList>
 
         <TabsContent value="metering" className="mt-0">
@@ -783,6 +830,24 @@ export default function Billing() {
               marginAlerts={marginAlerts}
               marginPeriod={marginPeriod}
               setMarginPeriod={setMarginPeriod}
+            />
+          )}
+        </TabsContent>
+
+        <TabsContent value="flywheel" className="mt-0">
+          {flywheelLoading ? (
+            <div className="flex flex-col gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <Card key={i}><CardContent className="p-4"><Skeleton className="h-20 w-full" /></CardContent></Card>
+                ))}
+              </div>
+              <Card><CardContent className="p-4"><Skeleton className="h-64 w-full" /></CardContent></Card>
+            </div>
+          ) : (
+            <FlywheelTabContent
+              metrics={flywheelMetrics}
+              patterns={acceptancePatterns}
             />
           )}
         </TabsContent>
@@ -1596,6 +1661,228 @@ function InvoiceDetailView({
           onOpenChange={(open) => { if (!open) setSelectedTraceId(null); }}
         />
       )}
+    </div>
+  );
+}
+
+function FlywheelTabContent({
+  metrics,
+  patterns,
+}: {
+  metrics?: FlywheelMetrics;
+  patterns?: AcceptancePatterns;
+}) {
+  const { toast } = useToast();
+
+  const syncMutation = useMutation({
+    mutationFn: async (outcomeId: string) => {
+      const res = await apiRequest("POST", `/api/outcomes/${outcomeId}/sync-eval-feedback`, { days: 30 });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      toast({ title: "Feedback Synced", description: `Created ${data.created} ground truth cases` });
+      queryClient.invalidateQueries({ queryKey: ["/api/flywheel/metrics"] });
+    },
+  });
+
+  const s = metrics?.summary;
+
+  return (
+    <div className="flex flex-col gap-4" data-testid="section-flywheel">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+        <StatCard
+          title="Total Ground Truth"
+          value={s?.totalGroundTruth ?? 0}
+          icon={Database}
+          testId="stat-total-ground-truth"
+        />
+        <StatCard
+          title="Positive Labels"
+          value={s?.positiveLabels ?? 0}
+          icon={CheckCircle}
+          testId="stat-positive-labels"
+        />
+        <StatCard
+          title="Negative Labels"
+          value={s?.negativeLabels ?? 0}
+          icon={XCircle}
+          testId="stat-negative-labels"
+        />
+        <StatCard
+          title="Golden Promotions"
+          value={s?.goldenPromotions ?? 0}
+          icon={Sparkles}
+          testId="stat-golden-promotions"
+        />
+        <StatCard
+          title="Acceptance Rate"
+          value={`${(s?.acceptanceRate ?? 0).toFixed(1)}%`}
+          icon={Target}
+          testId="stat-flywheel-acceptance"
+        />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Ground Truth Growth</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {metrics?.monthlyGrowth && metrics.monthlyGrowth.length > 0 ? (
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={metrics.monthlyGrowth}>
+                  <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
+                  <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 11 }} />
+                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
+                  <Bar dataKey="positive" name="Positive" stackId="gt" fill="hsl(var(--chart-2))" radius={[0, 0, 0, 0]} />
+                  <Bar dataKey="negative" name="Negative" stackId="gt" fill="hsl(var(--chart-1))" radius={[4, 4, 0, 0]} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-12 gap-2">
+                <Database className="w-8 h-8 text-muted-foreground/40" />
+                <p className="text-xs text-muted-foreground">No ground truth data yet. Sync production feedback to start building.</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Acceptance Rate Trend</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {metrics?.acceptanceTrend && metrics.acceptanceTrend.length > 0 ? (
+              <ResponsiveContainer width="100%" height={220}>
+                <AreaChart data={metrics.acceptanceTrend}>
+                  <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
+                  <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 11 }} domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
+                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} formatter={(v: number) => [`${v.toFixed(1)}%`, "Acceptance Rate"]} />
+                  <Area type="monotone" dataKey="rate" name="Acceptance Rate" stroke="hsl(var(--chart-2))" fill="hsl(var(--chart-2))" fillOpacity={0.15} />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-12 gap-2">
+                <TrendingUp className="w-8 h-8 text-muted-foreground/40" />
+                <p className="text-xs text-muted-foreground">No acceptance trend data yet</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {patterns && patterns.industries.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Cross-Industry Acceptance Patterns</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {patterns.industries.map((ind) => (
+                <div key={ind.industry} className="border rounded-lg p-3 flex flex-col gap-2" data-testid={`card-industry-${ind.industry}`}>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium capitalize">{ind.industry.replace(/_/g, " ")}</span>
+                    <Badge variant={ind.acceptanceRate >= 80 ? "default" : ind.acceptanceRate >= 60 ? "secondary" : "destructive"}>
+                      {ind.acceptanceRate.toFixed(1)}%
+                    </Badge>
+                  </div>
+                  <div className="text-xs text-muted-foreground">{ind.totalEvents.toLocaleString()} events</div>
+                  {ind.topRejectionReasons.length > 0 && (
+                    <div className="flex flex-col gap-1 mt-1">
+                      <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Top Rejections</span>
+                      {ind.topRejectionReasons.slice(0, 3).map((r) => (
+                        <div key={r.reason} className="flex items-center justify-between text-xs">
+                          <span className="truncate max-w-[140px]">{r.reason.replace(/_/g, " ")}</span>
+                          <span className="text-muted-foreground">{r.count}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {ind.distinctiveFailureModes.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {ind.distinctiveFailureModes.slice(0, 2).map((fm) => (
+                        <Badge key={fm.reason} variant="outline" className="text-[10px]">
+                          {fm.reason.replace(/_/g, " ")} ({fm.overRepresentationFactor.toFixed(1)}x)
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      <Card>
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-sm font-medium">Per-Outcome Flywheel Status</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {metrics?.outcomeStatus && metrics.outcomeStatus.length > 0 ? (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Outcome</TableHead>
+                  <TableHead className="text-right">Ground Truth Cases</TableHead>
+                  <TableHead className="text-right">Acceptance Rate</TableHead>
+                  <TableHead className="text-right">Eval Pass Rate</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {metrics.outcomeStatus.map((os) => (
+                  <TableRow key={os.outcomeId} data-testid={`row-flywheel-${os.outcomeId}`}>
+                    <TableCell>
+                      <Link href={`/outcomes/${os.outcomeId}`} className="text-sm hover:underline text-primary">
+                        {os.outcomeName}
+                      </Link>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <span className="text-sm">{os.groundTruthCases}</span>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Badge variant={os.acceptanceRate >= 80 ? "default" : os.acceptanceRate >= 60 ? "secondary" : "destructive"}>
+                        {os.acceptanceRate.toFixed(1)}%
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {os.evalPassRate > 0 ? (
+                        <span className="text-sm">{os.evalPassRate.toFixed(1)}%</span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => syncMutation.mutate(os.outcomeId)}
+                        disabled={syncMutation.isPending}
+                        data-testid={`button-sync-${os.outcomeId}`}
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 mr-1 ${syncMutation.isPending ? "animate-spin" : ""}`} />
+                        <span className="text-xs">Sync</span>
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-12 gap-3">
+              <Target className="w-10 h-10 text-muted-foreground/40" />
+              <p className="text-sm text-muted-foreground">No outcome flywheel data available</p>
+              <p className="text-xs text-muted-foreground">Create outcomes and run agents to start building ground truth</p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

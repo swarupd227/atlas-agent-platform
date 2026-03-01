@@ -1161,6 +1161,14 @@ export async function registerRoutes(
       const recentEvents = allEvents.filter(e => e.createdAt && new Date(e.createdAt) >= cutoffDate);
 
       const rejectedEvents = recentEvents.filter(e => !e.billable && e.excludeReason);
+      const acceptedEvents = recentEvents
+        .filter(e => e.billable === true)
+        .sort((a, b) => {
+          const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return bTime - aTime;
+        })
+        .slice(0, 20);
       const allDisputes = await storage.getBillingDisputes();
       const outcomeDisputes = allDisputes.filter(d =>
         d.outcomeId === outcomeId && (d.status === "resolved" || d.status === "upheld")
@@ -1226,6 +1234,7 @@ export async function registerRoutes(
             eventType: ev.type,
             payload: ev.payload,
             scenario: "rejected_outcome_event",
+            groundTruthLabel: "negative",
           },
           expectedOutput: {
             shouldPass: false,
@@ -1261,6 +1270,7 @@ export async function registerRoutes(
             payload: linkedEvent?.payload,
             disputeCategory: dispute.category,
             scenario: "billing_dispute",
+            groundTruthLabel: "negative",
           },
           expectedOutput: {
             shouldPass: false,
@@ -1277,6 +1287,36 @@ export async function registerRoutes(
         createdCases.push(tc);
       }
 
+      let acceptedCreatedCount = 0;
+      for (const ev of acceptedEvents) {
+        if (existingOriginIds.has(ev.id)) continue;
+
+        const tc = await storage.createEvalTestCase({
+          suiteId: suiteId,
+          name: `Production Accepted: ${ev.type} (billable)`,
+          inputData: {
+            type: "production_feedback",
+            sourceEventId: ev.id,
+            traceId: ev.traceId,
+            agentId: ev.agentId,
+            eventType: ev.type,
+            payload: ev.payload,
+            scenario: "accepted_outcome_event",
+            groundTruthLabel: "positive",
+          },
+          expectedOutput: {
+            shouldPass: true,
+            expectedBehavior: `Agent output was accepted and billed successfully. This represents correct agent behavior for event type: ${ev.type}.`,
+          },
+          tags: ["production_feedback", "ground_truth", "accepted_event"],
+          weight: 1.0,
+          origin: "production_feedback",
+          severity: "low",
+        });
+        createdCases.push(tc);
+        acceptedCreatedCount++;
+      }
+
       if (createdCases.length > 0) {
         const currentCases = await storage.getEvalTestCases(suiteId);
         await storage.updateEvalSuite(suiteId, { totalCases: currentCases.length });
@@ -1288,7 +1328,9 @@ export async function registerRoutes(
         created: createdCases.length,
         fromRejectedEvents: rejectedEvents.filter(e => !existingOriginIds.has(e.id)).length,
         fromDisputes: outcomeDisputes.filter(d => !existingOriginIds.has(d.id)).length,
+        fromAcceptedEvents: acceptedCreatedCount,
         totalRejectedEvents: rejectedEvents.length,
+        totalAcceptedEvents: acceptedEvents.length,
         totalDisputes: outcomeDisputes.length,
         excludeReasonBreakdown: Object.fromEntries(
           Array.from(excludeGroups.entries()).map(([reason, events]) => [reason, events.length])
@@ -1301,7 +1343,7 @@ export async function registerRoutes(
         action: "production_feedback_synced",
         objectType: "eval_suite",
         objectId: suiteId,
-        details: `Synced ${createdCases.length} production feedback cases (${rejectedEvents.length} rejected events, ${outcomeDisputes.length} disputes) for outcome ${outcome.name}`,
+        details: `Synced ${createdCases.length} production feedback cases (${acceptedCreatedCount} accepted, ${rejectedEvents.length} rejected events, ${outcomeDisputes.length} disputes) for outcome ${outcome.name}`,
       });
 
       res.json(summary);
@@ -5386,7 +5428,145 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     try {
       const data = insertInvoiceSchema.parse(req.body);
       const invoice = await storage.createInvoice(data);
-      res.status(201).json(invoice);
+
+      const flywheelSyncResults: any[] = [];
+      if (invoice.outcomeId) {
+        const outcomeIds = [invoice.outcomeId];
+        for (const oid of outcomeIds) {
+          try {
+            const outcome = await storage.getOutcome(oid);
+            if (!outcome) continue;
+
+            const allEvents = await storage.getOutcomeEventsByOutcome(oid);
+            const cutoffDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+            const recentEvents = allEvents.filter(e => e.createdAt && new Date(e.createdAt) >= cutoffDate);
+
+            const rejectedEvents = recentEvents.filter(e => !e.billable && e.excludeReason);
+            const acceptedEvents = recentEvents
+              .filter(e => e.billable === true)
+              .sort((a, b) => {
+                const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+                const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+                return bTime - aTime;
+              })
+              .slice(0, 20);
+
+            const agents = (await storage.getAgents()).filter(a => a.outcomeId === oid);
+            if (agents.length === 0) continue;
+
+            const primaryAgent = agents[0];
+            const existingSuites = await storage.getEvalsByAgent(primaryAgent.id);
+            let kpiSuite = existingSuites.find(s => s.type === "kpi_aligned");
+            if (!kpiSuite) {
+              const generated = await generateKpiAlignedEvalSuite(primaryAgent.id, oid);
+              if (generated) {
+                kpiSuite = generated.suite;
+              } else {
+                kpiSuite = await storage.createEvalSuite({
+                  agentId: primaryAgent.id,
+                  name: `${primaryAgent.name} - Production Feedback Suite (${outcome.name})`,
+                  type: "kpi_aligned",
+                  totalCases: 0,
+                  coverageTags: ["production_feedback", "ground_truth"],
+                  ontologyTags: { kpiAligned: true, outcomeId: oid, outcomeName: outcome.name, generatedAt: new Date().toISOString() },
+                });
+              }
+            }
+
+            const suiteId = kpiSuite!.id;
+            const existingCases = await storage.getEvalTestCases(suiteId);
+            const existingOriginIds = new Set(
+              existingCases
+                .filter(tc => tc.origin === "production_feedback")
+                .map(tc => {
+                  const input = tc.inputData as Record<string, unknown> | null;
+                  return input?.sourceEventId || input?.sourceDisputeId;
+                })
+                .filter(Boolean)
+            );
+
+            let created = 0;
+
+            for (const ev of rejectedEvents) {
+              if (existingOriginIds.has(ev.id)) continue;
+              await storage.createEvalTestCase({
+                suiteId,
+                name: `Production Rejection: ${ev.excludeReason || "excluded"} (${ev.type})`,
+                inputData: {
+                  type: "production_feedback",
+                  sourceEventId: ev.id,
+                  traceId: ev.traceId,
+                  agentId: ev.agentId,
+                  eventType: ev.type,
+                  payload: ev.payload,
+                  scenario: "rejected_outcome_event",
+                  groundTruthLabel: "negative",
+                  autoSynced: true,
+                  trigger: "invoice_creation",
+                },
+                expectedOutput: {
+                  shouldPass: false,
+                  rejectionReason: ev.excludeReason,
+                  expectedBehavior: `Agent output was rejected: ${ev.excludeReason}. Future runs must not reproduce this failure pattern.`,
+                },
+                tags: ["production_feedback", "ground_truth", "rejected_event", "auto_synced", ev.excludeReason || "excluded"],
+                weight: 1.5,
+                origin: "production_feedback",
+                severity: "high",
+              });
+              created++;
+            }
+
+            for (const ev of acceptedEvents) {
+              if (existingOriginIds.has(ev.id)) continue;
+              await storage.createEvalTestCase({
+                suiteId,
+                name: `Production Accepted: ${ev.type} (billable)`,
+                inputData: {
+                  type: "production_feedback",
+                  sourceEventId: ev.id,
+                  traceId: ev.traceId,
+                  agentId: ev.agentId,
+                  eventType: ev.type,
+                  payload: ev.payload,
+                  scenario: "accepted_outcome_event",
+                  groundTruthLabel: "positive",
+                  autoSynced: true,
+                  trigger: "invoice_creation",
+                },
+                expectedOutput: {
+                  shouldPass: true,
+                  expectedBehavior: `Agent output was accepted and billed successfully. This represents correct agent behavior for event type: ${ev.type}.`,
+                },
+                tags: ["production_feedback", "ground_truth", "accepted_event", "auto_synced"],
+                weight: 1.0,
+                origin: "production_feedback",
+                severity: "low",
+              });
+              created++;
+            }
+
+            if (created > 0) {
+              const currentCases = await storage.getEvalTestCases(suiteId);
+              await storage.updateEvalSuite(suiteId, { totalCases: currentCases.length });
+            }
+
+            flywheelSyncResults.push({ outcomeId: oid, suiteId, casesCreated: created });
+
+            await storage.createAuditEvent({
+              actorType: "system",
+              action: "flywheel_auto_sync",
+              objectType: "eval_suite",
+              objectId: suiteId,
+              details: `Auto-synced ${created} production feedback cases for outcome ${outcome.name} triggered by invoice creation (invoice ${invoice.id})`,
+            });
+          } catch (syncErr: any) {
+            flywheelSyncResults.push({ outcomeId: oid, error: syncErr.message });
+          }
+        }
+      }
+
+      res.status(201).json({ ...invoice, flywheelSync: flywheelSyncResults });
     } catch (e) {
       handleZodError(res, e);
     }
@@ -6248,9 +6428,87 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
         details: `Event ${event.id} for outcome "${outcome.name}": billable=${billable}${excludeReason ? `, reason=${excludeReason}` : ""}. Checks: ${checks.length > 0 ? checks.join("; ") : "all passed"}`,
       });
 
+      let flywheelAutoSync: any = null;
+      if (!billable && excludeReason) {
+        try {
+          const agents = (await storage.getAgents()).filter(a => a.outcomeId === outcomeId);
+          if (agents.length > 0) {
+            const primaryAgent = agents[0];
+            const existingSuites = await storage.getEvalsByAgent(primaryAgent.id);
+            let kpiSuite = existingSuites.find(s => s.type === "kpi_aligned");
+            if (!kpiSuite) {
+              const generated = await generateKpiAlignedEvalSuite(primaryAgent.id, outcomeId);
+              if (generated) {
+                kpiSuite = generated.suite;
+              } else {
+                kpiSuite = await storage.createEvalSuite({
+                  agentId: primaryAgent.id,
+                  name: `${primaryAgent.name} - Production Feedback Suite (${outcome.name})`,
+                  type: "kpi_aligned",
+                  totalCases: 0,
+                  coverageTags: ["production_feedback", "ground_truth"],
+                  ontologyTags: { kpiAligned: true, outcomeId, outcomeName: outcome.name, generatedAt: new Date().toISOString() },
+                });
+              }
+            }
+
+            const suiteId = kpiSuite!.id;
+            const existingCases = await storage.getEvalTestCases(suiteId);
+            const alreadyExists = existingCases.some(tc => {
+              const input = tc.inputData as Record<string, unknown> | null;
+              return input?.sourceEventId === event.id;
+            });
+
+            if (!alreadyExists) {
+              const tc = await storage.createEvalTestCase({
+                suiteId,
+                name: `Production Rejection: ${excludeReason} (${type})`,
+                inputData: {
+                  type: "production_feedback",
+                  sourceEventId: event.id,
+                  traceId: traceId || null,
+                  agentId: agentId || null,
+                  eventType: type,
+                  payload: payload || null,
+                  scenario: "rejected_outcome_event",
+                  groundTruthLabel: "negative",
+                  autoSynced: true,
+                  trigger: "event_rejection",
+                },
+                expectedOutput: {
+                  shouldPass: false,
+                  rejectionReason: excludeReason,
+                  expectedBehavior: `Agent output was rejected: ${excludeReason}. Future runs must not reproduce this failure pattern.`,
+                },
+                tags: ["production_feedback", "ground_truth", "rejected_event", "auto_synced", excludeReason],
+                weight: 1.5,
+                origin: "production_feedback",
+                severity: "high",
+              });
+
+              const currentCases = await storage.getEvalTestCases(suiteId);
+              await storage.updateEvalSuite(suiteId, { totalCases: currentCases.length });
+
+              flywheelAutoSync = { suiteId, testCaseId: tc.id, trigger: "event_rejection" };
+
+              await storage.createAuditEvent({
+                actorType: "system",
+                action: "flywheel_auto_sync",
+                objectType: "eval_test_case",
+                objectId: tc.id,
+                details: `Auto-created negative ground truth test case from rejected event ${event.id} (reason: ${excludeReason}) for outcome ${outcome.name}`,
+              });
+            }
+          }
+        } catch (syncErr: any) {
+          flywheelAutoSync = { error: syncErr.message };
+        }
+      }
+
       res.status(201).json({
         event,
         metering: { billable, excludeReason, checks, signedHash },
+        flywheelAutoSync,
       });
     } catch (e: any) {
       if (e.name === "ZodError") {
@@ -6288,6 +6546,350 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
       outcome: outcome ? { id: outcome.id, name: outcome.name, pricingModel: outcome.pricingModel } : null,
       agent: agent ? { id: agent.id, name: agent.name } : null,
     });
+  });
+
+  app.get("/api/flywheel/metrics", async (_req, res) => {
+    try {
+      const [allSuites, allOutcomes, allAgents, allEvents, allGoldenDatasets, allEvalRuns] = await Promise.all([
+        storage.getEvalSuites(),
+        storage.getOutcomes(),
+        storage.getAgents(),
+        storage.getOutcomeEvents(),
+        storage.getGoldenDatasets(),
+        storage.getAllEvalRuns(),
+      ]);
+
+      const allTestCases: Array<{ suiteId: string; tags: string[] | null; origin: string | null; lastRunAt: Date | null }> = [];
+      for (const suite of allSuites) {
+        const cases = await storage.getEvalTestCases(suite.id);
+        for (const tc of cases) {
+          allTestCases.push({
+            suiteId: suite.id,
+            tags: tc.tags,
+            origin: tc.origin,
+            lastRunAt: suite.lastRunAt,
+          });
+        }
+      }
+
+      const productionFeedbackCases = allTestCases.filter(tc => tc.origin === "production_feedback");
+      let positiveLabels = 0;
+      let negativeLabels = 0;
+      for (const tc of productionFeedbackCases) {
+        const tags = (tc.tags || []).map(t => t.toLowerCase());
+        if (tags.includes("rejected_event") || tags.includes("billing_dispute")) {
+          negativeLabels++;
+        } else if (tags.includes("accepted_event")) {
+          positiveLabels++;
+        } else {
+          positiveLabels++;
+        }
+      }
+      const totalGroundTruth = productionFeedbackCases.length;
+
+      const monthlyMap = new Map<string, { positive: number; negative: number; total: number }>();
+      for (const tc of productionFeedbackCases) {
+        const date = tc.lastRunAt ? new Date(tc.lastRunAt) : new Date();
+        const month = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+        if (!monthlyMap.has(month)) monthlyMap.set(month, { positive: 0, negative: 0, total: 0 });
+        const entry = monthlyMap.get(month)!;
+        const tags = (tc.tags || []).map(t => t.toLowerCase());
+        if (tags.includes("rejected_event") || tags.includes("billing_dispute")) {
+          entry.negative++;
+        } else {
+          entry.positive++;
+        }
+        entry.total++;
+      }
+      const monthlyGrowth = Array.from(monthlyMap.entries())
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([month, data]) => ({ month, ...data }));
+
+      const eventsByMonth = new Map<string, { totalEvents: number; accepted: number }>();
+      for (const ev of allEvents) {
+        const date = ev.createdAt ? new Date(ev.createdAt) : new Date();
+        const month = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+        if (!eventsByMonth.has(month)) eventsByMonth.set(month, { totalEvents: 0, accepted: 0 });
+        const entry = eventsByMonth.get(month)!;
+        entry.totalEvents++;
+        if (ev.billable) entry.accepted++;
+      }
+      const acceptanceTrend = Array.from(eventsByMonth.entries())
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([month, data]) => ({
+          month,
+          rate: data.totalEvents > 0 ? Math.round((data.accepted / data.totalEvents) * 10000) / 100 : 0,
+          totalEvents: data.totalEvents,
+          accepted: data.accepted,
+        }));
+
+      let goldenPromotions = 0;
+      for (const ds of allGoldenDatasets) {
+        const goldenCases = await storage.getGoldenTestCases(ds.id);
+        goldenPromotions += goldenCases.filter(gc => gc.contributorOrg === "production_feedback").length;
+      }
+
+      const totalAccepted = allEvents.filter(e => e.billable).length;
+      const overallAcceptanceRate = allEvents.length > 0
+        ? Math.round((totalAccepted / allEvents.length) * 10000) / 100
+        : 0;
+
+      const agentsByOutcome = new Map<string, string[]>();
+      for (const agent of allAgents) {
+        if (agent.outcomeId) {
+          if (!agentsByOutcome.has(agent.outcomeId)) agentsByOutcome.set(agent.outcomeId, []);
+          agentsByOutcome.get(agent.outcomeId)!.push(agent.id);
+        }
+      }
+
+      const suitesByAgent = new Map<string, string[]>();
+      for (const suite of allSuites) {
+        if (!suitesByAgent.has(suite.agentId)) suitesByAgent.set(suite.agentId, []);
+        suitesByAgent.get(suite.agentId)!.push(suite.id);
+      }
+
+      const latestRunBySuite = new Map<string, { passRate: number | null; startedAt: Date | null }>();
+      for (const run of allEvalRuns) {
+        const existing = latestRunBySuite.get(run.suiteId);
+        const runDate = run.startedAt ? new Date(run.startedAt) : null;
+        if (!existing || (runDate && (!existing.startedAt || runDate > existing.startedAt))) {
+          latestRunBySuite.set(run.suiteId, { passRate: run.passRate, startedAt: runDate });
+        }
+      }
+
+      const productionCasesBySuite = new Map<string, number>();
+      for (const tc of productionFeedbackCases) {
+        productionCasesBySuite.set(tc.suiteId, (productionCasesBySuite.get(tc.suiteId) || 0) + 1);
+      }
+
+      const outcomeStatus = allOutcomes.map(outcome => {
+        const agentIds = agentsByOutcome.get(outcome.id) || [];
+        const outcomeEvents = allEvents.filter(e => e.outcomeId === outcome.id);
+        const acceptedEvents = outcomeEvents.filter(e => e.billable).length;
+        const acceptanceRate = outcomeEvents.length > 0
+          ? Math.round((acceptedEvents / outcomeEvents.length) * 10000) / 100
+          : 0;
+
+        let groundTruthCases = 0;
+        const passRates: number[] = [];
+        for (const agentId of agentIds) {
+          const suiteIds = suitesByAgent.get(agentId) || [];
+          for (const suiteId of suiteIds) {
+            groundTruthCases += productionCasesBySuite.get(suiteId) || 0;
+            const latestRun = latestRunBySuite.get(suiteId);
+            if (latestRun && latestRun.passRate != null) {
+              passRates.push(latestRun.passRate);
+            }
+          }
+        }
+
+        const evalPassRate = passRates.length > 0
+          ? Math.round((passRates.reduce((a, b) => a + b, 0) / passRates.length) * 100) / 100
+          : 0;
+
+        return {
+          outcomeId: outcome.id,
+          outcomeName: outcome.name,
+          groundTruthCases,
+          acceptanceRate,
+          evalPassRate,
+        };
+      });
+
+      res.json({
+        summary: {
+          totalGroundTruth,
+          positiveLabels,
+          negativeLabels,
+          goldenPromotions,
+          acceptanceRate: overallAcceptanceRate,
+        },
+        monthlyGrowth,
+        acceptanceTrend,
+        outcomeStatus,
+      });
+    } catch (error: any) {
+      console.error("Error computing flywheel metrics:", error);
+      res.status(500).json({ error: "Failed to compute flywheel metrics" });
+    }
+  });
+
+  app.get("/api/flywheel/acceptance-patterns", async (_req, res) => {
+    try {
+      const [allEvents, allAgents, allDisputes] = await Promise.all([
+        storage.getOutcomeEvents(),
+        storage.getAgents(),
+        storage.getBillingDisputes(),
+      ]);
+
+      const agentIndustryMap = new Map<string, string>();
+      for (const agent of allAgents) {
+        let industry = "general";
+        const tags: string[] = [];
+        if (Array.isArray(agent.complianceTags)) tags.push(...agent.complianceTags);
+        if (Array.isArray(agent.ontologyTags)) {
+          for (const t of agent.ontologyTags as any[]) {
+            if (typeof t === "string") tags.push(t);
+            else if (t && typeof t === "object" && t.conceptLabel) tags.push(t.conceptLabel);
+            else if (t && typeof t === "object" && t.conceptId) tags.push(t.conceptId);
+          }
+        }
+        const combined = tags.join(" ").toUpperCase();
+        if (combined.includes("HIPAA") || combined.includes("HITECH")) industry = "healthcare";
+        else if (combined.includes("BSA") || combined.includes("AML") || combined.includes("SOX") || combined.includes("CIP") || combined.includes("GLBA")) industry = "financial_services";
+        else if (combined.includes("NAIC")) industry = "insurance";
+        else if (combined.includes("OSHA") || combined.includes("ISO 9001")) industry = "manufacturing";
+        else if (combined.includes("PCI-DSS") || combined.includes("PCI") || combined.includes("CCPA") || combined.includes("FTC")) industry = "retail";
+        else if (combined.includes("SOC 2") || combined.includes("FEDRAMP") || combined.includes("ISO 27001")) industry = "technology_saas";
+        if (agent.department) {
+          const dept = agent.department.toLowerCase();
+          if (dept.includes("health") || dept.includes("clinical")) industry = "healthcare";
+          else if (dept.includes("financ") || dept.includes("bank")) industry = "financial_services";
+          else if (dept.includes("insurance") || dept.includes("underwriting")) industry = "insurance";
+          else if (dept.includes("manufactur") || dept.includes("production")) industry = "manufacturing";
+          else if (dept.includes("retail") || dept.includes("commerce")) industry = "retail";
+          else if (dept.includes("tech") || dept.includes("saas") || dept.includes("engineering")) industry = "technology_saas";
+        }
+        agentIndustryMap.set(agent.id, industry);
+      }
+
+      const eventsByIndustry = new Map<string, typeof allEvents>();
+      for (const ev of allEvents) {
+        const industry = (ev.agentId && agentIndustryMap.get(ev.agentId)) || "general";
+        if (!eventsByIndustry.has(industry)) eventsByIndustry.set(industry, []);
+        eventsByIndustry.get(industry)!.push(ev);
+      }
+
+      const disputesByOutcome = new Map<string, typeof allDisputes>();
+      for (const d of allDisputes) {
+        const oid = d.outcomeId || "";
+        if (!disputesByOutcome.has(oid)) disputesByOutcome.set(oid, []);
+        disputesByOutcome.get(oid)!.push(d);
+      }
+
+      const outcomeToIndustry = new Map<string, string>();
+      for (const agent of allAgents) {
+        if (agent.outcomeId) {
+          outcomeToIndustry.set(agent.outcomeId, agentIndustryMap.get(agent.id) || "general");
+        }
+      }
+
+      const overallTotal = allEvents.length;
+      const overallAccepted = allEvents.filter(e => e.billable === true).length;
+      const overallAcceptanceRate = overallTotal > 0 ? Math.round((overallAccepted / overallTotal) * 10000) / 100 : 0;
+
+      const overallRejectionReasons = new Map<string, number>();
+      for (const ev of allEvents) {
+        if (!ev.billable && ev.excludeReason) {
+          overallRejectionReasons.set(ev.excludeReason, (overallRejectionReasons.get(ev.excludeReason) || 0) + 1);
+        }
+      }
+      const overallRejectionTotal = Array.from(overallRejectionReasons.values()).reduce((s, c) => s + c, 0);
+
+      const industries: any[] = [];
+
+      for (const [industry, events] of eventsByIndustry.entries()) {
+        const totalEvents = events.length;
+        const accepted = events.filter(e => e.billable === true).length;
+        const acceptanceRate = totalEvents > 0 ? Math.round((accepted / totalEvents) * 10000) / 100 : 0;
+
+        const rejectionReasons = new Map<string, number>();
+        for (const ev of events) {
+          if (!ev.billable && ev.excludeReason) {
+            rejectionReasons.set(ev.excludeReason, (rejectionReasons.get(ev.excludeReason) || 0) + 1);
+          }
+        }
+        const totalRejections = Array.from(rejectionReasons.values()).reduce((s, c) => s + c, 0);
+        const topRejectionReasons = Array.from(rejectionReasons.entries())
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 10)
+          .map(([reason, count]) => ({ reason, count, percentOfRejections: totalRejections > 0 ? Math.round((count / totalRejections) * 1000) / 10 : 0 }));
+
+        const industryOutcomeIds = new Set<string>();
+        for (const ev of events) {
+          if (ev.outcomeId) industryOutcomeIds.add(ev.outcomeId);
+        }
+        const disputeCategories = new Map<string, number>();
+        for (const oid of industryOutcomeIds) {
+          const disputes = disputesByOutcome.get(oid) || [];
+          for (const d of disputes) {
+            disputeCategories.set(d.category, (disputeCategories.get(d.category) || 0) + 1);
+          }
+        }
+        const topDisputeCategories = Array.from(disputeCategories.entries())
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 10)
+          .map(([category, count]) => ({ category, count }));
+
+        const monthlyBuckets = new Map<string, { total: number; accepted: number }>();
+        for (const ev of events) {
+          if (!ev.createdAt) continue;
+          const d = new Date(ev.createdAt);
+          const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+          if (!monthlyBuckets.has(key)) monthlyBuckets.set(key, { total: 0, accepted: 0 });
+          const bucket = monthlyBuckets.get(key)!;
+          bucket.total++;
+          if (ev.billable === true) bucket.accepted++;
+        }
+        const monthlyTrend = Array.from(monthlyBuckets.entries())
+          .sort((a, b) => a[0].localeCompare(b[0]))
+          .map(([month, data]) => ({
+            month,
+            totalEvents: data.total,
+            acceptedEvents: data.accepted,
+            acceptanceRate: data.total > 0 ? Math.round((data.accepted / data.total) * 10000) / 100 : 0,
+          }));
+
+        const industryRejectionTotal = Array.from(rejectionReasons.values()).reduce((s, c) => s + c, 0);
+        const distinctiveFailureModes: any[] = [];
+        if (overallRejectionTotal > 0 && industryRejectionTotal > 0) {
+          for (const [reason, count] of rejectionReasons.entries()) {
+            const industryRate = count / industryRejectionTotal;
+            const overallCount = overallRejectionReasons.get(reason) || 0;
+            const overallRate = overallCount / overallRejectionTotal;
+            if (overallRate > 0) {
+              const overRepresentationFactor = Math.round((industryRate / overallRate) * 100) / 100;
+              if (overRepresentationFactor > 1.5) {
+                distinctiveFailureModes.push({
+                  reason,
+                  industryCount: count,
+                  industryRate: Math.round(industryRate * 10000) / 100,
+                  overallRate: Math.round(overallRate * 10000) / 100,
+                  overRepresentationFactor,
+                });
+              }
+            }
+          }
+          distinctiveFailureModes.sort((a, b) => b.overRepresentationFactor - a.overRepresentationFactor);
+        }
+
+        industries.push({
+          industry,
+          acceptanceRate,
+          totalEvents,
+          acceptedEvents: accepted,
+          rejectedEvents: totalEvents - accepted,
+          topRejectionReasons,
+          topDisputeCategories,
+          monthlyTrend,
+          distinctiveFailureModes,
+        });
+      }
+
+      industries.sort((a, b) => b.totalEvents - a.totalEvents);
+
+      res.json({
+        industries,
+        overallAcceptanceRate,
+        totalEvents: overallTotal,
+        totalAccepted: overallAccepted,
+        totalRejected: overallTotal - overallAccepted,
+        industriesCount: industries.length,
+      });
+    } catch (error: any) {
+      console.error("Acceptance patterns error:", error);
+      res.status(500).json({ error: "Failed to compute acceptance patterns", details: error.message });
+    }
   });
 
   // Step 4-5: Billing aggregates events for period, creates invoice + line items
@@ -8797,6 +9399,141 @@ Eval Suites: ${evalSuites.length} configured`,
               },
             });
           }
+        }
+      }
+
+      const allOutcomeEvents = await storage.getOutcomeEvents();
+      const allDisputes = await storage.getBillingDisputes();
+
+      const agentIndustryMap = new Map<string, string>();
+      for (const agent of allAgents) {
+        let industry = "general";
+        const tags: string[] = [];
+        if (Array.isArray(agent.complianceTags)) tags.push(...agent.complianceTags);
+        if (Array.isArray(agent.ontologyTags)) {
+          for (const t of agent.ontologyTags as any[]) {
+            if (typeof t === "string") tags.push(t);
+            else if (t && typeof t === "object" && t.conceptLabel) tags.push(t.conceptLabel);
+            else if (t && typeof t === "object" && t.conceptId) tags.push(t.conceptId);
+          }
+        }
+        const combined = tags.join(" ").toUpperCase();
+        if (combined.includes("HIPAA") || combined.includes("HITECH")) industry = "healthcare";
+        else if (combined.includes("BSA") || combined.includes("AML") || combined.includes("SOX") || combined.includes("CIP") || combined.includes("GLBA")) industry = "financial_services";
+        else if (combined.includes("NAIC")) industry = "insurance";
+        else if (combined.includes("OSHA") || combined.includes("ISO 9001")) industry = "manufacturing";
+        else if (combined.includes("PCI-DSS") || combined.includes("PCI") || combined.includes("CCPA") || combined.includes("FTC")) industry = "retail";
+        else if (combined.includes("SOC 2") || combined.includes("FEDRAMP") || combined.includes("ISO 27001")) industry = "technology_saas";
+        if (agent.department) {
+          const dept = agent.department.toLowerCase();
+          if (dept.includes("health") || dept.includes("clinical")) industry = "healthcare";
+          else if (dept.includes("financ") || dept.includes("bank")) industry = "financial_services";
+          else if (dept.includes("insurance") || dept.includes("underwriting")) industry = "insurance";
+          else if (dept.includes("manufactur") || dept.includes("production")) industry = "manufacturing";
+          else if (dept.includes("retail") || dept.includes("commerce")) industry = "retail";
+          else if (dept.includes("tech") || dept.includes("saas") || dept.includes("engineering")) industry = "technology_saas";
+        }
+        agentIndustryMap.set(agent.id, industry);
+      }
+
+      const industryEventStats = new Map<string, { total: number; accepted: number }>();
+      for (const ev of allOutcomeEvents) {
+        const industry = (ev.agentId && agentIndustryMap.get(ev.agentId)) || "general";
+        if (!industryEventStats.has(industry)) industryEventStats.set(industry, { total: 0, accepted: 0 });
+        const stats = industryEventStats.get(industry)!;
+        stats.total++;
+        if (ev.billable === true) stats.accepted++;
+      }
+
+      const industryAcceptanceRates = new Map<string, number>();
+      for (const [industry, stats] of industryEventStats.entries()) {
+        industryAcceptanceRates.set(industry, stats.total > 0 ? (stats.accepted / stats.total) * 100 : 100);
+      }
+
+      const outcomeEventStats = new Map<string, { total: number; accepted: number; agentIds: Set<string>; topRejections: Map<string, number> }>();
+      for (const ev of allOutcomeEvents) {
+        if (!outcomeEventStats.has(ev.outcomeId)) {
+          outcomeEventStats.set(ev.outcomeId, { total: 0, accepted: 0, agentIds: new Set(), topRejections: new Map() });
+        }
+        const stats = outcomeEventStats.get(ev.outcomeId)!;
+        stats.total++;
+        if (ev.billable === true) stats.accepted++;
+        if (ev.agentId) stats.agentIds.add(ev.agentId);
+        if (!ev.billable && ev.excludeReason) {
+          stats.topRejections.set(ev.excludeReason, (stats.topRejections.get(ev.excludeReason) || 0) + 1);
+        }
+      }
+
+      for (const [outcomeId, stats] of outcomeEventStats.entries()) {
+        if (stats.total < 5) continue;
+
+        const outcomeAcceptanceRate = Math.round((stats.accepted / stats.total) * 10000) / 100;
+
+        const outcomeIndustries = new Set<string>();
+        for (const agentId of stats.agentIds) {
+          outcomeIndustries.add(agentIndustryMap.get(agentId) || "general");
+        }
+        const primaryIndustry = outcomeIndustries.values().next().value || "general";
+        const industryAvg = industryAcceptanceRates.get(primaryIndustry) ?? 100;
+        const industryAvgRounded = Math.round(industryAvg * 100) / 100;
+
+        if (outcomeAcceptanceRate >= industryAvgRounded) continue;
+
+        const gapPercent = Math.round((industryAvgRounded - outcomeAcceptanceRate) * 100) / 100;
+
+        const outcome = outcomes.find(o => o.id === outcomeId);
+        const outcomeName = outcome?.name || outcomeId;
+
+        const topRejections = Array.from(stats.topRejections.entries())
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 5)
+          .map(([reason, count]) => ({ reason, count }));
+
+        const suggestedActions: string[] = [];
+        suggestedActions.push("Sync production feedback to eval suites to capture recent failure patterns");
+        suggestedActions.push("Add edge case test cases targeting top rejection reasons");
+        if (gapPercent > 10) {
+          suggestedActions.push("Review and retrain agents on frequently rejected event types");
+          suggestedActions.push("Promote validated production cases to golden datasets for regression testing");
+        }
+        if (topRejections.length > 0) {
+          suggestedActions.push(`Focus on top rejection reason: "${topRejections[0].reason}" (${topRejections[0].count} occurrences)`);
+        }
+
+        for (const agentId of stats.agentIds) {
+          const hasExisting = existingRecs.some(
+            r => r.agentId === agentId && r.source === "acceptance_signal" && r.status === "pending"
+          );
+          if (hasExisting) continue;
+
+          const agent = allAgents.find(a => a.id === agentId);
+          const agentName = agent?.name || agentId;
+
+          newRecs.push({
+            agentId,
+            source: "acceptance_signal",
+            type: "eval_coverage",
+            title: `Low acceptance rate for ${agentName} on "${outcomeName}"`,
+            description: `Acceptance rate (${outcomeAcceptanceRate}%) is below the ${primaryIndustry} industry average (${industryAvgRounded}%) by ${gapPercent} percentage points. Eval coverage should be expanded to address rejection patterns.`,
+            severity: gapPercent > 15 ? "critical" : gapPercent > 5 ? "high" : "medium",
+            status: "pending",
+            impact: `Closing the ${gapPercent}pp acceptance gap could recover ~${Math.round(gapPercent * stats.total / 100)} additional billable events per period`,
+            suggestedChanges: {
+              action: "eval_coverage_expansion",
+              trigger: "acceptance_signal",
+              outcomeId,
+              outcomeName,
+              industry: primaryIndustry,
+              currentAcceptanceRate: outcomeAcceptanceRate,
+              industryAverage: industryAvgRounded,
+              gapPercent,
+              totalEvents: stats.total,
+              acceptedEvents: stats.accepted,
+              rejectedEvents: stats.total - stats.accepted,
+              topRejectionReasons: topRejections,
+              suggestedActions,
+            },
+          });
         }
       }
 
@@ -20029,6 +20766,208 @@ Simulate how the agent would handle the scenario. Return JSON:
       if (!deleted) return res.status(404).json({ error: "Test case not found" });
       res.json({ success: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/golden-datasets/:id/promotion-candidates", async (req, res) => {
+    try {
+      const datasetId = req.params.id;
+      const dataset = await storage.getGoldenDataset(datasetId);
+      if (!dataset) return res.status(404).json({ error: "Golden dataset not found" });
+
+      const suiteId = req.query.suiteId as string | undefined;
+      const minWeight = req.query.minWeight ? parseFloat(req.query.minWeight as string) : undefined;
+      const tagsParam = req.query.tags as string | undefined;
+      const filterTags = tagsParam ? tagsParam.split(",").map(t => t.trim()) : undefined;
+
+      const allSuites = await storage.getEvalSuites();
+      const targetSuites = suiteId
+        ? allSuites.filter(s => s.id === suiteId)
+        : allSuites;
+
+      const candidates: any[] = [];
+      for (const suite of targetSuites) {
+        const cases = await storage.getEvalTestCases(suite.id);
+        const productionCases = cases.filter(tc => {
+          if (tc.origin !== "production_feedback") return false;
+          if (minWeight !== undefined && (tc.weight || 0) < minWeight) return false;
+          if (filterTags && filterTags.length > 0) {
+            const caseTags = tc.tags || [];
+            if (!filterTags.some(ft => caseTags.includes(ft))) return false;
+          }
+          return true;
+        });
+        candidates.push(...productionCases.map(tc => ({ ...tc, sourceSuiteId: suite.id, sourceSuiteName: suite.name })));
+      }
+
+      const existingGoldenCases = await storage.getGoldenTestCases(datasetId);
+      const existingSourceIds = new Set<string>();
+      for (const gc of existingGoldenCases) {
+        const scenario = gc.inputScenario;
+        try {
+          const parsed = typeof scenario === "string" ? JSON.parse(scenario) : scenario;
+          if (parsed?.sourceEventId) existingSourceIds.add(parsed.sourceEventId);
+          if (parsed?.sourceDisputeId) existingSourceIds.add(parsed.sourceDisputeId);
+          if (parsed?.sourceEvalCaseId) existingSourceIds.add(parsed.sourceEvalCaseId);
+        } catch {}
+      }
+
+      const newCandidates = candidates.filter(tc => {
+        const input = tc.inputData as Record<string, unknown> | null;
+        const sourceEventId = input?.sourceEventId as string | undefined;
+        const sourceDisputeId = input?.sourceDisputeId as string | undefined;
+        if (sourceEventId && existingSourceIds.has(sourceEventId)) return false;
+        if (sourceDisputeId && existingSourceIds.has(sourceDisputeId)) return false;
+        if (existingSourceIds.has(tc.id)) return false;
+        return true;
+      });
+
+      res.json({
+        datasetId,
+        datasetName: dataset.name,
+        totalCandidates: newCandidates.length,
+        alreadyPromoted: candidates.length - newCandidates.length,
+        candidates: newCandidates,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/golden-datasets/:id/promote-production-cases", async (req, res) => {
+    try {
+      const datasetId = req.params.id;
+      const dataset = await storage.getGoldenDataset(datasetId);
+      if (!dataset) return res.status(404).json({ error: "Golden dataset not found" });
+
+      const { suiteId, minWeight, tags: filterTags } = req.body || {};
+
+      const allSuites = await storage.getEvalSuites();
+      const targetSuites = suiteId
+        ? allSuites.filter((s: any) => s.id === suiteId)
+        : allSuites;
+
+      const candidates: any[] = [];
+      for (const suite of targetSuites) {
+        const cases = await storage.getEvalTestCases(suite.id);
+        const productionCases = cases.filter((tc: any) => {
+          if (tc.origin !== "production_feedback") return false;
+          if (minWeight !== undefined && (tc.weight || 0) < minWeight) return false;
+          if (filterTags && Array.isArray(filterTags) && filterTags.length > 0) {
+            const caseTags = tc.tags || [];
+            if (!filterTags.some((ft: string) => caseTags.includes(ft))) return false;
+          }
+          return true;
+        });
+        candidates.push(...productionCases);
+      }
+
+      const existingGoldenCases = await storage.getGoldenTestCases(datasetId);
+      const existingSourceIds = new Set<string>();
+      for (const gc of existingGoldenCases) {
+        const scenario = gc.inputScenario;
+        try {
+          const parsed = typeof scenario === "string" ? JSON.parse(scenario) : scenario;
+          if (parsed?.sourceEventId) existingSourceIds.add(parsed.sourceEventId);
+          if (parsed?.sourceDisputeId) existingSourceIds.add(parsed.sourceDisputeId);
+          if (parsed?.sourceEvalCaseId) existingSourceIds.add(parsed.sourceEvalCaseId);
+        } catch {}
+      }
+
+      const newCandidates = candidates.filter((tc: any) => {
+        const input = tc.inputData as Record<string, unknown> | null;
+        const sourceEventId = input?.sourceEventId as string | undefined;
+        const sourceDisputeId = input?.sourceDisputeId as string | undefined;
+        if (sourceEventId && existingSourceIds.has(sourceEventId)) return false;
+        if (sourceDisputeId && existingSourceIds.has(sourceDisputeId)) return false;
+        if (existingSourceIds.has(tc.id)) return false;
+        return true;
+      });
+
+      const promoted: any[] = [];
+      for (const tc of newCandidates) {
+        const input = tc.inputData as Record<string, unknown> | null;
+        const expected = tc.expectedOutput as Record<string, unknown> | null;
+        const groundTruthLabel = (input?.groundTruthLabel as string) || "unknown";
+        const scenarioType = (input?.scenario as string) || "production_feedback";
+
+        const inputScenarioObj = {
+          sourceEvalCaseId: tc.id,
+          sourceEventId: input?.sourceEventId || null,
+          sourceDisputeId: input?.sourceDisputeId || null,
+          traceId: input?.traceId || null,
+          agentId: input?.agentId || null,
+          eventType: input?.eventType || null,
+          payload: input?.payload || null,
+          scenario: scenarioType,
+          groundTruthLabel,
+          promotedFrom: "production_feedback",
+        };
+
+        const expectedBehavior = (expected?.expectedBehavior as string) ||
+          (expected?.rejectionReason ? `Rejected: ${expected.rejectionReason}` : "") ||
+          `Production ${groundTruthLabel} case`;
+
+        const scenarioCategory = groundTruthLabel === "negative" ? "edge_case" : "happy_path";
+        const difficultyTier = groundTruthLabel === "negative" ? "challenging" : "routine";
+
+        const goldenCase = await storage.createGoldenTestCase({
+          datasetId,
+          name: tc.name || `Promoted: ${scenarioType}`,
+          inputScenario: JSON.stringify(inputScenarioObj),
+          expectedBehavior,
+          evaluationCriteria: expected ? [expected] : [],
+          rubricScoring: { dimensions: [], passingScore: 0.8 },
+          difficultyTier,
+          scenarioCategory,
+          tags: [...(tc.tags || []), "production_promotion"],
+          contributorOrg: "production_feedback",
+          aiGenerated: false,
+          status: "active",
+        });
+        promoted.push(goldenCase);
+      }
+
+      if (promoted.length > 0) {
+        const currentGrowth = (dataset.growthHistory as any[]) || [];
+        const now = new Date();
+        const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+        const existingMonth = currentGrowth.find((g: any) => g.month === monthKey || g.date === monthKey);
+        let updatedGrowth;
+        if (existingMonth) {
+          updatedGrowth = currentGrowth.map((g: any) =>
+            (g.month === monthKey || g.date === monthKey)
+              ? { ...g, count: (g.count || 0) + promoted.length, source: "production_promotion" }
+              : g
+          );
+        } else {
+          updatedGrowth = [...currentGrowth, { date: monthKey, count: promoted.length, source: "production_promotion" }];
+        }
+
+        const updatedDataset = await storage.updateGoldenDataset(datasetId, {
+          testCaseCount: (dataset.testCaseCount || 0) + promoted.length,
+          growthHistory: updatedGrowth,
+        });
+      }
+
+      await storage.createAuditEvent({
+        actorType: "system",
+        action: "golden_dataset_production_promotion",
+        objectType: "golden_dataset",
+        objectId: datasetId,
+        details: `Promoted ${promoted.length} production feedback cases into golden dataset "${dataset.name}" (from ${candidates.length} candidates, ${candidates.length - newCandidates.length} already promoted)`,
+      });
+
+      res.json({
+        datasetId,
+        datasetName: dataset.name,
+        promoted: promoted.length,
+        skippedDuplicates: candidates.length - newCandidates.length,
+        totalCandidatesEvaluated: candidates.length,
+        promotedCases: promoted,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   });
 
   // Seed golden datasets
