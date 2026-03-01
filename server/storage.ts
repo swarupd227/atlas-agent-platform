@@ -550,6 +550,7 @@ export interface IStorage {
 
   saveAgentMemory(agentId: string, memoryType: string, content: string, metadata?: any, expiresAt?: Date): Promise<AgentMemory>;
   getAgentMemories(agentId: string, memoryType: string, limit?: number): Promise<AgentMemory[]>;
+  getAllAgentMemories(agentId: string): Promise<AgentMemory[]>;
   pruneExpiredMemories(agentId: string): Promise<number>;
 
   getRagPipelines(): Promise<RagPipeline[]>;
@@ -2174,6 +2175,12 @@ export class DatabaseStorage implements IStorage {
       .where(and(eq(agentMemories.agentId, agentId), eq(agentMemories.memoryType, memoryType)))
       .orderBy(desc(agentMemories.createdAt))
       .limit(limit);
+  }
+
+  async getAllAgentMemories(agentId: string): Promise<AgentMemory[]> {
+    return db.select().from(agentMemories)
+      .where(eq(agentMemories.agentId, agentId))
+      .orderBy(desc(agentMemories.createdAt));
   }
 
   async pruneExpiredMemories(agentId: string): Promise<number> {

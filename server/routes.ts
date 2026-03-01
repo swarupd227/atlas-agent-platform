@@ -21736,41 +21736,135 @@ Respond in JSON:
               const kb = await storage.getKnowledgeBase(akb.knowledgeBaseId);
               if (kb) {
                 if (!evidenceBundle.knowledgeBases) evidenceBundle.knowledgeBases = [];
-                evidenceBundle.knowledgeBases.push({ name: kb.name, status: kb.status, updatedAt: kb.updatedAt });
+                evidenceBundle.knowledgeBases.push({ name: kb.name, status: kb.status, updatedAt: kb.updatedAt, chunkCount: (kb as any).chunkCount || 0 });
               }
             }
 
             const rootCauseCategories = [
-              "knowledge_base_staleness", "ontology_mismatch", "tool_schema_change",
-              "prompt_degradation", "context_window_overflow", "model_regression", "data_quality", "unknown",
+              "knowledge_base_staleness", "knowledge_gap", "ontology_mismatch", "tool_schema_change",
+              "prompt_degradation", "context_window_overflow", "model_regression", "data_quality", "memory_eviction", "unknown",
             ];
+
+            const allAgentMemories = await storage.getAllAgentMemories(agent.id);
+            const episodicMemoryCount = allAgentMemories.filter(m => m.memoryType === "episodic").length;
+            const expiredMemoryCount = allAgentMemories.filter(m => m.expiresAt && m.expiresAt <= new Date()).length;
+            const autoDetectMemoryGov = (agent.memoryGovernanceRules || null) as Record<string, any> | null;
+            const autoDetectTraces = await storage.getTracesByAgent(agent.id);
+
+            evidenceBundle.memoryEvidence = {
+              totalMemories: allAgentMemories.length,
+              episodicCount: episodicMemoryCount,
+              expiredCount: expiredMemoryCount,
+              mostRecentMemoryAt: allAgentMemories.length > 0 ? allAgentMemories[0].createdAt : null,
+              memoryGovernanceRules: autoDetectMemoryGov,
+              totalTraces: autoDetectTraces.length,
+            };
 
             let classificationCategory = "unknown";
             let classificationConfidence = 50;
             let classificationReasoning = "Insufficient data for confident classification";
             let evidenceItems: any[] = [];
 
-            if (metric === "pass_rate" || issueType === "drift") {
+            if (autoDetectMemoryGov && autoDetectTraces.length > 10 && episodicMemoryCount < 3) {
+              const retDays = autoDetectMemoryGov.retentionDays || autoDetectMemoryGov.retention_days || autoDetectMemoryGov.maxRetentionDays;
+              if (retDays && retDays <= 7) {
+                classificationCategory = "memory_eviction";
+                classificationConfidence = 74;
+                classificationReasoning = `Agent has ${autoDetectTraces.length} traces but only ${episodicMemoryCount} episodic memories with a ${retDays}-day retention policy. Critical episodic data may have been evicted.`;
+                evidenceItems = [{ source: "memory_governance", detail: `Short retention (${retDays}d) with low memory count (${episodicMemoryCount}) vs trace count (${autoDetectTraces.length})`, severity: "high" }];
+              }
+            }
+
+            let mcpToolSchemaChanged = false;
+            try {
+              const agentMcpLinks = await storage.getAgentMcpServers(agent.id);
+              const bpToolSchemas: Record<string, string> = {};
+              const agentBlueprints = await storage.getBlueprintsByAgent(agent.id);
+              if (agentBlueprints.length > 0) {
+                const latestBp = agentBlueprints.sort((a, b) =>
+                  new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+                )[0];
+                const bpJson = latestBp.blueprintJson as any;
+                if (bpJson?.toolSchemaSnapshots && typeof bpJson.toolSchemaSnapshots === "object") {
+                  for (const [toolName, schema] of Object.entries(bpJson.toolSchemaSnapshots)) {
+                    bpToolSchemas[toolName] = crypto.createHash("sha256")
+                      .update(JSON.stringify(schema)).digest("hex").slice(0, 16);
+                  }
+                }
+              }
+              for (const link of agentMcpLinks) {
+                const server = await storage.getMcpServer(link.serverId);
+                if (server) {
+                  const tools = await storage.getMcpServerTools(server.id);
+                  for (const t of tools) {
+                    const currentFp = crypto.createHash("sha256")
+                      .update(JSON.stringify(t.inputSchema || {})).digest("hex").slice(0, 16);
+                    const baselineFp = bpToolSchemas[t.name] || t.fingerprintHash || null;
+                    if (baselineFp && currentFp !== baselineFp) {
+                      mcpToolSchemaChanged = true;
+                      break;
+                    }
+                    if (t.driftStatus === "drifted") {
+                      mcpToolSchemaChanged = true;
+                      break;
+                    }
+                  }
+                  if (mcpToolSchemaChanged) break;
+                }
+              }
+            } catch (mcpCheckErr: any) {
+              console.error("MCP tool schema drift check failed (non-blocking):", mcpCheckErr.message);
+            }
+
+            if (classificationCategory !== "memory_eviction" && (metric === "pass_rate" || issueType === "drift")) {
               classificationCategory = "prompt_degradation";
               classificationConfidence = 72;
               classificationReasoning = `Pass rate drift detected (${Math.abs(driftPercent || 0).toFixed(1)}%). This typically indicates prompt or model output degradation affecting test case outcomes.`;
               evidenceItems = [{ source: "eval_drift", detail: `${metric} drifted by ${Math.abs(driftPercent || 0).toFixed(1)}%`, severity: "high" }];
-            } else if (metric === "hallucination" || issueType === "hallucination") {
+            } else if (classificationCategory !== "memory_eviction" && (metric === "hallucination" || issueType === "hallucination")) {
               classificationCategory = "knowledge_base_staleness";
               classificationConfidence = 68;
               classificationReasoning = "Hallucination increase often correlates with stale or incomplete knowledge base content.";
               evidenceItems = [{ source: "hallucination_metric", detail: `Hallucination rate increased`, severity: "high" }];
-            } else if (metric === "latency" || issueType === "performance_degradation") {
+            } else if (classificationCategory !== "memory_eviction" && (metric === "latency" || issueType === "performance_degradation")) {
               classificationCategory = "context_window_overflow";
               classificationConfidence = 65;
               classificationReasoning = "Latency degradation can indicate context window overflow or excessive token usage.";
               evidenceItems = [{ source: "latency_metric", detail: `Latency drifted beyond threshold`, severity: "medium" }];
             }
 
+            if (mcpToolSchemaChanged) {
+              if (classificationCategory === "unknown") {
+                classificationCategory = "tool_schema_change";
+                classificationConfidence = 78;
+                classificationReasoning = "MCP tool schema drift detected: one or more tool input schemas have changed since last baseline, which can cause tool invocation failures or degraded outputs.";
+                evidenceItems = [{ source: "mcp_tool_drift", detail: "Tool schema fingerprint mismatch detected against baseline", severity: "high" }];
+              } else {
+                classificationConfidence = Math.min(classificationConfidence + 10, 95);
+                evidenceItems.push({ source: "mcp_tool_drift", detail: "Tool schema fingerprint mismatch also detected — may be a contributing factor", severity: "medium" });
+              }
+            }
+
+            if (classificationCategory === "knowledge_base_staleness" && evidenceBundle.knowledgeBases) {
+              const kbs = evidenceBundle.knowledgeBases as Array<{ name: string; status: string; updatedAt?: string; chunkCount?: number }>;
+              const totalChunks = kbs.reduce((sum: number, kb: any) => sum + (kb.chunkCount || 0), 0);
+              const hasNoLinkedDocs = kbs.length === 0;
+              if (hasNoLinkedDocs || totalChunks < 10) {
+                classificationCategory = "knowledge_gap";
+                classificationConfidence = 70;
+                classificationReasoning = hasNoLinkedDocs
+                  ? "Agent has no linked knowledge bases. Missing knowledge coverage is the likely root cause rather than stale content."
+                  : `Agent's linked knowledge bases have very low chunk count (${totalChunks} total chunks). This indicates a knowledge coverage gap rather than staleness.`;
+                evidenceItems = [{ source: "kb_coverage", detail: hasNoLinkedDocs ? "No linked knowledge bases" : `Only ${totalChunks} chunks across ${kbs.length} KB(s)`, severity: "high" }];
+              }
+            }
+
             const subsystemLinks: Array<{ subsystem: string; reason: string }> = [];
             if (classificationCategory === "knowledge_base_staleness") subsystemLinks.push({ subsystem: "Knowledge Base", reason: "Stale KB content may be causing inaccurate outputs" });
+            if (classificationCategory === "knowledge_gap") subsystemLinks.push({ subsystem: "Knowledge Base", reason: "Missing knowledge coverage is causing incomplete or inaccurate outputs" });
             if (classificationCategory === "ontology_mismatch") subsystemLinks.push({ subsystem: "Ontology Explorer", reason: "Ontology concept changes may be affecting agent behavior" });
-            if (["knowledge_base_staleness", "context_window_overflow", "prompt_degradation"].includes(classificationCategory)) subsystemLinks.push({ subsystem: "Context Studio", reason: "Context profile adjustments may help resolve the issue" });
+            if (classificationCategory === "memory_eviction") subsystemLinks.push({ subsystem: "Memory Profiles", reason: "Episodic memory eviction may be causing the agent to lose context from previous successful runs" });
+            if (["knowledge_base_staleness", "knowledge_gap", "context_window_overflow", "prompt_degradation"].includes(classificationCategory)) subsystemLinks.push({ subsystem: "Context Studio", reason: "Context profile adjustments may help resolve the issue" });
 
             const existingDiag = (updated?.diagnosisDetails || {}) as Record<string, any>;
             await storage.updateHealingPipeline(pipeline.id, {
@@ -21787,7 +21881,7 @@ Respond in JSON:
               },
             } as any);
 
-            if (["knowledge_base_staleness", "context_window_overflow", "prompt_degradation"].includes(classificationCategory)) {
+            if (["knowledge_base_staleness", "knowledge_gap", "context_window_overflow", "prompt_degradation"].includes(classificationCategory)) {
               try {
                 const allProfiles = await storage.getContextProfiles();
                 const contextProfiles = allProfiles.filter(p => p.agentId === agent.id);
@@ -21796,6 +21890,8 @@ Respond in JSON:
                   const failurePatterns = [];
                   if (classificationCategory === "knowledge_base_staleness") {
                     failurePatterns.push({ category: "knowledge", failCount: 5, examples: ["Stale KB content detected during drift analysis"] });
+                  } else if (classificationCategory === "knowledge_gap") {
+                    failurePatterns.push({ category: "knowledge", failCount: 6, examples: ["Insufficient knowledge base coverage detected — missing domain content"] });
                   } else if (classificationCategory === "context_window_overflow") {
                     failurePatterns.push({ category: "context_overflow", failCount: 3, examples: ["Latency increase suggests context window saturation"] });
                   } else if (classificationCategory === "prompt_degradation") {
@@ -21953,6 +22049,45 @@ Respond in JSON:
         }
       }
 
+      if (data.stage === "remediation") {
+        const pipeline = await storage.getHealingPipeline(req.params.id);
+        if (pipeline && pipeline.agentId) {
+          const existingRemediation = (pipeline.remediation as Record<string, any>) || {};
+          const existingDataRemediation = (data.remediation as Record<string, any>) || {};
+          const mergedRemediation = { ...existingRemediation, ...existingDataRemediation };
+          const existingValidation = mergedRemediation.shadowReplayValidation;
+          const isAlreadyRunning = existingValidation?.status === "running";
+
+          if (!isAlreadyRunning) {
+            const traces = await storage.getTracesByAgent(pipeline.agentId);
+            if (traces.length > 0) {
+              const job = await storage.createJob({
+                type: "shadow_replay",
+                agentId: pipeline.agentId,
+                payload: {
+                  agentId: pipeline.agentId,
+                  healingPipelineId: pipeline.id,
+                  timeWindow: "24h",
+                  sampleSize: 10,
+                  autoTriggered: true,
+                },
+              });
+
+              mergedRemediation.shadowReplayValidation = {
+                status: "running",
+                replayJobId: job.id,
+                passRate: null,
+                evidenceBundle: null,
+                triggeredAt: new Date().toISOString(),
+                completedAt: null,
+                autoTriggered: true,
+              };
+              data.remediation = mergedRemediation;
+            }
+          }
+        }
+      }
+
       const updated = await storage.updateHealingPipeline(req.params.id, data);
       if (!updated) return res.status(404).json({ error: "Not found" });
       res.json(updated);
@@ -22012,7 +22147,37 @@ Respond in JSON:
         }
         evidenceBundle.knowledgeBases = kbDetails;
 
+        const allRagPipelines = await storage.getRagPipelines();
+        const agentRagPipelines = allRagPipelines.filter(p => p.agentId === agent.id);
+        if (agentRagPipelines.length > 0) {
+          evidenceBundle.ragPipelines = agentRagPipelines.map(p => ({
+            id: p.id,
+            name: p.name,
+            status: p.status,
+            chunkStrategy: (p as any).chunkStrategy || null,
+            retrievalStrategy: (p as any).retrievalStrategy || null,
+          }));
+        }
+
+        const totalKbChunks = kbDetails.reduce((sum: number, kb: any) => sum + (kb.chunkCount || 0), 0);
         const ontologyTags = (agent.ontologyTags || []) as Array<{ conceptId: string; conceptLabel: string }>;
+        const ontologyConceptCount = ontologyTags.length;
+        if (ontologyConceptCount > 0 && totalKbChunks > 0) {
+          const coverageRatio = totalKbChunks / ontologyConceptCount;
+          evidenceBundle.kbCoverage = {
+            totalChunks: totalKbChunks,
+            ontologyConceptCount,
+            coverageRatio: Math.round(coverageRatio * 100) / 100,
+            coverageSignal: coverageRatio < 5 ? "low" : coverageRatio < 20 ? "moderate" : "adequate",
+          };
+        } else if (kbDetails.length === 0) {
+          evidenceBundle.kbCoverage = {
+            totalChunks: 0,
+            ontologyConceptCount,
+            coverageRatio: 0,
+            coverageSignal: "low",
+          };
+        }
         const conceptDetails: any[] = [];
         for (const tag of ontologyTags.slice(0, 10)) {
           const concept = await storage.getOntologyConcept(tag.conceptId);
@@ -22029,16 +22194,47 @@ Respond in JSON:
 
         const agentMcpLinks = await storage.getAgentMcpServers(agent.id);
         const toolDetails: any[] = [];
+        const blueprintToolSchemas: Record<string, string> = {};
+        const agentBlueprints = await storage.getBlueprintsByAgent(agent.id);
+        if (agentBlueprints.length > 0) {
+          const latestBlueprint = agentBlueprints.sort((a, b) =>
+            new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+          )[0];
+          const bpJson = latestBlueprint.blueprintJson as any;
+          if (bpJson?.toolSchemaSnapshots && typeof bpJson.toolSchemaSnapshots === "object") {
+            for (const [toolName, schema] of Object.entries(bpJson.toolSchemaSnapshots)) {
+              blueprintToolSchemas[toolName] = crypto.createHash("sha256")
+                .update(JSON.stringify(schema)).digest("hex").slice(0, 16);
+            }
+          }
+        }
+
         for (const link of agentMcpLinks) {
           const server = await storage.getMcpServer(link.serverId);
           if (server) {
             const tools = await storage.getMcpServerTools(server.id);
+            const toolsWithFingerprints = tools.slice(0, 10).map(t => {
+              const currentFingerprint = crypto.createHash("sha256")
+                .update(JSON.stringify(t.inputSchema || {})).digest("hex").slice(0, 16);
+              const baselineFingerprint = blueprintToolSchemas[t.name] || t.fingerprintHash || null;
+              const schemaChanged = baselineFingerprint ? currentFingerprint !== baselineFingerprint : false;
+              return {
+                id: t.id,
+                name: t.name,
+                schemaFingerprint: currentFingerprint,
+                baselineFingerprint,
+                schemaChanged,
+                driftStatus: t.driftStatus || "stable",
+                lastDriftAt: t.lastDriftAt,
+              };
+            });
             toolDetails.push({
               serverId: server.id,
               serverName: server.name,
               serverStatus: server.status,
               toolCount: tools.length,
-              tools: tools.slice(0, 5).map(t => ({ id: t.id, name: t.name })),
+              tools: toolsWithFingerprints,
+              schemaChangesDetected: toolsWithFingerprints.some(t => t.schemaChanged),
             });
           }
         }
@@ -22055,16 +22251,78 @@ Respond in JSON:
             priorityOrder: agentProfile.priorityOrder,
           };
         }
+
+        const allHealingPipelines = await storage.getHealingPipelines();
+        const resolvedPipelines = allHealingPipelines.filter(
+          hp => hp.agentId === agent.id && hp.stage === "resolved" && hp.id !== pipeline.id
+        );
+        const historicalResolutions: any[] = [];
+        for (const rp of resolvedPipelines.slice(0, 10)) {
+          const diag = (rp.diagnosisDetails || {}) as Record<string, any>;
+          const rootCauseClassification = diag.rootCauseClassification || {};
+          const remediation = (rp.remediation || {}) as Record<string, any>;
+          const recurrence = allHealingPipelines.some(
+            hp => hp.agentId === agent.id &&
+                  hp.id !== rp.id &&
+                  hp.id !== pipeline.id &&
+                  hp.createdAt && rp.resolvedAt &&
+                  new Date(hp.createdAt) > new Date(rp.resolvedAt) &&
+                  ((hp.diagnosisDetails as any)?.rootCauseClassification?.category === rootCauseClassification.category)
+          );
+          historicalResolutions.push({
+            pipelineId: rp.id,
+            title: rp.title,
+            issueType: rp.issueType,
+            severity: rp.severity,
+            rootCauseCategory: rootCauseClassification.category || "unknown",
+            rootCauseConfidence: rootCauseClassification.confidence || 0,
+            remediationType: remediation.type || remediation.strategy || "unknown",
+            resolvedAt: rp.resolvedAt,
+            fixHeld: !recurrence,
+          });
+        }
+        evidenceBundle.historicalResolutions = historicalResolutions;
+
+        const agentImprovementCycles = await storage.getImprovementCyclesByAgent(agent.id);
+        evidenceBundle.improvementCycles = agentImprovementCycles.slice(0, 10).map(ic => ({
+          id: ic.id,
+          triggerType: ic.triggerType,
+          detectedIssue: ic.detectedIssue,
+          issueCategory: ic.issueCategory,
+          actionType: ic.actionType,
+          proposedAction: ic.proposedAction,
+          status: ic.status,
+          riskLevel: ic.riskLevel,
+          autoApplied: ic.autoApplied,
+          appliedAt: ic.appliedAt,
+        }));
+
+        const classifyMemories = await storage.getAllAgentMemories(agent.id);
+        const classifyEpisodicMemories = classifyMemories.filter(m => m.memoryType === "episodic");
+        const classifyExpiredMemories = classifyMemories.filter(m => m.expiresAt && m.expiresAt <= new Date());
+        const classifyMemoryGov = (agent.memoryGovernanceRules || null) as Record<string, any> | null;
+        const classifyAgentTraces = await storage.getTracesByAgent(agent.id);
+
+        evidenceBundle.memoryEvidence = {
+          totalMemories: classifyMemories.length,
+          episodicCount: classifyEpisodicMemories.length,
+          expiredCount: classifyExpiredMemories.length,
+          mostRecentMemoryAt: classifyMemories.length > 0 ? classifyMemories[0].createdAt : null,
+          memoryGovernanceRules: classifyMemoryGov,
+          totalTraces: classifyAgentTraces.length,
+        };
       }
 
       const rootCauseCategories = [
         "knowledge_base_staleness",
+        "knowledge_gap",
         "ontology_mismatch",
         "tool_schema_change",
         "prompt_degradation",
         "context_window_overflow",
         "model_regression",
         "data_quality",
+        "memory_eviction",
         "unknown",
       ];
 
@@ -22080,14 +22338,26 @@ Pipeline Info:
 
 Evidence Bundle:
 ${JSON.stringify(evidenceBundle, null, 2)}
+${(evidenceBundle.historicalResolutions && evidenceBundle.historicalResolutions.length > 0) ? `
+Historical Context:
+Previous healing incidents for this agent have been resolved. Use this history to improve classification confidence and identify recurring patterns:
+${evidenceBundle.historicalResolutions.map((hr: any) => `- Incident "${hr.title}": Root cause was "${hr.rootCauseCategory}" (confidence: ${hr.rootCauseConfidence}%), remediation type: "${hr.remediationType}", fix held: ${hr.fixHeld ? "yes (no recurrence)" : "no (issue recurred)"}${hr.issueType ? `, issue type: ${hr.issueType}` : ""}${hr.severity ? `, severity: ${hr.severity}` : ""}`).join("\n")}
+${evidenceBundle.improvementCycles && evidenceBundle.improvementCycles.length > 0 ? `\nImprovement cycles for this agent:\n${evidenceBundle.improvementCycles.map((ic: any) => `- [${ic.status}] ${ic.detectedIssue} -> Action: ${ic.proposedAction} (type: ${ic.actionType}, risk: ${ic.riskLevel}${ic.autoApplied ? ", auto-applied" : ""})`).join("\n")}` : ""}
+
+If a similar root cause pattern has appeared before and the fix did not hold, increase confidence for that category and note the recurrence in your reasoning.` : ""}
 
 Classify the root cause into exactly one of these categories: ${rootCauseCategories.join(", ")}
+
+Important distinctions:
+- knowledge_base_staleness: KB content exists but is outdated/stale
+- knowledge_gap: KB has missing coverage (low chunk count, no linked documents, insufficient domain coverage relative to ontology scope)
+- memory_eviction: Agent's episodic memories have been pruned/evicted due to retention policies, causing loss of context from previous successful runs. Check memoryEvidence for low episodic memory count relative to trace history, short retention policies, and high expired memory counts.
 
 Respond with JSON:
 {
   "category": string (one of the categories above),
   "confidence": number (0-100),
-  "reasoning": string (2-3 sentences explaining why),
+  "reasoning": string (2-3 sentences explaining why, referencing past incidents if relevant),
   "evidenceItems": [{ "source": string, "detail": string, "severity": "high"|"medium"|"low" }],
   "subsystemLinks": [{ "subsystem": string, "reason": string }]
 }`;
@@ -22319,6 +22589,7 @@ Respond with JSON:
       const categoryBoostMap: Record<string, string[]> = {
         "knowledge/factual": ["Retrieved Knowledge", "Domain Knowledge"],
         "knowledge_base_staleness": ["Retrieved Knowledge", "Domain Knowledge"],
+        "knowledge_gap": ["Retrieved Knowledge", "Domain Knowledge"],
         "regulatory/compliance": ["Regulatory Context", "Compliance Rules"],
         "tool usage": ["Tool Descriptions"],
         "tool_schema_change": ["Tool Descriptions"],

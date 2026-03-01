@@ -66,6 +66,7 @@ import {
   MessageSquare,
   Gauge,
   Link2,
+  FileQuestion,
 } from "lucide-react";
 
 const PIPELINE_STAGES = [
@@ -164,6 +165,8 @@ function getRootCauseCategoryInfo(category: string): { icon: any; label: string;
     context_window_overflow: { icon: Gauge, label: "Context Window Overflow", color: "bg-red-500/15 text-red-700 dark:text-red-400", subsystemLink: "/context-studio" },
     model_regression: { icon: Cpu, label: "Model Regression", color: "bg-indigo-500/15 text-indigo-700 dark:text-indigo-400", subsystemLink: "/agents" },
     data_quality: { icon: Database, label: "Data Quality", color: "bg-pink-500/15 text-pink-700 dark:text-pink-400", subsystemLink: "/knowledge-bases" },
+    knowledge_gap: { icon: FileQuestion, label: "Knowledge Gap", color: "bg-teal-500/15 text-teal-700 dark:text-teal-400", subsystemLink: "/knowledge-bases" },
+    memory_eviction: { icon: Brain, label: "Memory Eviction", color: "bg-violet-500/15 text-violet-700 dark:text-violet-400", subsystemLink: "/memory-profiles" },
     unknown: { icon: Brain, label: "Unknown", color: "bg-gray-500/15 text-gray-700 dark:text-gray-400", subsystemLink: "/evals" },
   };
   return map[category] || map.unknown;
@@ -766,12 +769,13 @@ export default function HealingOperations() {
                         <div className="space-y-1">
                           <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Shadow Replay</span>
                           {srValid ? (
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex items-center gap-1.5 flex-wrap">
                               {srValid.status === "running" && <Badge variant="outline" className="text-[10px] bg-blue-500/15 text-blue-600 border-blue-500/20"><Loader2 className="w-3 h-3 mr-1 animate-spin" />Running</Badge>}
                               {srValid.status === "passed" && <Badge variant="outline" className="text-[10px] bg-green-500/15 text-green-600 border-green-500/20"><CheckCircle2 className="w-3 h-3 mr-1" />Passed {srValid.passRate ? `${Number(srValid.passRate).toFixed(0)}%` : ""}</Badge>}
                               {srValid.status === "failed" && <Badge variant="outline" className="text-[10px] bg-red-500/15 text-red-600 border-red-500/20"><XCircle className="w-3 h-3 mr-1" />Failed {srValid.passRate ? `${Number(srValid.passRate).toFixed(0)}%` : ""}</Badge>}
                               {srValid.status === "pending" && <Badge variant="outline" className="text-[10px]">Pending</Badge>}
                               {srValid.status === "skipped" && <Badge variant="outline" className="text-[10px]">Skipped</Badge>}
+                              {srValid.autoTriggered && <Badge variant="outline" className="text-[10px] bg-purple-500/15 text-purple-600 border-purple-500/20" data-testid="badge-shadow-replay-auto-triggered">Auto-triggered</Badge>}
                             </div>
                           ) : (
                             <span className="text-xs text-muted-foreground">Not triggered</span>
@@ -806,6 +810,20 @@ export default function HealingOperations() {
                             <Link href="/knowledge-bases">
                               <Badge variant="outline" className="text-[10px] cursor-pointer hover:bg-muted/50" data-testid="link-intel-kb">
                                 <BookOpen className="w-3 h-3 mr-1" />Knowledge Base
+                              </Badge>
+                            </Link>
+                          )}
+                          {rc?.category === "knowledge_gap" && (
+                            <Link href="/knowledge-bases">
+                              <Badge variant="outline" className="text-[10px] cursor-pointer hover:bg-muted/50" data-testid="link-intel-knowledge-gap">
+                                <FileQuestion className="w-3 h-3 mr-1" />Knowledge Gap
+                              </Badge>
+                            </Link>
+                          )}
+                          {rc?.category === "memory_eviction" && (
+                            <Link href="/memory-profiles">
+                              <Badge variant="outline" className="text-[10px] cursor-pointer hover:bg-muted/50" data-testid="link-intel-memory">
+                                <Brain className="w-3 h-3 mr-1" />Memory
                               </Badge>
                             </Link>
                           )}
@@ -1286,7 +1304,12 @@ export default function HealingOperations() {
                             <div className="flex items-center gap-3 py-2" data-testid="status-shadow-replay-running">
                               <Loader2 className="w-5 h-5 animate-spin text-blue-500" />
                               <div>
-                                <p className="text-sm font-medium">Shadow Replay Running</p>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <p className="text-sm font-medium">Shadow Replay Running</p>
+                                  {shadowValidation.autoTriggered && (
+                                    <Badge variant="outline" className="text-[10px] bg-purple-500/15 text-purple-600 border-purple-500/20" data-testid="badge-shadow-replay-auto-triggered-detail">Auto-triggered</Badge>
+                                  )}
+                                </div>
                                 <p className="text-xs text-muted-foreground">
                                   {"Replaying historical traces against patched configuration..."}
                                   {shadowValidation.triggeredAt ? ` Started ${timeAgo(String(shadowValidation.triggeredAt))}` : ""}
@@ -1307,6 +1330,9 @@ export default function HealingOperations() {
                                     <XCircle className="w-3 h-3 mr-1" />
                                     Failed
                                   </Badge>
+                                )}
+                                {shadowValidation.autoTriggered && (
+                                  <Badge variant="outline" className="bg-purple-500/15 text-purple-600 dark:text-purple-400" data-testid="badge-shadow-replay-auto-triggered-result">Auto-triggered</Badge>
                                 )}
                                 <span className="text-sm font-medium" data-testid="text-shadow-replay-pass-rate">
                                   Pass Rate: {String(shadowValidation.passRate)}%
