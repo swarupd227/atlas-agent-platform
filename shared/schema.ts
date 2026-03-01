@@ -99,6 +99,8 @@ export const agents = pgTable("agents", {
   lastIncidentAt: timestamp("last_incident_at"),
   requiresRevalidation: boolean("requires_revalidation").default(false),
   revalidationReason: text("revalidation_reason"),
+  gitConfig: jsonb("git_config"),
+  ciCdConfig: jsonb("ci_cd_config"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -1496,6 +1498,8 @@ export const contextProfiles = pgTable("context_profiles", {
   priorityOrder: jsonb("priority_order").notNull().default(sql`'[]'::jsonb`),
   budgetAllocations: jsonb("budget_allocations").notNull().default(sql`'{}'::jsonb`),
   totalCapacity: integer("total_capacity").notNull().default(128000),
+  version: integer("version").notNull().default(1),
+  versionHistory: jsonb("version_history").notNull().default(sql`'[]'::jsonb`),
   status: text("status").notNull().default("active"),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -1512,6 +1516,8 @@ export const memoryProfiles = pgTable("memory_profiles", {
   tierConfigs: jsonb("tier_configs").notNull().default(sql`'[]'::jsonb`),
   industryRules: jsonb("industry_rules").notNull().default(sql`'[]'::jsonb`),
   forgettingPolicies: jsonb("forgetting_policies").notNull().default(sql`'[]'::jsonb`),
+  version: integer("version").notNull().default(1),
+  versionHistory: jsonb("version_history").notNull().default(sql`'[]'::jsonb`),
   status: text("status").notNull().default("active"),
   createdAt: timestamp("created_at").defaultNow(),
 });

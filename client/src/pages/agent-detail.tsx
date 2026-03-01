@@ -1583,6 +1583,7 @@ function AgentDetailInner() {
             { value: "ontology", label: "Ontology" },
             { value: "api-gateway", label: "API Gateway" },
             { value: "channels", label: "Channels" },
+            { value: "gitops", label: "GitOps" },
             ...(agent.agentType === "remote" ? [{ value: "a2a", label: "A2A Card" }] : []),
             ...(agent.agentType === "team" ? [{ value: "team", label: "Team Members" }] : []),
           ];
@@ -4839,6 +4840,10 @@ function AgentDetailInner() {
 
         <TabsContent value="knowledge-base" className="flex flex-col gap-4 mt-0" data-testid="tab-content-knowledge-base">
           <AgentKnowledgeBases agent={agent} />
+        </TabsContent>
+
+        <TabsContent value="gitops" className="flex flex-col gap-4 mt-0" data-testid="tab-content-gitops">
+          <AgentGitOps agent={agent} />
         </TabsContent>
       </Tabs>
 
@@ -9031,6 +9036,685 @@ function AgentKnowledgeBases({ agent }: { agent: any }) {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+function AgentGitOps({ agent }: { agent: any }) {
+  const { toast } = useToast();
+  const [repoUrl, setRepoUrl] = useState((agent.gitConfig as any)?.repoUrl || "");
+  const [branch, setBranch] = useState((agent.gitConfig as any)?.branch || "main");
+  const [path, setPath] = useState((agent.gitConfig as any)?.path || "");
+
+  const gitStatusQuery = useQuery<any>({
+    queryKey: ["/api/agents", agent.id, "git-status"],
+    queryFn: async () => {
+      const res = await fetch(`/api/agents/${agent.id}/git-status`);
+      if (!res.ok) throw new Error("Failed to fetch git status");
+      return res.json();
+    },
+    refetchInterval: 30000,
+  });
+
+  const saveConfigMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("PATCH", `/api/agents/${agent.id}/git-config`, { repoUrl, branch, path });
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Git config saved" });
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agent.id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agent.id, "git-status"] });
+    },
+    onError: (e: any) => toast({ title: "Failed to save config", description: e.message, variant: "destructive" }),
+  });
+
+  const pushMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/agents/${agent.id}/git-push`, {});
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      toast({ title: "Pushed to Git", description: `Commit: ${(data.commitSha || "").substring(0, 8)}` });
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agent.id, "git-status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agent.id] });
+    },
+    onError: (e: any) => toast({ title: "Push failed", description: e.message, variant: "destructive" }),
+  });
+
+  const pullMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/agents/${agent.id}/git-pull`, {});
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      toast({ title: "Pulled from Git", description: `Applied sections: ${(data.appliedSections || []).join(", ")}` });
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agent.id, "git-status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agent.id] });
+    },
+    onError: (e: any) => toast({ title: "Pull failed", description: e.message, variant: "destructive" }),
+  });
+
+  const statusData = gitStatusQuery.data;
+  const syncStatus = statusData?.status || "not_configured";
+
+  const statusConfig: Record<string, { label: string; color: string }> = {
+    in_sync: { label: "In Sync", color: "text-green-600 dark:text-green-400" },
+    local_changes: { label: "Local Changes", color: "text-yellow-600 dark:text-yellow-400" },
+    remote_changes: { label: "Remote Changes", color: "text-blue-600 dark:text-blue-400" },
+    diverged: { label: "Diverged", color: "text-red-600 dark:text-red-400" },
+    never_synced: { label: "Never Synced", color: "text-muted-foreground" },
+    remote_deleted: { label: "Remote Deleted", color: "text-red-600 dark:text-red-400" },
+    not_configured: { label: "Not Configured", color: "text-muted-foreground" },
+    error: { label: "Error", color: "text-red-600 dark:text-red-400" },
+  };
+
+  const currentStatus = statusConfig[syncStatus] || statusConfig.not_configured;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <GitBranch className="w-4 h-4" /> Git Repository Configuration
+          </CardTitle>
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5">
+              <Circle className={`w-2.5 h-2.5 fill-current ${currentStatus.color}`} />
+              <span className={`text-xs font-medium ${currentStatus.color}`} data-testid="text-git-sync-status">
+                {currentStatus.label}
+              </span>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => gitStatusQuery.refetch()}
+              disabled={gitStatusQuery.isFetching}
+              data-testid="button-refresh-git-status"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${gitStatusQuery.isFetching ? "animate-spin" : ""}`} />
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="git-repo-url" className="text-xs">Repository URL</Label>
+              <Input
+                id="git-repo-url"
+                value={repoUrl}
+                onChange={(e) => setRepoUrl(e.target.value)}
+                placeholder="https://github.com/owner/repo"
+                className="text-sm font-mono"
+                data-testid="input-git-repo-url"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="git-branch" className="text-xs">Branch</Label>
+              <Input
+                id="git-branch"
+                value={branch}
+                onChange={(e) => setBranch(e.target.value)}
+                placeholder="main"
+                className="text-sm font-mono"
+                data-testid="input-git-branch"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="git-path" className="text-xs">Manifest Path</Label>
+              <Input
+                id="git-path"
+                value={path}
+                onChange={(e) => setPath(e.target.value)}
+                placeholder={`agents/${agent.name.replace(/[^a-zA-Z0-9_-]/g, "_")}.agent-manifest.json`}
+                className="text-sm font-mono"
+                data-testid="input-git-path"
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => saveConfigMutation.mutate()}
+              disabled={saveConfigMutation.isPending}
+              data-testid="button-save-git-config"
+            >
+              {saveConfigMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Settings className="w-3.5 h-3.5 mr-1" />}
+              Save Config
+            </Button>
+            <Separator orientation="vertical" className="h-6" />
+            <Button
+              size="sm"
+              onClick={() => pushMutation.mutate()}
+              disabled={pushMutation.isPending || !repoUrl}
+              data-testid="button-git-push"
+            >
+              {pushMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <ArrowRight className="w-3.5 h-3.5 mr-1" />}
+              Push to Git
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => pullMutation.mutate()}
+              disabled={pullMutation.isPending || !repoUrl}
+              data-testid="button-git-pull"
+            >
+              {pullMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Download className="w-3.5 h-3.5 mr-1" />}
+              Pull from Git
+            </Button>
+          </div>
+
+          {statusData && syncStatus !== "not_configured" && (
+            <div className="rounded-md border p-3 bg-muted/30">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                <div>
+                  <span className="text-muted-foreground">Last Synced</span>
+                  <p className="font-medium mt-0.5" data-testid="text-git-last-synced">
+                    {statusData.lastSyncedAt ? new Date(statusData.lastSyncedAt).toLocaleString() : "Never"}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Last Commit</span>
+                  <p className="font-mono font-medium mt-0.5" data-testid="text-git-last-commit">
+                    {statusData.lastSyncCommit ? statusData.lastSyncCommit.substring(0, 8) : "N/A"}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Remote SHA</span>
+                  <p className="font-mono font-medium mt-0.5" data-testid="text-git-remote-sha">
+                    {statusData.remoteSha ? statusData.remoteSha.substring(0, 8) : "N/A"}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Remote Exists</span>
+                  <p className="font-medium mt-0.5" data-testid="text-git-remote-exists">
+                    {statusData.remoteExists ? "Yes" : "No"}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Download className="w-4 h-4" /> Manifest Export / Import
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={async () => {
+                try {
+                  const res = await fetch(`/api/agents/${agent.id}/export-manifest`);
+                  const data = await res.json();
+                  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `${agent.name.replace(/[^a-zA-Z0-9_-]/g, "_")}.agent-manifest.json`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                  toast({ title: "Manifest downloaded" });
+                } catch { toast({ title: "Export failed", variant: "destructive" }); }
+              }}
+              data-testid="button-export-manifest-json"
+            >
+              <FileCode className="w-3.5 h-3.5 mr-1" /> Export JSON
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={async () => {
+                try {
+                  const res = await fetch(`/api/agents/${agent.id}/export-manifest?format=yaml`);
+                  const text = await res.text();
+                  const blob = new Blob([text], { type: "text/yaml" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `${agent.name.replace(/[^a-zA-Z0-9_-]/g, "_")}.agent-manifest.yaml`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                  toast({ title: "YAML manifest downloaded" });
+                } catch { toast({ title: "Export failed", variant: "destructive" }); }
+              }}
+              data-testid="button-export-manifest-yaml"
+            >
+              <FileText className="w-3.5 h-3.5 mr-1" /> Export YAML
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                const input = document.createElement("input");
+                input.type = "file";
+                input.accept = ".json";
+                input.onchange = async (e: any) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  try {
+                    const text = await file.text();
+                    const manifest = JSON.parse(text);
+                    const res = await apiRequest("POST", `/api/agents/import-manifest?mode=update&agentId=${agent.id}`, manifest);
+                    const result = await res.json();
+                    toast({ title: "Manifest imported", description: `Changes: ${JSON.stringify(result.changeReport?.summary || {})}` });
+                    queryClient.invalidateQueries({ queryKey: ["/api/agents", agent.id] });
+                  } catch (err: any) {
+                    toast({ title: "Import failed", description: err.message, variant: "destructive" });
+                  }
+                };
+                input.click();
+              }}
+              data-testid="button-import-manifest"
+            >
+              <Package className="w-3.5 h-3.5 mr-1" /> Import Manifest
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <AgentConfigRollback agent={agent} />
+      <AgentCiCdConfig agent={agent} />
+      <AgentPipelineRunHistory agent={agent} />
+    </div>
+  );
+}
+
+function AgentConfigRollback({ agent }: { agent: any }) {
+  const { toast } = useToast();
+
+  const diffQuery = useQuery<any>({
+    queryKey: ["/api/agents", agent.id, "manifest-diff"],
+    queryFn: async () => {
+      const res = await fetch(`/api/agents/${agent.id}/manifest-diff?against=1`);
+      if (!res.ok) return null;
+      return res.json();
+    },
+  });
+
+  const rollbackMutation = useMutation({
+    mutationFn: async (targetVersion: number) => {
+      const res = await apiRequest("POST", `/api/agents/${agent.id}/rollback-config`, { targetVersion });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      toast({ title: "Config Rolled Back", description: `Restored to version ${data.targetVersion}. ${data.changes?.length || 0} sections updated.` });
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agent.id] });
+    },
+    onError: (e: any) => toast({ title: "Rollback Failed", description: e.message, variant: "destructive" }),
+  });
+
+  const blueprintHistory: any[] = (() => {
+    const bp = agent.blueprintJson;
+    if (!bp) return [];
+    const bpObj = typeof bp === "string" ? JSON.parse(bp) : bp;
+    return Array.isArray(bpObj?.versionHistory) ? bpObj.versionHistory : [];
+  })();
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium flex items-center gap-2">
+          <RotateCcw className="w-4 h-4" /> Config Version History
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {blueprintHistory.length > 0 ? (
+          <div className="flex flex-col gap-2">
+            {blueprintHistory.slice().reverse().slice(0, 10).map((entry: any, idx: number) => (
+              <div key={idx} className="flex items-center justify-between border rounded-lg p-2" data-testid={`row-version-${entry.version}`}>
+                <div className="flex flex-col">
+                  <span className="text-sm font-medium">Version {entry.version}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {entry.signedAt ? new Date(entry.signedAt).toLocaleDateString() : entry.snapshotAt ? new Date(entry.snapshotAt).toLocaleDateString() : "—"}
+                    {entry.signedBy ? ` by ${entry.signedBy}` : ""}
+                  </span>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => rollbackMutation.mutate(entry.version)}
+                  disabled={rollbackMutation.isPending}
+                  data-testid={`button-rollback-v${entry.version}`}
+                >
+                  <RotateCcw className={`w-3.5 h-3.5 mr-1 ${rollbackMutation.isPending ? "animate-spin" : ""}`} />
+                  Restore
+                </Button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center py-8 gap-2">
+            <History className="w-8 h-8 text-muted-foreground/40" />
+            <p className="text-xs text-muted-foreground">No version history yet. Versions are created when blueprints are signed or configs are updated.</p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function AgentCiCdConfig({ agent }: { agent: any }) {
+  const { toast } = useToast();
+
+  const ciCdQuery = useQuery<any>({
+    queryKey: ["/api/agents", agent.id, "ci-cd-config"],
+    queryFn: async () => {
+      const res = await fetch(`/api/agents/${agent.id}/ci-cd-config`);
+      if (!res.ok) throw new Error("Failed to fetch CI/CD config");
+      return res.json();
+    },
+  });
+
+  const [autoEvalOnPush, setAutoEvalOnPush] = useState(false);
+  const [autoDeployOnEvalPass, setAutoDeployOnEvalPass] = useState(false);
+  const [evalPassThreshold, setEvalPassThreshold] = useState("0.8");
+  const [targetEnvironment, setTargetEnvironment] = useState("staging");
+  const [webhookSecret, setWebhookSecret] = useState("");
+  const [initialized, setInitialized] = useState(false);
+
+  if (ciCdQuery.data && !initialized) {
+    setAutoEvalOnPush(ciCdQuery.data.autoEvalOnPush || false);
+    setAutoDeployOnEvalPass(ciCdQuery.data.autoDeployOnEvalPass || false);
+    setEvalPassThreshold(String(ciCdQuery.data.evalPassThreshold || 0.8));
+    setTargetEnvironment(ciCdQuery.data.targetEnvironment || "staging");
+    setWebhookSecret(ciCdQuery.data.webhookSecret || "");
+    setInitialized(true);
+  }
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("PATCH", `/api/agents/${agent.id}/ci-cd-config`, {
+        autoEvalOnPush,
+        autoDeployOnEvalPass,
+        evalPassThreshold: parseFloat(evalPassThreshold),
+        targetEnvironment,
+        webhookSecret: webhookSecret || undefined,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "CI/CD config saved" });
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agent.id, "ci-cd-config"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agent.id] });
+    },
+    onError: (e: any) => toast({ title: "Failed to save CI/CD config", description: e.message, variant: "destructive" }),
+  });
+
+  const generateSecret = () => {
+    const array = new Uint8Array(32);
+    crypto.getRandomValues(array);
+    const secret = Array.from(array).map(b => b.toString(16).padStart(2, "0")).join("");
+    setWebhookSecret(secret);
+  };
+
+  const webhookUrl = typeof window !== "undefined"
+    ? `${window.location.origin}/api/webhooks/git-commit`
+    : "/api/webhooks/git-commit";
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-3">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Workflow className="w-4 h-4" /> CI/CD Pipeline Configuration
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <div className="rounded-md border p-3 bg-muted/30">
+          <div className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium text-muted-foreground">Webhook URL</span>
+            <div className="flex items-center gap-2">
+              <code className="text-xs font-mono bg-background p-1.5 rounded-md border flex-1 truncate" data-testid="text-webhook-url">
+                {webhookUrl}
+              </code>
+              <Button
+                size="icon"
+                variant="outline"
+                onClick={() => {
+                  navigator.clipboard.writeText(webhookUrl);
+                  toast({ title: "Webhook URL copied" });
+                }}
+                data-testid="button-copy-webhook-url"
+              >
+                <Copy className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-0.5">
+              Add this URL as a webhook in your GitHub repository settings. Select "Push" events.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex flex-col gap-0.5">
+                <Label className="text-xs font-medium">Auto-Eval on Push</Label>
+                <span className="text-[10px] text-muted-foreground">Trigger eval suite when manifest is pushed via webhook</span>
+              </div>
+              <Switch
+                checked={autoEvalOnPush}
+                onCheckedChange={setAutoEvalOnPush}
+                data-testid="switch-auto-eval-on-push"
+              />
+            </div>
+
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex flex-col gap-0.5">
+                <Label className="text-xs font-medium">Auto-Deploy on Eval Pass</Label>
+                <span className="text-[10px] text-muted-foreground">Auto-create deployment when eval passes threshold</span>
+              </div>
+              <Switch
+                checked={autoDeployOnEvalPass}
+                onCheckedChange={setAutoDeployOnEvalPass}
+                data-testid="switch-auto-deploy-on-eval-pass"
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="eval-threshold" className="text-xs">Eval Pass Threshold</Label>
+              <Input
+                id="eval-threshold"
+                type="number"
+                min="0"
+                max="1"
+                step="0.05"
+                value={evalPassThreshold}
+                onChange={(e) => setEvalPassThreshold(e.target.value)}
+                className="text-sm font-mono"
+                data-testid="input-eval-pass-threshold"
+              />
+              <span className="text-[10px] text-muted-foreground">Minimum pass rate (0.0 - 1.0) to trigger auto-deploy</span>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="target-env" className="text-xs">Target Environment</Label>
+              <Select value={targetEnvironment} onValueChange={setTargetEnvironment}>
+                <SelectTrigger className="text-sm" data-testid="select-target-environment">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="staging">Staging</SelectItem>
+                  <SelectItem value="pilot">Pilot</SelectItem>
+                  <SelectItem value="production">Production</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </div>
+
+        <Separator />
+
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="webhook-secret" className="text-xs">Webhook Secret</Label>
+          <div className="flex items-center gap-2">
+            <Input
+              id="webhook-secret"
+              type="password"
+              value={webhookSecret}
+              onChange={(e) => setWebhookSecret(e.target.value)}
+              placeholder="HMAC-SHA256 secret for signature verification"
+              className="text-sm font-mono flex-1"
+              data-testid="input-webhook-secret"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={generateSecret}
+              data-testid="button-generate-webhook-secret"
+            >
+              <KeyRound className="w-3.5 h-3.5 mr-1" /> Generate
+            </Button>
+          </div>
+          <span className="text-[10px] text-muted-foreground">
+            Set this same secret in your GitHub webhook configuration for signature verification
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            size="sm"
+            onClick={() => saveMutation.mutate()}
+            disabled={saveMutation.isPending}
+            data-testid="button-save-cicd-config"
+          >
+            {saveMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Settings className="w-3.5 h-3.5 mr-1" />}
+            Save CI/CD Config
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function AgentPipelineRunHistory({ agent }: { agent: any }) {
+  const pipelineRunsQuery = useQuery<any[]>({
+    queryKey: ["/api/agents", agent.id, "pipeline-runs"],
+    queryFn: async () => {
+      const res = await fetch(`/api/agents/${agent.id}/pipeline-runs`);
+      if (!res.ok) throw new Error("Failed to fetch pipeline runs");
+      return res.json();
+    },
+    refetchInterval: 15000,
+  });
+
+  const runs = pipelineRunsQuery.data || [];
+
+  const actionLabels: Record<string, { label: string; color: string }> = {
+    cicd_pipeline_triggered: { label: "Pipeline Triggered", color: "text-blue-600 dark:text-blue-400" },
+    cicd_eval_completed: { label: "Eval Completed", color: "text-violet-600 dark:text-violet-400" },
+    cicd_auto_deploy: { label: "Auto-Deploy", color: "text-green-600 dark:text-green-400" },
+    cicd_webhook_received: { label: "Webhook Received", color: "text-cyan-600 dark:text-cyan-400" },
+    manifest_imported: { label: "Manifest Imported", color: "text-amber-600 dark:text-amber-400" },
+    config_rollback: { label: "Config Rollback", color: "text-red-600 dark:text-red-400" },
+  };
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-3">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <History className="w-4 h-4" /> Pipeline Run History
+        </CardTitle>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => pipelineRunsQuery.refetch()}
+          disabled={pipelineRunsQuery.isFetching}
+          data-testid="button-refresh-pipeline-runs"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${pipelineRunsQuery.isFetching ? "animate-spin" : ""}`} />
+        </Button>
+      </CardHeader>
+      <CardContent>
+        {pipelineRunsQuery.isLoading ? (
+          <div className="flex flex-col gap-2">
+            <Skeleton className="h-8 w-full" />
+            <Skeleton className="h-8 w-full" />
+            <Skeleton className="h-8 w-full" />
+          </div>
+        ) : runs.length === 0 ? (
+          <div className="text-center py-6">
+            <Workflow className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+            <p className="text-sm text-muted-foreground" data-testid="text-no-pipeline-runs">
+              No pipeline runs yet. Configure CI/CD and push changes to trigger runs.
+            </p>
+          </div>
+        ) : (
+          <div className="max-h-[400px] overflow-y-auto rounded-md border">
+            <table className="w-full text-xs" data-testid="table-pipeline-runs">
+              <thead className="bg-muted/50 sticky top-0">
+                <tr>
+                  <th className="px-3 py-2 text-left font-medium text-muted-foreground">Timestamp</th>
+                  <th className="px-3 py-2 text-left font-medium text-muted-foreground">Action</th>
+                  <th className="px-3 py-2 text-left font-medium text-muted-foreground">Trigger</th>
+                  <th className="px-3 py-2 text-left font-medium text-muted-foreground">Eval Result</th>
+                  <th className="px-3 py-2 text-left font-medium text-muted-foreground">Deploy Status</th>
+                  <th className="px-3 py-2 text-left font-medium text-muted-foreground">Commit</th>
+                </tr>
+              </thead>
+              <tbody>
+                {runs.map((run: any) => {
+                  const actionMeta = actionLabels[run.action] || { label: run.action, color: "text-muted-foreground" };
+                  return (
+                    <tr key={run.id} className="border-t border-muted/30" data-testid={`row-pipeline-run-${run.id}`}>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {run.timestamp ? new Date(run.timestamp).toLocaleString() : "N/A"}
+                      </td>
+                      <td className="px-3 py-2">
+                        <span className={`font-medium ${actionMeta.color}`}>{actionMeta.label}</span>
+                      </td>
+                      <td className="px-3 py-2">
+                        <Badge variant="outline" className="text-[10px]">
+                          {run.trigger}
+                        </Badge>
+                      </td>
+                      <td className="px-3 py-2">
+                        {run.evalResult ? (
+                          <Badge
+                            variant={run.evalResult === "passed" ? "default" : "destructive"}
+                            className="text-[10px]"
+                          >
+                            {run.evalResult === "passed" ? (
+                              <CheckCircle2 className="w-3 h-3 mr-0.5" />
+                            ) : (
+                              <XCircle className="w-3 h-3 mr-0.5" />
+                            )}
+                            {run.evalResult}
+                          </Badge>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2">
+                        {run.deployStatus ? (
+                          <Badge variant="outline" className="text-[10px]">
+                            <Rocket className="w-3 h-3 mr-0.5" />
+                            {run.deployStatus}
+                          </Badge>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 font-mono text-muted-foreground">
+                        {run.commitSha ? run.commitSha.substring(0, 8) : "-"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

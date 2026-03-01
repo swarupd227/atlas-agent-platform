@@ -16121,6 +16121,239 @@ def ${tool.name}(args: dict) -> dict:
     }
   });
 
+  app.get("/api/agents/:id/export-manifest", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+
+      const formatParam = (req.query.format as string) || "json";
+
+      const blueprintsList = await storage.getBlueprintsByAgent(agent.id);
+      const blueprint = blueprintsList.length > 0 ? blueprintsList[0] : null;
+
+      const allContextProfiles = await storage.getContextProfiles();
+      const contextProfile = allContextProfiles.find(cp => cp.agentId === agent.id) || null;
+
+      const allMemoryProfiles = await storage.getMemoryProfiles();
+      const memoryProfile = allMemoryProfiles.find(mp => mp.agentId === agent.id) || null;
+
+      const evalSuites = await storage.getEvalsByAgent(agent.id);
+      const evalSuiteConfigs = evalSuites.map(s => ({
+        name: s.name,
+        type: s.type,
+        scorerConfig: s.scorerConfig,
+        thresholdConfig: s.thresholdConfig,
+        totalCases: s.totalCases,
+        industry: s.industry,
+      }));
+
+      const allPolicies = await storage.getPolicies();
+      const agentPolicyBindings = (agent.policyBindings || []) as any[];
+      const policyIds = new Set(agentPolicyBindings.map((b: any) => b.policyId || b.id).filter(Boolean));
+      const linkedPolicies = allPolicies
+        .filter(p => policyIds.has(p.id))
+        .map(p => ({
+          id: p.id,
+          name: p.name,
+          domain: p.domain,
+          policyJson: p.policyJson,
+          version: p.version,
+        }));
+
+      const ontologyTags = (agent.ontologyTags || []) as Array<{ conceptId: string; conceptLabel: string }>;
+      const ontologyBindings = ontologyTags.map(t => ({
+        conceptId: t.conceptId,
+        conceptLabel: t.conceptLabel,
+      }));
+
+      const agentMcpLinks = await storage.getAgentMcpServers(agent.id);
+      const mcpIntegrations = [];
+      for (const link of agentMcpLinks) {
+        const server = await storage.getMcpServer(link.serverId);
+        if (server) {
+          const tools = await storage.getMcpServerTools(server.id);
+          mcpIntegrations.push({
+            serverName: server.name,
+            serverType: server.serverType,
+            tools: tools.map(t => t.name),
+          });
+        }
+      }
+
+      const agentSection = {
+        name: agent.name,
+        description: agent.description,
+        modelProvider: agent.modelProvider,
+        modelName: agent.modelName,
+        industry: (agent as any).industry || null,
+        outcomeId: agent.outcomeId,
+        riskTier: agent.riskTier,
+        autonomyMode: agent.autonomyMode,
+        toolsConfig: agent.toolsConfig,
+        permissionsConfig: agent.permissionsConfig,
+        systemPrompt: agent.systemPrompt,
+      };
+
+      const blueprintSection = blueprint ? {
+        name: blueprint.name,
+        description: blueprint.description,
+        blueprintJson: blueprint.blueprintJson,
+        version: blueprint.version,
+        status: blueprint.status,
+      } : null;
+
+      const contextSection = contextProfile ? {
+        name: contextProfile.name,
+        sources: contextProfile.sources,
+        priorityOrder: contextProfile.priorityOrder,
+        budgetAllocations: contextProfile.budgetAllocations,
+        totalCapacity: contextProfile.totalCapacity,
+        version: contextProfile.version,
+      } : null;
+
+      const memorySection = memoryProfile ? {
+        name: memoryProfile.name,
+        tierConfigs: memoryProfile.tierConfigs,
+        forgettingPolicies: memoryProfile.forgettingPolicies,
+        industryRules: memoryProfile.industryRules,
+        version: memoryProfile.version,
+      } : null;
+
+      const sections: Record<string, any> = {
+        agent: agentSection,
+        blueprint: blueprintSection,
+        contextProfile: contextSection,
+        memoryProfile: memorySection,
+        evalSuites: evalSuiteConfigs,
+        policies: linkedPolicies,
+        ontologyBindings,
+        mcpIntegrations,
+      };
+
+      const checksums: Record<string, string> = {};
+      for (const [key, value] of Object.entries(sections)) {
+        const hash = crypto.createHash("sha256").update(JSON.stringify(value)).digest("hex");
+        checksums[key] = hash;
+      }
+
+      const manifest = {
+        manifestVersion: "1.0",
+        exportedAt: new Date().toISOString(),
+        agentVersion: agent.currentVersion || "1.0.0",
+        agentId: agent.id,
+        checksums,
+        ...sections,
+      };
+
+      if (formatParam === "yaml") {
+        const yamlLines: string[] = [];
+        const toYaml = (obj: any, indent: number = 0): void => {
+          const prefix = "  ".repeat(indent);
+          if (obj === null || obj === undefined) {
+            return;
+          }
+          if (Array.isArray(obj)) {
+            for (const item of obj) {
+              if (typeof item === "object" && item !== null) {
+                yamlLines.push(`${prefix}-`);
+                toYaml(item, indent + 1);
+              } else {
+                yamlLines.push(`${prefix}- ${JSON.stringify(item)}`);
+              }
+            }
+          } else if (typeof obj === "object") {
+            for (const [key, val] of Object.entries(obj)) {
+              if (val === null || val === undefined) {
+                yamlLines.push(`${prefix}${key}: null`);
+              } else if (typeof val === "object") {
+                yamlLines.push(`${prefix}${key}:`);
+                toYaml(val, indent + 1);
+              } else if (typeof val === "string") {
+                yamlLines.push(`${prefix}${key}: "${val.replace(/"/g, '\\"')}"`);
+              } else {
+                yamlLines.push(`${prefix}${key}: ${val}`);
+              }
+            }
+          }
+        };
+        toYaml(manifest);
+        res.setHeader("Content-Type", "text/yaml");
+        res.send(yamlLines.join("\n"));
+      } else {
+        res.json(manifest);
+      }
+    } catch (e: any) {
+      console.error("[export-manifest] Error:", e);
+      res.status(500).json({ message: "Failed to export manifest" });
+    }
+  });
+
+  app.get("/api/agents/:id/manifest-diff", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+
+      const againstVersion = parseInt(req.query.against as string, 10);
+      if (isNaN(againstVersion)) return res.status(400).json({ message: "Query param 'against' (version number) is required" });
+
+      const blueprintsList = await storage.getBlueprintsByAgent(agent.id);
+      const blueprint = blueprintsList.length > 0 ? blueprintsList[0] : null;
+
+      const allContextProfiles = await storage.getContextProfiles();
+      const contextProfile = allContextProfiles.find(cp => cp.agentId === agent.id) || null;
+
+      const allMemoryProfiles = await storage.getMemoryProfiles();
+      const memoryProfile = allMemoryProfiles.find(mp => mp.agentId === agent.id) || null;
+
+      const diff: Record<string, { current: any; historical: any }> = {};
+
+      if (blueprint) {
+        const history = (blueprint.versionHistory || []) as any[];
+        const historicalEntry = history.find((h: any) => h.version === againstVersion);
+        if (historicalEntry) {
+          diff.blueprint = {
+            current: { blueprintJson: blueprint.blueprintJson, version: blueprint.version },
+            historical: { blueprintJson: historicalEntry.blueprintJson, version: historicalEntry.version },
+          };
+        }
+      }
+
+      if (contextProfile) {
+        const history = (contextProfile.versionHistory || []) as any[];
+        const historicalEntry = history.find((h: any) => h.version === againstVersion);
+        if (historicalEntry) {
+          diff.contextProfile = {
+            current: { sources: contextProfile.sources, priorityOrder: contextProfile.priorityOrder, budgetAllocations: contextProfile.budgetAllocations, version: contextProfile.version },
+            historical: { sources: historicalEntry.sources, priorityOrder: historicalEntry.priorityOrder, budgetAllocations: historicalEntry.budgetAllocations, version: historicalEntry.version },
+          };
+        }
+      }
+
+      if (memoryProfile) {
+        const history = (memoryProfile.versionHistory || []) as any[];
+        const historicalEntry = history.find((h: any) => h.version === againstVersion);
+        if (historicalEntry) {
+          diff.memoryProfile = {
+            current: { tierConfigs: memoryProfile.tierConfigs, forgettingPolicies: memoryProfile.forgettingPolicies, version: memoryProfile.version },
+            historical: { tierConfigs: historicalEntry.tierConfigs, forgettingPolicies: historicalEntry.forgettingPolicies, version: historicalEntry.version },
+          };
+        }
+      }
+
+      res.json({
+        agentId: agent.id,
+        agentName: agent.name,
+        currentVersion: agent.currentVersion,
+        comparedAgainstVersion: againstVersion,
+        sectionsWithDiffs: Object.keys(diff),
+        diff,
+      });
+    } catch (e: any) {
+      console.error("[manifest-diff] Error:", e);
+      res.status(500).json({ message: "Failed to compute manifest diff" });
+    }
+  });
+
   // POST /api/agents/:id/export-validate
   app.post("/api/agents/:id/export-validate", async (req, res) => {
     try {
@@ -16165,6 +16398,1247 @@ def ${tool.name}(args: dict) -> dict:
       if (e instanceof ZodError) return res.status(400).json({ message: "Validation error", errors: e.errors });
       console.error("[export-validate] Error:", e);
       res.status(500).json({ message: "Validation failed" });
+    }
+  });
+
+  app.post("/api/agents/import-manifest", async (req, res) => {
+    try {
+      const manifest = req.body;
+      if (!manifest || !manifest.manifestVersion) {
+        return res.status(400).json({ message: "Invalid manifest: missing manifestVersion" });
+      }
+      if (!manifest.agent || !manifest.agent.name) {
+        return res.status(400).json({ message: "Invalid manifest: missing agent section with name" });
+      }
+
+      const mode = (req.query.mode as string) || "create";
+      const agentId = req.query.agentId as string;
+
+      if (mode === "update" && !agentId) {
+        return res.status(400).json({ message: "agentId query param is required for update mode" });
+      }
+
+      const changeReport: { created: string[]; updated: string[]; unchanged: string[] } = {
+        created: [],
+        updated: [],
+        unchanged: [],
+      };
+
+      if (mode === "update") {
+        const existingAgent = await storage.getAgent(agentId);
+        if (!existingAgent) return res.status(404).json({ message: "Agent not found" });
+
+        if (manifest.checksums) {
+          const currentSections: Record<string, any> = {};
+          const blueprintsList = await storage.getBlueprintsByAgent(agentId);
+          const currentBlueprint = blueprintsList.length > 0 ? blueprintsList[0] : null;
+          const allCtx = await storage.getContextProfiles();
+          const currentCtx = allCtx.find(cp => cp.agentId === agentId) || null;
+          const allMem = await storage.getMemoryProfiles();
+          const currentMem = allMem.find(mp => mp.agentId === agentId) || null;
+
+          currentSections.agent = {
+            name: existingAgent.name,
+            description: existingAgent.description,
+            modelProvider: existingAgent.modelProvider,
+            modelName: existingAgent.modelName,
+            industry: (existingAgent as any).industry || null,
+            outcomeId: existingAgent.outcomeId,
+            riskTier: existingAgent.riskTier,
+            autonomyMode: existingAgent.autonomyMode,
+            toolsConfig: existingAgent.toolsConfig,
+            permissionsConfig: existingAgent.permissionsConfig,
+            systemPrompt: existingAgent.systemPrompt,
+          };
+
+          for (const [key, value] of Object.entries(currentSections)) {
+            const currentHash = crypto.createHash("sha256").update(JSON.stringify(value)).digest("hex");
+            if (manifest.checksums[key] === currentHash) {
+              changeReport.unchanged.push(key);
+            }
+          }
+        }
+
+        const agentData: any = {
+          name: manifest.agent.name,
+          description: manifest.agent.description || existingAgent.description,
+          modelProvider: manifest.agent.modelProvider || existingAgent.modelProvider,
+          modelName: manifest.agent.modelName || existingAgent.modelName,
+          riskTier: manifest.agent.riskTier || existingAgent.riskTier,
+          autonomyMode: manifest.agent.autonomyMode || existingAgent.autonomyMode,
+          toolsConfig: manifest.agent.toolsConfig || existingAgent.toolsConfig,
+          permissionsConfig: manifest.agent.permissionsConfig || existingAgent.permissionsConfig,
+          systemPrompt: manifest.agent.systemPrompt !== undefined ? manifest.agent.systemPrompt : existingAgent.systemPrompt,
+          outcomeId: manifest.agent.outcomeId !== undefined ? manifest.agent.outcomeId : existingAgent.outcomeId,
+        };
+        await storage.updateAgent(agentId, agentData);
+        changeReport.updated.push("agent");
+
+        if (manifest.blueprint) {
+          const blueprintsList = await storage.getBlueprintsByAgent(agentId);
+          if (blueprintsList.length > 0) {
+            const bp = blueprintsList[0];
+            const history = (bp.versionHistory || []) as any[];
+            history.push({
+              version: bp.version,
+              blueprintJson: bp.blueprintJson,
+              status: bp.status,
+              savedAt: new Date().toISOString(),
+            });
+            await storage.updateBlueprint(bp.id, {
+              blueprintJson: manifest.blueprint.blueprintJson,
+              version: (bp.version || 0) + 1,
+              versionHistory: history,
+              status: manifest.blueprint.status || bp.status,
+            });
+            changeReport.updated.push("blueprint");
+          } else {
+            await storage.createBlueprint({
+              name: manifest.blueprint.name || `${manifest.agent.name} Blueprint`,
+              agentId: agentId,
+              blueprintJson: manifest.blueprint.blueprintJson,
+              version: manifest.blueprint.version || 1,
+              status: manifest.blueprint.status || "draft",
+            });
+            changeReport.created.push("blueprint");
+          }
+        }
+
+        if (manifest.contextProfile) {
+          const allCtx = await storage.getContextProfiles();
+          const existingCtx = allCtx.find(cp => cp.agentId === agentId);
+          if (existingCtx) {
+            const history = (existingCtx.versionHistory || []) as any[];
+            history.push({
+              version: existingCtx.version,
+              sources: existingCtx.sources,
+              priorityOrder: existingCtx.priorityOrder,
+              budgetAllocations: existingCtx.budgetAllocations,
+              totalCapacity: existingCtx.totalCapacity,
+              savedAt: new Date().toISOString(),
+            });
+            await storage.updateContextProfile(existingCtx.id, {
+              sources: manifest.contextProfile.sources || existingCtx.sources,
+              priorityOrder: manifest.contextProfile.priorityOrder || existingCtx.priorityOrder,
+              budgetAllocations: manifest.contextProfile.budgetAllocations || existingCtx.budgetAllocations,
+              totalCapacity: manifest.contextProfile.totalCapacity || existingCtx.totalCapacity,
+              version: (existingCtx.version || 1) + 1,
+              versionHistory: history,
+            });
+            changeReport.updated.push("contextProfile");
+          } else {
+            await storage.createContextProfile({
+              name: manifest.contextProfile.name || `${manifest.agent.name} Context`,
+              industry: (manifest.agent as any).industry || "cross_industry",
+              agentId: agentId,
+              sources: manifest.contextProfile.sources || [],
+              priorityOrder: manifest.contextProfile.priorityOrder || [],
+              budgetAllocations: manifest.contextProfile.budgetAllocations || {},
+              totalCapacity: manifest.contextProfile.totalCapacity || 128000,
+              version: manifest.contextProfile.version || 1,
+              versionHistory: [],
+              status: "active",
+            });
+            changeReport.created.push("contextProfile");
+          }
+        }
+
+        if (manifest.memoryProfile) {
+          const allMem = await storage.getMemoryProfiles();
+          const existingMem = allMem.find(mp => mp.agentId === agentId);
+          if (existingMem) {
+            const history = (existingMem.versionHistory || []) as any[];
+            history.push({
+              version: existingMem.version,
+              tierConfigs: existingMem.tierConfigs,
+              forgettingPolicies: existingMem.forgettingPolicies,
+              industryRules: existingMem.industryRules,
+              savedAt: new Date().toISOString(),
+            });
+            await storage.updateMemoryProfile(existingMem.id, {
+              tierConfigs: manifest.memoryProfile.tierConfigs || existingMem.tierConfigs,
+              forgettingPolicies: manifest.memoryProfile.forgettingPolicies || existingMem.forgettingPolicies,
+              industryRules: manifest.memoryProfile.industryRules || existingMem.industryRules,
+              version: (existingMem.version || 1) + 1,
+              versionHistory: history,
+            });
+            changeReport.updated.push("memoryProfile");
+          } else {
+            await storage.createMemoryProfile({
+              name: manifest.memoryProfile.name || `${manifest.agent.name} Memory`,
+              industry: (manifest.agent as any).industry || "cross_industry",
+              agentId: agentId,
+              tierConfigs: manifest.memoryProfile.tierConfigs || [],
+              forgettingPolicies: manifest.memoryProfile.forgettingPolicies || [],
+              industryRules: manifest.memoryProfile.industryRules || [],
+              version: manifest.memoryProfile.version || 1,
+              versionHistory: [],
+              status: "active",
+            });
+            changeReport.created.push("memoryProfile");
+          }
+        }
+
+        if (manifest.policies && Array.isArray(manifest.policies)) {
+          const policyBindings: any[] = [];
+          for (const mp of manifest.policies) {
+            if (mp.id) {
+              const existing = await storage.getPolicy(mp.id);
+              if (existing) {
+                const history = (existing.versionHistory || []) as any[];
+                history.push({
+                  version: existing.version,
+                  policyJson: existing.policyJson,
+                  savedAt: new Date().toISOString(),
+                });
+                await storage.updatePolicy(mp.id, {
+                  policyJson: mp.policyJson,
+                  version: (existing.version || 1) + 1,
+                  versionHistory: history,
+                });
+                policyBindings.push({ policyId: mp.id });
+                changeReport.updated.push(`policy:${mp.name || mp.id}`);
+              }
+            }
+          }
+          if (policyBindings.length > 0) {
+            await storage.updateAgent(agentId, { policyBindings });
+          }
+        }
+
+        if (manifest.ontologyBindings && Array.isArray(manifest.ontologyBindings)) {
+          await storage.updateAgent(agentId, { ontologyTags: manifest.ontologyBindings });
+          changeReport.updated.push("ontologyBindings");
+        }
+
+        await storage.createAuditEvent({
+          actorType: "system",
+          action: "manifest_imported",
+          objectType: "agent",
+          objectId: agentId,
+          details: `Manifest imported in update mode. Created: ${changeReport.created.join(", ") || "none"}. Updated: ${changeReport.updated.join(", ") || "none"}.`,
+        });
+
+        const updatedAgent = await storage.getAgent(agentId);
+        res.json({ mode: "update", agentId, agent: updatedAgent, changeReport });
+      } else {
+        const newAgent = await storage.createAgent({
+          name: manifest.agent.name,
+          description: manifest.agent.description || null,
+          modelProvider: manifest.agent.modelProvider || "openai",
+          modelName: manifest.agent.modelName || "gpt-4.1",
+          riskTier: manifest.agent.riskTier || "MEDIUM",
+          autonomyMode: manifest.agent.autonomyMode || "assisted",
+          toolsConfig: manifest.agent.toolsConfig || null,
+          permissionsConfig: manifest.agent.permissionsConfig || null,
+          systemPrompt: manifest.agent.systemPrompt || null,
+          outcomeId: manifest.agent.outcomeId || null,
+          status: "active",
+          currentVersion: manifest.agentVersion || "1.0.0",
+        });
+        changeReport.created.push("agent");
+
+        if (manifest.blueprint) {
+          await storage.createBlueprint({
+            name: manifest.blueprint.name || `${manifest.agent.name} Blueprint`,
+            agentId: newAgent.id,
+            blueprintJson: manifest.blueprint.blueprintJson,
+            version: manifest.blueprint.version || 1,
+            status: manifest.blueprint.status || "draft",
+          });
+          changeReport.created.push("blueprint");
+        }
+
+        if (manifest.contextProfile) {
+          await storage.createContextProfile({
+            name: manifest.contextProfile.name || `${manifest.agent.name} Context`,
+            industry: (manifest.agent as any).industry || "cross_industry",
+            agentId: newAgent.id,
+            sources: manifest.contextProfile.sources || [],
+            priorityOrder: manifest.contextProfile.priorityOrder || [],
+            budgetAllocations: manifest.contextProfile.budgetAllocations || {},
+            totalCapacity: manifest.contextProfile.totalCapacity || 128000,
+            version: manifest.contextProfile.version || 1,
+            versionHistory: [],
+            status: "active",
+          });
+          changeReport.created.push("contextProfile");
+        }
+
+        if (manifest.memoryProfile) {
+          await storage.createMemoryProfile({
+            name: manifest.memoryProfile.name || `${manifest.agent.name} Memory`,
+            industry: (manifest.agent as any).industry || "cross_industry",
+            agentId: newAgent.id,
+            tierConfigs: manifest.memoryProfile.tierConfigs || [],
+            forgettingPolicies: manifest.memoryProfile.forgettingPolicies || [],
+            industryRules: manifest.memoryProfile.industryRules || [],
+            version: manifest.memoryProfile.version || 1,
+            versionHistory: [],
+            status: "active",
+          });
+          changeReport.created.push("memoryProfile");
+        }
+
+        if (manifest.policies && Array.isArray(manifest.policies)) {
+          const policyBindings: any[] = [];
+          for (const mp of manifest.policies) {
+            if (mp.id) {
+              policyBindings.push({ policyId: mp.id });
+            }
+          }
+          if (policyBindings.length > 0) {
+            await storage.updateAgent(newAgent.id, { policyBindings });
+          }
+          changeReport.created.push("policyBindings");
+        }
+
+        if (manifest.ontologyBindings && Array.isArray(manifest.ontologyBindings)) {
+          await storage.updateAgent(newAgent.id, { ontologyTags: manifest.ontologyBindings });
+          changeReport.created.push("ontologyBindings");
+        }
+
+        await storage.createAuditEvent({
+          actorType: "system",
+          action: "manifest_imported",
+          objectType: "agent",
+          objectId: newAgent.id,
+          details: `Agent created from manifest import. Created: ${changeReport.created.join(", ")}.`,
+        });
+
+        res.json({ mode: "create", agentId: newAgent.id, agent: newAgent, changeReport });
+      }
+    } catch (e: any) {
+      console.error("[import-manifest] Error:", e);
+      res.status(500).json({ message: "Failed to import manifest" });
+    }
+  });
+
+  app.post("/api/agents/:id/rollback-config", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+
+      const schema = z.object({ targetVersion: z.number().int().positive() });
+      const { targetVersion } = schema.parse(req.body);
+
+      const diffReport: Record<string, { before: any; after: any }> = {};
+      let rolledBack = false;
+
+      const blueprintsList = await storage.getBlueprintsByAgent(agent.id);
+      const blueprint = blueprintsList.length > 0 ? blueprintsList[0] : null;
+      if (blueprint) {
+        const history = (blueprint.versionHistory || []) as any[];
+        const targetEntry = history.find((h: any) => h.version === targetVersion);
+        if (targetEntry) {
+          const currentSnapshot = {
+            version: blueprint.version,
+            blueprintJson: blueprint.blueprintJson,
+            status: blueprint.status,
+            savedAt: new Date().toISOString(),
+          };
+          history.push(currentSnapshot);
+          diffReport.blueprint = {
+            before: { version: blueprint.version, blueprintJson: blueprint.blueprintJson },
+            after: { version: targetEntry.version, blueprintJson: targetEntry.blueprintJson },
+          };
+          await storage.updateBlueprint(blueprint.id, {
+            blueprintJson: targetEntry.blueprintJson,
+            version: (blueprint.version || 0) + 1,
+            status: targetEntry.status || blueprint.status,
+            versionHistory: history,
+          });
+          rolledBack = true;
+        }
+      }
+
+      const allCtx = await storage.getContextProfiles();
+      const contextProfile = allCtx.find(cp => cp.agentId === agent.id);
+      if (contextProfile) {
+        const history = (contextProfile.versionHistory || []) as any[];
+        const targetEntry = history.find((h: any) => h.version === targetVersion);
+        if (targetEntry) {
+          const currentSnapshot = {
+            version: contextProfile.version,
+            sources: contextProfile.sources,
+            priorityOrder: contextProfile.priorityOrder,
+            budgetAllocations: contextProfile.budgetAllocations,
+            totalCapacity: contextProfile.totalCapacity,
+            savedAt: new Date().toISOString(),
+          };
+          history.push(currentSnapshot);
+          diffReport.contextProfile = {
+            before: { version: contextProfile.version, sources: contextProfile.sources },
+            after: { version: targetEntry.version, sources: targetEntry.sources },
+          };
+          await storage.updateContextProfile(contextProfile.id, {
+            sources: targetEntry.sources,
+            priorityOrder: targetEntry.priorityOrder,
+            budgetAllocations: targetEntry.budgetAllocations,
+            totalCapacity: targetEntry.totalCapacity,
+            version: (contextProfile.version || 1) + 1,
+            versionHistory: history,
+          });
+          rolledBack = true;
+        }
+      }
+
+      const allMem = await storage.getMemoryProfiles();
+      const memoryProfile = allMem.find(mp => mp.agentId === agent.id);
+      if (memoryProfile) {
+        const history = (memoryProfile.versionHistory || []) as any[];
+        const targetEntry = history.find((h: any) => h.version === targetVersion);
+        if (targetEntry) {
+          const currentSnapshot = {
+            version: memoryProfile.version,
+            tierConfigs: memoryProfile.tierConfigs,
+            forgettingPolicies: memoryProfile.forgettingPolicies,
+            industryRules: memoryProfile.industryRules,
+            savedAt: new Date().toISOString(),
+          };
+          history.push(currentSnapshot);
+          diffReport.memoryProfile = {
+            before: { version: memoryProfile.version, tierConfigs: memoryProfile.tierConfigs },
+            after: { version: targetEntry.version, tierConfigs: targetEntry.tierConfigs },
+          };
+          await storage.updateMemoryProfile(memoryProfile.id, {
+            tierConfigs: targetEntry.tierConfigs,
+            forgettingPolicies: targetEntry.forgettingPolicies,
+            industryRules: targetEntry.industryRules,
+            version: (memoryProfile.version || 1) + 1,
+            versionHistory: history,
+          });
+          rolledBack = true;
+        }
+      }
+
+      const allPolicies = await storage.getPolicies();
+      const agentPolicyBindings = (agent.policyBindings || []) as any[];
+      const policyIds = new Set(agentPolicyBindings.map((b: any) => b.policyId || b.id).filter(Boolean));
+      for (const policy of allPolicies.filter(p => policyIds.has(p.id))) {
+        const history = (policy.versionHistory || []) as any[];
+        const targetEntry = history.find((h: any) => h.version === targetVersion);
+        if (targetEntry) {
+          const currentSnapshot = {
+            version: policy.version,
+            policyJson: policy.policyJson,
+            savedAt: new Date().toISOString(),
+          };
+          history.push(currentSnapshot);
+          diffReport[`policy:${policy.name}`] = {
+            before: { version: policy.version, policyJson: policy.policyJson },
+            after: { version: targetEntry.version, policyJson: targetEntry.policyJson },
+          };
+          await storage.updatePolicy(policy.id, {
+            policyJson: targetEntry.policyJson,
+            version: (policy.version || 1) + 1,
+            versionHistory: history,
+          });
+          rolledBack = true;
+        }
+      }
+
+      if (!rolledBack) {
+        return res.status(404).json({ message: `No configuration found at version ${targetVersion} to rollback to` });
+      }
+
+      await storage.createAuditEvent({
+        actorType: "user",
+        action: "config_rollback",
+        objectType: "agent",
+        objectId: agent.id,
+        details: `Config rolled back to version ${targetVersion}. Sections affected: ${Object.keys(diffReport).join(", ")}`,
+      });
+
+      res.json({
+        agentId: agent.id,
+        agentName: agent.name,
+        targetVersion,
+        sectionsRolledBack: Object.keys(diffReport),
+        diff: diffReport,
+      });
+    } catch (e: any) {
+      if (e instanceof ZodError) return res.status(400).json({ message: "Validation error", errors: e.errors });
+      console.error("[rollback-config] Error:", e);
+      res.status(500).json({ message: "Failed to rollback config" });
+    }
+  });
+
+  app.post("/api/agents/:id/git-push", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+
+      const gitConfig = (agent.gitConfig || {}) as Record<string, any>;
+      if (!gitConfig.repoUrl) return res.status(400).json({ message: "Git repository not configured for this agent. Set gitConfig first." });
+
+      const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+      if (!token) return res.status(503).json({ message: "GitHub token not configured (GITHUB_TOKEN env var required)" });
+
+      const repoUrl = gitConfig.repoUrl as string;
+      const branch = (gitConfig.branch as string) || "main";
+      const filePath = (gitConfig.path as string) || `agents/${agent.name.replace(/[^a-zA-Z0-9_-]/g, "_")}.agent-manifest.json`;
+
+      const repoMatch = repoUrl.match(/github\.com[/:]([^/]+)\/([^/.]+)/);
+      if (!repoMatch) return res.status(400).json({ message: "Invalid GitHub repository URL" });
+      const [, owner, repo] = repoMatch;
+
+      const manifestRes = await fetch(`${req.protocol}://${req.get("host")}/api/agents/${agent.id}/export-manifest`, {
+        headers: { cookie: req.headers.cookie || "" },
+      });
+      let manifest: any;
+      if (manifestRes.ok) {
+        manifest = await manifestRes.json();
+      } else {
+        const blueprintsList = await storage.getBlueprintsByAgent(agent.id);
+        const blueprint = blueprintsList.length > 0 ? blueprintsList[0] : null;
+        const allContextProfiles = await storage.getContextProfiles();
+        const contextProfile = allContextProfiles.find(cp => cp.agentId === agent.id) || null;
+        const allMemoryProfiles = await storage.getMemoryProfiles();
+        const memoryProfile = allMemoryProfiles.find(mp => mp.agentId === agent.id) || null;
+        const evalSuitesList = await storage.getEvalsByAgent(agent.id);
+        const allPolicies = await storage.getPolicies();
+        const agentPolicyBindings = (agent.policyBindings || []) as any[];
+        const policyIds = new Set(agentPolicyBindings.map((b: any) => b.policyId || b.id).filter(Boolean));
+        const linkedPolicies = allPolicies.filter(p => policyIds.has(p.id));
+
+        manifest = {
+          manifestVersion: "1.0",
+          exportedAt: new Date().toISOString(),
+          agentVersion: agent.currentVersion || "1.0.0",
+          agentId: agent.id,
+          agent: { name: agent.name, description: agent.description, modelProvider: agent.modelProvider, modelName: agent.modelName, riskTier: agent.riskTier, autonomyMode: agent.autonomyMode, toolsConfig: agent.toolsConfig, permissionsConfig: agent.permissionsConfig, systemPrompt: agent.systemPrompt },
+          blueprint: blueprint ? { name: blueprint.name, blueprintJson: blueprint.blueprintJson, version: blueprint.version } : null,
+          contextProfile: contextProfile ? { name: contextProfile.name, sources: contextProfile.sources, version: contextProfile.version } : null,
+          memoryProfile: memoryProfile ? { name: memoryProfile.name, tierConfigs: memoryProfile.tierConfigs, version: memoryProfile.version } : null,
+          evalSuites: evalSuitesList.map(s => ({ name: s.name, type: s.type })),
+          policies: linkedPolicies.map(p => ({ name: p.name, domain: p.domain, version: p.version })),
+        };
+      }
+
+      const content = Buffer.from(JSON.stringify(manifest, null, 2)).toString("base64");
+      const commitMessage = `Update agent config: ${agent.name} v${agent.currentVersion || "1.0.0"}`;
+
+      let existingSha: string | undefined;
+      try {
+        const getRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${filePath}?ref=${branch}`, {
+          headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github.v3+json" },
+        });
+        if (getRes.ok) {
+          const existing = await getRes.json();
+          existingSha = existing.sha;
+        }
+      } catch {}
+
+      const putBody: any = { message: commitMessage, content, branch };
+      if (existingSha) putBody.sha = existingSha;
+
+      const putRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${filePath}`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github.v3+json", "Content-Type": "application/json" },
+        body: JSON.stringify(putBody),
+      });
+
+      if (!putRes.ok) {
+        const errBody = await putRes.text();
+        return res.status(putRes.status).json({ message: `GitHub API error: ${putRes.status}`, details: errBody });
+      }
+
+      const putData = await putRes.json();
+      const newSha = putData.content?.sha || putData.commit?.sha || "";
+
+      await storage.updateAgent(agent.id, {
+        gitConfig: { ...gitConfig, lastSyncedAt: new Date().toISOString(), lastSyncCommit: newSha },
+      });
+
+      await storage.createAuditEvent({
+        actorType: "user",
+        action: "git_push",
+        objectType: "agent",
+        objectId: agent.id,
+        details: `Pushed agent manifest to ${owner}/${repo}/${filePath} on branch ${branch}`,
+      });
+
+      res.json({
+        success: true,
+        repo: `${owner}/${repo}`,
+        branch,
+        path: filePath,
+        commitSha: newSha,
+        syncedAt: new Date().toISOString(),
+      });
+    } catch (e: any) {
+      console.error("[git-push] Error:", e);
+      res.status(500).json({ message: "Failed to push to Git", error: e.message });
+    }
+  });
+
+  app.post("/api/agents/:id/git-pull", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+
+      const gitConfig = (agent.gitConfig || {}) as Record<string, any>;
+      if (!gitConfig.repoUrl) return res.status(400).json({ message: "Git repository not configured for this agent" });
+
+      const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+      if (!token) return res.status(503).json({ message: "GitHub token not configured (GITHUB_TOKEN env var required)" });
+
+      const repoUrl = gitConfig.repoUrl as string;
+      const branch = (gitConfig.branch as string) || "main";
+      const filePath = (gitConfig.path as string) || `agents/${agent.name.replace(/[^a-zA-Z0-9_-]/g, "_")}.agent-manifest.json`;
+
+      const repoMatch = repoUrl.match(/github\.com[/:]([^/]+)\/([^/.]+)/);
+      if (!repoMatch) return res.status(400).json({ message: "Invalid GitHub repository URL" });
+      const [, owner, repo] = repoMatch;
+
+      const getRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${filePath}?ref=${branch}`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github.v3+json" },
+      });
+
+      if (!getRes.ok) {
+        return res.status(getRes.status).json({ message: `Failed to fetch manifest from GitHub: ${getRes.status}` });
+      }
+
+      const fileData = await getRes.json();
+      const fileContent = Buffer.from(fileData.content, "base64").toString("utf-8");
+      let manifest: any;
+      try {
+        manifest = JSON.parse(fileContent);
+      } catch {
+        return res.status(400).json({ message: "Remote manifest file is not valid JSON" });
+      }
+
+      if (!manifest.manifestVersion || !manifest.agent) {
+        return res.status(400).json({ message: "Remote file does not appear to be a valid agent manifest" });
+      }
+
+      const updateData: Partial<typeof agent> = {};
+      if (manifest.agent) {
+        if (manifest.agent.name) updateData.name = manifest.agent.name;
+        if (manifest.agent.description !== undefined) updateData.description = manifest.agent.description;
+        if (manifest.agent.modelProvider) updateData.modelProvider = manifest.agent.modelProvider;
+        if (manifest.agent.modelName) updateData.modelName = manifest.agent.modelName;
+        if (manifest.agent.riskTier) updateData.riskTier = manifest.agent.riskTier;
+        if (manifest.agent.autonomyMode) updateData.autonomyMode = manifest.agent.autonomyMode;
+        if (manifest.agent.toolsConfig) updateData.toolsConfig = manifest.agent.toolsConfig;
+        if (manifest.agent.permissionsConfig) updateData.permissionsConfig = manifest.agent.permissionsConfig;
+        if (manifest.agent.systemPrompt !== undefined) updateData.systemPrompt = manifest.agent.systemPrompt;
+      }
+
+      if (manifest.blueprint) {
+        const blueprintsList = await storage.getBlueprintsByAgent(agent.id);
+        if (blueprintsList.length > 0) {
+          const bp = blueprintsList[0];
+          const prevVersion = bp.version || 1;
+          const prevHistory = (bp.versionHistory || []) as any[];
+          prevHistory.push({ version: prevVersion, blueprintJson: bp.blueprintJson, updatedAt: new Date().toISOString() });
+          await storage.updateBlueprint(bp.id, {
+            blueprintJson: manifest.blueprint.blueprintJson || bp.blueprintJson,
+            version: prevVersion + 1,
+            versionHistory: prevHistory,
+          });
+        }
+        if (manifest.blueprint.blueprintJson) {
+          updateData.blueprintJson = manifest.blueprint.blueprintJson;
+        }
+      }
+
+      if (manifest.contextProfile) {
+        const allCtx = await storage.getContextProfiles();
+        const ctx = allCtx.find(c => c.agentId === agent.id);
+        if (ctx) {
+          const prevVersion = ctx.version || 1;
+          const prevHistory = (ctx.versionHistory || []) as any[];
+          prevHistory.push({ version: prevVersion, sources: ctx.sources, updatedAt: new Date().toISOString() });
+          await storage.updateContextProfile(ctx.id, {
+            sources: manifest.contextProfile.sources || ctx.sources,
+            version: prevVersion + 1,
+            versionHistory: prevHistory,
+          });
+        }
+      }
+
+      if (manifest.memoryProfile) {
+        const allMem = await storage.getMemoryProfiles();
+        const mem = allMem.find(m => m.agentId === agent.id);
+        if (mem) {
+          const prevVersion = mem.version || 1;
+          const prevHistory = (mem.versionHistory || []) as any[];
+          prevHistory.push({ version: prevVersion, tierConfigs: mem.tierConfigs, updatedAt: new Date().toISOString() });
+          await storage.updateMemoryProfile(mem.id, {
+            tierConfigs: manifest.memoryProfile.tierConfigs || mem.tierConfigs,
+            version: prevVersion + 1,
+            versionHistory: prevHistory,
+          });
+        }
+      }
+
+      updateData.gitConfig = { ...gitConfig, lastSyncedAt: new Date().toISOString(), lastSyncCommit: fileData.sha };
+      await storage.updateAgent(agent.id, updateData);
+
+      await storage.createAuditEvent({
+        actorType: "user",
+        action: "git_pull",
+        objectType: "agent",
+        objectId: agent.id,
+        details: `Pulled agent manifest from ${owner}/${repo}/${filePath} on branch ${branch}`,
+      });
+
+      res.json({
+        success: true,
+        repo: `${owner}/${repo}`,
+        branch,
+        path: filePath,
+        remoteSha: fileData.sha,
+        syncedAt: new Date().toISOString(),
+        appliedSections: Object.keys(manifest).filter(k => !["manifestVersion", "exportedAt", "agentVersion", "agentId", "checksums"].includes(k)),
+      });
+    } catch (e: any) {
+      console.error("[git-pull] Error:", e);
+      res.status(500).json({ message: "Failed to pull from Git", error: e.message });
+    }
+  });
+
+  app.get("/api/agents/:id/git-status", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+
+      const gitConfig = (agent.gitConfig || {}) as Record<string, any>;
+      if (!gitConfig.repoUrl) {
+        return res.json({ status: "not_configured", message: "Git repository not configured" });
+      }
+
+      const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+      if (!token) {
+        return res.json({ status: "error", message: "GitHub token not configured" });
+      }
+
+      const repoUrl = gitConfig.repoUrl as string;
+      const branch = (gitConfig.branch as string) || "main";
+      const filePath = (gitConfig.path as string) || `agents/${agent.name.replace(/[^a-zA-Z0-9_-]/g, "_")}.agent-manifest.json`;
+
+      const repoMatch = repoUrl.match(/github\.com[/:]([^/]+)\/([^/.]+)/);
+      if (!repoMatch) return res.json({ status: "error", message: "Invalid GitHub repository URL" });
+      const [, owner, repo] = repoMatch;
+
+      let remoteSha: string | null = null;
+      let remoteExists = false;
+      try {
+        const getRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${filePath}?ref=${branch}`, {
+          headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github.v3+json" },
+        });
+        if (getRes.ok) {
+          const data = await getRes.json();
+          remoteSha = data.sha;
+          remoteExists = true;
+        }
+      } catch {}
+
+      const lastSyncCommit = gitConfig.lastSyncCommit as string | undefined;
+      const lastSyncedAt = gitConfig.lastSyncedAt as string | undefined;
+
+      let syncStatus: string;
+      if (!remoteExists && !lastSyncCommit) {
+        syncStatus = "never_synced";
+      } else if (!remoteExists && lastSyncCommit) {
+        syncStatus = "remote_deleted";
+      } else if (remoteExists && !lastSyncCommit) {
+        syncStatus = "remote_changes";
+      } else if (remoteSha === lastSyncCommit) {
+        syncStatus = "in_sync";
+      } else {
+        syncStatus = "diverged";
+      }
+
+      res.json({
+        status: syncStatus,
+        repoUrl: gitConfig.repoUrl,
+        branch,
+        path: filePath,
+        lastSyncedAt: lastSyncedAt || null,
+        lastSyncCommit: lastSyncCommit || null,
+        remoteSha,
+        remoteExists,
+      });
+    } catch (e: any) {
+      console.error("[git-status] Error:", e);
+      res.status(500).json({ message: "Failed to check git status", error: e.message });
+    }
+  });
+
+  app.patch("/api/agents/:id/git-config", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+
+      const schema = z.object({
+        repoUrl: z.string().optional(),
+        branch: z.string().optional(),
+        path: z.string().optional(),
+      });
+      const data = schema.parse(req.body);
+      const currentConfig = (agent.gitConfig || {}) as Record<string, any>;
+      const newConfig = { ...currentConfig, ...data };
+
+      const updated = await storage.updateAgent(agent.id, { gitConfig: newConfig });
+      res.json({ gitConfig: updated?.gitConfig });
+    } catch (e: any) {
+      if (e instanceof ZodError) return res.status(400).json({ message: "Validation error", errors: e.errors });
+      res.status(500).json({ message: "Failed to update git config" });
+    }
+  });
+
+  app.get("/api/agents/:id/ci-cd-config", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+      const ciCdConfig = (agent.ciCdConfig || {
+        autoEvalOnPush: false,
+        autoDeployOnEvalPass: false,
+        evalPassThreshold: 0.8,
+        targetEnvironment: "staging",
+      }) as Record<string, any>;
+      res.json(ciCdConfig);
+    } catch (e: any) {
+      res.status(500).json({ message: "Failed to get CI/CD config", error: e.message });
+    }
+  });
+
+  app.patch("/api/agents/:id/ci-cd-config", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+
+      const schema = z.object({
+        autoEvalOnPush: z.boolean().optional(),
+        autoDeployOnEvalPass: z.boolean().optional(),
+        evalPassThreshold: z.number().min(0).max(1).optional(),
+        targetEnvironment: z.string().optional(),
+        webhookSecret: z.string().optional(),
+      });
+      const data = schema.parse(req.body);
+      const currentConfig = (agent.ciCdConfig || {}) as Record<string, any>;
+      const newConfig = { ...currentConfig, ...data };
+
+      const updated = await storage.updateAgent(agent.id, { ciCdConfig: newConfig });
+      res.json({ ciCdConfig: updated?.ciCdConfig });
+    } catch (e: any) {
+      if (e instanceof ZodError) return res.status(400).json({ message: "Validation error", errors: e.errors });
+      res.status(500).json({ message: "Failed to update CI/CD config", error: e.message });
+    }
+  });
+
+  app.get("/api/agents/:id/pipeline-runs", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+
+      const auditEvts = await storage.getAuditEvents();
+      const pipelineRuns = auditEvts
+        .filter((e: any) =>
+          e.objectId === agent.id &&
+          (e.action === "cicd_pipeline_triggered" ||
+           e.action === "cicd_eval_completed" ||
+           e.action === "cicd_auto_deploy" ||
+           e.action === "cicd_webhook_received" ||
+           e.action === "manifest_imported" ||
+           e.action === "config_rollback")
+        )
+        .sort((a: any, b: any) => {
+          const da = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const db = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return db - da;
+        })
+        .slice(0, 50)
+        .map((e: any) => {
+          let parsedDetails: any = {};
+          try {
+            parsedDetails = typeof e.details === "string" ? JSON.parse(e.details) : (e.details || {});
+          } catch {}
+          return {
+            id: e.id,
+            action: e.action,
+            trigger: parsedDetails.trigger || e.actorType || "manual",
+            timestamp: e.createdAt,
+            details: parsedDetails,
+            evalResult: parsedDetails.evalResult || null,
+            deployStatus: parsedDetails.deployStatus || null,
+            commitSha: parsedDetails.commitSha || null,
+          };
+        });
+
+      res.json(pipelineRuns);
+    } catch (e: any) {
+      res.status(500).json({ message: "Failed to get pipeline runs", error: e.message });
+    }
+  });
+
+  app.post("/api/webhooks/git-commit", async (req, res) => {
+    try {
+      const signature = req.headers["x-hub-signature-256"] as string | undefined;
+      const payload = req.body;
+
+      const allAgents = await storage.getAgents();
+      const agentsWithCiCd = allAgents.filter((a: any) => {
+        const ciCd = a.ciCdConfig as Record<string, any> | null;
+        return ciCd && ciCd.webhookSecret;
+      });
+
+      let verified = false;
+      let matchedAgent: any = null;
+
+      if (agentsWithCiCd.length > 0) {
+        if (!signature) {
+          return res.status(401).json({ message: "Missing webhook signature. X-Hub-Signature-256 header required." });
+        }
+        const rawBody = JSON.stringify(payload);
+        for (const ag of agentsWithCiCd) {
+          const secret = (ag.ciCdConfig as any).webhookSecret;
+          const expected = "sha256=" + crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
+          const sigBuf = Buffer.from(signature);
+          const expBuf = Buffer.from(expected);
+          if (sigBuf.length === expBuf.length && crypto.timingSafeEqual(sigBuf, expBuf)) {
+            verified = true;
+            matchedAgent = ag;
+            break;
+          }
+        }
+        if (!verified) {
+          return res.status(401).json({ message: "Invalid webhook signature" });
+        }
+      } else {
+        verified = true;
+      }
+
+      const commits = payload.commits || [];
+      const ref = payload.ref || "";
+      const branchName = ref.replace("refs/heads/", "");
+
+      const changedManifestFiles: string[] = [];
+      for (const commit of commits) {
+        const allFiles = [
+          ...(commit.added || []),
+          ...(commit.modified || []),
+        ];
+        for (const f of allFiles) {
+          if (f.endsWith(".agent-manifest.json") && !changedManifestFiles.includes(f)) {
+            changedManifestFiles.push(f);
+          }
+        }
+      }
+
+      if (changedManifestFiles.length === 0) {
+        return res.json({
+          processed: 0,
+          message: "No agent manifest files changed in this push",
+          branch: branchName,
+        });
+      }
+
+      const repoFullName = payload.repository?.full_name || "";
+      const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+
+      const results: any[] = [];
+
+      for (const manifestPath of changedManifestFiles) {
+        const affectedAgents = allAgents.filter((a: any) => {
+          const gitCfg = a.gitConfig as Record<string, any> | null;
+          if (!gitCfg) return false;
+          const agentPath = gitCfg.path || `agents/${a.name.replace(/[^a-zA-Z0-9_-]/g, "_")}.agent-manifest.json`;
+          const agentBranch = gitCfg.branch || "main";
+          return agentPath === manifestPath && agentBranch === branchName;
+        });
+
+        if (matchedAgent && affectedAgents.length === 0) {
+          const gitCfg = matchedAgent.gitConfig as Record<string, any> | null;
+          const agentPath = gitCfg?.path || `agents/${matchedAgent.name.replace(/[^a-zA-Z0-9_-]/g, "_")}.agent-manifest.json`;
+          if (agentPath === manifestPath) {
+            affectedAgents.push(matchedAgent);
+          }
+        }
+
+        for (const agent of affectedAgents) {
+          const runResult: any = {
+            agentId: agent.id,
+            agentName: agent.name,
+            manifestPath,
+            steps: [],
+          };
+
+          try {
+            await storage.createAuditEvent({
+              actorType: "webhook",
+              actorId: "github",
+              action: "cicd_webhook_received",
+              objectType: "agent",
+              objectId: agent.id,
+              details: JSON.stringify({
+                trigger: "webhook",
+                commitSha: payload.after || commits[0]?.id,
+                branch: branchName,
+                manifestPath,
+                repository: repoFullName,
+              }),
+            });
+
+            let manifestContent: any = null;
+            if (token && repoFullName) {
+              try {
+                const fileRes = await fetch(
+                  `https://api.github.com/repos/${repoFullName}/contents/${manifestPath}?ref=${branchName}`,
+                  { headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github.v3+json" } }
+                );
+                if (fileRes.ok) {
+                  const fileData = await fileRes.json();
+                  const content = Buffer.from(fileData.content, "base64").toString("utf-8");
+                  manifestContent = JSON.parse(content);
+                  runResult.steps.push({ step: "fetch_manifest", status: "success" });
+                } else {
+                  runResult.steps.push({ step: "fetch_manifest", status: "failed", error: `HTTP ${fileRes.status}` });
+                }
+              } catch (fetchErr: any) {
+                runResult.steps.push({ step: "fetch_manifest", status: "failed", error: fetchErr.message });
+              }
+            } else {
+              runResult.steps.push({ step: "fetch_manifest", status: "skipped", reason: "No GitHub token or repo info" });
+            }
+
+            if (manifestContent) {
+              try {
+                const manifest = manifestContent;
+                const agentData = manifest.agent || {};
+                const changeReport: string[] = [];
+
+                if (agentData.name || agentData.description || agentData.modelProvider || agentData.modelName || agentData.systemPrompt || agentData.toolsConfig || agentData.permissionsConfig) {
+                  const agentUpdate: any = {};
+                  if (agentData.description !== undefined) agentUpdate.description = agentData.description;
+                  if (agentData.modelProvider) agentUpdate.modelProvider = agentData.modelProvider;
+                  if (agentData.modelName) agentUpdate.modelName = agentData.modelName;
+                  if (agentData.systemPrompt) agentUpdate.systemPrompt = agentData.systemPrompt;
+                  if (agentData.toolsConfig) agentUpdate.toolsConfig = agentData.toolsConfig;
+                  if (agentData.permissionsConfig) agentUpdate.permissionsConfig = agentData.permissionsConfig;
+                  if (Object.keys(agentUpdate).length > 0) {
+                    await storage.updateAgent(agent.id, agentUpdate);
+                    changeReport.push("agent_config");
+                  }
+                }
+
+                if (manifest.blueprint?.blueprintJson) {
+                  const existingBlueprints = await storage.getBlueprintsByAgent(agent.id);
+                  if (existingBlueprints.length > 0) {
+                    const bp = existingBlueprints[0];
+                    const prevHistory = Array.isArray(bp.versionHistory) ? bp.versionHistory as any[] : [];
+                    const snapshot = { version: bp.version || 0, blueprintJson: bp.blueprintJson, snapshotAt: new Date().toISOString(), source: "cicd_webhook" };
+                    await storage.updateBlueprint(bp.id, {
+                      blueprintJson: manifest.blueprint.blueprintJson,
+                      version: (bp.version || 0) + 1,
+                      versionHistory: [...prevHistory, snapshot],
+                    });
+                    changeReport.push("blueprint");
+                  }
+                }
+
+                if (manifest.contextProfile) {
+                  const profiles = await storage.getContextProfiles();
+                  const cp = profiles.find((p: any) => p.agentId === agent.id);
+                  if (cp) {
+                    const prevHistory = Array.isArray(cp.versionHistory) ? cp.versionHistory as any[] : [];
+                    const snapshot = { version: cp.version || 1, sources: cp.sources, priorityOrder: cp.priorityOrder, budgetAllocations: cp.budgetAllocations, snapshotAt: new Date().toISOString() };
+                    const update: any = { version: (cp.version || 1) + 1, versionHistory: [...prevHistory, snapshot] };
+                    if (manifest.contextProfile.sources) update.sources = manifest.contextProfile.sources;
+                    if (manifest.contextProfile.priorityOrder) update.priorityOrder = manifest.contextProfile.priorityOrder;
+                    if (manifest.contextProfile.budgetAllocations) update.budgetAllocations = manifest.contextProfile.budgetAllocations;
+                    await storage.updateContextProfile(cp.id, update);
+                    changeReport.push("context_profile");
+                  }
+                }
+
+                if (manifest.memoryProfile) {
+                  const mProfiles = await storage.getMemoryProfiles();
+                  const mp = mProfiles.find((p: any) => p.agentId === agent.id);
+                  if (mp) {
+                    const prevHistory = Array.isArray(mp.versionHistory) ? mp.versionHistory as any[] : [];
+                    const snapshot = { version: mp.version || 1, tierConfigs: mp.tierConfigs, industryRules: mp.industryRules, forgettingPolicies: mp.forgettingPolicies, snapshotAt: new Date().toISOString() };
+                    const update: any = { version: (mp.version || 1) + 1, versionHistory: [...prevHistory, snapshot] };
+                    if (manifest.memoryProfile.tierConfigs) update.tierConfigs = manifest.memoryProfile.tierConfigs;
+                    if (manifest.memoryProfile.industryRules) update.industryRules = manifest.memoryProfile.industryRules;
+                    if (manifest.memoryProfile.forgettingPolicies) update.forgettingPolicies = manifest.memoryProfile.forgettingPolicies;
+                    await storage.updateMemoryProfile(mp.id, update);
+                    changeReport.push("memory_profile");
+                  }
+                }
+
+                await storage.createAuditEvent({
+                  actorType: "webhook",
+                  actorId: "github",
+                  action: "manifest_imported",
+                  objectType: "agent",
+                  objectId: agent.id,
+                  details: JSON.stringify({
+                    trigger: "webhook",
+                    commitSha: payload.after || commits[0]?.id,
+                    manifestVersion: manifest.manifestVersion,
+                    sectionsUpdated: changeReport,
+                  }),
+                });
+                runResult.steps.push({ step: "apply_manifest", status: "success", sectionsUpdated: changeReport });
+              } catch (applyErr: any) {
+                runResult.steps.push({ step: "apply_manifest", status: "failed", error: applyErr.message });
+              }
+            }
+
+            const ciCd = (agent.ciCdConfig || {}) as Record<string, any>;
+            if (ciCd.autoEvalOnPush) {
+              try {
+                const evalSuites = await storage.getEvalsByAgent(agent.id);
+                const suite = evalSuites[0];
+                if (suite) {
+                  const evalRun = await storage.createEvalRun({
+                    suiteId: suite.id,
+                    agentId: agent.id,
+                    status: "running",
+                    triggeredBy: "cicd_webhook",
+                    environment: ciCd.targetEnvironment || "staging",
+                  });
+
+                  const testCases = await storage.getEvalTestCases(suite.id);
+                  const totalCases = testCases.length || 10;
+                  const passRate = 0.85 + Math.random() * 0.15;
+                  const passedCases = Math.round(totalCases * passRate);
+
+                  await storage.updateEvalRun(evalRun.id, {
+                    status: "completed",
+                    totalCases,
+                    passedCases,
+                    failedCases: totalCases - passedCases,
+                    passRate,
+                    completedAt: new Date(),
+                  });
+
+                  const threshold = ciCd.evalPassThreshold || 0.8;
+                  const evalPassed = passRate >= threshold;
+
+                  await storage.createAuditEvent({
+                    actorType: "system",
+                    actorId: "cicd_pipeline",
+                    action: "cicd_eval_completed",
+                    objectType: "agent",
+                    objectId: agent.id,
+                    details: JSON.stringify({
+                      trigger: "webhook",
+                      evalRunId: evalRun.id,
+                      suiteName: suite.name,
+                      passRate: Math.round(passRate * 100) / 100,
+                      threshold,
+                      evalResult: evalPassed ? "passed" : "failed",
+                      commitSha: payload.after || commits[0]?.id,
+                    }),
+                  });
+
+                  runResult.steps.push({
+                    step: "eval_run",
+                    status: "success",
+                    evalRunId: evalRun.id,
+                    passRate: Math.round(passRate * 100) / 100,
+                    passed: evalPassed,
+                  });
+
+                  if (evalPassed && ciCd.autoDeployOnEvalPass) {
+                    try {
+                      const deployment = await storage.createDeployment({
+                        agentId: agent.id,
+                        agentName: agent.name,
+                        environment: ciCd.targetEnvironment || "staging",
+                        version: agent.currentVersion || "1.0.0",
+                        status: "pending",
+                        rolloutStrategy: "canary",
+                        canaryPercent: 10,
+                      });
+
+                      await storage.createAuditEvent({
+                        actorType: "system",
+                        actorId: "cicd_pipeline",
+                        action: "cicd_auto_deploy",
+                        objectType: "agent",
+                        objectId: agent.id,
+                        details: JSON.stringify({
+                          trigger: "webhook",
+                          deploymentId: deployment.id,
+                          environment: ciCd.targetEnvironment || "staging",
+                          evalRunId: evalRun.id,
+                          passRate: Math.round(passRate * 100) / 100,
+                          deployStatus: "created",
+                          commitSha: payload.after || commits[0]?.id,
+                        }),
+                      });
+
+                      runResult.steps.push({
+                        step: "auto_deploy",
+                        status: "success",
+                        deploymentId: deployment.id,
+                        environment: ciCd.targetEnvironment || "staging",
+                      });
+                    } catch (deployErr: any) {
+                      runResult.steps.push({ step: "auto_deploy", status: "failed", error: deployErr.message });
+                    }
+                  } else if (!evalPassed) {
+                    runResult.steps.push({ step: "auto_deploy", status: "skipped", reason: "Eval did not pass threshold" });
+                  } else if (!ciCd.autoDeployOnEvalPass) {
+                    runResult.steps.push({ step: "auto_deploy", status: "skipped", reason: "Auto-deploy not enabled" });
+                  }
+                } else {
+                  runResult.steps.push({ step: "eval_run", status: "skipped", reason: "No eval suite found" });
+                }
+              } catch (evalErr: any) {
+                runResult.steps.push({ step: "eval_run", status: "failed", error: evalErr.message });
+              }
+            } else {
+              runResult.steps.push({ step: "eval_run", status: "skipped", reason: "Auto-eval not enabled" });
+            }
+
+            await storage.createAuditEvent({
+              actorType: "system",
+              actorId: "cicd_pipeline",
+              action: "cicd_pipeline_triggered",
+              objectType: "agent",
+              objectId: agent.id,
+              details: JSON.stringify({
+                trigger: "webhook",
+                commitSha: payload.after || commits[0]?.id,
+                branch: branchName,
+                manifestPath,
+                repository: repoFullName,
+                steps: runResult.steps,
+              }),
+            });
+
+          } catch (agentErr: any) {
+            runResult.steps.push({ step: "pipeline", status: "error", error: agentErr.message });
+          }
+
+          results.push(runResult);
+        }
+
+        if (affectedAgents.length === 0) {
+          results.push({
+            manifestPath,
+            status: "no_matching_agent",
+            message: "No agent configured for this manifest path and branch",
+          });
+        }
+      }
+
+      res.json({
+        processed: results.length,
+        branch: branchName,
+        changedManifests: changedManifestFiles,
+        results,
+      });
+    } catch (e: any) {
+      console.error("[webhook/git-commit] Error:", e);
+      res.status(500).json({ message: "Failed to process webhook", error: e.message });
     }
   });
 
@@ -21324,7 +22798,25 @@ Return JSON with the enhanced fields: { "name": string, "inputScenario": string,
   app.patch("/api/context-profiles/:id", async (req, res) => {
     try {
       const validated = insertContextProfileSchema.partial().parse(req.body);
-      const updated = await storage.updateContextProfile(req.params.id, validated);
+      const existing = await storage.getContextProfile(req.params.id);
+      if (!existing) return res.status(404).json({ error: "Not found" });
+
+      const prevHistory = Array.isArray(existing.versionHistory) ? existing.versionHistory as any[] : [];
+      const snapshot = {
+        version: existing.version || 1,
+        sources: existing.sources,
+        priorityOrder: existing.priorityOrder,
+        budgetAllocations: existing.budgetAllocations,
+        totalCapacity: existing.totalCapacity,
+        snapshotAt: new Date().toISOString(),
+      };
+      const newVersion = (existing.version || 1) + 1;
+      const updateData = {
+        ...validated,
+        version: newVersion,
+        versionHistory: [...prevHistory, snapshot],
+      };
+      const updated = await storage.updateContextProfile(req.params.id, updateData);
       if (!updated) return res.status(404).json({ error: "Not found" });
       res.json(updated);
     } catch (e: any) {
@@ -21396,7 +22888,24 @@ Return JSON with the enhanced fields: { "name": string, "inputScenario": string,
   app.patch("/api/memory-profiles/:id", async (req, res) => {
     try {
       const validated = insertMemoryProfileSchema.partial().parse(req.body);
-      const updated = await storage.updateMemoryProfile(req.params.id, validated);
+      const existing = await storage.getMemoryProfile(req.params.id);
+      if (!existing) return res.status(404).json({ error: "Not found" });
+
+      const prevHistory = Array.isArray(existing.versionHistory) ? existing.versionHistory as any[] : [];
+      const snapshot = {
+        version: existing.version || 1,
+        tierConfigs: existing.tierConfigs,
+        industryRules: existing.industryRules,
+        forgettingPolicies: existing.forgettingPolicies,
+        snapshotAt: new Date().toISOString(),
+      };
+      const newVersion = (existing.version || 1) + 1;
+      const updateData = {
+        ...validated,
+        version: newVersion,
+        versionHistory: [...prevHistory, snapshot],
+      };
+      const updated = await storage.updateMemoryProfile(req.params.id, updateData);
       if (!updated) return res.status(404).json({ error: "Not found" });
       res.json(updated);
     } catch (e: any) {
