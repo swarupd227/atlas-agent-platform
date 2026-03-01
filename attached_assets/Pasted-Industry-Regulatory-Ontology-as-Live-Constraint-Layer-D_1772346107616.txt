@@ -1,0 +1,11 @@
+Industry Regulatory Ontology as Live Constraint Layer
+Deep, machine-enforceable industry knowledge graphs that validate agent behavior at design-time and runtime
+ALMP's Ontology Explorer already has concept management, relationships, and MCP parameter matching. The IP is elevating this from a reference taxonomy to a live validation and enforcement layer that touches every module.
+How It Works: 
+•	For each target industry (Financial Services, Healthcare, Insurance), build a deep ontology that encodes not just vocabulary but regulatory constraints, prohibited actions, required disclosures, data sensitivity classifications, and mandated audit requirements.
+•	This ontology becomes a live validation layer: agent system prompts are checked for domain vocabulary accuracy, knowledge base documents are auto-classified against the taxonomy with coverage gap detection, MCP tool parameters are validated against domain semantics (already partially built), evaluation test suites auto-include industry-mandated test categories (Fair Lending tests for FinServ, PHI handling for Healthcare, claims integrity for Insurance), and memory retention policies are auto-enforced based on regulatory requirements encoded in the ontology (HIPAA retention rules, SEC recordkeeping mandates).
+•	The ontology is versioned and updated as regulations change. When HIPAA rules update, every linked healthcare agent gets flagged for re-validation automatically.
+Why It Cannot Be Easily Replicated: 
+•	Each regulated industry requires 12–18 months of domain expertise to encode properly. This is not LLM-generated content; it requires legal and compliance expert validation.
+•	The enforcement integration points (prompt validation, KB classification, eval generation, memory rules) require deep architectural coupling that cannot be layered on top of a generic platform.
+•	First-mover advantage is massive: the first platform with a validated Financial Services ontology becomes the reference standard for the industry.
