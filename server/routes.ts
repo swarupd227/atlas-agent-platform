@@ -21712,6 +21712,161 @@ Respond in JSON:
         },
       });
 
+      if (agentId) {
+        try {
+          const agent = await storage.getAgent(agentId);
+          if (agent) {
+            const evidenceBundle: Record<string, any> = {};
+            const agentSuites = await storage.getEvalsByAgent(agent.id);
+            const recentRuns: any[] = [];
+            for (const suite of agentSuites.slice(0, 3)) {
+              const runs = await storage.getEvalRunsBySuite(suite.id);
+              const sorted = runs.sort((a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime());
+              recentRuns.push(...sorted.slice(0, 3).map(r => ({
+                suiteName: suite.name,
+                passRate: r.passRate,
+                failedCases: r.failedCases,
+                status: r.status,
+              })));
+            }
+            evidenceBundle.evalHistory = recentRuns;
+
+            const agentKbs = await storage.getAgentKnowledgeBases(agent.id);
+            for (const akb of agentKbs.slice(0, 3)) {
+              const kb = await storage.getKnowledgeBase(akb.knowledgeBaseId);
+              if (kb) {
+                if (!evidenceBundle.knowledgeBases) evidenceBundle.knowledgeBases = [];
+                evidenceBundle.knowledgeBases.push({ name: kb.name, status: kb.status, updatedAt: kb.updatedAt });
+              }
+            }
+
+            const rootCauseCategories = [
+              "knowledge_base_staleness", "ontology_mismatch", "tool_schema_change",
+              "prompt_degradation", "context_window_overflow", "model_regression", "data_quality", "unknown",
+            ];
+
+            let classificationCategory = "unknown";
+            let classificationConfidence = 50;
+            let classificationReasoning = "Insufficient data for confident classification";
+            let evidenceItems: any[] = [];
+
+            if (metric === "pass_rate" || issueType === "drift") {
+              classificationCategory = "prompt_degradation";
+              classificationConfidence = 72;
+              classificationReasoning = `Pass rate drift detected (${Math.abs(driftPercent || 0).toFixed(1)}%). This typically indicates prompt or model output degradation affecting test case outcomes.`;
+              evidenceItems = [{ source: "eval_drift", detail: `${metric} drifted by ${Math.abs(driftPercent || 0).toFixed(1)}%`, severity: "high" }];
+            } else if (metric === "hallucination" || issueType === "hallucination") {
+              classificationCategory = "knowledge_base_staleness";
+              classificationConfidence = 68;
+              classificationReasoning = "Hallucination increase often correlates with stale or incomplete knowledge base content.";
+              evidenceItems = [{ source: "hallucination_metric", detail: `Hallucination rate increased`, severity: "high" }];
+            } else if (metric === "latency" || issueType === "performance_degradation") {
+              classificationCategory = "context_window_overflow";
+              classificationConfidence = 65;
+              classificationReasoning = "Latency degradation can indicate context window overflow or excessive token usage.";
+              evidenceItems = [{ source: "latency_metric", detail: `Latency drifted beyond threshold`, severity: "medium" }];
+            }
+
+            const subsystemLinks: Array<{ subsystem: string; reason: string }> = [];
+            if (classificationCategory === "knowledge_base_staleness") subsystemLinks.push({ subsystem: "Knowledge Base", reason: "Stale KB content may be causing inaccurate outputs" });
+            if (classificationCategory === "ontology_mismatch") subsystemLinks.push({ subsystem: "Ontology Explorer", reason: "Ontology concept changes may be affecting agent behavior" });
+            if (["knowledge_base_staleness", "context_window_overflow", "prompt_degradation"].includes(classificationCategory)) subsystemLinks.push({ subsystem: "Context Studio", reason: "Context profile adjustments may help resolve the issue" });
+
+            const existingDiag = (updated?.diagnosisDetails || {}) as Record<string, any>;
+            await storage.updateHealingPipeline(pipeline.id, {
+              diagnosisDetails: {
+                ...existingDiag,
+                rootCauseClassification: {
+                  category: classificationCategory,
+                  confidence: classificationConfidence,
+                  reasoning: classificationReasoning,
+                  evidenceItems,
+                  subsystemLinks,
+                  classifiedAt: new Date().toISOString(),
+                },
+              },
+            } as any);
+
+            if (["knowledge_base_staleness", "context_window_overflow", "prompt_degradation"].includes(classificationCategory)) {
+              try {
+                const allProfiles = await storage.getContextProfiles();
+                const contextProfiles = allProfiles.filter(p => p.agentId === agent.id);
+                if (contextProfiles.length > 0) {
+                  const profile = contextProfiles[0];
+                  const failurePatterns = [];
+                  if (classificationCategory === "knowledge_base_staleness") {
+                    failurePatterns.push({ category: "knowledge", failCount: 5, examples: ["Stale KB content detected during drift analysis"] });
+                  } else if (classificationCategory === "context_window_overflow") {
+                    failurePatterns.push({ category: "context_overflow", failCount: 3, examples: ["Latency increase suggests context window saturation"] });
+                  } else if (classificationCategory === "prompt_degradation") {
+                    failurePatterns.push({ category: "prompt", failCount: 4, examples: ["Pass rate regression in output quality tests"] });
+                  }
+
+                  const categoryToBoost: Record<string, string> = {
+                    knowledge: "Retrieved Knowledge",
+                    context_overflow: "System Instructions",
+                    prompt: "System Instructions",
+                    regulatory: "Regulatory Context",
+                    tool_usage: "Tool Descriptions",
+                    conversation: "Conversation History",
+                  };
+
+                  const sources = (profile.sources as any[]) || [];
+                  const currentPriority = (profile.priorityOrder as string[]) || sources.map((s: any) => s.category);
+                  const currentAllocations: Record<string, number> = {};
+                  sources.forEach((s: any) => { currentAllocations[s.category] = s.tokenAllocation || 0; });
+
+                  const boostTargets = failurePatterns.map(fp => categoryToBoost[fp.category] || "Retrieved Knowledge");
+                  const recommendedPriority = [...currentPriority];
+                  for (const target of boostTargets) {
+                    const idx = recommendedPriority.indexOf(target);
+                    if (idx > 0) {
+                      recommendedPriority.splice(idx, 1);
+                      recommendedPriority.unshift(target);
+                    }
+                  }
+
+                  const totalTokens = Object.values(currentAllocations).reduce((a, b) => a + b, 0) || 128000;
+                  const boostAmount = Math.round(totalTokens * 0.05);
+                  const recommendedAllocations = { ...currentAllocations };
+                  for (const target of boostTargets) {
+                    if (recommendedAllocations[target] !== undefined) {
+                      recommendedAllocations[target] += boostAmount;
+                    }
+                  }
+                  const nonBoosted = Object.keys(recommendedAllocations).filter(k => !boostTargets.includes(k));
+                  const reduction = Math.round((boostAmount * boostTargets.length) / Math.max(nonBoosted.length, 1));
+                  for (const key of nonBoosted) {
+                    recommendedAllocations[key] = Math.max(1000, recommendedAllocations[key] - reduction);
+                  }
+
+                  const existingRemed = (await storage.getHealingPipeline(pipeline.id))?.remediation as Record<string, any> || {};
+                  await storage.updateHealingPipeline(pipeline.id, {
+                    remediation: {
+                      ...existingRemed,
+                      contextAdjustmentRecommendation: {
+                        profileId: profile.id,
+                        profileName: profile.name,
+                        currentPriority,
+                        recommendedPriority,
+                        currentAllocations,
+                        recommendedAllocations,
+                        reason: classificationReasoning,
+                        generatedAt: new Date().toISOString(),
+                      },
+                    },
+                  } as any);
+                }
+              } catch (ctxErr: any) {
+                console.error("Auto context adjustment recommendation failed (non-blocking):", ctxErr.message);
+              }
+            }
+          }
+        } catch (classifyErr: any) {
+          console.error("Auto root cause classification failed (non-blocking):", classifyErr.message);
+        }
+      }
+
       res.json(updated);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -21720,6 +21875,55 @@ Respond in JSON:
     try {
       const pipeline = await storage.createHealingPipeline(req.body);
       res.json(pipeline);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/healing-pipelines/:id/trigger-shadow-replay", async (req, res) => {
+    try {
+      const pipeline = await storage.getHealingPipeline(req.params.id);
+      if (!pipeline) return res.status(404).json({ error: "Pipeline not found" });
+
+      const validStages = ["hypothesis", "remediation", "experiment"];
+      if (!validStages.includes(pipeline.stage)) {
+        return res.status(400).json({ error: `Pipeline must be in remediation or experiment stage to trigger shadow replay. Current stage: ${pipeline.stage}` });
+      }
+
+      const existingRemediation = (pipeline.remediation as Record<string, unknown>) || {};
+      const existingValidation = (existingRemediation.shadowReplayValidation as Record<string, unknown>) || {};
+      if (existingValidation.status === "running") {
+        return res.status(400).json({ error: "Shadow replay is already running for this pipeline" });
+      }
+
+      const agentId = pipeline.agentId || "unknown";
+
+      const job = await storage.createJob({
+        type: "shadow_replay",
+        agentId,
+        payload: {
+          agentId,
+          healingPipelineId: pipeline.id,
+          timeWindow: "24h",
+          sampleSize: 10,
+        },
+      });
+
+      const updatedRemediation = {
+        ...existingRemediation,
+        shadowReplayValidation: {
+          status: "running",
+          replayJobId: job.id,
+          passRate: null,
+          evidenceBundle: null,
+          triggeredAt: new Date().toISOString(),
+          completedAt: null,
+        },
+      };
+
+      const updated = await storage.updateHealingPipeline(pipeline.id, {
+        remediation: updatedRemediation,
+      });
+
+      res.json(updated);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -21732,6 +21936,23 @@ Respond in JSON:
       if (data.resolvedAt && typeof data.resolvedAt === "string") {
         data.resolvedAt = new Date(data.resolvedAt);
       }
+
+      if (data.stage === "verified") {
+        const pipeline = await storage.getHealingPipeline(req.params.id);
+        if (pipeline && pipeline.stage === "experiment") {
+          const remediation = (pipeline.remediation as Record<string, any>) || {};
+          const replayValidation = remediation.shadowReplayValidation;
+          if (replayValidation) {
+            if (replayValidation.status === "running") {
+              return res.status(400).json({ error: "Cannot verify: shadow replay validation is still running. Wait for it to complete." });
+            }
+            if (replayValidation.status === "failed") {
+              return res.status(400).json({ error: "Cannot verify: shadow replay validation failed. Address the replay failures before verifying." });
+            }
+          }
+        }
+      }
+
       const updated = await storage.updateHealingPipeline(req.params.id, data);
       if (!updated) return res.status(404).json({ error: "Not found" });
       res.json(updated);
@@ -21745,13 +21966,223 @@ Respond in JSON:
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  app.post("/api/healing-pipelines/:id/classify-root-cause", async (req, res) => {
+    try {
+      const pipeline = await storage.getHealingPipeline(req.params.id);
+      if (!pipeline) return res.status(404).json({ error: "Pipeline not found" });
+
+      const agentId = pipeline.agentId;
+      const agent = agentId ? await storage.getAgent(agentId) : null;
+
+      const evidenceBundle: Record<string, any> = {};
+
+      if (agent) {
+        const agentSuites = await storage.getEvalsByAgent(agent.id);
+        const recentRuns: any[] = [];
+        for (const suite of agentSuites.slice(0, 5)) {
+          const runs = await storage.getEvalRunsBySuite(suite.id);
+          const sorted = runs.sort((a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime());
+          recentRuns.push(...sorted.slice(0, 5).map(r => ({
+            suiteId: suite.id,
+            suiteName: suite.name,
+            passRate: r.passRate,
+            totalCases: r.totalCases,
+            failedCases: r.failedCases,
+            status: r.status,
+            startedAt: r.startedAt,
+            coverageTags: suite.coverageTags,
+          })));
+        }
+        evidenceBundle.evalHistory = recentRuns.slice(0, 10);
+
+        const agentKbs = await storage.getAgentKnowledgeBases(agent.id);
+        const kbDetails: any[] = [];
+        for (const akb of agentKbs) {
+          const kb = await storage.getKnowledgeBase(akb.knowledgeBaseId);
+          if (kb) {
+            kbDetails.push({
+              id: kb.id,
+              name: kb.name,
+              status: kb.status,
+              updatedAt: kb.updatedAt,
+              createdAt: kb.createdAt,
+              chunkCount: kb.chunkCount,
+            });
+          }
+        }
+        evidenceBundle.knowledgeBases = kbDetails;
+
+        const ontologyTags = (agent.ontologyTags || []) as Array<{ conceptId: string; conceptLabel: string }>;
+        const conceptDetails: any[] = [];
+        for (const tag of ontologyTags.slice(0, 10)) {
+          const concept = await storage.getOntologyConcept(tag.conceptId);
+          if (concept) {
+            conceptDetails.push({
+              id: concept.id,
+              label: concept.label,
+              requiresRevalidation: (concept as any).requiresRevalidation || false,
+              version: (concept as any).version || 1,
+            });
+          }
+        }
+        evidenceBundle.ontologyStatus = conceptDetails;
+
+        const agentMcpLinks = await storage.getAgentMcpServers(agent.id);
+        const toolDetails: any[] = [];
+        for (const link of agentMcpLinks) {
+          const server = await storage.getMcpServer(link.serverId);
+          if (server) {
+            const tools = await storage.getMcpServerTools(server.id);
+            toolDetails.push({
+              serverId: server.id,
+              serverName: server.name,
+              serverStatus: server.status,
+              toolCount: tools.length,
+              tools: tools.slice(0, 5).map(t => ({ id: t.id, name: t.name })),
+            });
+          }
+        }
+        evidenceBundle.mcpTools = toolDetails;
+
+        const allProfiles = await storage.getContextProfiles();
+        const agentProfile = allProfiles.find(p => p.agentId === agent.id);
+        if (agentProfile) {
+          evidenceBundle.contextProfile = {
+            id: agentProfile.id,
+            name: agentProfile.name,
+            totalCapacity: agentProfile.totalCapacity,
+            budgetAllocations: agentProfile.budgetAllocations,
+            priorityOrder: agentProfile.priorityOrder,
+          };
+        }
+      }
+
+      const rootCauseCategories = [
+        "knowledge_base_staleness",
+        "ontology_mismatch",
+        "tool_schema_change",
+        "prompt_degradation",
+        "context_window_overflow",
+        "model_regression",
+        "data_quality",
+        "unknown",
+      ];
+
+      const classificationPrompt = `You are a root cause classification engine for an AI agent platform. Analyze the following evidence and classify the root cause of the issue.
+
+Pipeline Info:
+- Title: ${pipeline.title}
+- Issue Type: ${pipeline.issueType}
+- Description: ${pipeline.issueDescription || "No description"}
+- Severity: ${pipeline.severity}
+- Industry: ${pipeline.industry}
+- Agent: ${pipeline.agentName}
+
+Evidence Bundle:
+${JSON.stringify(evidenceBundle, null, 2)}
+
+Classify the root cause into exactly one of these categories: ${rootCauseCategories.join(", ")}
+
+Respond with JSON:
+{
+  "category": string (one of the categories above),
+  "confidence": number (0-100),
+  "reasoning": string (2-3 sentences explaining why),
+  "evidenceItems": [{ "source": string, "detail": string, "severity": "high"|"medium"|"low" }],
+  "subsystemLinks": [{ "subsystem": string, "reason": string }]
+}`;
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "system", content: "You are a root cause analysis engine. Always respond with valid JSON." },
+          { role: "user", content: classificationPrompt },
+        ],
+        temperature: 0.2,
+        response_format: { type: "json_object" },
+      });
+
+      const classification = JSON.parse(response.choices[0].message.content || "{}");
+
+      const rawLinks = classification.subsystemLinks || [];
+      const normalizedLinks = rawLinks.map((link: any) =>
+        typeof link === "string" ? { subsystem: link, reason: "" } : { subsystem: link.subsystem || "Unknown", reason: link.reason || "" }
+      );
+
+      const existingDiagnosis = (pipeline.diagnosisDetails || {}) as Record<string, any>;
+      const updatedDiagnosis = {
+        ...existingDiagnosis,
+        rootCauseClassification: {
+          category: classification.category || "unknown",
+          confidence: classification.confidence || 0,
+          reasoning: classification.reasoning || "",
+          evidenceItems: classification.evidenceItems || [],
+          subsystemLinks: normalizedLinks,
+          classifiedAt: new Date().toISOString(),
+        },
+      };
+
+      const updated = await storage.updateHealingPipeline(pipeline.id, {
+        diagnosisDetails: updatedDiagnosis,
+      } as any);
+
+      res.json({ classification: updatedDiagnosis.rootCauseClassification, pipeline: updated });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   app.post("/api/ai/healing-diagnose", async (req, res) => {
     try {
       const { pipelineId, industry, issueType, issueDescription, stage } = req.body;
 
+      let rootCauseEvidence = "";
       if (pipelineId) {
         const pipeline = await storage.getHealingPipeline(pipelineId);
         if (!pipeline) return res.status(404).json({ error: "Pipeline not found" });
+
+        if (pipeline.agentId) {
+          const agent = await storage.getAgent(pipeline.agentId);
+          if (agent) {
+            const evidenceParts: string[] = [];
+
+            const agentSuites = await storage.getEvalsByAgent(agent.id);
+            if (agentSuites.length > 0) {
+              const recentRunInfo: string[] = [];
+              for (const suite of agentSuites.slice(0, 3)) {
+                const runs = await storage.getEvalRunsBySuite(suite.id);
+                const sorted = runs.sort((a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime());
+                for (const r of sorted.slice(0, 2)) {
+                  recentRunInfo.push(`Suite "${suite.name}": passRate=${r.passRate}%, failed=${r.failedCases}/${r.totalCases}`);
+                }
+              }
+              if (recentRunInfo.length > 0) {
+                evidenceParts.push(`Eval History:\n${recentRunInfo.join("\n")}`);
+              }
+            }
+
+            const agentKbs = await storage.getAgentKnowledgeBases(agent.id);
+            if (agentKbs.length > 0) {
+              const kbInfo: string[] = [];
+              for (const akb of agentKbs.slice(0, 3)) {
+                const kb = await storage.getKnowledgeBase(akb.knowledgeBaseId);
+                if (kb) {
+                  kbInfo.push(`KB "${kb.name}": status=${kb.status}, lastUpdated=${kb.updatedAt || kb.createdAt}`);
+                }
+              }
+              if (kbInfo.length > 0) {
+                evidenceParts.push(`Knowledge Bases:\n${kbInfo.join("\n")}`);
+              }
+            }
+
+            const ontologyTags = (agent.ontologyTags || []) as Array<{ conceptId: string; conceptLabel: string }>;
+            if (ontologyTags.length > 0) {
+              evidenceParts.push(`Ontology Tags: ${ontologyTags.map(t => t.conceptLabel).join(", ")}`);
+            }
+
+            if (evidenceParts.length > 0) {
+              rootCauseEvidence = `\n\nAgent Evidence (from actual agent data):\n${evidenceParts.join("\n\n")}`;
+            }
+          }
+        }
       }
 
       const industryDiagnosis: Record<string, any> = {
@@ -21804,7 +22235,7 @@ Description: ${issueDescription || "Agent performance degradation detected"}
 Current Stage: ${stage || "detected"}
 Industry: ${industry}
 Industry Diagnosis Checks: ${JSON.stringify(context.diagnosisChecks)}
-Industry Guardrails: ${JSON.stringify(context.guardrails)}
+Industry Guardrails: ${JSON.stringify(context.guardrails)}${rootCauseEvidence}
 
 Respond with JSON:
 {
@@ -21863,6 +22294,165 @@ Respond with JSON:
       }
 
       res.json({ analysis, industryContext: context });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/context-profiles/:id/auto-adjust", async (req, res) => {
+    try {
+      const profile = await storage.getContextProfile(req.params.id);
+      if (!profile) return res.status(404).json({ error: "Context profile not found" });
+
+      const { agentId, failurePatterns } = req.body as {
+        agentId?: string;
+        failurePatterns: Array<{ category: string; failCount: number; examples: string[] }>;
+      };
+
+      if (!failurePatterns || !Array.isArray(failurePatterns) || failurePatterns.length === 0) {
+        return res.status(400).json({ error: "failurePatterns array is required" });
+      }
+
+      const sources = Array.isArray(profile.sources) ? profile.sources as any[] : [];
+      const priorityOrder = Array.isArray(profile.priorityOrder) ? profile.priorityOrder as string[] : [];
+      const budgetAllocations = (profile.budgetAllocations || {}) as Record<string, number>;
+      const totalCapacity = profile.totalCapacity || 128000;
+
+      const categoryBoostMap: Record<string, string[]> = {
+        "knowledge/factual": ["Retrieved Knowledge", "Domain Knowledge"],
+        "knowledge_base_staleness": ["Retrieved Knowledge", "Domain Knowledge"],
+        "regulatory/compliance": ["Regulatory Context", "Compliance Rules"],
+        "tool usage": ["Tool Descriptions"],
+        "tool_schema_change": ["Tool Descriptions"],
+        "conversation coherence": ["Conversation History"],
+        "context_window_overflow": ["System Prompt"],
+        "prompt_degradation": ["System Prompt", "Instructions"],
+      };
+
+      const boostTargets = new Map<string, number>();
+      for (const pattern of failurePatterns) {
+        const catLower = pattern.category.toLowerCase();
+        let matchedSources: string[] = [];
+        for (const [key, vals] of Object.entries(categoryBoostMap)) {
+          if (catLower.includes(key) || key.includes(catLower)) {
+            matchedSources.push(...vals);
+          }
+        }
+        if (matchedSources.length === 0) {
+          matchedSources = ["Retrieved Knowledge"];
+        }
+        for (const src of matchedSources) {
+          boostTargets.set(src, (boostTargets.get(src) || 0) + pattern.failCount);
+        }
+      }
+
+      const currentAllocations: Record<string, number> = {};
+      const recommendedAllocations: Record<string, number> = {};
+      for (const src of sources) {
+        const name = src.category || src.name || "Unknown";
+        currentAllocations[name] = Number(src.tokenAllocation) || 0;
+        recommendedAllocations[name] = currentAllocations[name];
+      }
+
+      let totalBoostWeight = 0;
+      for (const [, weight] of boostTargets) totalBoostWeight += weight;
+
+      const boostBudget = Math.round(totalCapacity * 0.1);
+      const nonBoostedSources = sources.filter((s: any) => !boostTargets.has(s.category || s.name));
+      const totalNonBoosted = nonBoostedSources.reduce((s: number, src: any) => s + (Number(src.tokenAllocation) || 0), 0);
+
+      for (const [srcName, weight] of boostTargets) {
+        const boostAmount = Math.round((weight / totalBoostWeight) * boostBudget);
+        if (recommendedAllocations[srcName] !== undefined) {
+          recommendedAllocations[srcName] += boostAmount;
+        }
+      }
+
+      if (totalNonBoosted > 0) {
+        for (const src of nonBoostedSources) {
+          const name = src.category || src.name;
+          const proportion = (Number(src.tokenAllocation) || 0) / totalNonBoosted;
+          const reduction = Math.round(proportion * boostBudget);
+          if (recommendedAllocations[name] !== undefined) {
+            recommendedAllocations[name] = Math.max(500, recommendedAllocations[name] - reduction);
+          }
+        }
+      }
+
+      const currentPriority = [...priorityOrder];
+      const recommendedPriority = [...priorityOrder];
+      const boostNames = Array.from(boostTargets.keys());
+      for (const name of boostNames) {
+        const idx = recommendedPriority.indexOf(name);
+        if (idx > 0) {
+          recommendedPriority.splice(idx, 1);
+          recommendedPriority.unshift(name);
+        }
+      }
+
+      const recommendations = {
+        generatedAt: new Date().toISOString(),
+        profileId: profile.id,
+        agentId: agentId || profile.agentId,
+        failurePatterns,
+        currentPriority,
+        recommendedPriority,
+        currentAllocations,
+        recommendedAllocations,
+        totalCapacity,
+        boostTargets: Object.fromEntries(boostTargets),
+        summary: failurePatterns.map(p =>
+          `${p.category}: ${p.failCount} failures detected. ${p.examples.length > 0 ? `Example: ${p.examples[0]}` : ""}`
+        ),
+        applied: false,
+      };
+
+      res.json(recommendations);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/healing-pipelines/:id/apply-context-adjustment", async (req, res) => {
+    try {
+      const pipeline = await storage.getHealingPipeline(req.params.id);
+      if (!pipeline) return res.status(404).json({ error: "Pipeline not found" });
+
+      const { profileId, recommendedPriority, recommendedAllocations } = req.body;
+      if (!profileId) return res.status(400).json({ error: "profileId is required" });
+
+      const profile = await storage.getContextProfile(profileId);
+      if (!profile) return res.status(404).json({ error: "Context profile not found" });
+
+      const sources = Array.isArray(profile.sources) ? (profile.sources as any[]).map((s: any) => {
+        const name = s.category || s.name;
+        if (recommendedAllocations && recommendedAllocations[name] !== undefined) {
+          return { ...s, tokenAllocation: recommendedAllocations[name] };
+        }
+        return s;
+      }) : profile.sources;
+
+      const updatedProfile = await storage.updateContextProfile(profileId, {
+        sources,
+        priorityOrder: recommendedPriority || profile.priorityOrder,
+      } as any);
+
+      const remediation = (pipeline.remediation || {}) as Record<string, any>;
+      remediation.contextAdjustment = {
+        applied: true,
+        appliedAt: new Date().toISOString(),
+        profileId,
+        changes: { recommendedPriority, recommendedAllocations },
+      };
+
+      await storage.updateHealingPipeline(pipeline.id, { remediation } as any);
+
+      await storage.createAuditEvent({
+        actorType: "system",
+        actorId: "healing-engine",
+        action: "context_profile_auto_adjusted",
+        objectType: "context_profile",
+        objectId: profileId,
+        details: `Context profile auto-adjusted via healing pipeline ${pipeline.id}. Priority order and token allocations updated based on failure patterns.`,
+      });
+
+      res.json({ success: true, profile: updatedProfile, pipelineId: pipeline.id });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 

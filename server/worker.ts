@@ -692,6 +692,46 @@ async function processShadowReplay(job: Job): Promise<Record<string, unknown>> {
     }
   }
 
+  const healingPipelineId = payload.healingPipelineId as string | undefined;
+  if (healingPipelineId) {
+    try {
+      const pipeline = await storage.getHealingPipeline(healingPipelineId);
+      if (pipeline) {
+        const replayPassed = passRate >= 80;
+        const existingRemediation = (pipeline.remediation as Record<string, unknown>) || {};
+        const updatedRemediation = {
+          ...existingRemediation,
+          shadowReplayValidation: {
+            status: replayPassed ? "passed" : "failed",
+            replayJobId: job.id,
+            passRate: Math.round(passRate * 100) / 100,
+            evidenceBundle,
+            triggeredAt: (existingRemediation.shadowReplayValidation as any)?.triggeredAt || new Date().toISOString(),
+            completedAt: new Date().toISOString(),
+          },
+        };
+
+        const experimentUpdate: Record<string, unknown> = {};
+        if (!replayPassed) {
+          const existingResults = (pipeline.experimentResults as Record<string, unknown>) || {};
+          experimentUpdate.experimentResults = {
+            ...existingResults,
+            shadowReplayFailed: true,
+          };
+        }
+
+        await storage.updateHealingPipeline(healingPipelineId, {
+          remediation: updatedRemediation,
+          ...experimentUpdate,
+        });
+
+        console.log(`[worker] Shadow replay for healing pipeline ${healingPipelineId}: ${replayPassed ? "PASSED" : "FAILED"} (passRate: ${passRate.toFixed(1)}%)`);
+      }
+    } catch (err: any) {
+      console.error(`[worker] Failed to update healing pipeline ${healingPipelineId}:`, err.message);
+    }
+  }
+
   await storage.updateJob(job.id, { progress: 100 });
   jobEvents.emit("progress", { jobId: job.id, agentId, progress: 100, step: "completed" });
 

@@ -54,6 +54,18 @@ import {
   Rocket,
   FileCheck,
   Target,
+  RotateCcw,
+  Eye,
+  Settings2,
+  ArrowRight,
+  ExternalLink,
+  Brain,
+  Database,
+  BookOpen,
+  Cpu,
+  MessageSquare,
+  Gauge,
+  Link2,
 } from "lucide-react";
 
 const PIPELINE_STAGES = [
@@ -141,6 +153,20 @@ function timeAgo(dateStr: string) {
   if (diffHours < 24) return `${diffHours}h ago`;
   const diffDays = Math.floor(diffHours / 24);
   return `${diffDays}d ago`;
+}
+
+function getRootCauseCategoryInfo(category: string): { icon: any; label: string; color: string; subsystemLink: string } {
+  const map: Record<string, { icon: any; label: string; color: string; subsystemLink: string }> = {
+    knowledge_base_staleness: { icon: Database, label: "Knowledge Base Staleness", color: "bg-amber-500/15 text-amber-700 dark:text-amber-400", subsystemLink: "/knowledge-bases" },
+    ontology_mismatch: { icon: BookOpen, label: "Ontology Mismatch", color: "bg-purple-500/15 text-purple-700 dark:text-purple-400", subsystemLink: "/ontology" },
+    tool_schema_change: { icon: Wrench, label: "Tool Schema Change", color: "bg-blue-500/15 text-blue-700 dark:text-blue-400", subsystemLink: "/mcp-servers" },
+    prompt_degradation: { icon: MessageSquare, label: "Prompt Degradation", color: "bg-orange-500/15 text-orange-700 dark:text-orange-400", subsystemLink: "/context-studio" },
+    context_window_overflow: { icon: Gauge, label: "Context Window Overflow", color: "bg-red-500/15 text-red-700 dark:text-red-400", subsystemLink: "/context-studio" },
+    model_regression: { icon: Cpu, label: "Model Regression", color: "bg-indigo-500/15 text-indigo-700 dark:text-indigo-400", subsystemLink: "/agents" },
+    data_quality: { icon: Database, label: "Data Quality", color: "bg-pink-500/15 text-pink-700 dark:text-pink-400", subsystemLink: "/knowledge-bases" },
+    unknown: { icon: Brain, label: "Unknown", color: "bg-gray-500/15 text-gray-700 dark:text-gray-400", subsystemLink: "/evals" },
+  };
+  return map[category] || map.unknown;
 }
 
 function formatDollars(amount: number) {
@@ -369,6 +395,60 @@ export default function HealingOperations() {
     onError: (e: any) => toast({ title: "Verification failed", description: e.message, variant: "destructive" }),
   });
 
+  const triggerShadowReplayMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("POST", `/api/healing-pipelines/${id}/trigger-shadow-replay`, {});
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/healing-pipelines"] });
+      toast({ title: "Shadow Replay triggered", description: "Validation job has been queued" });
+    },
+    onError: (e: any) => toast({ title: "Failed to trigger Shadow Replay", description: e.message, variant: "destructive" }),
+  });
+
+  const [contextRecommendations, setContextRecommendations] = useState<any>(null);
+  const [contextAdjustConfirmOpen, setContextAdjustConfirmOpen] = useState(false);
+
+  const generateContextAdjustMutation = useMutation({
+    mutationFn: async ({ profileId, agentId, failurePatterns }: { profileId: string; agentId?: string; failurePatterns: Array<{ category: string; failCount: number; examples: string[] }> }) => {
+      const res = await apiRequest("POST", `/api/context-profiles/${profileId}/auto-adjust`, { agentId, failurePatterns });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setContextRecommendations(data);
+      toast({ title: "Context adjustment recommendations generated" });
+    },
+    onError: (e: any) => toast({ title: "Failed to generate context adjustments", description: e.message, variant: "destructive" }),
+  });
+
+  const applyContextAdjustMutation = useMutation({
+    mutationFn: async ({ pipelineId, profileId, recommendedPriority, recommendedAllocations }: { pipelineId: string; profileId: string; recommendedPriority: string[]; recommendedAllocations: Record<string, number> }) => {
+      const res = await apiRequest("POST", `/api/healing-pipelines/${pipelineId}/apply-context-adjustment`, { profileId, recommendedPriority, recommendedAllocations });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/healing-pipelines"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/context-profiles"] });
+      setContextAdjustConfirmOpen(false);
+      setContextRecommendations(null);
+      toast({ title: "Context adjustments applied", description: "Profile updated and audit event created" });
+    },
+    onError: (e: any) => toast({ title: "Failed to apply adjustments", description: e.message, variant: "destructive" }),
+  });
+
+  const classifyRootCauseMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("POST", `/api/healing-pipelines/${id}/classify-root-cause`, {});
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/healing-pipelines"] });
+      toast({ title: "Root cause classified", description: "Classification complete with evidence" });
+    },
+    onError: (e: any) => toast({ title: "Classification failed", description: e.message, variant: "destructive" }),
+  });
+
   const filteredPipelines = useMemo(() => {
     let list = pipelines;
     if (statusFilter !== "all") {
@@ -575,6 +655,17 @@ export default function HealingOperations() {
                     <Badge variant="outline" className={`text-[10px] ${getIndustryColor(p.industry)}`} data-testid={`badge-industry-${p.id}`}>
                       {p.industry.replace("_", " ")}
                     </Badge>
+                    {(() => {
+                      const diag = p.diagnosisDetails as Record<string, any> | null;
+                      const rc = diag?.rootCauseClassification;
+                      if (!rc?.category) return null;
+                      const info = getRootCauseCategoryInfo(rc.category);
+                      return (
+                        <Badge variant="outline" className={`text-[10px] ${info.color}`} data-testid={`badge-root-cause-${p.id}`}>
+                          {info.label}
+                        </Badge>
+                      );
+                    })()}
                   </div>
                   {p.detectedAt && (
                     <div className="flex items-center gap-1 mt-2">
@@ -639,6 +730,110 @@ export default function HealingOperations() {
                   )}
                 </div>
               </div>
+
+              {(() => {
+                const diag = selected.diagnosisDetails as Record<string, any> | null;
+                const remed = selected.remediation as Record<string, any> | null;
+                const rc = diag?.rootCauseClassification;
+                const srValid = remed?.shadowReplayValidation;
+                const ctxAdj = remed?.contextAdjustment;
+                if (!rc && !srValid && !ctxAdj) return null;
+                const rcInfo = rc?.category ? getRootCauseCategoryInfo(rc.category) : null;
+                const contextRelated = rc?.category === "knowledge_base_staleness" || rc?.category === "context_window_overflow" || rc?.category === "prompt_degradation";
+                return (
+                  <Card className="border-blue-500/30 bg-blue-500/5" data-testid="card-healing-intelligence">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        <Brain className="w-4 h-4 text-blue-500" />
+                        Healing Intelligence
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div className="space-y-1">
+                          <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Root Cause</span>
+                          {rcInfo ? (
+                            <div className="flex items-center gap-1.5">
+                              <Badge variant="outline" className={`text-[10px] ${rcInfo.color}`} data-testid="badge-intel-root-cause">
+                                {rcInfo.label}
+                              </Badge>
+                              <span className="text-[10px] text-muted-foreground">{rc.confidence}% confidence</span>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">Not classified</span>
+                          )}
+                        </div>
+                        <div className="space-y-1">
+                          <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Shadow Replay</span>
+                          {srValid ? (
+                            <div className="flex items-center gap-1.5">
+                              {srValid.status === "running" && <Badge variant="outline" className="text-[10px] bg-blue-500/15 text-blue-600 border-blue-500/20"><Loader2 className="w-3 h-3 mr-1 animate-spin" />Running</Badge>}
+                              {srValid.status === "passed" && <Badge variant="outline" className="text-[10px] bg-green-500/15 text-green-600 border-green-500/20"><CheckCircle2 className="w-3 h-3 mr-1" />Passed {srValid.passRate ? `${Number(srValid.passRate).toFixed(0)}%` : ""}</Badge>}
+                              {srValid.status === "failed" && <Badge variant="outline" className="text-[10px] bg-red-500/15 text-red-600 border-red-500/20"><XCircle className="w-3 h-3 mr-1" />Failed {srValid.passRate ? `${Number(srValid.passRate).toFixed(0)}%` : ""}</Badge>}
+                              {srValid.status === "pending" && <Badge variant="outline" className="text-[10px]">Pending</Badge>}
+                              {srValid.status === "skipped" && <Badge variant="outline" className="text-[10px]">Skipped</Badge>}
+                            </div>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">Not triggered</span>
+                          )}
+                        </div>
+                        <div className="space-y-1">
+                          <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Context Adjustment</span>
+                          {ctxAdj?.appliedAt ? (
+                            <Badge variant="outline" className="text-[10px] bg-green-500/15 text-green-600 border-green-500/20">
+                              <CheckCircle2 className="w-3 h-3 mr-1" />Applied
+                            </Badge>
+                          ) : contextRelated ? (
+                            <Badge variant="outline" className="text-[10px] bg-amber-500/15 text-amber-600 border-amber-500/20">
+                              Recommended
+                            </Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">N/A</span>
+                          )}
+                        </div>
+                      </div>
+                      {(rc?.subsystemLinks?.length > 0 || selected.agentId) && (
+                        <div className="flex flex-wrap items-center gap-2 mt-3 pt-2 border-t">
+                          <span className="text-[10px] text-muted-foreground">Connected:</span>
+                          {selected.agentId && (
+                            <Link href={`/agents/${selected.agentId}`}>
+                              <Badge variant="outline" className="text-[10px] cursor-pointer hover:bg-muted/50" data-testid="link-intel-agent">
+                                <Cpu className="w-3 h-3 mr-1" />Agent
+                              </Badge>
+                            </Link>
+                          )}
+                          {rc?.category === "knowledge_base_staleness" && (
+                            <Link href="/knowledge-bases">
+                              <Badge variant="outline" className="text-[10px] cursor-pointer hover:bg-muted/50" data-testid="link-intel-kb">
+                                <BookOpen className="w-3 h-3 mr-1" />Knowledge Base
+                              </Badge>
+                            </Link>
+                          )}
+                          {rc?.category === "ontology_mismatch" && (
+                            <Link href="/ontology">
+                              <Badge variant="outline" className="text-[10px] cursor-pointer hover:bg-muted/50" data-testid="link-intel-ontology">
+                                <Database className="w-3 h-3 mr-1" />Ontology
+                              </Badge>
+                            </Link>
+                          )}
+                          {contextRelated && (
+                            <Link href="/context-studio">
+                              <Badge variant="outline" className="text-[10px] cursor-pointer hover:bg-muted/50" data-testid="link-intel-context">
+                                <Settings2 className="w-3 h-3 mr-1" />Context Studio
+                              </Badge>
+                            </Link>
+                          )}
+                          <Link href="/eval-studio">
+                            <Badge variant="outline" className="text-[10px] cursor-pointer hover:bg-muted/50" data-testid="link-intel-evals">
+                              <Beaker className="w-3 h-3 mr-1" />Eval Suite
+                            </Badge>
+                          </Link>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })()}
 
               <Tabs value={detailTab} onValueChange={setDetailTab}>
                 <TabsList>
@@ -769,17 +964,140 @@ export default function HealingOperations() {
                       {(() => {
                         const details = selected.diagnosisDetails as Record<string, unknown> | null;
                         if (!details || Object.keys(details).length === 0) return null;
+                        const { rootCauseClassification, ...otherDetails } = details as any;
+                        if (Object.keys(otherDetails).length === 0) return null;
                         return (
                           <div className="mt-3">
                             <span className="text-xs text-muted-foreground">AI Diagnosis Results</span>
                             <pre className="text-xs font-mono p-3 rounded-md bg-muted/50 overflow-auto max-h-[200px] whitespace-pre-wrap mt-1" data-testid="text-diagnosis-results">
-                              {JSON.stringify(details, null, 2)}
+                              {JSON.stringify(otherDetails, null, 2)}
                             </pre>
                           </div>
                         );
                       })()}
                     </CardContent>
                   </Card>
+
+                  {(() => {
+                    const details = selected.diagnosisDetails as Record<string, any> | null;
+                    const rootCause = details?.rootCauseClassification;
+                    const categoryInfo = rootCause ? getRootCauseCategoryInfo(rootCause.category) : null;
+                    const CategoryIcon = categoryInfo?.icon || Brain;
+
+                    return (
+                      <Card data-testid="card-root-cause-classification">
+                        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0 pb-2">
+                          <CardTitle className="text-base flex items-center gap-2">
+                            <Brain className="w-4 h-4" />
+                            Root Cause Classification
+                          </CardTitle>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => classifyRootCauseMutation.mutate(selected.id)}
+                            disabled={classifyRootCauseMutation.isPending}
+                            data-testid="button-classify-root-cause"
+                          >
+                            {classifyRootCauseMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Brain className="w-4 h-4 mr-1" />}
+                            {rootCause ? "Re-classify" : "Classify Root Cause"}
+                          </Button>
+                        </CardHeader>
+                        <CardContent className="space-y-3">
+                          {!rootCause ? (
+                            <div className="rounded-md bg-muted/50 p-4 text-center">
+                              <Brain className="w-6 h-6 text-muted-foreground mx-auto mb-2" />
+                              <p className="text-sm text-muted-foreground" data-testid="text-no-classification">
+                                No root cause classification yet. Click "Classify Root Cause" to analyze agent data and determine the root cause category.
+                              </p>
+                            </div>
+                          ) : (
+                            <>
+                              <div className="flex flex-wrap items-center gap-3">
+                                <div className="flex items-center gap-2">
+                                  <div className={`flex items-center justify-center w-10 h-10 rounded-md ${categoryInfo?.color}`}>
+                                    <CategoryIcon className="w-5 h-5" />
+                                  </div>
+                                  <div>
+                                    <Badge variant="outline" className={categoryInfo?.color} data-testid="badge-root-cause-category">
+                                      {categoryInfo?.label}
+                                    </Badge>
+                                    <div className="flex items-center gap-1 mt-1">
+                                      <span className="text-xs text-muted-foreground">Confidence:</span>
+                                      <span className="text-xs font-medium" data-testid="text-root-cause-confidence">{rootCause.confidence}%</span>
+                                      <Progress value={rootCause.confidence} className="w-16 h-1.5" />
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {rootCause.reasoning && (
+                                <div className="rounded-md bg-muted/50 p-3">
+                                  <span className="text-xs text-muted-foreground">Reasoning</span>
+                                  <p className="text-sm mt-1" data-testid="text-root-cause-reasoning">{rootCause.reasoning}</p>
+                                </div>
+                              )}
+
+                              {rootCause.evidenceItems && rootCause.evidenceItems.length > 0 && (
+                                <div>
+                                  <span className="text-xs text-muted-foreground">Evidence</span>
+                                  <div className="space-y-1 mt-1">
+                                    {rootCause.evidenceItems.map((item: any, idx: number) => (
+                                      <div key={idx} className="flex flex-wrap items-start gap-2 py-1.5 border-b last:border-b-0" data-testid={`evidence-item-${idx}`}>
+                                        <Badge
+                                          variant="outline"
+                                          className={`text-[10px] shrink-0 ${
+                                            item.severity === "high" ? "bg-red-500/15 text-red-700 dark:text-red-400" :
+                                            item.severity === "medium" ? "bg-yellow-500/15 text-yellow-700 dark:text-yellow-400" :
+                                            "bg-green-500/15 text-green-700 dark:text-green-400"
+                                          }`}
+                                        >
+                                          {item.severity}
+                                        </Badge>
+                                        <div className="flex-1 min-w-0">
+                                          <span className="text-xs font-medium">{item.source}</span>
+                                          <p className="text-xs text-muted-foreground">{item.detail}</p>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {rootCause.subsystemLinks && rootCause.subsystemLinks.length > 0 && (
+                                <div>
+                                  <span className="text-xs text-muted-foreground">Connected Subsystems</span>
+                                  <div className="flex flex-wrap gap-2 mt-1">
+                                    {rootCause.subsystemLinks.map((link: any, idx: number) => {
+                                      const label = typeof link === "string" ? link : (link.subsystem || "Unknown");
+                                      return (
+                                        <Link key={idx} href={getRootCauseCategoryInfo(rootCause.category).subsystemLink}>
+                                          <Button variant="outline" size="sm" data-testid={`link-subsystem-${idx}`}>
+                                            <Link2 className="w-3 h-3 mr-1" />
+                                            {label}
+                                          </Button>
+                                        </Link>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              )}
+
+                              {categoryInfo?.subsystemLink && (
+                                <div className="pt-1">
+                                  <Link href={categoryInfo.subsystemLink}>
+                                    <Button variant="outline" size="sm" data-testid="link-root-cause-subsystem">
+                                      <ExternalLink className="w-3 h-3 mr-1" />
+                                      Open {categoryInfo.label} Subsystem
+                                    </Button>
+                                  </Link>
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </CardContent>
+                      </Card>
+                    );
+                  })()}
                 </TabsContent>
 
                 {/* Tab 2: Business Impact */}
@@ -929,6 +1247,314 @@ export default function HealingOperations() {
                     </CardContent>
                   </Card>
 
+                  {(() => {
+                    const remediation = selected.remediation as Record<string, unknown> | null;
+                    const shadowValidation = (remediation?.shadowReplayValidation as Record<string, unknown>) || null;
+                    const canTrigger = ["hypothesis", "remediation", "experiment"].includes(selected.stage);
+                    const isRunning = shadowValidation?.status === "running";
+                    const isPassed = shadowValidation?.status === "passed";
+                    const isFailed = shadowValidation?.status === "failed";
+                    const hasResult = isPassed || isFailed;
+
+                    return (
+                      <Card>
+                        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0 pb-2">
+                          <CardTitle className="text-base flex flex-wrap items-center gap-2">
+                            <Eye className="w-4 h-4" />
+                            Shadow Replay Validation
+                          </CardTitle>
+                          {canTrigger && !isRunning && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => triggerShadowReplayMutation.mutate(selected.id)}
+                              disabled={triggerShadowReplayMutation.isPending}
+                              data-testid="button-trigger-shadow-replay"
+                            >
+                              {triggerShadowReplayMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <RotateCcw className="w-4 h-4 mr-1" />}
+                              Validate with Shadow Replay
+                            </Button>
+                          )}
+                        </CardHeader>
+                        <CardContent>
+                          {!shadowValidation && (
+                            <div className="text-sm text-muted-foreground py-2" data-testid="text-shadow-replay-empty">
+                              No shadow replay validation has been triggered yet. Trigger a replay to validate the healing patch against historical traces.
+                            </div>
+                          )}
+                          {isRunning && (
+                            <div className="flex items-center gap-3 py-2" data-testid="status-shadow-replay-running">
+                              <Loader2 className="w-5 h-5 animate-spin text-blue-500" />
+                              <div>
+                                <p className="text-sm font-medium">Shadow Replay Running</p>
+                                <p className="text-xs text-muted-foreground">
+                                  {"Replaying historical traces against patched configuration..."}
+                                  {shadowValidation.triggeredAt ? ` Started ${timeAgo(String(shadowValidation.triggeredAt))}` : ""}
+                                </p>
+                              </div>
+                            </div>
+                          )}
+                          {hasResult && (
+                            <div className="space-y-3" data-testid="status-shadow-replay-result">
+                              <div className="flex flex-wrap items-center gap-3">
+                                {isPassed ? (
+                                  <Badge variant="outline" className="bg-green-500/15 text-green-700 dark:text-green-400" data-testid="badge-shadow-replay-status">
+                                    <CheckCircle className="w-3 h-3 mr-1" />
+                                    Passed
+                                  </Badge>
+                                ) : (
+                                  <Badge variant="outline" className="bg-red-500/15 text-red-700 dark:text-red-400" data-testid="badge-shadow-replay-status">
+                                    <XCircle className="w-3 h-3 mr-1" />
+                                    Failed
+                                  </Badge>
+                                )}
+                                <span className="text-sm font-medium" data-testid="text-shadow-replay-pass-rate">
+                                  Pass Rate: {String(shadowValidation.passRate)}%
+                                </span>
+                                {shadowValidation.completedAt ? (
+                                  <span className="text-xs text-muted-foreground">
+                                    {"Completed " + timeAgo(String(shadowValidation.completedAt))}
+                                  </span>
+                                ) : null}
+                              </div>
+                              {(() => {
+                                const evidence = shadowValidation.evidenceBundle as Record<string, unknown> | null;
+                                if (!evidence) return null;
+                                const summary = evidence.summary as Record<string, unknown> | null;
+                                const divergences = (evidence.divergences as Array<Record<string, unknown>>) || [];
+                                return (
+                                  <>
+                                    {summary && (
+                                      <div className="grid grid-cols-3 gap-3">
+                                        <div className="space-y-1">
+                                          <span className="text-xs text-muted-foreground">Traces Replayed</span>
+                                          <p className="text-sm font-medium" data-testid="text-shadow-traces-replayed">{String(summary.tracesReplayed)}</p>
+                                        </div>
+                                        <div className="space-y-1">
+                                          <span className="text-xs text-muted-foreground">Passed</span>
+                                          <p className="text-sm font-medium text-green-600 dark:text-green-400" data-testid="text-shadow-passed">{String(summary.passed)}</p>
+                                        </div>
+                                        <div className="space-y-1">
+                                          <span className="text-xs text-muted-foreground">Failed</span>
+                                          <p className="text-sm font-medium text-red-600 dark:text-red-400" data-testid="text-shadow-failed">{String(summary.failed)}</p>
+                                        </div>
+                                      </div>
+                                    )}
+                                    {divergences.length > 0 && (
+                                      <div>
+                                        <span className="text-xs text-muted-foreground">Divergences ({divergences.length})</span>
+                                        <div className="mt-1 space-y-1 max-h-[120px] overflow-auto">
+                                          {divergences.slice(0, 5).map((d, i) => (
+                                            <div key={i} className="flex items-center gap-2 text-xs py-1 border-b last:border-b-0" data-testid={`divergence-item-${i}`}>
+                                              <Badge variant="outline" className={`text-[10px] ${d.severity === "critical" ? "bg-red-500/15 text-red-700 dark:text-red-400" : "bg-yellow-500/15 text-yellow-700 dark:text-yellow-400"}`}>
+                                                {String(d.severity)}
+                                              </Badge>
+                                              <span className="text-muted-foreground">{String(d.type).replace("_", " ")}</span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </>
+                                );
+                              })()}
+                              {isFailed && (
+                                <div className="flex items-center gap-2 p-2 rounded-md bg-red-500/10 border border-red-500/30" data-testid="alert-shadow-replay-failed">
+                                  <AlertTriangle className="w-4 h-4 text-red-500 shrink-0" />
+                                  <span className="text-xs text-red-700 dark:text-red-400">
+                                    Shadow replay failed. The healing patch did not pass validation. Consider revising the remediation before advancing.
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    );
+                  })()}
+
+                  {(() => {
+                    const diagnosis = selected.diagnosisDetails as Record<string, any> | null;
+                    const rootCause = diagnosis?.rootCauseClassification?.category || diagnosis?.rootCause || "";
+                    const rootCauseLower = (typeof rootCause === "string" ? rootCause : "").toLowerCase();
+                    const isContextRelated = rootCauseLower.includes("knowledge_base") || rootCauseLower.includes("context_window") || rootCauseLower.includes("prompt_degradation") || rootCauseLower.includes("knowledge") || rootCauseLower.includes("context") || rootCauseLower.includes("prompt");
+                    const remediation = selected.remediation as Record<string, any> | null;
+                    const contextAdj = remediation?.contextAdjustment;
+                    const hasApplied = contextAdj?.applied === true || contextAdj?.appliedAt;
+                    const storedRec = remediation?.contextAdjustmentRecommendation;
+                    const activeRecs = contextRecommendations || storedRec || null;
+
+                    if (!isContextRelated && !activeRecs && !hasApplied) return null;
+
+                    return (
+                      <Card data-testid="card-context-adjustment">
+                        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0 pb-2">
+                          <CardTitle className="text-base flex flex-wrap items-center gap-2">
+                            <Settings2 className="w-4 h-4" />
+                            Context Adjustment Recommendation
+                          </CardTitle>
+                          <div className="flex flex-wrap items-center gap-2">
+                            {hasApplied && (
+                              <Badge variant="outline" className="bg-green-500/15 text-green-700 dark:text-green-400" data-testid="badge-context-applied">
+                                <CheckCircle className="w-3 h-3 mr-1" /> Applied
+                              </Badge>
+                            )}
+                            <Link href="/context-studio">
+                              <Button variant="outline" size="sm" data-testid="button-goto-context-studio">
+                                <ExternalLink className="w-3 h-3 mr-1" /> Context Studio
+                              </Button>
+                            </Link>
+                          </div>
+                        </CardHeader>
+                        <CardContent className="space-y-3">
+                          {!activeRecs && !hasApplied && (
+                            <div className="space-y-3">
+                              <p className="text-sm text-muted-foreground" data-testid="text-context-adjust-hint">
+                                Root cause analysis suggests context-related issues. Generate recommendations to adjust context profile priorities and token allocations.
+                              </p>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={async () => {
+                                  const failurePatterns = [
+                                    { category: rootCause || "knowledge/factual", failCount: 5, examples: [selected.issueDescription || "Performance degradation detected"] }
+                                  ];
+                                  let profileId = storedRec?.profileId;
+                                  if (!profileId && selected.agentId) {
+                                    try {
+                                      const profiles = await fetch("/api/context-profiles").then(r => r.json());
+                                      const match = (profiles as any[]).find((p: any) => p.agentId === selected.agentId);
+                                      if (match) profileId = match.id;
+                                      else if (profiles.length > 0) profileId = profiles[0].id;
+                                    } catch {}
+                                  }
+                                  if (!profileId) {
+                                    toast({ title: "No context profile found", description: "This agent has no associated context profile", variant: "destructive" });
+                                    return;
+                                  }
+                                  generateContextAdjustMutation.mutate({
+                                    profileId,
+                                    agentId: selected.agentId || undefined,
+                                    failurePatterns,
+                                  });
+                                }}
+                                disabled={generateContextAdjustMutation.isPending}
+                                data-testid="button-generate-context-adjust"
+                              >
+                                {generateContextAdjustMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Settings2 className="w-4 h-4 mr-1" />}
+                                Generate Recommendations
+                              </Button>
+                            </div>
+                          )}
+
+                          {activeRecs && !hasApplied && (
+                            <div className="space-y-3">
+                              {activeRecs.summary && activeRecs.summary.length > 0 && (
+                                <div className="rounded-md bg-muted/50 p-3">
+                                  <span className="text-xs text-muted-foreground">Failure Analysis</span>
+                                  {activeRecs.summary.map((s: string, i: number) => (
+                                    <p key={i} className="text-sm mt-1" data-testid={`text-context-summary-${i}`}>{s}</p>
+                                  ))}
+                                </div>
+                              )}
+
+                              {activeRecs.reason && !activeRecs.summary && (
+                                <div className="rounded-md bg-muted/50 p-3">
+                                  <span className="text-xs text-muted-foreground">Analysis</span>
+                                  <p className="text-sm mt-1">{activeRecs.reason}</p>
+                                </div>
+                              )}
+
+                              <div className="grid grid-cols-2 gap-3">
+                                <div className="space-y-2">
+                                  <span className="text-xs font-medium text-muted-foreground">Current Priority</span>
+                                  <div className="space-y-1">
+                                    {(activeRecs.currentPriority || []).map((p: string, i: number) => (
+                                      <div key={i} className="text-xs flex items-center gap-1" data-testid={`text-current-priority-${i}`}>
+                                        <span className="text-muted-foreground">{i + 1}.</span> {p}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                                <div className="space-y-2">
+                                  <span className="text-xs font-medium text-muted-foreground">Recommended Priority</span>
+                                  <div className="space-y-1">
+                                    {(activeRecs.recommendedPriority || []).map((p: string, i: number) => (
+                                      <div key={i} className="text-xs flex items-center gap-1" data-testid={`text-recommended-priority-${i}`}>
+                                        <span className="text-muted-foreground">{i + 1}.</span> <span className="font-medium">{p}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              </div>
+
+                              <Separator />
+
+                              <div className="space-y-2">
+                                <span className="text-xs font-medium text-muted-foreground">Token Allocation Changes</span>
+                                <div className="space-y-2">
+                                  {Object.keys(activeRecs.currentAllocations || {}).map((srcName: string) => {
+                                    const current = activeRecs.currentAllocations[srcName] || 0;
+                                    const recommended = (activeRecs.recommendedAllocations || {})[srcName] || 0;
+                                    const diff = recommended - current;
+                                    const maxVal = Math.max(current, recommended, (activeRecs.totalCapacity || 128000) * 0.3);
+                                    return (
+                                      <div key={srcName} className="space-y-1" data-testid={`allocation-${srcName.replace(/\s/g, "-").toLowerCase()}`}>
+                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                          <span className="text-xs">{srcName}</span>
+                                          <div className="flex items-center gap-1 text-xs">
+                                            <span className="text-muted-foreground">{current.toLocaleString()}</span>
+                                            <ArrowRight className="w-3 h-3 text-muted-foreground" />
+                                            <span className={diff > 0 ? "text-green-600 dark:text-green-400 font-medium" : diff < 0 ? "text-orange-600 dark:text-orange-400" : "text-muted-foreground"}>
+                                              {recommended.toLocaleString()}
+                                            </span>
+                                            {diff !== 0 && (
+                                              <Badge variant="outline" className={`text-[10px] ${diff > 0 ? "bg-green-500/15 text-green-700 dark:text-green-400" : "bg-orange-500/15 text-orange-700 dark:text-orange-400"}`}>
+                                                {diff > 0 ? "+" : ""}{diff.toLocaleString()}
+                                              </Badge>
+                                            )}
+                                          </div>
+                                        </div>
+                                        <div className="flex items-center gap-1">
+                                          <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
+                                            <div className="h-full bg-muted-foreground/30 rounded-full" style={{ width: `${Math.min(100, (current / maxVal) * 100)}%` }} />
+                                          </div>
+                                          <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
+                                            <div className={`h-full rounded-full ${diff > 0 ? "bg-green-500/60" : diff < 0 ? "bg-orange-500/60" : "bg-muted-foreground/30"}`} style={{ width: `${Math.min(100, (recommended / maxVal) * 100)}%` }} />
+                                          </div>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+
+                              <Separator />
+
+                              <Button
+                                size="sm"
+                                onClick={() => setContextAdjustConfirmOpen(true)}
+                                data-testid="button-apply-context-adjust"
+                              >
+                                <Settings2 className="w-4 h-4 mr-1" />
+                                Apply Adjustment
+                              </Button>
+                            </div>
+                          )}
+
+                          {hasApplied && (
+                            <div className="rounded-md bg-green-500/10 p-3">
+                              <p className="text-sm text-green-700 dark:text-green-400" data-testid="text-context-applied-info">
+                                Context profile was adjusted at {contextAdj.appliedAt ? timeAgo(contextAdj.appliedAt) : "recently"}.
+                                Priority order and token allocations have been updated based on failure pattern analysis.
+                              </p>
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    );
+                  })()}
+
                   <Button
                     onClick={() => applyRemediationMutation.mutate(selected.id)}
                     disabled={applyRemediationMutation.isPending}
@@ -1056,25 +1682,55 @@ export default function HealingOperations() {
                     );
                   })()}
 
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button
-                      onClick={() => startExperimentMutation.mutate(selected.id)}
-                      disabled={startExperimentMutation.isPending}
-                      data-testid="button-start-experiment"
-                    >
-                      {startExperimentMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Play className="w-4 h-4 mr-1" />}
-                      Start Experiment
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={() => verifyExperimentMutation.mutate(selected.id)}
-                      disabled={verifyExperimentMutation.isPending}
-                      data-testid="button-verify-experiment"
-                    >
-                      {verifyExperimentMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <FileCheck className="w-4 h-4 mr-1" />}
-                      Verify Results
-                    </Button>
-                  </div>
+                  {(() => {
+                    const remediation = selected.remediation as Record<string, unknown> | null;
+                    const shadowValidation = (remediation?.shadowReplayValidation as Record<string, unknown>) || null;
+                    const replayStatus = shadowValidation?.status as string | null;
+                    const isReplayBlocking = replayStatus === "running" || replayStatus === "failed";
+
+                    return (
+                      <>
+                        {isReplayBlocking && (
+                          <div className="flex items-center gap-2 p-3 rounded-md bg-yellow-500/10 border border-yellow-500/30" data-testid="alert-shadow-replay-blocking">
+                            <AlertTriangle className="w-4 h-4 text-yellow-600 dark:text-yellow-400 shrink-0" />
+                            <span className="text-sm text-yellow-700 dark:text-yellow-400">
+                              {replayStatus === "running"
+                                ? "Shadow replay validation is in progress. Cannot verify experiment until replay completes."
+                                : "Shadow replay validation failed. Fix the patch and re-run shadow replay before advancing to verified."}
+                            </span>
+                          </div>
+                        )}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Button
+                            onClick={() => startExperimentMutation.mutate(selected.id)}
+                            disabled={startExperimentMutation.isPending}
+                            data-testid="button-start-experiment"
+                          >
+                            {startExperimentMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Play className="w-4 h-4 mr-1" />}
+                            Start Experiment
+                          </Button>
+                          <Button
+                            variant="outline"
+                            onClick={() => triggerShadowReplayMutation.mutate(selected.id)}
+                            disabled={triggerShadowReplayMutation.isPending || replayStatus === "running"}
+                            data-testid="button-trigger-shadow-replay-experiment"
+                          >
+                            {triggerShadowReplayMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <RotateCcw className="w-4 h-4 mr-1" />}
+                            Validate with Shadow Replay
+                          </Button>
+                          <Button
+                            variant="outline"
+                            onClick={() => verifyExperimentMutation.mutate(selected.id)}
+                            disabled={verifyExperimentMutation.isPending || isReplayBlocking}
+                            data-testid="button-verify-experiment"
+                          >
+                            {verifyExperimentMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <FileCheck className="w-4 h-4 mr-1" />}
+                            Verify Results
+                          </Button>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </TabsContent>
               </Tabs>
             </div>
@@ -1180,6 +1836,62 @@ export default function HealingOperations() {
             >
               {createMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Plus className="w-4 h-4 mr-1" />}
               Create Issue
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={contextAdjustConfirmOpen} onOpenChange={setContextAdjustConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Apply Context Adjustment</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <p className="text-sm text-muted-foreground" data-testid="text-confirm-context-adjust">
+              This will update the context profile with the recommended priority order and token allocations. An audit event will be created for this change.
+            </p>
+            {(() => {
+              const remed = selected ? selected.remediation as Record<string, any> | null : null;
+              const recs = contextRecommendations || remed?.contextAdjustmentRecommendation || null;
+              if (!recs) return null;
+              return (
+                <div className="rounded-md bg-muted/50 p-3 space-y-1">
+                  <span className="text-xs font-medium">Changes to apply:</span>
+                  <p className="text-xs text-muted-foreground">
+                    Priority reorder: {(recs.recommendedPriority || []).join(" > ")}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {Object.entries(recs.recommendedAllocations || {}).filter(([k]) => {
+                      const curr = (recs.currentAllocations || {})[k] || 0;
+                      return curr !== recs.recommendedAllocations[k];
+                    }).length} source allocation(s) modified
+                  </p>
+                </div>
+              );
+            })()}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setContextAdjustConfirmOpen(false)} data-testid="button-cancel-context-adjust">
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                const remed = selected ? selected.remediation as Record<string, any> | null : null;
+                const recs = contextRecommendations || remed?.contextAdjustmentRecommendation || null;
+                if (selected && recs) {
+                  applyContextAdjustMutation.mutate({
+                    pipelineId: selected.id,
+                    profileId: recs.profileId,
+                    recommendedPriority: recs.recommendedPriority,
+                    recommendedAllocations: recs.recommendedAllocations,
+                  });
+                }
+              }}
+              disabled={applyContextAdjustMutation.isPending}
+              data-testid="button-confirm-context-adjust"
+            >
+              {applyContextAdjustMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <CheckCircle className="w-4 h-4 mr-1" />}
+              Confirm and Apply
             </Button>
           </DialogFooter>
         </DialogContent>
