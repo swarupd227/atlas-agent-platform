@@ -246,6 +246,78 @@ export default function AutonomyEngine() {
     onError: (e: any) => toast({ title: "Failed to delete", description: e.message, variant: "destructive" }),
   });
 
+  const { data: calibrationSummary, isLoading: isCalibrationLoading, isError: isCalibrationError } = useQuery<{
+    totalDecisions: number;
+    validatedDecisions: number;
+    avgAccuracy: number;
+    pendingProposals: number;
+    approvedProposals: number;
+    agentsWithExpandedAutonomy: number;
+    decisionsByIndustry: Record<string, number>;
+    agentMaturityLeaderboard: Array<{ agentId: string; name: string; maturityScore: number; maturityFactors: Record<string, any> }>;
+    qualityHeatmap: Array<{ agentId: string; agentName: string; decisionType: string; accuracyRate: number; totalDecisions: number; trendDirection: string; currentLevel: string | null; recommendedLevel: string | null }>;
+    boundaryEvolution: Array<{ decisionType: string; from: string; to: string; direction: string; appliedAt: string }>;
+  }>({
+    queryKey: ["/api/autonomy/calibration-summary"],
+  });
+
+  const { data: calibrationProposals = [], isLoading: isProposalsLoading } = useQuery<Array<{
+    id: string; agentId: string; profileId: string; industry: string; decisionType: string;
+    riskDimension: string; currentLevel: string; proposedLevel: string; direction: string;
+    evidence: Record<string, any>; confidenceScore: number; status: string;
+    reviewedBy: string | null; reviewNote: string | null; reviewedAt: string | null;
+    appliedAt: string | null; createdAt: string;
+  }>>({
+    queryKey: ["/api/autonomy/calibration-proposals"],
+  });
+
+  const { data: industryBaselines = [], isLoading: isBaselinesLoading } = useQuery<Array<{
+    industry: string; decisionType: string; sampleSize: number;
+    averageAccuracy: number; recommendedLevel: string; confidenceInterval: { lower: number; upper: number };
+    topPerformingAgents: Array<{ agentId: string; name: string; accuracyRate: number }>;
+  }>>({
+    queryKey: ["/api/autonomy/industry-baselines"],
+  });
+
+  const calibrateMut = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/autonomy/calibrate", {});
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/autonomy/calibration-summary"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/autonomy/calibration-proposals"] });
+      toast({ title: "Calibration complete", description: `${data.proposalsGenerated} proposals generated` });
+    },
+    onError: (e: any) => toast({ title: "Calibration failed", description: e.message, variant: "destructive" }),
+  });
+
+  const reviewProposalMut = useMutation({
+    mutationFn: async ({ id, decision, reviewNote }: { id: string; decision: string; reviewNote?: string }) => {
+      const res = await apiRequest("POST", `/api/autonomy/calibration-proposals/${id}/review`, { decision, reviewNote, reviewedBy: "admin" });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/autonomy/calibration-proposals"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/autonomy/calibration-summary"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/autonomy-profiles"] });
+      toast({ title: "Proposal reviewed" });
+    },
+    onError: (e: any) => toast({ title: "Review failed", description: e.message, variant: "destructive" }),
+  });
+
+  const computeMaturityMut = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/autonomy/compute-maturity", {});
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/autonomy/calibration-summary"] });
+      toast({ title: "Maturity scores updated", description: `${data.agentsUpdated} agents updated` });
+    },
+    onError: (e: any) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
+  });
+
   const aiRecMut = useMutation({
     mutationFn: async (data: any) => {
       const res = await apiRequest("POST", "/api/ai/autonomy-recommendations", data);
@@ -747,7 +819,7 @@ export default function AutonomyEngine() {
               </Card>
 
               <Tabs value={activeTab} onValueChange={setActiveTab}>
-                <TabsList className="grid w-full grid-cols-4">
+                <TabsList className="grid w-full grid-cols-5">
                   <TabsTrigger value="risk-matrix" data-testid="tab-risk-matrix">
                     <Target className="w-4 h-4 mr-1.5" />Risk Matrix
                   </TabsTrigger>
@@ -759,6 +831,9 @@ export default function AutonomyEngine() {
                   </TabsTrigger>
                   <TabsTrigger value="learning-dashboard" data-testid="tab-learning-dashboard">
                     <Brain className="w-4 h-4 mr-1.5" />Learning Dashboard
+                  </TabsTrigger>
+                  <TabsTrigger value="calibration" data-testid="tab-calibration">
+                    <TrendingUp className="w-4 h-4 mr-1.5" />Calibration
                   </TabsTrigger>
                 </TabsList>
 
@@ -1203,6 +1278,317 @@ export default function AutonomyEngine() {
                       )}
                     </CardContent>
                   </Card>
+                </TabsContent>
+
+                <TabsContent value="calibration" className="mt-4">
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-lg font-semibold" data-testid="text-calibration-title">Adaptive Calibration Engine</h3>
+                        <p className="text-sm text-muted-foreground" data-testid="text-calibration-desc">Decision quality tracking, boundary proposals, and industry baselines</p>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => computeMaturityMut.mutate()}
+                          disabled={computeMaturityMut.isPending}
+                          data-testid="btn-compute-maturity"
+                        >
+                          {computeMaturityMut.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <BarChart3 className="w-4 h-4 mr-1" />}
+                          Update Maturity
+                        </Button>
+                        <Button
+                          size="sm"
+                          onClick={() => calibrateMut.mutate()}
+                          disabled={calibrateMut.isPending}
+                          data-testid="btn-run-calibration"
+                        >
+                          {calibrateMut.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <TrendingUp className="w-4 h-4 mr-1" />}
+                          Run Calibration
+                        </Button>
+                      </div>
+                    </div>
+
+                    {isCalibrationError && (
+                      <Card className="border-destructive">
+                        <CardContent className="pt-4 pb-3">
+                          <div className="flex items-center gap-2 text-destructive" data-testid="calibration-error">
+                            <AlertTriangle className="w-4 h-4" />
+                            <span className="text-sm font-medium">Failed to load calibration data. Please try again.</span>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    {isCalibrationLoading ? (
+                      <div className="grid grid-cols-4 gap-3" data-testid="calibration-summary-loading">
+                        {[0, 1, 2, 3].map(i => (
+                          <Card key={i}>
+                            <CardContent className="pt-4 pb-3 text-center">
+                              <div className="h-8 w-16 mx-auto bg-muted animate-pulse rounded mb-1" />
+                              <div className="h-3 w-20 mx-auto bg-muted animate-pulse rounded" />
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-4 gap-3" data-testid="calibration-summary-cards">
+                        <Card>
+                          <CardContent className="pt-4 pb-3 text-center">
+                            <div className="text-2xl font-bold" data-testid="stat-total-decisions">{calibrationSummary?.totalDecisions ?? 0}</div>
+                            <div className="text-xs text-muted-foreground">Total Decisions</div>
+                          </CardContent>
+                        </Card>
+                        <Card>
+                          <CardContent className="pt-4 pb-3 text-center">
+                            <div className="text-2xl font-bold" data-testid="stat-avg-accuracy">{((calibrationSummary?.avgAccuracy ?? 0) * 100).toFixed(1)}%</div>
+                            <div className="text-xs text-muted-foreground">Avg Accuracy</div>
+                          </CardContent>
+                        </Card>
+                        <Card>
+                          <CardContent className="pt-4 pb-3 text-center">
+                            <div className="text-2xl font-bold text-orange-600" data-testid="stat-pending-proposals">{calibrationSummary?.pendingProposals ?? 0}</div>
+                            <div className="text-xs text-muted-foreground">Pending Proposals</div>
+                          </CardContent>
+                        </Card>
+                        <Card>
+                          <CardContent className="pt-4 pb-3 text-center">
+                            <div className="text-2xl font-bold text-green-600" data-testid="stat-expanded-agents">{calibrationSummary?.agentsWithExpandedAutonomy ?? 0}</div>
+                            <div className="text-xs text-muted-foreground">Expanded Agents</div>
+                          </CardContent>
+                        </Card>
+                      </div>
+                    )}
+
+                    {calibrationSummary?.qualityHeatmap && calibrationSummary.qualityHeatmap.length > 0 && (
+                      <Card>
+                        <CardHeader className="pb-2">
+                          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                            <Target className="w-4 h-4" />Decision Quality Heatmap
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="space-y-2" data-testid="quality-heatmap">
+                            {calibrationSummary.qualityHeatmap.map((entry, idx) => (
+                              <div key={idx} className="flex items-center justify-between p-2 rounded border" data-testid={`heatmap-row-${idx}`}>
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <span className="text-sm font-medium truncate max-w-[180px]" data-testid={`heatmap-agent-${idx}`}>{entry.agentName}</span>
+                                  <Badge variant="outline" className="text-xs" data-testid={`heatmap-type-${idx}`}>{entry.decisionType}</Badge>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                  <div className={`text-sm font-bold ${entry.accuracyRate >= 0.95 ? 'text-green-600' : entry.accuracyRate >= 0.80 ? 'text-yellow-600' : 'text-red-600'}`} data-testid={`heatmap-accuracy-${idx}`}>
+                                    {(entry.accuracyRate * 100).toFixed(1)}%
+                                  </div>
+                                  <Badge variant="secondary" className="text-xs" data-testid={`heatmap-count-${idx}`}>{entry.totalDecisions} decisions</Badge>
+                                  {entry.trendDirection === "improving" && <TrendingUp className="w-4 h-4 text-green-500" data-testid={`heatmap-trend-${idx}`} />}
+                                  {entry.trendDirection === "degrading" && <TrendingDown className="w-4 h-4 text-red-500" data-testid={`heatmap-trend-${idx}`} />}
+                                  {entry.trendDirection === "stable" && <Minus className="w-4 h-4 text-muted-foreground" data-testid={`heatmap-trend-${idx}`} />}
+                                  {entry.currentLevel && (
+                                    <Badge variant="outline" className="text-xs" data-testid={`heatmap-level-${idx}`}>
+                                      {AUTONOMY_LEVELS.find(l => l.value === entry.currentLevel)?.label || entry.currentLevel}
+                                    </Badge>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    {isProposalsLoading ? (
+                      <Card>
+                        <CardContent className="pt-4 pb-4">
+                          <div className="flex items-center gap-2 text-muted-foreground" data-testid="proposals-loading">
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            <span className="text-sm">Loading proposals...</span>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ) : calibrationProposals.filter(p => p.status === "pending").length > 0 ? (
+                      <Card>
+                        <CardHeader className="pb-2">
+                          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                            <AlertTriangle className="w-4 h-4 text-orange-500" />Pending Boundary Proposals
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="space-y-3" data-testid="pending-proposals">
+                            {calibrationProposals.filter(p => p.status === "pending").map((proposal) => {
+                              const evidence = proposal.evidence || {};
+                              const fromLevel = AUTONOMY_LEVELS.find(l => l.value === proposal.currentLevel);
+                              const toLevel = AUTONOMY_LEVELS.find(l => l.value === proposal.proposedLevel);
+                              return (
+                                <div key={proposal.id} className="p-3 rounded-lg border" data-testid={`proposal-${proposal.id}`}>
+                                  <div className="flex items-center justify-between mb-2">
+                                    <div className="flex items-center gap-2">
+                                      {proposal.direction === "expand" ? (
+                                        <ArrowUp className="w-4 h-4 text-green-500" />
+                                      ) : (
+                                        <ArrowDown className="w-4 h-4 text-red-500" />
+                                      )}
+                                      <span className="text-sm font-medium" data-testid={`proposal-type-${proposal.id}`}>{proposal.decisionType}</span>
+                                      <Badge variant={proposal.direction === "expand" ? "default" : "destructive"} className="text-xs" data-testid={`proposal-direction-${proposal.id}`}>
+                                        {proposal.direction}
+                                      </Badge>
+                                    </div>
+                                    <Badge variant="outline" className="text-xs" data-testid={`proposal-industry-${proposal.id}`}>{proposal.industry}</Badge>
+                                  </div>
+                                  <div className="flex items-center gap-2 mb-2 text-sm">
+                                    <span className={fromLevel?.color} data-testid={`proposal-from-${proposal.id}`}>{fromLevel?.label}</span>
+                                    <ArrowRight className="w-3 h-3" />
+                                    <span className={toLevel?.color} data-testid={`proposal-to-${proposal.id}`}>{toLevel?.label}</span>
+                                    <span className="text-xs text-muted-foreground ml-2" data-testid={`proposal-evidence-${proposal.id}`}>
+                                      Accuracy: {((evidence.accuracyRate || 0) * 100).toFixed(1)}% over {evidence.totalDecisions || 0} decisions
+                                    </span>
+                                  </div>
+                                  <div className="flex gap-2 justify-end">
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => reviewProposalMut.mutate({ id: proposal.id, decision: "rejected", reviewNote: "Not approved at this time" })}
+                                      disabled={reviewProposalMut.isPending}
+                                      data-testid={`btn-reject-${proposal.id}`}
+                                    >
+                                      Reject
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      onClick={() => reviewProposalMut.mutate({ id: proposal.id, decision: "approved" })}
+                                      disabled={reviewProposalMut.isPending}
+                                      data-testid={`btn-approve-${proposal.id}`}
+                                    >
+                                      <CheckCircle className="w-3 h-3 mr-1" />Approve
+                                    </Button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ) : null}
+
+                    {calibrationSummary?.boundaryEvolution && calibrationSummary.boundaryEvolution.length > 0 && (
+                      <Card>
+                        <CardHeader className="pb-2">
+                          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                            <ArrowRight className="w-4 h-4" />Boundary Evolution History
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="space-y-2" data-testid="boundary-evolution">
+                            {calibrationSummary.boundaryEvolution.map((entry, idx) => {
+                              const fromL = AUTONOMY_LEVELS.find(l => l.value === entry.from);
+                              const toL = AUTONOMY_LEVELS.find(l => l.value === entry.to);
+                              return (
+                                <div key={idx} className="flex items-center justify-between p-2 rounded border text-sm" data-testid={`evolution-${idx}`}>
+                                  <div className="flex items-center gap-2">
+                                    {entry.direction === "expand" ? <ArrowUp className="w-3 h-3 text-green-500" /> : <ArrowDown className="w-3 h-3 text-red-500" />}
+                                    <span className="font-medium" data-testid={`evolution-type-${idx}`}>{entry.decisionType}</span>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <span className={fromL?.color} data-testid={`evolution-from-${idx}`}>{fromL?.label}</span>
+                                    <ArrowRight className="w-3 h-3" />
+                                    <span className={toL?.color} data-testid={`evolution-to-${idx}`}>{toL?.label}</span>
+                                    <span className="text-xs text-muted-foreground" data-testid={`evolution-date-${idx}`}>{entry.appliedAt ? new Date(entry.appliedAt).toLocaleDateString() : ""}</span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    {isBaselinesLoading ? (
+                      <Card>
+                        <CardContent className="pt-4 pb-4">
+                          <div className="flex items-center gap-2 text-muted-foreground" data-testid="baselines-loading">
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            <span className="text-sm">Loading industry baselines...</span>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ) : industryBaselines.length > 0 ? (
+                      <Card>
+                        <CardHeader className="pb-2">
+                          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                            <BarChart3 className="w-4 h-4" />Industry Baselines
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="space-y-2" data-testid="industry-baselines">
+                            {industryBaselines.map((baseline, idx) => {
+                              const recLevel = AUTONOMY_LEVELS.find(l => l.value === baseline.recommendedLevel);
+                              return (
+                                <div key={idx} className="flex items-center justify-between p-2 rounded border" data-testid={`baseline-${idx}`}>
+                                  <div className="flex items-center gap-2">
+                                    <Badge variant="outline" className="text-xs" data-testid={`baseline-industry-${idx}`}>{baseline.industry}</Badge>
+                                    <span className="text-sm font-medium" data-testid={`baseline-type-${idx}`}>{baseline.decisionType}</span>
+                                  </div>
+                                  <div className="flex items-center gap-3">
+                                    <span className="text-sm" data-testid={`baseline-accuracy-${idx}`}>{(baseline.averageAccuracy * 100).toFixed(1)}% accuracy</span>
+                                    <Badge variant="secondary" className="text-xs" data-testid={`baseline-samples-${idx}`}>{baseline.sampleSize} samples</Badge>
+                                    <Badge className={`text-xs ${recLevel?.color}`} data-testid={`baseline-level-${idx}`}>{recLevel?.label}</Badge>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ) : null}
+
+                    {calibrationSummary?.agentMaturityLeaderboard && calibrationSummary.agentMaturityLeaderboard.length > 0 && (
+                      <Card>
+                        <CardHeader className="pb-2">
+                          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                            <Shield className="w-4 h-4" />Agent Maturity Leaderboard
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="space-y-2" data-testid="maturity-leaderboard">
+                            {calibrationSummary.agentMaturityLeaderboard.map((agent, idx) => {
+                              const factors = agent.maturityFactors || {};
+                              return (
+                                <div key={agent.agentId} className="flex items-center justify-between p-2 rounded border" data-testid={`maturity-${idx}`}>
+                                  <div className="flex items-center gap-3">
+                                    <span className="text-sm font-bold text-muted-foreground w-6" data-testid={`maturity-rank-${idx}`}>#{idx + 1}</span>
+                                    <span className="text-sm font-medium" data-testid={`maturity-name-${idx}`}>{agent.name}</span>
+                                  </div>
+                                  <div className="flex items-center gap-3">
+                                    <div className="w-24 bg-secondary rounded-full h-2" data-testid={`maturity-bar-${idx}`}>
+                                      <div
+                                        className={`h-2 rounded-full ${agent.maturityScore >= 0.8 ? 'bg-green-500' : agent.maturityScore >= 0.5 ? 'bg-yellow-500' : 'bg-red-500'}`}
+                                        style={{ width: `${Math.min(100, agent.maturityScore * 100)}%` }}
+                                      />
+                                    </div>
+                                    <span className="text-sm font-bold w-12 text-right" data-testid={`maturity-score-${idx}`}>{(agent.maturityScore * 100).toFixed(0)}%</span>
+                                    <span className="text-xs text-muted-foreground" data-testid={`maturity-validated-${idx}`}>{factors.validatedDecisions || 0} validated</span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    {!isCalibrationLoading && (!calibrationSummary || calibrationSummary.totalDecisions === 0) && (
+                      <Card>
+                        <CardContent className="pt-8 pb-8 text-center" data-testid="calibration-empty-state">
+                          <TrendingUp className="w-12 h-12 mx-auto text-muted-foreground/30 mb-3" />
+                          <h4 className="text-sm font-medium mb-1">No Calibration Data Yet</h4>
+                          <p className="text-xs text-muted-foreground max-w-md mx-auto">
+                            The calibration engine tracks autonomous decision outcomes over time to build decision quality profiles.
+                            As agents make decisions and outcomes are validated, the engine will recommend autonomy boundary adjustments.
+                          </p>
+                        </CardContent>
+                      </Card>
+                    )}
+                  </div>
                 </TabsContent>
               </Tabs>
             </div>

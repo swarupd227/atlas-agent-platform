@@ -6505,10 +6505,49 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
         }
       }
 
+      let autonomyValidation: any = null;
+      if (agentId) {
+        try {
+          const pendingDecisions = await storage.getAutonomyDecisions({ agentId, outcome: "pending" });
+          const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000);
+          const recentPending = pendingDecisions.filter((d: any) => d.createdAt && new Date(d.createdAt) >= thirtyMinAgo);
+          let validatedCount = 0;
+          for (const dec of recentPending) {
+            const outcome_val = billable ? "validated_correct" : "validated_incorrect";
+            await storage.updateAutonomyDecision(dec.id, {
+              outcome: outcome_val,
+              outcomeSource: "customer_acceptance",
+              outcomeDetails: { eventId: event.id, billable, excludeReason: excludeReason || null } as any,
+              outcomeAt: new Date(),
+            });
+            const profiles = await storage.getDecisionQualityProfiles({ agentId: dec.agentId, decisionType: dec.decisionType });
+            const matching = profiles.find((p: any) => (p.riskDimension || null) === (dec.riskDimension || null));
+            if (matching) {
+              const newCorrect = matching.correctDecisions + (billable ? 1 : 0);
+              const newIncorrect = matching.incorrectDecisions + (billable ? 0 : 1);
+              const newPending = Math.max(0, matching.pendingDecisions - 1);
+              const resolved = newCorrect + newIncorrect;
+              await storage.updateDecisionQualityProfile(matching.id, {
+                correctDecisions: newCorrect,
+                incorrectDecisions: newIncorrect,
+                pendingDecisions: newPending,
+                accuracyRate: resolved > 0 ? Math.round((newCorrect / resolved) * 10000) / 10000 : 0,
+                updatedAt: new Date(),
+              });
+            }
+            validatedCount++;
+          }
+          if (validatedCount > 0) {
+            autonomyValidation = { validatedDecisions: validatedCount, outcomeSignal: billable ? "correct" : "incorrect" };
+          }
+        } catch (_autoValErr) {}
+      }
+
       res.status(201).json({
         event,
         metering: { billable, excludeReason, checks, signedHash },
         flywheelAutoSync,
+        autonomyValidation,
       });
     } catch (e: any) {
       if (e.name === "ZodError") {
@@ -23753,6 +23792,689 @@ Return ONLY valid JSON.`
       const content = response.choices[0]?.message?.content;
       if (!content) return res.status(500).json({ error: "No response from AI" });
       res.json(JSON.parse(content));
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ===== Adaptive Autonomy Calibration Engine (IP #5) =====
+
+  const AUTONOMY_LEVEL_HIERARCHY = ["expert_approval", "confirm_before", "notify_after", "log_only", "full_auto"];
+
+  function getNextExpandedLevel(current: string): string | null {
+    const idx = AUTONOMY_LEVEL_HIERARCHY.indexOf(current);
+    if (idx < 0 || idx >= AUTONOMY_LEVEL_HIERARCHY.length - 1) return null;
+    return AUTONOMY_LEVEL_HIERARCHY[idx + 1];
+  }
+
+  function getNextTightenedLevel(current: string): string | null {
+    const idx = AUTONOMY_LEVEL_HIERARCHY.indexOf(current);
+    if (idx <= 0) return null;
+    return AUTONOMY_LEVEL_HIERARCHY[idx - 1];
+  }
+
+  async function recalculateQualityProfile(agentId: string, decisionType: string, riskDimension: string | null, industry: string) {
+    const allDecisions = await storage.getAutonomyDecisions({ agentId, decisionType, industry });
+    const relevant = allDecisions.filter((d: any) => !riskDimension || d.riskDimension === riskDimension);
+    const correct = relevant.filter((d: any) => d.outcome === "validated_correct" || d.outcome === "escalation_avoided").length;
+    const incorrect = relevant.filter((d: any) => d.outcome === "validated_incorrect" || d.outcome === "escalation_needed").length;
+    const pending = relevant.filter((d: any) => d.outcome === "pending").length;
+    const total = relevant.length;
+    const resolved = correct + incorrect;
+    const accuracyRate = resolved > 0 ? correct / resolved : 0;
+
+    const now = new Date();
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const sixtyDaysAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
+    const recent30 = relevant.filter((d: any) => d.outcomeAt && new Date(d.outcomeAt) >= thirtyDaysAgo && d.outcome !== "pending");
+    const prev30 = relevant.filter((d: any) => d.outcomeAt && new Date(d.outcomeAt) >= sixtyDaysAgo && new Date(d.outcomeAt) < thirtyDaysAgo && d.outcome !== "pending");
+    const recentAcc = recent30.length > 0 ? recent30.filter((d: any) => d.outcome === "validated_correct" || d.outcome === "escalation_avoided").length / recent30.length : 0;
+    const prevAcc = prev30.length > 0 ? prev30.filter((d: any) => d.outcome === "validated_correct" || d.outcome === "escalation_avoided").length / prev30.length : 0;
+    let trendDirection = "stable";
+    if (recent30.length >= 5 && prev30.length >= 5) {
+      if (recentAcc - prevAcc > 0.05) trendDirection = "improving";
+      else if (prevAcc - recentAcc > 0.05) trendDirection = "degrading";
+    }
+
+    const existingProfiles = await storage.getDecisionQualityProfiles({ agentId, decisionType });
+    const matchingProfile = existingProfiles.find((p: any) => (p.riskDimension || null) === (riskDimension || null));
+
+    const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    const profileData: any = {
+      totalDecisions: total,
+      correctDecisions: correct,
+      incorrectDecisions: incorrect,
+      pendingDecisions: pending,
+      accuracyRate: Math.round(accuracyRate * 10000) / 10000,
+      trendDirection,
+      updatedAt: now,
+    };
+
+    if (matchingProfile) {
+      const existingTrend = Array.isArray(matchingProfile.trendData) ? matchingProfile.trendData as any[] : [];
+      const updatedTrend = existingTrend.filter((t: any) => t.month !== monthKey);
+      updatedTrend.push({ month: monthKey, accuracy: Math.round(accuracyRate * 10000) / 10000, sampleSize: resolved });
+      if (updatedTrend.length > 12) updatedTrend.splice(0, updatedTrend.length - 12);
+      profileData.trendData = updatedTrend;
+      return storage.updateDecisionQualityProfile(matchingProfile.id, profileData);
+    } else {
+      return storage.createDecisionQualityProfile({
+        agentId,
+        industry,
+        decisionType,
+        riskDimension: riskDimension || undefined,
+        ...profileData,
+        trendData: [{ month: monthKey, accuracy: Math.round(accuracyRate * 10000) / 10000, sampleSize: resolved }],
+      });
+    }
+  }
+
+  app.post("/api/autonomy/decisions", async (req, res) => {
+    try {
+      const decision = await storage.createAutonomyDecision(req.body);
+      res.json(decision);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/autonomy/decisions", async (req, res) => {
+    try {
+      const { agentId, decisionType, industry, outcome } = req.query;
+      const decisions = await storage.getAutonomyDecisions({
+        agentId: agentId as string,
+        decisionType: decisionType as string,
+        industry: industry as string,
+        outcome: outcome as string,
+      });
+      res.json(decisions);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/autonomy/decisions/:id", async (req, res) => {
+    try {
+      const decision = await storage.getAutonomyDecision(req.params.id);
+      if (!decision) return res.status(404).json({ message: "Decision not found" });
+      res.json(decision);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/autonomy/decisions/:id/validate", async (req, res) => {
+    try {
+      const { outcome, outcomeSource, outcomeDetails } = req.body;
+      if (!outcome || !outcomeSource) {
+        return res.status(400).json({ message: "outcome and outcomeSource are required" });
+      }
+      const validOutcomes = ["validated_correct", "validated_incorrect", "escalation_avoided", "escalation_needed"];
+      if (!validOutcomes.includes(outcome)) {
+        return res.status(400).json({ message: `outcome must be one of: ${validOutcomes.join(", ")}` });
+      }
+
+      const decision = await storage.getAutonomyDecision(req.params.id);
+      if (!decision) return res.status(404).json({ message: "Decision not found" });
+
+      const updated = await storage.updateAutonomyDecision(req.params.id, {
+        outcome,
+        outcomeSource,
+        outcomeDetails: outcomeDetails || null,
+        outcomeAt: new Date(),
+      });
+
+      await recalculateQualityProfile(decision.agentId, decision.decisionType, decision.riskDimension, decision.industry);
+
+      await storage.createAuditEvent({
+        actorType: "system",
+        actorId: "calibration_engine",
+        action: "autonomy_decision_validated",
+        objectType: "autonomy_decision",
+        objectId: decision.id,
+        details: JSON.stringify({ outcome, outcomeSource, agentId: decision.agentId, decisionType: decision.decisionType }),
+      });
+
+      res.json(updated);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/autonomy/quality-profiles", async (req, res) => {
+    try {
+      const { agentId, industry, decisionType } = req.query;
+      const profiles = await storage.getDecisionQualityProfiles({
+        agentId: agentId as string,
+        industry: industry as string,
+        decisionType: decisionType as string,
+      });
+      res.json(profiles);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/autonomy/calibrate", async (req, res) => {
+    try {
+      const { agentId } = req.body;
+      const profileFilters: any = {};
+      if (agentId) profileFilters.agentId = agentId;
+      const allProfiles = await storage.getDecisionQualityProfiles(profileFilters);
+
+      const proposals: any[] = [];
+      const now = new Date();
+      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+      for (const profile of allProfiles) {
+        const resolved = profile.correctDecisions + profile.incorrectDecisions;
+        if (resolved < 10) continue;
+
+        const recentDecisions = await storage.getAutonomyDecisions({
+          agentId: profile.agentId,
+          decisionType: profile.decisionType,
+        });
+        const recentIncorrect = recentDecisions.filter((d: any) =>
+          (d.outcome === "validated_incorrect" || d.outcome === "escalation_needed") &&
+          d.outcomeAt && new Date(d.outcomeAt) >= sevenDaysAgo
+        );
+        const recentIncidents = recentDecisions.filter((d: any) =>
+          (d.outcome === "validated_incorrect" || d.outcome === "escalation_needed") &&
+          d.outcomeAt && new Date(d.outcomeAt) >= thirtyDaysAgo
+        );
+
+        const currentLevel = profile.currentAutonomyLevel || "confirm_before";
+
+        if (profile.accuracyRate >= 0.95 && resolved >= 50 &&
+            (profile.trendDirection === "improving" || profile.trendDirection === "stable") &&
+            recentIncidents.length === 0) {
+          const nextLevel = getNextExpandedLevel(currentLevel);
+          if (nextLevel) {
+            const confidenceScore = Math.min(0.99, profile.accuracyRate * (resolved / (resolved + 50)));
+            const existingPending = await storage.getAutonomyBoundaryProposals({
+              status: "pending", agentId: profile.agentId,
+            });
+            const alreadyProposed = existingPending.find((p: any) =>
+              p.decisionType === profile.decisionType && p.riskDimension === (profile.riskDimension || null)
+            );
+            if (!alreadyProposed) {
+              const proposal = await storage.createAutonomyBoundaryProposal({
+                agentId: profile.agentId,
+                profileId: profile.id,
+                industry: profile.industry,
+                decisionType: profile.decisionType,
+                riskDimension: profile.riskDimension || undefined,
+                currentLevel,
+                proposedLevel: nextLevel,
+                direction: "expand",
+                evidence: {
+                  accuracyRate: profile.accuracyRate,
+                  totalDecisions: resolved,
+                  trendDirection: profile.trendDirection,
+                  recentIncidents: 0,
+                  trendData: profile.trendData,
+                  sampleDecisions: recentDecisions.slice(0, 5).map((d: any) => ({
+                    id: d.id, outcome: d.outcome, confidence: d.confidence, createdAt: d.createdAt,
+                  })),
+                },
+                confidenceScore,
+                status: "pending",
+              });
+              proposals.push(proposal);
+            }
+          }
+        }
+
+        if (profile.accuracyRate < 0.80 || recentIncorrect.length > 0) {
+          const nextLevel = getNextTightenedLevel(currentLevel);
+          if (nextLevel) {
+            const existingPending = await storage.getAutonomyBoundaryProposals({
+              status: "pending", agentId: profile.agentId,
+            });
+            const alreadyProposed = existingPending.find((p: any) =>
+              p.decisionType === profile.decisionType && p.direction === "tighten"
+            );
+            if (!alreadyProposed) {
+              const proposal = await storage.createAutonomyBoundaryProposal({
+                agentId: profile.agentId,
+                profileId: profile.id,
+                industry: profile.industry,
+                decisionType: profile.decisionType,
+                riskDimension: profile.riskDimension || undefined,
+                currentLevel,
+                proposedLevel: nextLevel,
+                direction: "tighten",
+                evidence: {
+                  accuracyRate: profile.accuracyRate,
+                  totalDecisions: resolved,
+                  trendDirection: profile.trendDirection,
+                  recentIncorrectCount: recentIncorrect.length,
+                  recentIncorrect: recentIncorrect.slice(0, 5).map((d: any) => ({
+                    id: d.id, decisionType: d.decisionType, outcomeDetails: d.outcomeDetails, createdAt: d.createdAt,
+                  })),
+                },
+                confidenceScore: 0.9,
+                status: "pending",
+              });
+              proposals.push(proposal);
+            }
+          }
+        }
+
+        await storage.updateDecisionQualityProfile(profile.id, {
+          currentAutonomyLevel: currentLevel,
+          recommendedAutonomyLevel: proposals.find((p: any) => p.agentId === profile.agentId && p.decisionType === profile.decisionType)?.proposedLevel || currentLevel,
+          lastCalibrationAt: now,
+        });
+      }
+
+      res.json({
+        calibratedProfiles: allProfiles.length,
+        proposalsGenerated: proposals.length,
+        proposals,
+      });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/autonomy/calibration-proposals", async (req, res) => {
+    try {
+      const { status, agentId, industry } = req.query;
+      const proposals = await storage.getAutonomyBoundaryProposals({
+        status: status as string,
+        agentId: agentId as string,
+        industry: industry as string,
+      });
+      res.json(proposals);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/autonomy/calibration-proposals/:id/review", async (req, res) => {
+    try {
+      const { decision, reviewNote, reviewedBy } = req.body;
+      if (!decision || !["approved", "rejected"].includes(decision)) {
+        return res.status(400).json({ message: "decision must be 'approved' or 'rejected'" });
+      }
+
+      const proposal = await storage.getAutonomyBoundaryProposal(req.params.id);
+      if (!proposal) return res.status(404).json({ message: "Proposal not found" });
+      if (proposal.status !== "pending") {
+        return res.status(400).json({ message: "Proposal already reviewed" });
+      }
+
+      const updateData: any = {
+        status: decision,
+        reviewedBy: reviewedBy || "admin",
+        reviewNote: reviewNote || "",
+        reviewedAt: new Date(),
+      };
+
+      if (decision === "approved") {
+        updateData.appliedAt = new Date();
+
+        if (proposal.profileId) {
+          const autonomyProfile = await storage.getAutonomyProfile(proposal.profileId);
+          if (autonomyProfile) {
+            const levels = Array.isArray(autonomyProfile.autonomyLevels) ? [...autonomyProfile.autonomyLevels as any[]] : [];
+            const existingIdx = levels.findIndex((l: any) => l.actionType === proposal.decisionType);
+            if (existingIdx >= 0) {
+              levels[existingIdx] = { ...levels[existingIdx], level: proposal.proposedLevel, calibratedAt: new Date().toISOString() };
+            } else {
+              levels.push({ actionType: proposal.decisionType, level: proposal.proposedLevel, calibratedAt: new Date().toISOString() });
+            }
+
+            const existingLearning = (autonomyProfile.learningData || {}) as Record<string, any>;
+            const history = existingLearning.boundaryChanges || [];
+            history.push({
+              decisionType: proposal.decisionType,
+              from: proposal.currentLevel,
+              to: proposal.proposedLevel,
+              direction: proposal.direction,
+              accuracyRate: (proposal.evidence as any)?.accuracyRate,
+              appliedAt: new Date().toISOString(),
+            });
+
+            await storage.updateAutonomyProfile(autonomyProfile.id, {
+              autonomyLevels: levels,
+              learningData: { ...existingLearning, boundaryChanges: history, lastCalibration: new Date().toISOString() },
+            });
+          }
+        }
+
+        const qualityProfiles = await storage.getDecisionQualityProfiles({ agentId: proposal.agentId, decisionType: proposal.decisionType });
+        for (const qp of qualityProfiles) {
+          await storage.updateDecisionQualityProfile(qp.id, {
+            currentAutonomyLevel: proposal.proposedLevel,
+          });
+        }
+
+        await storage.createAuditEvent({
+          actorType: "expert",
+          actorId: reviewedBy || "admin",
+          action: "autonomy_boundary_changed",
+          objectType: "autonomy_profile",
+          objectId: proposal.profileId || proposal.agentId,
+          details: JSON.stringify({
+            proposalId: proposal.id,
+            decisionType: proposal.decisionType,
+            from: proposal.currentLevel,
+            to: proposal.proposedLevel,
+            direction: proposal.direction,
+            evidence: proposal.evidence,
+          }),
+        });
+      }
+
+      const updated = await storage.updateAutonomyBoundaryProposal(req.params.id, updateData);
+      res.json(updated);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/autonomy/calibration-proposals/:id/auto-apply", async (req, res) => {
+    try {
+      const proposal = await storage.getAutonomyBoundaryProposal(req.params.id);
+      if (!proposal) return res.status(404).json({ message: "Proposal not found" });
+      if (proposal.status !== "pending") return res.status(400).json({ message: "Proposal already reviewed" });
+
+      const evidence = proposal.evidence as any;
+      if (proposal.direction !== "expand" || evidence?.accuracyRate < 0.98 || evidence?.totalDecisions < 100 || evidence?.trendDirection === "degrading") {
+        return res.status(400).json({
+          message: "Auto-apply requires: expand direction, ≥0.98 accuracy, ≥100 decisions, non-degrading trend",
+          currentValues: {
+            direction: proposal.direction,
+            accuracyRate: evidence?.accuracyRate,
+            totalDecisions: evidence?.totalDecisions,
+            trendDirection: evidence?.trendDirection,
+          },
+        });
+      }
+
+      const reviewReq = { body: { decision: "approved", reviewNote: "Auto-applied: meets confidence threshold", reviewedBy: "calibration_engine" }, params: req.params } as any;
+      const reviewRes = { json: (d: any) => res.json({ ...d, autoApplied: true }), status: (s: number) => ({ json: (d: any) => res.status(s).json(d) }) } as any;
+
+      if (proposal.profileId) {
+        const autonomyProfile = await storage.getAutonomyProfile(proposal.profileId);
+        if (autonomyProfile) {
+          const levels = Array.isArray(autonomyProfile.autonomyLevels) ? [...autonomyProfile.autonomyLevels as any[]] : [];
+          const existingIdx = levels.findIndex((l: any) => l.actionType === proposal.decisionType);
+          if (existingIdx >= 0) {
+            levels[existingIdx] = { ...levels[existingIdx], level: proposal.proposedLevel, calibratedAt: new Date().toISOString(), autoApplied: true };
+          } else {
+            levels.push({ actionType: proposal.decisionType, level: proposal.proposedLevel, calibratedAt: new Date().toISOString(), autoApplied: true });
+          }
+          await storage.updateAutonomyProfile(autonomyProfile.id, {
+            autonomyLevels: levels,
+            learningData: {
+              ...(autonomyProfile.learningData as any || {}),
+              boundaryChanges: [...((autonomyProfile.learningData as any)?.boundaryChanges || []), {
+                decisionType: proposal.decisionType, from: proposal.currentLevel, to: proposal.proposedLevel,
+                direction: "expand", autoApplied: true, appliedAt: new Date().toISOString(),
+              }],
+              lastCalibration: new Date().toISOString(),
+            },
+          });
+        }
+      }
+
+      const updated = await storage.updateAutonomyBoundaryProposal(proposal.id, {
+        status: "auto_applied",
+        reviewedBy: "calibration_engine",
+        reviewNote: "Auto-applied: meets confidence threshold (≥0.98 accuracy, ≥100 decisions, stable trend)",
+        reviewedAt: new Date(),
+        appliedAt: new Date(),
+      });
+
+      await storage.createAuditEvent({
+        actorType: "system",
+        actorId: "calibration_engine",
+        action: "autonomy_boundary_auto_applied",
+        objectType: "autonomy_profile",
+        objectId: proposal.profileId || proposal.agentId,
+        details: JSON.stringify({
+          proposalId: proposal.id, decisionType: proposal.decisionType,
+          from: proposal.currentLevel, to: proposal.proposedLevel, direction: "expand",
+          accuracyRate: evidence?.accuracyRate, totalDecisions: evidence?.totalDecisions,
+        }),
+      });
+
+      res.json({ ...updated, autoApplied: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/autonomy/compute-maturity", async (req, res) => {
+    try {
+      const { agentId } = req.body;
+      const targetAgents = agentId ? [await storage.getAgent(agentId)].filter(Boolean) : await storage.getAgents();
+      const results: any[] = [];
+
+      for (const agent of targetAgents) {
+        if (!agent) continue;
+        const decisions = await storage.getAutonomyDecisions({ agentId: agent.id });
+        const validated = decisions.filter((d: any) => d.outcome !== "pending");
+        const correct = validated.filter((d: any) => d.outcome === "validated_correct" || d.outcome === "escalation_avoided");
+        const avgAccuracy = validated.length > 0 ? correct.length / validated.length : 0;
+
+        const autonomyLevelCounts: Record<string, number> = {};
+        decisions.forEach((d: any) => {
+          autonomyLevelCounts[d.autonomyLevelUsed] = (autonomyLevelCounts[d.autonomyLevelUsed] || 0) + 1;
+        });
+        const totalLevelDecisions = decisions.length || 1;
+        const autonomyScore = Object.entries(autonomyLevelCounts).reduce((score, [level, count]) => {
+          const idx = AUTONOMY_LEVEL_HIERARCHY.indexOf(level);
+          return score + (idx >= 0 ? idx / (AUTONOMY_LEVEL_HIERARCHY.length - 1) : 0) * (count / totalLevelDecisions);
+        }, 0);
+
+        const createdAt = agent.createdAt ? new Date(agent.createdAt).getTime() : Date.now();
+        const daysInProduction = Math.max(1, (Date.now() - createdAt) / (24 * 60 * 60 * 1000));
+        const timeScore = Math.min(1, daysInProduction / 180);
+
+        const decisionVolumeScore = Math.min(1, validated.length / 200);
+
+        const maturityScore = Math.round(
+          (avgAccuracy * 0.4 + autonomyScore * 0.25 + timeScore * 0.15 + decisionVolumeScore * 0.2) * 100
+        ) / 100;
+
+        const factors = {
+          avgAccuracy: Math.round(avgAccuracy * 10000) / 10000,
+          autonomyScore: Math.round(autonomyScore * 10000) / 10000,
+          timeScore: Math.round(timeScore * 10000) / 10000,
+          decisionVolumeScore: Math.round(decisionVolumeScore * 10000) / 10000,
+          totalDecisions: decisions.length,
+          validatedDecisions: validated.length,
+          correctDecisions: correct.length,
+          daysInProduction: Math.round(daysInProduction),
+          autonomyLevelDistribution: autonomyLevelCounts,
+        };
+
+        await storage.updateAgent(agent.id, { maturityScore, maturityFactors: factors });
+        results.push({ agentId: agent.id, agentName: agent.name, maturityScore, factors });
+      }
+
+      res.json({ agentsUpdated: results.length, results });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/autonomy/industry-baselines", async (req, res) => {
+    try {
+      const allProfiles = await storage.getDecisionQualityProfiles();
+      const byIndustryType: Record<string, any[]> = {};
+
+      for (const p of allProfiles) {
+        const key = `${p.industry}::${p.decisionType}`;
+        if (!byIndustryType[key]) byIndustryType[key] = [];
+        byIndustryType[key].push(p);
+      }
+
+      const baselines = Object.entries(byIndustryType).map(([key, profiles]) => {
+        const [industry, decisionType] = key.split("::");
+        const totalSample = profiles.reduce((s, p) => s + (p.correctDecisions + p.incorrectDecisions), 0);
+        const totalCorrect = profiles.reduce((s, p) => s + p.correctDecisions, 0);
+        const avgAccuracy = totalSample > 0 ? totalCorrect / totalSample : 0;
+
+        let recommendedLevel = "confirm_before";
+        if (avgAccuracy >= 0.98 && totalSample >= 200) recommendedLevel = "full_auto";
+        else if (avgAccuracy >= 0.95 && totalSample >= 100) recommendedLevel = "log_only";
+        else if (avgAccuracy >= 0.90 && totalSample >= 50) recommendedLevel = "notify_after";
+        else if (avgAccuracy < 0.80) recommendedLevel = "expert_approval";
+
+        const agentAccuracies = profiles.map(p => p.accuracyRate).sort();
+        const stdDev = agentAccuracies.length > 1 ? Math.sqrt(agentAccuracies.reduce((s, a) => s + Math.pow(a - avgAccuracy, 2), 0) / agentAccuracies.length) : 0;
+
+        return {
+          industry,
+          decisionType,
+          sampleSize: totalSample,
+          agentCount: profiles.length,
+          averageAccuracy: Math.round(avgAccuracy * 10000) / 10000,
+          recommendedLevel,
+          confidenceInterval: {
+            lower: Math.max(0, Math.round((avgAccuracy - 1.96 * stdDev) * 10000) / 10000),
+            upper: Math.min(1, Math.round((avgAccuracy + 1.96 * stdDev) * 10000) / 10000),
+          },
+          topPerformingAgents: profiles
+            .filter(p => p.accuracyRate >= avgAccuracy)
+            .sort((a, b) => b.accuracyRate - a.accuracyRate)
+            .slice(0, 3)
+            .map(p => ({ agentId: p.agentId, accuracy: p.accuracyRate, decisions: p.correctDecisions + p.incorrectDecisions })),
+        };
+      });
+
+      res.json(baselines);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/autonomy/industry-baselines/:industry/benchmarks", async (req, res) => {
+    try {
+      const { industry } = req.params;
+      const { agentId } = req.query;
+      const industryProfiles = await storage.getDecisionQualityProfiles({ industry });
+
+      const byDecisionType: Record<string, any[]> = {};
+      for (const p of industryProfiles) {
+        if (!byDecisionType[p.decisionType]) byDecisionType[p.decisionType] = [];
+        byDecisionType[p.decisionType].push(p);
+      }
+
+      const benchmarks = Object.entries(byDecisionType).map(([decisionType, profiles]) => {
+        const totalSample = profiles.reduce((s, p) => s + (p.correctDecisions + p.incorrectDecisions), 0);
+        const totalCorrect = profiles.reduce((s, p) => s + p.correctDecisions, 0);
+        const industryAvg = totalSample > 0 ? totalCorrect / totalSample : 0;
+
+        const agentProfile = agentId ? profiles.find((p: any) => p.agentId === agentId) : null;
+        const agentAccuracy = agentProfile?.accuracyRate || null;
+        const delta = agentAccuracy !== null ? agentAccuracy - industryAvg : null;
+
+        return {
+          decisionType,
+          industryAverage: Math.round(industryAvg * 10000) / 10000,
+          industrySampleSize: totalSample,
+          agentAccuracy: agentAccuracy !== null ? Math.round(agentAccuracy * 10000) / 10000 : null,
+          deltaVsIndustry: delta !== null ? Math.round(delta * 10000) / 10000 : null,
+          performance: delta === null ? "no_data" : delta >= 0.05 ? "above_average" : delta <= -0.05 ? "below_average" : "at_average",
+        };
+      });
+
+      res.json({ industry, agentId: agentId || null, benchmarks });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/autonomy/apply-industry-baseline", async (req, res) => {
+    try {
+      const { agentId, industry } = req.body;
+      if (!agentId || !industry) {
+        return res.status(400).json({ message: "agentId and industry are required" });
+      }
+
+      const agent = await storage.getAgent(agentId);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+
+      const allIndustryProfiles = await storage.getDecisionQualityProfiles({ industry });
+      const agentProfiles = allIndustryProfiles.filter((p: any) => p.agentId === agentId);
+      const otherProfiles = allIndustryProfiles.filter((p: any) => p.agentId !== agentId);
+
+      const byDecisionType: Record<string, any[]> = {};
+      for (const p of otherProfiles) {
+        if (!byDecisionType[p.decisionType]) byDecisionType[p.decisionType] = [];
+        byDecisionType[p.decisionType].push(p);
+      }
+
+      const applied: any[] = [];
+      for (const [decisionType, profiles] of Object.entries(byDecisionType)) {
+        const agentProfile = agentProfiles.find((p: any) => p.decisionType === decisionType);
+        const agentDecisions = agentProfile ? (agentProfile.correctDecisions + agentProfile.incorrectDecisions) : 0;
+        if (agentDecisions >= 20) continue;
+
+        const totalSample = profiles.reduce((s: number, p: any) => s + (p.correctDecisions + p.incorrectDecisions), 0);
+        const totalCorrect = profiles.reduce((s: number, p: any) => s + p.correctDecisions, 0);
+        const avgAccuracy = totalSample > 0 ? totalCorrect / totalSample : 0;
+
+        let recommendedLevel = "confirm_before";
+        if (avgAccuracy >= 0.98 && totalSample >= 200) recommendedLevel = "log_only";
+        else if (avgAccuracy >= 0.95 && totalSample >= 100) recommendedLevel = "notify_after";
+        else if (avgAccuracy < 0.80) recommendedLevel = "expert_approval";
+
+        applied.push({ decisionType, recommendedLevel, industryAccuracy: Math.round(avgAccuracy * 10000) / 10000, industrySample: totalSample });
+      }
+
+      await storage.createAuditEvent({
+        actorType: "system",
+        actorId: "calibration_engine",
+        action: "industry_baseline_applied",
+        objectType: "agent",
+        objectId: agentId,
+        details: JSON.stringify({ industry, appliedBaselines: applied }),
+      });
+
+      res.json({ agentId, industry, appliedBaselines: applied });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/autonomy/calibration-summary", async (req, res) => {
+    try {
+      const allDecisions = await storage.getAutonomyDecisions();
+      const allProfiles = await storage.getDecisionQualityProfiles();
+      const pendingProposals = await storage.getAutonomyBoundaryProposals({ status: "pending" });
+      const allProposals = await storage.getAutonomyBoundaryProposals();
+      const allAgents = await storage.getAgents();
+
+      const totalDecisions = allDecisions.length;
+      const validatedDecisions = allDecisions.filter((d: any) => d.outcome !== "pending");
+      const correctDecisions = validatedDecisions.filter((d: any) => d.outcome === "validated_correct" || d.outcome === "escalation_avoided");
+      const avgAccuracy = validatedDecisions.length > 0 ? correctDecisions.length / validatedDecisions.length : 0;
+
+      const approvedProposals = allProposals.filter((p: any) => p.status === "approved" || p.status === "auto_applied");
+      const expandedAgents = new Set(approvedProposals.filter((p: any) => p.direction === "expand").map((p: any) => p.agentId));
+
+      const agentsByMaturity = allAgents
+        .filter((a: any) => (a.maturityScore || 0) > 0)
+        .sort((a: any, b: any) => (b.maturityScore || 0) - (a.maturityScore || 0))
+        .slice(0, 10)
+        .map((a: any) => ({ agentId: a.id, name: a.name, maturityScore: a.maturityScore, maturityFactors: a.maturityFactors }));
+
+      const decisionsByIndustry: Record<string, number> = {};
+      allDecisions.forEach((d: any) => { decisionsByIndustry[d.industry] = (decisionsByIndustry[d.industry] || 0) + 1; });
+
+      const qualityHeatmap = allProfiles.map((p: any) => {
+        const agent = allAgents.find((a: any) => a.id === p.agentId);
+        return {
+          agentId: p.agentId,
+          agentName: agent?.name || "Unknown",
+          decisionType: p.decisionType,
+          accuracyRate: p.accuracyRate,
+          totalDecisions: p.totalDecisions,
+          trendDirection: p.trendDirection,
+          currentLevel: p.currentAutonomyLevel,
+          recommendedLevel: p.recommendedAutonomyLevel,
+        };
+      });
+
+      res.json({
+        totalDecisions,
+        validatedDecisions: validatedDecisions.length,
+        avgAccuracy: Math.round(avgAccuracy * 10000) / 10000,
+        pendingProposals: pendingProposals.length,
+        approvedProposals: approvedProposals.length,
+        agentsWithExpandedAutonomy: expandedAgents.size,
+        decisionsByIndustry,
+        agentMaturityLeaderboard: agentsByMaturity,
+        qualityHeatmap,
+        boundaryEvolution: approvedProposals.map((p: any) => ({
+          agentId: p.agentId,
+          decisionType: p.decisionType,
+          from: p.currentLevel,
+          to: p.proposedLevel,
+          direction: p.direction,
+          appliedAt: p.appliedAt,
+        })),
+      });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 

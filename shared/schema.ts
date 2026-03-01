@@ -101,6 +101,8 @@ export const agents = pgTable("agents", {
   revalidationReason: text("revalidation_reason"),
   gitConfig: jsonb("git_config"),
   ciCdConfig: jsonb("ci_cd_config"),
+  maturityScore: real("maturity_score").default(0),
+  maturityFactors: jsonb("maturity_factors").notNull().default(sql`'{}'::jsonb`),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -2029,5 +2031,74 @@ export const agentKnowledgeBases = pgTable("agent_knowledge_bases", {
 export const insertAgentKnowledgeBaseSchema = createInsertSchema(agentKnowledgeBases).omit({ id: true, createdAt: true });
 export type InsertAgentKnowledgeBase = z.infer<typeof insertAgentKnowledgeBaseSchema>;
 export type AgentKnowledgeBase = typeof agentKnowledgeBases.$inferSelect;
+
+export const autonomyDecisions = pgTable("autonomy_decisions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  agentId: varchar("agent_id").notNull(),
+  profileId: varchar("profile_id"),
+  industry: text("industry").notNull(),
+  decisionType: text("decision_type").notNull(),
+  riskDimension: text("risk_dimension"),
+  autonomyLevelUsed: text("autonomy_level_used").notNull(),
+  compositeRiskScore: real("composite_risk_score").notNull().default(50),
+  confidence: real("confidence").notNull().default(0.5),
+  decisionContext: jsonb("decision_context").notNull().default(sql`'{}'::jsonb`),
+  outcome: text("outcome").notNull().default("pending"),
+  outcomeSource: text("outcome_source"),
+  outcomeDetails: jsonb("outcome_details"),
+  outcomeAt: timestamp("outcome_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAutonomyDecisionSchema = createInsertSchema(autonomyDecisions).omit({ id: true, createdAt: true });
+export type InsertAutonomyDecision = z.infer<typeof insertAutonomyDecisionSchema>;
+export type AutonomyDecision = typeof autonomyDecisions.$inferSelect;
+
+export const decisionQualityProfiles = pgTable("decision_quality_profiles", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  agentId: varchar("agent_id").notNull(),
+  industry: text("industry").notNull(),
+  decisionType: text("decision_type").notNull(),
+  riskDimension: text("risk_dimension"),
+  totalDecisions: integer("total_decisions").notNull().default(0),
+  correctDecisions: integer("correct_decisions").notNull().default(0),
+  incorrectDecisions: integer("incorrect_decisions").notNull().default(0),
+  pendingDecisions: integer("pending_decisions").notNull().default(0),
+  accuracyRate: real("accuracy_rate").notNull().default(0),
+  trendDirection: text("trend_direction").notNull().default("stable"),
+  trendData: jsonb("trend_data").notNull().default(sql`'[]'::jsonb`),
+  currentAutonomyLevel: text("current_autonomy_level"),
+  recommendedAutonomyLevel: text("recommended_autonomy_level"),
+  lastCalibrationAt: timestamp("last_calibration_at"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertDecisionQualityProfileSchema = createInsertSchema(decisionQualityProfiles).omit({ id: true, updatedAt: true });
+export type InsertDecisionQualityProfile = z.infer<typeof insertDecisionQualityProfileSchema>;
+export type DecisionQualityProfile = typeof decisionQualityProfiles.$inferSelect;
+
+export const autonomyBoundaryProposals = pgTable("autonomy_boundary_proposals", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  agentId: varchar("agent_id").notNull(),
+  profileId: varchar("profile_id"),
+  industry: text("industry").notNull(),
+  decisionType: text("decision_type").notNull(),
+  riskDimension: text("risk_dimension"),
+  currentLevel: text("current_level").notNull(),
+  proposedLevel: text("proposed_level").notNull(),
+  direction: text("direction").notNull(),
+  evidence: jsonb("evidence").notNull().default(sql`'{}'::jsonb`),
+  confidenceScore: real("confidence_score").notNull().default(0),
+  status: text("status").notNull().default("pending"),
+  reviewedBy: text("reviewed_by"),
+  reviewNote: text("review_note"),
+  reviewedAt: timestamp("reviewed_at"),
+  appliedAt: timestamp("applied_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAutonomyBoundaryProposalSchema = createInsertSchema(autonomyBoundaryProposals).omit({ id: true, createdAt: true });
+export type InsertAutonomyBoundaryProposal = z.infer<typeof insertAutonomyBoundaryProposalSchema>;
+export type AutonomyBoundaryProposal = typeof autonomyBoundaryProposals.$inferSelect;
 
 export * from "./models/chat";

@@ -481,6 +481,19 @@ export function startWorker(intervalMs = 2000) {
   };
   setTimeout(canaryMonitor, canaryMonitorInterval);
   console.log("[worker] Canary monitor started (30s interval)");
+
+  const autonomyAutoTimeoutInterval = 300000;
+  const autonomyAutoTimeout = async () => {
+    if (!workerRunning) return;
+    try {
+      await autoValidateTimedOutDecisions();
+    } catch (err) {
+      console.error("[worker] Autonomy auto-timeout error:", err);
+    }
+    setTimeout(autonomyAutoTimeout, autonomyAutoTimeoutInterval);
+  };
+  setTimeout(autonomyAutoTimeout, autonomyAutoTimeoutInterval);
+  console.log("[worker] Autonomy auto-timeout validator started (5min interval)");
 }
 
 async function monitorCanaryDeployments() {
@@ -736,6 +749,43 @@ async function processShadowReplay(job: Job): Promise<Record<string, unknown>> {
   jobEvents.emit("progress", { jobId: job.id, agentId, progress: 100, step: "completed" });
 
   return evidenceBundle;
+}
+
+async function autoValidateTimedOutDecisions() {
+  const pendingDecisions = await storage.getAutonomyDecisions({ outcome: "pending" });
+  const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+  let validated = 0;
+
+  for (const decision of pendingDecisions) {
+    if (!decision.createdAt || new Date(decision.createdAt) > fourteenDaysAgo) continue;
+
+    await storage.updateAutonomyDecision(decision.id, {
+      outcome: "validated_correct",
+      outcomeSource: "auto_timeout",
+      outcomeDetails: { reason: "No negative signals after 14 days" } as any,
+      outcomeAt: new Date(),
+    });
+
+    const { getDecisionQualityProfiles, createDecisionQualityProfile, updateDecisionQualityProfile } = storage;
+    const profiles = await storage.getDecisionQualityProfiles({ agentId: decision.agentId, decisionType: decision.decisionType });
+    const matching = profiles.find((p: any) => (p.riskDimension || null) === (decision.riskDimension || null));
+    if (matching) {
+      const newCorrect = matching.correctDecisions + 1;
+      const newPending = Math.max(0, matching.pendingDecisions - 1);
+      const resolved = newCorrect + matching.incorrectDecisions;
+      await storage.updateDecisionQualityProfile(matching.id, {
+        correctDecisions: newCorrect,
+        pendingDecisions: newPending,
+        accuracyRate: resolved > 0 ? Math.round((newCorrect / resolved) * 10000) / 10000 : 0,
+        updatedAt: new Date(),
+      });
+    }
+    validated++;
+  }
+
+  if (validated > 0) {
+    console.log(`[worker] Auto-validated ${validated} timed-out autonomy decisions`);
+  }
 }
 
 export function stopWorker() {

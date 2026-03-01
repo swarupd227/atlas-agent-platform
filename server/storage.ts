@@ -153,6 +153,9 @@ import {
   knowledgeSources, type KnowledgeSource, type InsertKnowledgeSource,
   knowledgeChunks, type KnowledgeChunk, type InsertKnowledgeChunk,
   agentKnowledgeBases, type AgentKnowledgeBase, type InsertAgentKnowledgeBase,
+  autonomyDecisions, type AutonomyDecision, type InsertAutonomyDecision,
+  decisionQualityProfiles, type DecisionQualityProfile, type InsertDecisionQualityProfile,
+  autonomyBoundaryProposals, type AutonomyBoundaryProposal, type InsertAutonomyBoundaryProposal,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -688,6 +691,21 @@ export interface IStorage {
   getKnowledgeBaseAgents(kbId: string): Promise<AgentKnowledgeBase[]>;
   createAgentKnowledgeBase(link: InsertAgentKnowledgeBase): Promise<AgentKnowledgeBase>;
   deleteAgentKnowledgeBase(id: string): Promise<boolean>;
+
+  getAutonomyDecisions(filters?: { agentId?: string; decisionType?: string; industry?: string; outcome?: string }): Promise<AutonomyDecision[]>;
+  getAutonomyDecision(id: string): Promise<AutonomyDecision | undefined>;
+  createAutonomyDecision(decision: InsertAutonomyDecision): Promise<AutonomyDecision>;
+  updateAutonomyDecision(id: string, data: Partial<AutonomyDecision>): Promise<AutonomyDecision | undefined>;
+
+  getDecisionQualityProfiles(filters?: { agentId?: string; industry?: string; decisionType?: string }): Promise<DecisionQualityProfile[]>;
+  getDecisionQualityProfile(id: string): Promise<DecisionQualityProfile | undefined>;
+  createDecisionQualityProfile(profile: InsertDecisionQualityProfile): Promise<DecisionQualityProfile>;
+  updateDecisionQualityProfile(id: string, data: Partial<DecisionQualityProfile>): Promise<DecisionQualityProfile | undefined>;
+
+  getAutonomyBoundaryProposals(filters?: { status?: string; agentId?: string; industry?: string }): Promise<AutonomyBoundaryProposal[]>;
+  getAutonomyBoundaryProposal(id: string): Promise<AutonomyBoundaryProposal | undefined>;
+  createAutonomyBoundaryProposal(proposal: InsertAutonomyBoundaryProposal): Promise<AutonomyBoundaryProposal>;
+  updateAutonomyBoundaryProposal(id: string, data: Partial<AutonomyBoundaryProposal>): Promise<AutonomyBoundaryProposal | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2760,6 +2778,85 @@ export class DatabaseStorage implements IStorage {
   async deleteAgentKnowledgeBase(id: string): Promise<boolean> {
     const result = await db.delete(agentKnowledgeBases).where(eq(agentKnowledgeBases.id, id)).returning();
     return result.length > 0;
+  }
+
+  async getAutonomyDecisions(filters?: { agentId?: string; decisionType?: string; industry?: string; outcome?: string }): Promise<AutonomyDecision[]> {
+    const conditions = [];
+    if (filters?.agentId) conditions.push(eq(autonomyDecisions.agentId, filters.agentId));
+    if (filters?.decisionType) conditions.push(eq(autonomyDecisions.decisionType, filters.decisionType));
+    if (filters?.industry) conditions.push(eq(autonomyDecisions.industry, filters.industry));
+    if (filters?.outcome) conditions.push(eq(autonomyDecisions.outcome, filters.outcome));
+    if (conditions.length > 0) {
+      return db.select().from(autonomyDecisions).where(and(...conditions)).orderBy(desc(autonomyDecisions.createdAt));
+    }
+    return db.select().from(autonomyDecisions).orderBy(desc(autonomyDecisions.createdAt));
+  }
+
+  async getAutonomyDecision(id: string): Promise<AutonomyDecision | undefined> {
+    const [decision] = await db.select().from(autonomyDecisions).where(eq(autonomyDecisions.id, id));
+    return decision;
+  }
+
+  async createAutonomyDecision(decision: InsertAutonomyDecision): Promise<AutonomyDecision> {
+    const [created] = await db.insert(autonomyDecisions).values(decision).returning();
+    return created;
+  }
+
+  async updateAutonomyDecision(id: string, data: Partial<AutonomyDecision>): Promise<AutonomyDecision | undefined> {
+    const [updated] = await db.update(autonomyDecisions).set(data).where(eq(autonomyDecisions.id, id)).returning();
+    return updated;
+  }
+
+  async getDecisionQualityProfiles(filters?: { agentId?: string; industry?: string; decisionType?: string }): Promise<DecisionQualityProfile[]> {
+    const conditions = [];
+    if (filters?.agentId) conditions.push(eq(decisionQualityProfiles.agentId, filters.agentId));
+    if (filters?.industry) conditions.push(eq(decisionQualityProfiles.industry, filters.industry));
+    if (filters?.decisionType) conditions.push(eq(decisionQualityProfiles.decisionType, filters.decisionType));
+    if (conditions.length > 0) {
+      return db.select().from(decisionQualityProfiles).where(and(...conditions));
+    }
+    return db.select().from(decisionQualityProfiles);
+  }
+
+  async getDecisionQualityProfile(id: string): Promise<DecisionQualityProfile | undefined> {
+    const [profile] = await db.select().from(decisionQualityProfiles).where(eq(decisionQualityProfiles.id, id));
+    return profile;
+  }
+
+  async createDecisionQualityProfile(profile: InsertDecisionQualityProfile): Promise<DecisionQualityProfile> {
+    const [created] = await db.insert(decisionQualityProfiles).values(profile).returning();
+    return created;
+  }
+
+  async updateDecisionQualityProfile(id: string, data: Partial<DecisionQualityProfile>): Promise<DecisionQualityProfile | undefined> {
+    const [updated] = await db.update(decisionQualityProfiles).set(data).where(eq(decisionQualityProfiles.id, id)).returning();
+    return updated;
+  }
+
+  async getAutonomyBoundaryProposals(filters?: { status?: string; agentId?: string; industry?: string }): Promise<AutonomyBoundaryProposal[]> {
+    const conditions = [];
+    if (filters?.status) conditions.push(eq(autonomyBoundaryProposals.status, filters.status));
+    if (filters?.agentId) conditions.push(eq(autonomyBoundaryProposals.agentId, filters.agentId));
+    if (filters?.industry) conditions.push(eq(autonomyBoundaryProposals.industry, filters.industry));
+    if (conditions.length > 0) {
+      return db.select().from(autonomyBoundaryProposals).where(and(...conditions)).orderBy(desc(autonomyBoundaryProposals.createdAt));
+    }
+    return db.select().from(autonomyBoundaryProposals).orderBy(desc(autonomyBoundaryProposals.createdAt));
+  }
+
+  async getAutonomyBoundaryProposal(id: string): Promise<AutonomyBoundaryProposal | undefined> {
+    const [proposal] = await db.select().from(autonomyBoundaryProposals).where(eq(autonomyBoundaryProposals.id, id));
+    return proposal;
+  }
+
+  async createAutonomyBoundaryProposal(proposal: InsertAutonomyBoundaryProposal): Promise<AutonomyBoundaryProposal> {
+    const [created] = await db.insert(autonomyBoundaryProposals).values(proposal).returning();
+    return created;
+  }
+
+  async updateAutonomyBoundaryProposal(id: string, data: Partial<AutonomyBoundaryProposal>): Promise<AutonomyBoundaryProposal | undefined> {
+    const [updated] = await db.update(autonomyBoundaryProposals).set(data).where(eq(autonomyBoundaryProposals.id, id)).returning();
+    return updated;
   }
 }
 
