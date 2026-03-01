@@ -1,5 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useEffect, useMemo } from "react";
+import { Link } from "wouter";
 import {
   DollarSign,
   Download,
@@ -10,6 +11,7 @@ import {
   FileText,
   CreditCard,
   TrendingUp,
+  TrendingDown,
   PieChart,
   ArrowLeft,
   ExternalLink,
@@ -24,6 +26,10 @@ import {
   Layers,
   Activity,
   X,
+  Cpu,
+  Wrench,
+  Server,
+  Zap,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -73,6 +79,9 @@ import {
   PieChart as RechartsPie,
   Pie,
   Legend,
+  Area,
+  AreaChart,
+  ComposedChart,
 } from "recharts";
 
 interface MeteringDashboard {
@@ -134,6 +143,62 @@ interface InvoiceLineItems {
   }>;
 }
 
+interface MarginAnalysis {
+  summary: {
+    totalRevenue: number;
+    totalCost: number;
+    overallMargin: number;
+    overallMarginPercent: number;
+    outcomeCount: number;
+    alertCount: number;
+  };
+  outcomes: Array<{
+    outcomeId: string;
+    outcomeName: string;
+    revenue: number;
+    costToServe: number;
+    margin: number;
+    marginPercent: number;
+    traceCount: number;
+    costBreakdown: {
+      llmCost: number;
+      toolCost: number;
+      infraCost: number;
+    };
+    trend: Array<{
+      month: string;
+      revenue: number;
+      cost: number;
+      margin: number;
+      marginPercent: number;
+    }>;
+    alerts: Array<{ type: string; severity: string; message: string }>;
+  }>;
+  monthlyMargin: Array<{
+    month: string;
+    revenue: number;
+    cost: number;
+    margin: number;
+    marginPercent: number;
+  }>;
+  alerts: Array<{ type: string; severity: string; message: string }>;
+}
+
+interface MarginAlerts {
+  alerts: Array<{
+    outcomeId: string;
+    outcomeName: string;
+    type: string;
+    severity: string;
+    message: string;
+    currentMargin: number;
+    recommendedAction: string;
+  }>;
+  totalAlerts: number;
+  criticalCount: number;
+  warningCount: number;
+}
+
 const COLORS = ["hsl(var(--chart-1))", "hsl(var(--chart-2))", "hsl(var(--chart-3))", "hsl(var(--chart-4))", "hsl(var(--chart-5))"];
 
 export default function Billing() {
@@ -165,6 +230,18 @@ export default function Billing() {
   const { data: invoiceDetail, isLoading: detailLoading } = useQuery<InvoiceLineItems>({
     queryKey: ["/api/invoices", selectedInvoiceId, "line-items"],
     enabled: !!selectedInvoiceId,
+  });
+
+  const [marginPeriod, setMarginPeriod] = useState("90d");
+
+  const { data: marginData, isLoading: marginLoading } = useQuery<MarginAnalysis>({
+    queryKey: [`/api/billing/margin-analysis?period=${marginPeriod}`],
+    enabled: activeTab === "margins",
+  });
+
+  const { data: marginAlerts } = useQuery<MarginAlerts>({
+    queryKey: [`/api/billing/margin-alerts?period=${marginPeriod}`],
+    enabled: activeTab === "margins",
   });
 
   const isLoading = dashboardLoading || invoicesLoading;
@@ -275,6 +352,7 @@ export default function Billing() {
           <TabsTrigger value="metering" data-testid="tab-metering">Outcome Metering</TabsTrigger>
           <TabsTrigger value="invoices" data-testid="tab-invoices">Invoices</TabsTrigger>
           <TabsTrigger value="disputes" data-testid="tab-disputes">Disputes</TabsTrigger>
+          <TabsTrigger value="margins" data-testid="tab-margins">Margins</TabsTrigger>
         </TabsList>
 
         <TabsContent value="metering" className="mt-0">
@@ -688,7 +766,402 @@ export default function Billing() {
             </Card>
           </div>
         </TabsContent>
+
+        <TabsContent value="margins" className="mt-0">
+          {marginLoading ? (
+            <div className="flex flex-col gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <Card key={i}><CardContent className="p-4"><Skeleton className="h-20 w-full" /></CardContent></Card>
+                ))}
+              </div>
+              <Card><CardContent className="p-4"><Skeleton className="h-64 w-full" /></CardContent></Card>
+            </div>
+          ) : (
+            <MarginsTabContent
+              marginData={marginData}
+              marginAlerts={marginAlerts}
+              marginPeriod={marginPeriod}
+              setMarginPeriod={setMarginPeriod}
+            />
+          )}
+        </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+function MarginsTabContent({
+  marginData,
+  marginAlerts,
+  marginPeriod,
+  setMarginPeriod,
+}: {
+  marginData: MarginAnalysis | undefined;
+  marginAlerts: MarginAlerts | undefined;
+  marginPeriod: string;
+  setMarginPeriod: (v: string) => void;
+}) {
+  const [selectedOutcome, setSelectedOutcome] = useState<string | null>(null);
+
+  const summary = marginData?.summary;
+  const outcomes = marginData?.outcomes || [];
+  const monthlyMargin = marginData?.monthlyMargin || [];
+  const alerts = marginAlerts?.alerts || [];
+
+  const momTrend = useMemo(() => {
+    if (monthlyMargin.length < 2) return null;
+    const prev = monthlyMargin[monthlyMargin.length - 2];
+    const curr = monthlyMargin[monthlyMargin.length - 1];
+    if (!prev || !curr) return null;
+    const diff = curr.marginPercent - prev.marginPercent;
+    return { diff: Math.round(diff * 10) / 10, direction: diff >= 0 ? "up" : "down" as const };
+  }, [monthlyMargin]);
+
+  const selectedOutcomeData = outcomes.find(o => o.outcomeId === selectedOutcome);
+
+  const costBreakdownData = useMemo(() => {
+    if (selectedOutcomeData) {
+      const cb = selectedOutcomeData.costBreakdown;
+      return [
+        { name: "LLM Tokens", value: cb.llmCost, icon: Cpu },
+        { name: "Tool Calls", value: cb.toolCost, icon: Wrench },
+        { name: "Infrastructure", value: cb.infraCost, icon: Server },
+      ];
+    }
+    const totals = outcomes.reduce(
+      (acc, o) => ({
+        llm: acc.llm + o.costBreakdown.llmCost,
+        tool: acc.tool + o.costBreakdown.toolCost,
+        infra: acc.infra + o.costBreakdown.infraCost,
+      }),
+      { llm: 0, tool: 0, infra: 0 }
+    );
+    return [
+      { name: "LLM Tokens", value: Math.round(totals.llm * 100) / 100, icon: Cpu },
+      { name: "Tool Calls", value: Math.round(totals.tool * 100) / 100, icon: Wrench },
+      { name: "Infrastructure", value: Math.round(totals.infra * 100) / 100, icon: Server },
+    ];
+  }, [selectedOutcomeData, outcomes]);
+
+  const costTotal = costBreakdownData.reduce((s, d) => s + d.value, 0);
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <span className="text-sm text-muted-foreground">Margin analysis across all outcomes</span>
+        <Select value={marginPeriod} onValueChange={setMarginPeriod}>
+          <SelectTrigger className="w-28" data-testid="select-margin-period">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="30d">Last 30d</SelectItem>
+            <SelectItem value="90d">Last 90d</SelectItem>
+            <SelectItem value="all">All Time</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard
+          title="Total Revenue"
+          value={`$${(summary?.totalRevenue || 0).toLocaleString()}`}
+          icon={DollarSign}
+          variant="success"
+          testId="stat-margin-revenue"
+        />
+        <StatCard
+          title="Cost-to-Serve"
+          value={`$${(summary?.totalCost || 0).toLocaleString()}`}
+          icon={CreditCard}
+          variant="default"
+          testId="stat-margin-cost"
+        />
+        <StatCard
+          title="Overall Margin"
+          value={`${summary?.overallMarginPercent || 0}%`}
+          icon={TrendingUp}
+          variant={summary && summary.overallMarginPercent >= 20 ? "success" : "warning"}
+          testId="stat-margin-overall"
+        />
+        <Card data-testid="stat-margin-mom">
+          <CardContent className="p-4 flex flex-col gap-1">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wide">MoM Trend</span>
+              {momTrend ? (
+                momTrend.direction === "up"
+                  ? <TrendingUp className="w-4 h-4 text-emerald-500" />
+                  : <TrendingDown className="w-4 h-4 text-red-500" />
+              ) : (
+                <Activity className="w-4 h-4 text-muted-foreground" />
+              )}
+            </div>
+            <span className="text-2xl font-bold" data-testid="text-margin-mom-value">
+              {momTrend ? `${momTrend.diff > 0 ? "+" : ""}${momTrend.diff}%` : "N/A"}
+            </span>
+            <span className="text-[10px] text-muted-foreground">margin change vs. prior month</span>
+          </CardContent>
+        </Card>
+      </div>
+
+      {alerts.length > 0 && (
+        <div className="flex flex-col gap-2" data-testid="section-margin-alerts">
+          {alerts.map((alert, i) => (
+            <Card key={i} data-testid={`card-margin-alert-${i}`}>
+              <CardContent className="p-3 flex items-start gap-3">
+                {alert.severity === "critical" ? (
+                  <XCircle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
+                )}
+                <div className="flex flex-col gap-1 flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-medium">{alert.outcomeName}</span>
+                    <Badge
+                      variant={alert.severity === "critical" ? "destructive" : "secondary"}
+                      className="text-[9px]"
+                    >
+                      {alert.severity}
+                    </Badge>
+                    <Badge variant="outline" className="text-[9px]">
+                      {alert.currentMargin}% margin
+                    </Badge>
+                  </div>
+                  <span className="text-xs text-muted-foreground">{alert.message}</span>
+                  <span className="text-[11px] text-muted-foreground">{alert.recommendedAction}</span>
+                  <Link href="/improvements" data-testid={`link-optimize-${alert.outcomeId}`}>
+                    <Button variant="outline" size="sm" className="mt-1 w-fit">
+                      <Zap className="w-3 h-3 mr-1" /> View Optimization Patches
+                    </Button>
+                  </Link>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Monthly Margin Trend</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="h-56" data-testid="chart-monthly-margin-trend">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={monthlyMargin}>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                  <XAxis dataKey="month" tick={{ fontSize: 10 }} className="fill-muted-foreground" />
+                  <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickFormatter={(v) => `$${v}`} />
+                  <Tooltip
+                    contentStyle={{ fontSize: 11, borderRadius: 8, border: "1px solid hsl(var(--border))", background: "hsl(var(--card))" }}
+                    formatter={(value: number, name: string) => [
+                      `$${value.toLocaleString()}`,
+                      name === "revenue" ? "Revenue" : name === "cost" ? "Cost" : "Margin",
+                    ]}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Line type="monotone" dataKey="revenue" stroke="hsl(var(--chart-1))" strokeWidth={2} dot={{ r: 3 }} name="Revenue" />
+                  <Line type="monotone" dataKey="cost" stroke="hsl(var(--chart-4))" strokeWidth={2} dot={{ r: 3 }} name="Cost" />
+                  <Area type="monotone" dataKey="margin" fill="hsl(var(--chart-2))" fillOpacity={0.15} stroke="hsl(var(--chart-2))" strokeWidth={1.5} name="Margin" />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <CardTitle className="text-sm font-medium">Cost Breakdown</CardTitle>
+              {selectedOutcomeData && (
+                <Badge variant="outline" className="text-[10px]">{selectedOutcomeData.outcomeName}</Badge>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center gap-6">
+              <div className="h-48 w-48 flex-shrink-0" data-testid="chart-cost-breakdown-donut">
+                <ResponsiveContainer width="100%" height="100%">
+                  <RechartsPie>
+                    <Pie
+                      data={costBreakdownData}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      outerRadius={70}
+                      innerRadius={45}
+                      paddingAngle={3}
+                    >
+                      <Cell fill="hsl(var(--chart-1))" />
+                      <Cell fill="hsl(var(--chart-3))" />
+                      <Cell fill="hsl(var(--chart-5))" />
+                    </Pie>
+                    <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8, border: "1px solid hsl(var(--border))", background: "hsl(var(--card))" }} formatter={(value: number) => [`$${value.toFixed(2)}`, ""]} />
+                  </RechartsPie>
+                </ResponsiveContainer>
+              </div>
+              <div className="flex flex-col gap-3 flex-1">
+                {costBreakdownData.map((item, i) => {
+                  const pct = costTotal > 0 ? ((item.value / costTotal) * 100).toFixed(0) : "0";
+                  const colors = ["hsl(var(--chart-1))", "hsl(var(--chart-3))", "hsl(var(--chart-5))"];
+                  return (
+                    <div key={item.name} className="flex flex-col gap-0.5">
+                      <div className="flex items-center gap-2">
+                        <div className="w-2.5 h-2.5 rounded-full" style={{ background: colors[i] }} />
+                        <item.icon className="w-3 h-3 text-muted-foreground" />
+                        <span className="text-xs text-muted-foreground">{item.name}</span>
+                        <span className="text-[10px] text-muted-foreground ml-auto">{pct}%</span>
+                      </div>
+                      <span className="text-sm font-semibold" data-testid={`text-cost-${item.name.toLowerCase().replace(/\s/g, "-")}`}>${item.value.toFixed(2)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <CardTitle className="text-sm font-medium">Per-Outcome Margin Analysis</CardTitle>
+            <Badge variant="outline" className="text-[10px]">{outcomes.length} outcomes</Badge>
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Outcome</TableHead>
+                <TableHead className="text-right">Revenue</TableHead>
+                <TableHead className="text-right">Cost-to-Serve</TableHead>
+                <TableHead className="text-right">Margin</TableHead>
+                <TableHead className="text-right">Margin %</TableHead>
+                <TableHead className="text-center">Trend</TableHead>
+                <TableHead className="text-center">Status</TableHead>
+                <TableHead></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {outcomes.map((o) => {
+                const trendData = o.trend.filter(t => t.revenue > 0 || t.cost > 0);
+                return (
+                  <TableRow
+                    key={o.outcomeId}
+                    data-testid={`row-margin-${o.outcomeId}`}
+                    className={selectedOutcome === o.outcomeId ? "bg-muted/40" : "cursor-pointer"}
+                    onClick={() => setSelectedOutcome(selectedOutcome === o.outcomeId ? null : o.outcomeId)}
+                  >
+                    <TableCell>
+                      <span className="text-xs font-medium">{o.outcomeName}</span>
+                      <span className="text-[10px] text-muted-foreground block">{o.traceCount.toLocaleString()} traces</span>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <span className="text-sm font-semibold">${o.revenue.toLocaleString()}</span>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <span className="text-sm text-muted-foreground">${o.costToServe.toLocaleString()}</span>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <span className={`text-sm font-medium ${o.margin >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
+                        {o.margin >= 0 ? "$" : "-$"}{Math.abs(o.margin).toLocaleString()}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Badge
+                        variant={o.marginPercent >= 20 ? "default" : o.marginPercent >= 0 ? "secondary" : "destructive"}
+                        className="text-[10px]"
+                        data-testid={`badge-margin-pct-${o.outcomeId}`}
+                      >
+                        {o.marginPercent}%
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-center">
+                      {trendData.length >= 2 ? (
+                        <div className="w-16 h-6 inline-block" data-testid={`sparkline-${o.outcomeId}`}>
+                          <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={trendData}>
+                              <Line
+                                type="monotone"
+                                dataKey="marginPercent"
+                                stroke={o.marginPercent >= 20 ? "hsl(var(--chart-2))" : "hsl(var(--chart-4))"}
+                                strokeWidth={1.5}
+                                dot={false}
+                              />
+                            </LineChart>
+                          </ResponsiveContainer>
+                        </div>
+                      ) : (
+                        <span className="text-[10px] text-muted-foreground">--</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      {o.alerts.length > 0 ? (
+                        <Badge variant="destructive" className="text-[9px]">
+                          <AlertTriangle className="w-2.5 h-2.5 mr-0.5" />
+                          {o.alerts.length}
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-[9px]">
+                          <CheckCircle className="w-2.5 h-2.5 mr-0.5" />
+                          OK
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+          {outcomes.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-12 gap-3">
+              <BarChart3 className="w-10 h-10 text-muted-foreground/50" />
+              <p className="text-sm text-muted-foreground">No margin data available</p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {selectedOutcomeData && (
+        <Card data-testid={`card-outcome-detail-${selectedOutcomeData.outcomeId}`}>
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <CardTitle className="text-sm font-medium">{selectedOutcomeData.outcomeName} - Margin Trend</CardTitle>
+              <Button variant="ghost" size="icon" onClick={() => setSelectedOutcome(null)} data-testid="button-close-outcome-detail">
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="h-56" data-testid="chart-outcome-margin-trend">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={selectedOutcomeData.trend}>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                  <XAxis dataKey="month" tick={{ fontSize: 10 }} className="fill-muted-foreground" />
+                  <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickFormatter={(v) => `$${v}`} />
+                  <Tooltip
+                    contentStyle={{ fontSize: 11, borderRadius: 8, border: "1px solid hsl(var(--border))", background: "hsl(var(--card))" }}
+                    formatter={(value: number, name: string) => [
+                      `$${value.toLocaleString()}`,
+                      name === "revenue" ? "Revenue" : name === "cost" ? "Cost" : "Margin",
+                    ]}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Bar dataKey="revenue" fill="hsl(var(--chart-1))" radius={[4, 4, 0, 0]} name="Revenue" />
+                  <Bar dataKey="cost" fill="hsl(var(--chart-4))" radius={[4, 4, 0, 0]} name="Cost" />
+                  <Line type="monotone" dataKey="margin" stroke="hsl(var(--chart-2))" strokeWidth={2} dot={{ r: 3 }} name="Margin" />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

@@ -5423,6 +5423,11 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
       const allEvents = await storage.getOutcomeEvents();
       const allDisputes = await storage.getBillingDisputes();
       const outcomes = await storage.getOutcomes();
+      const allAgents = await storage.getAgents();
+      const allTraces = await storage.getTraces();
+      const agentOutcomeMap = new Map(allAgents.map(a => [a.id, a.outcomeId]));
+      const INFRA_OVERHEAD_RATE = 0.15;
+      const TOOL_CALL_COST_RATE = 0.001;
 
       const totalEvents = allEvents.length;
       const billableEvents = allEvents.filter(e => e.billable);
@@ -5468,11 +5473,27 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
         excludeReasons[reason] = (excludeReasons[reason] || 0) + 1;
       });
 
+      const outcomeCostLookup: Record<string, { llm: number; tool: number }> = {};
+      for (const trace of allTraces) {
+        const oId = agentOutcomeMap.get(trace.agentId);
+        if (!oId) continue;
+        if (!outcomeCostLookup[oId]) outcomeCostLookup[oId] = { llm: 0, tool: 0 };
+        outcomeCostLookup[oId].llm += trace.costUsd || 0;
+        const tc = trace.toolCalls as any[] | null;
+        outcomeCostLookup[oId].tool += (Array.isArray(tc) ? tc.length : 0) * TOOL_CALL_COST_RATE;
+      }
+
       const outcomeMetering = outcomes.map(o => {
         const oEvents = allEvents.filter(e => e.outcomeId === o.id);
         const oInvoices = allInvoices.filter(inv => inv.outcomeId === o.id);
         const oDisputes = allDisputes.filter(d => d.outcomeId === o.id);
         const oBillable = oEvents.filter(e => e.billable);
+        const totalRevenue = oInvoices.reduce((s, inv) => s + (inv.amount || 0), 0);
+        const costs = outcomeCostLookup[o.id];
+        const directCost = costs ? costs.llm + costs.tool : 0;
+        const costToServe = Math.round(directCost * (1 + INFRA_OVERHEAD_RATE) * 100) / 100;
+        const margin = Math.round((totalRevenue - costToServe) * 100) / 100;
+        const marginPercent = totalRevenue > 0 ? Math.round(((totalRevenue - costToServe) / totalRevenue) * 1000) / 10 : 0;
         return {
           outcomeId: o.id,
           outcomeName: o.name,
@@ -5480,11 +5501,14 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
           billableEvents: oBillable.length,
           excludedEvents: oEvents.length - oBillable.length,
           acceptanceRate: oEvents.length > 0 ? oBillable.length / oEvents.length : 0,
-          totalRevenue: oInvoices.reduce((s, inv) => s + (inv.amount || 0), 0),
+          totalRevenue,
           totalUnits: oEvents.reduce((s, e) => s + (e.unitCount || 1), 0),
           invoiceCount: oInvoices.length,
           disputeCount: oDisputes.length,
           disputeAmount: oDisputes.reduce((s, d) => s + (d.amount || 0), 0),
+          costToServe,
+          margin,
+          marginPercent,
         };
       });
 
@@ -5494,6 +5518,28 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
       const disputeCategories: Record<string, number> = {};
       allDisputes.forEach(d => {
         disputeCategories[d.category] = (disputeCategories[d.category] || 0) + 1;
+      });
+
+      const totalCostToServe = outcomeMetering.reduce((s, o) => s + o.costToServe, 0);
+      const totalMargin = totalRevenue - totalCostToServe;
+      const totalMarginPercent = totalRevenue > 0 ? Math.round(((totalRevenue - totalCostToServe) / totalRevenue) * 1000) / 10 : 0;
+
+      const monthlyMargin = monthlyRevenue.map(mr => {
+        const monthTraces = allTraces.filter(t => {
+          if (!t.startedAt) return false;
+          const d = new Date(t.startedAt);
+          const mk = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+          return mk === mr.month;
+        });
+        let mCost = 0;
+        for (const t of monthTraces) {
+          const llm = t.costUsd || 0;
+          const tc = t.toolCalls as any[] | null;
+          const tool = (Array.isArray(tc) ? tc.length : 0) * TOOL_CALL_COST_RATE;
+          mCost += (llm + tool) * (1 + INFRA_OVERHEAD_RATE);
+        }
+        const mMargin = mr.revenue - Math.round(mCost * 100) / 100;
+        return { month: mr.month, revenue: mr.revenue, cost: Math.round(mCost * 100) / 100, margin: Math.round(mMargin * 100) / 100 };
       });
 
       res.json({
@@ -5509,8 +5555,12 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
           totalInvoices: allInvoices.length,
           paidInvoices: paidInvoices.length,
           pendingInvoices: pendingInvoices.length,
+          totalCostToServe: Math.round(totalCostToServe * 100) / 100,
+          totalMargin: Math.round(totalMargin * 100) / 100,
+          totalMarginPercent,
         },
         monthlyRevenue,
+        monthlyMargin,
         excludeReasons,
         outcomeMetering,
         disputes: {
@@ -5524,6 +5574,444 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
       });
     } catch (e: any) {
       res.status(500).json({ error: e.message || "Failed to compute metering dashboard" });
+    }
+  });
+
+  app.get("/api/billing/cost-attribution", async (req, res) => {
+    try {
+      const period = (req.query.period as string) || "90d";
+      const now = new Date();
+      let cutoff: Date | null = null;
+      if (period === "30d") cutoff = new Date(now.getTime() - 30 * 86400000);
+      else if (period === "90d") cutoff = new Date(now.getTime() - 90 * 86400000);
+
+      const allTraces = await storage.getTraces();
+      const filteredTraces = cutoff
+        ? allTraces.filter(t => t.startedAt && new Date(t.startedAt) >= cutoff!)
+        : allTraces;
+
+      const agents = await storage.getAgents();
+      const outcomes = await storage.getOutcomes();
+      const agentMap = new Map(agents.map(a => [a.id, a]));
+      const outcomeMap = new Map(outcomes.map(o => [o.id, o]));
+
+      const INFRA_OVERHEAD_RATE = 0.15;
+      const TOOL_CALL_COST = 0.001;
+
+      const agentCosts: Record<string, {
+        agentId: string; agentName: string; outcomeId: string | null; outcomeName: string | null;
+        llmCost: number; toolCost: number; toolCallCount: number; traceCount: number; totalTokens: number;
+        monthlyCosts: Record<string, { llm: number; tool: number; infra: number; traces: number }>;
+      }> = {};
+
+      for (const trace of filteredTraces) {
+        const agentId = trace.agentId;
+        if (!agentCosts[agentId]) {
+          const agent = agentMap.get(agentId);
+          agentCosts[agentId] = {
+            agentId,
+            agentName: agent?.name || "Unknown Agent",
+            outcomeId: agent?.outcomeId || null,
+            outcomeName: agent?.outcomeId ? outcomeMap.get(agent.outcomeId)?.name || null : null,
+            llmCost: 0, toolCost: 0, toolCallCount: 0, traceCount: 0, totalTokens: 0,
+            monthlyCosts: {},
+          };
+        }
+
+        const entry = agentCosts[agentId];
+        entry.traceCount++;
+        entry.llmCost += trace.costUsd || 0;
+
+        const tokenUsage = trace.tokenUsage as { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null;
+        if (tokenUsage) {
+          entry.totalTokens += tokenUsage.total_tokens || 0;
+        }
+
+        const toolCalls = trace.toolCalls as any[] | null;
+        const toolCallCount = Array.isArray(toolCalls) ? toolCalls.length : 0;
+        entry.toolCallCount += toolCallCount;
+        entry.toolCost += toolCallCount * TOOL_CALL_COST;
+
+        if (trace.startedAt) {
+          const d = new Date(trace.startedAt);
+          const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+          if (!entry.monthlyCosts[monthKey]) {
+            entry.monthlyCosts[monthKey] = { llm: 0, tool: 0, infra: 0, traces: 0 };
+          }
+          entry.monthlyCosts[monthKey].llm += trace.costUsd || 0;
+          entry.monthlyCosts[monthKey].tool += toolCallCount * TOOL_CALL_COST;
+          entry.monthlyCosts[monthKey].traces++;
+        }
+      }
+
+      for (const entry of Object.values(agentCosts)) {
+        for (const mc of Object.values(entry.monthlyCosts)) {
+          mc.infra = (mc.llm + mc.tool) * INFRA_OVERHEAD_RATE;
+        }
+      }
+
+      const outcomeCosts: Record<string, {
+        outcomeId: string; outcomeName: string;
+        totalCost: number; llmCost: number; toolCost: number; infraCost: number;
+        traceCount: number; toolCallCount: number; totalTokens: number;
+        avgCostPerTrace: number;
+        agents: Array<{ agentId: string; agentName: string; llmCost: number; toolCost: number; infraCost: number; totalCost: number; traceCount: number }>;
+        costTrend: Array<{ month: string; llm: number; tool: number; infra: number; total: number }>;
+      }> = {};
+
+      const UNATTRIBUTED = "__unattributed__";
+
+      for (const entry of Object.values(agentCosts)) {
+        const oId = entry.outcomeId || UNATTRIBUTED;
+        if (!outcomeCosts[oId]) {
+          outcomeCosts[oId] = {
+            outcomeId: oId,
+            outcomeName: entry.outcomeName || "Unattributed",
+            totalCost: 0, llmCost: 0, toolCost: 0, infraCost: 0,
+            traceCount: 0, toolCallCount: 0, totalTokens: 0, avgCostPerTrace: 0,
+            agents: [], costTrend: [],
+          };
+        }
+
+        const oc = outcomeCosts[oId];
+        const directCost = entry.llmCost + entry.toolCost;
+        const infraCost = directCost * INFRA_OVERHEAD_RATE;
+        const totalCost = directCost + infraCost;
+
+        oc.llmCost += entry.llmCost;
+        oc.toolCost += entry.toolCost;
+        oc.infraCost += infraCost;
+        oc.totalCost += totalCost;
+        oc.traceCount += entry.traceCount;
+        oc.toolCallCount += entry.toolCallCount;
+        oc.totalTokens += entry.totalTokens;
+
+        oc.agents.push({
+          agentId: entry.agentId,
+          agentName: entry.agentName,
+          llmCost: Math.round(entry.llmCost * 10000) / 10000,
+          toolCost: Math.round(entry.toolCost * 10000) / 10000,
+          infraCost: Math.round((entry.llmCost + entry.toolCost) * INFRA_OVERHEAD_RATE * 10000) / 10000,
+          totalCost: Math.round((entry.llmCost + entry.toolCost) * (1 + INFRA_OVERHEAD_RATE) * 10000) / 10000,
+          traceCount: entry.traceCount,
+        });
+      }
+
+      const allMonths = new Set<string>();
+      for (const entry of Object.values(agentCosts)) {
+        for (const mk of Object.keys(entry.monthlyCosts)) allMonths.add(mk);
+      }
+      const sortedMonths = Array.from(allMonths).sort();
+
+      for (const oc of Object.values(outcomeCosts)) {
+        oc.avgCostPerTrace = oc.traceCount > 0 ? Math.round((oc.totalCost / oc.traceCount) * 10000) / 10000 : 0;
+        oc.totalCost = Math.round(oc.totalCost * 100) / 100;
+        oc.llmCost = Math.round(oc.llmCost * 100) / 100;
+        oc.toolCost = Math.round(oc.toolCost * 100) / 100;
+        oc.infraCost = Math.round(oc.infraCost * 100) / 100;
+
+        const agentIds = oc.agents.map(a => a.agentId);
+        oc.costTrend = sortedMonths.map(month => {
+          let llm = 0, tool = 0, infra = 0;
+          for (const aid of agentIds) {
+            const mc = agentCosts[aid]?.monthlyCosts[month];
+            if (mc) { llm += mc.llm; tool += mc.tool; infra += mc.infra; }
+          }
+          return {
+            month,
+            llm: Math.round(llm * 100) / 100,
+            tool: Math.round(tool * 100) / 100,
+            infra: Math.round(infra * 100) / 100,
+            total: Math.round((llm + tool + infra) * 100) / 100,
+          };
+        });
+      }
+
+      const outcomeList = Object.values(outcomeCosts).filter(o => o.outcomeId !== UNATTRIBUTED);
+      const unattributed = outcomeCosts[UNATTRIBUTED] || null;
+
+      const totalCost = outcomeList.reduce((s, o) => s + o.totalCost, 0) + (unattributed?.totalCost || 0);
+      const totalLlmCost = outcomeList.reduce((s, o) => s + o.llmCost, 0) + (unattributed?.llmCost || 0);
+      const totalToolCost = outcomeList.reduce((s, o) => s + o.toolCost, 0) + (unattributed?.toolCost || 0);
+      const totalInfraCost = outcomeList.reduce((s, o) => s + o.infraCost, 0) + (unattributed?.infraCost || 0);
+
+      res.json({
+        summary: {
+          totalCost: Math.round(totalCost * 100) / 100,
+          llmCost: Math.round(totalLlmCost * 100) / 100,
+          toolCost: Math.round(totalToolCost * 100) / 100,
+          infraCost: Math.round(totalInfraCost * 100) / 100,
+          totalTraces: filteredTraces.length,
+          avgCostPerTrace: filteredTraces.length > 0 ? Math.round((totalCost / filteredTraces.length) * 10000) / 10000 : 0,
+          infraOverheadRate: INFRA_OVERHEAD_RATE,
+          toolCallCostRate: TOOL_CALL_COST,
+          period,
+        },
+        outcomes: outcomeList,
+        unattributed,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message || "Failed to compute cost attribution" });
+    }
+  });
+
+  app.get("/api/billing/margin-analysis", async (req, res) => {
+    try {
+      const period = (req.query.period as string) || "90d";
+      const now = new Date();
+      let cutoff: Date | null = null;
+      if (period === "30d") cutoff = new Date(now.getTime() - 30 * 86400000);
+      else if (period === "90d") cutoff = new Date(now.getTime() - 90 * 86400000);
+
+      const allTraces = await storage.getTraces();
+      const filteredTraces = cutoff
+        ? allTraces.filter(t => t.startedAt && new Date(t.startedAt) >= cutoff!)
+        : allTraces;
+
+      const agents = await storage.getAgents();
+      const outcomes = await storage.getOutcomes();
+      const allInvoices = await storage.getInvoices();
+      const allEvents = await storage.getOutcomeEvents();
+      const agentMap = new Map(agents.map(a => [a.id, a]));
+      const outcomeMap = new Map(outcomes.map(o => [o.id, o]));
+
+      const INFRA_OVERHEAD_RATE = 0.15;
+      const TOOL_CALL_COST = 0.001;
+
+      const outcomeCostMap: Record<string, { llm: number; tool: number; traceCount: number; monthly: Record<string, { llm: number; tool: number }> }> = {};
+
+      for (const trace of filteredTraces) {
+        const agent = agentMap.get(trace.agentId);
+        const oId = agent?.outcomeId;
+        if (!oId) continue;
+
+        if (!outcomeCostMap[oId]) {
+          outcomeCostMap[oId] = { llm: 0, tool: 0, traceCount: 0, monthly: {} };
+        }
+        const entry = outcomeCostMap[oId];
+        entry.llm += trace.costUsd || 0;
+        const toolCalls = trace.toolCalls as any[] | null;
+        entry.tool += (Array.isArray(toolCalls) ? toolCalls.length : 0) * TOOL_CALL_COST;
+        entry.traceCount++;
+
+        if (trace.startedAt) {
+          const d = new Date(trace.startedAt);
+          const mk = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+          if (!entry.monthly[mk]) entry.monthly[mk] = { llm: 0, tool: 0 };
+          entry.monthly[mk].llm += trace.costUsd || 0;
+          entry.monthly[mk].tool += (Array.isArray(toolCalls) ? toolCalls.length : 0) * TOOL_CALL_COST;
+        }
+      }
+
+      const outcomeRevenueMap: Record<string, { total: number; monthly: Record<string, number> }> = {};
+      for (const inv of allInvoices) {
+        const oId = inv.outcomeId;
+        if (!oId) continue;
+        if (!outcomeRevenueMap[oId]) outcomeRevenueMap[oId] = { total: 0, monthly: {} };
+        outcomeRevenueMap[oId].total += inv.amount || 0;
+        if (inv.periodStart) {
+          const d = new Date(inv.periodStart);
+          const mk = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+          outcomeRevenueMap[oId].monthly[mk] = (outcomeRevenueMap[oId].monthly[mk] || 0) + (inv.amount || 0);
+        }
+      }
+
+      const allMonths = new Set<string>();
+      for (let m = 5; m >= 0; m--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - m, 1);
+        allMonths.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+      }
+      const sortedMonths = Array.from(allMonths).sort();
+
+      const outcomeMargins = outcomes.map(o => {
+        const costs = outcomeCostMap[o.id];
+        const revenue = outcomeRevenueMap[o.id];
+
+        const directCost = costs ? costs.llm + costs.tool : 0;
+        const infraCost = directCost * INFRA_OVERHEAD_RATE;
+        const totalCost = directCost + infraCost;
+        const totalRevenue = revenue?.total || 0;
+        const margin = totalRevenue - totalCost;
+        const marginPercent = totalRevenue > 0 ? (margin / totalRevenue) * 100 : (totalCost > 0 ? -100 : 0);
+
+        const trend = sortedMonths.map(month => {
+          const mCost = costs?.monthly[month];
+          const mDirectCost = mCost ? mCost.llm + mCost.tool : 0;
+          const mInfraCost = mDirectCost * INFRA_OVERHEAD_RATE;
+          const mTotalCost = mDirectCost + mInfraCost;
+          const mRevenue = revenue?.monthly[month] || 0;
+          const mMargin = mRevenue - mTotalCost;
+          const mMarginPct = mRevenue > 0 ? (mMargin / mRevenue) * 100 : (mTotalCost > 0 ? -100 : 0);
+          return {
+            month,
+            revenue: Math.round(mRevenue * 100) / 100,
+            cost: Math.round(mTotalCost * 100) / 100,
+            margin: Math.round(mMargin * 100) / 100,
+            marginPercent: Math.round(mMarginPct * 10) / 10,
+          };
+        });
+
+        const alerts: Array<{ type: string; severity: string; message: string }> = [];
+        if (totalRevenue > 0 && marginPercent < 0) {
+          alerts.push({ type: "negative_margin", severity: "critical", message: `Outcome "${o.name}" is operating at a loss (${marginPercent.toFixed(1)}% margin)` });
+        } else if (totalRevenue > 0 && marginPercent < 20) {
+          alerts.push({ type: "low_margin", severity: "warning", message: `Outcome "${o.name}" has thin margins (${marginPercent.toFixed(1)}%)` });
+        }
+
+        const recentTrend = trend.filter(t => t.revenue > 0 || t.cost > 0);
+        if (recentTrend.length >= 2) {
+          const prev = recentTrend[recentTrend.length - 2];
+          const curr = recentTrend[recentTrend.length - 1];
+          if (prev.marginPercent > 0 && curr.marginPercent < prev.marginPercent - 10) {
+            alerts.push({ type: "margin_erosion", severity: "warning", message: `Margin dropped ${(prev.marginPercent - curr.marginPercent).toFixed(1)}% month-over-month` });
+          }
+        }
+
+        const costBreakdown = {
+          llmCost: Math.round((costs?.llm || 0) * 100) / 100,
+          toolCost: Math.round((costs?.tool || 0) * 100) / 100,
+          infraCost: Math.round(infraCost * 100) / 100,
+        };
+
+        return {
+          outcomeId: o.id,
+          outcomeName: o.name,
+          revenue: Math.round(totalRevenue * 100) / 100,
+          costToServe: Math.round(totalCost * 100) / 100,
+          margin: Math.round(margin * 100) / 100,
+          marginPercent: Math.round(marginPercent * 10) / 10,
+          traceCount: costs?.traceCount || 0,
+          costBreakdown,
+          trend,
+          alerts,
+        };
+      });
+
+      const totalRevenue = outcomeMargins.reduce((s, o) => s + o.revenue, 0);
+      const totalCost = outcomeMargins.reduce((s, o) => s + o.costToServe, 0);
+      const overallMargin = totalRevenue - totalCost;
+      const overallMarginPercent = totalRevenue > 0 ? (overallMargin / totalRevenue) * 100 : 0;
+
+      const allAlerts = outcomeMargins.flatMap(o => o.alerts);
+
+      const monthlyMargin = sortedMonths.map(month => {
+        const mRevenue = outcomeMargins.reduce((s, o) => {
+          const mt = o.trend.find(t => t.month === month);
+          return s + (mt?.revenue || 0);
+        }, 0);
+        const mCost = outcomeMargins.reduce((s, o) => {
+          const mt = o.trend.find(t => t.month === month);
+          return s + (mt?.cost || 0);
+        }, 0);
+        return {
+          month,
+          revenue: Math.round(mRevenue * 100) / 100,
+          cost: Math.round(mCost * 100) / 100,
+          margin: Math.round((mRevenue - mCost) * 100) / 100,
+          marginPercent: mRevenue > 0 ? Math.round(((mRevenue - mCost) / mRevenue) * 1000) / 10 : 0,
+        };
+      });
+
+      res.json({
+        summary: {
+          totalRevenue: Math.round(totalRevenue * 100) / 100,
+          totalCost: Math.round(totalCost * 100) / 100,
+          overallMargin: Math.round(overallMargin * 100) / 100,
+          overallMarginPercent: Math.round(overallMarginPercent * 10) / 10,
+          outcomeCount: outcomes.length,
+          alertCount: allAlerts.length,
+        },
+        outcomes: outcomeMargins.sort((a, b) => a.marginPercent - b.marginPercent),
+        monthlyMargin,
+        alerts: allAlerts,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message || "Failed to compute margin analysis" });
+    }
+  });
+
+  app.get("/api/billing/margin-alerts", async (req, res) => {
+    try {
+      const period = (req.query.period as string) || "90d";
+      const now = new Date();
+      let cutoff: Date | null = null;
+      if (period === "30d") cutoff = new Date(now.getTime() - 30 * 86400000);
+      else if (period === "90d") cutoff = new Date(now.getTime() - 90 * 86400000);
+
+      const agents = await storage.getAgents();
+      const outcomes = await storage.getOutcomes();
+      const rawTraces = await storage.getTraces();
+      const allTraces = cutoff ? rawTraces.filter(t => t.startedAt && new Date(t.startedAt) >= cutoff!) : rawTraces;
+      const allInvoices = await storage.getInvoices();
+      const agentMap = new Map(agents.map(a => [a.id, a]));
+
+      const INFRA_OVERHEAD_RATE = 0.15;
+      const TOOL_CALL_COST = 0.001;
+
+      const alerts: Array<{
+        outcomeId: string; outcomeName: string; type: string; severity: string; message: string;
+        currentMargin: number; recommendedAction: string;
+      }> = [];
+
+      for (const outcome of outcomes) {
+        const outcomeAgents = agents.filter(a => a.outcomeId === outcome.id);
+        const agentIds = new Set(outcomeAgents.map(a => a.id));
+
+        const outcomeTraces = allTraces.filter(t => agentIds.has(t.agentId));
+        let totalCost = 0;
+        for (const t of outcomeTraces) {
+          const llm = t.costUsd || 0;
+          const toolCalls = t.toolCalls as any[] | null;
+          const tool = (Array.isArray(toolCalls) ? toolCalls.length : 0) * TOOL_CALL_COST;
+          totalCost += (llm + tool) * (1 + INFRA_OVERHEAD_RATE);
+        }
+
+        const outcomeInvoices = allInvoices.filter(inv => inv.outcomeId === outcome.id);
+        const totalRevenue = outcomeInvoices.reduce((s, inv) => s + (inv.amount || 0), 0);
+
+        const margin = totalRevenue - totalCost;
+        const marginPct = totalRevenue > 0 ? (margin / totalRevenue) * 100 : (totalCost > 0 ? -100 : 0);
+
+        if (totalRevenue > 0 && marginPct < 0) {
+          alerts.push({
+            outcomeId: outcome.id, outcomeName: outcome.name,
+            type: "negative_margin", severity: "critical",
+            message: `Operating at a loss: ${marginPct.toFixed(1)}% margin ($${Math.abs(margin).toFixed(2)} loss)`,
+            currentMargin: Math.round(marginPct * 10) / 10,
+            recommendedAction: "Immediate review required: consider model downgrade, prompt compression, or price increase",
+          });
+        } else if (totalRevenue > 0 && marginPct < 20) {
+          alerts.push({
+            outcomeId: outcome.id, outcomeName: outcome.name,
+            type: "low_margin", severity: "warning",
+            message: `Thin margins at ${marginPct.toFixed(1)}%`,
+            currentMargin: Math.round(marginPct * 10) / 10,
+            recommendedAction: "Consider cost optimization patches: model downgrade for low-complexity tasks, token budget reduction",
+          });
+        }
+
+        if (totalCost > 0 && totalRevenue === 0) {
+          alerts.push({
+            outcomeId: outcome.id, outcomeName: outcome.name,
+            type: "no_revenue", severity: "warning",
+            message: `$${totalCost.toFixed(2)} in costs with no invoiced revenue`,
+            currentMargin: -100,
+            recommendedAction: "Review billing configuration: ensure outcome events are being generated and invoiced",
+          });
+        }
+      }
+
+      res.json({
+        alerts: alerts.sort((a, b) => {
+          const sevOrder: Record<string, number> = { critical: 0, warning: 1, info: 2 };
+          return (sevOrder[a.severity] || 2) - (sevOrder[b.severity] || 2);
+        }),
+        totalAlerts: alerts.length,
+        criticalCount: alerts.filter(a => a.severity === "critical").length,
+        warningCount: alerts.filter(a => a.severity === "warning").length,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message || "Failed to compute margin alerts" });
     }
   });
 
@@ -8202,7 +8690,116 @@ Eval Suites: ${evalSuites.length} configured`,
         }
       }
 
-      // Insert new recommendations
+      const allTraces = await storage.getTraces();
+      const allInvoices = await storage.getInvoices();
+      const outcomes = await storage.getOutcomes();
+      const INFRA_OVERHEAD_RATE = 0.15;
+      const TOOL_CALL_COST_RATE = 0.001;
+
+      for (const outcome of outcomes) {
+        const outcomeAgents = allAgents.filter(a => a.outcomeId === outcome.id);
+        if (outcomeAgents.length === 0) continue;
+
+        const agentIds = new Set(outcomeAgents.map(a => a.id));
+        const outcomeTraces = allTraces.filter(t => agentIds.has(t.agentId));
+
+        let totalLlmCost = 0;
+        let totalToolCost = 0;
+        let totalToolCalls = 0;
+        let totalTokens = 0;
+
+        for (const t of outcomeTraces) {
+          totalLlmCost += t.costUsd || 0;
+          const toolCalls = t.toolCalls as any[] | null;
+          const tcCount = Array.isArray(toolCalls) ? toolCalls.length : 0;
+          totalToolCalls += tcCount;
+          totalToolCost += tcCount * TOOL_CALL_COST_RATE;
+          const tokenUsage = t.tokenUsage as { total_tokens?: number } | null;
+          if (tokenUsage) totalTokens += tokenUsage.total_tokens || 0;
+        }
+
+        const directCost = totalLlmCost + totalToolCost;
+        const totalCost = directCost * (1 + INFRA_OVERHEAD_RATE);
+        const outcomeInvoices = allInvoices.filter(inv => inv.outcomeId === outcome.id);
+        const totalRevenue = outcomeInvoices.reduce((s, inv) => s + (inv.amount || 0), 0);
+        const margin = totalRevenue - totalCost;
+        const marginPct = totalRevenue > 0 ? (margin / totalRevenue) * 100 : (totalCost > 0 ? -100 : 0);
+        const avgCostPerTrace = outcomeTraces.length > 0 ? totalCost / outcomeTraces.length : 0;
+
+        if (totalRevenue > 0 && marginPct < 20) {
+          for (const agent of outcomeAgents) {
+            const hasExistingCostReduction = existingRecs.some(
+              r => r.agentId === agent.id && r.source === "cost_reduction" && r.status === "pending"
+            );
+            if (hasExistingCostReduction) continue;
+
+            const agentTraces = outcomeTraces.filter(t => t.agentId === agent.id);
+            let agentLlmCost = 0;
+            let agentToolCalls = 0;
+            let agentTokens = 0;
+            for (const t of agentTraces) {
+              agentLlmCost += t.costUsd || 0;
+              const tc = t.toolCalls as any[] | null;
+              agentToolCalls += Array.isArray(tc) ? tc.length : 0;
+              const tu = t.tokenUsage as { total_tokens?: number } | null;
+              if (tu) agentTokens += tu.total_tokens || 0;
+            }
+            const agentToolCost = agentToolCalls * TOOL_CALL_COST_RATE;
+            const agentTotalCost = (agentLlmCost + agentToolCost) * (1 + INFRA_OVERHEAD_RATE);
+            const agentAvgCostPerRun = agentTraces.length > 0 ? agentTotalCost / agentTraces.length : 0;
+            const toolCostShare = agentTotalCost > 0 ? (agentToolCost / agentTotalCost) * 100 : 0;
+            const avgTokensPerRun = agentTraces.length > 0 ? agentTokens / agentTraces.length : 0;
+
+            const strategies: string[] = [];
+            let recType = "model_swap";
+            let recTitle = "";
+            let recDescription = "";
+            const estimatedSavingsPct = marginPct < 0 ? 40 : marginPct < 10 ? 30 : 20;
+            const estimatedCostSavings = Math.round(agentTotalCost * (estimatedSavingsPct / 100) * 100) / 100;
+            const projectedMargin = totalRevenue > 0 ? Math.round(((margin + estimatedCostSavings) / totalRevenue) * 1000) / 10 : 0;
+
+            if (toolCostShare > 40) {
+              recType = "workflow_optimization";
+              recTitle = `Reduce tool call costs for ${agent.name}`;
+              recDescription = `Tool calls account for ${toolCostShare.toFixed(0)}% of costs (${agentToolCalls} calls). Batch or cache tool invocations to reduce per-run cost from $${agentAvgCostPerRun.toFixed(4)} by ~${estimatedSavingsPct}%.`;
+              strategies.push("tool_call_batching", "tool_result_caching", "reduce_redundant_calls");
+            } else if (avgTokensPerRun > 4000) {
+              recType = "prompt_optimization";
+              recTitle = `Compress prompts for ${agent.name}`;
+              recDescription = `High token usage (${Math.round(avgTokensPerRun)} tokens/run avg). Prompt compression or context budget reduction can lower LLM costs by ~${estimatedSavingsPct}%.`;
+              strategies.push("prompt_compression", "context_budget_reduction", "few_shot_pruning");
+            } else {
+              recType = "model_swap";
+              recTitle = `Downgrade model for ${agent.name}`;
+              recDescription = `Cost-per-run is $${agentAvgCostPerRun.toFixed(4)} contributing to ${marginPct.toFixed(1)}% outcome margin. A model downgrade can save ~${estimatedSavingsPct}% while maintaining acceptable quality.`;
+              strategies.push("model_downgrade", "response_caching", "token_budget_reduction");
+            }
+
+            newRecs.push({
+              agentId: agent.id,
+              source: "cost_reduction",
+              type: recType,
+              title: recTitle,
+              description: recDescription,
+              severity: marginPct < 0 ? "critical" : marginPct < 10 ? "high" : "medium",
+              status: "pending",
+              impact: `Estimated savings: $${estimatedCostSavings.toFixed(2)}/period. Projected margin improvement: ${marginPct.toFixed(1)}% → ${projectedMargin.toFixed(1)}%`,
+              suggestedChanges: {
+                action: "cost_reduction",
+                category: "cost_reduction",
+                outcomeId: outcome.id,
+                outcomeName: outcome.name,
+                currentMarginPercent: Math.round(marginPct * 10) / 10,
+                estimatedCostSavings,
+                marginImpact: `${marginPct.toFixed(1)}% → ${projectedMargin.toFixed(1)}%`,
+                costPerRun: Math.round(agentAvgCostPerRun * 10000) / 10000,
+                strategies,
+              },
+            });
+          }
+        }
+      }
+
       const created = [];
       for (const rec of newRecs) {
         const result = await storage.createImprovementRecommendation(rec);
@@ -11015,14 +11612,39 @@ Analyze and respond in JSON:
 
       const recommendations = await storage.getImprovementRecommendationsByAgent(agentId);
       const driftSignals = recommendations.filter(r => r.source === "drift" || r.severity === "high" || r.severity === "critical");
+      const costReductionSignals = recommendations.filter(r => r.source === "cost_reduction");
       const evalSuites = await storage.getEvalsByAgent(agentId);
+
+      let marginContext = "";
+      if (agent.outcomeId) {
+        const allAgents = await storage.getAgents();
+        const allTraces = await storage.getTraces();
+        const allInvoices = await storage.getInvoices();
+        const INFRA_RATE = 0.15;
+        const TOOL_RATE = 0.001;
+        const outcomeAgents = allAgents.filter(a => a.outcomeId === agent.outcomeId);
+        const oAgentIds = new Set(outcomeAgents.map(a => a.id));
+        const oTraces = allTraces.filter(t => oAgentIds.has(t.agentId));
+        let oCost = 0;
+        for (const t of oTraces) {
+          const llm = t.costUsd || 0;
+          const tc = t.toolCalls as any[] | null;
+          const tool = (Array.isArray(tc) ? tc.length : 0) * TOOL_RATE;
+          oCost += (llm + tool) * (1 + INFRA_RATE);
+        }
+        const oInvoices = allInvoices.filter(inv => inv.outcomeId === agent.outcomeId);
+        const oRevenue = oInvoices.reduce((s, inv) => s + (inv.amount || 0), 0);
+        const oMargin = oRevenue > 0 ? ((oRevenue - oCost) / oRevenue) * 100 : -100;
+        marginContext = `\nOutcome Margin: ${oMargin.toFixed(1)}% (Revenue: $${oRevenue.toFixed(2)}, Cost: $${oCost.toFixed(2)})`;
+        if (oMargin < 20) marginContext += ` [MARGIN ALERT: Below 20% threshold - prioritize cost reduction patches]`;
+      }
 
       const response = await openai.chat.completions.create({
         model: "gpt-4.1",
         messages: [
           {
             role: "system",
-            content: `You are an autonomous agent optimization engine. Based on agent performance data, drift signals, and evaluation results, generate candidate patches that could improve the agent. Each patch is a self-contained change proposal.
+            content: `You are an autonomous agent optimization engine. Based on agent performance data, drift signals, margin analysis, and evaluation results, generate candidate patches that could improve the agent. Each patch is a self-contained change proposal.
 
 Return a JSON array of 2-4 patch proposals. Each patch must have:
 - changeType: one of "prompt_tweak", "retrieval_change", "tool_retry_fallback", "model_upgrade_downgrade", "cost_cap_tuning"
@@ -11031,9 +11653,13 @@ Return a JSON array of 2-4 patch proposals. Each patch must have:
 - diff: JSON object describing the change (before/after config)
 - expectedKpiImpact: expected improvement description
 - expectedCostImpact: cost change description (e.g. "-12% cost/run" or "+$0.01/run for better quality")
+- estimatedCostSavings: number (estimated dollar savings per period, e.g. 45.00)
+- marginImpact: string describing projected margin change (e.g. "15.2% → 28.4%")
 - riskLevel: "low", "medium", "high", or "critical"
 - requiredApprovals: number (0 for low risk, 1 for medium, 2+ for high/critical)
 - rolloutPlan: JSON with strategy ("canary"/"shadow"/"direct"), trafficPercent, duration
+
+When margin is below 20%, prioritize cost reduction patches (model downgrade, prompt compression, tool call optimization).
 
 SAFETY CONSTRAINTS:
 - Cannot propose expanding tool permissions (requires explicit approval)
@@ -11049,8 +11675,9 @@ Return ONLY valid JSON array.`,
 Success Rate: ${((agent.successRate || 0) * 100).toFixed(1)}%
 Avg Latency: ${agent.avgLatencyMs || 0}ms
 Cost/Run: $${agent.costPerRun || 0}
-Health Score: ${agent.healthScore || 0}
+Health Score: ${agent.healthScore || 0}${marginContext}
 Drift Signals: ${JSON.stringify(driftSignals.slice(0, 5))}
+Cost Reduction Signals: ${JSON.stringify(costReductionSignals.slice(0, 3).map(r => ({ type: r.type, title: r.title, severity: r.severity, suggestedChanges: r.suggestedChanges })))}
 Recent Recommendations: ${JSON.stringify(recommendations.slice(0, 3).map(r => ({ type: r.type, title: r.title, severity: r.severity })))}
 Eval Suites: ${evalSuites.length} configured`,
           },
@@ -11090,17 +11717,183 @@ Eval Suites: ${evalSuites.length} configured`,
             source: "ai_generated",
             driftSignalCount: driftSignals.length,
             recommendationCount: recommendations.length,
+            estimatedCostSavings: p.estimatedCostSavings || null,
+            marginImpact: p.marginImpact || null,
             generatedAt: new Date().toISOString(),
           },
           status: "proposed",
         });
-        createdPatches.push(patch);
+        createdPatches.push({
+          ...patch,
+          estimatedCostSavings: p.estimatedCostSavings || null,
+          marginImpact: p.marginImpact || null,
+        });
       }
 
       res.json({ patches: createdPatches, generated: createdPatches.length });
     } catch (e: any) {
       console.error("AI patch generation error:", e);
       res.status(500).json({ message: e.message || "Failed to generate patches" });
+    }
+  });
+
+  app.post("/api/recommendations/generate-cost-optimizations", async (_req, res) => {
+    try {
+      const agents = await storage.getAgents();
+      const outcomes = await storage.getOutcomes();
+      const allTraces = await storage.getTraces();
+      const allInvoices = await storage.getInvoices();
+      const existingRecs = await storage.getImprovementRecommendations();
+
+      const INFRA_OVERHEAD_RATE = 0.15;
+      const TOOL_CALL_COST = 0.001;
+
+      const generatedRecs: any[] = [];
+      const generatedPatches: any[] = [];
+
+      for (const outcome of outcomes) {
+        const outcomeAgents = agents.filter(a => a.outcomeId === outcome.id);
+        if (outcomeAgents.length === 0) continue;
+
+        const agentIds = new Set(outcomeAgents.map(a => a.id));
+        const outcomeTraces = allTraces.filter(t => agentIds.has(t.agentId));
+
+        let totalCost = 0;
+        let totalToolCalls = 0;
+        let totalTokens = 0;
+
+        for (const t of outcomeTraces) {
+          const llm = t.costUsd || 0;
+          const tc = t.toolCalls as any[] | null;
+          const tcCount = Array.isArray(tc) ? tc.length : 0;
+          totalToolCalls += tcCount;
+          const tool = tcCount * TOOL_CALL_COST;
+          totalCost += (llm + tool) * (1 + INFRA_OVERHEAD_RATE);
+          const tu = t.tokenUsage as { total_tokens?: number } | null;
+          if (tu) totalTokens += tu.total_tokens || 0;
+        }
+
+        const outcomeInvoices = allInvoices.filter(inv => inv.outcomeId === outcome.id);
+        const totalRevenue = outcomeInvoices.reduce((s, inv) => s + (inv.amount || 0), 0);
+        const marginPct = totalRevenue > 0 ? ((totalRevenue - totalCost) / totalRevenue) * 100 : (totalCost > 0 ? -100 : 0);
+
+        if (!(totalRevenue > 0 && marginPct < 20)) continue;
+
+        for (const agent of outcomeAgents) {
+          const hasPending = existingRecs.some(
+            r => r.agentId === agent.id && r.source === "cost_reduction" && r.status === "pending"
+          );
+          if (hasPending) continue;
+
+          const agentTraces = outcomeTraces.filter(t => t.agentId === agent.id);
+          if (agentTraces.length === 0) continue;
+
+          let agentLlm = 0, agentToolCalls = 0, agentTokens = 0;
+          for (const t of agentTraces) {
+            agentLlm += t.costUsd || 0;
+            const tc = t.toolCalls as any[] | null;
+            agentToolCalls += Array.isArray(tc) ? tc.length : 0;
+            const tu = t.tokenUsage as { total_tokens?: number } | null;
+            if (tu) agentTokens += tu.total_tokens || 0;
+          }
+          const agentCost = (agentLlm + agentToolCalls * TOOL_CALL_COST) * (1 + INFRA_OVERHEAD_RATE);
+          const avgCostPerRun = agentCost / agentTraces.length;
+          const toolShare = agentCost > 0 ? ((agentToolCalls * TOOL_CALL_COST) / agentCost) * 100 : 0;
+          const avgTokens = agentTokens / agentTraces.length;
+
+          const savingsPct = marginPct < 0 ? 40 : marginPct < 10 ? 30 : 20;
+          const estimatedSavings = Math.round(agentCost * (savingsPct / 100) * 100) / 100;
+          const projectedMargin = totalRevenue > 0 ? Math.round(((totalRevenue - totalCost + estimatedSavings) / totalRevenue) * 1000) / 10 : 0;
+
+          let recType: string, title: string, description: string;
+          const strategies: string[] = [];
+
+          if (toolShare > 40) {
+            recType = "workflow_optimization";
+            title = `Reduce tool call costs for ${agent.name}`;
+            description = `Tool calls account for ${toolShare.toFixed(0)}% of costs. Batch or cache tool invocations to reduce costs by ~${savingsPct}%.`;
+            strategies.push("tool_call_batching", "tool_result_caching", "reduce_redundant_calls");
+          } else if (avgTokens > 4000) {
+            recType = "prompt_optimization";
+            title = `Compress prompts for ${agent.name}`;
+            description = `High token usage (${Math.round(avgTokens)} tokens/run). Prompt compression can lower LLM costs by ~${savingsPct}%.`;
+            strategies.push("prompt_compression", "context_budget_reduction", "few_shot_pruning");
+          } else {
+            recType = "model_swap";
+            title = `Downgrade model for ${agent.name}`;
+            description = `Cost-per-run is $${avgCostPerRun.toFixed(4)} contributing to ${marginPct.toFixed(1)}% margin. Model downgrade can save ~${savingsPct}%.`;
+            strategies.push("model_downgrade", "response_caching", "token_budget_reduction");
+          }
+
+          const rec = await storage.createImprovementRecommendation({
+            agentId: agent.id,
+            source: "cost_reduction",
+            type: recType,
+            title,
+            description,
+            severity: marginPct < 0 ? "critical" : marginPct < 10 ? "high" : "medium",
+            status: "pending",
+            impact: `Estimated savings: $${estimatedSavings.toFixed(2)}/period. Margin: ${marginPct.toFixed(1)}% → ${projectedMargin.toFixed(1)}%`,
+            suggestedChanges: {
+              action: "cost_reduction",
+              category: "cost_reduction",
+              outcomeId: outcome.id,
+              outcomeName: outcome.name,
+              currentMarginPercent: Math.round(marginPct * 10) / 10,
+              estimatedCostSavings: estimatedSavings,
+              marginImpact: `${marginPct.toFixed(1)}% → ${projectedMargin.toFixed(1)}%`,
+              costPerRun: Math.round(avgCostPerRun * 10000) / 10000,
+              strategies,
+            },
+          });
+          generatedRecs.push(rec);
+
+          const changeTypeMap: Record<string, string> = {
+            model_swap: "model_upgrade_downgrade",
+            prompt_optimization: "prompt_tweak",
+            workflow_optimization: "cost_cap_tuning",
+          };
+
+          const patch = await storage.createPatch({
+            agentId: agent.id,
+            changeType: changeTypeMap[recType] || "cost_cap_tuning",
+            title: `Cost optimization: ${title}`,
+            description: `${description} Triggered by margin alert (${marginPct.toFixed(1)}% margin on outcome "${outcome.name}").`,
+            diff: {
+              before: { costPerRun: avgCostPerRun.toFixed(4), strategies: [] },
+              after: { costPerRun: (avgCostPerRun * (1 - savingsPct / 100)).toFixed(4), strategies },
+            },
+            expectedKpiImpact: "Minimal quality impact expected with targeted cost optimization",
+            expectedCostImpact: `-${savingsPct}% cost/run ($${estimatedSavings.toFixed(2)} total savings)`,
+            riskLevel: marginPct < 0 ? "medium" : "low",
+            requiredApprovals: marginPct < 0 ? 1 : 0,
+            rolloutPlan: { strategy: "canary", startPercent: 10, stepPercent: 20, maxErrorRate: 5, successThreshold: 95 },
+            evidenceBundle: {
+              source: "margin_alert_auto",
+              outcomeId: outcome.id,
+              currentMarginPercent: Math.round(marginPct * 10) / 10,
+              estimatedCostSavings: estimatedSavings,
+              marginImpact: `${marginPct.toFixed(1)}% → ${projectedMargin.toFixed(1)}%`,
+              generatedAt: new Date().toISOString(),
+            },
+            status: "proposed",
+          });
+          generatedPatches.push({
+            ...patch,
+            estimatedCostSavings: estimatedSavings,
+            marginImpact: `${marginPct.toFixed(1)}% → ${projectedMargin.toFixed(1)}%`,
+          });
+        }
+      }
+
+      res.json({
+        generated: generatedRecs.length,
+        recommendations: generatedRecs,
+        patches: generatedPatches,
+        patchesGenerated: generatedPatches.length,
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to generate cost optimization recommendations" });
     }
   });
 

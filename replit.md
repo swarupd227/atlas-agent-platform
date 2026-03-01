@@ -72,6 +72,11 @@ The Nous Agent Orchestrator utilizes a modern web stack with React, Vite, Tailwi
 - **Shadow Replay Validation Gate**: Creates shadow replay jobs linked to healing pipelines to validate remediation. Server-side gate blocks experiment→verified transition if replay is running or failed. Auto-triggers on remediation stage transition when agent has traces.
 - **Context Engineering Auto-Adjustment**: Analyzes failure patterns to recommend and apply context priority and token allocation changes. Auto-generates recommendations when root cause is context-related (`knowledge_base_staleness`, `knowledge_gap`, `context_window_overflow`, `prompt_degradation`).
 - **Healing Intelligence Summary**: Provides a top-level summary of root cause classification, shadow replay status (with auto-triggered badge), context adjustment status, and connected subsystem links for healing pipelines.
+- **Cost Attribution Chain**: Full cost-to-serve analysis aggregating LLM token costs + MCP tool call costs + infrastructure overhead (15%) per agent, per outcome. `GET /api/billing/cost-attribution` with period filtering (30d/90d/all).
+- **Margin Analysis Dashboard**: Revenue vs cost-to-serve per outcome with monthly trend analysis. `GET /api/billing/margin-analysis` computes margin %, flags outcomes below 20% margin or with month-over-month erosion. "Margins" tab in billing page with summary cards, trend chart, cost breakdown donut, per-outcome table, and alert cards.
+- **Margin Alerts**: `GET /api/billing/margin-alerts` identifies negative margins, thin margins (<20%), and margin erosion with recommended actions.
+- **Cost Optimization Patches**: `POST /api/recommendations/generate` extended with `cost_reduction` category. `POST /api/ai/generate-patches` includes margin context and `estimatedCostSavings`/`marginImpact` fields. `POST /api/recommendations/generate-cost-optimizations` auto-generates patches for outcomes with poor margins.
+- **Metering Dashboard Cost Integration**: `GET /api/billing/metering-dashboard` response includes `costToServe`, `margin`, `marginPercent` per outcome and `monthlyMargin` trend data.
 
 ## External Dependencies
 - **OpenAI**: Used for TTS narration, AI skill generation/enhancement, conversational design, and other AI features.
