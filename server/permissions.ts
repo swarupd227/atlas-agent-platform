@@ -182,10 +182,119 @@ const FINANCIAL_KEYS = ["costUsd", "amount", "revenue", "revenueExposure", "unit
 const SENSITIVE_KEYS = ["evidenceJson", "constraintsJson", "payload", "policyJson", "diff", "evidenceBundle", "toolsConfig", "permissionsConfig"];
 const IDENTITY_KEYS = ["actorId", "requestedBy", "decidedBy", "approvedBy", "owner", "submittedBy", "signedBy"];
 
+export interface OntologySensitivityEntry {
+  conceptId: string;
+  label: string;
+  level: string;
+  dataTypes: string[];
+  redactionRequired: boolean;
+  retentionDays: number | null;
+}
+
+let cachedOntologySensitivityKeys: { keys: string[]; entries: OntologySensitivityEntry[]; cachedAt: number } | null = null;
+const SENSITIVITY_CACHE_TTL_MS = 60_000;
+
+export async function getOntologySensitivityKeys(): Promise<{ keys: string[]; entries: OntologySensitivityEntry[] }> {
+  if (cachedOntologySensitivityKeys && Date.now() - cachedOntologySensitivityKeys.cachedAt < SENSITIVITY_CACHE_TTL_MS) {
+    return { keys: cachedOntologySensitivityKeys.keys, entries: cachedOntologySensitivityKeys.entries };
+  }
+
+  try {
+    const { storage } = await import("./storage");
+    const allConcepts = await storage.getAllOntologyConcepts();
+    const keys: string[] = [];
+    const entries: OntologySensitivityEntry[] = [];
+
+    for (const concept of allConcepts) {
+      const sc = concept.sensitivityClassification as any;
+      if (!sc || !sc.redactionRequired) continue;
+
+      const dataTypes: string[] = Array.isArray(sc.dataTypes) ? sc.dataTypes : [];
+      keys.push(...dataTypes);
+
+      entries.push({
+        conceptId: concept.id,
+        label: concept.label,
+        level: sc.level || "internal",
+        dataTypes,
+        redactionRequired: sc.redactionRequired,
+        retentionDays: sc.retentionDays ?? null,
+      });
+    }
+
+    cachedOntologySensitivityKeys = { keys, entries, cachedAt: Date.now() };
+    return { keys, entries };
+  } catch {
+    return { keys: [], entries: [] };
+  }
+}
+
+export function invalidateOntologySensitivityCache() {
+  cachedOntologySensitivityKeys = null;
+}
+
+export function redactWithOntologyKeys(data: any, level: RedactionLevel, ontologyKeys: string[]): any {
+  if (level === "R0") return data;
+  if (data === null || data === undefined) return data;
+  if (typeof data !== "object") return data;
+
+  if (Array.isArray(data)) {
+    return data.map(item => redactWithOntologyKeys(item, level, ontologyKeys));
+  }
+
+  const result: Record<string, any> = {};
+  const ontologyKeysLower = ontologyKeys.map(k => k.toLowerCase());
+
+  for (const [key, value] of Object.entries(data)) {
+    const keyLower = key.toLowerCase();
+
+    if (ontologyKeysLower.some(ok => keyLower.includes(ok) || ok.includes(keyLower))) {
+      result[key] = "[ONTOLOGY_SENSITIVE_REDACTED]";
+      continue;
+    }
+
+    if (level === "R1" || level === "R2") {
+      if (IDENTITY_KEYS.includes(key) && typeof value === "string") {
+        result[key] = "[PII_REDACTED]";
+        continue;
+      }
+      if (typeof value === "string") {
+        let redacted = value;
+        for (const pattern of PII_PATTERNS) {
+          redacted = redacted.replace(new RegExp(pattern.source, pattern.flags), "[PII_REDACTED]");
+        }
+        result[key] = redacted;
+        continue;
+      }
+    }
+
+    if (level === "R2") {
+      if (FINANCIAL_KEYS.includes(key)) {
+        result[key] = "[FINANCIAL_REDACTED]";
+        continue;
+      }
+      if (SENSITIVE_KEYS.includes(key)) {
+        result[key] = "[SENSITIVE_REDACTED]";
+        continue;
+      }
+    }
+
+    if (typeof value === "object" && value !== null) {
+      result[key] = redactWithOntologyKeys(value, level, ontologyKeys);
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
 export function redactPayload(data: any, level: RedactionLevel): any {
   if (level === "R0") return data;
   if (data === null || data === undefined) return data;
   if (typeof data !== "object") return data;
+
+  const ontologyKeys = cachedOntologySensitivityKeys?.keys || [];
+  const ontologyKeysLower = ontologyKeys.map(k => k.toLowerCase());
 
   if (Array.isArray(data)) {
     return data.map(item => redactPayload(item, level));
@@ -193,6 +302,14 @@ export function redactPayload(data: any, level: RedactionLevel): any {
 
   const result: Record<string, any> = {};
   for (const [key, value] of Object.entries(data)) {
+    if (ontologyKeysLower.length > 0) {
+      const keyLower = key.toLowerCase();
+      if (ontologyKeysLower.some(ok => keyLower.includes(ok) || ok.includes(keyLower))) {
+        result[key] = "[ONTOLOGY_SENSITIVE_REDACTED]";
+        continue;
+      }
+    }
+
     if (level === "R1" || level === "R2") {
       if (IDENTITY_KEYS.includes(key) && typeof value === "string") {
         result[key] = "[PII_REDACTED]";

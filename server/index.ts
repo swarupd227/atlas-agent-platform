@@ -123,6 +123,11 @@ app.use((req, res, next) => {
     () => {
       log(`serving on port ${port}`);
       serverReady = true;
+      import("./permissions").then(({ getOntologySensitivityKeys }) => {
+        getOntologySensitivityKeys().then(({ keys }) => {
+          if (keys.length > 0) log(`Primed ontology sensitivity cache with ${keys.length} keys`);
+        }).catch(() => {});
+      });
       setTimeout(() => {
         autoResumeRuntimes().catch(err => {
           console.error("[startup] Failed to auto-resume agent runtimes:", err.message);

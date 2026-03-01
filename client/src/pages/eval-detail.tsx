@@ -521,6 +521,16 @@ export default function EvalDetail() {
                 KPI-Aligned
               </Badge>
             )}
+            {(() => {
+              const ontologyMandatedCases = testCases?.filter(tc => tc.origin === "ontology_regulation") || [];
+              if (ontologyMandatedCases.length === 0) return null;
+              return (
+                <Badge variant="outline" className="text-[11px] bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20" data-testid="badge-ontology-mandated">
+                  <Shield className="w-3 h-3 mr-1" />
+                  {ontologyMandatedCases.length} Ontology-Mandated
+                </Badge>
+              );
+            })()}
           </div>
         </div>
         <Button

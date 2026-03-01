@@ -10,7 +10,7 @@ import { startWorker, jobEvents } from "./worker";
 import { executePromptWithMcp, executeTeamPipeline, executeKGQueryTemplate, startAgentRuntime, stopAgentRuntime, getActiveRuntimes, isRuntimeActive, runtimeEvents, type RuntimeAgent } from "./agent-runtime";
 import OpenAI, { toFile } from "openai";
 import multer from "multer";
-import { checkPermission, getRequestRole, getTraceRedactionLevel, getRedactionLevel, redactPayload } from "./permissions";
+import { checkPermission, getRequestRole, getTraceRedactionLevel, getRedactionLevel, redactPayload, getOntologySensitivityKeys, invalidateOntologySensitivityCache, redactWithOntologyKeys } from "./permissions";
 import { registerKnowledgeBaseRoutes } from "./kb-routes";
 import adobeAnalyticsRouter from "./mock-mcp/adobe-analytics";
 import marketoRouter from "./mock-mcp/marketo";
@@ -521,7 +521,46 @@ async function generateKpiAlignedEvalSuite(agentId: string, outcomeId: string): 
   const agent = await storage.getAgent(agentId);
   if (!agent) return null;
 
-  const testCases: Array<{ name: string; inputData: unknown; expectedOutput: unknown; tags: string[]; weight: number; origin: string; severity: string }> = [];
+  const testCases: Array<{ name: string; inputData: unknown; expectedOutput: unknown; tags: string[]; weight: number; origin: string; severity: string; locked?: boolean; regulationRef?: string }> = [];
+
+  const ontologyTags = Array.isArray(agent.ontologyTags) ? (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string; category?: string }>) : [];
+  for (const tag of ontologyTags) {
+    try {
+      const concept = await storage.getOntologyConcept(tag.conceptId);
+      if (!concept) continue;
+      const regs = Array.isArray(concept.linkedRegulations) ? (concept.linkedRegulations as Array<{ id?: string; ref?: string; name?: string; section?: string; description?: string }>) : [];
+      for (const reg of regs) {
+        const regRef = reg.ref || reg.id || reg.name || "Unknown";
+        const regSection = reg.section || "";
+        const regDesc = reg.description || reg.name || regRef;
+        const regLabel = regSection ? `[${regRef} ${regSection}]` : `[${regRef}]`;
+
+        testCases.push({
+          name: `${regLabel} ${regDesc} - Compliance Boundary`,
+          inputData: {
+            type: "ontology_regulation_test",
+            conceptId: tag.conceptId,
+            conceptLabel: tag.conceptLabel,
+            regulation: regRef,
+            section: regSection,
+            scenario: `Verify compliant behavior under ${regRef} requirements for ${tag.conceptLabel}`,
+          },
+          expectedOutput: {
+            compliant: true,
+            regulationRef: regRef,
+            expectedBehavior: `Agent must comply with ${regRef} requirements when handling ${tag.conceptLabel} operations`,
+          },
+          tags: ["ontology_mandated", "regulatory", tag.conceptLabel, regRef],
+          weight: 2,
+          origin: "ontology_regulation",
+          severity: "critical",
+          locked: true,
+          regulationRef: `${regRef} ${regSection}`.trim(),
+        });
+      }
+    } catch {
+    }
+  }
 
   for (const kpi of kpis) {
     const kpiNameLower = (kpi.name || "").toLowerCase();
@@ -665,9 +704,13 @@ async function generateKpiAlignedEvalSuite(agentId: string, outcomeId: string): 
       weight: tc.weight,
       origin: tc.origin,
       severity: tc.severity,
+      locked: tc.locked,
+      regulationRef: tc.regulationRef,
     });
     createdCases.push(created);
   }
+
+  const ontologyMandatedCount = testCases.filter(tc => tc.origin === "ontology_regulation").length;
 
   await storage.createAuditEvent({
     actorType: "system",
@@ -676,12 +719,13 @@ async function generateKpiAlignedEvalSuite(agentId: string, outcomeId: string): 
     objectType: "eval",
     objectId: suite.id,
     details: JSON.stringify({
-      summary: `KPI-aligned eval suite generated for agent "${agent.name}" from outcome "${outcome.name}" with ${testCases.length} test cases covering ${kpis.length} KPIs`,
+      summary: `KPI-aligned eval suite generated for agent "${agent.name}" from outcome "${outcome.name}" with ${testCases.length} test cases covering ${kpis.length} KPIs and ${ontologyMandatedCount} ontology-mandated regulatory test cases`,
       agentId,
       outcomeId,
       outcomeName: outcome.name,
       kpiCount: kpis.length,
       testCaseCount: testCases.length,
+      ontologyMandatedCount,
     }),
     ontologyTags: resolveOntologyTags("eval", "eval.kpi_suite_generated"),
   });
@@ -17773,8 +17817,259 @@ Return ONLY a valid JSON object.`
 
   app.put("/api/ontology/concepts/:id", async (req, res) => {
     try {
-      const updated = await storage.updateOntologyConcept(req.params.id, req.body);
+      const existing = await storage.getOntologyConcept(req.params.id);
+      if (!existing) return res.status(404).json({ message: "Concept not found" });
+
+      const previousSnapshot = {
+        label: existing.label,
+        description: existing.description,
+        properties: existing.properties,
+        relationships: existing.relationships,
+        synonyms: existing.synonyms,
+        linkedRegulations: existing.linkedRegulations,
+        version: existing.version,
+        updatedAt: new Date().toISOString(),
+      };
+
+      const currentHistory = Array.isArray(existing.versionHistory) ? existing.versionHistory : [];
+      const newVersion = (existing.version || 1) + 1;
+
+      const updateData = {
+        ...req.body,
+        version: newVersion,
+        versionHistory: [...currentHistory, previousSnapshot],
+      };
+
+      const updated = await storage.updateOntologyConcept(req.params.id, updateData);
       if (!updated) return res.status(404).json({ message: "Concept not found" });
+
+      const oldRegs = Array.isArray(existing.linkedRegulations) ? existing.linkedRegulations : [];
+      const newRegs = Array.isArray(updated.linkedRegulations) ? updated.linkedRegulations : [];
+      const regsChanged = JSON.stringify(oldRegs) !== JSON.stringify(newRegs);
+
+      if (regsChanged) {
+        try {
+          const allAgents = await storage.getAgents();
+          const linkedAgents = allAgents.filter(a => {
+            const tags = Array.isArray(a.ontologyTags) ? (a.ontologyTags as Array<{ conceptId: string }>) : [];
+            return tags.some(t => t.conceptId === req.params.id);
+          });
+
+          for (const linkedAgent of linkedAgents) {
+            const agentEvalSuites = await storage.getEvalsByAgent(linkedAgent.id);
+            for (const evalSuite of agentEvalSuites) {
+              const existingCases = await storage.getEvalTestCases(evalSuite.id);
+              const ontologyCases = existingCases.filter(tc => tc.origin === "ontology_regulation" && tc.tags?.includes(existing.label));
+
+              const oldRegRefs = new Set(ontologyCases.map(tc => tc.regulationRef).filter(Boolean));
+              const newRegEntries = newRegs as Array<{ id?: string; ref?: string; name?: string; section?: string; description?: string }>;
+              const newRegRefs = new Set(newRegEntries.map(r => `${r.ref || r.id || r.name || ""} ${r.section || ""}`.trim()));
+
+              for (const tc of ontologyCases) {
+                if (tc.regulationRef && !newRegRefs.has(tc.regulationRef)) {
+                  await storage.updateEvalTestCase(tc.id, { status: "deprecated" });
+                }
+              }
+
+              for (const reg of newRegEntries) {
+                const regRef = `${reg.ref || reg.id || reg.name || ""} ${reg.section || ""}`.trim();
+                if (!oldRegRefs.has(regRef)) {
+                  const regRefShort = reg.ref || reg.id || reg.name || "Unknown";
+                  const regSection = reg.section || "";
+                  const regDesc = reg.description || reg.name || regRefShort;
+                  const regLabel = regSection ? `[${regRefShort} ${regSection}]` : `[${regRefShort}]`;
+
+                  await storage.createEvalTestCase({
+                    suiteId: evalSuite.id,
+                    name: `${regLabel} ${regDesc} - Compliance Boundary`,
+                    inputData: {
+                      type: "ontology_regulation_test",
+                      conceptId: existing.id,
+                      conceptLabel: existing.label,
+                      regulation: regRefShort,
+                      section: regSection,
+                      scenario: `Verify compliant behavior under ${regRefShort} requirements for ${existing.label}`,
+                    },
+                    expectedOutput: {
+                      compliant: true,
+                      regulationRef: regRefShort,
+                      expectedBehavior: `Agent must comply with ${regRefShort} requirements when handling ${existing.label} operations`,
+                    },
+                    tags: ["ontology_mandated", "regulatory", existing.label, regRefShort],
+                    weight: 2,
+                    origin: "ontology_regulation",
+                    severity: "critical",
+                    locked: true,
+                    regulationRef: regRef,
+                  });
+                }
+              }
+            }
+
+            await storage.createAuditEvent({
+              actorType: "system",
+              actorId: "ontology_sync",
+              action: "ontology.regulation_eval_synced",
+              objectType: "agent",
+              objectId: linkedAgent.id,
+              details: JSON.stringify({
+                conceptId: existing.id,
+                conceptLabel: existing.label,
+                agentName: linkedAgent.name,
+                oldRegCount: oldRegs.length,
+                newRegCount: newRegs.length,
+              }),
+              ontologyTags: resolveOntologyTags("agent", "ontology.regulation_eval_synced"),
+            });
+          }
+        } catch (syncErr) {
+          console.error("[ontology-sync] Failed to sync eval suites after regulation change:", syncErr);
+        }
+      }
+
+      invalidateOntologySensitivityCache();
+
+      try {
+        const allAgents = await storage.getAgents();
+        const affectedAgents = allAgents.filter(a => {
+          const tags = Array.isArray(a.ontologyTags) ? (a.ontologyTags as Array<{ conceptId: string }>) : [];
+          return tags.some(t => t.conceptId === req.params.id);
+        });
+
+        const changedFields: string[] = [];
+        if (existing.label !== updated.label) changedFields.push("label");
+        if (existing.description !== updated.description) changedFields.push("description");
+        if (JSON.stringify(existing.properties) !== JSON.stringify(updated.properties)) changedFields.push("properties");
+        if (JSON.stringify(existing.relationships) !== JSON.stringify(updated.relationships)) changedFields.push("relationships");
+        if (JSON.stringify(existing.synonyms) !== JSON.stringify(updated.synonyms)) changedFields.push("synonyms");
+        if (regsChanged) changedFields.push("linkedRegulations");
+
+        if (affectedAgents.length > 0 && changedFields.length > 0) {
+          const reason = `Ontology concept "${updated.label}" updated (v${updated.version}): ${changedFields.join(", ")} changed${regsChanged ? " — linked regulations modified" : ""}`;
+
+          for (const agent of affectedAgents) {
+            await storage.updateAgent(agent.id, {
+              requiresRevalidation: true,
+              revalidationReason: reason,
+            });
+
+            await storage.createAuditEvent({
+              actorType: "system",
+              actorId: "ontology_propagation",
+              action: "ontology.concept_updated",
+              objectType: "agent",
+              objectId: agent.id,
+              details: JSON.stringify({
+                conceptId: existing.id,
+                conceptLabel: updated.label,
+                agentName: agent.name,
+                changedFields,
+                previousVersion: existing.version,
+                newVersion: updated.version,
+              }),
+              ontologyTags: resolveOntologyTags("agent", "ontology.concept_updated"),
+            });
+
+            if (regsChanged) {
+              await storage.createAuditEvent({
+                actorType: "system",
+                actorId: "ontology_propagation",
+                action: "ontology.regulation_changed",
+                objectType: "agent",
+                objectId: agent.id,
+                details: JSON.stringify({
+                  conceptId: existing.id,
+                  conceptLabel: updated.label,
+                  agentName: agent.name,
+                  previousRegCount: (Array.isArray(existing.linkedRegulations) ? existing.linkedRegulations : []).length,
+                  newRegCount: (Array.isArray(updated.linkedRegulations) ? updated.linkedRegulations : []).length,
+                }),
+                ontologyTags: resolveOntologyTags("agent", "ontology.regulation_changed"),
+              });
+            }
+          }
+        }
+      } catch (propErr) {
+        console.error("[ontology-propagation] Failed to propagate concept update to agents:", propErr);
+      }
+
+      const allAgentsForCount = await storage.getAgents();
+      const affectedCount = allAgentsForCount.filter(a => {
+        const tags = Array.isArray(a.ontologyTags) ? (a.ontologyTags as Array<{ conceptId: string }>) : [];
+        return tags.some(t => t.conceptId === req.params.id);
+      }).length;
+      res.json({ ...updated, affectedAgentsCount: affectedCount });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/ontology/sensitivity-keys", async (_req, res) => {
+    try {
+      const result = await getOntologySensitivityKeys();
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/ontology/concepts/:id/versions", async (req, res) => {
+    try {
+      const concept = await storage.getOntologyConcept(req.params.id);
+      if (!concept) return res.status(404).json({ message: "Concept not found" });
+      const history = Array.isArray(concept.versionHistory) ? concept.versionHistory : [];
+      res.json({
+        currentVersion: concept.version || 1,
+        history,
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/ontology/concepts/:id/linked-agents", async (req, res) => {
+    try {
+      const concept = await storage.getOntologyConcept(req.params.id);
+      if (!concept) return res.status(404).json({ message: "Concept not found" });
+      const allAgents = await storage.getAgents();
+      const linked = allAgents.filter(a => {
+        const tags = Array.isArray(a.ontologyTags) ? (a.ontologyTags as Array<{ conceptId: string }>) : [];
+        return tags.some(t => t.conceptId === req.params.id);
+      }).map(a => ({
+        id: a.id,
+        name: a.name,
+        status: a.status,
+        industry: a.department,
+        requiresRevalidation: a.requiresRevalidation,
+        revalidationReason: a.revalidationReason,
+      }));
+      res.json(linked);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/agents/:id/clear-revalidation", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+      const updated = await storage.updateAgent(req.params.id, {
+        requiresRevalidation: false,
+        revalidationReason: null,
+      });
+      await storage.createAuditEvent({
+        actorType: "user",
+        actorId: "system",
+        action: "agent.revalidation_cleared",
+        objectType: "agent",
+        objectId: req.params.id,
+        details: JSON.stringify({
+          agentName: agent.name,
+          previousReason: agent.revalidationReason,
+          clearedAt: new Date().toISOString(),
+        }),
+        ontologyTags: resolveOntologyTags("agent", "agent.revalidation_cleared"),
+      });
       res.json(updated);
     } catch (err: any) {
       res.status(500).json({ message: err.message });

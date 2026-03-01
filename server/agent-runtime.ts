@@ -252,6 +252,31 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<string> {
     } catch {}
   }
 
+  if (agent.ontologyTags && agent.ontologyTags.length > 0) {
+    try {
+      const sensitivityConstraints: string[] = [];
+      for (const tag of agent.ontologyTags.slice(0, 15)) {
+        const concept = await storage.getOntologyConcept(tag.conceptId);
+        if (!concept) continue;
+        const sc = concept.sensitivityClassification as any;
+        if (!sc || !sc.level) continue;
+
+        const dataTypes: string[] = Array.isArray(sc.dataTypes) ? sc.dataTypes : [];
+        const levelLabel = sc.level.toUpperCase();
+        const redactionNote = sc.redactionRequired ? " [REDACTION REQUIRED]" : "";
+        const retentionNote = sc.retentionDays != null ? ` | Max retention: ${sc.retentionDays} days` : "";
+        sensitivityConstraints.push(
+          `- ${concept.label} (${levelLabel}${redactionNote}): Data types [${dataTypes.join(", ")}]${retentionNote}`
+        );
+      }
+      if (sensitivityConstraints.length > 0) {
+        sections.push(`\n## DATA SENSITIVITY CONSTRAINTS (ontology-encoded classifications)`);
+        sections.push(`The following data types require protection based on ontology sensitivity classifications. You MUST NOT expose, log, or return these data types in plain text unless explicitly authorized.`);
+        sensitivityConstraints.forEach(c => sections.push(c));
+      }
+    } catch {}
+  }
+
   if (agent.complianceTags && agent.complianceTags.length > 0) {
     sections.push(`\n## COMPLIANCE TAGS`);
     sections.push(`This agent is tagged with the following compliance classifications: ${agent.complianceTags.join(", ")}`);

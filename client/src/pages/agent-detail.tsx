@@ -1367,6 +1367,44 @@ function AgentDetailInner() {
         );
       })()}
 
+      {agent.requiresRevalidation && (
+        <Card className="border border-amber-500/50 bg-amber-500/5" data-testid="banner-ontology-revalidation">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 bg-amber-500/10">
+                  <ShieldAlert className="w-4 h-4 text-amber-500" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold" data-testid="text-revalidation-title">
+                    Ontology Re-validation Required
+                  </p>
+                  <p className="text-[11px] text-muted-foreground" data-testid="text-revalidation-reason">
+                    {agent.revalidationReason || "A linked ontology concept has been updated — review your agent configuration for compliance"}
+                  </p>
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                data-testid="button-clear-revalidation"
+                onClick={async () => {
+                  try {
+                    await apiRequest("POST", `/api/agents/${agentId}/clear-revalidation`);
+                    queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId] });
+                    toast({ title: "Re-validation acknowledged" });
+                  } catch (err: any) {
+                    toast({ title: "Failed to clear", description: err.message, variant: "destructive" });
+                  }
+                }}
+              >
+                <CheckCircle className="w-3 h-3 mr-1" /> Acknowledge & Clear
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="flex items-center gap-2 flex-wrap">
         <Select
           value={agent.currentVersion || "1.0.0"}

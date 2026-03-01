@@ -97,6 +97,8 @@ export const agents = pgTable("agents", {
   systemPrompt: text("system_prompt"),
   department: text("department"),
   lastIncidentAt: timestamp("last_incident_at"),
+  requiresRevalidation: boolean("requires_revalidation").default(false),
+  revalidationReason: text("revalidation_reason"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -1330,6 +1332,9 @@ export const ontologyConcepts = pgTable("ontology_concepts", {
   source: text("source").notNull().default("industry-standard"),
   usageCount: integer("usage_count").notNull().default(0),
   linkedRegulations: jsonb("linked_regulations").default(sql`'[]'::jsonb`),
+  version: integer("version").notNull().default(1),
+  versionHistory: jsonb("version_history").default(sql`'[]'::jsonb`),
+  sensitivityClassification: jsonb("sensitivity_classification"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

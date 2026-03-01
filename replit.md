@@ -62,6 +62,10 @@ The Nous Agent Orchestrator uses a modern web stack with React, Vite, Tailwind C
 - **RAG Pipeline Manager**: Configures how agents retrieve industry-specific knowledge.
 - **MCP-Ontology Parameter Matching**: Cross-references tool parameters against ontology concepts.
 - **Mock MCP Servers**: Built-in mock REST APIs for demonstration purposes.
+- **Ontology Concept Versioning**: `ontology_concepts` has `version` (integer, default 1) and `versionHistory` (jsonb array of previous state snapshots). `PUT /api/ontology/concepts/:id` auto-increments version and stores history. Version history viewable in Ontology Explorer UI with expandable timeline.
+- **Regulatory Change Propagation**: Updating an ontology concept auto-finds all agents with that concept in `ontologyTags`, sets `requiresRevalidation=true` with `revalidationReason`, and creates audit events. `GET /api/ontology/concepts/:id/linked-agents` returns affected agents. Agent detail shows amber re-validation banner with "Acknowledge & Clear" action. Ontology concept detail shows linked agents card with re-validation status.
+- **Ontology-Mandated Eval Test Cases**: `generateKpiAlignedEvalSuite` auto-generates regulatory test cases from concept `linkedRegulations` tagged `origin: "ontology_regulation"`, `severity: "critical"`, `locked: true`. Regulation changes auto-sync eval suites (add new cases, deprecate removed ones).
+- **Ontology-Encoded Data Sensitivity Classifications**: `sensitivityClassification` jsonb field on `ontology_concepts` with `{ level, dataTypes, redactionRequired, retentionDays }`. Levels: public/internal/confidential/restricted/phi/pci. `getOntologySensitivityKeys()` in `permissions.ts` feeds ontology-defined sensitive data types into `redactPayload()` for dynamic trace/payload redaction. `buildRuntimeContext` injects `DATA SENSITIVITY CONSTRAINTS` section into agent system prompts. Sensitivity badges display on Ontology Explorer with color-coded severity.
 
 ## External Dependencies
 - **OpenAI**: Used for TTS narration, AI skill generation/enhancement, conversational design, and other AI features.

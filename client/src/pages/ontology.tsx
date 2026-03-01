@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback, useRef } from "react";
+import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Search,
@@ -32,6 +33,8 @@ import {
   X,
   CheckCircle,
   ArrowRight,
+  History,
+  Bot,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -105,6 +108,24 @@ interface ConceptView {
   usageCount: number;
   linkedRegulations: LinkedRegulation[];
   industryRelevance: string | null;
+  version: number;
+  sensitivityClassification: {
+    level: string;
+    dataTypes: string[];
+    redactionRequired: boolean;
+    retentionDays: number | null;
+  } | null;
+}
+
+interface VersionHistoryEntry {
+  label: string;
+  description: string;
+  properties: unknown;
+  relationships: unknown;
+  synonyms: string[];
+  linkedRegulations: unknown;
+  version: number;
+  updatedAt: string;
 }
 
 interface EnrichedConcept {
@@ -203,6 +224,8 @@ function toConceptView(c: DbOntologyConcept): ConceptView {
     usageCount: c.usageCount || 0,
     linkedRegulations: (c.linkedRegulations as LinkedRegulation[]) || [],
     industryRelevance: c.industryRelevance,
+    version: c.version || 1,
+    sensitivityClassification: (c.sensitivityClassification as ConceptView["sensitivityClassification"]) || null,
   };
 }
 
@@ -236,6 +259,7 @@ export default function OntologyExplorer() {
   const [kgSelectedIds, setKgSelectedIds] = useState<Set<string>>(new Set());
   const [kgImporting, setKgImporting] = useState(false);
   const [kgExpandedCategories, setKgExpandedCategories] = useState<Set<string>>(new Set());
+  const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
 
   const industryId = industry ? industry.id : null;
 
@@ -314,6 +338,26 @@ export default function OntologyExplorer() {
     if (!selectedConceptId) return null;
     return concepts.find((c) => c.id === selectedConceptId) || null;
   }, [selectedConceptId, concepts]);
+
+  const { data: versionData } = useQuery<{ currentVersion: number; history: VersionHistoryEntry[] }>({
+    queryKey: ["/api/ontology/concepts", selectedConceptId, "versions"],
+    queryFn: async () => {
+      const res = await fetch(`/api/ontology/concepts/${selectedConceptId}/versions`);
+      if (!res.ok) throw new Error("Failed to load version history");
+      return res.json();
+    },
+    enabled: !!selectedConceptId,
+  });
+
+  const { data: linkedAgents } = useQuery<Array<{ id: string; name: string; status: string; requiresRevalidation: boolean; revalidationReason: string | null }>>({
+    queryKey: ["/api/ontology/concepts", selectedConceptId, "linked-agents"],
+    queryFn: async () => {
+      const res = await fetch(`/api/ontology/concepts/${selectedConceptId}/linked-agents`);
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: !!selectedConceptId,
+  });
 
   const [localEnriched, setLocalEnriched] = useState<Record<string, EnrichedConcept>>({});
 
@@ -978,6 +1022,21 @@ export default function OntologyExplorer() {
                                 >
                                   <ChevronRight className="w-3 h-3 shrink-0" />
                                   <span className="truncate">{concept.label}</span>
+                                  {concept.sensitivityClassification && (
+                                    <Badge
+                                      variant="outline"
+                                      className={`text-[9px] shrink-0 ${
+                                        concept.sensitivityClassification.level === "phi" || concept.sensitivityClassification.level === "pci"
+                                          ? "border-red-500/50 text-red-600 dark:text-red-400"
+                                          : concept.sensitivityClassification.level === "restricted" || concept.sensitivityClassification.level === "confidential"
+                                          ? "border-orange-500/50 text-orange-600 dark:text-orange-400"
+                                          : "border-yellow-500/50 text-yellow-600 dark:text-yellow-400"
+                                      }`}
+                                      data-testid={`badge-sensitivity-${concept.id}`}
+                                    >
+                                      {concept.sensitivityClassification.level.toUpperCase()}
+                                    </Badge>
+                                  )}
                                   {isCustom(concept) && (
                                     <Badge variant="outline" className="text-[9px] ml-auto shrink-0 border-amber-500/50 text-amber-600 dark:text-amber-400" data-testid={`badge-custom-${concept.id}`}>
                                       Custom
@@ -1111,6 +1170,27 @@ export default function OntologyExplorer() {
                 <div className="flex items-center gap-3 flex-wrap">
                   <h1 className="text-xl font-semibold" data-testid="text-concept-label">{selectedConcept.label}</h1>
                   <Badge variant="secondary" data-testid="badge-concept-category">{selectedConcept.category}</Badge>
+                  <Badge variant="outline" data-testid="badge-concept-version">
+                    v{selectedConcept.version}
+                  </Badge>
+                  {selectedConcept.sensitivityClassification && (
+                    <Badge
+                      variant="outline"
+                      className={
+                        selectedConcept.sensitivityClassification.level === "phi" || selectedConcept.sensitivityClassification.level === "pci"
+                          ? "border-red-500/50 text-red-600 dark:text-red-400"
+                          : selectedConcept.sensitivityClassification.level === "restricted" || selectedConcept.sensitivityClassification.level === "confidential"
+                          ? "border-orange-500/50 text-orange-600 dark:text-orange-400"
+                          : selectedConcept.sensitivityClassification.level === "internal"
+                          ? "border-yellow-500/50 text-yellow-600 dark:text-yellow-400"
+                          : ""
+                      }
+                      data-testid="badge-sensitivity-level"
+                    >
+                      <Shield className="w-3 h-3 mr-1" />
+                      {selectedConcept.sensitivityClassification.level.toUpperCase()}
+                    </Badge>
+                  )}
                   {isCustom(selectedConcept) && (
                     <Badge variant="outline" className="border-amber-500/50 text-amber-600 dark:text-amber-400" data-testid="badge-custom-extension">
                       Custom Extension
@@ -1162,6 +1242,106 @@ export default function OntologyExplorer() {
                 )}
               </div>
 
+              {versionData && versionData.history.length > 0 && (
+                <Card data-testid="card-version-history">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        <History className="w-4 h-4" />
+                        Version History
+                        <Badge variant="secondary" className="text-[10px]">
+                          {versionData.history.length} revision{versionData.history.length !== 1 ? "s" : ""}
+                        </Badge>
+                      </CardTitle>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setVersionHistoryOpen(!versionHistoryOpen)}
+                        data-testid="button-toggle-version-history"
+                      >
+                        {versionHistoryOpen ? "Hide" : "Show"} History
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  {versionHistoryOpen && (
+                    <CardContent>
+                      <div className="space-y-3">
+                        {[...versionData.history].reverse().map((entry, idx) => (
+                          <div
+                            key={idx}
+                            className="p-3 rounded-md border text-xs space-y-1.5"
+                            data-testid={`version-entry-${entry.version}`}
+                          >
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <Badge variant="outline" className="text-[10px]" data-testid={`badge-version-${entry.version}`}>
+                                v{entry.version}
+                              </Badge>
+                              <span className="text-muted-foreground text-[10px]">
+                                {new Date(entry.updatedAt).toLocaleString()}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="font-medium">Label:</span>{" "}
+                              <span className="text-muted-foreground">{entry.label}</span>
+                            </div>
+                            <div>
+                              <span className="font-medium">Description:</span>{" "}
+                              <span className="text-muted-foreground line-clamp-2">{entry.description}</span>
+                            </div>
+                            {Array.isArray(entry.synonyms) && entry.synonyms.length > 0 && (
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-medium">Synonyms:</span>
+                                {entry.synonyms.map((s: string) => (
+                                  <Badge key={s} variant="outline" className="text-[9px]">{s}</Badge>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  )}
+                </Card>
+              )}
+
+              {linkedAgents && linkedAgents.length > 0 && (
+                <Card data-testid="card-linked-agents">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <Bot className="w-4 h-4" />
+                      Linked Agents
+                      <Badge variant="secondary" className="text-[10px]">
+                        {linkedAgents.length}
+                      </Badge>
+                      {linkedAgents.some(a => a.requiresRevalidation) && (
+                        <Badge variant="outline" className="text-[10px] bg-amber-500/15 text-amber-600 border-amber-500/20">
+                          {linkedAgents.filter(a => a.requiresRevalidation).length} need re-validation
+                        </Badge>
+                      )}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2">
+                      {linkedAgents.map(a => (
+                        <Link key={a.id} href={`/agents/${a.id}`}>
+                          <div className="flex items-center justify-between gap-2 p-2 rounded-md border hover:bg-muted/50 cursor-pointer" data-testid={`linked-agent-${a.id}`}>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-medium">{a.name}</span>
+                              <Badge variant="outline" className="text-[9px]">{a.status}</Badge>
+                            </div>
+                            {a.requiresRevalidation && (
+                              <Badge variant="outline" className="text-[9px] bg-amber-500/15 text-amber-600 border-amber-500/20">
+                                Re-validation needed
+                              </Badge>
+                            )}
+                          </div>
+                        </Link>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
               {selectedConcept.linkedRegulations.length > 0 && (
                 <Card data-testid="card-linked-regulations">
                   <CardHeader className="pb-3">
@@ -1185,6 +1365,66 @@ export default function OntologyExplorer() {
                         </div>
                       ))}
                     </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {selectedConcept.sensitivityClassification && (
+                <Card data-testid="card-sensitivity-classification">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <Shield className="w-4 h-4" />
+                      Data Sensitivity Classification
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <div className="text-xs">
+                        <span className="text-muted-foreground">Level: </span>
+                        <Badge
+                          variant="outline"
+                          className={
+                            selectedConcept.sensitivityClassification.level === "phi" || selectedConcept.sensitivityClassification.level === "pci"
+                              ? "border-red-500/50 text-red-600 dark:text-red-400"
+                              : selectedConcept.sensitivityClassification.level === "restricted" || selectedConcept.sensitivityClassification.level === "confidential"
+                              ? "border-orange-500/50 text-orange-600 dark:text-orange-400"
+                              : selectedConcept.sensitivityClassification.level === "internal"
+                              ? "border-yellow-500/50 text-yellow-600 dark:text-yellow-400"
+                              : ""
+                          }
+                          data-testid="badge-sensitivity-detail-level"
+                        >
+                          {selectedConcept.sensitivityClassification.level.toUpperCase()}
+                        </Badge>
+                      </div>
+                      <div className="text-xs">
+                        <span className="text-muted-foreground">Redaction: </span>
+                        <Badge
+                          variant={selectedConcept.sensitivityClassification.redactionRequired ? "destructive" : "secondary"}
+                          data-testid="badge-sensitivity-redaction"
+                        >
+                          {selectedConcept.sensitivityClassification.redactionRequired ? "Required" : "Not Required"}
+                        </Badge>
+                      </div>
+                      {selectedConcept.sensitivityClassification.retentionDays != null && (
+                        <div className="text-xs" data-testid="text-sensitivity-retention">
+                          <span className="text-muted-foreground">Retention: </span>
+                          <span className="font-medium">{selectedConcept.sensitivityClassification.retentionDays} days</span>
+                        </div>
+                      )}
+                    </div>
+                    {selectedConcept.sensitivityClassification.dataTypes.length > 0 && (
+                      <div>
+                        <div className="text-xs font-medium mb-1.5">Protected Data Types</div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {selectedConcept.sensitivityClassification.dataTypes.map((dt) => (
+                            <Badge key={dt} variant="outline" className="text-[10px]" data-testid={`badge-data-type-${dt.toLowerCase().replace(/\s+/g, "-")}`}>
+                              {dt}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               )}

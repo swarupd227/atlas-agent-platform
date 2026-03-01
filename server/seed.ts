@@ -1537,6 +1537,35 @@ export async function seedDatabase() {
       await db.insert(ontologyConcepts).values(seed);
     }
     console.log(`Seeded ${ontologySeeds.length} ontology concepts`);
+
+    const sensitivityDefaults: Record<string, { level: string; dataTypes: string[]; redactionRequired: boolean; retentionDays: number | null }> = {
+      "fibo-5": { level: "confidential", dataTypes: ["legalEntityId", "jurisdiction", "creditScore"], redactionRequired: true, retentionDays: 2555 },
+      "fibo-6": { level: "confidential", dataTypes: ["verificationLevel", "riskCategory", "identityDocuments"], redactionRequired: true, retentionDays: 1825 },
+      "fibo-7": { level: "restricted", dataTypes: ["screeningType", "alertThreshold", "sanctionsLists", "suspiciousActivity"], redactionRequired: true, retentionDays: 1825 },
+      "fibo-8": { level: "confidential", dataTypes: ["probabilityOfDefault", "lossGivenDefault", "exposureAtDefault"], redactionRequired: true, retentionDays: 2555 },
+      "fibo-12": { level: "pci", dataTypes: ["paymentType", "amount", "beneficiary", "accountNumber", "routingNumber"], redactionRequired: true, retentionDays: 365 },
+      "fibo-13": { level: "pci", dataTypes: ["accountType", "balance", "accountNumber"], redactionRequired: true, retentionDays: 2555 },
+      "fibo-18": { level: "restricted", dataTypes: ["ownershipPercentage", "controlType", "beneficialOwnerName"], redactionRequired: true, retentionDays: 1825 },
+      "fibo-24": { level: "restricted", dataTypes: ["transactionDetails", "alertData", "suspiciousPatterns"], redactionRequired: true, retentionDays: 1825 },
+      "sno-1": { level: "phi", dataTypes: ["patientId", "clinicalNotes", "assessmentFindings", "medicalHistory"], redactionRequired: true, retentionDays: 2555 },
+      "sno-2": { level: "phi", dataTypes: ["heartRate", "bloodPressure", "temperature", "oxygenSaturation", "patientId"], redactionRequired: true, retentionDays: 2555 },
+      "sno-3": { level: "phi", dataTypes: ["patientId", "triageScore", "chiefComplaint", "acuityLevel"], redactionRequired: true, retentionDays: 2555 },
+      "sno-5": { level: "phi", dataTypes: ["diagnosisCode", "primaryDiagnosis", "coMorbidities", "patientId"], redactionRequired: true, retentionDays: 2555 },
+      "sno-6": { level: "phi", dataTypes: ["patientId", "medication", "dosage", "route", "prescriber"], redactionRequired: true, retentionDays: 2555 },
+      "sno-7": { level: "phi", dataTypes: ["patientId", "medication", "prescriber", "duration"], redactionRequired: true, retentionDays: 2555 },
+      "sno-8": { level: "phi", dataTypes: ["patientId", "medications", "interactions", "allergyList"], redactionRequired: true, retentionDays: 2555 },
+      "isa-5": { level: "confidential", dataTypes: ["processParameters", "recipeFormulas", "tradeSecrets"], redactionRequired: true, retentionDays: null },
+      "isa-13": { level: "confidential", dataTypes: ["supplierContracts", "pricingAgreements", "sourcingStrategy"], redactionRequired: true, retentionDays: 2555 },
+      "gs1-6": { level: "confidential", dataTypes: ["customerPII", "purchaseHistory", "loyaltyData", "paymentInfo"], redactionRequired: true, retentionDays: 730 },
+      "gs1-8": { level: "pci", dataTypes: ["creditCardNumber", "paymentMethod", "transactionAmount", "customerBilling"], redactionRequired: true, retentionDays: 365 },
+    };
+
+    for (const [conceptId, sc] of Object.entries(sensitivityDefaults)) {
+      await db.execute(
+        sql`UPDATE ontology_concepts SET sensitivity_classification = ${JSON.stringify(sc)}::jsonb WHERE id = ${conceptId}`
+      );
+    }
+    console.log(`Applied sensitivity classifications to ${Object.keys(sensitivityDefaults).length} ontology concepts`);
   }
 
   const existingAgents = await db.select().from(agents);
