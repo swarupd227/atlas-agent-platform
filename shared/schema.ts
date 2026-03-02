@@ -2104,4 +2104,44 @@ export const insertAutonomyBoundaryProposalSchema = createInsertSchema(autonomyB
 export type InsertAutonomyBoundaryProposal = z.infer<typeof insertAutonomyBoundaryProposalSchema>;
 export type AutonomyBoundaryProposal = typeof autonomyBoundaryProposals.$inferSelect;
 
+export const contextEconomics = pgTable("context_economics", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  traceId: varchar("trace_id"),
+  agentId: varchar("agent_id").notNull(),
+  industry: text("industry"),
+  contextProfileId: varchar("context_profile_id"),
+  totalTokensUsed: integer("total_tokens_used").notNull().default(0),
+  totalCostUsd: real("total_cost_usd").notNull().default(0),
+  sections: jsonb("sections").notNull().default(sql`'[]'::jsonb`),
+  outcomeQuality: real("outcome_quality"),
+  outcomeBillable: boolean("outcome_billable"),
+  kbSourceDetails: jsonb("kb_source_details").notNull().default(sql`'[]'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertContextEconomicsSchema = createInsertSchema(contextEconomics).omit({ id: true, createdAt: true });
+export type InsertContextEconomics = z.infer<typeof insertContextEconomicsSchema>;
+export type ContextEconomics = typeof contextEconomics.$inferSelect;
+
+export const contextRecommendations = pgTable("context_recommendations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  agentId: varchar("agent_id").notNull(),
+  industry: text("industry"),
+  contextProfileId: varchar("context_profile_id"),
+  type: text("type").notNull(),
+  category: text("category").notNull(),
+  currentTokens: integer("current_tokens"),
+  recommendedTokens: integer("recommended_tokens"),
+  estimatedQualityImpact: real("estimated_quality_impact"),
+  estimatedCostSavings: real("estimated_cost_savings"),
+  rationale: text("rationale").notNull(),
+  status: text("status").notNull().default("pending"),
+  metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertContextRecommendationSchema = createInsertSchema(contextRecommendations).omit({ id: true, createdAt: true });
+export type InsertContextRecommendation = z.infer<typeof insertContextRecommendationSchema>;
+export type ContextRecommendation = typeof contextRecommendations.$inferSelect;
+
 export * from "./models/chat";

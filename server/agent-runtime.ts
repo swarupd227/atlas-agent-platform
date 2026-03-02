@@ -96,35 +96,57 @@ export interface RuntimeAgent {
   };
 }
 
-async function buildRuntimeContext(agent: RuntimeAgent): Promise<string> {
+export interface ContextSectionMetric {
+  category: string;
+  tokenCount: number;
+}
+
+export interface BuildRuntimeContextResult {
+  context: string;
+  sectionMetrics: ContextSectionMetric[];
+}
+
+export function estimateTokenCount(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
+async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeContextResult> {
   const sections: string[] = [];
+  const sectionMetrics: ContextSectionMetric[] = [];
+
+  function trackSection(category: string, text: string) {
+    sections.push(text);
+    sectionMetrics.push({ category, tokenCount: estimateTokenCount(text) });
+  }
 
   if (agent.agentSystemPrompt) {
-    sections.push(agent.agentSystemPrompt);
+    trackSection("system_prompt", agent.agentSystemPrompt);
   }
 
   if (agent.outcomeId) {
     try {
       const outcome = await storage.getOutcome(agent.outcomeId);
       if (outcome) {
-        sections.push(`\n## OUTCOME CONTRACT`);
-        sections.push(`Name: ${outcome.name}`);
-        if (outcome.description) sections.push(`Description: ${outcome.description}`);
-        sections.push(`Risk Tier: ${outcome.riskTier}`);
-        sections.push(`Status: ${outcome.status}`);
-        if (outcome.pricingModel) sections.push(`Pricing Model: ${outcome.pricingModel}`);
-        if (outcome.riskThreshold) sections.push(`Risk Threshold: ${(outcome.riskThreshold * 100).toFixed(0)}%`);
-        if ((outcome as any).slaDescription) sections.push(`SLA: ${(outcome as any).slaDescription}`);
+        const outcomeLines: string[] = [];
+        outcomeLines.push(`\n## OUTCOME CONTRACT`);
+        outcomeLines.push(`Name: ${outcome.name}`);
+        if (outcome.description) outcomeLines.push(`Description: ${outcome.description}`);
+        outcomeLines.push(`Risk Tier: ${outcome.riskTier}`);
+        outcomeLines.push(`Status: ${outcome.status}`);
+        if (outcome.pricingModel) outcomeLines.push(`Pricing Model: ${outcome.pricingModel}`);
+        if (outcome.riskThreshold) outcomeLines.push(`Risk Threshold: ${(outcome.riskThreshold * 100).toFixed(0)}%`);
+        if ((outcome as any).slaDescription) outcomeLines.push(`SLA: ${(outcome as any).slaDescription}`);
 
         const kpis = await storage.getKpisByOutcome(agent.outcomeId);
         if (kpis.length > 0) {
-          sections.push(`\n## KPI TARGETS (you must optimize for these)`);
+          outcomeLines.push(`\n## KPI TARGETS (you must optimize for these)`);
           kpis.forEach(kpi => {
             const progress = kpi.target ? `${((kpi.currentValue || 0) / kpi.target * 100).toFixed(0)}%` : "N/A";
-            sections.push(`- ${kpi.name}: current=${kpi.currentValue ?? 0}, target=${kpi.target}, unit=${kpi.unit}, weight=${kpi.weight ?? 1}, progress=${progress}${kpi.slaThreshold ? `, SLA threshold=${kpi.slaThreshold}` : ""}`);
+            outcomeLines.push(`- ${kpi.name}: current=${kpi.currentValue ?? 0}, target=${kpi.target}, unit=${kpi.unit}, weight=${kpi.weight ?? 1}, progress=${progress}${kpi.slaThreshold ? `, SLA threshold=${kpi.slaThreshold}` : ""}`);
           });
-          sections.push(`Prioritize KPIs with higher weight. Flag if any KPI is breaching its SLA threshold.`);
+          outcomeLines.push(`Prioritize KPIs with higher weight. Flag if any KPI is breaching its SLA threshold.`);
         }
+        trackSection("outcome_contract", outcomeLines.join("\n"));
       }
     } catch (err: any) {
       console.log(`[agent-runtime] Could not load outcome context: ${err.message}`);
@@ -135,13 +157,15 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<string> {
     const policies = await storage.getPolicies();
     const activePolicies = policies.filter(p => p.status === "active");
     if (activePolicies.length > 0) {
-      sections.push(`\n## GOVERNANCE POLICIES (you must comply with these)`);
+      const policyLines: string[] = [];
+      policyLines.push(`\n## GOVERNANCE POLICIES (you must comply with these)`);
       activePolicies.slice(0, 10).forEach(p => {
         const policyJson = p.policyJson as any;
         const enforcement = policyJson?.enforcement || "soft";
         const rules = Array.isArray(policyJson?.rules) ? policyJson.rules.slice(0, 3).map((r: any) => r.description || r.name || JSON.stringify(r)).join("; ") : "";
-        sections.push(`- [${enforcement.toUpperCase()}] ${p.name} (${p.domain}): ${p.description || ""}${rules ? ` Rules: ${rules}` : ""}`);
+        policyLines.push(`- [${enforcement.toUpperCase()}] ${p.name} (${p.domain}): ${p.description || ""}${rules ? ` Rules: ${rules}` : ""}`);
       });
+      trackSection("governance_policies", policyLines.join("\n"));
     }
   } catch {}
 
@@ -161,12 +185,14 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<string> {
     }).slice(0, 10);
 
     if (relevantSkills.length > 0) {
-      sections.push(`\n## AGENT SKILLS (capabilities you have)`);
+      const skillLines: string[] = [];
+      skillLines.push(`\n## AGENT SKILLS (capabilities you have)`);
       relevantSkills.forEach(s => {
         const toolsNote = s.allowedTools?.length ? ` | Allowed tools: ${s.allowedTools.join(", ")}` : "";
         const mcpNote = s.requiredMcpServers?.length ? ` | Required MCP: ${s.requiredMcpServers.join(", ")}` : "";
-        sections.push(`- ${s.name} (${s.domain}, v${s.version}): ${s.description}${toolsNote}${mcpNote}`);
+        skillLines.push(`- ${s.name} (${s.domain}, v${s.version}): ${s.description}${toolsNote}${mcpNote}`);
       });
+      trackSection("skills", skillLines.join("\n"));
 
       const kgResultLines: string[] = [];
       for (const s of relevantSkills) {
@@ -205,9 +231,8 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<string> {
         }
       }
       if (kgResultLines.length > 0) {
-        sections.push(`\n## KNOWLEDGE GRAPH QUERY RESULTS (domain knowledge retrieved by your skills)`);
-        sections.push(`Use these results to ground your reasoning in domain-specific data:`);
-        kgResultLines.forEach(r => sections.push(r));
+        const kgText = `\n## KNOWLEDGE GRAPH QUERY RESULTS (domain knowledge retrieved by your skills)\nUse these results to ground your reasoning in domain-specific data:\n${kgResultLines.join("\n")}`;
+        trackSection("knowledge_graph", kgText);
       }
     }
   } catch {}
@@ -246,17 +271,19 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<string> {
         }
       }
       if (conceptDetails.length > 0) {
-        sections.push(`\n## DOMAIN ONTOLOGY (vocabulary constraints and domain concepts)`);
-        sections.push(`You MUST use the canonical terms below when discussing these domain concepts. Avoid deprecated synonyms — use the canonical form instead.`);
-        conceptDetails.forEach(d => sections.push(d));
+        const ontologyLines: string[] = [];
+        ontologyLines.push(`\n## DOMAIN ONTOLOGY (vocabulary constraints and domain concepts)`);
+        ontologyLines.push(`You MUST use the canonical terms below when discussing these domain concepts. Avoid deprecated synonyms — use the canonical form instead.`);
+        conceptDetails.forEach(d => ontologyLines.push(d));
         if (requiredVocab.length > 0) {
-          sections.push(`\n### REQUIRED VOCABULARY (always use these exact terms)`);
-          requiredVocab.forEach(v => sections.push(`- ${v}`));
+          ontologyLines.push(`\n### REQUIRED VOCABULARY (always use these exact terms)`);
+          requiredVocab.forEach(v => ontologyLines.push(`- ${v}`));
         }
         if (deprecatedTerms.length > 0) {
-          sections.push(`\n### DEPRECATED TERMS (do NOT use these — use the canonical form)`);
-          deprecatedTerms.slice(0, 20).forEach(d => sections.push(`- "${d.deprecated}" → use "${d.useInstead}" instead`));
+          ontologyLines.push(`\n### DEPRECATED TERMS (do NOT use these — use the canonical form)`);
+          deprecatedTerms.slice(0, 20).forEach(d => ontologyLines.push(`- "${d.deprecated}" → use "${d.useInstead}" instead`));
         }
+        trackSection("domain_ontology", ontologyLines.join("\n"));
       }
     } catch {}
   }
@@ -279,67 +306,72 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<string> {
         );
       }
       if (sensitivityConstraints.length > 0) {
-        sections.push(`\n## DATA SENSITIVITY CONSTRAINTS (ontology-encoded classifications)`);
-        sections.push(`The following data types require protection based on ontology sensitivity classifications. You MUST NOT expose, log, or return these data types in plain text unless explicitly authorized.`);
-        sensitivityConstraints.forEach(c => sections.push(c));
+        const sensText = `\n## DATA SENSITIVITY CONSTRAINTS (ontology-encoded classifications)\nThe following data types require protection based on ontology sensitivity classifications. You MUST NOT expose, log, or return these data types in plain text unless explicitly authorized.\n${sensitivityConstraints.join("\n")}`;
+        trackSection("domain_ontology", sensText);
       }
     } catch {}
   }
 
   if (agent.complianceTags && agent.complianceTags.length > 0) {
-    sections.push(`\n## COMPLIANCE TAGS`);
-    sections.push(`This agent is tagged with the following compliance classifications: ${agent.complianceTags.join(", ")}`);
-    sections.push(`Ensure all outputs and decisions respect these compliance requirements.`);
+    const complianceText = `\n## COMPLIANCE TAGS\nThis agent is tagged with the following compliance classifications: ${agent.complianceTags.join(", ")}\nEnsure all outputs and decisions respect these compliance requirements.`;
+    trackSection("compliance_tags", complianceText);
   }
 
   if (agent.memoryGovernanceRules && agent.memoryGovernanceRules.length > 0) {
-    sections.push("\n## MEMORY GOVERNANCE CONSTRAINTS (mandatory data handling rules)");
+    const mgLines: string[] = [];
+    mgLines.push("\n## MEMORY GOVERNANCE CONSTRAINTS (mandatory data handling rules)");
     for (const rule of agent.memoryGovernanceRules) {
       switch (rule.type) {
         case "retention":
-          sections.push(`- RETENTION: ${rule.rule} (per ${rule.regulation})`);
+          mgLines.push(`- RETENTION: ${rule.rule} (per ${rule.regulation})`);
           break;
         case "encryption":
-          sections.push(`- ENCRYPTION: ${rule.rule} — annotate protected data with [PHI-PROTECTED] markers`);
+          mgLines.push(`- ENCRYPTION: ${rule.rule} — annotate protected data with [PHI-PROTECTED] markers`);
           break;
         case "erasure":
-          sections.push(`- ERASURE: ${rule.rule} (per ${rule.regulation}) — flag data for deletion when requested`);
+          mgLines.push(`- ERASURE: ${rule.rule} (per ${rule.regulation}) — flag data for deletion when requested`);
           break;
         case "access":
         case "access_control":
-          sections.push(`- ACCESS CONTROL: ${rule.rule}`);
+          mgLines.push(`- ACCESS CONTROL: ${rule.rule}`);
           break;
         case "immutability":
-          sections.push(`- IMMUTABILITY: ${rule.rule} — do NOT modify committed records`);
+          mgLines.push(`- IMMUTABILITY: ${rule.rule} — do NOT modify committed records`);
           break;
         default:
-          sections.push(`- ${rule.rule}`);
+          mgLines.push(`- ${rule.rule}`);
           break;
       }
     }
-    sections.push(`You MUST comply with ALL memory governance constraints above. Violations will be flagged in execution traces.`);
+    mgLines.push(`You MUST comply with ALL memory governance constraints above. Violations will be flagged in execution traces.`);
+    trackSection("memory_governance", mgLines.join("\n"));
   }
 
   const rtConfig = agent.runtimeConfig || {};
-  if (Array.isArray(rtConfig.kpiBindings) && rtConfig.kpiBindings.length > 0) {
-    sections.push(`\n## ASSIGNED KPI BINDINGS: ${rtConfig.kpiBindings.join(", ")}`);
-  }
-  if (Array.isArray(rtConfig.workflowSteps) && rtConfig.workflowSteps.length > 0) {
-    sections.push(`\n## WORKFLOW STEPS`);
-    rtConfig.workflowSteps.forEach((step: string, i: number) => {
-      sections.push(`${i + 1}. ${step}`);
-    });
-  }
-  if (rtConfig.estimatedImpact) {
-    sections.push(`\nExpected Impact: ${rtConfig.estimatedImpact}`);
-  }
-
-  if (agent.agentType === "team" && rtConfig.orchestration) {
-    const orch = rtConfig.orchestration;
-    sections.push(`\n## ORCHESTRATION CONFIG`);
-    sections.push(`Pattern: ${orch.pattern || "supervisor"}`);
-    if (orch.errorHandling) sections.push(`Error Handling: ${orch.errorHandling}`);
-    if (orch.handoffRules) sections.push(`Handoff Rules: ${orch.handoffRules}`);
+  {
+    const rcLines: string[] = [];
+    if (Array.isArray(rtConfig.kpiBindings) && rtConfig.kpiBindings.length > 0) {
+      rcLines.push(`\n## ASSIGNED KPI BINDINGS: ${rtConfig.kpiBindings.join(", ")}`);
+    }
+    if (Array.isArray(rtConfig.workflowSteps) && rtConfig.workflowSteps.length > 0) {
+      rcLines.push(`\n## WORKFLOW STEPS`);
+      rtConfig.workflowSteps.forEach((step: string, i: number) => {
+        rcLines.push(`${i + 1}. ${step}`);
+      });
+    }
+    if (rtConfig.estimatedImpact) {
+      rcLines.push(`\nExpected Impact: ${rtConfig.estimatedImpact}`);
+    }
+    if (agent.agentType === "team" && rtConfig.orchestration) {
+      const orch = rtConfig.orchestration;
+      rcLines.push(`\n## ORCHESTRATION CONFIG`);
+      rcLines.push(`Pattern: ${orch.pattern || "supervisor"}`);
+      if (orch.errorHandling) rcLines.push(`Error Handling: ${orch.errorHandling}`);
+      if (orch.handoffRules) rcLines.push(`Handoff Rules: ${orch.handoffRules}`);
+    }
+    if (rcLines.length > 0) {
+      trackSection("runtime_config", rcLines.join("\n"));
+    }
   }
 
   try {
@@ -352,72 +384,78 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<string> {
     });
     if (matchingProfiles.length > 0) {
       const profile = matchingProfiles.find(p => p.agentId === agent.agentId) || matchingProfiles[0];
-      sections.push(`\n## CONTEXT ENGINEERING PROFILE: ${profile.name}`);
-      if (profile.description) sections.push(profile.description);
+      const cpLines: string[] = [];
+      cpLines.push(`\n## CONTEXT ENGINEERING PROFILE: ${profile.name}`);
+      if (profile.description) cpLines.push(profile.description);
       const priorities = profile.priorityOrder as any[];
       if (Array.isArray(priorities) && priorities.length > 0) {
-        sections.push(`\n### Priority Matrix (context source importance)`);
+        cpLines.push(`\n### Priority Matrix (context source importance)`);
         priorities.forEach((p: any, i: number) => {
           const label = typeof p === "string" ? p : (p.source || p.name || JSON.stringify(p));
           const weight = typeof p === "object" && p.weight ? ` (weight: ${p.weight})` : "";
-          sections.push(`${i + 1}. ${label}${weight}`);
+          cpLines.push(`${i + 1}. ${label}${weight}`);
         });
       }
       const budgets = profile.budgetAllocations as Record<string, any>;
       if (budgets && typeof budgets === "object" && Object.keys(budgets).length > 0) {
-        sections.push(`\n### Context Budget Allocation (token budget guidance)`);
-        sections.push(`Total capacity: ${profile.totalCapacity} tokens`);
+        cpLines.push(`\n### Context Budget Allocation (token budget guidance)`);
+        cpLines.push(`Total capacity: ${profile.totalCapacity} tokens`);
         for (const [source, allocation] of Object.entries(budgets)) {
           const pct = typeof allocation === "number" ? `${allocation}%` : JSON.stringify(allocation);
-          sections.push(`- ${source}: ${pct}`);
+          cpLines.push(`- ${source}: ${pct}`);
         }
       }
       const sources = profile.sources as any[];
       if (Array.isArray(sources) && sources.length > 0) {
-        sections.push(`\n### Context Sources`);
+        cpLines.push(`\n### Context Sources`);
         sources.forEach((s: any) => {
           const label = typeof s === "string" ? s : (s.name || s.type || JSON.stringify(s));
           const instructions = typeof s === "object" && s.instructions ? ` — ${s.instructions}` : "";
-          sections.push(`- ${label}${instructions}`);
+          cpLines.push(`- ${label}${instructions}`);
         });
       }
+      trackSection("context_profile", cpLines.join("\n"));
     }
   } catch {}
 
   try {
     const recentMemories = await storage.getAgentMemories(agent.agentId, "episodic", 10);
     if (recentMemories.length > 0) {
-      sections.push(`\n## EPISODIC MEMORY (recent execution history)`);
-      sections.push(`You have executed ${recentMemories.length} previous run(s). Use this history to inform your decisions:`);
+      const memLines: string[] = [];
+      memLines.push(`\n## EPISODIC MEMORY (recent execution history)`);
+      memLines.push(`You have executed ${recentMemories.length} previous run(s). Use this history to inform your decisions:`);
       recentMemories.forEach((mem, i) => {
         const age = Math.round((Date.now() - new Date(mem.createdAt!).getTime()) / 60000);
         const ageLabel = age < 60 ? `${age}m ago` : age < 1440 ? `${Math.round(age / 60)}h ago` : `${Math.round(age / 1440)}d ago`;
-        sections.push(`- [${ageLabel}] ${mem.content}`);
+        memLines.push(`- [${ageLabel}] ${mem.content}`);
       });
+      trackSection("episodic_memory", memLines.join("\n"));
     }
   } catch {}
 
   if (agent.blueprintRequirements) {
     const bp = agent.blueprintRequirements;
-    sections.push(`\n## BLUEPRINT WORKFLOW (expected execution flow)`);
+    const bpLines: string[] = [];
+    bpLines.push(`\n## BLUEPRINT WORKFLOW (expected execution flow)`);
     if (bp.workflowSteps && bp.workflowSteps.length > 0) {
-      sections.push(`Follow this workflow:`);
+      bpLines.push(`Follow this workflow:`);
       bp.workflowSteps.forEach((step: string, i: number) => {
-        sections.push(`${i + 1}. ${step}`);
+        bpLines.push(`${i + 1}. ${step}`);
       });
     }
     if (bp.requiredTools && bp.requiredTools.length > 0) {
-      sections.push(`\nRequired tools: ${bp.requiredTools.join(", ")}`);
+      bpLines.push(`\nRequired tools: ${bp.requiredTools.join(", ")}`);
     }
     if (bp.escalationTriggers && bp.escalationTriggers.length > 0) {
-      sections.push(`\nEscalation triggers: ${bp.escalationTriggers.join("; ")}`);
+      bpLines.push(`\nEscalation triggers: ${bp.escalationTriggers.join("; ")}`);
     }
     if (bp.outputFormat) {
-      sections.push(`\nExpected output format: ${bp.outputFormat}`);
+      bpLines.push(`\nExpected output format: ${bp.outputFormat}`);
     }
+    trackSection("blueprint_workflow", bpLines.join("\n"));
   }
 
-  return sections.join("\n");
+  return { context: sections.join("\n"), sectionMetrics };
 }
 
 const activeAgents = new Map<string, { timer: NodeJS.Timeout; agent: RuntimeAgent }>();
@@ -658,9 +696,10 @@ export async function executePromptWithMcp(
   industry?: string,
   agentSystemPrompt?: string,
   options?: { conversational?: boolean; ontologyLabels?: string[]; runtimeConfig?: Record<string, any> },
-): Promise<{ steps: any[]; success: boolean; summary: any; promptInputs?: any; provenanceSnapshot?: any; provenanceHash?: string; retrievedDocs?: any; conversationalResponse?: string }> {
+): Promise<{ steps: any[]; success: boolean; summary: any; promptInputs?: any; provenanceSnapshot?: any; provenanceHash?: string; retrievedDocs?: any; conversationalResponse?: string; contextSectionMetrics?: ContextSectionMetric[] }> {
   const startTime = Date.now();
   const steps: any[] = [];
+  const promptSectionMetrics: ContextSectionMetric[] = [];
 
   steps.push({
     id: "step_1",
@@ -752,9 +791,13 @@ export async function executePromptWithMcp(
       }
       if (kbChunks.length > 0) {
         kbContext = `\n\n## KNOWLEDGE BASE CONTEXT (retrieved via RAG)\nUse the following domain knowledge to inform your analysis and decisions:\n\n${kbChunks.join("\n\n")}`;
+        promptSectionMetrics.push({ category: "kb_retrieval", tokenCount: estimateTokenCount(kbContext) });
       }
     }
   } catch {}
+
+  const toolSchemaText = JSON.stringify(availableTools.map(t => ({ server: t.serverName, tool: t.toolName, description: t.toolDescription, inputSchema: t.toolInputSchema })));
+  promptSectionMetrics.push({ category: "tool_schemas", tokenCount: estimateTokenCount(toolSchemaText) });
 
   const baseInstructions = `You have access to MCP (Model Context Protocol) server tools for executing real API calls.
 Your job is to fulfill the user's prompt by calling the appropriate tools and then analyzing the results.
@@ -1228,6 +1271,7 @@ After receiving tool results, provide a structured analysis with key findings, s
     provenanceSnapshot,
     provenanceHash,
     retrievedDocs: kbRetrievals,
+    contextSectionMetrics: promptSectionMetrics,
     ...(conversationalResponse ? { conversationalResponse } : {}),
   };
 }
@@ -1389,7 +1433,8 @@ async function executeWorkerAgent(
     memoryGovernanceRules: (workerAgent.memoryGovernanceRules as Array<{ rule: string; regulation: string; type: string }>) || undefined,
   };
 
-  const workerContext = await buildRuntimeContext(workerRuntimeAgent);
+  const workerContextResult = await buildRuntimeContext(workerRuntimeAgent);
+  const workerContext = workerContextResult.context;
 
   try {
     const result = await executePromptWithMcp(
@@ -1814,7 +1859,9 @@ async function executeAgentCycle(agent: RuntimeAgent) {
   }
 
   const isTeam = agent.agentType === "team" && agent.runtimeConfig?.orchestration?.workerIds?.length > 0;
-  const enrichedContext = isTeam ? undefined : await buildRuntimeContext(agent);
+  const contextResult = isTeam ? undefined : await buildRuntimeContext(agent);
+  const enrichedContext = contextResult?.context;
+  const buildSectionMetrics = contextResult?.sectionMetrics || [];
 
   const runtimeRun = await storage.createAgentRuntimeRun({
     agentId: agent.agentId,
@@ -1967,6 +2014,64 @@ async function executeAgentCycle(agent: RuntimeAgent) {
         }
       }
     } catch {}
+
+    try {
+      const allSectionMetrics: ContextSectionMetric[] = [
+        ...buildSectionMetrics,
+        ...((result as any).contextSectionMetrics || []),
+      ];
+      const totalTokensUsed = allSectionMetrics.reduce((sum, m) => sum + m.tokenCount, 0);
+      const sectionsWithPercent = allSectionMetrics.map(m => ({
+        category: m.category,
+        tokenCount: m.tokenCount,
+        percentOfTotal: totalTokensUsed > 0 ? Math.round((m.tokenCount / totalTokensUsed) * 10000) / 100 : 0,
+      }));
+
+      let outcomeQuality: number | null = null;
+      let outcomeBillable: boolean | null = null;
+      if (agent.outcomeId) {
+        try {
+          const outcomeEvts = await storage.getOutcomeEventsByOutcome(agent.outcomeId);
+          if (outcomeEvts.length > 0) {
+            const latest = outcomeEvts[0];
+            outcomeBillable = latest.billable;
+            outcomeQuality = outcomeBillable ? 80 : 40;
+          }
+        } catch {}
+      }
+
+      const kbSourceDetails: Array<{ kbId: string; kbName: string; chunkCount: number; tokenCount: number; avgSimilarity: number }> = [];
+      const retrievedDocs = (result as any).retrievedDocs || [];
+      if (Array.isArray(retrievedDocs)) {
+        for (const kb of retrievedDocs) {
+          const chunks = kb.chunks || [];
+          const avgSim = chunks.length > 0 ? chunks.reduce((s: number, c: any) => s + (c.similarityScore || 0), 0) / chunks.length : 0;
+          const chunkTokens = chunks.reduce((s: number, c: any) => s + (c.tokenCount || estimateTokenCount(c.content || c.text || "")), 0);
+          kbSourceDetails.push({
+            kbId: kb.kbId,
+            kbName: kb.kbName || kb.kbId,
+            chunkCount: chunks.length,
+            tokenCount: chunkTokens,
+            avgSimilarity: Math.round(avgSim * 1000) / 1000,
+          });
+        }
+      }
+
+      await storage.createContextEconomics({
+        traceId: trace.id,
+        agentId: agent.agentId,
+        industry: agent.industry || "general",
+        contextProfileId: contextProfileId || null,
+        totalTokensUsed,
+        totalCostUsd: result.summary.costUsd || 0,
+        sections: sectionsWithPercent,
+        outcomeQuality,
+        outcomeBillable,
+        kbSourceDetails: kbSourceDetails.length > 0 ? kbSourceDetails : [],
+      });
+    } catch (econErr: any) {
+      console.log(`[agent-runtime] Failed to save context economics: ${econErr.message}`);
+    }
 
     try {
       const toolsUsed = result.steps.filter((s: any) => s.type === "api_call" && s.status === "completed").map((s: any) => s.mcpTool || s.name);

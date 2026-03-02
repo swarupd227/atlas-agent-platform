@@ -28936,6 +28936,716 @@ Return ONLY valid JSON array, no explanation.`;
     }
   });
 
+  app.get("/api/context-economics/agent/:agentId/roi", async (req, res) => {
+    try {
+      const { agentId } = req.params;
+      const days = parseInt(req.query.days as string) || 30;
+      const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+      const allRecords = await storage.getContextEconomicsByAgent(agentId);
+      const records = allRecords.filter(r => !r.createdAt || new Date(r.createdAt) >= cutoff);
+
+      if (records.length === 0) {
+        return res.json({
+          agentId,
+          totalRuns: 0,
+          avgOutcomeQuality: 0,
+          totalCostUsd: 0,
+          categories: [],
+        });
+      }
+
+      const totalRuns = records.length;
+      const qualityRecords = records.filter(r => r.outcomeQuality != null);
+      const avgOutcomeQuality = qualityRecords.length > 0
+        ? qualityRecords.reduce((s, r) => s + (r.outcomeQuality || 0), 0) / qualityRecords.length
+        : 0;
+      const totalCostUsd = records.reduce((s, r) => s + (r.totalCostUsd || 0), 0);
+
+      const categoryMap: Record<string, { totalTokens: number; totalCost: number; tokensByRun: number[]; qualitiesByRun: { tokens: number; quality: number | null }[]; count: number }> = {};
+
+      for (const record of records) {
+        const sections = (record.sections as Array<{ category: string; tokenCount: number; percentOfTotal: number }>) || [];
+        const runTotalTokens = record.totalTokensUsed || 1;
+        const runCost = record.totalCostUsd || 0;
+
+        for (const section of sections) {
+          if (!categoryMap[section.category]) {
+            categoryMap[section.category] = { totalTokens: 0, totalCost: 0, tokensByRun: [], qualitiesByRun: [], count: 0 };
+          }
+          const cat = categoryMap[section.category];
+          cat.totalTokens += section.tokenCount;
+          const proportionalCost = runTotalTokens > 0 ? (section.tokenCount / runTotalTokens) * runCost : 0;
+          cat.totalCost += proportionalCost;
+          cat.tokensByRun.push(section.tokenCount);
+          cat.qualitiesByRun.push({ tokens: section.tokenCount, quality: record.outcomeQuality });
+          cat.count++;
+        }
+      }
+
+      const midpoint = Math.floor(records.length / 2);
+      const recentRecords = records.slice(0, midpoint);
+      const olderRecords = records.slice(midpoint);
+
+      const categories = Object.entries(categoryMap).map(([category, data]) => {
+        const avgTokenCount = Math.round(data.totalTokens / data.count);
+        const avgCostUsd = parseFloat((data.totalCost / data.count).toFixed(6));
+
+        const validPairs = data.qualitiesByRun.filter(p => p.quality != null);
+        let qualityCorrelation = 0;
+        if (validPairs.length >= 3) {
+          const meanT = validPairs.reduce((s, p) => s + p.tokens, 0) / validPairs.length;
+          const meanQ = validPairs.reduce((s, p) => s + (p.quality || 0), 0) / validPairs.length;
+          let num = 0, denT = 0, denQ = 0;
+          for (const p of validPairs) {
+            const dt = p.tokens - meanT;
+            const dq = (p.quality || 0) - meanQ;
+            num += dt * dq;
+            denT += dt * dt;
+            denQ += dq * dq;
+          }
+          const denom = Math.sqrt(denT * denQ);
+          qualityCorrelation = denom > 0 ? parseFloat((num / denom).toFixed(4)) : 0;
+        }
+
+        let roi = 0;
+        if (validPairs.length >= 2 && avgCostUsd > 0) {
+          const sortedByTokens = [...validPairs].sort((a, b) => a.tokens - b.tokens);
+          const medianIdx = Math.floor(sortedByTokens.length / 2);
+          const aboveMedian = sortedByTokens.slice(medianIdx);
+          const belowMedian = sortedByTokens.slice(0, medianIdx);
+          const avgQAbove = aboveMedian.length > 0 ? aboveMedian.reduce((s, p) => s + (p.quality || 0), 0) / aboveMedian.length : 0;
+          const avgQBelow = belowMedian.length > 0 ? belowMedian.reduce((s, p) => s + (p.quality || 0), 0) / belowMedian.length : 0;
+          const qualityContribution = avgQAbove - avgQBelow;
+          roi = parseFloat((qualityContribution / avgCostUsd).toFixed(4));
+        }
+
+        let trend: "improving" | "stable" | "declining" = "stable";
+        if (recentRecords.length > 0 && olderRecords.length > 0) {
+          const recentAvgQ = recentRecords.filter(r => r.outcomeQuality != null).reduce((s, r) => s + (r.outcomeQuality || 0), 0) / (recentRecords.filter(r => r.outcomeQuality != null).length || 1);
+          const olderAvgQ = olderRecords.filter(r => r.outcomeQuality != null).reduce((s, r) => s + (r.outcomeQuality || 0), 0) / (olderRecords.filter(r => r.outcomeQuality != null).length || 1);
+          if (recentAvgQ > olderAvgQ * 1.05) trend = "improving";
+          else if (recentAvgQ < olderAvgQ * 0.95) trend = "declining";
+        }
+
+        return { category, avgTokenCount, avgCostUsd, qualityCorrelation, roi, trend };
+      });
+
+      res.json({ agentId, totalRuns, avgOutcomeQuality: parseFloat(avgOutcomeQuality.toFixed(2)), totalCostUsd: parseFloat(totalCostUsd.toFixed(4)), categories });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/context-economics/industry/:industry/benchmarks", async (req, res) => {
+    try {
+      const { industry } = req.params;
+      const records = await storage.getContextEconomicsByIndustry(industry);
+
+      if (records.length === 0) {
+        return res.json({ industry, totalAgents: 0, totalRuns: 0, categories: [] });
+      }
+
+      const agentIds = new Set(records.map(r => r.agentId));
+
+      const categoryMap: Record<string, { totalTokens: number; totalCost: number; qualities: number[]; count: number }> = {};
+
+      for (const record of records) {
+        const sections = (record.sections as Array<{ category: string; tokenCount: number; percentOfTotal: number }>) || [];
+        const runTotalTokens = record.totalTokensUsed || 1;
+        const runCost = record.totalCostUsd || 0;
+
+        for (const section of sections) {
+          if (!categoryMap[section.category]) {
+            categoryMap[section.category] = { totalTokens: 0, totalCost: 0, qualities: [], count: 0 };
+          }
+          const cat = categoryMap[section.category];
+          cat.totalTokens += section.tokenCount;
+          const proportionalCost = runTotalTokens > 0 ? (section.tokenCount / runTotalTokens) * runCost : 0;
+          cat.totalCost += proportionalCost;
+          if (record.outcomeQuality != null) cat.qualities.push(record.outcomeQuality);
+          cat.count++;
+        }
+      }
+
+      const categories = Object.entries(categoryMap).map(([category, data]) => {
+        const avgTokenCount = Math.round(data.totalTokens / data.count);
+        const avgCostUsd = parseFloat((data.totalCost / data.count).toFixed(6));
+        const avgQuality = data.qualities.length > 0
+          ? parseFloat((data.qualities.reduce((s, q) => s + q, 0) / data.qualities.length).toFixed(2))
+          : 0;
+
+        const sorted = [...data.qualities].sort((a, b) => a - b);
+        const p25 = sorted.length > 0 ? sorted[Math.floor(sorted.length * 0.25)] : 0;
+        const p50 = sorted.length > 0 ? sorted[Math.floor(sorted.length * 0.5)] : 0;
+        const p75 = sorted.length > 0 ? sorted[Math.floor(sorted.length * 0.75)] : 0;
+
+        return { category, avgTokenCount, avgCostUsd, avgQuality, percentiles: { p25, p50, p75 }, runCount: data.count };
+      });
+
+      const allQualities = records.filter(r => r.outcomeQuality != null).map(r => r.outcomeQuality!);
+      const avgQuality = allQualities.length > 0 ? parseFloat((allQualities.reduce((s, q) => s + q, 0) / allQualities.length).toFixed(2)) : 0;
+
+      const sortedCategories = [...categories].sort((a, b) => b.avgQuality - a.avgQuality);
+      const highRoi = sortedCategories.slice(0, Math.max(1, Math.floor(sortedCategories.length * 0.3))).map(c => c.category);
+      const lowRoi = sortedCategories.slice(-Math.max(1, Math.floor(sortedCategories.length * 0.3))).map(c => c.category);
+
+      res.json({
+        industry,
+        totalAgents: agentIds.size,
+        totalRuns: records.length,
+        avgOutcomeQuality: avgQuality,
+        categories,
+        patterns: { highRoi, lowRoi },
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/context-economics/agent/:agentId/cliff-analysis", async (req, res) => {
+    try {
+      const { agentId } = req.params;
+      const records = await storage.getContextEconomicsByAgent(agentId);
+
+      if (records.length < 3) {
+        return res.json({
+          cliffDetected: false,
+          optimalTokenCount: null,
+          currentAvgTokenCount: records.length > 0 ? Math.round(records.reduce((s, r) => s + (r.totalTokensUsed || 0), 0) / records.length) : 0,
+          qualityCurve: [],
+          recommendation: "Insufficient data for cliff analysis. At least 3 runs are needed.",
+        });
+      }
+
+      const bucketBounds = [0, 2000, 4000, 8000, 16000, 32000, 64000, 128000, Infinity];
+      const bucketLabels = ["0-2K", "2K-4K", "4K-8K", "8K-16K", "16K-32K", "32K-64K", "64K-128K", "128K+"];
+
+      const buckets: Array<{ label: string; totalTokens: number; totalQuality: number; runCount: number }> = bucketLabels.map(label => ({
+        label,
+        totalTokens: 0,
+        totalQuality: 0,
+        runCount: 0,
+      }));
+
+      for (const record of records) {
+        const tokens = record.totalTokensUsed || 0;
+        for (let i = 0; i < bucketBounds.length - 1; i++) {
+          if (tokens >= bucketBounds[i] && tokens < bucketBounds[i + 1]) {
+            buckets[i].totalTokens += tokens;
+            buckets[i].totalQuality += record.outcomeQuality || 0;
+            buckets[i].runCount++;
+            break;
+          }
+        }
+      }
+
+      const qualityCurve = buckets
+        .filter(b => b.runCount > 0)
+        .map(b => ({
+          bucketLabel: b.label,
+          avgTokens: Math.round(b.totalTokens / b.runCount),
+          avgQuality: parseFloat((b.totalQuality / b.runCount).toFixed(2)),
+          runCount: b.runCount,
+        }));
+
+      let cliffDetected = false;
+      let cliffBucketIdx = -1;
+      for (let i = 1; i < qualityCurve.length; i++) {
+        const prev = qualityCurve[i - 1];
+        const curr = qualityCurve[i];
+        if (prev.avgQuality > 0) {
+          const dropPercent = ((prev.avgQuality - curr.avgQuality) / prev.avgQuality) * 100;
+          if (dropPercent > 5) {
+            cliffDetected = true;
+            cliffBucketIdx = i;
+            break;
+          }
+        }
+      }
+
+      const optimalTokenCount = cliffDetected && cliffBucketIdx > 0
+        ? qualityCurve[cliffBucketIdx - 1].avgTokens
+        : qualityCurve.length > 0
+          ? qualityCurve[qualityCurve.length - 1].avgTokens
+          : null;
+
+      const currentAvgTokenCount = Math.round(records.reduce((s, r) => s + (r.totalTokensUsed || 0), 0) / records.length);
+
+      let recommendation = "";
+      if (cliffDetected && optimalTokenCount) {
+        if (currentAvgTokenCount > optimalTokenCount * 1.2) {
+          recommendation = `Context cliff detected. Current avg (${currentAvgTokenCount} tokens) exceeds optimal (${optimalTokenCount} tokens). Reduce context to improve quality and save costs.`;
+        } else if (currentAvgTokenCount > optimalTokenCount * 0.8) {
+          recommendation = `Near context cliff. Current avg (${currentAvgTokenCount} tokens) is approaching the optimal limit (${optimalTokenCount} tokens). Monitor closely.`;
+        } else {
+          recommendation = `Context cliff detected at ~${optimalTokenCount} tokens but current usage (${currentAvgTokenCount} tokens) is safely below it.`;
+        }
+      } else {
+        recommendation = "No context cliff detected. Quality remains stable across context sizes.";
+      }
+
+      res.json({ cliffDetected, optimalTokenCount, currentAvgTokenCount, qualityCurve, recommendation });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/context-economics/agent/:agentId/source-attribution", async (req, res) => {
+    try {
+      const { agentId } = req.params;
+      const records = await storage.getContextEconomicsByAgent(agentId);
+
+      if (records.length === 0) {
+        return res.json({ agentId, sources: [] });
+      }
+
+      const sourceMap: Record<string, {
+        kbName: string;
+        totalChunks: number;
+        totalTokens: number;
+        totalSimilarity: number;
+        similarityCount: number;
+        qualities: number[];
+        count: number;
+      }> = {};
+
+      for (const record of records) {
+        const kbDetails = (record.kbSourceDetails as Array<{ kbId: string; kbName: string; chunkCount: number; tokenCount: number; avgSimilarity: number }>) || [];
+        for (const kb of kbDetails) {
+          const key = kb.kbId || kb.kbName;
+          if (!sourceMap[key]) {
+            sourceMap[key] = { kbName: kb.kbName || key, totalChunks: 0, totalTokens: 0, totalSimilarity: 0, similarityCount: 0, qualities: [], count: 0 };
+          }
+          const src = sourceMap[key];
+          src.totalChunks += kb.chunkCount || 0;
+          src.totalTokens += kb.tokenCount || 0;
+          if (kb.avgSimilarity != null) {
+            src.totalSimilarity += kb.avgSimilarity;
+            src.similarityCount++;
+          }
+          if (record.outcomeQuality != null) src.qualities.push(record.outcomeQuality);
+          src.count++;
+        }
+      }
+
+      const sources = Object.entries(sourceMap).map(([kbId, data]) => {
+        const avgChunks = parseFloat((data.totalChunks / data.count).toFixed(1));
+        const avgTokens = Math.round(data.totalTokens / data.count);
+        const avgSimilarity = data.similarityCount > 0 ? parseFloat((data.totalSimilarity / data.similarityCount).toFixed(4)) : 0;
+        const avgQuality = data.qualities.length > 0 ? parseFloat((data.qualities.reduce((s, q) => s + q, 0) / data.qualities.length).toFixed(2)) : 0;
+
+        const qualityImpact = avgQuality;
+        const costPerQualityPoint = avgTokens > 0 && avgQuality > 0 ? parseFloat((avgTokens / avgQuality).toFixed(2)) : 0;
+
+        return {
+          kbId,
+          kbName: data.kbName,
+          avgChunksRetrieved: avgChunks,
+          avgTokens,
+          avgSimilarity,
+          qualityImpact,
+          costPerQualityPoint,
+          runCount: data.count,
+        };
+      });
+
+      sources.sort((a, b) => {
+        if (b.qualityImpact !== a.qualityImpact) return b.qualityImpact - a.qualityImpact;
+        return a.costPerQualityPoint - b.costPerQualityPoint;
+      });
+
+      const rankedSources = sources.map((s, idx) => ({ ...s, roiRank: idx + 1 }));
+
+      res.json({ agentId, totalRuns: records.length, sources: rankedSources });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/context-economics/agent/:agentId/generate-recommendations", async (req, res) => {
+    try {
+      const { agentId } = req.params;
+      const agent = await storage.getAgent(agentId);
+      if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+      const allRecords = await storage.getContextEconomicsByAgent(agentId);
+      const days = 30;
+      const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+      const records = allRecords.filter(r => !r.createdAt || new Date(r.createdAt) >= cutoff);
+
+      if (records.length < 2) {
+        return res.json({ recommendations: [], message: "Insufficient data. At least 2 runs are needed." });
+      }
+
+      const totalRuns = records.length;
+      const qualityRecords = records.filter(r => r.outcomeQuality != null);
+      const totalCostUsd = records.reduce((s, r) => s + (r.totalCostUsd || 0), 0);
+
+      const categoryMap: Record<string, { totalTokens: number; totalCost: number; tokensByRun: number[]; qualitiesByRun: { tokens: number; quality: number | null }[]; count: number }> = {};
+      const avgTotalTokens = records.reduce((s, r) => s + (r.totalTokensUsed || 0), 0) / totalRuns;
+
+      for (const record of records) {
+        const sections = (record.sections as Array<{ category: string; tokenCount: number; percentOfTotal: number }>) || [];
+        const runTotalTokens = record.totalTokensUsed || 1;
+        const runCost = record.totalCostUsd || 0;
+        for (const section of sections) {
+          if (!categoryMap[section.category]) {
+            categoryMap[section.category] = { totalTokens: 0, totalCost: 0, tokensByRun: [], qualitiesByRun: [], count: 0 };
+          }
+          const cat = categoryMap[section.category];
+          cat.totalTokens += section.tokenCount;
+          const proportionalCost = runTotalTokens > 0 ? (section.tokenCount / runTotalTokens) * runCost : 0;
+          cat.totalCost += proportionalCost;
+          cat.tokensByRun.push(section.tokenCount);
+          cat.qualitiesByRun.push({ tokens: section.tokenCount, quality: record.outcomeQuality });
+          cat.count++;
+        }
+      }
+
+      const categoryStats = Object.entries(categoryMap).map(([category, data]) => {
+        const avgTokenCount = Math.round(data.totalTokens / data.count);
+        const avgCostUsd = data.totalCost / data.count;
+        const percentOfBudget = avgTotalTokens > 0 ? (avgTokenCount / avgTotalTokens) * 100 : 0;
+
+        const validPairs = data.qualitiesByRun.filter(p => p.quality != null);
+        let roi = 0;
+        if (validPairs.length >= 2 && avgCostUsd > 0) {
+          const sortedByTokens = [...validPairs].sort((a, b) => a.tokens - b.tokens);
+          const medianIdx = Math.floor(sortedByTokens.length / 2);
+          const aboveMedian = sortedByTokens.slice(medianIdx);
+          const belowMedian = sortedByTokens.slice(0, medianIdx);
+          const avgQAbove = aboveMedian.length > 0 ? aboveMedian.reduce((s, p) => s + (p.quality || 0), 0) / aboveMedian.length : 0;
+          const avgQBelow = belowMedian.length > 0 ? belowMedian.reduce((s, p) => s + (p.quality || 0), 0) / belowMedian.length : 0;
+          const qualityContribution = avgQAbove - avgQBelow;
+          roi = parseFloat((qualityContribution / avgCostUsd).toFixed(4));
+        }
+
+        return { category, avgTokenCount, avgCostUsd, percentOfBudget, roi, count: data.count };
+      });
+
+      const sortedByRoi = [...categoryStats].sort((a, b) => a.roi - b.roi);
+      const bottom20Idx = Math.max(1, Math.floor(sortedByRoi.length * 0.2));
+      const bottom20Categories = new Set(sortedByRoi.slice(0, bottom20Idx).map(c => c.category));
+
+      let cliffDetected = false;
+      let optimalTokenCount: number | null = null;
+      const currentAvgTokenCount = Math.round(records.reduce((s, r) => s + (r.totalTokensUsed || 0), 0) / records.length);
+
+      if (records.length >= 3) {
+        const bucketBounds = [0, 2000, 4000, 8000, 16000, 32000, 64000, 128000, Infinity];
+        const bucketLabels = ["0-2K", "2K-4K", "4K-8K", "8K-16K", "16K-32K", "32K-64K", "64K-128K", "128K+"];
+        const buckets = bucketLabels.map(label => ({ label, totalTokens: 0, totalQuality: 0, runCount: 0 }));
+
+        for (const record of records) {
+          const tokens = record.totalTokensUsed || 0;
+          for (let i = 0; i < bucketBounds.length - 1; i++) {
+            if (tokens >= bucketBounds[i] && tokens < bucketBounds[i + 1]) {
+              buckets[i].totalTokens += tokens;
+              buckets[i].totalQuality += record.outcomeQuality || 0;
+              buckets[i].runCount++;
+              break;
+            }
+          }
+        }
+
+        const qualityCurve = buckets.filter(b => b.runCount > 0).map(b => ({
+          avgTokens: Math.round(b.totalTokens / b.runCount),
+          avgQuality: b.totalQuality / b.runCount,
+          runCount: b.runCount,
+        }));
+
+        for (let i = 1; i < qualityCurve.length; i++) {
+          const prev = qualityCurve[i - 1];
+          const curr = qualityCurve[i];
+          if (prev.avgQuality > 0) {
+            const dropPercent = ((prev.avgQuality - curr.avgQuality) / prev.avgQuality) * 100;
+            if (dropPercent > 5) {
+              cliffDetected = true;
+              optimalTokenCount = qualityCurve[i - 1].avgTokens;
+              break;
+            }
+          }
+        }
+        if (!cliffDetected && qualityCurve.length > 0) {
+          optimalTokenCount = qualityCurve[qualityCurve.length - 1].avgTokens;
+        }
+      }
+
+      let industryBenchmarks: Record<string, { avgTokenCount: number; avgQuality: number }> = {};
+      const agentIndustry = agent.department || (agent as any).industry;
+      if (agentIndustry) {
+        const industryRecords = await storage.getContextEconomicsByIndustry(agentIndustry);
+        const otherRecords = industryRecords.filter(r => r.agentId !== agentId);
+        if (otherRecords.length > 0) {
+          for (const record of otherRecords) {
+            const sections = (record.sections as Array<{ category: string; tokenCount: number; percentOfTotal: number }>) || [];
+            for (const section of sections) {
+              if (!industryBenchmarks[section.category]) {
+                industryBenchmarks[section.category] = { avgTokenCount: 0, avgQuality: 0 };
+              }
+              industryBenchmarks[section.category].avgTokenCount += section.tokenCount;
+            }
+            if (record.outcomeQuality != null) {
+              for (const section of sections) {
+                industryBenchmarks[section.category].avgQuality += record.outcomeQuality;
+              }
+            }
+          }
+          for (const [cat, data] of Object.entries(industryBenchmarks)) {
+            const count = otherRecords.filter(r => (r.sections as any[])?.some((s: any) => s.category === cat)).length || 1;
+            data.avgTokenCount = Math.round(data.avgTokenCount / count);
+            data.avgQuality = parseFloat((data.avgQuality / count).toFixed(2));
+          }
+        }
+      }
+
+      const existingPending = await storage.getContextRecommendations(agentId, "pending");
+      const existingKeys = new Set(existingPending.map(r => `${r.type}:${r.category}`));
+
+      const newRecs: Array<{
+        agentId: string;
+        industry: string | null;
+        contextProfileId: string | null;
+        type: string;
+        category: string;
+        currentTokens: number;
+        recommendedTokens: number;
+        estimatedQualityImpact: number;
+        estimatedCostSavings: number;
+        rationale: string;
+        status: string;
+        metadata: any;
+      }> = [];
+
+      const contextProfileId = records.find(r => r.contextProfileId)?.contextProfileId || null;
+
+      for (const cat of categoryStats) {
+        if (bottom20Categories.has(cat.category) && cat.percentOfBudget > 5) {
+          const key = `remove_source:${cat.category}`;
+          if (!existingKeys.has(key)) {
+            const tokenSavings = Math.round(cat.avgTokenCount * 0.5);
+            const costSavings = parseFloat((cat.avgCostUsd * 0.5).toFixed(6));
+            newRecs.push({
+              agentId,
+              industry: agentIndustry || null,
+              contextProfileId,
+              type: "remove_source",
+              category: cat.category,
+              currentTokens: cat.avgTokenCount,
+              recommendedTokens: cat.avgTokenCount - tokenSavings,
+              estimatedQualityImpact: parseFloat((Math.abs(cat.roi) * -0.1).toFixed(2)),
+              estimatedCostSavings: costSavings,
+              rationale: `Category "${cat.category}" has low ROI (${cat.roi.toFixed(2)}) and consumes ${cat.percentOfBudget.toFixed(1)}% of the token budget. Reducing by 50% could save ~${tokenSavings} tokens per run with minimal quality impact.`,
+              status: "pending",
+              metadata: { roi: cat.roi, percentOfBudget: cat.percentOfBudget },
+            });
+          }
+        }
+      }
+
+      for (const [benchCat, benchData] of Object.entries(industryBenchmarks)) {
+        const agentCat = categoryStats.find(c => c.category === benchCat);
+        if ((!agentCat || agentCat.avgTokenCount < benchData.avgTokenCount * 0.5) && benchData.avgQuality > 50) {
+          const key = `add_source:${benchCat}`;
+          if (!existingKeys.has(key)) {
+            const currentTokens = agentCat?.avgTokenCount || 0;
+            newRecs.push({
+              agentId,
+              industry: agentIndustry || null,
+              contextProfileId,
+              type: "add_source",
+              category: benchCat,
+              currentTokens,
+              recommendedTokens: benchData.avgTokenCount,
+              estimatedQualityImpact: parseFloat((benchData.avgQuality * 0.1).toFixed(2)),
+              estimatedCostSavings: 0,
+              rationale: `Industry peers using "${benchCat}" allocate ~${benchData.avgTokenCount} tokens (vs your ${currentTokens}). Top performers with this category achieve ${benchData.avgQuality.toFixed(1)} avg quality.`,
+              status: "pending",
+              metadata: { industryAvgTokens: benchData.avgTokenCount, industryAvgQuality: benchData.avgQuality },
+            });
+          }
+        }
+      }
+
+      const sortedByRoiDesc = [...categoryStats].sort((a, b) => b.roi - a.roi);
+      const avgPercentOfBudget = categoryStats.length > 0 ? 100 / categoryStats.length : 0;
+      for (const cat of sortedByRoiDesc) {
+        if (cat.roi > 0 && cat.percentOfBudget < avgPercentOfBudget * 0.7 && cat.count >= 2) {
+          const key = `rebalance_budget:${cat.category}`;
+          if (!existingKeys.has(key)) {
+            const recommendedPercent = Math.min(cat.percentOfBudget * 1.5, avgPercentOfBudget * 1.2);
+            const recommendedTokens = Math.round(avgTotalTokens * recommendedPercent / 100);
+            newRecs.push({
+              agentId,
+              industry: agentIndustry || null,
+              contextProfileId,
+              type: "rebalance_budget",
+              category: cat.category,
+              currentTokens: cat.avgTokenCount,
+              recommendedTokens,
+              estimatedQualityImpact: parseFloat((cat.roi * 0.05).toFixed(2)),
+              estimatedCostSavings: 0,
+              rationale: `Category "${cat.category}" has high ROI (${cat.roi.toFixed(2)}) but only ${cat.percentOfBudget.toFixed(1)}% of token budget. Increasing allocation from ${cat.avgTokenCount} to ${recommendedTokens} tokens could improve quality.`,
+              status: "pending",
+              metadata: { roi: cat.roi, currentPercent: cat.percentOfBudget, recommendedPercent },
+            });
+          }
+        }
+      }
+
+      if (cliffDetected && optimalTokenCount && currentAvgTokenCount > optimalTokenCount) {
+        const key = `reduce_context:overall`;
+        if (!existingKeys.has(key)) {
+          const tokenSavings = currentAvgTokenCount - optimalTokenCount;
+          const costPerToken = totalCostUsd / (records.reduce((s, r) => s + (r.totalTokensUsed || 0), 0) || 1);
+          newRecs.push({
+            agentId,
+            industry: agentIndustry || null,
+            contextProfileId,
+            type: "reduce_context",
+            category: "overall",
+            currentTokens: currentAvgTokenCount,
+            recommendedTokens: optimalTokenCount,
+            estimatedQualityImpact: 5,
+            estimatedCostSavings: parseFloat((tokenSavings * costPerToken).toFixed(6)),
+            rationale: `Total context (${currentAvgTokenCount} tokens) exceeds the optimal point (${optimalTokenCount} tokens). Reducing total context from ${currentAvgTokenCount} to ${optimalTokenCount} tokens should improve quality and save costs.`,
+            status: "pending",
+            metadata: { cliffDetected: true, optimalTokenCount, currentAvgTokenCount },
+          });
+        }
+      }
+
+      if (cliffDetected && optimalTokenCount && currentAvgTokenCount > optimalTokenCount * 0.8 && currentAvgTokenCount <= optimalTokenCount) {
+        const key = `context_cliff_warning:overall`;
+        if (!existingKeys.has(key)) {
+          const headroom = optimalTokenCount - currentAvgTokenCount;
+          newRecs.push({
+            agentId,
+            industry: agentIndustry || null,
+            contextProfileId,
+            type: "context_cliff_warning",
+            category: "overall",
+            currentTokens: currentAvgTokenCount,
+            recommendedTokens: Math.round(optimalTokenCount * 0.8),
+            estimatedQualityImpact: 0,
+            estimatedCostSavings: 0,
+            rationale: `Context cliff detected at ~${optimalTokenCount} tokens. Current usage (${currentAvgTokenCount} tokens) is within 20% of the cliff with only ${headroom} tokens of headroom. Avoid increasing context further.`,
+            status: "pending",
+            metadata: { cliffDetected: true, optimalTokenCount, currentAvgTokenCount, headroom },
+          });
+        }
+      }
+
+      const createdRecs = [];
+      for (const rec of newRecs) {
+        const created = await storage.createContextRecommendation(rec as any);
+        createdRecs.push(created);
+      }
+
+      res.json({ recommendations: createdRecs, generated: createdRecs.length, totalPending: existingPending.length + createdRecs.length });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.patch("/api/context-recommendations/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { status } = req.body;
+      if (!status || !["applied", "dismissed"].includes(status)) {
+        return res.status(400).json({ error: "Status must be 'applied' or 'dismissed'" });
+      }
+      const existing = await storage.getContextRecommendation(id);
+      if (!existing) return res.status(404).json({ error: "Recommendation not found" });
+
+      const updated = await storage.updateContextRecommendation(id, { status });
+      res.json(updated);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/context-recommendations/:id/apply", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const rec = await storage.getContextRecommendation(id);
+      if (!rec) return res.status(404).json({ error: "Recommendation not found" });
+      if (rec.status === "applied") return res.status(400).json({ error: "Recommendation already applied" });
+
+      let updatedProfile = null;
+
+      if (rec.contextProfileId) {
+        const profile = await storage.getContextProfile(rec.contextProfileId);
+        if (profile) {
+          const budgetAllocations = (profile.budgetAllocations || {}) as Record<string, number>;
+          const versionHistory = (profile.versionHistory || []) as Array<any>;
+          const historyEntry = {
+            version: profile.version,
+            changedAt: new Date().toISOString(),
+            changedBy: "context_economics_engine",
+            changeType: rec.type,
+            category: rec.category,
+            previousValue: rec.currentTokens,
+            newValue: rec.recommendedTokens,
+            rationale: rec.rationale,
+          };
+          versionHistory.push(historyEntry);
+
+          if (rec.type === "rebalance_budget" && rec.recommendedTokens != null && rec.currentTokens != null) {
+            budgetAllocations[rec.category] = rec.recommendedTokens;
+            updatedProfile = await storage.updateContextProfile(rec.contextProfileId, {
+              budgetAllocations,
+              versionHistory,
+              version: profile.version + 1,
+            });
+          } else if (rec.type === "reduce_context" && rec.recommendedTokens != null) {
+            updatedProfile = await storage.updateContextProfile(rec.contextProfileId, {
+              totalCapacity: rec.recommendedTokens,
+              versionHistory,
+              version: profile.version + 1,
+            });
+          } else if (rec.type === "remove_source" && rec.recommendedTokens != null) {
+            budgetAllocations[rec.category] = rec.recommendedTokens;
+            updatedProfile = await storage.updateContextProfile(rec.contextProfileId, {
+              budgetAllocations,
+              versionHistory,
+              version: profile.version + 1,
+            });
+          } else if (rec.type === "add_source") {
+            budgetAllocations[rec.category] = rec.recommendedTokens || (rec.currentTokens || 0) + 1000;
+            updatedProfile = await storage.updateContextProfile(rec.contextProfileId, {
+              budgetAllocations,
+              versionHistory,
+              version: profile.version + 1,
+            });
+          } else {
+            versionHistory.pop();
+            updatedProfile = profile;
+          }
+        }
+      }
+
+      await storage.updateContextRecommendation(id, { status: "applied" });
+      const appliedRec = await storage.getContextRecommendation(id);
+
+      res.json({ recommendation: appliedRec, profile: updatedProfile });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/context-economics/agent/:agentId/recommendations", async (req, res) => {
+    try {
+      const { agentId } = req.params;
+      const status = req.query.status as string | undefined;
+      const recommendations = await storage.getContextRecommendations(agentId, status);
+      res.json({ agentId, recommendations, total: recommendations.length });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Start the job worker
   startWorker();
 

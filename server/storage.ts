@@ -156,6 +156,8 @@ import {
   autonomyDecisions, type AutonomyDecision, type InsertAutonomyDecision,
   decisionQualityProfiles, type DecisionQualityProfile, type InsertDecisionQualityProfile,
   autonomyBoundaryProposals, type AutonomyBoundaryProposal, type InsertAutonomyBoundaryProposal,
+  contextEconomics, type ContextEconomics, type InsertContextEconomics,
+  contextRecommendations, type ContextRecommendation, type InsertContextRecommendation,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -706,6 +708,16 @@ export interface IStorage {
   getAutonomyBoundaryProposal(id: string): Promise<AutonomyBoundaryProposal | undefined>;
   createAutonomyBoundaryProposal(proposal: InsertAutonomyBoundaryProposal): Promise<AutonomyBoundaryProposal>;
   updateAutonomyBoundaryProposal(id: string, data: Partial<AutonomyBoundaryProposal>): Promise<AutonomyBoundaryProposal | undefined>;
+
+  createContextEconomics(record: InsertContextEconomics): Promise<ContextEconomics>;
+  getContextEconomicsByAgent(agentId: string): Promise<ContextEconomics[]>;
+  getContextEconomicsByTrace(traceId: string): Promise<ContextEconomics | undefined>;
+  getContextEconomicsByIndustry(industry: string): Promise<ContextEconomics[]>;
+
+  createContextRecommendation(rec: InsertContextRecommendation): Promise<ContextRecommendation>;
+  getContextRecommendations(agentId: string, status?: string): Promise<ContextRecommendation[]>;
+  updateContextRecommendation(id: string, data: Partial<ContextRecommendation>): Promise<ContextRecommendation | undefined>;
+  getContextRecommendation(id: string): Promise<ContextRecommendation | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2857,6 +2869,45 @@ export class DatabaseStorage implements IStorage {
   async updateAutonomyBoundaryProposal(id: string, data: Partial<AutonomyBoundaryProposal>): Promise<AutonomyBoundaryProposal | undefined> {
     const [updated] = await db.update(autonomyBoundaryProposals).set(data).where(eq(autonomyBoundaryProposals.id, id)).returning();
     return updated;
+  }
+
+  async createContextEconomics(record: InsertContextEconomics): Promise<ContextEconomics> {
+    const [created] = await db.insert(contextEconomics).values(record).returning();
+    return created;
+  }
+
+  async getContextEconomicsByAgent(agentId: string): Promise<ContextEconomics[]> {
+    return db.select().from(contextEconomics).where(eq(contextEconomics.agentId, agentId)).orderBy(desc(contextEconomics.createdAt));
+  }
+
+  async getContextEconomicsByTrace(traceId: string): Promise<ContextEconomics | undefined> {
+    const [record] = await db.select().from(contextEconomics).where(eq(contextEconomics.traceId, traceId));
+    return record;
+  }
+
+  async getContextEconomicsByIndustry(industry: string): Promise<ContextEconomics[]> {
+    return db.select().from(contextEconomics).where(eq(contextEconomics.industry, industry)).orderBy(desc(contextEconomics.createdAt));
+  }
+
+  async createContextRecommendation(rec: InsertContextRecommendation): Promise<ContextRecommendation> {
+    const [created] = await db.insert(contextRecommendations).values(rec).returning();
+    return created;
+  }
+
+  async getContextRecommendations(agentId: string, status?: string): Promise<ContextRecommendation[]> {
+    const conditions = [eq(contextRecommendations.agentId, agentId)];
+    if (status) conditions.push(eq(contextRecommendations.status, status));
+    return db.select().from(contextRecommendations).where(and(...conditions)).orderBy(desc(contextRecommendations.createdAt));
+  }
+
+  async updateContextRecommendation(id: string, data: Partial<ContextRecommendation>): Promise<ContextRecommendation | undefined> {
+    const [updated] = await db.update(contextRecommendations).set(data).where(eq(contextRecommendations.id, id)).returning();
+    return updated;
+  }
+
+  async getContextRecommendation(id: string): Promise<ContextRecommendation | undefined> {
+    const [rec] = await db.select().from(contextRecommendations).where(eq(contextRecommendations.id, id));
+    return rec;
   }
 }
 

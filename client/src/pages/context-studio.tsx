@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import type { ContextProfile } from "@shared/schema";
+import type { ContextProfile, Agent } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,8 @@ import {
   Brain, Layers, BookOpen, Shield, MessageSquare, Database, Wrench,
   ArrowUp, ArrowDown, Plus, Trash2, Settings, Sparkles, Eye, BarChart3,
   ChevronDown, ChevronRight, Loader2, Lightbulb, RefreshCcw, Zap,
+  DollarSign, TrendingUp, TrendingDown, Minus, AlertTriangle, Target,
+  Activity, FileText, Check, X, Scale, Scissors, PlusCircle, ArrowRightLeft,
 } from "lucide-react";
 
 type ContextSource = {
@@ -32,6 +34,107 @@ type ContextSource = {
   enabled: boolean;
   priority: number;
   refreshStrategy: string;
+};
+
+type RoiCategory = {
+  category: string;
+  avgTokenCount: number;
+  avgCostUsd: number;
+  qualityCorrelation: number;
+  roi: number;
+  trend: "improving" | "stable" | "declining";
+};
+
+type RoiData = {
+  agentId: string;
+  totalRuns: number;
+  avgOutcomeQuality: number;
+  totalCostUsd: number;
+  categories: RoiCategory[];
+};
+
+type CliffBucket = {
+  bucketLabel: string;
+  avgTokens: number;
+  avgQuality: number;
+  runCount: number;
+};
+
+type CliffData = {
+  cliffDetected: boolean;
+  optimalTokenCount: number | null;
+  currentAvgTokenCount: number;
+  qualityCurve: CliffBucket[];
+  recommendation: string;
+};
+
+type KbSource = {
+  kbId: string;
+  kbName: string;
+  avgChunksRetrieved: number;
+  avgTokens: number;
+  avgSimilarity: number;
+  qualityImpact: number;
+  costPerQualityPoint: number;
+  runCount: number;
+  roiRank: number;
+};
+
+type SourceAttributionData = {
+  agentId: string;
+  totalRuns: number;
+  sources: KbSource[];
+};
+
+type BenchmarkCategory = {
+  category: string;
+  avgTokenCount: number;
+  avgCostUsd: number;
+  avgQuality: number;
+  percentiles: { p25: number; p50: number; p75: number };
+  runCount: number;
+};
+
+type BenchmarkData = {
+  industry: string;
+  totalAgents: number;
+  totalRuns: number;
+  avgOutcomeQuality: number;
+  categories: BenchmarkCategory[];
+  patterns: { highRoi: string[]; lowRoi: string[] };
+};
+
+type ContextRecommendation = {
+  id: string;
+  agentId: string;
+  industry: string | null;
+  contextProfileId: string | null;
+  type: string;
+  category: string;
+  currentTokens: number;
+  recommendedTokens: number;
+  estimatedQualityImpact: number;
+  estimatedCostSavings: number;
+  rationale: string;
+  status: string;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+};
+
+const REC_TYPE_ICONS: Record<string, typeof Settings> = {
+  remove_source: Scissors,
+  add_source: PlusCircle,
+  rebalance_budget: ArrowRightLeft,
+  reduce_context: TrendingDown,
+  context_cliff_warning: AlertTriangle,
+};
+
+const REC_TYPE_LABELS: Record<string, string> = {
+  remove_source: "Remove Source",
+  add_source: "Add Source",
+  rebalance_budget: "Rebalance Budget",
+  reduce_context: "Reduce Context",
+  context_cliff_warning: "Cliff Warning",
 };
 
 const CATEGORIES = [
@@ -206,12 +309,110 @@ export default function ContextStudioPage() {
   const [simulationScore, setSimulationScore] = useState<number | null>(null);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
   const [taskType, setTaskType] = useState("Compliance Check");
+  const [economicsAgentId, setEconomicsAgentId] = useState<string | null>(null);
+  const [recStatusFilter, setRecStatusFilter] = useState<"pending" | "applied" | "dismissed">("pending");
   const { toast } = useToast();
   const { industry: currentIndustry } = useIndustry();
 
   const { data: profiles = [], isLoading } = useQuery<ContextProfile[]>({
     queryKey: ["/api/context-profiles"],
   });
+
+  const { data: agentsList = [] } = useQuery<Agent[]>({
+    queryKey: ["/api/agents"],
+  });
+
+  const { data: roiData, isLoading: roiLoading } = useQuery<RoiData>({
+    queryKey: ["/api/context-economics/agent", economicsAgentId, "roi"],
+    queryFn: () => fetch(`/api/context-economics/agent/${economicsAgentId}/roi`).then(r => r.json()),
+    enabled: !!economicsAgentId,
+  });
+
+  const { data: cliffData, isLoading: cliffLoading } = useQuery<CliffData>({
+    queryKey: ["/api/context-economics/agent", economicsAgentId, "cliff-analysis"],
+    queryFn: () => fetch(`/api/context-economics/agent/${economicsAgentId}/cliff-analysis`).then(r => r.json()),
+    enabled: !!economicsAgentId,
+  });
+
+  const { data: sourceData, isLoading: sourceLoading } = useQuery<SourceAttributionData>({
+    queryKey: ["/api/context-economics/agent", economicsAgentId, "source-attribution"],
+    queryFn: () => fetch(`/api/context-economics/agent/${economicsAgentId}/source-attribution`).then(r => r.json()),
+    enabled: !!economicsAgentId,
+  });
+
+  const selectedAgent = useMemo(() => agentsList.find(a => a.id === economicsAgentId), [agentsList, economicsAgentId]);
+  const agentIndustry = selectedAgent?.department || currentIndustry || "financial_services";
+
+  const { data: benchmarkData, isLoading: benchmarkLoading } = useQuery<BenchmarkData>({
+    queryKey: ["/api/context-economics/industry", agentIndustry, "benchmarks"],
+    queryFn: () => fetch(`/api/context-economics/industry/${agentIndustry}/benchmarks`).then(r => r.json()),
+    enabled: !!economicsAgentId,
+  });
+
+  const { data: recommendations = [], isLoading: recsLoading } = useQuery<ContextRecommendation[]>({
+    queryKey: ["/api/context-economics/agent", economicsAgentId, "recommendations"],
+    queryFn: async () => {
+      const res = await fetch(`/api/context-economics/agent/${economicsAgentId}/recommendations`);
+      const data = await res.json();
+      return data.recommendations || data || [];
+    },
+    enabled: !!economicsAgentId,
+  });
+
+  const generateRecsMutation = useMutation({
+    mutationFn: async (agentId: string) => {
+      const res = await apiRequest("POST", `/api/context-economics/agent/${agentId}/generate-recommendations`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/context-economics/agent", economicsAgentId, "recommendations"] });
+      toast({ title: "Recommendations generated" });
+    },
+    onError: () => {
+      toast({ title: "Failed to generate recommendations", variant: "destructive" });
+    },
+  });
+
+  const applyRecMutation = useMutation({
+    mutationFn: async (recId: string) => {
+      const res = await apiRequest("POST", `/api/context-recommendations/${recId}/apply`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/context-economics/agent", economicsAgentId, "recommendations"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/context-profiles"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/context-economics/agent", economicsAgentId, "roi"] });
+      toast({ title: "Recommendation applied" });
+    },
+    onError: () => {
+      toast({ title: "Failed to apply recommendation", variant: "destructive" });
+    },
+  });
+
+  const dismissRecMutation = useMutation({
+    mutationFn: async (recId: string) => {
+      await apiRequest("PATCH", `/api/context-recommendations/${recId}`, { status: "dismissed" });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/context-economics/agent", economicsAgentId, "recommendations"] });
+      toast({ title: "Recommendation dismissed" });
+    },
+  });
+
+  const pendingRecsCount = useMemo(() => {
+    return recommendations.filter(r => r.status === "pending").length;
+  }, [recommendations]);
+
+  const filteredRecs = useMemo(() => {
+    return recommendations.filter(r => r.status === recStatusFilter);
+  }, [recommendations, recStatusFilter]);
+
+  const estimatedSavings = useMemo(() => {
+    const pending = recommendations.filter(r => r.status === "pending");
+    const tokenSavings = pending.reduce((sum, r) => sum + Math.max(0, r.currentTokens - r.recommendedTokens), 0);
+    const costSavings = pending.reduce((sum, r) => sum + r.estimatedCostSavings, 0);
+    return { tokens: tokenSavings, cost: costSavings };
+  }, [recommendations]);
 
   const filteredProfiles = useMemo(() => {
     if (industryFilter === "all") return profiles;
@@ -550,6 +751,15 @@ export default function ContextStudioPage() {
             <TabsTrigger value="compilation-preview" data-testid="tab-compilation-preview" className="gap-1.5">
               <Eye className="w-3.5 h-3.5" />
               Compilation Preview
+            </TabsTrigger>
+            <TabsTrigger value="economics" data-testid="tab-economics" className="gap-1.5">
+              <DollarSign className="w-3.5 h-3.5" />
+              Economics
+              {pendingRecsCount > 0 && (
+                <Badge variant="default" className="text-[10px] ml-1" data-testid="badge-pending-recs-count">
+                  {pendingRecsCount}
+                </Badge>
+              )}
             </TabsTrigger>
           </TabsList>
 
@@ -933,6 +1143,566 @@ export default function ContextStudioPage() {
                   </Button>
                 </div>
               </div>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="economics" className="mt-0">
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <p className="text-sm text-muted-foreground" data-testid="text-economics-description">
+                  Analyze per-source ROI, detect context cliffs, and compare against industry benchmarks.
+                </p>
+                <Select
+                  value={economicsAgentId || ""}
+                  onValueChange={(v) => setEconomicsAgentId(v)}
+                >
+                  <SelectTrigger className="w-[240px]" data-testid="select-economics-agent">
+                    <SelectValue placeholder="Select an agent..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {agentsList.map((agent) => (
+                      <SelectItem key={agent.id} value={agent.id}>{agent.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {!economicsAgentId ? (
+                <Card>
+                  <CardContent className="flex flex-col items-center justify-center py-16 gap-4">
+                    <Activity className="w-12 h-12 text-muted-foreground/40" />
+                    <h2 className="text-lg font-medium" data-testid="text-economics-empty">Select an Agent</h2>
+                    <p className="text-sm text-muted-foreground text-center max-w-md">
+                      Choose an agent from the dropdown above to view context economics data.
+                    </p>
+                  </CardContent>
+                </Card>
+              ) : (
+                <div className="flex flex-col gap-4">
+                  {roiLoading ? (
+                    <Card>
+                      <CardHeader><Skeleton className="h-5 w-40" /></CardHeader>
+                      <CardContent className="flex flex-col gap-3">
+                        <div className="grid grid-cols-3 gap-4">
+                          {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-16" />)}
+                        </div>
+                        <Skeleton className="h-48" />
+                      </CardContent>
+                    </Card>
+                  ) : roiData && roiData.totalRuns === 0 ? (
+                    <Card>
+                      <CardContent className="flex flex-col items-center justify-center py-16 gap-4">
+                        <BarChart3 className="w-12 h-12 text-muted-foreground/40" />
+                        <h2 className="text-lg font-medium" data-testid="text-roi-empty">No Economics Data</h2>
+                        <p className="text-sm text-muted-foreground text-center max-w-md">
+                          Run agents to start collecting context economics data. Each run generates per-section token metrics for ROI analysis.
+                        </p>
+                      </CardContent>
+                    </Card>
+                  ) : roiData ? (
+                    <Card data-testid="card-roi-overview">
+                      <CardHeader className="flex flex-row items-center justify-between gap-2">
+                        <CardTitle className="flex items-center gap-2">
+                          <DollarSign className="w-4 h-4" />
+                          ROI Overview
+                        </CardTitle>
+                        <Badge variant="outline">{roiData.totalRuns} runs analyzed</Badge>
+                      </CardHeader>
+                      <CardContent className="flex flex-col gap-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                          <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/50" data-testid="stat-total-runs">
+                            <span className="text-xs text-muted-foreground">Total Runs</span>
+                            <span className="text-xl font-semibold">{roiData.totalRuns}</span>
+                          </div>
+                          <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/50" data-testid="stat-avg-quality">
+                            <span className="text-xs text-muted-foreground">Avg Outcome Quality</span>
+                            <span className="text-xl font-semibold">{roiData.avgOutcomeQuality.toFixed(1)}</span>
+                          </div>
+                          <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/50" data-testid="stat-total-cost">
+                            <span className="text-xs text-muted-foreground">Total Cost</span>
+                            <span className="text-xl font-semibold">${roiData.totalCostUsd.toFixed(4)}</span>
+                          </div>
+                        </div>
+
+                        {roiData.categories.length > 0 && (
+                          <div className="overflow-x-auto" data-testid="table-roi-categories">
+                            <table className="w-full text-sm">
+                              <thead>
+                                <tr className="border-b text-left">
+                                  <th className="py-2 pr-4 font-medium text-muted-foreground">Category</th>
+                                  <th className="py-2 pr-4 font-medium text-muted-foreground text-right">Avg Tokens</th>
+                                  <th className="py-2 pr-4 font-medium text-muted-foreground text-right">Avg Cost</th>
+                                  <th className="py-2 pr-4 font-medium text-muted-foreground text-right">Quality Correlation</th>
+                                  <th className="py-2 pr-4 font-medium text-muted-foreground text-right">ROI</th>
+                                  <th className="py-2 font-medium text-muted-foreground text-right">Trend</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {(() => {
+                                  const sorted = [...roiData.categories].sort((a, b) => b.roi - a.roi);
+                                  const topCount = Math.max(1, Math.floor(sorted.length * 0.3));
+                                  const topRoi = new Set(sorted.slice(0, topCount).map(c => c.category));
+                                  const bottomRoi = new Set(sorted.slice(-topCount).map(c => c.category));
+                                  return roiData.categories.map((cat) => {
+                                    let rowClass = "";
+                                    if (topRoi.has(cat.category)) rowClass = "bg-green-500/5";
+                                    else if (bottomRoi.has(cat.category)) rowClass = "bg-red-500/5";
+                                    else rowClass = "bg-amber-500/5";
+                                    return (
+                                      <tr key={cat.category} className={`border-b ${rowClass}`} data-testid={`row-roi-${cat.category}`}>
+                                        <td className="py-2 pr-4">{cat.category}</td>
+                                        <td className="py-2 pr-4 text-right font-mono">{cat.avgTokenCount.toLocaleString()}</td>
+                                        <td className="py-2 pr-4 text-right font-mono">${cat.avgCostUsd.toFixed(6)}</td>
+                                        <td className="py-2 pr-4 text-right font-mono">{cat.qualityCorrelation.toFixed(4)}</td>
+                                        <td className="py-2 pr-4 text-right font-mono font-semibold">{cat.roi.toFixed(2)}</td>
+                                        <td className="py-2 text-right">
+                                          {cat.trend === "improving" ? (
+                                            <TrendingUp className="w-4 h-4 text-green-500 inline" />
+                                          ) : cat.trend === "declining" ? (
+                                            <TrendingDown className="w-4 h-4 text-red-500 inline" />
+                                          ) : (
+                                            <Minus className="w-4 h-4 text-muted-foreground inline" />
+                                          )}
+                                        </td>
+                                      </tr>
+                                    );
+                                  });
+                                })()}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  ) : null}
+
+                  {cliffLoading ? (
+                    <Card>
+                      <CardHeader><Skeleton className="h-5 w-40" /></CardHeader>
+                      <CardContent><Skeleton className="h-48" /></CardContent>
+                    </Card>
+                  ) : cliffData ? (
+                    <Card data-testid="card-cliff-analysis">
+                      <CardHeader className="flex flex-row items-center justify-between gap-2">
+                        <CardTitle className="flex items-center gap-2">
+                          <AlertTriangle className="w-4 h-4" />
+                          Context Cliff Analysis
+                        </CardTitle>
+                        {cliffData.cliffDetected ? (
+                          cliffData.currentAvgTokenCount > (cliffData.optimalTokenCount || 0) * 1.2 ? (
+                            <Badge variant="destructive" data-testid="badge-cliff-status">Past Cliff</Badge>
+                          ) : cliffData.currentAvgTokenCount > (cliffData.optimalTokenCount || 0) * 0.8 ? (
+                            <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30" data-testid="badge-cliff-status">Near Cliff</Badge>
+                          ) : (
+                            <Badge className="bg-green-500/15 text-green-700 dark:text-green-400 border-green-500/30" data-testid="badge-cliff-status">Optimal Zone</Badge>
+                          )
+                        ) : (
+                          <Badge className="bg-green-500/15 text-green-700 dark:text-green-400 border-green-500/30" data-testid="badge-cliff-status">Optimal Zone</Badge>
+                        )}
+                      </CardHeader>
+                      <CardContent className="flex flex-col gap-4">
+                        <p className="text-sm text-muted-foreground" data-testid="text-cliff-recommendation">
+                          {cliffData.recommendation}
+                        </p>
+
+                        {cliffData.qualityCurve.length > 0 ? (
+                          <div className="flex flex-col gap-2" data-testid="chart-quality-curve">
+                            <span className="text-xs text-muted-foreground font-medium">Quality by Token Bucket</span>
+                            {cliffData.qualityCurve.map((bucket, idx) => {
+                              const maxQuality = Math.max(...cliffData.qualityCurve.map(b => b.avgQuality), 1);
+                              const pct = (bucket.avgQuality / maxQuality) * 100;
+                              const isCliff = cliffData.cliffDetected && idx > 0 &&
+                                cliffData.qualityCurve[idx - 1].avgQuality > 0 &&
+                                ((cliffData.qualityCurve[idx - 1].avgQuality - bucket.avgQuality) / cliffData.qualityCurve[idx - 1].avgQuality) * 100 > 5;
+                              return (
+                                <div key={bucket.bucketLabel} className="flex items-center gap-3" data-testid={`cliff-bucket-${bucket.bucketLabel}`}>
+                                  <span className="text-xs w-16 text-right font-mono shrink-0">{bucket.bucketLabel}</span>
+                                  <div className="flex-1 h-6 rounded-md bg-muted/50 overflow-hidden relative">
+                                    <div
+                                      className={`h-full rounded-md transition-all ${isCliff ? "bg-red-500/60" : "bg-primary/60"}`}
+                                      style={{ width: `${Math.max(pct, 2)}%` }}
+                                    />
+                                    {isCliff && (
+                                      <div className="absolute right-2 top-0.5">
+                                        <AlertTriangle className="w-3.5 h-3.5 text-red-500" />
+                                      </div>
+                                    )}
+                                  </div>
+                                  <span className="text-xs w-12 text-right font-mono shrink-0">{bucket.avgQuality.toFixed(1)}</span>
+                                  <span className="text-xs w-16 text-right text-muted-foreground shrink-0">{bucket.runCount} runs</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground text-center py-4">
+                            Not enough data points to generate quality curve.
+                          </p>
+                        )}
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/50" data-testid="stat-current-tokens">
+                            <span className="text-xs text-muted-foreground">Current Avg Tokens</span>
+                            <span className="text-lg font-semibold">{cliffData.currentAvgTokenCount.toLocaleString()}</span>
+                          </div>
+                          {cliffData.optimalTokenCount && (
+                            <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/50" data-testid="stat-optimal-tokens">
+                              <span className="text-xs text-muted-foreground">Optimal Token Count</span>
+                              <span className="text-lg font-semibold">{cliffData.optimalTokenCount.toLocaleString()}</span>
+                            </div>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ) : null}
+
+                  {sourceLoading ? (
+                    <Card>
+                      <CardHeader><Skeleton className="h-5 w-40" /></CardHeader>
+                      <CardContent><Skeleton className="h-32" /></CardContent>
+                    </Card>
+                  ) : sourceData && sourceData.sources.length > 0 ? (
+                    <Card data-testid="card-kb-source-economics">
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                          <FileText className="w-4 h-4" />
+                          KB Source Economics
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="overflow-x-auto" data-testid="table-kb-sources">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="border-b text-left">
+                                <th className="py-2 pr-4 font-medium text-muted-foreground">Rank</th>
+                                <th className="py-2 pr-4 font-medium text-muted-foreground">KB Name</th>
+                                <th className="py-2 pr-4 font-medium text-muted-foreground text-right">Avg Chunks</th>
+                                <th className="py-2 pr-4 font-medium text-muted-foreground text-right">Avg Tokens</th>
+                                <th className="py-2 pr-4 font-medium text-muted-foreground text-right">Avg Similarity</th>
+                                <th className="py-2 pr-4 font-medium text-muted-foreground text-right">Quality Impact</th>
+                                <th className="py-2 font-medium text-muted-foreground text-right">Runs</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {sourceData.sources.map((src) => (
+                                <tr
+                                  key={src.kbId}
+                                  className={`border-b ${src.roiRank === 1 ? "bg-green-500/5" : ""}`}
+                                  data-testid={`row-kb-source-${src.kbId}`}
+                                >
+                                  <td className="py-2 pr-4">
+                                    <Badge variant={src.roiRank === 1 ? "default" : "outline"} className="text-xs">
+                                      #{src.roiRank}
+                                    </Badge>
+                                  </td>
+                                  <td className="py-2 pr-4 font-medium">{src.kbName}</td>
+                                  <td className="py-2 pr-4 text-right font-mono">{src.avgChunksRetrieved.toFixed(1)}</td>
+                                  <td className="py-2 pr-4 text-right font-mono">{src.avgTokens.toLocaleString()}</td>
+                                  <td className="py-2 pr-4 text-right font-mono">{(src.avgSimilarity * 100).toFixed(1)}%</td>
+                                  <td className="py-2 pr-4 text-right font-mono font-semibold">{src.qualityImpact.toFixed(1)}</td>
+                                  <td className="py-2 text-right font-mono">{src.runCount}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ) : sourceData ? (
+                    <Card>
+                      <CardContent className="flex flex-col items-center justify-center py-8 gap-3">
+                        <Database className="w-8 h-8 text-muted-foreground/40" />
+                        <p className="text-sm text-muted-foreground" data-testid="text-kb-empty">No KB source data available yet.</p>
+                      </CardContent>
+                    </Card>
+                  ) : null}
+
+                  {benchmarkLoading ? (
+                    <Card>
+                      <CardHeader><Skeleton className="h-5 w-40" /></CardHeader>
+                      <CardContent><Skeleton className="h-48" /></CardContent>
+                    </Card>
+                  ) : benchmarkData && benchmarkData.totalRuns > 0 && roiData ? (
+                    <Card data-testid="card-industry-benchmarks">
+                      <CardHeader className="flex flex-row items-center justify-between gap-2">
+                        <CardTitle className="flex items-center gap-2">
+                          <Target className="w-4 h-4" />
+                          Industry Benchmarks
+                        </CardTitle>
+                        <Badge variant="outline">{benchmarkData.totalAgents} agents / {benchmarkData.totalRuns} runs</Badge>
+                      </CardHeader>
+                      <CardContent className="flex flex-col gap-4">
+                        <div className="overflow-x-auto" data-testid="table-benchmarks">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="border-b text-left">
+                                <th className="py-2 pr-4 font-medium text-muted-foreground">Category</th>
+                                <th className="py-2 pr-4 font-medium text-muted-foreground text-right">Your Tokens</th>
+                                <th className="py-2 pr-4 font-medium text-muted-foreground text-right">Industry Avg</th>
+                                <th className="py-2 pr-4 font-medium text-muted-foreground text-right">Difference</th>
+                                <th className="py-2 font-medium text-muted-foreground text-right">Industry Quality</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {benchmarkData.categories.map((bench) => {
+                                const agentCat = roiData.categories.find(c => c.category === bench.category);
+                                const agentTokens = agentCat?.avgTokenCount || 0;
+                                const diff = agentTokens - bench.avgTokenCount;
+                                const diffPct = bench.avgTokenCount > 0 ? ((diff / bench.avgTokenCount) * 100).toFixed(0) : "0";
+                                const isOver = diff > bench.avgTokenCount * 0.2;
+                                const isUnder = diff < -bench.avgTokenCount * 0.2;
+                                return (
+                                  <tr key={bench.category} className="border-b" data-testid={`row-benchmark-${bench.category}`}>
+                                    <td className="py-2 pr-4">{bench.category}</td>
+                                    <td className="py-2 pr-4 text-right font-mono">{agentTokens.toLocaleString()}</td>
+                                    <td className="py-2 pr-4 text-right font-mono">{bench.avgTokenCount.toLocaleString()}</td>
+                                    <td className="py-2 pr-4 text-right">
+                                      <span className={`font-mono ${isOver ? "text-amber-600 dark:text-amber-400" : isUnder ? "text-blue-600 dark:text-blue-400" : "text-muted-foreground"}`}>
+                                        {diff > 0 ? "+" : ""}{diff.toLocaleString()} ({diffPct}%)
+                                      </span>
+                                    </td>
+                                    <td className="py-2 text-right font-mono">{bench.avgQuality.toFixed(1)}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        {benchmarkData.patterns && (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div className="flex flex-col gap-2 p-3 rounded-md bg-muted/50" data-testid="stat-high-roi-patterns">
+                              <span className="text-xs font-medium text-muted-foreground">High ROI Categories</span>
+                              <div className="flex flex-wrap gap-1">
+                                {benchmarkData.patterns.highRoi.map(cat => (
+                                  <Badge key={cat} variant="outline" className="text-xs bg-green-500/10">{cat}</Badge>
+                                ))}
+                              </div>
+                            </div>
+                            <div className="flex flex-col gap-2 p-3 rounded-md bg-muted/50" data-testid="stat-low-roi-patterns">
+                              <span className="text-xs font-medium text-muted-foreground">Low ROI Categories</span>
+                              <div className="flex flex-wrap gap-1">
+                                {benchmarkData.patterns.lowRoi.map(cat => (
+                                  <Badge key={cat} variant="outline" className="text-xs bg-red-500/10">{cat}</Badge>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  ) : benchmarkData && benchmarkData.totalRuns === 0 ? (
+                    <Card>
+                      <CardContent className="flex flex-col items-center justify-center py-8 gap-3">
+                        <Target className="w-8 h-8 text-muted-foreground/40" />
+                        <p className="text-sm text-muted-foreground" data-testid="text-benchmarks-empty">No industry benchmark data available yet.</p>
+                      </CardContent>
+                    </Card>
+                  ) : null}
+
+                  <Card data-testid="card-recommendations">
+                    <CardHeader className="flex flex-row items-center justify-between gap-2">
+                      <CardTitle className="flex items-center gap-2">
+                        <Lightbulb className="w-4 h-4" />
+                        Recommendations
+                      </CardTitle>
+                      <Button
+                        onClick={() => economicsAgentId && generateRecsMutation.mutate(economicsAgentId)}
+                        disabled={!economicsAgentId || generateRecsMutation.isPending}
+                        data-testid="button-generate-recommendations"
+                      >
+                        {generateRecsMutation.isPending ? (
+                          <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                        ) : (
+                          <Sparkles className="w-4 h-4 mr-1.5" />
+                        )}
+                        Generate Recommendations
+                      </Button>
+                    </CardHeader>
+                    <CardContent className="flex flex-col gap-4">
+                      {pendingRecsCount > 0 && (
+                        <div className="flex items-center gap-3 p-3 rounded-md bg-muted/50" data-testid="card-estimated-savings">
+                          <Scale className="w-4 h-4 text-muted-foreground shrink-0" />
+                          <div className="flex-1">
+                            <span className="text-sm font-medium">Estimated savings if all pending recommendations applied:</span>
+                            <span className="text-sm text-muted-foreground ml-2">
+                              {estimatedSavings.tokens.toLocaleString()} tokens / ${estimatedSavings.cost.toFixed(4)} per run
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="flex items-center gap-1 flex-wrap">
+                        <Button
+                          variant={recStatusFilter === "pending" ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => setRecStatusFilter("pending")}
+                          data-testid="button-filter-pending"
+                        >
+                          Pending
+                          {recommendations.filter(r => r.status === "pending").length > 0 && (
+                            <Badge variant="outline" className="ml-1.5 text-[10px]">
+                              {recommendations.filter(r => r.status === "pending").length}
+                            </Badge>
+                          )}
+                        </Button>
+                        <Button
+                          variant={recStatusFilter === "applied" ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => setRecStatusFilter("applied")}
+                          data-testid="button-filter-applied"
+                        >
+                          Applied
+                          {recommendations.filter(r => r.status === "applied").length > 0 && (
+                            <Badge variant="outline" className="ml-1.5 text-[10px]">
+                              {recommendations.filter(r => r.status === "applied").length}
+                            </Badge>
+                          )}
+                        </Button>
+                        <Button
+                          variant={recStatusFilter === "dismissed" ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => setRecStatusFilter("dismissed")}
+                          data-testid="button-filter-dismissed"
+                        >
+                          Dismissed
+                          {recommendations.filter(r => r.status === "dismissed").length > 0 && (
+                            <Badge variant="outline" className="ml-1.5 text-[10px]">
+                              {recommendations.filter(r => r.status === "dismissed").length}
+                            </Badge>
+                          )}
+                        </Button>
+                      </div>
+
+                      {recsLoading ? (
+                        <div className="flex flex-col gap-3">
+                          {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-24" />)}
+                        </div>
+                      ) : filteredRecs.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-8 gap-3">
+                          <Lightbulb className="w-8 h-8 text-muted-foreground/40" />
+                          <p className="text-sm text-muted-foreground" data-testid="text-recs-empty">
+                            {recStatusFilter === "pending"
+                              ? "No pending recommendations. Click 'Generate Recommendations' to analyze context economics."
+                              : `No ${recStatusFilter} recommendations.`}
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col gap-3" data-testid="list-recommendations">
+                          {filteredRecs.map((rec) => {
+                            const RecIcon = REC_TYPE_ICONS[rec.type] || Lightbulb;
+                            const typeLabel = REC_TYPE_LABELS[rec.type] || rec.type;
+                            const tokenDiff = rec.recommendedTokens - rec.currentTokens;
+                            return (
+                              <div
+                                key={rec.id}
+                                className="flex flex-col gap-3 p-4 rounded-md bg-muted/40"
+                                data-testid={`card-recommendation-${rec.id}`}
+                              >
+                                <div className="flex items-start gap-3">
+                                  <div className={`flex items-center justify-center w-8 h-8 rounded-md shrink-0 ${
+                                    rec.type === "context_cliff_warning" ? "bg-red-500/10" :
+                                    rec.type === "remove_source" || rec.type === "reduce_context" ? "bg-amber-500/10" :
+                                    "bg-green-500/10"
+                                  }`}>
+                                    <RecIcon className={`w-4 h-4 ${
+                                      rec.type === "context_cliff_warning" ? "text-red-500" :
+                                      rec.type === "remove_source" || rec.type === "reduce_context" ? "text-amber-600 dark:text-amber-400" :
+                                      "text-green-600 dark:text-green-400"
+                                    }`} />
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <Badge variant="outline" className="text-[10px]">{typeLabel}</Badge>
+                                      <span className="text-sm font-medium">{rec.category}</span>
+                                    </div>
+                                    <p className="text-xs text-muted-foreground mt-1" data-testid={`text-rec-rationale-${rec.id}`}>
+                                      {rec.rationale}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                                  <div className="flex flex-col gap-0.5" data-testid={`stat-rec-current-${rec.id}`}>
+                                    <span className="text-[10px] text-muted-foreground">Current Tokens</span>
+                                    <span className="text-sm font-mono">{rec.currentTokens.toLocaleString()}</span>
+                                  </div>
+                                  <div className="flex flex-col gap-0.5" data-testid={`stat-rec-recommended-${rec.id}`}>
+                                    <span className="text-[10px] text-muted-foreground">Recommended</span>
+                                    <span className="text-sm font-mono">{rec.recommendedTokens.toLocaleString()}</span>
+                                  </div>
+                                  <div className="flex flex-col gap-0.5" data-testid={`stat-rec-quality-${rec.id}`}>
+                                    <span className="text-[10px] text-muted-foreground">Quality Impact</span>
+                                    <span className={`text-sm font-mono ${rec.estimatedQualityImpact >= 0 ? "text-green-600 dark:text-green-400" : "text-red-500"}`}>
+                                      {rec.estimatedQualityImpact >= 0 ? "+" : ""}{rec.estimatedQualityImpact.toFixed(1)}
+                                    </span>
+                                  </div>
+                                  <div className="flex flex-col gap-0.5" data-testid={`stat-rec-savings-${rec.id}`}>
+                                    <span className="text-[10px] text-muted-foreground">Cost Savings</span>
+                                    <span className="text-sm font-mono">${rec.estimatedCostSavings.toFixed(4)}</span>
+                                  </div>
+                                </div>
+
+                                {tokenDiff !== 0 && (
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs text-muted-foreground">Token change:</span>
+                                    <Badge
+                                      variant="outline"
+                                      className={`text-[10px] ${tokenDiff < 0 ? "bg-green-500/10 text-green-700 dark:text-green-400" : "bg-amber-500/10 text-amber-700 dark:text-amber-400"}`}
+                                    >
+                                      {tokenDiff > 0 ? "+" : ""}{tokenDiff.toLocaleString()} tokens
+                                    </Badge>
+                                  </div>
+                                )}
+
+                                {rec.status === "pending" && (
+                                  <div className="flex items-center gap-2">
+                                    <Button
+                                      size="sm"
+                                      onClick={() => applyRecMutation.mutate(rec.id)}
+                                      disabled={applyRecMutation.isPending || dismissRecMutation.isPending}
+                                      data-testid={`button-apply-rec-${rec.id}`}
+                                    >
+                                      {applyRecMutation.isPending ? (
+                                        <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                                      ) : (
+                                        <Check className="w-3.5 h-3.5 mr-1.5" />
+                                      )}
+                                      Apply
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => dismissRecMutation.mutate(rec.id)}
+                                      disabled={applyRecMutation.isPending || dismissRecMutation.isPending}
+                                      data-testid={`button-dismiss-rec-${rec.id}`}
+                                    >
+                                      <X className="w-3.5 h-3.5 mr-1.5" />
+                                      Dismiss
+                                    </Button>
+                                  </div>
+                                )}
+
+                                {rec.status === "applied" && (
+                                  <Badge className="bg-green-500/15 text-green-700 dark:text-green-400 border-green-500/30 w-fit text-[10px]">
+                                    Applied
+                                  </Badge>
+                                )}
+
+                                {rec.status === "dismissed" && (
+                                  <Badge variant="outline" className="w-fit text-[10px] text-muted-foreground">
+                                    Dismissed
+                                  </Badge>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
             </div>
           </TabsContent>
         </Tabs>
