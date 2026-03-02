@@ -23,7 +23,8 @@ import {
   Plus, Loader2, Trash2, RefreshCw, CheckCircle2, XCircle,
   Clock, Bot, Link2, Unlink, Settings, MessageSquare,
   BookOpen, Brain, AlignLeft, Table2, Send, ShieldCheck,
-  AlertTriangle, CircleDot, Lightbulb, Timer,
+  AlertTriangle, CircleDot, Lightbulb, Timer, BarChart3,
+  Gauge, Zap, TrendingUp, Archive,
 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
@@ -365,6 +366,52 @@ export default function KnowledgeBaseDetail() {
     onError: (e: any) => toast({ title: "Staleness check failed", description: e.message, variant: "destructive" }),
   });
 
+  const { data: usageAnalytics, isLoading: usageLoading } = useQuery<{
+    kbId: string;
+    kbName: string;
+    sources: Array<{ sourceId: string; name: string; sourceType: string; status: string; retrievalCount: number; lastRetrievedAt: string | null; chunkCount: number; processedAt: string | null }>;
+    deadSources: Array<{ sourceId: string; name: string; processedAt: string | null; daysSinceProcessed: number | null }>;
+    summary: { totalSources: number; activeSources: number; deadSources: number; totalRetrievals: number; avgRetrievalsPerSource: number };
+  }>({
+    queryKey: ["/api/knowledge-bases", kbId, "usage-analytics"],
+    queryFn: async () => {
+      const res = await fetch(`/api/knowledge-bases/${kbId}/usage-analytics`);
+      return res.json();
+    },
+    enabled: !!kbId && activeTab === "usage",
+  });
+
+  const [tuningResult, setTuningResult] = useState<{
+    analyzedRuns: number;
+    metrics: { avgSimilarity: number; retrievalUtilization: number; overflowCount: number; totalSimilarityScores: number };
+    recommendations: Array<{ parameter: string; currentValue: number; recommendedValue: number; reason: string; confidence: string }>;
+    autoApplyAvailable: boolean;
+  } | null>(null);
+
+  const autoTuneMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/knowledge-bases/${kbId}/auto-tune`);
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      setTuningResult(data);
+      toast({ title: "Auto-tune analysis complete", description: `${data.recommendations.length} recommendation${data.recommendations.length !== 1 ? "s" : ""} from ${data.analyzedRuns} runs analyzed` });
+    },
+    onError: (e: any) => toast({ title: "Auto-tune failed", description: e.message, variant: "destructive" }),
+  });
+
+  const applyTuningMutation = useMutation({
+    mutationFn: async (params: { chunkSize?: number; chunkOverlap?: number; retrievalTopK?: number }) => {
+      const res = await apiRequest("POST", `/api/knowledge-bases/${kbId}/apply-tuning`, params);
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/knowledge-bases", kbId] });
+      toast({ title: "Tuning applied", description: `${data.changes.length} parameter${data.changes.length !== 1 ? "s" : ""} updated` });
+    },
+    onError: (e: any) => toast({ title: "Apply failed", description: e.message, variant: "destructive" }),
+  });
+
   const handleSearch = async () => {
     if (!searchQuery.trim()) return;
     setIsSearching(true);
@@ -492,6 +539,9 @@ export default function KnowledgeBaseDetail() {
           </TabsTrigger>
           <TabsTrigger value="agents" data-testid="tab-agents">
             <Bot className="w-3.5 h-3.5 mr-1.5" /> Linked Agents
+          </TabsTrigger>
+          <TabsTrigger value="usage" data-testid="tab-usage">
+            <BarChart3 className="w-3.5 h-3.5 mr-1.5" /> Usage Analytics
           </TabsTrigger>
           <TabsTrigger value="eval-gaps" data-testid="tab-eval-gaps">
             <AlertTriangle className="w-3.5 h-3.5 mr-1.5" /> Eval KB Gaps
@@ -1094,6 +1144,198 @@ export default function KnowledgeBaseDetail() {
               )}
             </CardContent>
           </Card>
+
+          <Card className="mt-4">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <Gauge className="w-4 h-4" /> RAG Pipeline Auto-Tuning
+                </CardTitle>
+                <Button size="sm" variant="outline" onClick={() => autoTuneMutation.mutate()} disabled={autoTuneMutation.isPending} data-testid="button-auto-tune">
+                  {autoTuneMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Zap className="w-3.5 h-3.5 mr-1.5" />}
+                  Run Auto-Tune Analysis
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">Analyzes recent retrieval quality metrics and recommends optimal chunk size, overlap, and topK settings</p>
+            </CardHeader>
+            <CardContent>
+              {tuningResult ? (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-4 gap-3">
+                    <div className="p-3 rounded-md bg-muted/50 text-center">
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Runs Analyzed</p>
+                      <p className="text-lg font-semibold" data-testid="text-analyzed-runs">{tuningResult.analyzedRuns}</p>
+                    </div>
+                    <div className="p-3 rounded-md bg-muted/50 text-center">
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Avg Similarity</p>
+                      <p className="text-lg font-semibold" data-testid="text-avg-similarity">{tuningResult.metrics.avgSimilarity.toFixed(3)}</p>
+                    </div>
+                    <div className="p-3 rounded-md bg-muted/50 text-center">
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Utilization</p>
+                      <p className="text-lg font-semibold" data-testid="text-utilization">{tuningResult.metrics.retrievalUtilization}%</p>
+                    </div>
+                    <div className="p-3 rounded-md bg-muted/50 text-center">
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Overflows</p>
+                      <p className={`text-lg font-semibold ${tuningResult.metrics.overflowCount > 0 ? "text-red-600 dark:text-red-400" : ""}`} data-testid="text-overflow-count">{tuningResult.metrics.overflowCount}</p>
+                    </div>
+                  </div>
+
+                  {tuningResult.recommendations.length > 0 ? (
+                    <div className="space-y-2">
+                      <p className="text-xs font-medium">Recommendations</p>
+                      {tuningResult.recommendations.map((rec, idx) => (
+                        <div key={idx} className="flex items-center justify-between p-3 rounded-md border bg-card" data-testid={`tuning-rec-${idx}`}>
+                          <div className="flex-1 space-y-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium">{rec.parameter}</span>
+                              <Badge variant="outline" className={`text-[10px] ${rec.confidence === "high" ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300" : "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"}`}>
+                                {rec.confidence} confidence
+                              </Badge>
+                            </div>
+                            <p className="text-xs text-muted-foreground">{rec.reason}</p>
+                            <div className="flex items-center gap-2 text-xs">
+                              <span className="text-muted-foreground">Current: <span className="font-medium text-foreground">{rec.currentValue}</span></span>
+                              <TrendingUp className="w-3 h-3 text-muted-foreground" />
+                              <span className="text-muted-foreground">Recommended: <span className="font-medium text-green-700 dark:text-green-400">{rec.recommendedValue}</span></span>
+                            </div>
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="ml-3 shrink-0"
+                            disabled={applyTuningMutation.isPending}
+                            onClick={() => applyTuningMutation.mutate({ [rec.parameter]: rec.recommendedValue })}
+                            data-testid={`button-apply-rec-${idx}`}
+                          >
+                            {applyTuningMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : "Apply"}
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-4">
+                      <CheckCircle2 className="w-6 h-6 text-green-500 mx-auto mb-2" />
+                      <p className="text-sm text-muted-foreground">
+                        {tuningResult.analyzedRuns < 5
+                          ? "Not enough runs to generate recommendations (need at least 5)"
+                          : "Current configuration looks optimal — no changes recommended"}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-center py-6 text-muted-foreground">
+                  <Gauge className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                  <p className="text-sm">Run an analysis to get RAG pipeline tuning recommendations based on recent retrieval quality metrics</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="usage" className="mt-4 space-y-4">
+          {usageLoading ? (
+            <div className="space-y-3">
+              <Skeleton className="h-20 w-full" />
+              <Skeleton className="h-40 w-full" />
+            </div>
+          ) : usageAnalytics ? (
+            <>
+              <div className="grid grid-cols-4 gap-3">
+                <Card>
+                  <CardContent className="pt-4 text-center">
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Total Sources</p>
+                    <p className="text-2xl font-semibold" data-testid="text-total-sources">{usageAnalytics.summary.totalSources}</p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="pt-4 text-center">
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Active Sources</p>
+                    <p className="text-2xl font-semibold text-green-600 dark:text-green-400" data-testid="text-active-sources">{usageAnalytics.summary.activeSources}</p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="pt-4 text-center">
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Dead Sources</p>
+                    <p className={`text-2xl font-semibold ${usageAnalytics.summary.deadSources > 0 ? "text-amber-600 dark:text-amber-400" : ""}`} data-testid="text-dead-sources">{usageAnalytics.summary.deadSources}</p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="pt-4 text-center">
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Total Retrievals</p>
+                    <p className="text-2xl font-semibold" data-testid="text-total-retrievals">{usageAnalytics.summary.totalRetrievals}</p>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {usageAnalytics.deadSources.length > 0 && (
+                <Alert variant="destructive" className="border-amber-500/50 bg-amber-50/50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-300" data-testid="alert-dead-knowledge">
+                  <Archive className="w-4 h-4" />
+                  <AlertDescription className="text-sm">
+                    <span className="font-medium">{usageAnalytics.deadSources.length} dead knowledge source{usageAnalytics.deadSources.length !== 1 ? "s" : ""} detected</span> — processed but never retrieved by any agent. Consider reviewing or removing these sources to keep the knowledge base lean.
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm">Per-Source Retrieval Activity</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    {usageAnalytics.sources.length === 0 ? (
+                      <p className="text-sm text-muted-foreground text-center py-4">No sources in this knowledge base</p>
+                    ) : (
+                      usageAnalytics.sources
+                        .sort((a, b) => b.retrievalCount - a.retrievalCount)
+                        .map((source) => {
+                          const maxCount = Math.max(...usageAnalytics.sources.map(s => s.retrievalCount), 1);
+                          const isDead = usageAnalytics.deadSources.some(d => d.sourceId === source.sourceId);
+                          return (
+                            <div key={source.sourceId} className={`flex items-center gap-3 p-2 rounded-md ${isDead ? "bg-amber-50/50 dark:bg-amber-950/10 border border-amber-200 dark:border-amber-800/30" : "bg-muted/30"}`} data-testid={`source-usage-${source.sourceId}`}>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-sm font-medium truncate">{source.name}</span>
+                                  {isDead && (
+                                    <Badge variant="outline" className="text-[10px] bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300 shrink-0" data-testid={`badge-dead-${source.sourceId}`}>
+                                      <Archive className="w-2.5 h-2.5 mr-1" /> Dead Knowledge
+                                    </Badge>
+                                  )}
+                                  <StatusBadge status={source.status} />
+                                </div>
+                                <div className="flex items-center gap-3 mt-1 text-[11px] text-muted-foreground">
+                                  <span>{source.chunkCount} chunks</span>
+                                  {source.lastRetrievedAt && (
+                                    <span>Last retrieved: {new Date(source.lastRetrievedAt).toLocaleDateString()}</span>
+                                  )}
+                                  {!source.lastRetrievedAt && source.processedAt && (
+                                    <span>Processed {daysSinceProcessed(source.processedAt)} days ago, never retrieved</span>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <div className="w-24">
+                                  <Progress value={maxCount > 0 ? (source.retrievalCount / maxCount) * 100 : 0} className="h-1.5" />
+                                </div>
+                                <span className="text-sm font-mono font-medium w-12 text-right" data-testid={`count-${source.sourceId}`}>{source.retrievalCount}</span>
+                              </div>
+                            </div>
+                          );
+                        })
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </>
+          ) : (
+            <Card>
+              <CardContent className="flex flex-col items-center py-8 text-center">
+                <BarChart3 className="w-8 h-8 text-muted-foreground mb-3" />
+                <h3 className="font-medium mb-1">Usage Analytics</h3>
+                <p className="text-sm text-muted-foreground">Loading usage data...</p>
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
 
         <TabsContent value="agents" className="mt-4 space-y-4">

@@ -2,8 +2,8 @@ import { Express, Request, Response } from "express";
 import multer from "multer";
 import { storage } from "./storage";
 import { db } from "./db";
-import { insertKnowledgeBaseSchema, insertKnowledgeSourceSchema, insertAgentKnowledgeBaseSchema, knowledgeChunks, knowledgeSources } from "@shared/schema";
-import { sql, eq } from "drizzle-orm";
+import { insertKnowledgeBaseSchema, insertKnowledgeSourceSchema, insertAgentKnowledgeBaseSchema, knowledgeChunks, knowledgeSources, knowledgeBases, runTraces, contextEconomics, agentKnowledgeBases } from "@shared/schema";
+import { sql, eq, desc, and, inArray } from "drizzle-orm";
 import OpenAI from "openai";
 import { generateEmbeddings, storeChunkEmbedding } from "./embeddings";
 
@@ -847,6 +847,279 @@ export function registerKnowledgeBaseRoutes(app: Express) {
         totalStale,
         totalCritical,
         results,
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/knowledge-bases/:id/usage-analytics", async (req: Request, res: Response) => {
+    try {
+      const kb = await storage.getKnowledgeBase(req.params.id);
+      if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
+
+      const sources = await storage.getKnowledgeSources(req.params.id);
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+      const sourceAnalytics = sources.map(s => ({
+        sourceId: s.id,
+        name: s.name,
+        sourceType: s.sourceType,
+        status: s.status,
+        retrievalCount: s.retrievalCount || 0,
+        lastRetrievedAt: s.lastRetrievedAt,
+        chunkCount: s.chunkCount,
+        processedAt: s.processedAt,
+      }));
+
+      const deadSources = sourceAnalytics.filter(s =>
+        s.retrievalCount === 0 &&
+        s.status === "processed" &&
+        s.processedAt && new Date(s.processedAt) < thirtyDaysAgo
+      );
+
+      const activeSources = sourceAnalytics.filter(s => s.retrievalCount > 0);
+      const totalRetrievals = sourceAnalytics.reduce((sum, s) => sum + s.retrievalCount, 0);
+
+      res.json({
+        kbId: kb.id,
+        kbName: kb.name,
+        sources: sourceAnalytics,
+        deadSources: deadSources.map(s => ({
+          sourceId: s.sourceId,
+          name: s.name,
+          processedAt: s.processedAt,
+          daysSinceProcessed: s.processedAt ? Math.floor((Date.now() - new Date(s.processedAt).getTime()) / (24 * 60 * 60 * 1000)) : null,
+        })),
+        summary: {
+          totalSources: sources.length,
+          activeSources: activeSources.length,
+          deadSources: deadSources.length,
+          totalRetrievals,
+          avgRetrievalsPerSource: sources.length > 0 ? Math.round(totalRetrievals / sources.length * 10) / 10 : 0,
+        },
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/knowledge-bases/:id/auto-tune", async (req: Request, res: Response) => {
+    try {
+      const kb = await storage.getKnowledgeBase(req.params.id);
+      if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
+
+      const agentLinks = await storage.getKnowledgeBaseAgents(req.params.id);
+      const agentIds = agentLinks.map(l => l.agentId);
+
+      let allSimilarityScores: number[] = [];
+      let overflowCount = 0;
+      let analyzedRuns = 0;
+
+      if (agentIds.length > 0) {
+        const recentTraces = await db.select()
+          .from(runTraces)
+          .where(inArray(runTraces.agentId, agentIds))
+          .orderBy(desc(runTraces.startedAt))
+          .limit(200);
+
+        const relevantTraces = recentTraces.filter(t => {
+          const docs = t.retrievedDocs as any;
+          if (!docs || !Array.isArray(docs)) return false;
+          return docs.some((d: any) => d.kbId === req.params.id);
+        }).slice(0, 50);
+
+        analyzedRuns = relevantTraces.length;
+
+        for (const trace of relevantTraces) {
+          const docs = trace.retrievedDocs as any[];
+          if (!docs) continue;
+          for (const doc of docs) {
+            if (doc.kbId !== req.params.id) continue;
+            const chunks = doc.chunks || [];
+            for (const chunk of chunks) {
+              if (typeof chunk.similarityScore === "number") {
+                allSimilarityScores.push(chunk.similarityScore);
+              }
+            }
+          }
+        }
+
+        const recentEcon = await db.select()
+          .from(contextEconomics)
+          .where(inArray(contextEconomics.agentId, agentIds))
+          .orderBy(desc(contextEconomics.createdAt))
+          .limit(100);
+
+        for (const econ of recentEcon) {
+          const kbDetails = econ.kbSourceDetails as any[];
+          const usesThisKb = Array.isArray(kbDetails) && kbDetails.some((d: any) => d.kbId === req.params.id);
+          if (!usesThisKb) continue;
+          const sections = econ.sections as any[];
+          if (!sections) continue;
+          const kbSection = sections.find((s: any) => s.category === "kb_retrieval");
+          if (kbSection && kbSection.tokenCount > (econ.totalTokensUsed * 0.8)) {
+            overflowCount++;
+          }
+        }
+      }
+
+      const avgSimilarity = allSimilarityScores.length > 0
+        ? Math.round(allSimilarityScores.reduce((a, b) => a + b, 0) / allSimilarityScores.length * 1000) / 1000
+        : 0;
+      const highQualityChunks = allSimilarityScores.filter(s => s > 0.7).length;
+      const retrievalUtilization = allSimilarityScores.length > 0
+        ? Math.round(highQualityChunks / allSimilarityScores.length * 100)
+        : 0;
+
+      const recommendations: Array<{
+        parameter: string;
+        currentValue: number;
+        recommendedValue: number;
+        reason: string;
+        confidence: string;
+      }> = [];
+
+      const currentTopK = agentLinks.length > 0
+        ? ((agentLinks[0].retrievalConfig as any)?.topK ?? 5)
+        : 5;
+
+      if (analyzedRuns >= 5) {
+        if (avgSimilarity < 0.6) {
+          recommendations.push({
+            parameter: "chunkOverlap",
+            currentValue: kb.chunkOverlap,
+            recommendedValue: Math.min(Math.round(kb.chunkOverlap * 1.5), Math.round(kb.chunkSize * 0.4)),
+            reason: "Low average similarity scores suggest chunks lack sufficient context overlap for accurate retrieval",
+            confidence: "medium",
+          });
+          recommendations.push({
+            parameter: "chunkSize",
+            currentValue: kb.chunkSize,
+            recommendedValue: Math.max(Math.round(kb.chunkSize * 0.75), 128),
+            reason: "Smaller chunks can improve retrieval precision when similarity scores are low",
+            confidence: "medium",
+          });
+        }
+
+        if (avgSimilarity > 0.85 && retrievalUtilization < 50) {
+          recommendations.push({
+            parameter: "retrievalTopK",
+            currentValue: currentTopK,
+            recommendedValue: 3,
+            reason: "High similarity but low utilization suggests too many chunks are retrieved; reducing topK saves context budget",
+            confidence: "high",
+          });
+        }
+
+        if (overflowCount > 2) {
+          recommendations.push({
+            parameter: "chunkSize",
+            currentValue: kb.chunkSize,
+            recommendedValue: Math.max(Math.round(kb.chunkSize * 0.8), 128),
+            reason: `${overflowCount} runs showed context overflow; smaller chunks reduce per-retrieval token cost`,
+            confidence: "high",
+          });
+          if (!recommendations.some(r => r.parameter === "retrievalTopK")) {
+            recommendations.push({
+              parameter: "retrievalTopK",
+              currentValue: currentTopK,
+              recommendedValue: 3,
+              reason: "Reducing topK alongside chunk size helps prevent context window overflow",
+              confidence: "medium",
+            });
+          }
+        }
+
+        if (retrievalUtilization > 90 && avgSimilarity < 0.75) {
+          recommendations.push({
+            parameter: "retrievalTopK",
+            currentValue: currentTopK,
+            recommendedValue: currentTopK + 3,
+            reason: "High utilization with moderate similarity suggests retrieving more chunks could capture missing relevant content",
+            confidence: "medium",
+          });
+        }
+      }
+
+      res.json({
+        kbId: kb.id,
+        kbName: kb.name,
+        analyzedRuns,
+        metrics: {
+          avgSimilarity,
+          retrievalUtilization,
+          overflowCount,
+          totalSimilarityScores: allSimilarityScores.length,
+        },
+        recommendations,
+        autoApplyAvailable: recommendations.length > 0 && analyzedRuns >= 5,
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/knowledge-bases/:id/apply-tuning", async (req: Request, res: Response) => {
+    try {
+      const kb = await storage.getKnowledgeBase(req.params.id);
+      if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
+
+      const { chunkSize, chunkOverlap, retrievalTopK } = req.body;
+      const updates: any = {};
+      const changes: Array<{ parameter: string; before: number; after: number }> = [];
+
+      if (chunkSize !== undefined && typeof chunkSize === "number" && chunkSize >= 64 && chunkSize <= 4096) {
+        changes.push({ parameter: "chunkSize", before: kb.chunkSize, after: chunkSize });
+        updates.chunkSize = chunkSize;
+      }
+      if (chunkOverlap !== undefined && typeof chunkOverlap === "number" && chunkOverlap >= 0 && chunkOverlap <= 1024) {
+        changes.push({ parameter: "chunkOverlap", before: kb.chunkOverlap, after: chunkOverlap });
+        updates.chunkOverlap = chunkOverlap;
+      }
+
+      if (retrievalTopK !== undefined && typeof retrievalTopK === "number" && retrievalTopK >= 1 && retrievalTopK <= 20) {
+        changes.push({ parameter: "retrievalTopK", before: 5, after: retrievalTopK });
+        const agentLinks = await storage.getKnowledgeBaseAgents(req.params.id);
+        for (const link of agentLinks) {
+          const currentConfig = (link.retrievalConfig as any) || { topK: 5, scoreThreshold: 0.7 };
+          await db.update(agentKnowledgeBases)
+            .set({ retrievalConfig: { ...currentConfig, topK: retrievalTopK } })
+            .where(eq(agentKnowledgeBases.id, link.id));
+        }
+      }
+
+      if (changes.length === 0) {
+        return res.status(400).json({ message: "No valid tuning parameters provided. chunkSize (64-4096), chunkOverlap (0-1024), retrievalTopK (1-20)" });
+      }
+
+      if (Object.keys(updates).length > 0) {
+        await storage.updateKnowledgeBase(req.params.id, updates);
+      }
+
+      try {
+        await storage.createAuditEvent({
+          actorType: "system",
+          actorId: "rag-auto-tuner",
+          action: "rag_pipeline_tuned",
+          objectType: "knowledge_base",
+          objectId: kb.id,
+          details: JSON.stringify({
+            kbName: kb.name,
+            changes,
+            appliedAt: new Date().toISOString(),
+          }),
+        });
+      } catch {}
+
+      const updatedKb = await storage.getKnowledgeBase(req.params.id);
+      res.json({
+        kbId: kb.id,
+        changes,
+        updatedConfig: {
+          chunkSize: updatedKb?.chunkSize || kb.chunkSize,
+          chunkOverlap: updatedKb?.chunkOverlap || kb.chunkOverlap,
+        },
       });
     } catch (error: any) {
       res.status(500).json({ message: error.message });

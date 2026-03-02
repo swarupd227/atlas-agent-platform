@@ -2008,10 +2008,12 @@ export const knowledgeSources = pgTable("knowledge_sources", {
   freshnessStatus: varchar("freshness_status", { length: 20 }).default("unknown"),
   stalenessThresholdDays: integer("staleness_threshold_days"),
   lastFreshnessCheckAt: timestamp("last_freshness_check_at"),
+  retrievalCount: integer("retrieval_count").default(0),
+  lastRetrievedAt: timestamp("last_retrieved_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const insertKnowledgeSourceSchema = createInsertSchema(knowledgeSources).omit({ id: true, createdAt: true, processedAt: true, chunkCount: true, freshnessStatus: true, lastFreshnessCheckAt: true });
+export const insertKnowledgeSourceSchema = createInsertSchema(knowledgeSources).omit({ id: true, createdAt: true, processedAt: true, chunkCount: true, freshnessStatus: true, lastFreshnessCheckAt: true, retrievalCount: true, lastRetrievedAt: true });
 export type InsertKnowledgeSource = z.infer<typeof insertKnowledgeSourceSchema>;
 export type KnowledgeSource = typeof knowledgeSources.$inferSelect;
 
@@ -2023,6 +2025,8 @@ export const knowledgeChunks = pgTable("knowledge_chunks", {
   chunkIndex: integer("chunk_index").notNull(),
   metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
   tokenCount: integer("token_count"),
+  retrievalCount: integer("retrieval_count").default(0),
+  lastRetrievedAt: timestamp("last_retrieved_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

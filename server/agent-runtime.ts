@@ -1,7 +1,9 @@
 import { storage } from "./storage";
+import { db } from "./db";
 import { EventEmitter } from "events";
 import OpenAI from "openai";
 import { createHash } from "crypto";
+import { sql } from "drizzle-orm";
 import { searchKnowledgeBaseChunks } from "./embeddings";
 
 export function canonicalJsonStringify(obj: any): string {
@@ -756,7 +758,10 @@ export async function executePromptWithMcp(
         let kbMeta: any = null;
         try { kbMeta = await storage.getKnowledgeBase(link.knowledgeBaseId); } catch {}
         try {
-          const chunks = await searchKnowledgeBaseChunks(link.knowledgeBaseId, augmentedQuery, 5, 0.3);
+          const linkConfig = (link.retrievalConfig as any) || {};
+          const topK = typeof linkConfig.topK === "number" ? linkConfig.topK : 5;
+          const scoreThreshold = typeof linkConfig.scoreThreshold === "number" ? linkConfig.scoreThreshold : 0.3;
+          const chunks = await searchKnowledgeBaseChunks(link.knowledgeBaseId, augmentedQuery, topK, scoreThreshold);
           if (chunks.length > 0) {
             kbChunks.push(`--- Knowledge Base: ${link.knowledgeBaseId} ---\n${chunks.map((c: any) => c.content).join("\n\n")}`);
             kbRetrievals.push({
@@ -792,6 +797,27 @@ export async function executePromptWithMcp(
       if (kbChunks.length > 0) {
         kbContext = `\n\n## KNOWLEDGE BASE CONTEXT (retrieved via RAG)\nUse the following domain knowledge to inform your analysis and decisions:\n\n${kbChunks.join("\n\n")}`;
         promptSectionMetrics.push({ category: "kb_retrieval", tokenCount: estimateTokenCount(kbContext) });
+      }
+
+      if (kbRetrievals.length > 0) {
+        try {
+          const allChunkIds: string[] = [];
+          const allSourceIds = new Set<string>();
+          for (const kbr of kbRetrievals) {
+            for (const chunk of kbr.chunks) {
+              allChunkIds.push(chunk.chunkId);
+              if (chunk.sourceDocId) allSourceIds.add(chunk.sourceDocId);
+            }
+          }
+          const now = new Date();
+          if (allChunkIds.length > 0) {
+            await db.execute(sql`UPDATE knowledge_chunks SET retrieval_count = COALESCE(retrieval_count, 0) + 1, last_retrieved_at = ${now} WHERE id = ANY(${allChunkIds})`);
+          }
+          if (allSourceIds.size > 0) {
+            const sourceIdArr = Array.from(allSourceIds);
+            await db.execute(sql`UPDATE knowledge_sources SET retrieval_count = COALESCE(retrieval_count, 0) + 1, last_retrieved_at = ${now} WHERE id = ANY(${sourceIdArr})`);
+          }
+        } catch {}
       }
     }
   } catch {}

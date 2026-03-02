@@ -27839,8 +27839,51 @@ Respond in JSON:
                 console.error("Auto context adjustment recommendation failed (non-blocking):", ctxErr.message);
               }
             }
+
+            if (["knowledge_gap", "context_window_overflow", "knowledge_base_staleness"].includes(classificationCategory)) {
+              try {
+                const agentKbLinks = await storage.getAgentKnowledgeBases(agent.id);
+                if (agentKbLinks.length > 0) {
+                  const ragTuningRecommendations = [];
+                  for (const link of agentKbLinks.slice(0, 3)) {
+                    const kbDetail = await storage.getKnowledgeBase(link.knowledgeBaseId);
+                    if (!kbDetail) continue;
+                    const recs = [];
+                    if (classificationCategory === "context_window_overflow") {
+                      recs.push(
+                        { parameter: "chunkSize", currentValue: kbDetail.chunkSize, recommendedValue: Math.max(Math.round(kbDetail.chunkSize * 0.8), 128), reason: "Reduce chunk size to decrease per-retrieval token cost", confidence: "medium" },
+                        { parameter: "retrievalTopK", currentValue: 5, recommendedValue: 3, reason: "Fewer retrieved chunks reduces context window pressure", confidence: "medium" }
+                      );
+                    } else if (classificationCategory === "knowledge_gap") {
+                      recs.push(
+                        { parameter: "chunkOverlap", currentValue: kbDetail.chunkOverlap, recommendedValue: Math.min(Math.round(kbDetail.chunkOverlap * 1.5), Math.round(kbDetail.chunkSize * 0.4)), reason: "Increase overlap for better context continuity", confidence: "medium" },
+                        { parameter: "retrievalTopK", currentValue: 5, recommendedValue: 8, reason: "Retrieve more chunks to improve coverage", confidence: "medium" }
+                      );
+                    }
+                    if (recs.length > 0) {
+                      ragTuningRecommendations.push({ kbId: kbDetail.id, kbName: kbDetail.name, recommendations: recs });
+                    }
+                  }
+                  if (ragTuningRecommendations.length > 0) {
+                    const existingRemed2 = (await storage.getHealingPipeline(pipeline.id))?.remediation || {};
+                    await storage.updateHealingPipeline(pipeline.id, {
+                      remediation: {
+                        ...existingRemed2,
+                        ragTuningRecommendation: {
+                          recommendations: ragTuningRecommendations,
+                          reason: classificationReasoning,
+                          generatedAt: new Date().toISOString(),
+                        },
+                      },
+                    });
+                  }
+                }
+              } catch (ragErr) {
+                console.error("RAG tuning recommendation failed (non-blocking):", ragErr.message);
+              }
+            }
           }
-        } catch (classifyErr: any) {
+        } catch (classifyErr) {
           console.error("Auto root cause classification failed (non-blocking):", classifyErr.message);
         }
       }
