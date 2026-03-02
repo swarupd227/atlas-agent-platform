@@ -51,6 +51,7 @@ const INDUSTRY_CONFIG: Record<string, { label: string; icon: typeof Building2; c
   manufacturing: { label: "Manufacturing", icon: Factory, color: "text-amber-600 dark:text-amber-400" },
   insurance: { label: "Insurance", icon: Shield, color: "text-indigo-600 dark:text-indigo-400" },
   retail: { label: "Retail", icon: ShoppingCart, color: "text-emerald-600 dark:text-emerald-400" },
+  cross_industry: { label: "Cross-Industry", icon: Building2, color: "text-gray-600 dark:text-gray-400" },
 };
 
 const TRUST_TIER_STYLES: Record<string, string> = {
@@ -207,7 +208,7 @@ export default function SkillCatalog() {
         industry: generateIndustry,
         domain: generateDomain,
         existingSkillNames,
-        count: 5,
+        count: 1,
       });
       const data = await res.json();
       const generated = data.skills || [];
@@ -221,7 +222,7 @@ export default function SkillCatalog() {
         }
       }
       queryClient.invalidateQueries({ queryKey: ["/api/skills"] });
-      toast({ title: `Generated ${savedCount} new skills for ${generateDomain}` });
+      toast({ title: `Generated ${savedCount} new skill${savedCount !== 1 ? 's' : ''} for ${generateDomain}` });
       setShowGeneratePanel(false);
     } catch (e: any) {
       toast({ title: "AI generation failed", description: e.message, variant: "destructive" });
@@ -464,7 +465,7 @@ export default function SkillCatalog() {
             </CardHeader>
             <CardContent>
               <p className="text-sm text-muted-foreground mb-4">
-                Generate new skills for a specific industry and domain. AI will create 5 unique, production-ready skill definitions that avoid duplicating existing skills.
+                Generate a new skill for a specific industry and domain. AI will create a unique, production-ready skill definition that avoids duplicating existing skills.
               </p>
               <div className="flex items-end gap-3 flex-wrap">
                 <div className="space-y-1.5">
@@ -497,7 +498,7 @@ export default function SkillCatalog() {
                   {aiGenerating ? (
                     <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> Generating...</>
                   ) : (
-                    <><Plus className="w-4 h-4 mr-1" /> Generate 5 Skills</>
+                    <><Plus className="w-4 h-4 mr-1" /> Generate Skill</>
                   )}
                 </Button>
               </div>
