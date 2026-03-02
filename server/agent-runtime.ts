@@ -1,7 +1,16 @@
 import { storage } from "./storage";
 import { EventEmitter } from "events";
 import OpenAI from "openai";
+import { createHash } from "crypto";
 import { searchKnowledgeBaseChunks } from "./embeddings";
+
+export function canonicalJsonStringify(obj: any): string {
+  if (obj === null || obj === undefined) return JSON.stringify(obj);
+  if (typeof obj !== "object") return JSON.stringify(obj);
+  if (Array.isArray(obj)) return "[" + obj.map(canonicalJsonStringify).join(",") + "]";
+  const sortedKeys = Object.keys(obj).sort();
+  return "{" + sortedKeys.map(k => JSON.stringify(k) + ":" + canonicalJsonStringify(obj[k])).join(",") + "}";
+}
 
 export async function executeKGQueryTemplate(
   queryPattern: string,
@@ -649,7 +658,7 @@ export async function executePromptWithMcp(
   industry?: string,
   agentSystemPrompt?: string,
   options?: { conversational?: boolean; ontologyLabels?: string[]; runtimeConfig?: Record<string, any> },
-): Promise<{ steps: any[]; success: boolean; summary: any; promptInputs?: any; conversationalResponse?: string }> {
+): Promise<{ steps: any[]; success: boolean; summary: any; promptInputs?: any; provenanceSnapshot?: any; provenanceHash?: string; retrievedDocs?: any; conversationalResponse?: string }> {
   const startTime = Date.now();
   const steps: any[] = [];
 
@@ -695,6 +704,7 @@ export async function executePromptWithMcp(
   const openaiTools = buildOpenAITools(availableTools);
 
   let kbContext = "";
+  const kbRetrievals: Array<{ kbId: string; kbName: string; embeddingModel: string; chunks: Array<{ chunkId: string; sourceDocId: string; similarityScore: number; contentHash: string }> }> = [];
   try {
     const linkedKbs = await storage.getAgentKnowledgeBases(agentId);
     if (linkedKbs.length > 0) {
@@ -704,15 +714,39 @@ export async function executePromptWithMcp(
         : prompt;
       const kbChunks: string[] = [];
       for (const link of linkedKbs.slice(0, 3)) {
+        let kbMeta: any = null;
+        try { kbMeta = await storage.getKnowledgeBase(link.knowledgeBaseId); } catch {}
         try {
           const chunks = await searchKnowledgeBaseChunks(link.knowledgeBaseId, augmentedQuery, 5, 0.3);
           if (chunks.length > 0) {
             kbChunks.push(`--- Knowledge Base: ${link.knowledgeBaseId} ---\n${chunks.map((c: any) => c.content).join("\n\n")}`);
+            kbRetrievals.push({
+              kbId: link.knowledgeBaseId,
+              kbName: kbMeta?.name || link.knowledgeBaseId,
+              embeddingModel: kbMeta?.embeddingModel || "text-embedding-3-small",
+              chunks: chunks.map((c: any) => ({
+                chunkId: c.id,
+                sourceDocId: c.source_id || c.sourceId || "",
+                similarityScore: typeof c.similarity === "number" ? c.similarity : 0.5,
+                contentHash: createHash("sha256").update(c.content || "").digest("hex"),
+              })),
+            });
           }
         } catch {
           const fallbackChunks = await storage.getKnowledgeChunks(link.knowledgeBaseId);
           if (fallbackChunks.length > 0) {
             kbChunks.push(`--- Knowledge Base: ${link.knowledgeBaseId} ---\n${fallbackChunks.slice(0, 5).map((c: any) => c.content).join("\n\n")}`);
+            kbRetrievals.push({
+              kbId: link.knowledgeBaseId,
+              kbName: kbMeta?.name || link.knowledgeBaseId,
+              embeddingModel: kbMeta?.embeddingModel || "fallback",
+              chunks: fallbackChunks.slice(0, 5).map((c: any) => ({
+                chunkId: c.id,
+                sourceDocId: c.sourceId || "",
+                similarityScore: 0.5,
+                contentHash: createHash("sha256").update(c.content || "").digest("hex"),
+              })),
+            });
           }
         }
       }
@@ -1090,6 +1124,76 @@ After receiving tool results, provide a structured analysis with key findings, s
   const outputCostPer1k = 0.008;
   const estimatedCostUsd = (totalPromptTokens / 1000) * inputCostPer1k + (totalCompletionTokens / 1000) * outputCostPer1k;
 
+  let mcpToolFingerprints: Record<string, string> = {};
+  let mcpServerVersions: Record<string, { name: string; lastSyncedAt: string | null }> = {};
+  try {
+    for (const serverId of mcpServerIds) {
+      const server = await storage.getMcpServer(serverId);
+      if (server) {
+        mcpServerVersions[serverId] = { name: server.name, lastSyncedAt: server.lastSyncedAt ? server.lastSyncedAt.toISOString() : null };
+      }
+      const tools = await storage.getMcpServerTools(serverId);
+      for (const tool of tools) {
+        mcpToolFingerprints[tool.name] = (tool as any).fingerprintHash || "";
+      }
+    }
+  } catch {}
+
+  let policySnapshot: Array<{ policyId: string; policyName: string; domain: string; status: string }> = [];
+  try {
+    const policies = await storage.getPolicies();
+    policySnapshot = policies.filter(p => p.status === "active").slice(0, 20).map(p => ({
+      policyId: p.id,
+      policyName: p.name,
+      domain: p.domain,
+      status: p.status,
+    }));
+  } catch {}
+
+  let autonomyLevel: string | null = null;
+  let autonomyProfileId: string | null = null;
+  try {
+    const autonomyProfiles = await storage.getAutonomyProfiles();
+    const agentProfile = autonomyProfiles.find((p: any) => p.industry === (industry || "general"));
+    if (agentProfile) {
+      autonomyProfileId = agentProfile.id;
+      const levels = agentProfile.autonomyLevels as any;
+      if (levels && typeof levels === "object") {
+        autonomyLevel = levels.default || levels.general || Object.values(levels)[0] as string || null;
+      }
+    }
+  } catch {}
+
+  let blueprintVersionHash: string | null = null;
+  if (blueprintId) {
+    try {
+      const bp = await storage.getBlueprint(blueprintId);
+      blueprintVersionHash = bp?.workflowJson
+        ? createHash("sha256").update(canonicalJsonStringify(bp.workflowJson)).digest("hex")
+        : createHash("sha256").update(blueprintId).digest("hex");
+    } catch {
+      blueprintVersionHash = createHash("sha256").update(blueprintId).digest("hex");
+    }
+  }
+
+  const provenanceSnapshot = {
+    blueprintId: blueprintId || null,
+    blueprintVersionHash,
+    kbRetrievals,
+    mcpToolFingerprints,
+    mcpServerVersions,
+    policySnapshot,
+    autonomyLevel,
+    autonomyProfileId,
+    industryContext: industry || "general",
+    ontologyConceptsUsed: options?.ontologyLabels || [],
+    capturedAt: new Date().toISOString(),
+  };
+
+  const provenanceHash = createHash("sha256")
+    .update(canonicalJsonStringify(provenanceSnapshot))
+    .digest("hex");
+
   return {
     steps,
     success: failedSteps.length === 0,
@@ -1121,6 +1225,9 @@ After receiving tool results, provide a structured analysis with key findings, s
         toolCount: availableTools.length,
       },
     },
+    provenanceSnapshot,
+    provenanceHash,
+    retrievedDocs: kbRetrievals,
     ...(conversationalResponse ? { conversationalResponse } : {}),
   };
 }
@@ -1770,7 +1877,43 @@ async function executeAgentCycle(agent: RuntimeAgent) {
       } catch {}
     }
 
-    await storage.createTrace({
+    let memoryIdsLoaded: string[] = [];
+    let memorySummaryHash: string | null = null;
+    let contextProfileId: string | null = null;
+    let contextProfileVersion: number | null = null;
+    let contextBudgets: any = null;
+    try {
+      const recentMemories = await storage.getAgentMemories(agent.agentId, "episodic", 10);
+      memoryIdsLoaded = recentMemories.map(m => m.id);
+      if (recentMemories.length > 0) {
+        memorySummaryHash = createHash("sha256").update(recentMemories.map(m => m.content).join("|")).digest("hex");
+      }
+    } catch {}
+    try {
+      const allContextProfiles = await storage.getContextProfiles();
+      const agentContextProfiles = allContextProfiles.filter((p: any) => p.agentId === agent.agentId);
+      if (agentContextProfiles.length > 0) {
+        const cp = agentContextProfiles[0];
+        contextProfileId = cp.id;
+        contextProfileVersion = (cp as any).version || 1;
+        contextBudgets = (cp as any).budgetAllocations || null;
+      }
+    } catch {}
+
+    let fullProvenanceSnapshot = result.provenanceSnapshot || {};
+    fullProvenanceSnapshot = {
+      ...fullProvenanceSnapshot,
+      memoryIdsLoaded,
+      memorySummaryHash,
+      contextProfileId,
+      contextProfileVersion,
+      contextBudgets,
+    };
+    const fullProvenanceHash = createHash("sha256")
+      .update(canonicalJsonStringify(fullProvenanceSnapshot))
+      .digest("hex");
+
+    const trace = await storage.createTrace({
       agentId: agent.agentId,
       environment: "prod",
       status: result.success ? "completed" : "failed",
@@ -1794,7 +1937,36 @@ async function executeAgentCycle(agent: RuntimeAgent) {
         input: s.input || {},
         output: s.output,
       })),
+      retrievedDocs: result.retrievedDocs || null,
+      provenanceSnapshot: fullProvenanceSnapshot,
+      provenanceHash: fullProvenanceHash,
     });
+
+    try {
+      if (trace && trace.id) {
+        const auditEvent = await storage.createAuditEvent({
+          actorType: "system",
+          actorId: "provenance_engine",
+          action: "provenance.captured",
+          objectType: "run_trace",
+          objectId: trace.id,
+          details: JSON.stringify({
+            provenanceHash: fullProvenanceHash,
+            agentId: agent.agentId,
+            agentName: agent.agentName,
+            versionId: agent.deploymentId,
+            industry: agent.industry || "general",
+            kbRetrievalCount: (fullProvenanceSnapshot.kbRetrievals || []).length,
+            toolCount: Object.keys(fullProvenanceSnapshot.mcpToolFingerprints || {}).length,
+            policyCount: (fullProvenanceSnapshot.policySnapshot || []).length,
+            memoryCount: memoryIdsLoaded.length,
+          }),
+        });
+        if (auditEvent && auditEvent.id) {
+          await storage.updateTrace(trace.id, { auditEventId: auditEvent.id });
+        }
+      }
+    } catch {}
 
     try {
       const toolsUsed = result.steps.filter((s: any) => s.type === "api_call" && s.status === "completed").map((s: any) => s.mcpTool || s.name);

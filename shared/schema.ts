@@ -177,6 +177,9 @@ export const runTraces = pgTable("run_traces", {
   decisions: jsonb("decisions"),
   policyChecks: jsonb("policy_checks"),
   tokenUsage: jsonb("token_usage"),
+  provenanceSnapshot: jsonb("provenance_snapshot"),
+  provenanceHash: text("provenance_hash"),
+  auditEventId: varchar("audit_event_id"),
   startedAt: timestamp("started_at").defaultNow(),
   endedAt: timestamp("ended_at"),
 });

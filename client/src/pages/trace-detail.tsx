@@ -30,6 +30,15 @@ import {
   Table2,
   ChevronLeft,
   GitFork,
+  Fingerprint,
+  FileCheck,
+  AlertTriangle,
+  Database,
+  BookOpen,
+  Lock,
+  Unlock,
+  ExternalLink,
+  Info,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -1121,6 +1130,427 @@ function TimelineStepContent({ step }: { step: TimelineStep }) {
   }
 }
 
+function ProvenanceExplorer({ traceId }: { traceId: string }) {
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
+
+  const toggleSection = (section: string) => {
+    setExpandedSections(prev => {
+      const next = new Set(prev);
+      if (next.has(section)) next.delete(section);
+      else next.add(section);
+      return next;
+    });
+  };
+
+  const { data: provenance, isLoading: provLoading } = useQuery<any>({
+    queryKey: ["/api/provenance", traceId],
+    enabled: !!traceId,
+  });
+
+  const { data: diff, isLoading: diffLoading } = useQuery<any>({
+    queryKey: ["/api/provenance", traceId, "diff"],
+    enabled: !!traceId,
+  });
+
+  const { data: reconstruction } = useQuery<any>({
+    queryKey: ["/api/provenance", traceId, "reconstruct"],
+    enabled: !!traceId && expandedSections.has("reconstruction"),
+  });
+
+  if (provLoading) {
+    return (
+      <Card data-testid="provenance-loading">
+        <CardHeader><CardTitle className="text-sm flex items-center gap-2"><Fingerprint className="w-4 h-4" /> Provenance</CardTitle></CardHeader>
+        <CardContent><Skeleton className="h-32" /></CardContent>
+      </Card>
+    );
+  }
+
+  if (!provenance) return null;
+
+  const snapshot = provenance.provenanceSnapshot || {};
+  const integrity = provenance.integrity || { valid: false, checks: {} };
+  const kbRetrievals = snapshot.kbRetrievals || [];
+  const policySnap = snapshot.policySnapshot || [];
+  const mcpFingerprints = snapshot.mcpToolFingerprints || {};
+  const mcpServers = snapshot.mcpServerVersions || {};
+  const memoryIds = snapshot.memoryIdsLoaded || [];
+  const driftDetected = diff?.driftDetected || false;
+  const diffs = diff?.diffs || [];
+
+  return (
+    <Card data-testid="provenance-explorer">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Fingerprint className="w-4 h-4" />
+            Provenance Graph
+          </CardTitle>
+          <div className="flex items-center gap-2">
+            {integrity.valid ? (
+              <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20" data-testid="badge-provenance-valid">
+                <CheckCircle className="w-3 h-3 mr-1" /> Verified
+              </Badge>
+            ) : provenance.provenanceHash ? (
+              <Badge className="bg-amber-500/10 text-amber-600 border-amber-500/20" data-testid="badge-provenance-warning">
+                <AlertTriangle className="w-3 h-3 mr-1" /> Unverified
+              </Badge>
+            ) : (
+              <Badge variant="outline" className="text-muted-foreground" data-testid="badge-provenance-none">
+                <Info className="w-3 h-3 mr-1" /> No Provenance
+              </Badge>
+            )}
+            {driftDetected && (
+              <Badge className="bg-orange-500/10 text-orange-600 border-orange-500/20" data-testid="badge-drift-detected">
+                <AlertTriangle className="w-3 h-3 mr-1" /> Drift Detected
+              </Badge>
+            )}
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        {provenance.provenanceHash && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3" data-testid="provenance-summary-cards">
+            <div className="rounded-lg border p-3 bg-muted/30">
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">KB Sources</div>
+              <div className="text-lg font-semibold" data-testid="text-kb-count">{kbRetrievals.length}</div>
+              <div className="text-[10px] text-muted-foreground">
+                {kbRetrievals.reduce((s: number, k: any) => s + (k.chunks?.length || 0), 0)} chunks retrieved
+              </div>
+            </div>
+            <div className="rounded-lg border p-3 bg-muted/30">
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">MCP Tools</div>
+              <div className="text-lg font-semibold" data-testid="text-tool-count">{Object.keys(mcpFingerprints).length}</div>
+              <div className="text-[10px] text-muted-foreground">{Object.keys(mcpServers).length} server(s)</div>
+            </div>
+            <div className="rounded-lg border p-3 bg-muted/30">
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Policies</div>
+              <div className="text-lg font-semibold" data-testid="text-policy-count">{policySnap.length}</div>
+              <div className="text-[10px] text-muted-foreground">active at execution</div>
+            </div>
+            <div className="rounded-lg border p-3 bg-muted/30">
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Memories</div>
+              <div className="text-lg font-semibold" data-testid="text-memory-count">{memoryIds.length}</div>
+              <div className="text-[10px] text-muted-foreground">episodic loaded</div>
+            </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3" data-testid="provenance-integrity-section">
+          <div className="rounded-lg border p-3">
+            <div className="text-xs font-medium mb-2 flex items-center gap-1.5">
+              <Lock className="w-3.5 h-3.5" /> Integrity Checks
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-muted-foreground">Snapshot Hash</span>
+                {integrity.checks?.snapshotHashMatch ? (
+                  <Badge className="text-[9px] bg-emerald-500/10 text-emerald-600 border-emerald-500/20" data-testid="check-hash-match">Match</Badge>
+                ) : (
+                  <Badge variant="outline" className="text-[9px]" data-testid="check-hash-mismatch">
+                    {provenance.provenanceHash ? "Mismatch" : "N/A"}
+                  </Badge>
+                )}
+              </div>
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-muted-foreground">Audit Event Linked</span>
+                {integrity.checks?.auditEventFound ? (
+                  <Badge className="text-[9px] bg-emerald-500/10 text-emerald-600 border-emerald-500/20" data-testid="check-audit-found">Found</Badge>
+                ) : (
+                  <Badge variant="outline" className="text-[9px]" data-testid="check-audit-missing">
+                    {provenance.auditEventId ? "Missing" : "N/A"}
+                  </Badge>
+                )}
+              </div>
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-muted-foreground">Audit Chain Valid</span>
+                {integrity.checks?.auditChainValid ? (
+                  <Badge className="text-[9px] bg-emerald-500/10 text-emerald-600 border-emerald-500/20" data-testid="check-chain-valid">Valid</Badge>
+                ) : (
+                  <Badge variant="outline" className="text-[9px]" data-testid="check-chain-invalid">
+                    {provenance.auditEventId ? "Invalid" : "N/A"}
+                  </Badge>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-lg border p-3">
+            <div className="text-xs font-medium mb-2 flex items-center gap-1.5">
+              <Shield className="w-3.5 h-3.5" /> Environment Snapshot
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-muted-foreground">Industry</span>
+                <Badge variant="outline" className="text-[9px]" data-testid="text-industry">{snapshot.industryContext || "general"}</Badge>
+              </div>
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-muted-foreground">Autonomy Level</span>
+                <Badge variant="outline" className="text-[9px]" data-testid="text-autonomy-level">{snapshot.autonomyLevel || "unknown"}</Badge>
+              </div>
+              {snapshot.contextProfileId && (
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="text-muted-foreground">Context Profile</span>
+                  <span className="text-[10px] font-mono text-foreground" data-testid="text-context-profile">v{snapshot.contextProfileVersion || 1}</span>
+                </div>
+              )}
+              {snapshot.blueprintId && (
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="text-muted-foreground">Blueprint</span>
+                  <span className="text-[10px] font-mono text-foreground" data-testid="text-blueprint-hash">{snapshot.blueprintVersionHash?.substring(0, 12)}...</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {kbRetrievals.length > 0 && (
+          <div className="rounded-lg border p-3" data-testid="provenance-kb-section">
+            <button
+              className="w-full flex items-center justify-between text-xs font-medium"
+              onClick={() => toggleSection("kb")}
+              data-testid="button-toggle-kb"
+            >
+              <span className="flex items-center gap-1.5"><BookOpen className="w-3.5 h-3.5" /> Knowledge Base Retrievals ({kbRetrievals.length})</span>
+              {expandedSections.has("kb") ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+            </button>
+            {expandedSections.has("kb") && (
+              <div className="mt-3 flex flex-col gap-2">
+                {kbRetrievals.map((kbr: any, idx: number) => (
+                  <div key={idx} className="rounded border p-2 bg-muted/20" data-testid={`kb-retrieval-${idx}`}>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-[11px] font-medium">{kbr.kbName || kbr.kbId}</span>
+                      <Badge variant="outline" className="text-[9px]">{kbr.embeddingModel}</Badge>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      {(kbr.chunks || []).map((chunk: any, ci: number) => (
+                        <div key={ci} className="flex items-center gap-2 text-[10px]" data-testid={`kb-chunk-${idx}-${ci}`}>
+                          <span className="font-mono text-muted-foreground w-16 shrink-0">{chunk.chunkId?.substring(0, 8)}...</span>
+                          <Progress value={chunk.similarityScore * 100} className="h-1.5 flex-1" />
+                          <span className="text-muted-foreground w-10 text-right">{(chunk.similarityScore * 100).toFixed(0)}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {Object.keys(mcpFingerprints).length > 0 && (
+          <div className="rounded-lg border p-3" data-testid="provenance-tools-section">
+            <button
+              className="w-full flex items-center justify-between text-xs font-medium"
+              onClick={() => toggleSection("tools")}
+              data-testid="button-toggle-tools"
+            >
+              <span className="flex items-center gap-1.5"><Wrench className="w-3.5 h-3.5" /> MCP Tools ({Object.keys(mcpFingerprints).length})</span>
+              {expandedSections.has("tools") ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+            </button>
+            {expandedSections.has("tools") && (
+              <div className="mt-3 flex flex-col gap-1">
+                {Object.entries(mcpFingerprints).map(([toolName, fp]) => {
+                  const toolDiff = diffs.find((d: any) => d.component === `mcpTool:${toolName}`);
+                  return (
+                    <div key={toolName} className="flex items-center justify-between py-1 text-[11px] border-b last:border-0" data-testid={`tool-fingerprint-${toolName}`}>
+                      <span className="font-medium">{toolName}</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-mono text-[9px] text-muted-foreground">{(fp as string)?.substring(0, 12) || "—"}...</span>
+                        {toolDiff?.changed ? (
+                          <Badge className="text-[8px] bg-orange-500/10 text-orange-600 border-orange-500/20">Drifted</Badge>
+                        ) : toolDiff ? (
+                          <Badge className="text-[8px] bg-emerald-500/10 text-emerald-600 border-emerald-500/20">Stable</Badge>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {policySnap.length > 0 && (
+          <div className="rounded-lg border p-3" data-testid="provenance-policies-section">
+            <button
+              className="w-full flex items-center justify-between text-xs font-medium"
+              onClick={() => toggleSection("policies")}
+              data-testid="button-toggle-policies"
+            >
+              <span className="flex items-center gap-1.5"><Shield className="w-3.5 h-3.5" /> Policies ({policySnap.length})</span>
+              {expandedSections.has("policies") ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+            </button>
+            {expandedSections.has("policies") && (
+              <div className="mt-3 flex flex-col gap-1">
+                {policySnap.map((p: any, idx: number) => {
+                  const policyDiff = diffs.find((d: any) => d.component === `policy:${p.policyName}`);
+                  return (
+                    <div key={idx} className="flex items-center justify-between py-1 text-[11px] border-b last:border-0" data-testid={`policy-snapshot-${idx}`}>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-medium">{p.policyName}</span>
+                        <Badge variant="outline" className="text-[8px]">{p.domain}</Badge>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Badge className={`text-[8px] ${p.status === "active" ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" : "bg-muted text-muted-foreground"}`}>
+                          {p.status}
+                        </Badge>
+                        {policyDiff?.changed && (
+                          <Badge className="text-[8px] bg-orange-500/10 text-orange-600 border-orange-500/20">Changed</Badge>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {memoryIds.length > 0 && (
+          <div className="rounded-lg border p-3" data-testid="provenance-memories-section">
+            <button
+              className="w-full flex items-center justify-between text-xs font-medium"
+              onClick={() => toggleSection("memories")}
+              data-testid="button-toggle-memories"
+            >
+              <span className="flex items-center gap-1.5"><Brain className="w-3.5 h-3.5" /> Loaded Memories ({memoryIds.length})</span>
+              {expandedSections.has("memories") ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+            </button>
+            {expandedSections.has("memories") && (
+              <div className="mt-3 flex flex-col gap-1">
+                {memoryIds.map((mid: string, idx: number) => (
+                  <div key={idx} className="flex items-center gap-2 py-1 text-[11px] border-b last:border-0" data-testid={`memory-id-${idx}`}>
+                    <Database className="w-3 h-3 text-muted-foreground" />
+                    <span className="font-mono text-muted-foreground">{mid.substring(0, 16)}...</span>
+                  </div>
+                ))}
+                {snapshot.memorySummaryHash && (
+                  <div className="mt-2 text-[10px] text-muted-foreground flex items-center gap-1" data-testid="text-memory-hash">
+                    <Lock className="w-3 h-3" /> Content hash: {snapshot.memorySummaryHash.substring(0, 16)}...
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="rounded-lg border p-3" data-testid="provenance-reconstruction-section">
+          <button
+            className="w-full flex items-center justify-between text-xs font-medium"
+            onClick={() => toggleSection("reconstruction")}
+            data-testid="button-toggle-reconstruction"
+          >
+            <span className="flex items-center gap-1.5"><FileCheck className="w-3.5 h-3.5" /> Full Reconstruction</span>
+            {expandedSections.has("reconstruction") ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+          </button>
+          {expandedSections.has("reconstruction") && reconstruction && (
+            <div className="mt-3 flex flex-col gap-2">
+              <div className="flex items-center gap-2 text-[11px]">
+                <Badge variant={reconstruction.completeness === "full" ? "default" : "outline"} className="text-[9px]" data-testid="badge-reconstruction-completeness">
+                  {reconstruction.completeness === "full" ? "Full Reconstruction Available" : "Partial Reconstruction"}
+                </Badge>
+                {reconstruction.unavailable?.length > 0 && (
+                  <span className="text-muted-foreground">{reconstruction.unavailable.length} component(s) unavailable</span>
+                )}
+              </div>
+              {reconstruction.available?.blueprint && (
+                <div className="rounded border p-2 bg-muted/20" data-testid="reconstruction-blueprint">
+                  <div className="text-[10px] font-medium mb-1">Blueprint: {reconstruction.available.blueprint.name}</div>
+                  <pre className="text-[9px] text-muted-foreground max-h-32 overflow-auto">
+                    {JSON.stringify(reconstruction.available.blueprint.workflowJson, null, 2)?.substring(0, 500)}
+                  </pre>
+                </div>
+              )}
+              {reconstruction.available?.knowledgeBases?.length > 0 && (
+                <div className="rounded border p-2 bg-muted/20" data-testid="reconstruction-kb">
+                  <div className="text-[10px] font-medium mb-1">Retrieved Knowledge ({reconstruction.available.knowledgeBases.length} KB)</div>
+                  {reconstruction.available.knowledgeBases.map((kb: any, i: number) => (
+                    <div key={i} className="mb-1">
+                      <div className="text-[10px] text-muted-foreground">{kb.kbName} - {kb.chunks?.filter((c: any) => c.stillAvailable).length}/{kb.chunks?.length} chunks available</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {reconstruction.available?.policies?.length > 0 && (
+                <div className="rounded border p-2 bg-muted/20" data-testid="reconstruction-policies">
+                  <div className="text-[10px] font-medium mb-1">Policies ({reconstruction.available.policies.length})</div>
+                  {reconstruction.available.policies.map((p: any, i: number) => (
+                    <div key={i} className="text-[10px] text-muted-foreground">
+                      {p.policyName} ({p.status}) {p.currentStatus !== p.status ? `→ now ${p.currentStatus}` : ""}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {reconstruction.available?.memories?.length > 0 && (
+                <div className="rounded border p-2 bg-muted/20" data-testid="reconstruction-memories">
+                  <div className="text-[10px] font-medium mb-1">Memories ({reconstruction.available.memories.length})</div>
+                  {reconstruction.available.memories.map((m: any, i: number) => (
+                    <div key={i} className="text-[10px] text-muted-foreground">
+                      {m.memoryId?.substring(0, 12)}... - {m.stillAvailable ? "Available" : "Expired/Deleted"}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {expandedSections.has("reconstruction") && !reconstruction && (
+            <div className="mt-3"><Skeleton className="h-20" /></div>
+          )}
+        </div>
+
+        {diffs.length > 0 && (
+          <div className="rounded-lg border p-3" data-testid="provenance-drift-section">
+            <button
+              className="w-full flex items-center justify-between text-xs font-medium"
+              onClick={() => toggleSection("drift")}
+              data-testid="button-toggle-drift"
+            >
+              <span className="flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                State Drift ({diff?.changedComponents || 0} of {diffs.length} changed)
+              </span>
+              {expandedSections.has("drift") ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+            </button>
+            {expandedSections.has("drift") && (
+              <div className="mt-3 flex flex-col gap-1">
+                {diffs.map((d: any, idx: number) => (
+                  <div key={idx} className="flex items-center justify-between py-1 text-[11px] border-b last:border-0" data-testid={`drift-item-${idx}`}>
+                    <span className="font-medium">{d.component}</span>
+                    <div className="flex items-center gap-1.5">
+                      {d.changed ? (
+                        <Badge className="text-[8px] bg-orange-500/10 text-orange-600 border-orange-500/20">{d.changeDetails || "Changed"}</Badge>
+                      ) : (
+                        <Badge className="text-[8px] bg-emerald-500/10 text-emerald-600 border-emerald-500/20">Unchanged</Badge>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {provenance.auditEventId && (
+          <div className="flex items-center gap-2 text-[11px] text-muted-foreground" data-testid="provenance-audit-link">
+            <ExternalLink className="w-3 h-3" />
+            <span>Audit Event:</span>
+            <Link href="/governance" className="text-primary hover:underline font-mono" data-testid="link-audit-event">
+              {provenance.auditEventId.substring(0, 12)}...
+            </Link>
+          </div>
+        )}
+
+        {provenance.provenanceHash && (
+          <div className="text-[10px] text-muted-foreground font-mono bg-muted/30 rounded px-2 py-1 break-all" data-testid="text-provenance-hash">
+            SHA-256: {provenance.provenanceHash}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function TraceDetail() {
   const [, params] = useRoute("/traces/:id");
   const traceId = params?.id;
@@ -1402,6 +1832,8 @@ export default function TraceDetail() {
           })}
         </CardContent>
       </Card>
+
+      {traceId && <ProvenanceExplorer traceId={traceId} />}
 
     </div>
   );

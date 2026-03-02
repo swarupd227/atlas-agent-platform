@@ -7,7 +7,7 @@ import { eq, desc } from "drizzle-orm";
 import { conversations, messages as chatMessages, outcomeContracts, kpiDefinitions } from "@shared/schema";
 import { z, ZodError } from "zod";
 import { startWorker, jobEvents } from "./worker";
-import { executePromptWithMcp, executeTeamPipeline, executeKGQueryTemplate, startAgentRuntime, stopAgentRuntime, getActiveRuntimes, isRuntimeActive, runtimeEvents, type RuntimeAgent } from "./agent-runtime";
+import { executePromptWithMcp, executeTeamPipeline, executeKGQueryTemplate, startAgentRuntime, stopAgentRuntime, getActiveRuntimes, isRuntimeActive, runtimeEvents, canonicalJsonStringify, type RuntimeAgent } from "./agent-runtime";
 import OpenAI, { toFile } from "openai";
 import multer from "multer";
 import { checkPermission, getRequestRole, getTraceRedactionLevel, getRedactionLevel, redactPayload, getOntologySensitivityKeys, invalidateOntologySensitivityCache, redactWithOntologyKeys } from "./permissions";
@@ -2909,6 +2909,544 @@ export async function registerRoutes(
       res.status(201).json(trace);
     } catch (e) {
       handleZodError(res, e);
+    }
+  });
+
+  app.get("/api/provenance/:traceId", checkPermission("view_traces"), async (req, res) => {
+    try {
+      const trace = await storage.getTrace(req.params.traceId);
+      if (!trace) return res.status(404).json({ error: "Trace not found" });
+
+      let integrityStatus: any = { valid: false, checks: {} };
+      try {
+        const snapshot = trace.provenanceSnapshot as any;
+        const storedHash = trace.provenanceHash;
+        let snapshotHashMatch = false;
+        if (snapshot && storedHash) {
+          const recomputed = crypto.createHash("sha256")
+            .update(canonicalJsonStringify(snapshot))
+            .digest("hex");
+          snapshotHashMatch = recomputed === storedHash;
+        }
+
+        let auditEventFound = false;
+        let auditChainValid = false;
+        if (trace.auditEventId) {
+          const events = await storage.getAuditEvents();
+          const auditEvent = events.find(e => e.id === trace.auditEventId);
+          auditEventFound = !!auditEvent;
+          if (auditEvent && auditEvent.sequenceNum) {
+            const chainResult = await storage.verifyAuditChainIntegrity();
+            auditChainValid = chainResult.valid;
+          }
+        }
+
+        integrityStatus = {
+          valid: snapshotHashMatch && auditEventFound && auditChainValid,
+          checks: { snapshotHashMatch, auditEventFound, auditChainValid },
+        };
+      } catch {}
+
+      res.json({
+        traceId: trace.id,
+        agentId: trace.agentId,
+        provenanceSnapshot: trace.provenanceSnapshot || null,
+        provenanceHash: trace.provenanceHash || null,
+        auditEventId: trace.auditEventId || null,
+        retrievedDocs: trace.retrievedDocs || null,
+        integrity: integrityStatus,
+        capturedAt: (trace.provenanceSnapshot as any)?.capturedAt || trace.createdAt,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/provenance/:traceId/reconstruct", checkPermission("view_traces"), async (req, res) => {
+    try {
+      const trace = await storage.getTrace(req.params.traceId);
+      if (!trace) return res.status(404).json({ error: "Trace not found" });
+
+      const snapshot = (trace.provenanceSnapshot || {}) as any;
+      const available: any = {};
+      const unavailable: string[] = [];
+
+      if (snapshot.blueprintId) {
+        try {
+          const blueprints = await storage.getBlueprints();
+          const bp = blueprints.find(b => b.id === snapshot.blueprintId);
+          if (bp) {
+            available.blueprint = {
+              id: bp.id,
+              name: bp.name,
+              versionHistory: bp.versionHistory,
+              currentVersion: bp.version,
+              workflowJson: bp.workflowJson,
+            };
+          } else {
+            unavailable.push("blueprint");
+          }
+        } catch { unavailable.push("blueprint"); }
+      }
+
+      if (snapshot.kbRetrievals && Array.isArray(snapshot.kbRetrievals)) {
+        available.knowledgeBases = [];
+        for (const kbr of snapshot.kbRetrievals) {
+          try {
+            const kb = await storage.getKnowledgeBase(kbr.kbId);
+            const allChunks = await storage.getKnowledgeChunks(kbr.kbId);
+            const resolvedChunks = kbr.chunks.map((c: any) => {
+              const foundChunk = allChunks.find((ac: any) => ac.id === c.chunkId);
+              return {
+                ...c,
+                content: foundChunk?.content || null,
+                stillAvailable: !!foundChunk,
+              };
+            });
+            available.knowledgeBases.push({
+              kbId: kbr.kbId,
+              kbName: kbr.kbName || kb?.name || kbr.kbId,
+              embeddingModel: kbr.embeddingModel,
+              chunks: resolvedChunks,
+            });
+          } catch {
+            unavailable.push(`kb:${kbr.kbId}`);
+          }
+        }
+      }
+
+      if (snapshot.memoryIdsLoaded && Array.isArray(snapshot.memoryIdsLoaded) && snapshot.memoryIdsLoaded.length > 0) {
+        try {
+          const allMemories = await storage.getAgentMemories(trace.agentId, "episodic", 100);
+          const resolved = snapshot.memoryIdsLoaded.map((mid: string) => {
+            const found = allMemories.find(m => m.id === mid);
+            return { memoryId: mid, content: found?.content || null, stillAvailable: !!found, expired: !found };
+          });
+          available.memories = resolved;
+        } catch { unavailable.push("memories"); }
+      }
+
+      if (snapshot.policySnapshot && Array.isArray(snapshot.policySnapshot)) {
+        available.policies = [];
+        for (const ps of snapshot.policySnapshot) {
+          try {
+            const policy = await storage.getPolicy(ps.policyId);
+            available.policies.push({
+              ...ps,
+              currentStatus: policy?.status || "unknown",
+              rules: policy?.rules || null,
+              stillAvailable: !!policy,
+            });
+          } catch {
+            available.policies.push({ ...ps, currentStatus: "unknown", stillAvailable: false });
+          }
+        }
+      }
+
+      if (snapshot.mcpToolFingerprints && typeof snapshot.mcpToolFingerprints === "object") {
+        available.mcpTools = {};
+        for (const [toolName, fingerprint] of Object.entries(snapshot.mcpToolFingerprints)) {
+          available.mcpTools[toolName] = {
+            executionTimeFingerprint: fingerprint,
+          };
+        }
+        if (snapshot.mcpServerVersions && typeof snapshot.mcpServerVersions === "object") {
+          for (const [serverId, serverInfo] of Object.entries(snapshot.mcpServerVersions)) {
+            try {
+              const server = await storage.getMcpServer(serverId);
+              const tools = await storage.getMcpServerTools(serverId);
+              for (const tool of tools) {
+                if (available.mcpTools[tool.name]) {
+                  available.mcpTools[tool.name].currentFingerprint = (tool as any).fingerprintHash || null;
+                  available.mcpTools[tool.name].drifted = (tool as any).fingerprintHash !== available.mcpTools[tool.name].executionTimeFingerprint;
+                  available.mcpTools[tool.name].inputSchema = tool.inputSchema;
+                }
+              }
+            } catch {}
+          }
+        }
+      }
+
+      if (snapshot.contextProfileId) {
+        try {
+          const allProfiles = await storage.getContextProfiles();
+          const cp = allProfiles.find(p => p.id === snapshot.contextProfileId);
+          if (cp) {
+            available.contextProfile = {
+              id: cp.id,
+              name: cp.name,
+              executionTimeVersion: snapshot.contextProfileVersion,
+              currentVersion: (cp as any).version,
+              budgetAllocations: (cp as any).budgetAllocations,
+              sources: cp.sources,
+            };
+          } else {
+            unavailable.push("contextProfile");
+          }
+        } catch { unavailable.push("contextProfile"); }
+      }
+
+      available.autonomy = {
+        level: snapshot.autonomyLevel || null,
+        profileId: snapshot.autonomyProfileId || null,
+      };
+      available.industry = snapshot.industryContext || trace.agentId;
+      available.ontologyConcepts = snapshot.ontologyConceptsUsed || [];
+
+      res.json({
+        traceId: trace.id,
+        agentId: trace.agentId,
+        executedAt: (snapshot.capturedAt || trace.createdAt),
+        provenanceHash: trace.provenanceHash,
+        available,
+        unavailable,
+        completeness: unavailable.length === 0 ? "full" : "partial",
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/provenance/:traceId/diff", checkPermission("view_traces"), async (req, res) => {
+    try {
+      const trace = await storage.getTrace(req.params.traceId);
+      if (!trace) return res.status(404).json({ error: "Trace not found" });
+
+      const snapshot = (trace.provenanceSnapshot || {}) as any;
+      const diffs: Array<{ component: string; atExecutionTime: any; currentState: any; changed: boolean; changeDetails?: string }> = [];
+
+      if (snapshot.policySnapshot && Array.isArray(snapshot.policySnapshot)) {
+        const currentPolicies = await storage.getPolicies();
+        for (const ps of snapshot.policySnapshot) {
+          const current = currentPolicies.find(p => p.id === ps.policyId);
+          const changed = !current || current.status !== ps.status;
+          diffs.push({
+            component: `policy:${ps.policyName}`,
+            atExecutionTime: { id: ps.policyId, status: ps.status, domain: ps.domain },
+            currentState: current ? { id: current.id, status: current.status, domain: current.domain } : null,
+            changed,
+            changeDetails: !current ? "Policy deleted" : changed ? `Status changed: ${ps.status} → ${current.status}` : undefined,
+          });
+        }
+      }
+
+      if (snapshot.mcpToolFingerprints && typeof snapshot.mcpToolFingerprints === "object") {
+        if (snapshot.mcpServerVersions) {
+          for (const [serverId] of Object.entries(snapshot.mcpServerVersions)) {
+            try {
+              const tools = await storage.getMcpServerTools(serverId);
+              for (const tool of tools) {
+                const execFingerprint = snapshot.mcpToolFingerprints[tool.name];
+                if (execFingerprint !== undefined) {
+                  const currentFp = (tool as any).fingerprintHash || "";
+                  const changed = execFingerprint !== currentFp;
+                  diffs.push({
+                    component: `mcpTool:${tool.name}`,
+                    atExecutionTime: { fingerprint: execFingerprint },
+                    currentState: { fingerprint: currentFp },
+                    changed,
+                    changeDetails: changed ? "Tool schema has drifted since execution" : undefined,
+                  });
+                }
+              }
+            } catch {}
+          }
+        }
+      }
+
+      if (snapshot.contextProfileId) {
+        try {
+          const allProfiles = await storage.getContextProfiles();
+          const cp = allProfiles.find(p => p.id === snapshot.contextProfileId);
+          const currentVersion = (cp as any)?.version || null;
+          const changed = currentVersion !== snapshot.contextProfileVersion;
+          diffs.push({
+            component: "contextProfile",
+            atExecutionTime: { id: snapshot.contextProfileId, version: snapshot.contextProfileVersion },
+            currentState: cp ? { id: cp.id, version: currentVersion } : null,
+            changed,
+            changeDetails: !cp ? "Context profile deleted" : changed ? `Version changed: ${snapshot.contextProfileVersion} → ${currentVersion}` : undefined,
+          });
+        } catch {}
+      }
+
+      if (snapshot.blueprintId) {
+        try {
+          const blueprints = await storage.getBlueprints();
+          const bp = blueprints.find(b => b.id === snapshot.blueprintId);
+          if (bp) {
+            const currentHash = crypto.createHash("sha256").update(canonicalJsonStringify(bp.workflowJson || {})).digest("hex");
+            const changed = snapshot.blueprintVersionHash && currentHash !== snapshot.blueprintVersionHash;
+            diffs.push({
+              component: "blueprint",
+              atExecutionTime: { id: snapshot.blueprintId, versionHash: snapshot.blueprintVersionHash },
+              currentState: { id: bp.id, versionHash: currentHash, version: bp.version },
+              changed: !!changed,
+              changeDetails: changed ? "Blueprint has been updated since execution" : undefined,
+            });
+          }
+        } catch {}
+      }
+
+      res.json({
+        traceId: trace.id,
+        agentId: trace.agentId,
+        executedAt: snapshot.capturedAt || trace.createdAt,
+        diffs,
+        totalComponents: diffs.length,
+        changedComponents: diffs.filter(d => d.changed).length,
+        driftDetected: diffs.some(d => d.changed),
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/provenance/verify-integrity", async (req, res) => {
+    try {
+      const { traceIds } = req.body || {};
+      let traces: any[];
+      if (traceIds && Array.isArray(traceIds) && traceIds.length > 0) {
+        traces = [];
+        for (const tid of traceIds) {
+          const t = await storage.getTrace(tid);
+          if (t) traces.push(t);
+        }
+      } else {
+        traces = await storage.getTraces();
+      }
+
+      const results = [];
+      const auditEvents = await storage.getAuditEvents();
+      const chainResult = await storage.verifyAuditChainIntegrity();
+
+      for (const trace of traces) {
+        const snapshot = trace.provenanceSnapshot as any;
+        const storedHash = trace.provenanceHash;
+
+        let snapshotHashMatch = false;
+        if (snapshot && storedHash) {
+          const recomputed = crypto.createHash("sha256")
+            .update(canonicalJsonStringify(snapshot))
+            .digest("hex");
+          snapshotHashMatch = recomputed === storedHash;
+        }
+
+        let auditEventFound = false;
+        if (trace.auditEventId) {
+          auditEventFound = auditEvents.some(e => e.id === trace.auditEventId);
+        }
+
+        const hasProvenance = !!snapshot;
+        results.push({
+          traceId: trace.id,
+          agentId: trace.agentId,
+          hasProvenance,
+          valid: hasProvenance ? (snapshotHashMatch && auditEventFound && chainResult.valid) : false,
+          checks: {
+            snapshotHashMatch: hasProvenance ? snapshotHashMatch : null,
+            auditEventFound: trace.auditEventId ? auditEventFound : null,
+            auditChainValid: chainResult.valid,
+          },
+        });
+      }
+
+      res.json({
+        totalTraces: results.length,
+        withProvenance: results.filter(r => r.hasProvenance).length,
+        withoutProvenance: results.filter(r => !r.hasProvenance).length,
+        allValid: results.filter(r => r.hasProvenance).every(r => r.valid),
+        results,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/provenance/:traceId/export", checkPermission("view_traces"), async (req, res) => {
+    try {
+      const trace = await storage.getTrace(req.params.traceId);
+      if (!trace) return res.status(404).json({ error: "Trace not found" });
+
+      const format = (req.query.format as string) || "generic";
+      const snapshot = (trace.provenanceSnapshot || {}) as any;
+
+      const integritySection = {
+        provenanceHash: trace.provenanceHash,
+        auditEventId: trace.auditEventId,
+        hashAlgorithm: "SHA-256",
+        chainVerified: false as boolean,
+      };
+      try {
+        if (trace.provenanceHash && trace.provenanceSnapshot) {
+          const recomputed = crypto.createHash("sha256")
+            .update(canonicalJsonStringify(trace.provenanceSnapshot))
+            .digest("hex");
+          integritySection.chainVerified = recomputed === trace.provenanceHash;
+        }
+      } catch {}
+
+      let chainOfCustody: any[] = [];
+      try {
+        const events = await storage.getAuditEvents();
+        const sorted = events
+          .filter(e => e.sequenceNum !== null)
+          .sort((a, b) => (a.sequenceNum || 0) - (b.sequenceNum || 0));
+        if (trace.auditEventId) {
+          const targetIdx = sorted.findIndex(e => e.id === trace.auditEventId);
+          if (targetIdx >= 0) {
+            chainOfCustody = sorted.slice(Math.max(0, targetIdx - 5), targetIdx + 1).map(e => ({
+              sequenceNum: e.sequenceNum,
+              eventHash: e.eventHash,
+              action: e.action,
+              timestamp: e.createdAt,
+            }));
+          }
+        }
+      } catch {}
+
+      const baseExport = {
+        exportFormat: format,
+        exportedAt: new Date().toISOString(),
+        traceId: trace.id,
+        agentId: trace.agentId,
+        executedAt: snapshot.capturedAt || trace.createdAt,
+        tamperEvidence: integritySection,
+        chainOfCustody,
+      };
+
+      if (format === "sec") {
+        const kbSources = (snapshot.kbRetrievals || []).flatMap((kbr: any) =>
+          (kbr.chunks || []).map((c: any) => ({ kbName: kbr.kbName, chunkId: c.chunkId, sourceDocId: c.sourceDocId, similarity: c.similarityScore }))
+        );
+        res.json({
+          ...baseExport,
+          title: "Investment Decision Reconstruction",
+          agentIdentity: { agentId: trace.agentId, versionId: trace.versionId, industry: snapshot.industryContext },
+          decisionTimestamp: snapshot.capturedAt || trace.createdAt,
+          modelUsed: trace.modelId || "gpt-4.1",
+          dataSources: kbSources,
+          reasoningChain: (trace.stepsJson as any[])?.filter((s: any) => s.type === "ai_analysis" || s.type === "ai_planning").map((s: any) => ({ step: s.name, output: s.output })) || [],
+          riskFactors: (trace.stepsJson as any[])?.find((s: any) => s.type === "compliance_check")?.output || {},
+          policiesApplied: snapshot.policySnapshot || [],
+          autonomyLevel: snapshot.autonomyLevel || "unknown",
+          tokenUsage: trace.tokenUsage,
+          costUsd: trace.costUsd,
+        });
+      } else if (format === "hipaa") {
+        res.json({
+          ...baseExport,
+          title: "PHI Access Audit",
+          accessingAgent: { agentId: trace.agentId, versionId: trace.versionId },
+          dataAccessed: (snapshot.kbRetrievals || []).map((kbr: any) => ({
+            knowledgeBase: kbr.kbName,
+            chunksAccessed: (kbr.chunks || []).length,
+            embeddingModel: kbr.embeddingModel,
+          })),
+          governingPolicies: snapshot.policySnapshot || [],
+          autonomyLevel: snapshot.autonomyLevel || "unknown",
+          minimumNecessary: {
+            chunksRetrieved: (snapshot.kbRetrievals || []).reduce((sum: number, kbr: any) => sum + (kbr.chunks || []).length, 0),
+            memoriesLoaded: (snapshot.memoryIdsLoaded || []).length,
+          },
+          retentionPolicy: snapshot.policySnapshot?.find((p: any) => p.domain === "retention") || null,
+        });
+      } else if (format === "insurance") {
+        res.json({
+          ...baseExport,
+          title: "Claims Decision Reconstruction",
+          claimContext: {
+            agentId: trace.agentId,
+            industry: snapshot.industryContext,
+            autonomyLevel: snapshot.autonomyLevel,
+          },
+          rulesApplied: snapshot.policySnapshot || [],
+          supportingDocuments: (snapshot.kbRetrievals || []).flatMap((kbr: any) =>
+            (kbr.chunks || []).map((c: any) => ({ source: kbr.kbName, docId: c.sourceDocId, confidence: c.similarityScore }))
+          ),
+          reasoningSteps: (trace.stepsJson as any[])?.map((s: any) => ({ step: s.name, type: s.type, status: s.status })) || [],
+          escalationTriggers: snapshot.policySnapshot?.filter((p: any) => p.domain === "escalation") || [],
+          humanOversight: {
+            autonomyLevel: snapshot.autonomyLevel,
+            requiresApproval: snapshot.autonomyLevel === "expert_approval" || snapshot.autonomyLevel === "confirm_before",
+          },
+        });
+      } else {
+        res.json({
+          ...baseExport,
+          title: "Full Provenance Export",
+          provenanceSnapshot: snapshot,
+          traceDetails: {
+            status: trace.status,
+            latencyMs: trace.latencyMs,
+            costUsd: trace.costUsd,
+            modelId: trace.modelId,
+            tokenUsage: trace.tokenUsage,
+            inputSummary: trace.inputSummary,
+            outputSummary: trace.outputSummary,
+          },
+          steps: trace.stepsJson,
+          toolCalls: trace.toolCalls,
+          policyChecks: trace.policyChecks,
+          retrievedDocs: trace.retrievedDocs,
+        });
+      }
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/provenance/batch-export", async (req, res) => {
+    try {
+      const { traceIds, format, dateRange } = req.body || {};
+      const exportFormat = format || "generic";
+      let traces: any[];
+
+      if (traceIds && Array.isArray(traceIds) && traceIds.length > 0) {
+        traces = [];
+        for (const tid of traceIds) {
+          const t = await storage.getTrace(tid);
+          if (t) traces.push(t);
+        }
+      } else {
+        traces = await storage.getTraces();
+        if (dateRange) {
+          const { start, end } = dateRange;
+          if (start) traces = traces.filter(t => new Date(t.createdAt || 0) >= new Date(start));
+          if (end) traces = traces.filter(t => new Date(t.createdAt || 0) <= new Date(end));
+        }
+      }
+
+      const exports = traces.map(trace => {
+        const snapshot = (trace.provenanceSnapshot || {}) as any;
+        return {
+          traceId: trace.id,
+          agentId: trace.agentId,
+          executedAt: snapshot.capturedAt || trace.createdAt,
+          status: trace.status,
+          provenanceHash: trace.provenanceHash,
+          auditEventId: trace.auditEventId,
+          hasProvenance: !!trace.provenanceSnapshot,
+          industry: snapshot.industryContext || null,
+          autonomyLevel: snapshot.autonomyLevel || null,
+          kbRetrievalCount: (snapshot.kbRetrievals || []).length,
+          policyCount: (snapshot.policySnapshot || []).length,
+          toolCount: Object.keys(snapshot.mcpToolFingerprints || {}).length,
+          memoryCount: (snapshot.memoryIdsLoaded || []).length,
+          latencyMs: trace.latencyMs,
+          costUsd: trace.costUsd,
+        };
+      });
+
+      res.json({
+        exportFormat,
+        exportedAt: new Date().toISOString(),
+        totalTraces: exports.length,
+        withProvenance: exports.filter(e => e.hasProvenance).length,
+        records: exports,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
     }
   });
 
