@@ -22708,15 +22708,22 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
       if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
         return res.status(503).json({ error: "AI service not configured" });
       }
-      const { industry, domain, existingSkillNames, count } = req.body;
+      const { industry, domain, skillName, skillDescription, existingSkillNames, count } = req.body;
       if (!industry || !domain) {
         return res.status(400).json({ error: "industry and domain are required" });
       }
 
-      const numSkills = Math.min(count || 5, 8);
+      const numSkills = Math.min(count || 1, 8);
       const existingContext = existingSkillNames?.length > 0
         ? `\nExisting skills in this domain (do NOT duplicate these):\n${existingSkillNames.map((n: string) => `- ${n}`).join("\n")}`
         : "";
+
+      const nameDirective = skillName
+        ? `The skill MUST be named exactly "${skillName}".`
+        : "Choose a descriptive, professional skill name.";
+      const descDirective = skillDescription
+        ? `Use this description as the basis (expand and refine it into a production-quality 2-3 sentence description): "${skillDescription}"`
+        : "Write a detailed 2-3 sentence description explaining what the skill does, when it activates, and what outcomes it produces.";
 
       const response = await openai.chat.completions.create({
         model: "gpt-4.1",
@@ -22727,8 +22734,8 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
             content: `You are an expert in AI agent skill design for enterprise automation. You create detailed, production-ready agent skill definitions for the ${industry.replace(/_/g, " ")} industry.
 
 Generate a JSON object with a "skills" array. Each skill MUST have:
-- "name": descriptive skill name (clear, professional)
-- "description": detailed 2-3 sentence description explaining what the skill does, when it activates, and what outcomes it produces. This is the critical field that controls when agents activate the skill.
+- "name": ${nameDirective}
+- "description": ${descDirective} This is the critical field that controls when agents activate the skill.
 - "domain": "${domain}"
 - "industry": "${industry}"
 - "version": "1.0.0"
@@ -22746,10 +22753,10 @@ Generate exactly ${numSkills} unique, practical skills that would be valuable in
           },
           {
             role: "user",
-            content: `Generate ${numSkills} new agent skills for:
+            content: `Generate ${numSkills} new agent skill${numSkills > 1 ? 's' : ''} for:
 
 Industry: ${industry.replace(/_/g, " ")}
-Domain: ${domain}
+Domain: ${domain}${skillName ? `\nSkill Name: ${skillName}` : ""}${skillDescription ? `\nSkill Description: ${skillDescription}` : ""}
 ${existingContext}
 
 Return ONLY a valid JSON object with a "skills" array.`

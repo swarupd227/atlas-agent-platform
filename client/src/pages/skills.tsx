@@ -43,6 +43,7 @@ import {
   Link2,
   Pencil,
   Unlink,
+  Trash2,
 } from "lucide-react";
 
 const INDUSTRY_CONFIG: Record<string, { label: string; icon: typeof Building2; color: string }> = {
@@ -97,6 +98,8 @@ export default function SkillCatalog() {
   const [aiGenerating, setAiGenerating] = useState(false);
   const [generateIndustry, setGenerateIndustry] = useState("financial_services");
   const [generateDomain, setGenerateDomain] = useState("");
+  const [generateName, setGenerateName] = useState("");
+  const [generateDescription, setGenerateDescription] = useState("");
   const [showGeneratePanel, setShowGeneratePanel] = useState(false);
 
   const { data: skills = [], isLoading } = useQuery<Skill[]>({
@@ -207,6 +210,8 @@ export default function SkillCatalog() {
       const res = await apiRequest("POST", "/api/ai/generate-skills", {
         industry: generateIndustry,
         domain: generateDomain,
+        skillName: generateName || undefined,
+        skillDescription: generateDescription || undefined,
         existingSkillNames,
         count: 1,
       });
@@ -224,6 +229,8 @@ export default function SkillCatalog() {
       queryClient.invalidateQueries({ queryKey: ["/api/skills"] });
       toast({ title: `Generated ${savedCount} new skill${savedCount !== 1 ? 's' : ''} for ${generateDomain}` });
       setShowGeneratePanel(false);
+      setGenerateName("");
+      setGenerateDescription("");
     } catch (e: any) {
       toast({ title: "AI generation failed", description: e.message, variant: "destructive" });
     } finally {
@@ -465,42 +472,66 @@ export default function SkillCatalog() {
             </CardHeader>
             <CardContent>
               <p className="text-sm text-muted-foreground mb-4">
-                Generate a new skill for a specific industry and domain. AI will create a unique, production-ready skill definition that avoids duplicating existing skills.
+                Generate a new skill for a specific industry and domain. Provide a name and description for precise results, or leave them blank for AI to decide.
               </p>
-              <div className="flex items-end gap-3 flex-wrap">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-muted-foreground">Industry</label>
-                  <Select value={generateIndustry} onValueChange={setGenerateIndustry}>
-                    <SelectTrigger className="w-[200px]" data-testid="select-generate-industry">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {Object.entries(INDUSTRY_CONFIG).map(([key, cfg]) => (
-                        <SelectItem key={key} value={key}>{cfg.label}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+              <div className="flex flex-col gap-3">
+                <div className="flex items-end gap-3 flex-wrap">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-muted-foreground">Industry</label>
+                    <Select value={generateIndustry} onValueChange={setGenerateIndustry}>
+                      <SelectTrigger className="w-[200px]" data-testid="select-generate-industry">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {Object.entries(INDUSTRY_CONFIG).map(([key, cfg]) => (
+                          <SelectItem key={key} value={key}>{cfg.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5 flex-1 min-w-[200px]">
+                    <label className="text-xs font-medium text-muted-foreground">Domain</label>
+                    <Input
+                      placeholder="e.g., Order to Cash, Fraud Detection..."
+                      value={generateDomain}
+                      onChange={(e) => setGenerateDomain(e.target.value)}
+                      data-testid="input-generate-domain"
+                    />
+                  </div>
                 </div>
-                <div className="space-y-1.5 flex-1 min-w-[200px]">
-                  <label className="text-xs font-medium text-muted-foreground">Domain</label>
-                  <Input
-                    placeholder="e.g., Fraud Detection, Clinical Trials..."
-                    value={generateDomain}
-                    onChange={(e) => setGenerateDomain(e.target.value)}
-                    data-testid="input-generate-domain"
-                  />
+                <div className="flex items-end gap-3 flex-wrap">
+                  <div className="space-y-1.5 flex-1 min-w-[200px]">
+                    <label className="text-xs font-medium text-muted-foreground">Skill Name <span className="text-muted-foreground/60">(optional)</span></label>
+                    <Input
+                      placeholder="e.g., Product Catalog Retrieval"
+                      value={generateName}
+                      onChange={(e) => setGenerateName(e.target.value)}
+                      data-testid="input-generate-name"
+                    />
+                  </div>
+                  <div className="space-y-1.5 flex-[2] min-w-[300px]">
+                    <label className="text-xs font-medium text-muted-foreground">Description <span className="text-muted-foreground/60">(optional)</span></label>
+                    <Input
+                      placeholder="e.g., RAG over product master data, configuration rules, compatibility matrices"
+                      value={generateDescription}
+                      onChange={(e) => setGenerateDescription(e.target.value)}
+                      data-testid="input-generate-description"
+                    />
+                  </div>
                 </div>
-                <Button
-                  onClick={handleAiGenerateSkills}
-                  disabled={aiGenerating || !generateDomain}
-                  data-testid="button-generate-skills"
-                >
-                  {aiGenerating ? (
-                    <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> Generating...</>
-                  ) : (
-                    <><Plus className="w-4 h-4 mr-1" /> Generate Skill</>
-                  )}
-                </Button>
+                <div className="flex justify-end">
+                  <Button
+                    onClick={handleAiGenerateSkills}
+                    disabled={aiGenerating || !generateDomain}
+                    data-testid="button-generate-skills"
+                  >
+                    {aiGenerating ? (
+                      <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> Generating...</>
+                    ) : (
+                      <><Plus className="w-4 h-4 mr-1" /> Generate Skill</>
+                    )}
+                  </Button>
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -603,6 +634,17 @@ export default function SkillCatalog() {
           enrichment={sheetEnrichment}
           onAiEnhance={() => selectedSkill && handleAiEnhanceSkill(selectedSkill)}
           isEnhancing={!!selectedSkill && aiEnhancingSkill === selectedSkill.id}
+          onDelete={async (id: string) => {
+            try {
+              await apiRequest("DELETE", `/api/skills/${id}`);
+              queryClient.invalidateQueries({ queryKey: ["/api/skills"] });
+              setSelectedSkill(null);
+              setSheetEnrichment(null);
+              toast({ title: "Skill deleted" });
+            } catch (e: any) {
+              toast({ title: "Failed to delete skill", description: e.message, variant: "destructive" });
+            }
+          }}
         />
 
         {showCompare && compareSkills.length >= 2 && (
@@ -770,6 +812,7 @@ function SkillDetailSheet({
   enrichment,
   onAiEnhance,
   isEnhancing,
+  onDelete,
 }: {
   skill: Skill | null;
   open: boolean;
@@ -777,7 +820,9 @@ function SkillDetailSheet({
   enrichment: any;
   onAiEnhance: () => void;
   isEnhancing: boolean;
+  onDelete: (id: string) => void;
 }) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
   if (!skill) return null;
   const deps = (skill.dependencies as string[] | null) || [];
   const tags = (skill.tags as string[] | null) || [];
@@ -816,12 +861,28 @@ function SkillDetailSheet({
                 </Badge>
               </div>
             </div>
-            <Link href={`/skills/studio/${skill.id}`}>
-              <Button size="sm" variant="outline" data-testid="button-open-studio">
-                <Pencil className="w-3.5 h-3.5 mr-1.5" />
-                Open in Studio
-              </Button>
-            </Link>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <Link href={`/skills/studio/${skill.id}`}>
+                <Button size="sm" variant="outline" data-testid="button-open-studio">
+                  <Pencil className="w-3.5 h-3.5 mr-1.5" />
+                  Open in Studio
+                </Button>
+              </Link>
+              {confirmDelete ? (
+                <div className="flex items-center gap-1">
+                  <Button size="sm" variant="destructive" onClick={() => { onDelete(skill.id); setConfirmDelete(false); }} data-testid="button-confirm-delete-skill">
+                    Confirm
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(false)} data-testid="button-cancel-delete-skill">
+                    Cancel
+                  </Button>
+                </div>
+              ) : (
+                <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => setConfirmDelete(true)} data-testid="button-delete-skill">
+                  <Trash2 className="w-3.5 h-3.5" />
+                </Button>
+              )}
+            </div>
           </div>
         </SheetHeader>
 
