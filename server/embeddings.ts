@@ -28,18 +28,9 @@ export async function ensurePgVector(): Promise<boolean> {
           await db.execute(sql`ALTER TABLE knowledge_chunks ADD COLUMN embedding vector(1536)`);
         }
         try {
-          const idxCheck = await db.execute(sql`
-            SELECT indexname FROM pg_indexes
-            WHERE tablename = 'knowledge_chunks' AND indexname = 'idx_knowledge_chunks_embedding'
-          `);
-          if (!idxCheck.rows || idxCheck.rows.length === 0) {
-            await db.execute(sql`
-              CREATE INDEX idx_knowledge_chunks_embedding
-              ON knowledge_chunks USING hnsw (embedding vector_cosine_ops)
-            `);
-          }
+          await db.execute(sql`DROP INDEX IF EXISTS idx_knowledge_chunks_embedding`);
         } catch (indexErr: any) {
-          console.log("[pgvector] HNSW index creation skipped:", indexErr.message);
+          console.log("[pgvector] Index cleanup skipped:", indexErr.message);
         }
         pgvectorState = "available";
         console.log("[pgvector] Vector embeddings enabled successfully");
