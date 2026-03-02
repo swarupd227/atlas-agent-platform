@@ -2025,7 +2025,7 @@ async function resolveBlueprint(
   blueprintJson: any,
   availableMcpServerIds: string[],
   complianceTags?: string[]
-): Promise<{ valid: boolean; error?: string; requirements: RuntimeAgent["blueprintRequirements"] }> {
+): Promise<{ valid: boolean; error?: string; requirements: RuntimeAgent["blueprintRequirements"]; ontologyWarnings?: string[] }> {
   const nodes = blueprintJson?.nodes || [];
   const edges = blueprintJson?.edges || [];
   const workflowSteps: string[] = [];
@@ -2092,9 +2092,47 @@ async function resolveBlueprint(
     }
   }
 
+  const ontologyWarnings: string[] = [];
+  if (requiredTools.length > 0 && availableMcpServerIds.length > 0) {
+    try {
+      const requiredToolsLower = requiredTools.map(t => t.toLowerCase());
+      const checkedServerIds = new Set<string>();
+      const availableTools = await gatherAvailableTools(availableMcpServerIds);
+      for (const tool of availableTools) {
+        if (checkedServerIds.has(tool.serverId)) continue;
+        checkedServerIds.add(tool.serverId);
+        const matches = await storage.getMcpParameterMatches(tool.serverId);
+        if (matches.length === 0) continue;
+        const serverTools = availableTools.filter(t => t.serverId === tool.serverId);
+        for (const st of serverTools) {
+          const isReferencedByBlueprint = requiredToolsLower.some(rt =>
+            rt.includes(st.toolName.toLowerCase()) || st.toolName.toLowerCase().includes(rt)
+          );
+          if (!isReferencedByBlueprint) continue;
+          const toolMatches = matches.filter(m => m.toolName === st.toolName);
+          if (toolMatches.length === 0) continue;
+          const matchedCount = toolMatches.filter(m => m.matchStatus === "matched" || m.matchStatus === "partial").length;
+          const totalCount = toolMatches.length;
+          const score = totalCount > 0 ? matchedCount / totalCount : 0;
+          if (score === 0) {
+            ontologyWarnings.push(`Tool "${st.toolName}" (server: ${st.serverName}) has 0% ontology alignment — none of its ${totalCount} parameter(s) match domain concepts`);
+          } else if (score < 0.5) {
+            ontologyWarnings.push(`Tool "${st.toolName}" (server: ${st.serverName}) has ${Math.round(score * 100)}% ontology alignment (${matchedCount}/${totalCount} parameters matched) — below 50% threshold`);
+          }
+        }
+      }
+      if (ontologyWarnings.length > 0) {
+        console.log(`[agent-runtime] Blueprint ontology alignment warnings: ${ontologyWarnings.join("; ")}`);
+      }
+    } catch (err: any) {
+      console.log(`[agent-runtime] Could not check ontology alignment: ${err.message}`);
+    }
+  }
+
   return {
     valid: true,
     requirements: { workflowSteps, requiredTools, escalationTriggers, outputFormat, complianceNodes },
+    ontologyWarnings,
   };
 }
 
@@ -2142,6 +2180,9 @@ export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?
     }
     blueprintRequirements = bpResult.requirements;
     console.log(`[agent-runtime] Blueprint resolved: ${blueprintRequirements?.workflowSteps.length || 0} steps, ${blueprintRequirements?.requiredTools.length || 0} tools`);
+    if (bpResult.ontologyWarnings && bpResult.ontologyWarnings.length > 0) {
+      console.log(`[agent-runtime] Blueprint ontology warnings for ${agent.name}: ${bpResult.ontologyWarnings.join("; ")}`);
+    }
   }
 
   const runtimeAgent: RuntimeAgent = {

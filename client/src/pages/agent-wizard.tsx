@@ -1535,16 +1535,132 @@ export default function AgentWizard() {
   );
 }
 
+interface PromptVocabResult {
+  valid: boolean;
+  score: number;
+  deprecatedTermsFound: Array<{ term: string; suggestedCanonical: string; conceptId: string }>;
+  canonicalTermsUsed: string[];
+}
+
+function PromptVocabularyValidator({
+  glossary,
+  ontologyTags,
+}: {
+  glossary: string;
+  ontologyTags: Array<{ conceptId: string; conceptLabel: string }>;
+}) {
+  const [result, setResult] = useState<PromptVocabResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const lastValidatedRef = useRef("");
+
+  const runValidation = async () => {
+    if (!glossary || ontologyTags.length === 0) return;
+    const cacheKey = glossary + "||" + ontologyTags.map(t => t.conceptId).sort().join(",");
+    if (cacheKey === lastValidatedRef.current) return;
+    lastValidatedRef.current = cacheKey;
+    setLoading(true);
+    try {
+      const res = await fetch("/api/validate-prompt-vocabulary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: glossary, ontologyTags }),
+      });
+      if (res.ok) {
+        const data: PromptVocabResult = await res.json();
+        setResult(data);
+      } else {
+        setResult(null);
+      }
+    } catch {
+      setResult(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (glossary && ontologyTags.length > 0) {
+      const timer = setTimeout(runValidation, 800);
+      return () => clearTimeout(timer);
+    }
+  }, [glossary, JSON.stringify(ontologyTags.map(t => t.conceptId).sort())]);
+
+  if (!glossary || ontologyTags.length === 0) return null;
+
+  const deprecatedCount = result?.deprecatedTermsFound?.length || 0;
+  const isAligned = result ? result.valid : null;
+
+  return (
+    <div className="flex flex-col gap-2" data-testid="prompt-vocabulary-validator">
+      <div className="flex items-center gap-2 flex-wrap">
+        {loading ? (
+          <Badge variant="secondary" className="text-xs" data-testid="badge-prompt-vocab-loading">
+            <Loader2 className="w-3 h-3 mr-1 animate-spin" />Validating vocabulary...
+          </Badge>
+        ) : isAligned === true ? (
+          <Badge variant="default" className="text-xs bg-green-600" data-testid="badge-prompt-vocab-aligned">
+            <CheckCircle className="w-3 h-3 mr-1" />Ontology Aligned
+          </Badge>
+        ) : isAligned === false ? (
+          <Badge variant="secondary" className="text-xs bg-amber-500/80 text-white" data-testid="badge-prompt-vocab-deprecated">
+            <AlertTriangle className="w-3 h-3 mr-1" />{deprecatedCount} deprecated term{deprecatedCount !== 1 ? "s" : ""}
+          </Badge>
+        ) : null}
+        {result && result.canonicalTermsUsed.length > 0 && (
+          <span className="text-xs text-muted-foreground" data-testid="text-canonical-count">
+            {result.canonicalTermsUsed.length} canonical term{result.canonicalTermsUsed.length !== 1 ? "s" : ""} used
+          </span>
+        )}
+        {result && (
+          <span className="text-xs text-muted-foreground" data-testid="text-vocab-score">
+            Score: {result.score}%
+          </span>
+        )}
+        {result && deprecatedCount > 0 && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setExpanded(!expanded)}
+            data-testid="button-toggle-vocab-details"
+            className="ml-auto"
+          >
+            <Info className="h-3.5 w-3.5 mr-1" />
+            {expanded ? "Hide" : "Show"} Details
+          </Button>
+        )}
+      </div>
+      {expanded && result && deprecatedCount > 0 && (
+        <div className="rounded-md border bg-amber-50/50 dark:bg-amber-950/20 p-3 space-y-1.5" data-testid="vocab-deprecated-details">
+          <p className="text-xs font-medium text-amber-700 dark:text-amber-400">Deprecated terms found in prompt vocabulary:</p>
+          {result.deprecatedTermsFound.map((d, i) => (
+            <div key={i} className="flex items-center gap-2 text-xs" data-testid={`vocab-deprecated-term-${i}`}>
+              <span className="text-amber-600 dark:text-amber-400 line-through">{d.term}</span>
+              <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0" />
+              <span className="font-medium">{d.suggestedCanonical}</span>
+            </div>
+          ))}
+          <p className="text-[10px] text-muted-foreground mt-1">
+            These are soft warnings. The agent will still be created, but using canonical terms improves consistency.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DomainTerminologyPreview({
   glossary,
   conceptCount,
   industryLabel,
   collapsed: initialCollapsed = true,
+  ontologyTags,
 }: {
   glossary: string;
   conceptCount: number;
   industryLabel: string;
   collapsed?: boolean;
+  ontologyTags?: Array<{ conceptId: string; conceptLabel: string }>;
 }) {
   const [collapsed, setCollapsed] = useState(initialCollapsed);
 
@@ -1578,6 +1694,9 @@ function DomainTerminologyPreview({
             </Button>
           </div>
         </div>
+        {ontologyTags && ontologyTags.length > 0 && (
+          <PromptVocabularyValidator glossary={glossary} ontologyTags={ontologyTags} />
+        )}
         {!collapsed && (
           <div className="rounded-md border bg-muted/30 p-3 max-h-64 overflow-y-auto" data-testid="glossary-preview-content">
             <pre className="text-xs whitespace-pre-wrap font-mono text-muted-foreground leading-relaxed">{glossary}</pre>
@@ -1984,6 +2103,7 @@ function Step1IndustryDefine({
             glossary={domainGlossary}
             conceptCount={ontologyConceptCount || 0}
             industryLabel={industry?.label || "Industry"}
+            ontologyTags={state.ontologyTags}
           />
         )}
         {outcomeLockedFromUrl && linkedOutcome ? (
@@ -4657,6 +4777,7 @@ function StepReview({
           conceptCount={glossaryConceptCount || 0}
           industryLabel={industryLabel || "Industry"}
           collapsed={true}
+          ontologyTags={state.ontologyTags}
         />
       )}
 

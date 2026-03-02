@@ -329,6 +329,40 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
 
   const [runningEval, setRunningEval] = useState(false);
 
+  interface OntologyTagValidation {
+    totalTags: number;
+    resolvedTags: number;
+    unresolvedTags: string[];
+    resolved: Array<{ tag: string; conceptId: string; conceptLabel: string }>;
+  }
+  const [tagValidation, setTagValidation] = useState<OntologyTagValidation | null>(null);
+  const [tagValidating, setTagValidating] = useState(false);
+  const tagValidationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const validateOntologyTags = useCallback((currentTags: string, currentIndustry: string) => {
+    if (tagValidationTimer.current) clearTimeout(tagValidationTimer.current);
+    const parsedTags = currentTags.split(",").map(t => t.trim()).filter(Boolean);
+    if (parsedTags.length === 0 || !id) {
+      setTagValidation(null);
+      return;
+    }
+    tagValidationTimer.current = setTimeout(async () => {
+      setTagValidating(true);
+      try {
+        const res = await apiRequest("POST", `/api/skills/${id}/validate-ontology-tags`, {
+          tags: parsedTags,
+          industry: currentIndustry,
+        });
+        const data: OntologyTagValidation = await res.json();
+        setTagValidation(data);
+      } catch {
+        setTagValidation(null);
+      } finally {
+        setTagValidating(false);
+      }
+    }, 600);
+  }, [id]);
+
   const handleRunEval = async () => {
     setRunningEval(true);
     try {
@@ -425,6 +459,10 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
       setComplexity(skill.complexity);
       setMarkdownBody(skill.markdownBody ?? "");
       setQualityScore(skill.descriptionQualityScore ?? null);
+      const loadedTags = (skill.tags as string[] | null)?.join(", ") ?? "";
+      if (loadedTags && skill.industry) {
+        validateOntologyTags(loadedTags, skill.industry);
+      }
     }
   }, [skill]);
 
@@ -956,7 +994,7 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
                   </div>
                   <div className="space-y-1.5">
                     <Label>Industry</Label>
-                    <Select value={industry} onValueChange={setIndustry}>
+                    <Select value={industry} onValueChange={(val) => { setIndustry(val); validateOntologyTags(tags, val); }}>
                       <SelectTrigger data-testid="select-industry">
                         <SelectValue />
                       </SelectTrigger>
@@ -976,7 +1014,60 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="skill-tags">Tags (comma-separated)</Label>
-                    <OntologyAutocomplete value={tags} onChange={setTags} industry={industry} placeholder="compliance, fraud, kyc" testId="input-tags" />
+                    <OntologyAutocomplete value={tags} onChange={(val) => { setTags(val); validateOntologyTags(val, industry); }} industry={industry} placeholder="compliance, fraud, kyc" testId="input-tags" />
+                    {(() => {
+                      const parsedTags = tags.split(",").map(t => t.trim()).filter(Boolean);
+                      if (parsedTags.length === 0) return null;
+                      return (
+                        <div className="space-y-1.5 mt-1.5" data-testid="ontology-tag-validation">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {parsedTags.map((tag, idx) => {
+                              const isResolved = tagValidation?.resolved.some(r => r.tag === tag);
+                              const isUnresolved = tagValidation?.unresolvedTags.includes(tag);
+                              const resolvedInfo = tagValidation?.resolved.find(r => r.tag === tag);
+                              return (
+                                <div key={idx} className="flex items-center gap-1" data-testid={`tag-resolution-${idx}`}>
+                                  <Badge
+                                    variant="outline"
+                                    className={`text-[10px] gap-1 ${
+                                      isResolved
+                                        ? "bg-green-500/10 text-green-700 dark:text-green-400 border-green-500/30"
+                                        : isUnresolved
+                                          ? "bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 border-yellow-500/30"
+                                          : ""
+                                    } no-default-hover-elevate no-default-active-elevate`}
+                                  >
+                                    {tagValidating ? (
+                                      <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                                    ) : isResolved ? (
+                                      <CheckCircle className="w-2.5 h-2.5 text-green-500" />
+                                    ) : isUnresolved ? (
+                                      <AlertTriangle className="w-2.5 h-2.5 text-yellow-500" />
+                                    ) : null}
+                                    {tag}
+                                  </Badge>
+                                  {isResolved && resolvedInfo && (
+                                    <span className="text-[9px] text-muted-foreground" data-testid={`tag-concept-${idx}`}>
+                                      {resolvedInfo.conceptLabel}
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                          {tagValidation && tagValidation.unresolvedTags.length > 0 && (
+                            <p className="text-[10px] text-yellow-600 dark:text-yellow-400" data-testid="text-unresolved-tags-warning">
+                              {tagValidation.unresolvedTags.length} tag{tagValidation.unresolvedTags.length !== 1 ? "s" : ""} don't match any known ontology concept
+                            </p>
+                          )}
+                          {tagValidation && tagValidation.unresolvedTags.length === 0 && tagValidation.totalTags > 0 && (
+                            <p className="text-[10px] text-green-600 dark:text-green-400" data-testid="text-all-tags-resolved">
+                              All tags resolve to ontology concepts
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {(() => {

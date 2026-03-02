@@ -542,6 +542,102 @@ export function registerKnowledgeBaseRoutes(app: Express) {
     }
   });
 
+  app.get("/api/knowledge-bases/:id/ontology-coverage", async (req, res) => {
+    try {
+      const kb = await storage.getKnowledgeBase(req.params.id);
+      if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
+
+      const concepts = await storage.getOntologyConcepts(kb.industry);
+      const allConcepts = concepts.length > 0 ? concepts : await storage.getAllOntologyConcepts();
+
+      if (allConcepts.length === 0) {
+        return res.json({
+          totalConcepts: 0,
+          coveredConcepts: 0,
+          uncoveredConcepts: 0,
+          coveragePercent: 100,
+          gaps: [],
+          covered: [],
+        });
+      }
+
+      const sources = await storage.getKnowledgeSources(req.params.id);
+      const processedSources = sources.filter((s) => s.status === "processed");
+
+      const gaps: Array<{ conceptId: string; label: string; category: string; description: string }> = [];
+      const covered: Array<{ conceptId: string; label: string; category: string; sourceCount: number }> = [];
+
+      for (const concept of allConcepts) {
+        const labelLower = concept.label.toLowerCase();
+        const synonyms = (concept.synonyms || []).map((s: string) => s.toLowerCase());
+
+        let matchCount = 0;
+
+        for (const source of processedSources) {
+          const meta = (source.metadata && typeof source.metadata === "object") ? source.metadata as Record<string, any> : {};
+          const sourceTerms: string[] = (meta.canonicalTermsFound || []).map((t: string) => t.toLowerCase());
+          const content = source.content ? source.content.toLowerCase() : "";
+
+          if (sourceTerms.includes(labelLower)) {
+            matchCount++;
+            continue;
+          }
+
+          const labelWords = labelLower.split(/[\s_-]+/).filter((w: string) => w.length > 2);
+          const labelFound = content.includes(labelLower) ||
+            (labelWords.length > 1 && labelWords.every((w: string) => content.includes(w)));
+
+          if (labelFound) {
+            matchCount++;
+            continue;
+          }
+
+          let synFound = false;
+          for (const syn of synonyms) {
+            if (content.includes(syn) || sourceTerms.includes(syn)) {
+              synFound = true;
+              break;
+            }
+          }
+          if (synFound) {
+            matchCount++;
+          }
+        }
+
+        if (matchCount > 0) {
+          covered.push({
+            conceptId: concept.id,
+            label: concept.label,
+            category: concept.category,
+            sourceCount: matchCount,
+          });
+        } else {
+          gaps.push({
+            conceptId: concept.id,
+            label: concept.label,
+            category: concept.category,
+            description: concept.description,
+          });
+        }
+      }
+
+      const totalConcepts = allConcepts.length;
+      const coveredCount = covered.length;
+      const coveragePercent = totalConcepts > 0 ? Math.round((coveredCount / totalConcepts) * 100) : 100;
+
+      res.json({
+        totalConcepts,
+        coveredConcepts: coveredCount,
+        uncoveredConcepts: gaps.length,
+        coveragePercent,
+        gaps,
+        covered,
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   app.post("/api/knowledge-bases/:id/query", async (req, res) => {
     try {
       const kb = await storage.getKnowledgeBase(req.params.id);

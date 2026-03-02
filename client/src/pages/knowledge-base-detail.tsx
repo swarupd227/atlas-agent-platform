@@ -17,11 +17,13 @@ import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Progress } from "@/components/ui/progress";
 import {
   ArrowLeft, Upload, Globe, FileText, Layers, Database, Search,
   Plus, Loader2, Trash2, RefreshCw, CheckCircle2, XCircle,
   Clock, Bot, Link2, Unlink, Settings, MessageSquare,
   BookOpen, Brain, AlignLeft, Table2, Send, ShieldCheck,
+  AlertTriangle, CircleDot,
 } from "lucide-react";
 
 function StatusBadge({ status }: { status: string }) {
@@ -162,6 +164,23 @@ export default function KnowledgeBaseDetail() {
     },
     enabled: !!kbId,
     refetchInterval: 10000,
+  });
+
+  const { data: ontologyCoverage, isLoading: coverageLoading } = useQuery<{
+    totalConcepts: number;
+    coveredConcepts: number;
+    uncoveredConcepts: number;
+    coveragePercent: number;
+    gaps: Array<{ conceptId: string; label: string; category: string; description: string }>;
+    covered: Array<{ conceptId: string; label: string; category: string; sourceCount: number }>;
+  }>({
+    queryKey: ["/api/knowledge-bases", kbId, "ontology-coverage"],
+    queryFn: async () => {
+      const res = await fetch(`/api/knowledge-bases/${kbId}/ontology-coverage`);
+      if (!res.ok) throw new Error(`Failed to fetch coverage: ${res.statusText}`);
+      return res.json();
+    },
+    enabled: !!kbId,
   });
 
   const { data: embeddingStatus } = useQuery<{ total: number; withEmbeddings: number; withoutEmbeddings: number }>({
@@ -401,6 +420,9 @@ export default function KnowledgeBaseDetail() {
           </TabsTrigger>
           <TabsTrigger value="search" data-testid="tab-search">
             <Search className="w-3.5 h-3.5 mr-1.5" /> Search & Query
+          </TabsTrigger>
+          <TabsTrigger value="coverage" data-testid="tab-coverage">
+            <CircleDot className="w-3.5 h-3.5 mr-1.5" /> Concept Coverage
           </TabsTrigger>
           <TabsTrigger value="config" data-testid="tab-config">
             <Settings className="w-3.5 h-3.5 mr-1.5" /> Configuration
@@ -747,6 +769,149 @@ export default function KnowledgeBaseDetail() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="coverage" className="mt-4 space-y-4">
+          {coverageLoading ? (
+            <div className="space-y-3">
+              <Skeleton className="h-24 w-full" />
+              <Skeleton className="h-48 w-full" />
+            </div>
+          ) : !ontologyCoverage || ontologyCoverage.totalConcepts === 0 ? (
+            <Card className="border-dashed">
+              <CardContent className="flex flex-col items-center py-12 text-center">
+                <CircleDot className="w-10 h-10 text-muted-foreground mb-3" />
+                <h3 className="font-medium mb-1">No Ontology Concepts Found</h3>
+                <p className="text-sm text-muted-foreground max-w-sm">
+                  No ontology concepts are defined for this knowledge base's industry. Add concepts in the Ontology section to enable coverage analysis.
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            <>
+              <Card data-testid="card-coverage-summary">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <CircleDot className="w-4 h-4" /> Ontology Concept Coverage
+                    </CardTitle>
+                    <Badge
+                      variant="outline"
+                      className={
+                        ontologyCoverage.coveragePercent >= 80
+                          ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300"
+                          : ontologyCoverage.coveragePercent >= 50
+                            ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
+                            : "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300"
+                      }
+                      data-testid="badge-coverage-level"
+                    >
+                      {ontologyCoverage.coveragePercent >= 80 ? (
+                        <CheckCircle2 className="w-3 h-3 mr-1" />
+                      ) : ontologyCoverage.coveragePercent >= 50 ? (
+                        <AlertTriangle className="w-3 h-3 mr-1" />
+                      ) : (
+                        <XCircle className="w-3 h-3 mr-1" />
+                      )}
+                      {ontologyCoverage.coveragePercent}% Coverage
+                    </Badge>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <Progress
+                    value={ontologyCoverage.coveragePercent}
+                    className="h-2"
+                    data-testid="progress-coverage"
+                  />
+                  <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
+                    <span data-testid="text-total-concepts">{ontologyCoverage.totalConcepts} total concepts</span>
+                    <span data-testid="text-covered-concepts" className="text-green-600 dark:text-green-400">{ontologyCoverage.coveredConcepts} covered</span>
+                    <span data-testid="text-uncovered-concepts" className="text-red-600 dark:text-red-400">{ontologyCoverage.uncoveredConcepts} uncovered</span>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {ontologyCoverage.gaps.length > 0 && (
+                <Card data-testid="card-coverage-gaps">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-500" /> Uncovered Concepts ({ontologyCoverage.gaps.length})
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <ScrollArea className="max-h-[400px]">
+                      {(() => {
+                        const grouped: Record<string, typeof ontologyCoverage.gaps> = {};
+                        for (const gap of ontologyCoverage.gaps) {
+                          if (!grouped[gap.category]) grouped[gap.category] = [];
+                          grouped[gap.category].push(gap);
+                        }
+                        return Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b)).map(([category, items]) => (
+                          <div key={category} className="mb-4 last:mb-0">
+                            <div className="flex items-center gap-2 mb-2">
+                              <Badge variant="secondary" className="text-[10px]">{category}</Badge>
+                              <span className="text-xs text-muted-foreground">{items.length} concept{items.length !== 1 ? "s" : ""}</span>
+                            </div>
+                            <div className="space-y-1.5 ml-1">
+                              {items.map((gap) => (
+                                <div key={gap.conceptId} className="flex items-start gap-2" data-testid={`gap-concept-${gap.conceptId}`}>
+                                  <XCircle className="w-3.5 h-3.5 text-red-500 mt-0.5 shrink-0" />
+                                  <div className="min-w-0">
+                                    <span className="text-sm font-medium">{gap.label}</span>
+                                    {gap.description && (
+                                      <p className="text-xs text-muted-foreground line-clamp-2">{gap.description}</p>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ));
+                      })()}
+                    </ScrollArea>
+                  </CardContent>
+                </Card>
+              )}
+
+              {ontologyCoverage.covered.length > 0 && (
+                <Card data-testid="card-coverage-covered">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-green-500" /> Covered Concepts ({ontologyCoverage.covered.length})
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <ScrollArea className="max-h-[400px]">
+                      {(() => {
+                        const grouped: Record<string, typeof ontologyCoverage.covered> = {};
+                        for (const item of ontologyCoverage.covered) {
+                          if (!grouped[item.category]) grouped[item.category] = [];
+                          grouped[item.category].push(item);
+                        }
+                        return Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b)).map(([category, items]) => (
+                          <div key={category} className="mb-4 last:mb-0">
+                            <div className="flex items-center gap-2 mb-2">
+                              <Badge variant="secondary" className="text-[10px]">{category}</Badge>
+                              <span className="text-xs text-muted-foreground">{items.length} concept{items.length !== 1 ? "s" : ""}</span>
+                            </div>
+                            <div className="space-y-1.5 ml-1">
+                              {items.map((item) => (
+                                <div key={item.conceptId} className="flex items-center gap-2" data-testid={`covered-concept-${item.conceptId}`}>
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-green-500 shrink-0" />
+                                  <span className="text-sm font-medium">{item.label}</span>
+                                  <span className="text-xs text-muted-foreground">({item.sourceCount} source{item.sourceCount !== 1 ? "s" : ""})</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ));
+                      })()}
+                    </ScrollArea>
+                  </CardContent>
+                </Card>
+              )}
+            </>
+          )}
         </TabsContent>
 
         <TabsContent value="config" className="mt-4">

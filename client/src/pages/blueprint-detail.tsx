@@ -124,6 +124,23 @@ export default function BlueprintDetail() {
   const { data: mcpPrompts } = useQuery<McpPromptBrief[]>({ queryKey: ["/api/mcp-prompts"] });
   const { data: mcpServers } = useQuery<McpServerBrief[]>({ queryKey: ["/api/mcp-servers"] });
   const { data: mcpTools } = useQuery<McpToolBrief[]>({ queryKey: ["/api/mcp-tools"] });
+  const { data: ontologyReadiness, isLoading: ontologyReadinessLoading } = useQuery<{
+    ready: boolean;
+    overallScore: number;
+    tools: Array<{
+      toolName: string;
+      serverId: string;
+      serverName: string;
+      alignmentScore: number;
+      matchedParams: number;
+      totalParams: number;
+      unmatchedParams: string[];
+    }>;
+    warnings: string[];
+  }>({
+    queryKey: ["/api/blueprints", id, "ontology-readiness"],
+    enabled: !!id,
+  });
 
   const [nodes, setNodes] = useState<BpNode[]>([]);
   const [edges, setEdges] = useState<BpEdge[]>([]);
@@ -147,6 +164,7 @@ export default function BlueprintDetail() {
   const [savedSnapshot, setSavedSnapshot] = useState<BpNode[]>([]);
   const [kgBindings, setKgBindings] = useState<string[]>([]);
   const [kgBindingsOpen, setKgBindingsOpen] = useState(false);
+  const [ontologyReadinessOpen, setOntologyReadinessOpen] = useState(false);
 
   useEffect(() => {
     if (blueprint) {
@@ -342,6 +360,22 @@ export default function BlueprintDetail() {
         <Badge variant="outline" className="text-xs" data-testid="badge-version">v{blueprint.version}</Badge>
         {linkedAgent && (
           <Badge variant="outline" className="text-xs" data-testid="badge-agent">{linkedAgent.name}</Badge>
+        )}
+        {ontologyReadiness && (
+          <Badge
+            variant="outline"
+            className={`text-xs ${
+              ontologyReadiness.ready
+                ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                : ontologyReadiness.overallScore >= 0.5
+                  ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20"
+                  : "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20"
+            }`}
+            data-testid="badge-ontology-readiness"
+          >
+            <Shield className="w-3 h-3 mr-0.5" />
+            Ontology {ontologyReadiness.ready ? "Ready" : `${Math.round(ontologyReadiness.overallScore * 100)}%`}
+          </Badge>
         )}
         {dirty && <span className="text-xs text-amber-500" data-testid="text-unsaved">Unsaved changes</span>}
         <div className="flex-1" />
@@ -1136,6 +1170,130 @@ export default function BlueprintDetail() {
                       </>
                     );
                   })()}
+                </div>
+              )}
+            </div>
+
+            <div className="border-t mx-4">
+              <button
+                className="flex items-center gap-2 py-3 w-full text-left"
+                onClick={() => setOntologyReadinessOpen(!ontologyReadinessOpen)}
+                data-testid="button-toggle-ontology-readiness"
+              >
+                {ontologyReadinessOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                <Shield className="w-3.5 h-3.5 text-muted-foreground" />
+                <span className="text-xs font-medium text-muted-foreground">
+                  Ontology Readiness {ontologyReadiness ? `(${Math.round(ontologyReadiness.overallScore * 100)}%)` : ""}
+                </span>
+                {ontologyReadiness && (
+                  ontologyReadiness.ready
+                    ? <CheckCircle className="w-3 h-3 text-emerald-500 ml-auto shrink-0" />
+                    : <AlertTriangle className="w-3 h-3 text-amber-500 ml-auto shrink-0" />
+                )}
+              </button>
+              {ontologyReadinessOpen && (
+                <div className="flex flex-col gap-2 pb-4" data-testid="panel-ontology-readiness">
+                  {ontologyReadinessLoading ? (
+                    <div className="flex flex-col gap-1.5">
+                      <Skeleton className="h-4 w-full" />
+                      <Skeleton className="h-4 w-3/4" />
+                    </div>
+                  ) : ontologyReadiness ? (
+                    <>
+                      <div className="flex items-center gap-2 px-1 flex-wrap">
+                        <span className="text-[10px] text-muted-foreground">Overall Score:</span>
+                        <Badge
+                          variant="outline"
+                          className={`text-[10px] ${
+                            ontologyReadiness.overallScore >= 0.8
+                              ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                              : ontologyReadiness.overallScore >= 0.5
+                                ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20"
+                                : "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20"
+                          }`}
+                          data-testid="badge-ontology-overall-score"
+                        >
+                          {Math.round(ontologyReadiness.overallScore * 100)}%
+                        </Badge>
+                        <Badge
+                          variant="outline"
+                          className={`text-[10px] ${ontologyReadiness.ready ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" : "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20"}`}
+                          data-testid="badge-ontology-ready-status"
+                        >
+                          {ontologyReadiness.ready ? "Ready" : "Not Ready"}
+                        </Badge>
+                      </div>
+
+                      {ontologyReadiness.tools.length > 0 && (
+                        <div className="flex flex-col gap-1.5 px-1">
+                          <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Tool Alignment</span>
+                          {ontologyReadiness.tools.map((tool, i) => (
+                            <div
+                              key={`${tool.serverId}-${tool.toolName}-${i}`}
+                              className="flex flex-col gap-1 p-2 rounded-md bg-muted/50"
+                              data-testid={`ontology-tool-${tool.toolName}`}
+                            >
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <Wrench className="w-3 h-3 text-muted-foreground shrink-0" />
+                                <span className="text-xs font-medium truncate flex-1">{tool.toolName}</span>
+                                {tool.alignmentScore >= 0.8 ? (
+                                  <CheckCircle className="w-3 h-3 text-emerald-500 shrink-0" />
+                                ) : tool.alignmentScore >= 0.5 ? (
+                                  <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />
+                                ) : (
+                                  <AlertTriangle className="w-3 h-3 text-red-500 shrink-0" />
+                                )}
+                                <Badge
+                                  variant="outline"
+                                  className={`text-[9px] ${
+                                    tool.alignmentScore >= 0.8
+                                      ? "text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                                      : tool.alignmentScore >= 0.5
+                                        ? "text-amber-600 dark:text-amber-400 border-amber-500/20"
+                                        : "text-red-600 dark:text-red-400 border-red-500/20"
+                                  }`}
+                                  data-testid={`badge-tool-score-${tool.toolName}`}
+                                >
+                                  {Math.round(tool.alignmentScore * 100)}%
+                                </Badge>
+                              </div>
+                              <span className="text-[10px] text-muted-foreground">{tool.serverName}</span>
+                              <span className="text-[10px] text-muted-foreground">
+                                {tool.matchedParams}/{tool.totalParams} params matched
+                              </span>
+                              {tool.unmatchedParams.length > 0 && (
+                                <div className="flex flex-wrap gap-1 mt-0.5">
+                                  {tool.unmatchedParams.map(p => (
+                                    <Badge key={p} variant="outline" className="text-[9px] font-mono text-muted-foreground" data-testid={`badge-unmatched-param-${p}`}>
+                                      {p}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {ontologyReadiness.warnings.length > 0 && (
+                        <div className="flex flex-col gap-1 px-1">
+                          <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Warnings</span>
+                          {ontologyReadiness.warnings.map((w, i) => (
+                            <div key={i} className="flex items-start gap-1.5" data-testid={`ontology-warning-${i}`}>
+                              <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0 mt-0.5" />
+                              <span className="text-[10px] text-muted-foreground">{w}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {ontologyReadiness.tools.length === 0 && ontologyReadiness.warnings.length === 0 && (
+                        <p className="text-[10px] text-muted-foreground px-1" data-testid="text-no-ontology-tools">No tool nodes to evaluate</p>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-[10px] text-muted-foreground px-1">Could not load ontology readiness</p>
+                  )}
                 </div>
               )}
             </div>

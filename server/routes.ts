@@ -7,7 +7,7 @@ import { eq, desc } from "drizzle-orm";
 import { conversations, messages as chatMessages, outcomeContracts, kpiDefinitions } from "@shared/schema";
 import { z, ZodError } from "zod";
 import { startWorker, jobEvents } from "./worker";
-import { executePromptWithMcp, executeTeamPipeline, executeKGQueryTemplate, startAgentRuntime, stopAgentRuntime, getActiveRuntimes, isRuntimeActive, runtimeEvents, canonicalJsonStringify, type RuntimeAgent } from "./agent-runtime";
+import { executePromptWithMcp, executeTeamPipeline, executeKGQueryTemplate, startAgentRuntime, stopAgentRuntime, getActiveRuntimes, isRuntimeActive, runtimeEvents, canonicalJsonStringify, checkOntologyCompliance, type RuntimeAgent } from "./agent-runtime";
 import OpenAI, { toFile } from "openai";
 import multer from "multer";
 import { checkPermission, getRequestRole, getTraceRedactionLevel, getRedactionLevel, redactPayload, getOntologySensitivityKeys, invalidateOntologySensitivityCache, redactWithOntologyKeys } from "./permissions";
@@ -7937,6 +7937,187 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     }
   });
 
+  app.post("/api/evals/:id/validate-ontology-schema", async (req, res) => {
+    try {
+      const suite = await storage.getEvalSuite(req.params.id);
+      if (!suite) return res.status(404).json({ message: "Eval suite not found" });
+
+      const testCases = await storage.getEvalTestCases(suite.id);
+      if (testCases.length === 0) {
+        return res.json({ totalCases: 0, validCases: 0, invalidCases: 0, warnings: [] });
+      }
+
+      const ontologyTags = suite.ontologyTags as any;
+      let conceptIds: string[] = [];
+      if (Array.isArray(ontologyTags)) {
+        conceptIds = ontologyTags
+          .map((t: any) => typeof t === "string" ? t : t?.conceptId)
+          .filter(Boolean);
+      } else if (ontologyTags && typeof ontologyTags === "object") {
+        if (ontologyTags.concepts) {
+          conceptIds = (ontologyTags.concepts as any[])
+            .map((c: any) => typeof c === "string" ? c : c?.conceptId)
+            .filter(Boolean);
+        }
+        if (ontologyTags.conceptIds) {
+          conceptIds = [...conceptIds, ...(ontologyTags.conceptIds as string[])];
+        }
+      }
+
+      const concepts: Array<{ id: string; label: string; category: string; properties: any }> = [];
+      for (const cid of conceptIds) {
+        const concept = await storage.getOntologyConcept(cid);
+        if (concept) {
+          concepts.push({
+            id: concept.id,
+            label: concept.label,
+            category: concept.category,
+            properties: concept.properties,
+          });
+        }
+      }
+
+      if (concepts.length === 0) {
+        const agent = suite.agentId ? await storage.getAgent(suite.agentId) : null;
+        if (agent?.ontologyTags && Array.isArray(agent.ontologyTags)) {
+          for (const tag of agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) {
+            if (tag.conceptId) {
+              const concept = await storage.getOntologyConcept(tag.conceptId);
+              if (concept) {
+                concepts.push({
+                  id: concept.id,
+                  label: concept.label,
+                  category: concept.category,
+                  properties: concept.properties,
+                });
+              }
+            }
+          }
+        }
+      }
+
+      if (concepts.length === 0) {
+        return res.json({
+          totalCases: testCases.length,
+          validCases: testCases.length,
+          invalidCases: 0,
+          warnings: [],
+          message: "No ontology concepts linked to this eval suite or its agent. Link ontology concepts to enable schema validation.",
+        });
+      }
+
+      const conceptPropertyNames = new Map<string, Set<string>>();
+      const allPropertyNames = new Set<string>();
+      for (const concept of concepts) {
+        const props = concept.properties;
+        const propNames = new Set<string>();
+        if (Array.isArray(props)) {
+          for (const p of props) {
+            const name = typeof p === "string" ? p : (p?.name || p?.key || p?.label);
+            if (name) {
+              propNames.add(name.toLowerCase());
+              allPropertyNames.add(name.toLowerCase());
+            }
+          }
+        } else if (props && typeof props === "object") {
+          for (const key of Object.keys(props)) {
+            propNames.add(key.toLowerCase());
+            allPropertyNames.add(key.toLowerCase());
+          }
+        }
+        conceptPropertyNames.set(concept.id, propNames);
+      }
+
+      const warnings: Array<{
+        caseId: string;
+        caseName: string;
+        issues: Array<{ field: string; issue: string; conceptProperty?: string }>;
+      }> = [];
+
+      function extractKeys(data: unknown): string[] {
+        if (!data || typeof data !== "object") return [];
+        if (Array.isArray(data)) {
+          const keys: string[] = [];
+          for (const item of data) {
+            keys.push(...extractKeys(item));
+          }
+          return keys;
+        }
+        return Object.keys(data as Record<string, unknown>);
+      }
+
+      const genericFieldNames = new Set(["scenario", "context", "query", "prompt", "message", "behavior", "response", "result", "expected", "input", "output", "description", "name", "id", "type", "status", "text", "value", "data", "action"]);
+
+      for (const tc of testCases) {
+        const issues: Array<{ field: string; issue: string; conceptProperty?: string }> = [];
+
+        const inputKeys = extractKeys(tc.inputData).map(k => k.toLowerCase());
+        const outputKeys = extractKeys(tc.expectedOutput).map(k => k.toLowerCase());
+        const allCaseKeys = new Set([...inputKeys, ...outputKeys]);
+
+        for (const concept of concepts) {
+          const conceptProps = conceptPropertyNames.get(concept.id);
+          if (!conceptProps || conceptProps.size === 0) continue;
+
+          const overlappingKeys = [...conceptProps].filter(p => allCaseKeys.has(p));
+          if (overlappingKeys.length === 0 && allCaseKeys.size > 0) continue;
+
+          for (const propName of conceptProps) {
+            if (inputKeys.length > 0 && overlappingKeys.length > 0 && !inputKeys.includes(propName)) {
+              issues.push({
+                field: "inputData",
+                issue: `Missing "${concept.label}" property "${propName}"`,
+                conceptProperty: `${concept.label}.${propName}`,
+              });
+            }
+            if (outputKeys.length > 0 && overlappingKeys.length > 0 && !outputKeys.includes(propName)) {
+              issues.push({
+                field: "expectedOutput",
+                issue: `Missing "${concept.label}" property "${propName}"`,
+                conceptProperty: `${concept.label}.${propName}`,
+              });
+            }
+          }
+        }
+
+        const unknownInInput = inputKeys.filter(k => !allPropertyNames.has(k) && !genericFieldNames.has(k));
+        const unknownInOutput = outputKeys.filter(k => !allPropertyNames.has(k) && !genericFieldNames.has(k));
+
+        for (const unknown of unknownInInput.slice(0, 5)) {
+          issues.push({
+            field: "inputData",
+            issue: `Field "${unknown}" not found in ontology concept properties`,
+          });
+        }
+
+        for (const unknown of unknownInOutput.slice(0, 5)) {
+          issues.push({
+            field: "expectedOutput",
+            issue: `Field "${unknown}" not found in ontology concept properties`,
+          });
+        }
+
+        if (issues.length > 0) {
+          warnings.push({ caseId: tc.id, caseName: tc.name, issues });
+        }
+      }
+
+      const invalidCases = warnings.length;
+      const validCases = testCases.length - invalidCases;
+
+      res.json({
+        totalCases: testCases.length,
+        validCases,
+        invalidCases,
+        warnings,
+        concepts: concepts.map(c => ({ id: c.id, label: c.label, category: c.category, propertyCount: conceptPropertyNames.get(c.id)?.size || 0 })),
+      });
+    } catch (err: any) {
+      console.error("Ontology schema validation error:", err);
+      res.status(500).json({ message: err.message || "Failed to validate ontology schema" });
+    }
+  });
+
   app.post("/api/evals/:suiteId/drift-analysis", async (req, res) => {
     try {
       const suiteId = req.params.suiteId;
@@ -8528,6 +8709,119 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     });
 
     res.json(updated);
+  });
+
+  app.get("/api/blueprints/:id/ontology-readiness", async (req, res) => {
+    try {
+      const blueprint = await storage.getBlueprint(req.params.id);
+      if (!blueprint) return res.status(404).json({ error: "Blueprint not found" });
+
+      const bpJson = blueprint.blueprintJson as any;
+      const nodes = bpJson?.nodes || [];
+      const toolNodes = nodes.filter((n: any) => {
+        const nodeType = (n.type || n.data?.type || "").toLowerCase();
+        return nodeType.includes("tool") || nodeType.includes("mcp") || nodeType.includes("action");
+      });
+
+      const requiredToolNames = toolNodes.map((n: any) => n.data?.toolName || n.data?.tool || n.toolName || n.label || n.id || "unknown");
+
+      let agentMcpServerIds: string[] = [];
+      if (blueprint.agentId) {
+        const mcpLinks = await storage.getAgentMcpServers(blueprint.agentId);
+        agentMcpServerIds = mcpLinks.map(l => l.serverId);
+      }
+
+      const toolResults: Array<{
+        toolName: string;
+        serverId: string;
+        serverName: string;
+        alignmentScore: number;
+        matchedParams: number;
+        totalParams: number;
+        unmatchedParams: string[];
+      }> = [];
+      const warnings: string[] = [];
+
+      if (agentMcpServerIds.length > 0) {
+        const checkedServerIds = new Set<string>();
+        for (const serverId of agentMcpServerIds) {
+          if (checkedServerIds.has(serverId)) continue;
+          checkedServerIds.add(serverId);
+
+          const server = await storage.getMcpServer(serverId);
+          if (!server) continue;
+
+          const serverTools = await storage.getMcpServerTools(serverId);
+          const matches = await storage.getMcpParameterMatches(serverId);
+
+          for (const tool of serverTools) {
+            const isReferenced = requiredToolNames.some((name: string) =>
+              name.toLowerCase().includes(tool.name.toLowerCase()) ||
+              tool.name.toLowerCase().includes(name.toLowerCase())
+            );
+            if (!isReferenced && requiredToolNames.length > 0) continue;
+
+            const toolMatches = matches.filter(m => m.toolName === tool.name);
+            if (toolMatches.length === 0) {
+              const inputSchema = tool.inputSchema as any;
+              const paramNames = inputSchema?.properties ? Object.keys(inputSchema.properties) : [];
+              toolResults.push({
+                toolName: tool.name,
+                serverId,
+                serverName: server.name,
+                alignmentScore: paramNames.length === 0 ? 1 : 0,
+                matchedParams: 0,
+                totalParams: paramNames.length,
+                unmatchedParams: paramNames,
+              });
+              if (paramNames.length > 0) {
+                warnings.push(`Tool "${tool.name}" has no ontology parameter analysis yet — run parameter matching first`);
+              }
+              continue;
+            }
+
+            const matchedCount = toolMatches.filter(m => m.matchStatus === "matched" || m.matchStatus === "partial").length;
+            const totalCount = toolMatches.length;
+            const score = totalCount > 0 ? matchedCount / totalCount : 1;
+            const unmatchedParams = toolMatches
+              .filter(m => m.matchStatus !== "matched" && m.matchStatus !== "partial")
+              .map(m => m.parameterName);
+
+            toolResults.push({
+              toolName: tool.name,
+              serverId,
+              serverName: server.name,
+              alignmentScore: Math.round(score * 100) / 100,
+              matchedParams: matchedCount,
+              totalParams: totalCount,
+              unmatchedParams,
+            });
+
+            if (score === 0) {
+              warnings.push(`Tool "${tool.name}" (${server.name}) has 0% ontology alignment — no parameters match domain concepts`);
+            } else if (score < 0.5) {
+              warnings.push(`Tool "${tool.name}" (${server.name}) has ${Math.round(score * 100)}% ontology alignment — below 50% threshold`);
+            }
+          }
+        }
+      } else if (blueprint.agentId) {
+        warnings.push("No MCP servers linked to agent — cannot assess tool ontology alignment");
+      }
+
+      const overallScore = toolResults.length > 0
+        ? Math.round(toolResults.reduce((sum, t) => sum + t.alignmentScore, 0) / toolResults.length * 100) / 100
+        : 1;
+      const ready = toolResults.length === 0 || toolResults.every(t => t.alignmentScore >= 0.5);
+
+      res.json({
+        ready,
+        overallScore,
+        tools: toolResults,
+        warnings,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // AI Template Matching
@@ -22399,7 +22693,36 @@ Return ONLY a valid JSON object with a "skills" array.`
     try {
       const data = insertSkillSchema.parse(req.body);
       const skill = await storage.createSkill(data);
-      res.status(201).json(skill);
+
+      let ontologyTagValidation = undefined;
+      const skillTags = (data.tags as string[] | null) || [];
+      const skillIndustry = data.industry;
+      if (skillTags.length > 0 && skillIndustry) {
+        try {
+          const concepts = await storage.getOntologyConcepts(skillIndustry);
+          if (concepts.length > 0) {
+            const resolved: Array<{ tag: string; conceptId: string; conceptLabel: string }> = [];
+            const unresolvedTags: string[] = [];
+            for (const tag of skillTags) {
+              const tagLower = tag.toLowerCase().trim();
+              if (!tagLower) continue;
+              const match = concepts.find(c =>
+                c.label.toLowerCase() === tagLower ||
+                (c.synonyms || []).some((s: string) => s.toLowerCase() === tagLower) ||
+                (c.tags || []).some((t: string) => t.toLowerCase() === tagLower)
+              );
+              if (match) {
+                resolved.push({ tag, conceptId: match.id, conceptLabel: match.label });
+              } else {
+                unresolvedTags.push(tag);
+              }
+            }
+            ontologyTagValidation = { totalTags: skillTags.length, resolvedTags: resolved.length, unresolvedTags, resolved };
+          }
+        } catch {}
+      }
+
+      res.status(201).json({ ...skill, ontologyTagValidation });
     } catch (e: any) {
       if (e instanceof ZodError) return res.status(400).json({ error: e.errors });
       res.status(500).json({ error: e.message });
@@ -22412,9 +22735,79 @@ Return ONLY a valid JSON object with a "skills" array.`
       const data = patchSchema.parse(req.body);
       const updated = await storage.updateSkill(req.params.id, data);
       if (!updated) return res.status(404).json({ error: "Skill not found" });
-      res.json(updated);
+
+      let ontologyTagValidation = undefined;
+      const skillTags = (updated.tags as string[] | null) || [];
+      const skillIndustry = updated.industry;
+      if (skillTags.length > 0 && skillIndustry) {
+        try {
+          const concepts = await storage.getOntologyConcepts(skillIndustry);
+          if (concepts.length > 0) {
+            const resolved: Array<{ tag: string; conceptId: string; conceptLabel: string }> = [];
+            const unresolvedTags: string[] = [];
+            for (const tag of skillTags) {
+              const tagLower = tag.toLowerCase().trim();
+              if (!tagLower) continue;
+              const match = concepts.find(c =>
+                c.label.toLowerCase() === tagLower ||
+                (c.synonyms || []).some((s: string) => s.toLowerCase() === tagLower) ||
+                (c.tags || []).some((t: string) => t.toLowerCase() === tagLower)
+              );
+              if (match) {
+                resolved.push({ tag, conceptId: match.id, conceptLabel: match.label });
+              } else {
+                unresolvedTags.push(tag);
+              }
+            }
+            ontologyTagValidation = { totalTags: skillTags.length, resolvedTags: resolved.length, unresolvedTags, resolved };
+          }
+        } catch {}
+      }
+
+      res.json({ ...updated, ontologyTagValidation });
     } catch (e: any) {
       if (e instanceof ZodError) return res.status(400).json({ error: e.errors });
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/skills/:id/validate-ontology-tags", async (req, res) => {
+    try {
+      const skill = await storage.getSkill(req.params.id);
+      if (!skill) return res.status(404).json({ error: "Skill not found" });
+
+      const tagsToValidate: string[] = req.body.tags || (skill.tags as string[] | null) || [];
+      const industryId = req.body.industry || skill.industry;
+      const concepts = await storage.getOntologyConcepts(industryId);
+
+      const resolved: Array<{ tag: string; conceptId: string; conceptLabel: string }> = [];
+      const unresolvedTags: string[] = [];
+
+      for (const tag of tagsToValidate) {
+        const tagLower = tag.toLowerCase().trim();
+        if (!tagLower) continue;
+
+        const match = concepts.find(c => {
+          if (c.label.toLowerCase() === tagLower) return true;
+          if ((c.synonyms || []).some((s: string) => s.toLowerCase() === tagLower)) return true;
+          if ((c.tags || []).some((t: string) => t.toLowerCase() === tagLower)) return true;
+          return false;
+        });
+
+        if (match) {
+          resolved.push({ tag, conceptId: match.id, conceptLabel: match.label });
+        } else {
+          unresolvedTags.push(tag);
+        }
+      }
+
+      res.json({
+        totalTags: tagsToValidate.length,
+        resolvedTags: resolved.length,
+        unresolvedTags,
+        resolved,
+      });
+    } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
   });
@@ -28455,6 +28848,91 @@ Return ONLY valid JSON array, no explanation.`;
     } catch (error: any) {
       console.error("Dynamic preset error:", error);
       res.status(500).json({ error: "Failed to compute dynamic presets" });
+    }
+  });
+
+  app.post("/api/agents/:id/validate-prompt-vocabulary", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+      const text = req.body.text || agent.systemPrompt || "";
+      if (!text) {
+        return res.json({
+          valid: true,
+          score: 100,
+          deprecatedTermsFound: [],
+          canonicalTermsUsed: [],
+        });
+      }
+
+      const ontologyTags = (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) || [];
+      if (ontologyTags.length === 0) {
+        return res.json({
+          valid: true,
+          score: 100,
+          deprecatedTermsFound: [],
+          canonicalTermsUsed: [],
+        });
+      }
+
+      const result = await checkOntologyCompliance(text, ontologyTags);
+
+      const deprecatedTermsFound = result.deprecatedTermsUsed.map((d) => ({
+        term: d.term,
+        suggestedCanonical: d.shouldUse,
+        conceptId: ontologyTags.find((t) => t.conceptLabel === d.shouldUse)?.conceptId || "",
+      }));
+
+      res.json({
+        valid: deprecatedTermsFound.length === 0,
+        score: result.score,
+        deprecatedTermsFound,
+        canonicalTermsUsed: result.canonicalTermsUsed,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/validate-prompt-vocabulary", async (req, res) => {
+    try {
+      const { text, ontologyTags } = req.body;
+      if (!text) {
+        return res.json({
+          valid: true,
+          score: 100,
+          deprecatedTermsFound: [],
+          canonicalTermsUsed: [],
+        });
+      }
+
+      const tags = (ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) || [];
+      if (tags.length === 0) {
+        return res.json({
+          valid: true,
+          score: 100,
+          deprecatedTermsFound: [],
+          canonicalTermsUsed: [],
+        });
+      }
+
+      const result = await checkOntologyCompliance(text, tags);
+
+      const deprecatedTermsFound = result.deprecatedTermsUsed.map((d) => ({
+        term: d.term,
+        suggestedCanonical: d.shouldUse,
+        conceptId: tags.find((t) => t.conceptLabel === d.shouldUse)?.conceptId || "",
+      }));
+
+      res.json({
+        valid: deprecatedTermsFound.length === 0,
+        score: result.score,
+        deprecatedTermsFound,
+        canonicalTermsUsed: result.canonicalTermsUsed,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
     }
   });
 

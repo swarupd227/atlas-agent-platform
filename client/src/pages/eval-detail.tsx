@@ -166,6 +166,15 @@ export default function EvalDetail() {
   const [ontologyValidating, setOntologyValidating] = useState(false);
   const [testCaseOntologyIssues, setTestCaseOntologyIssues] = useState<Map<string, Array<{term: string; suggestedTerm: string; conceptId: string; category: string; confidence: number}>>>(new Map());
   const [bulkValidating, setBulkValidating] = useState(false);
+  const [ontologySchemaResults, setOntologySchemaResults] = useState<{
+    totalCases: number;
+    validCases: number;
+    invalidCases: number;
+    warnings: Array<{ caseId: string; caseName: string; issues: Array<{ field: string; issue: string; conceptProperty?: string }> }>;
+    concepts?: Array<{ id: string; label: string; category: string; propertyCount: number }>;
+    message?: string;
+  } | null>(null);
+  const [schemaValidating, setSchemaValidating] = useState(false);
 
   useEffect(() => {
     const combinedText = `${tcName} ${tcInputData} ${tcExpectedOutput}`.trim();
@@ -994,6 +1003,124 @@ export default function EvalDetail() {
         );
       })()}
 
+      <Card data-testid="card-ontology-schema-validation">
+        <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+          <div className="flex items-center gap-2">
+            <Shield className="w-4 h-4 text-blue-500" />
+            <CardTitle className="text-sm font-medium">Ontology Schema Validation</CardTitle>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            {ontologySchemaResults && (
+              <Badge
+                variant="outline"
+                className={`text-[10px] ${ontologySchemaResults.invalidCases === 0 ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" : ontologySchemaResults.invalidCases <= ontologySchemaResults.totalCases / 2 ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20" : "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20"}`}
+                data-testid="badge-schema-validation-status"
+              >
+                {ontologySchemaResults.invalidCases === 0 ? "All Valid" : `${ontologySchemaResults.invalidCases} Issue${ontologySchemaResults.invalidCases !== 1 ? "s" : ""}`}
+              </Badge>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="button-validate-ontology-schema"
+              disabled={schemaValidating}
+              onClick={async () => {
+                setSchemaValidating(true);
+                try {
+                  const res = await apiRequest("POST", `/api/evals/${id}/validate-ontology-schema`);
+                  const data = await res.json();
+                  setOntologySchemaResults(data);
+                  toast({
+                    title: "Ontology schema validation complete",
+                    description: data.message || `${data.validCases} valid, ${data.invalidCases} with issues out of ${data.totalCases} cases.`,
+                  });
+                } catch (err: any) {
+                  toast({ title: "Validation failed", description: err.message, variant: "destructive" });
+                } finally {
+                  setSchemaValidating(false);
+                }
+              }}
+            >
+              {schemaValidating ? (
+                <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Validating...</>
+              ) : (
+                <><Shield className="w-3.5 h-3.5 mr-1.5" /> Validate Against Ontology</>
+              )}
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          {!ontologySchemaResults ? (
+            <p className="text-sm text-muted-foreground" data-testid="text-schema-validation-empty">
+              Click "Validate Against Ontology" to check test case data against ontology concept properties.
+            </p>
+          ) : (
+            <>
+              <div className="flex items-center gap-4 flex-wrap">
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-xs text-muted-foreground">Total Cases</span>
+                  <span className="text-sm font-medium" data-testid="text-schema-total-cases">{ontologySchemaResults.totalCases}</span>
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-xs text-muted-foreground">Valid</span>
+                  <span className="text-sm font-medium text-emerald-600 dark:text-emerald-400" data-testid="text-schema-valid-cases">{ontologySchemaResults.validCases}</span>
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-xs text-muted-foreground">With Issues</span>
+                  <span className={`text-sm font-medium ${ontologySchemaResults.invalidCases > 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}`} data-testid="text-schema-invalid-cases">{ontologySchemaResults.invalidCases}</span>
+                </div>
+                {ontologySchemaResults.concepts && ontologySchemaResults.concepts.length > 0 && (
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-xs text-muted-foreground">Concepts Checked</span>
+                    <span className="text-sm font-medium" data-testid="text-schema-concepts-count">{ontologySchemaResults.concepts.length}</span>
+                  </div>
+                )}
+              </div>
+              {ontologySchemaResults.totalCases > 0 && (
+                <Progress
+                  value={(ontologySchemaResults.validCases / ontologySchemaResults.totalCases) * 100}
+                  className={`h-2 ${ontologySchemaResults.invalidCases === 0 ? "[&>div]:bg-emerald-500" : ontologySchemaResults.invalidCases <= ontologySchemaResults.totalCases / 2 ? "[&>div]:bg-amber-500" : "[&>div]:bg-red-500"}`}
+                  data-testid="progress-schema-validation"
+                />
+              )}
+              {ontologySchemaResults.message && (
+                <p className="text-xs text-muted-foreground" data-testid="text-schema-message">{ontologySchemaResults.message}</p>
+              )}
+              {ontologySchemaResults.concepts && ontologySchemaResults.concepts.length > 0 && (
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-xs text-muted-foreground">Validating against:</span>
+                  {ontologySchemaResults.concepts.map(c => (
+                    <Badge key={c.id} variant="outline" className="text-[10px]" data-testid={`badge-schema-concept-${c.id}`}>
+                      {c.label} ({c.propertyCount} props)
+                    </Badge>
+                  ))}
+                </div>
+              )}
+              {ontologySchemaResults.warnings.length > 0 && (
+                <div className="flex flex-col gap-2 pt-1">
+                  <span className="text-xs text-muted-foreground font-medium">Cases with Schema Issues</span>
+                  <div className="flex flex-col gap-1.5 max-h-60 overflow-y-auto">
+                    {ontologySchemaResults.warnings.slice(0, 20).map(w => (
+                      <div key={w.caseId} className="flex flex-col gap-1 p-2 rounded-md border text-xs" data-testid={`schema-warning-${w.caseId}`}>
+                        <span className="font-medium" data-testid={`text-schema-case-name-${w.caseId}`}>{w.caseName}</span>
+                        <div className="flex flex-col gap-0.5">
+                          {w.issues.map((iss, idx) => (
+                            <div key={idx} className="flex items-center gap-1.5 text-muted-foreground" data-testid={`schema-issue-${w.caseId}-${idx}`}>
+                              <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />
+                              <span><span className="font-medium">{iss.field}:</span> {iss.issue}{iss.conceptProperty ? ` (${iss.conceptProperty})` : ""}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
+
       <Tabs defaultValue="test-cases" className="flex flex-col gap-4">
         <TabsList className="flex-wrap h-auto gap-1" data-testid="eval-tabs">
           {tabItems.map((tab) => {
@@ -1100,6 +1227,21 @@ export default function EvalDetail() {
                               </TooltipTrigger>
                               <TooltipContent>
                                 <span>{testCaseOntologyIssues.get(tc.id)!.length} term mismatch{testCaseOntologyIssues.get(tc.id)!.length !== 1 ? "es" : ""}</span>
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
+                          {ontologySchemaResults?.warnings.some(w => w.caseId === tc.id) && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <FileWarning className="w-3.5 h-3.5 text-red-500 dark:text-red-400 shrink-0" data-testid={`icon-schema-warning-${tc.id}`} />
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <div className="flex flex-col gap-0.5 max-w-xs">
+                                  <span className="font-medium">Schema mismatches:</span>
+                                  {ontologySchemaResults!.warnings.find(w => w.caseId === tc.id)!.issues.slice(0, 3).map((iss, idx) => (
+                                    <span key={idx} className="text-xs">{iss.field}: {iss.issue}</span>
+                                  ))}
+                                </div>
                               </TooltipContent>
                             </Tooltip>
                           )}
