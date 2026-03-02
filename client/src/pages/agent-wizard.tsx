@@ -4742,6 +4742,20 @@ function Step7RolloutPlan({
   );
 }
 
+interface GovernanceRequirement {
+  domain: string;
+  regulation: string;
+  description: string;
+  status: "satisfied" | "missing";
+  matchingPolicy?: string;
+  severity: string;
+}
+
+interface DesignTimeCheckResult {
+  passed: boolean;
+  requirements: GovernanceRequirement[];
+}
+
 function StepReview({
   state,
   onCreate,
@@ -4768,6 +4782,32 @@ function StepReview({
   dynamicAdjustmentCount?: number;
 }) {
   const linkedOutcome = outcomes?.find((o) => o.id === state.outcomeId);
+  const [governanceOverride, setGovernanceOverride] = useState(false);
+
+  const { data: designTimeCheck, isLoading: designTimeLoading } = useQuery<DesignTimeCheckResult>({
+    queryKey: ["/api/governance/design-time-check", state.industryId, state.riskTier],
+    queryFn: async () => {
+      if (!state.industryId || state.industryId === "cross_industry") {
+        return { passed: true, requirements: [] };
+      }
+      const resp = await apiRequest("POST", "/api/governance/design-time-check", {
+        industryId: state.industryId,
+        riskTier: state.riskTier,
+      });
+      return resp.json();
+    },
+    enabled: !!state.industryId && state.industryId !== "cross_industry",
+  });
+
+  const hasMissingPolicies = designTimeCheck && !designTimeCheck.passed;
+  const missingCount = designTimeCheck?.requirements.filter(r => r.status === "missing").length || 0;
+  const satisfiedCount = designTimeCheck?.requirements.filter(r => r.status === "satisfied").length || 0;
+  const canCreate = !hasMissingPolicies || governanceOverride;
+
+  const handleCreate = () => {
+    if (hasMissingPolicies && !governanceOverride) return;
+    onCreate();
+  };
 
   return (
     <div className="flex flex-col gap-4 max-w-2xl">
@@ -4775,6 +4815,89 @@ function StepReview({
       <p className="text-sm text-muted-foreground">
         Review your agent configuration before creating.
       </p>
+
+      {designTimeLoading && state.industryId && state.industryId !== "cross_industry" && (
+        <Card data-testid="card-governance-loading">
+          <CardContent className="flex items-center gap-3 pt-4">
+            <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+            <span className="text-sm text-muted-foreground">Checking governance readiness...</span>
+          </CardContent>
+        </Card>
+      )}
+
+      {designTimeCheck && designTimeCheck.requirements.length > 0 && (
+        <Card
+          className={`border ${designTimeCheck.passed ? "border-green-500/30 bg-green-500/5" : "border-amber-500/50 bg-amber-500/5"}`}
+          data-testid="card-governance-readiness"
+        >
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium flex items-center gap-2">
+              {designTimeCheck.passed ? (
+                <CheckCircle className="w-4 h-4 text-green-500" />
+              ) : (
+                <AlertTriangle className="w-4 h-4 text-amber-500" />
+              )}
+              Governance Readiness
+              <Badge
+                variant={designTimeCheck.passed ? "default" : "destructive"}
+                className="text-[10px] ml-auto"
+                data-testid="badge-governance-score"
+              >
+                {satisfiedCount}/{designTimeCheck.requirements.length} policies satisfied
+              </Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-2">
+            {!designTimeCheck.passed && (
+              <div className="flex items-start gap-2 p-2 rounded-md bg-amber-500/10 text-xs" data-testid="governance-warning-banner">
+                <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                <div className="flex flex-col gap-1">
+                  <span className="font-medium text-amber-700 dark:text-amber-300">
+                    {missingCount} required {missingCount === 1 ? "policy is" : "policies are"} missing for {industryLabel || state.industryId}
+                  </span>
+                  <span className="text-muted-foreground">
+                    Creating this agent without the required policies may violate compliance requirements.
+                    Admin or compliance roles can override this gate.
+                  </span>
+                </div>
+              </div>
+            )}
+            <div className="flex flex-col gap-1.5 mt-1">
+              {designTimeCheck.requirements.map((req, i) => (
+                <div key={i} className="flex items-center gap-2 text-xs" data-testid={`governance-req-${i}`}>
+                  {req.status === "satisfied" ? (
+                    <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" />
+                  ) : (
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                  )}
+                  <span className={req.status === "satisfied" ? "text-muted-foreground" : "text-foreground font-medium"}>
+                    {req.regulation}
+                  </span>
+                  <Badge variant="outline" className="text-[9px]">{req.domain}</Badge>
+                  <span className="text-muted-foreground ml-auto text-right truncate max-w-[200px]">
+                    {req.status === "satisfied" ? req.matchingPolicy : "No matching policy"}
+                  </span>
+                </div>
+              ))}
+            </div>
+            {!designTimeCheck.passed && (
+              <div className="flex items-center gap-2 mt-2 pt-2 border-t">
+                <input
+                  type="checkbox"
+                  id="governance-override"
+                  checked={governanceOverride}
+                  onChange={(e) => setGovernanceOverride(e.target.checked)}
+                  className="rounded border-amber-500"
+                  data-testid="checkbox-governance-override"
+                />
+                <label htmlFor="governance-override" className="text-xs text-muted-foreground cursor-pointer">
+                  I acknowledge the missing policies and accept responsibility for compliance gaps (requires admin/compliance role)
+                </label>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {fromOutcome && linkedOutcome && (
         <Card className="border-primary/30 bg-primary/5" data-testid="review-outcome-requirements">
@@ -5248,11 +5371,11 @@ function StepReview({
 
       <Button
         className="w-full"
-        onClick={onCreate}
-        disabled={isPending || !state.name}
+        onClick={handleCreate}
+        disabled={isPending || !state.name || (hasMissingPolicies && !governanceOverride)}
         data-testid="button-create-agent-review"
       >
-        {isPending ? "Creating Agent..." : "Create Agent"}
+        {isPending ? "Creating Agent..." : hasMissingPolicies && !governanceOverride ? "Override Required to Create" : "Create Agent"}
       </Button>
     </div>
   );

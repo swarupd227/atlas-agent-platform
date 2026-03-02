@@ -726,20 +726,61 @@ function AgentDetailInner() {
 
   const [assignMcpOpen, setAssignMcpOpen] = useState(false);
   const [selectedMcpServerId, setSelectedMcpServerId] = useState("");
+  const [mcpPolicyWarnings, setMcpPolicyWarnings] = useState<Array<{
+    toolName: string;
+    toolId: string;
+    riskClassification: string;
+    issue: string;
+    requiredPolicyDomain: string;
+  }> | null>(null);
+  const [mcpPolicyWarningServerName, setMcpPolicyWarningServerName] = useState("");
+  const [mcpPolicyWarningServerId, setMcpPolicyWarningServerId] = useState("");
 
   const assignMcpMutation = useMutation({
-    mutationFn: () =>
-      apiRequest("POST", `/api/agents/${agentId}/mcp-servers`, { serverId: selectedMcpServerId }),
-    onSuccess: () => {
+    mutationFn: async (opts?: { acknowledgeWarnings?: boolean; forceServerId?: string }) => {
+      const sid = opts?.forceServerId || selectedMcpServerId;
+      const response = await apiRequest("POST", `/api/agents/${agentId}/mcp-servers`, {
+        serverId: sid,
+        acknowledgeWarnings: opts?.acknowledgeWarnings || false,
+      });
+      return response.json();
+    },
+    onSuccess: (data: any) => {
+      if (data.requiresAcknowledgment && data.policyWarnings) {
+        setMcpPolicyWarnings(data.policyWarnings);
+        setMcpPolicyWarningServerName(data.serverName || "");
+        setMcpPolicyWarningServerId(data.serverId || selectedMcpServerId);
+        setAssignMcpOpen(false);
+        return;
+      }
       queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId, "mcp-servers"] });
       setAssignMcpOpen(false);
       setSelectedMcpServerId("");
+      setMcpPolicyWarnings(null);
       toast({ title: "MCP Server linked", description: "The MCP server has been assigned to this agent." });
     },
     onError: (err: Error) => {
       toast({ title: "Failed to link MCP server", description: err.message, variant: "destructive" });
     },
   });
+
+  const acknowledgeAndLinkMcp = () => {
+    assignMcpMutation.mutate(
+      { acknowledgeWarnings: true, forceServerId: mcpPolicyWarningServerId },
+      {
+        onSuccess: (data: any) => {
+          if (!data.requiresAcknowledgment) {
+            queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId, "mcp-servers"] });
+            setMcpPolicyWarnings(null);
+            setMcpPolicyWarningServerId("");
+            setMcpPolicyWarningServerName("");
+            setSelectedMcpServerId("");
+            toast({ title: "MCP Server linked with warnings acknowledged", description: "The MCP server has been assigned. Consider adding the recommended policies." });
+          }
+        },
+      }
+    );
+  };
 
   const unlinkMcpMutation = useMutation({
     mutationFn: (linkId: string) =>
@@ -4691,6 +4732,55 @@ function AgentDetailInner() {
             </div>
           )}
         </TabsContent>
+
+        <Dialog open={!!mcpPolicyWarnings} onOpenChange={(open) => { if (!open) { setMcpPolicyWarnings(null); setMcpPolicyWarningServerId(""); setMcpPolicyWarningServerName(""); } }}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <ShieldAlert className="w-5 h-5 text-amber-500" />
+                Policy Compatibility Warnings
+              </DialogTitle>
+              <DialogDescription>
+                Linking MCP server <span className="font-semibold">{mcpPolicyWarningServerName}</span> has identified tools that may require additional governance policies on this agent.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex flex-col gap-3 max-h-[300px] overflow-y-auto" data-testid="mcp-policy-warnings-list">
+              {mcpPolicyWarnings?.map((warning, idx) => (
+                <div key={idx} className="flex flex-col gap-1 p-3 rounded-md border border-amber-500/30 bg-amber-500/5" data-testid={`mcp-policy-warning-${idx}`}>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Badge variant={warning.riskClassification === "critical" ? "destructive" : "secondary"} className="text-[10px]">
+                      <Shield className="w-3 h-3 mr-0.5" />
+                      {warning.riskClassification}
+                    </Badge>
+                    <span className="text-sm font-medium font-mono">{warning.toolName}</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">{warning.issue}</p>
+                  <div className="flex items-center gap-1 mt-0.5">
+                    <Badge variant="outline" className="text-[10px]">Required: {warning.requiredPolicyDomain}</Badge>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <DialogFooter className="flex gap-2">
+              <Button
+                variant="outline"
+                onClick={() => { setMcpPolicyWarnings(null); setMcpPolicyWarningServerId(""); setMcpPolicyWarningServerName(""); }}
+                data-testid="button-cancel-mcp-policy-warning"
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={acknowledgeAndLinkMcp}
+                disabled={assignMcpMutation.isPending}
+                data-testid="button-acknowledge-mcp-policy-warning"
+              >
+                {assignMcpMutation.isPending ? <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" /> : <AlertTriangle className="w-4 h-4 mr-1.5" />}
+                Acknowledge & Link Anyway
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <TabsContent value="ontology" className="flex flex-col gap-4 mt-0" data-testid="tab-content-ontology">
           {(() => {

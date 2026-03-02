@@ -137,6 +137,15 @@ export default function KnowledgeBaseDetail() {
   const [linkAgentOpen, setLinkAgentOpen] = useState(false);
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [stalenessResult, setStalenessResult] = useState<{ sourcesChecked: number; fresh: number; stale: number; critical: number } | null>(null);
+  const [sensitivityWarnings, setSensitivityWarnings] = useState<Array<{
+    sensitivityClass: string;
+    termsFound: string[];
+    agentId: string;
+    agentName: string;
+    missingPolicyDomain: string;
+    regulation: string;
+  }>>([]);
+  const [sensitivityDialogOpen, setSensitivityDialogOpen] = useState(false);
 
   const { data: kb, isLoading: kbLoading } = useQuery<KnowledgeBase>({
     queryKey: ["/api/knowledge-bases", kbId],
@@ -241,10 +250,15 @@ export default function KnowledgeBaseDetail() {
       if (!res.ok) throw new Error((await res.json()).message);
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/knowledge-bases", kbId, "sources"] });
       queryClient.invalidateQueries({ queryKey: ["/api/knowledge-bases", kbId] });
-      toast({ title: "File uploaded", description: "Processing will begin shortly" });
+      if (data.sensitivityWarnings && data.sensitivityWarnings.length > 0) {
+        setSensitivityWarnings(data.sensitivityWarnings);
+        setSensitivityDialogOpen(true);
+      } else {
+        toast({ title: "File uploaded", description: "Processing will begin shortly" });
+      }
     },
     onError: (e: any) => toast({ title: "Upload failed", description: e.message, variant: "destructive" }),
   });
@@ -269,12 +283,17 @@ export default function KnowledgeBaseDetail() {
       const res = await apiRequest("POST", `/api/knowledge-bases/${kbId}/sources/text`, data);
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/knowledge-bases", kbId, "sources"] });
       queryClient.invalidateQueries({ queryKey: ["/api/knowledge-bases", kbId] });
       setAddTextOpen(false);
       setTextForm({ title: "", content: "" });
-      toast({ title: "Text added" });
+      if (data.sensitivityWarnings && data.sensitivityWarnings.length > 0) {
+        setSensitivityWarnings(data.sensitivityWarnings);
+        setSensitivityDialogOpen(true);
+      } else {
+        toast({ title: "Text added" });
+      }
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -284,12 +303,17 @@ export default function KnowledgeBaseDetail() {
       const res = await apiRequest("POST", `/api/knowledge-bases/${kbId}/sources/structured`, payload);
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/knowledge-bases", kbId, "sources"] });
       queryClient.invalidateQueries({ queryKey: ["/api/knowledge-bases", kbId] });
       setAddStructuredOpen(false);
       setStructuredForm({ name: "", data: "" });
-      toast({ title: "Structured data imported" });
+      if (data.sensitivityWarnings && data.sensitivityWarnings.length > 0) {
+        setSensitivityWarnings(data.sensitivityWarnings);
+        setSensitivityDialogOpen(true);
+      } else {
+        toast({ title: "Structured data imported" });
+      }
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -1409,6 +1433,80 @@ export default function KnowledgeBaseDetail() {
           <EvalKbGapsSection kbId={kbId!} agentLinks={agentLinks} />
         </TabsContent>
       </Tabs>
+
+      <Dialog open={sensitivityDialogOpen} onOpenChange={setSensitivityDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-amber-500" />
+              Sensitivity Warnings Detected
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              The uploaded content contains sensitive data that may require additional policy coverage. The following issues were detected:
+            </p>
+            <ScrollArea className="max-h-64">
+              <div className="space-y-2">
+                {sensitivityWarnings.map((warning, idx) => (
+                  <div
+                    key={idx}
+                    className="p-3 rounded-md bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200/50 dark:border-amber-800/30 space-y-1.5"
+                    data-testid={`sensitivity-warning-${idx}`}
+                  >
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Badge variant="outline" className="bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+                        {warning.sensitivityClass}
+                      </Badge>
+                      <Badge variant="outline" className="bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300">
+                        {warning.regulation}
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Agent <span className="font-medium text-foreground">{warning.agentName}</span> is linked to this KB but lacks a <span className="font-medium text-foreground">{warning.missingPolicyDomain}</span> policy for {warning.regulation} compliance.
+                    </p>
+                    <div className="flex flex-wrap gap-1">
+                      {warning.termsFound.map((term, ti) => (
+                        <Badge key={ti} variant="secondary" className="text-[10px]" data-testid={`sensitivity-term-${idx}-${ti}`}>
+                          {term}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </ScrollArea>
+            <Alert variant="destructive" className="border-amber-500/50 bg-amber-50/50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-300">
+              <AlertTriangle className="w-4 h-4" />
+              <AlertDescription className="text-xs">
+                The source has been uploaded and processing will continue. Please ensure appropriate data handling policies are in place for linked agents before deploying to production.
+              </AlertDescription>
+            </Alert>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setSensitivityDialogOpen(false);
+                setSensitivityWarnings([]);
+              }}
+              data-testid="button-sensitivity-cancel"
+            >
+              Review Later
+            </Button>
+            <Button
+              onClick={() => {
+                setSensitivityDialogOpen(false);
+                setSensitivityWarnings([]);
+                toast({ title: "Source uploaded with acknowledgment", description: "Sensitivity warnings acknowledged. Ensure policies are updated." });
+              }}
+              data-testid="button-sensitivity-acknowledge"
+            >
+              Acknowledge & Proceed
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -9033,6 +9033,102 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
       }
     }
 
+    if (blueprint.agentId) {
+      const agentForPolicy = await storage.getAgent(blueprint.agentId);
+      if (agentForPolicy) {
+        const allPolicies = await storage.getPolicies();
+        const activeDataHandling = allPolicies.filter((p: any) => p.domain === "data_handling" && p.status === "active");
+        const activeOutputControl = allPolicies.filter((p: any) => p.domain === "output_control" && p.status === "active");
+
+        const agentBindings = (agentForPolicy.policyBindings as any[]) || [];
+        const boundPolicyIds = new Set(agentBindings.map((b: any) => b.policyId || b.policyName || b.id || b).filter(Boolean));
+
+        const hasDataHandlingPolicy = activeDataHandling.some((p: any) => boundPolicyIds.has(p.id) || boundPolicyIds.has(p.name));
+        const hasOutputControlPolicy = activeOutputControl.some((p: any) => boundPolicyIds.has(p.id) || boundPolicyIds.has(p.name));
+
+        const hasAnyActiveDataHandling = activeDataHandling.length > 0;
+        const hasAnyActiveOutputControl = activeOutputControl.length > 0;
+
+        const sensitivityClasses = ["pci", "phi", "pii", "hipaa", "glba", "sox"];
+
+        for (const toolNode of toolNodes) {
+          if (toolNode.mcpToolId) {
+            const toolsArr = allToolsForCompile.length > 0 ? allToolsForCompile : [];
+            const tool = toolsArr.find((t: any) => t.id === toolNode.mcpToolId);
+            if (tool) {
+              const toolAnnotations = (tool.annotations as any) || {};
+              const toolOntologyTags = (tool.ontologyTags as any[]) || [];
+              const toolNameLower = (tool.name || "").toLowerCase();
+              const toolDescLower = (tool.description || "").toLowerCase();
+
+              const matchedSensitivity: string[] = [];
+              for (const sc of sensitivityClasses) {
+                if (
+                  toolNameLower.includes(sc) ||
+                  toolDescLower.includes(sc) ||
+                  toolAnnotations.sensitivityClass === sc ||
+                  toolAnnotations.dataClassification === sc ||
+                  (Array.isArray(toolAnnotations.sensitivityClasses) && toolAnnotations.sensitivityClasses.includes(sc)) ||
+                  toolOntologyTags.some((t: any) => (t.conceptLabel || t.conceptId || "").toLowerCase().includes(sc))
+                ) {
+                  matchedSensitivity.push(sc.toUpperCase());
+                }
+              }
+
+              if (matchedSensitivity.length > 0 && !hasDataHandlingPolicy && !hasAnyActiveDataHandling) {
+                warnings.push({
+                  type: "policyCompatibility",
+                  severity: "warning",
+                  message: `Tool '${tool.name}' in node '${toolNode.id}' handles ${matchedSensitivity.join(", ")} data but no active data_handling policy exists. Create and bind a data_handling policy to ensure compliance.`,
+                  nodeId: toolNode.id,
+                });
+              } else if (matchedSensitivity.length > 0 && !hasDataHandlingPolicy) {
+                warnings.push({
+                  type: "policyCompatibility",
+                  severity: "warning",
+                  message: `Tool '${tool.name}' in node '${toolNode.id}' handles ${matchedSensitivity.join(", ")} data but the agent has no bound data_handling policy. Bind an existing data_handling policy to this agent.`,
+                  nodeId: toolNode.id,
+                });
+              }
+            }
+          }
+
+          if (!toolNode.mcpToolId && toolNode.toolName) {
+            const toolNameLower = (toolNode.toolName || "").toLowerCase();
+            const matchedSensitivity: string[] = [];
+            for (const sc of sensitivityClasses) {
+              if (toolNameLower.includes(sc)) {
+                matchedSensitivity.push(sc.toUpperCase());
+              }
+            }
+            if (matchedSensitivity.length > 0 && !hasDataHandlingPolicy) {
+              warnings.push({
+                type: "policyCompatibility",
+                severity: "warning",
+                message: `Tool '${toolNode.toolName}' in node '${toolNode.id}' may handle ${matchedSensitivity.join(", ")} data but the agent has no bound data_handling policy.`,
+                nodeId: toolNode.id,
+              });
+            }
+          }
+        }
+
+        if (hasOutputControlPolicy) {
+          for (const llmNode of llmNodes) {
+            const nodeConfig = llmNode.config || llmNode;
+            const hasOutputFilter = nodeConfig.outputFilter || nodeConfig.outputFiltering || nodeConfig.contentFilter || nodeConfig.guardrails;
+            if (!hasOutputFilter) {
+              warnings.push({
+                type: "policyCompatibility",
+                severity: "warning",
+                message: `LLM call node '${llmNode.id}' lacks output filtering configuration but output_control policies are active. Add output filtering (content filter, guardrails) to this node for policy compliance.`,
+                nodeId: llmNode.id,
+              });
+            }
+          }
+        }
+      }
+    }
+
     let compiledSnapshot: any = null;
     if (errors.length === 0) {
       const snapshotTools: any[] = [];
@@ -9162,7 +9258,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
 
     const bpJsonSign = blueprint.blueprintJson as any;
     const vr = blueprint.validationResults as any;
-    const governanceWarnings = (vr?.warnings || []).filter((w: any) => w.type === "governance" || w.type === "dependency");
+    const governanceWarnings = (vr?.warnings || []).filter((w: any) => w.type === "governance" || w.type === "dependency" || w.type === "policyCompatibility");
     if (governanceWarnings.length > 0) {
       if (role !== "admin" && role !== "compliance_security") {
         return res.status(403).json({
@@ -14821,6 +14917,88 @@ Eval Suites: ${evalSuites.length} configured`,
     }
   });
 
+  const INDUSTRY_POLICY_REQUIREMENTS: Record<string, Array<{ domain: string; regulation: string; description: string }>> = {
+    financial_services: [
+      { domain: "data_handling", regulation: "PCI-DSS", description: "Payment Card Industry Data Security Standard data handling policy" },
+      { domain: "data_handling", regulation: "GLBA", description: "Gramm-Leach-Bliley Act customer data privacy policy" },
+      { domain: "data_handling", regulation: "BSA/AML", description: "Bank Secrecy Act / Anti-Money Laundering data retention policy" },
+      { domain: "tool_permissions", regulation: "SOX", description: "Sarbanes-Oxley financial reporting controls" },
+      { domain: "output_control", regulation: "REG_DD", description: "Truth in Savings disclosure output controls" },
+    ],
+    healthcare: [
+      { domain: "data_handling", regulation: "HIPAA", description: "Health Insurance Portability and Accountability Act PHI handling policy" },
+      { domain: "data_handling", regulation: "HITECH", description: "HITECH Act breach notification and data protection policy" },
+      { domain: "output_control", regulation: "HIPAA", description: "HIPAA minimum necessary standard output filtering" },
+    ],
+    insurance: [
+      { domain: "data_handling", regulation: "NAIC", description: "NAIC model regulation data governance policy" },
+      { domain: "data_handling", regulation: "GDPR", description: "GDPR policyholder data processing policy" },
+      { domain: "output_control", regulation: "NAIC", description: "NAIC consumer communication compliance controls" },
+    ],
+    manufacturing: [
+      { domain: "tool_permissions", regulation: "OSHA", description: "OSHA safety interlock tool access controls" },
+      { domain: "data_handling", regulation: "ITAR", description: "ITAR export-controlled data handling policy" },
+    ],
+    retail: [
+      { domain: "data_handling", regulation: "PCI-DSS", description: "PCI-DSS payment card data handling policy" },
+      { domain: "data_handling", regulation: "CCPA", description: "CCPA consumer data privacy policy" },
+    ],
+    technology_saas: [
+      { domain: "data_handling", regulation: "SOC2", description: "SOC 2 Type II data handling and security controls" },
+      { domain: "data_handling", regulation: "GDPR", description: "GDPR data processing and residency policy" },
+      { domain: "output_control", regulation: "CCPA", description: "CCPA consumer data output controls" },
+    ],
+  };
+
+  app.post("/api/governance/design-time-check", async (req, res) => {
+    try {
+      const schema = z.object({
+        industryId: z.string(),
+        riskTier: z.string().optional(),
+      });
+      const { industryId, riskTier } = schema.parse(req.body);
+
+      const requirements = INDUSTRY_POLICY_REQUIREMENTS[industryId];
+      if (!requirements || requirements.length === 0) {
+        return res.json({ passed: true, requirements: [] });
+      }
+
+      const activePolicies = await storage.getPolicies();
+      const active = activePolicies.filter(p => p.status === "active");
+
+      const results = requirements.map(req => {
+        const isHighRisk = riskTier === "HIGH" || riskTier === "CRITICAL";
+        const matchingPolicy = active.find(p => {
+          const domainMatch = p.domain === req.domain;
+          if (!domainMatch) return false;
+          const regulationLower = req.regulation.toLowerCase().split("/")[0];
+          const nameOrDescMatch =
+            (p.name || "").toLowerCase().includes(regulationLower) ||
+            (p.description || "").toLowerCase().includes(regulationLower);
+          return nameOrDescMatch;
+        });
+
+        return {
+          domain: req.domain,
+          regulation: req.regulation,
+          description: req.description,
+          status: matchingPolicy ? "satisfied" as const : "missing" as const,
+          matchingPolicy: matchingPolicy?.name,
+          severity: isHighRisk ? "critical" : "warning",
+        };
+      });
+
+      const passed = results.every(r => r.status === "satisfied");
+
+      res.json({ passed, requirements: results });
+    } catch (e: any) {
+      if (e instanceof ZodError) {
+        return res.status(400).json({ message: "Validation error", errors: e.errors });
+      }
+      res.status(500).json({ message: e.message });
+    }
+  });
+
   app.post("/api/governance/what-if", async (req, res) => {
     try {
       const whatIfSchema = z.object({
@@ -19634,7 +19812,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
       const agent = await storage.getAgent(req.params.id);
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
-      const { serverId } = req.body;
+      const { serverId, acknowledgeWarnings } = req.body;
       if (!serverId) return res.status(400).json({ message: "serverId is required" });
 
       const server = await storage.getMcpServer(serverId);
@@ -19643,21 +19821,160 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
       const existing = await storage.getAgentMcpServerByIds(req.params.id, serverId);
       if (existing) return res.status(409).json({ message: "MCP server already linked to this agent" });
 
+      const tools = await storage.getMcpServerTools(serverId);
+      const policyWarnings: Array<{
+        toolName: string;
+        toolId: string;
+        riskClassification: string;
+        issue: string;
+        requiredPolicyDomain: string;
+      }> = [];
+
+      const highRiskTools = tools.filter(t => {
+        const risk = (t.riskClassification || "low").toLowerCase();
+        return risk === "high" || risk === "critical";
+      });
+
+      const writeTools = tools.filter(t => {
+        const desc = (t.description || "").toLowerCase();
+        const name = (t.name || "").toLowerCase();
+        const annotations = t.annotations as any;
+        const hasWriteHint = desc.includes("write") || desc.includes("delete") || desc.includes("update") ||
+          desc.includes("create") || desc.includes("modify") || desc.includes("remove") ||
+          name.includes("write") || name.includes("delete") || name.includes("update") ||
+          name.includes("create") || name.includes("modify") || name.includes("remove");
+        const hasDestructiveAnnotation = annotations && (
+          annotations.destructive === true || annotations.readOnlyHint === false ||
+          annotations.idempotentHint === false
+        );
+        return hasWriteHint || hasDestructiveAnnotation;
+      });
+
+      const toolsToCheck = new Map<string, typeof tools[0]>();
+      for (const t of [...highRiskTools, ...writeTools]) {
+        toolsToCheck.set(t.id, t);
+      }
+
+      if (toolsToCheck.size > 0) {
+        const bindings = (agent.policyBindings || []) as Array<{ policyId?: string; domain?: string; [key: string]: any }>;
+        const policies = await storage.getPolicies();
+        const activePolicies = policies.filter(p => p.status === "active");
+
+        const boundPolicyIds = new Set(bindings.map(b => b.policyId).filter(Boolean));
+        const boundPolicies = activePolicies.filter(p => boundPolicyIds.has(p.id));
+        const boundDomains = new Set([
+          ...bindings.map(b => b.domain).filter(Boolean),
+          ...boundPolicies.map(p => p.domain),
+        ]);
+
+        const hasToolPermissionsPolicy = boundDomains.has("tool_permissions");
+        const hasDataHandlingPolicy = boundDomains.has("data_handling");
+
+        for (const [, tool] of toolsToCheck) {
+          const risk = (tool.riskClassification || "low").toLowerCase();
+          const isHighRisk = risk === "high" || risk === "critical";
+
+          if (isHighRisk && !hasToolPermissionsPolicy) {
+            policyWarnings.push({
+              toolName: tool.name,
+              toolId: tool.id,
+              riskClassification: risk,
+              issue: `Tool "${tool.name}" has ${risk}-risk classification but agent lacks a tool_permissions policy to govern its usage.`,
+              requiredPolicyDomain: "tool_permissions",
+            });
+          }
+
+          const desc = (tool.description || "").toLowerCase();
+          const name = (tool.name || "").toLowerCase();
+          const isWrite = desc.includes("write") || desc.includes("delete") || desc.includes("update") ||
+            desc.includes("create") || desc.includes("modify") || desc.includes("remove") ||
+            name.includes("write") || name.includes("delete") || name.includes("update") ||
+            name.includes("create") || name.includes("modify") || name.includes("remove");
+          const annotations = tool.annotations as any;
+          const isDestructive = annotations && (annotations.destructive === true || annotations.readOnlyHint === false);
+
+          if ((isWrite || isDestructive) && !hasDataHandlingPolicy && !hasToolPermissionsPolicy) {
+            const alreadyWarned = policyWarnings.some(w => w.toolId === tool.id);
+            if (!alreadyWarned) {
+              policyWarnings.push({
+                toolName: tool.name,
+                toolId: tool.id,
+                riskClassification: risk,
+                issue: `Tool "${tool.name}" has write/destructive capabilities but agent lacks data_handling or tool_permissions policies.`,
+                requiredPolicyDomain: "data_handling",
+              });
+            }
+          }
+        }
+      }
+
+      if (policyWarnings.length > 0 && !acknowledgeWarnings) {
+        for (const warning of policyWarnings) {
+          await storage.createAuditEvent({
+            action: "agent.mcp_policy_mismatch",
+            objectType: "agent",
+            objectId: req.params.id,
+            actorId: "user",
+            details: JSON.stringify({
+              serverId,
+              serverName: server.name,
+              toolName: warning.toolName,
+              toolId: warning.toolId,
+              riskClassification: warning.riskClassification,
+              requiredPolicyDomain: warning.requiredPolicyDomain,
+              issue: warning.issue,
+            }),
+          });
+        }
+
+        return res.status(200).json({
+          requiresAcknowledgment: true,
+          policyWarnings,
+          serverName: server.name,
+          serverId,
+        });
+      }
+
       const link = await storage.createAgentMcpServer({
         agentId: req.params.id,
         serverId,
         assignedBy: "user",
       });
 
+      if (policyWarnings.length > 0) {
+        for (const warning of policyWarnings) {
+          await storage.createAuditEvent({
+            action: "agent.mcp_policy_mismatch",
+            objectType: "agent",
+            objectId: req.params.id,
+            actorId: "user",
+            details: JSON.stringify({
+              serverId,
+              serverName: server.name,
+              toolName: warning.toolName,
+              toolId: warning.toolId,
+              riskClassification: warning.riskClassification,
+              requiredPolicyDomain: warning.requiredPolicyDomain,
+              issue: warning.issue,
+              acknowledged: true,
+            }),
+          });
+        }
+      }
+
       await storage.createAuditEvent({
         action: "agent.mcp_server_linked",
         objectType: "agent",
         objectId: req.params.id,
         actorId: "user",
-        details: JSON.stringify({ serverId, serverName: server.name }),
+        details: JSON.stringify({
+          serverId,
+          serverName: server.name,
+          policyWarningsAcknowledged: policyWarnings.length,
+        }),
       });
 
-      res.status(201).json(link);
+      res.status(201).json({ ...link, policyWarnings: policyWarnings.length > 0 ? policyWarnings : undefined });
     } catch (e) {
       res.status(500).json({ message: "Failed to link MCP server to agent" });
     }
@@ -21888,6 +22205,134 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
     } catch (e: any) {
       console.error("TTS error:", e.message);
       res.status(500).json({ message: e.message || "TTS generation failed" });
+    }
+  });
+
+  app.get("/api/governance/compliance-posture", async (req, res) => {
+    try {
+      const industryId = req.query.industry as string | undefined;
+      const allRegulations = await storage.getRegulations();
+      const filteredRegulations = industryId
+        ? allRegulations.filter(r => r.industry === industryId)
+        : allRegulations;
+
+      const allPolicies = await storage.getPolicies();
+      const activePolicies = allPolicies.filter(p => p.status === "active");
+      const allAgents = await storage.getAgents();
+
+      const frameworks: Array<{
+        name: string;
+        regulationId: string;
+        industry: string;
+        totalControls: number;
+        coveredControls: number;
+        gaps: Array<{ controlId: string; controlName: string; severity: string }>;
+        agentCoverage: Array<{ controlId: string; controlName: string; agents: Array<{ id: string; name: string }> }>;
+      }> = [];
+
+      for (const reg of filteredRegulations) {
+        const controls = await storage.getComplianceControlsByRegulation(reg.id);
+        const regPolicies = await storage.getRegulatoryPoliciesByRegulation(reg.id);
+
+        const matchingActivePolicies = activePolicies.filter(ap => {
+          const nameCheck = reg.name.toLowerCase();
+          const policyName = ap.name.toLowerCase();
+          const policyDesc = (ap.description || "").toLowerCase();
+          return policyName.includes(nameCheck) || policyDesc.includes(nameCheck) ||
+            nameCheck.includes(ap.domain) ||
+            regPolicies.some(rp => {
+              const rpTitle = rp.title.toLowerCase();
+              return policyName.includes(rpTitle) || rpTitle.includes(ap.domain);
+            });
+        });
+
+        const gaps: Array<{ controlId: string; controlName: string; severity: string }> = [];
+        const agentCoverage: Array<{ controlId: string; controlName: string; agents: Array<{ id: string; name: string }> }> = [];
+        let coveredControls = 0;
+
+        for (const control of controls) {
+          const controlHasMatchingPolicy = matchingActivePolicies.some(mp => {
+            const mpName = mp.name.toLowerCase();
+            const controlRef = (control.requirementRef || "").toLowerCase();
+            const controlTitle = (control.requirementTitle || "").toLowerCase();
+            return mpName.includes(controlRef) || controlTitle.split(" ").slice(0, 3).every(w => w.length < 3 || mpName.includes(w));
+          });
+          const isCovered = control.coverageStatus === "full" || control.coverageStatus === "partial" || controlHasMatchingPolicy;
+
+          if (isCovered) {
+            coveredControls++;
+          } else {
+            const severity = control.gapDescription ? "high" : "medium";
+            gaps.push({
+              controlId: control.requirementRef,
+              controlName: control.requirementTitle,
+              severity,
+            });
+          }
+
+          const boundAgents = allAgents.filter(agent => {
+            if (!agent.policyBindings) return false;
+            const bindings = agent.policyBindings as any[];
+            if (!Array.isArray(bindings)) return false;
+            return bindings.some((b: any) => {
+              const bId = typeof b === "string" ? b : b?.policyId || b?.id;
+              return matchingActivePolicies.some(mp => mp.id === bId);
+            });
+          });
+
+          const complianceTaggedAgents = allAgents.filter(agent => {
+            const tags = agent.complianceTags || [];
+            return tags.some(t => {
+              const tLower = (t || "").toLowerCase();
+              return tLower.includes(reg.name.toLowerCase()) ||
+                reg.name.toLowerCase().includes(tLower);
+            });
+          });
+
+          const allMatchingAgents = [...new Map(
+            [...boundAgents, ...complianceTaggedAgents].map(a => [a.id, a])
+          ).values()];
+
+          agentCoverage.push({
+            controlId: control.requirementRef,
+            controlName: control.requirementTitle,
+            agents: allMatchingAgents.map(a => ({ id: a.id, name: a.name })),
+          });
+        }
+
+        const totalControls = controls.length > 0 ? controls.length : regPolicies.length;
+        const effectiveCovered = controls.length > 0
+          ? coveredControls
+          : (matchingActivePolicies.length > 0 ? Math.ceil(regPolicies.length * 0.7) : 0);
+
+        frameworks.push({
+          name: reg.fullName || reg.name,
+          regulationId: reg.id,
+          industry: reg.industry,
+          totalControls,
+          coveredControls: effectiveCovered,
+          gaps,
+          agentCoverage,
+        });
+      }
+
+      const totalAllControls = frameworks.reduce((s, f) => s + f.totalControls, 0);
+      const totalCoveredControls = frameworks.reduce((s, f) => s + f.coveredControls, 0);
+      const score = totalAllControls > 0 ? Math.round((totalCoveredControls / totalAllControls) * 100) : 0;
+
+      res.json({
+        frameworks,
+        overallPosture: {
+          score,
+          trend: score >= 80 ? "strong" : score >= 50 ? "moderate" : "weak",
+          totalFrameworks: frameworks.length,
+          totalControls: totalAllControls,
+          coveredControls: totalCoveredControls,
+          gapControls: totalAllControls - totalCoveredControls,
+        },
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to compute compliance posture" });
     }
   });
 

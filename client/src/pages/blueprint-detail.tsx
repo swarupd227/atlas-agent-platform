@@ -793,7 +793,7 @@ export default function BlueprintDetail() {
                   >
                     <AlertTriangle className="w-3.5 h-3.5 text-destructive shrink-0 mt-0.5" />
                     <div className="flex flex-col gap-1 min-w-0">
-                      <Badge variant="outline" className={`text-[10px] w-fit ${item.type === "compliance" ? "text-purple-600 dark:text-purple-400 border-purple-500/30" : "text-destructive border-destructive/30"}`}>{item.type}</Badge>
+                      <Badge variant="outline" className={`text-[10px] w-fit ${item.type === "compliance" ? "text-purple-600 dark:text-purple-400 border-purple-500/30" : item.type === "policyCompatibility" ? "text-orange-600 dark:text-orange-400 border-orange-500/30" : "text-destructive border-destructive/30"}`}>{item.type === "policyCompatibility" ? "policy compatibility" : item.type}</Badge>
                       <span className="text-xs">{item.message}</span>
                     </div>
                   </div>
@@ -801,13 +801,13 @@ export default function BlueprintDetail() {
                 {(localValidation?.warnings || []).map((item, i) => (
                   <div
                     key={`warn-${i}`}
-                    className={`flex items-start gap-2 p-2.5 rounded-md bg-amber-500/10 text-sm ${item.nodeId ? "cursor-pointer" : ""}`}
+                    className={`flex items-start gap-2 p-2.5 rounded-md ${item.type === "policyCompatibility" ? "bg-orange-500/10" : "bg-amber-500/10"} text-sm ${item.nodeId ? "cursor-pointer" : ""}`}
                     onClick={() => { if (item.nodeId) { setSelectedNodeId(item.nodeId); setRightPanel("properties"); } }}
                     data-testid={`validation-warning-${i}`}
                   >
-                    <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
+                    <AlertTriangle className={`w-3.5 h-3.5 ${item.type === "policyCompatibility" ? "text-orange-500" : "text-amber-500"} shrink-0 mt-0.5`} />
                     <div className="flex flex-col gap-1 min-w-0">
-                      <Badge variant="outline" className={`text-[10px] w-fit ${item.type === "compliance" ? "text-purple-600 dark:text-purple-400 border-purple-500/30" : "text-amber-600 dark:text-amber-400 border-amber-500/30"}`}>{item.type}</Badge>
+                      <Badge variant="outline" className={`text-[10px] w-fit ${item.type === "compliance" ? "text-purple-600 dark:text-purple-400 border-purple-500/30" : item.type === "policyCompatibility" ? "text-orange-600 dark:text-orange-400 border-orange-500/30" : "text-amber-600 dark:text-amber-400 border-amber-500/30"}`}>{item.type === "policyCompatibility" ? "policy compatibility" : item.type}</Badge>
                       <span className="text-xs">{item.message}</span>
                     </div>
                   </div>

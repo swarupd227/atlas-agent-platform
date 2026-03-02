@@ -61,6 +61,148 @@ async function computeOntologyAlignment(text: string, industryId: string): Promi
 
 type Params = { id: string; sourceId?: string; kbId?: string; agentId?: string; linkId?: string };
 
+interface SensitivityWarning {
+  sensitivityClass: string;
+  termsFound: string[];
+  agentId: string;
+  agentName: string;
+  missingPolicyDomain: string;
+  regulation: string;
+}
+
+const SENSITIVITY_TERMS: Record<string, { terms: string[]; regulation: string; requiredPolicyDomain: string }> = {
+  PHI: {
+    terms: [
+      "patient", "diagnosis", "medical record", "health information", "protected health",
+      "hipaa", "treatment plan", "prescription", "clinical", "electronic health record",
+      "ehr", "phi", "health insurance", "medical history", "lab results",
+      "vital signs", "discharge summary", "radiology", "pathology",
+    ],
+    regulation: "HIPAA",
+    requiredPolicyDomain: "data_handling",
+  },
+  PCI: {
+    terms: [
+      "credit card", "card number", "cvv", "cardholder", "pci-dss", "pci dss",
+      "payment card", "card verification", "primary account number", "pan",
+      "magnetic stripe", "chip data", "pin block", "card expiration",
+      "merchant id", "acquiring bank", "card brand",
+    ],
+    regulation: "PCI-DSS",
+    requiredPolicyDomain: "data_handling",
+  },
+  PII: {
+    terms: [
+      "social security", "ssn", "date of birth", "driver license", "passport number",
+      "national id", "tax id", "personal identification", "biometric",
+      "fingerprint", "facial recognition",
+    ],
+    regulation: "GDPR/CCPA",
+    requiredPolicyDomain: "data_handling",
+  },
+  FINANCIAL_RESTRICTED: {
+    terms: [
+      "account balance", "routing number", "iban", "swift code", "wire transfer",
+      "bank account", "investment portfolio", "trading position", "margin call",
+      "insider information", "material non-public", "mnpi",
+    ],
+    regulation: "GLBA/SOX",
+    requiredPolicyDomain: "data_handling",
+  },
+};
+
+async function performSensitivityScan(
+  text: string,
+  kbId: string,
+  industryId: string,
+): Promise<SensitivityWarning[]> {
+  const textLower = text.toLowerCase();
+  const detectedClasses: Array<{ sensitivityClass: string; termsFound: string[]; regulation: string; requiredPolicyDomain: string }> = [];
+
+  for (const [sensitivityClass, config] of Object.entries(SENSITIVITY_TERMS)) {
+    const found = config.terms.filter(term => textLower.includes(term.toLowerCase()));
+    if (found.length >= 2) {
+      detectedClasses.push({
+        sensitivityClass,
+        termsFound: found.slice(0, 5),
+        regulation: config.regulation,
+        requiredPolicyDomain: config.requiredPolicyDomain,
+      });
+    }
+  }
+
+  if (detectedClasses.length === 0) return [];
+
+  const agentLinks = await storage.getKnowledgeBaseAgents(kbId);
+  if (agentLinks.length === 0) return [];
+
+  const warnings: SensitivityWarning[] = [];
+  const allPolicies = await storage.getPolicies();
+  const activePolicies = allPolicies.filter(p => p.status === "active");
+
+  for (const link of agentLinks) {
+    const agent = await storage.getAgent(link.agentId);
+    if (!agent) continue;
+
+    const agentPolicyBindings = (agent.policyBindings as Array<{ policyName?: string; policyId?: string; enforcement?: string }>) || [];
+    const boundPolicyNames = agentPolicyBindings.map(b => (b.policyName || "").toLowerCase());
+
+    for (const detected of detectedClasses) {
+      const hasCoveringPolicy = activePolicies.some(p => {
+        if (p.domain !== detected.requiredPolicyDomain) return false;
+        const policyNameLower = p.name.toLowerCase();
+        const policyId = p.id;
+        const isBoundToAgent = agentPolicyBindings.some(b => {
+          const bindingRef = (b.policyId || b.policyName || "").toLowerCase();
+          return bindingRef === policyId || bindingRef === policyNameLower ||
+            policyNameLower.includes(bindingRef) || bindingRef.includes(policyNameLower);
+        });
+        if (!isBoundToAgent) return false;
+        const regulationLower = detected.regulation.toLowerCase().split("/")[0];
+        return policyNameLower.includes(regulationLower) ||
+          policyNameLower.includes(detected.sensitivityClass.toLowerCase());
+      });
+
+      if (!hasCoveringPolicy) {
+        warnings.push({
+          sensitivityClass: detected.sensitivityClass,
+          termsFound: detected.termsFound,
+          agentId: agent.id,
+          agentName: agent.name,
+          missingPolicyDomain: detected.requiredPolicyDomain,
+          regulation: detected.regulation,
+        });
+      }
+    }
+  }
+
+  for (const warning of warnings) {
+    try {
+      await storage.createAuditEvent({
+        actorType: "system",
+        actorId: "kb-sensitivity-scanner",
+        action: "knowledge.sensitivity_warning",
+        objectType: "knowledge_base",
+        objectId: kbId,
+        details: JSON.stringify({
+          sensitivityClass: warning.sensitivityClass,
+          termsFound: warning.termsFound,
+          agentId: warning.agentId,
+          agentName: warning.agentName,
+          missingPolicyDomain: warning.missingPolicyDomain,
+          regulation: warning.regulation,
+          industryId,
+        }),
+        industryId,
+      });
+    } catch (err: any) {
+      console.log(`[kb] Failed to log sensitivity warning audit event:`, err.message);
+    }
+  }
+
+  return warnings;
+}
+
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
 function chunkText(text: string, chunkSize: number = 512, overlap: number = 50): string[] {
@@ -261,8 +403,15 @@ export function registerKnowledgeBaseRoutes(app: Express) {
       const allSources = await storage.getKnowledgeSources(req.params.id);
       await storage.updateKnowledgeBase(req.params.id, { totalSources: allSources.length });
 
+      let sensitivityWarnings: SensitivityWarning[] = [];
+      try {
+        sensitivityWarnings = await performSensitivityScan(text, req.params.id, kb.industry);
+      } catch (err: any) {
+        console.log("[kb] Sensitivity scan failed (non-blocking):", err.message);
+      }
+
       processSourceInBackground(source.id, req.params.id);
-      res.status(201).json(source);
+      res.status(201).json({ ...source, sensitivityWarnings: sensitivityWarnings.length > 0 ? sensitivityWarnings : undefined });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -315,8 +464,15 @@ export function registerKnowledgeBaseRoutes(app: Express) {
       const allSources = await storage.getKnowledgeSources(req.params.id);
       await storage.updateKnowledgeBase(req.params.id, { totalSources: allSources.length });
 
+      let sensitivityWarnings: SensitivityWarning[] = [];
+      try {
+        sensitivityWarnings = await performSensitivityScan(content, req.params.id, kb.industry);
+      } catch (err: any) {
+        console.log("[kb] Sensitivity scan failed (non-blocking):", err.message);
+      }
+
       processSourceInBackground(source.id, req.params.id);
-      res.status(201).json(source);
+      res.status(201).json({ ...source, sensitivityWarnings: sensitivityWarnings.length > 0 ? sensitivityWarnings : undefined });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -353,8 +509,15 @@ export function registerKnowledgeBaseRoutes(app: Express) {
       const allSources = await storage.getKnowledgeSources(req.params.id);
       await storage.updateKnowledgeBase(req.params.id, { totalSources: allSources.length });
 
+      let sensitivityWarnings: SensitivityWarning[] = [];
+      try {
+        sensitivityWarnings = await performSensitivityScan(combinedText, req.params.id, kb.industry);
+      } catch (err: any) {
+        console.log("[kb] Sensitivity scan failed (non-blocking):", err.message);
+      }
+
       processSourceInBackground(source.id, req.params.id);
-      res.status(201).json(source);
+      res.status(201).json({ ...source, sensitivityWarnings: sensitivityWarnings.length > 0 ? sensitivityWarnings : undefined });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }

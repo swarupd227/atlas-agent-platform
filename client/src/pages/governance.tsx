@@ -1289,6 +1289,44 @@ export default function Governance() {
     queryKey: ["/api/skills"],
   });
 
+  interface CompliancePostureFramework {
+    name: string;
+    regulationId: string;
+    industry: string;
+    totalControls: number;
+    coveredControls: number;
+    gaps: Array<{ controlId: string; controlName: string; severity: string }>;
+    agentCoverage: Array<{ controlId: string; controlName: string; agents: Array<{ id: string; name: string }> }>;
+  }
+
+  interface CompliancePostureData {
+    frameworks: CompliancePostureFramework[];
+    overallPosture: {
+      score: number;
+      trend: string;
+      totalFrameworks: number;
+      totalControls: number;
+      coveredControls: number;
+      gapControls: number;
+    };
+  }
+
+  const compliancePostureUrl = industry?.id
+    ? `/api/governance/compliance-posture?industry=${encodeURIComponent(industry.id)}`
+    : "/api/governance/compliance-posture";
+  const { data: compliancePosture, isLoading: postureLoading } = useQuery<CompliancePostureData>({
+    queryKey: ["/api/governance/compliance-posture", industry?.id],
+    queryFn: async () => {
+      const res = await fetch(compliancePostureUrl);
+      if (!res.ok) throw new Error("Failed to fetch compliance posture");
+      return res.json();
+    },
+    enabled: activeGovTab === "compliance-posture",
+    staleTime: 30000,
+    refetchOnWindowFocus: true,
+    refetchInterval: 60000,
+  });
+
   const createMutation = useMutation({
     mutationFn: async (data: Record<string, any>) => {
       const res = await apiRequest("POST", "/api/policies", data);
@@ -1296,6 +1334,7 @@ export default function Governance() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/policies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/governance/compliance-posture"] });
       setCreateOpen(false);
       toast({ title: "Policy created" });
     },
@@ -1378,6 +1417,7 @@ export default function Governance() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/policies'] });
       queryClient.invalidateQueries({ queryKey: ['/api/audit-events'] });
+      queryClient.invalidateQueries({ queryKey: ["/api/governance/compliance-posture"] });
       setSelectedPolicyId(null);
       toast({ title: "Policy deleted", description: "The policy has been permanently removed." });
     },
@@ -1420,6 +1460,7 @@ export default function Governance() {
     },
     onSuccess: (_data, pack) => {
       queryClient.invalidateQueries({ queryKey: ["/api/policies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/governance/compliance-posture"] });
       setActivatedPacks((prev) => new Set(prev).add(pack.id));
       toast({ title: `${pack.name} activated`, description: `${pack.policies.length} policies created` });
     },
@@ -1508,6 +1549,7 @@ export default function Governance() {
     },
     onSuccess: (_data, regulation) => {
       queryClient.invalidateQueries({ queryKey: ["/api/policies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/governance/compliance-posture"] });
       setGeneratingPoliciesFor(null);
       toast({ title: "Compliance policies created", description: `Policies generated for ${regulation.name}` });
     },
@@ -2123,6 +2165,10 @@ export default function Governance() {
           <TabsTrigger value="impact-network" data-testid="tab-impact-network">
             <Network className="w-3.5 h-3.5 mr-1" />
             Impact Network
+          </TabsTrigger>
+          <TabsTrigger value="compliance-posture" data-testid="tab-compliance-posture">
+            <ShieldCheck className="w-3.5 h-3.5 mr-1" />
+            Compliance Posture
           </TabsTrigger>
         </TabsList>
 
@@ -4499,6 +4545,204 @@ export default function Governance() {
               />
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="compliance-posture" className="mt-0 flex flex-col gap-4" data-testid="content-compliance-posture">
+          {postureLoading ? (
+            <div className="flex flex-col gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-24 rounded-md" />)}
+              </div>
+              <Skeleton className="h-64 rounded-md" />
+            </div>
+          ) : compliancePosture ? (
+            <div className="flex flex-col gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <StatCard
+                  title="Overall Posture"
+                  value={`${compliancePosture.overallPosture.score}%`}
+                  icon={ShieldCheck}
+                  variant={compliancePosture.overallPosture.score >= 80 ? "success" : compliancePosture.overallPosture.score >= 50 ? "warning" : "danger"}
+                  testId="stat-posture-score"
+                />
+                <StatCard
+                  title="Frameworks"
+                  value={compliancePosture.overallPosture.totalFrameworks}
+                  icon={Scale}
+                  variant="default"
+                  testId="stat-posture-frameworks"
+                />
+                <StatCard
+                  title="Controls Covered"
+                  value={`${compliancePosture.overallPosture.coveredControls}/${compliancePosture.overallPosture.totalControls}`}
+                  icon={CheckCircle}
+                  variant="success"
+                  testId="stat-posture-covered"
+                />
+                <StatCard
+                  title="Gap Controls"
+                  value={compliancePosture.overallPosture.gapControls}
+                  icon={AlertTriangle}
+                  variant={compliancePosture.overallPosture.gapControls > 0 ? "danger" : "default"}
+                  testId="stat-posture-gaps"
+                />
+              </div>
+
+              {compliancePosture.frameworks.length === 0 ? (
+                <Card>
+                  <CardContent className="p-8 text-center">
+                    <ShieldAlert className="w-10 h-10 mx-auto mb-3 text-muted-foreground" />
+                    <p className="text-sm text-muted-foreground" data-testid="text-no-frameworks">
+                      No compliance frameworks found. Seed regulations for your industry to see posture data.
+                    </p>
+                  </CardContent>
+                </Card>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {compliancePosture.frameworks.map((fw) => {
+                      const coveragePercent = fw.totalControls > 0 ? Math.round((fw.coveredControls / fw.totalControls) * 100) : 0;
+                      const agentsInvolved = new Map<string, string>();
+                      fw.agentCoverage.forEach(ac => ac.agents.forEach(a => agentsInvolved.set(a.id, a.name)));
+                      return (
+                        <Card key={fw.regulationId} data-testid={`card-framework-${fw.regulationId}`}>
+                          <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <Shield className="w-4 h-4 text-blue-500 shrink-0" />
+                              <CardTitle className="text-sm truncate" data-testid={`text-framework-name-${fw.regulationId}`}>{fw.name}</CardTitle>
+                            </div>
+                            <Badge
+                              variant="outline"
+                              className={`text-[10px] shrink-0 ${coveragePercent >= 80 ? "text-green-600 dark:text-green-400 border-green-500/30" : coveragePercent >= 50 ? "text-amber-600 dark:text-amber-400 border-amber-500/30" : "text-red-600 dark:text-red-400 border-red-500/30"}`}
+                              data-testid={`badge-coverage-${fw.regulationId}`}
+                            >
+                              {coveragePercent}% covered
+                            </Badge>
+                          </CardHeader>
+                          <CardContent className="flex flex-col gap-3">
+                            <Progress value={coveragePercent} className="h-2" data-testid={`progress-coverage-${fw.regulationId}`} />
+                            <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                              <span>{fw.coveredControls} of {fw.totalControls} controls</span>
+                              <span>{fw.gaps.length} gap{fw.gaps.length !== 1 ? "s" : ""}</span>
+                            </div>
+                            {fw.gaps.length > 0 && (
+                              <div className="flex flex-col gap-1.5">
+                                <span className="text-[11px] font-medium text-red-600 dark:text-red-400">Gaps:</span>
+                                {fw.gaps.slice(0, 3).map((gap) => (
+                                  <div key={gap.controlId} className="flex items-center gap-1.5 text-[11px]" data-testid={`gap-${gap.controlId}`}>
+                                    <XCircle className="w-3 h-3 text-red-500 shrink-0" />
+                                    <span className="truncate text-muted-foreground">{gap.controlName}</span>
+                                    <Badge variant="outline" className={`text-[9px] ml-auto shrink-0 ${gap.severity === "high" || gap.severity === "critical" ? "text-red-600 dark:text-red-400 border-red-500/20" : "text-amber-600 dark:text-amber-400 border-amber-500/20"}`}>
+                                      {gap.severity}
+                                    </Badge>
+                                  </div>
+                                ))}
+                                {fw.gaps.length > 3 && (
+                                  <span className="text-[10px] text-muted-foreground">+{fw.gaps.length - 3} more gap{fw.gaps.length - 3 !== 1 ? "s" : ""}</span>
+                                )}
+                              </div>
+                            )}
+                            {agentsInvolved.size > 0 && (
+                              <div className="flex flex-col gap-1">
+                                <span className="text-[11px] font-medium text-muted-foreground">{agentsInvolved.size} agent{agentsInvolved.size !== 1 ? "s" : ""} bound</span>
+                                <div className="flex flex-wrap gap-1">
+                                  {[...agentsInvolved.values()].slice(0, 4).map((name, idx) => (
+                                    <Badge key={idx} variant="secondary" className="text-[9px]" data-testid={`badge-agent-${fw.regulationId}-${idx}`}>{name}</Badge>
+                                  ))}
+                                  {agentsInvolved.size > 4 && (
+                                    <Badge variant="outline" className="text-[9px]">+{agentsInvolved.size - 4}</Badge>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                  </div>
+
+                  <Card data-testid="card-control-coverage-table">
+                    <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+                      <div className="flex items-center gap-2">
+                        <Target className="w-4 h-4 text-blue-500" />
+                        <CardTitle className="text-base" data-testid="text-control-coverage-title">Control Coverage</CardTitle>
+                      </div>
+                      <Badge variant="outline" className="text-[10px]">
+                        {compliancePosture.frameworks.reduce((s, f) => s + f.agentCoverage.length, 0)} controls
+                      </Badge>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="max-h-[400px] overflow-y-auto">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead className="text-xs">Framework</TableHead>
+                              <TableHead className="text-xs">Control</TableHead>
+                              <TableHead className="text-xs">Status</TableHead>
+                              <TableHead className="text-xs">Agents</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {compliancePosture.frameworks.flatMap((fw) =>
+                              fw.agentCoverage.map((ac) => {
+                                const isGap = fw.gaps.some(g => g.controlId === ac.controlId);
+                                const gapSeverity = fw.gaps.find(g => g.controlId === ac.controlId)?.severity;
+                                return (
+                                  <TableRow key={`${fw.regulationId}-${ac.controlId}`} data-testid={`row-control-${ac.controlId}`}>
+                                    <TableCell className="text-xs font-medium">{fw.name.length > 30 ? fw.name.slice(0, 30) + "..." : fw.name}</TableCell>
+                                    <TableCell className="text-xs">
+                                      <div className="flex flex-col gap-0.5">
+                                        <span className="font-medium">{ac.controlId}</span>
+                                        <span className="text-muted-foreground text-[11px] truncate max-w-[200px]">{ac.controlName}</span>
+                                      </div>
+                                    </TableCell>
+                                    <TableCell>
+                                      {isGap ? (
+                                        <Badge variant="outline" className={`text-[10px] ${gapSeverity === "high" || gapSeverity === "critical" ? "text-red-600 dark:text-red-400 border-red-500/20 bg-red-500/10" : "text-amber-600 dark:text-amber-400 border-amber-500/20 bg-amber-500/10"}`} data-testid={`badge-status-gap-${ac.controlId}`}>
+                                          Gap
+                                        </Badge>
+                                      ) : (
+                                        <Badge variant="outline" className="text-[10px] text-green-600 dark:text-green-400 border-green-500/20 bg-green-500/10" data-testid={`badge-status-covered-${ac.controlId}`}>
+                                          Covered
+                                        </Badge>
+                                      )}
+                                    </TableCell>
+                                    <TableCell>
+                                      {ac.agents.length > 0 ? (
+                                        <div className="flex flex-wrap gap-1">
+                                          {ac.agents.slice(0, 3).map((a) => (
+                                            <Link key={a.id} href={`/agents/${a.id}`}>
+                                              <Badge variant="secondary" className="text-[9px] cursor-pointer" data-testid={`badge-control-agent-${ac.controlId}-${a.id}`}>{a.name}</Badge>
+                                            </Link>
+                                          ))}
+                                          {ac.agents.length > 3 && <Badge variant="outline" className="text-[9px]">+{ac.agents.length - 3}</Badge>}
+                                        </div>
+                                      ) : (
+                                        <span className="text-[11px] text-muted-foreground">No agents</span>
+                                      )}
+                                    </TableCell>
+                                  </TableRow>
+                                );
+                              })
+                            )}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </>
+              )}
+            </div>
+          ) : (
+            <Card>
+              <CardContent className="p-8 text-center">
+                <ShieldAlert className="w-10 h-10 mx-auto mb-3 text-muted-foreground" />
+                <p className="text-sm text-muted-foreground" data-testid="text-posture-empty">
+                  Select an industry and navigate to this tab to view compliance posture data.
+                </p>
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
 
         {selectedPolicyId && (
