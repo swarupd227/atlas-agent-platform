@@ -23,8 +23,9 @@ import {
   Plus, Loader2, Trash2, RefreshCw, CheckCircle2, XCircle,
   Clock, Bot, Link2, Unlink, Settings, MessageSquare,
   BookOpen, Brain, AlignLeft, Table2, Send, ShieldCheck,
-  AlertTriangle, CircleDot, Lightbulb,
+  AlertTriangle, CircleDot, Lightbulb, Timer,
 } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 function StatusBadge({ status }: { status: string }) {
   const config: Record<string, { color: string; icon: typeof Clock }> = {
@@ -87,6 +88,30 @@ const SOURCE_TYPE_CONFIG: Record<string, { label: string; icon: typeof FileText 
   api: { label: "API Connector", icon: Database },
 };
 
+function FreshnessBadge({ status }: { status: string | null }) {
+  const s = status || "unknown";
+  const config: Record<string, { color: string; label: string; icon: typeof CheckCircle2 }> = {
+    fresh: { color: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300", label: "Fresh", icon: CheckCircle2 },
+    stale: { color: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300", label: "Stale", icon: AlertTriangle },
+    critical: { color: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300", label: "Critical", icon: XCircle },
+    unknown: { color: "bg-gray-100 text-gray-600 dark:bg-gray-800/50 dark:text-gray-400", label: "Unknown", icon: Clock },
+  };
+  const c = config[s] || config.unknown;
+  const Icon = c.icon;
+  return (
+    <Badge variant="outline" className={c.color} data-testid={`badge-freshness-${s}`}>
+      <Icon className="w-3 h-3 mr-1" />
+      {c.label}
+    </Badge>
+  );
+}
+
+function daysSinceProcessed(processedAt: Date | string | null): number | null {
+  if (!processedAt) return null;
+  const d = new Date(processedAt);
+  return Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24));
+}
+
 export default function KnowledgeBaseDetail() {
   const [, params] = useRoute("/knowledge-bases/:id");
   const kbId = params?.id;
@@ -110,6 +135,7 @@ export default function KnowledgeBaseDetail() {
   const [configForm, setConfigForm] = useState<any>(null);
   const [linkAgentOpen, setLinkAgentOpen] = useState(false);
   const [selectedAgentId, setSelectedAgentId] = useState("");
+  const [stalenessResult, setStalenessResult] = useState<{ sourcesChecked: number; fresh: number; stale: number; critical: number } | null>(null);
 
   const { data: kb, isLoading: kbLoading } = useQuery<KnowledgeBase>({
     queryKey: ["/api/knowledge-bases", kbId],
@@ -325,6 +351,20 @@ export default function KnowledgeBaseDetail() {
     },
   });
 
+  const checkStalenessMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/knowledge-bases/${kbId}/check-staleness`);
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/knowledge-bases", kbId, "sources"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/knowledge-bases", kbId] });
+      setStalenessResult({ sourcesChecked: data.sourcesChecked, fresh: data.fresh, stale: data.stale, critical: data.critical });
+      toast({ title: "Staleness check complete", description: `${data.fresh} fresh, ${data.stale} stale, ${data.critical} critical` });
+    },
+    onError: (e: any) => toast({ title: "Staleness check failed", description: e.message, variant: "destructive" }),
+  });
+
   const handleSearch = async () => {
     if (!searchQuery.trim()) return;
     setIsSearching(true);
@@ -407,8 +447,31 @@ export default function KnowledgeBaseDetail() {
             <div className="font-semibold text-xs text-foreground">{kb.vectorDbType}</div>
             <div>Vector DB</div>
           </div>
+          <Separator orientation="vertical" className="h-8" />
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => checkStalenessMutation.mutate()}
+            disabled={checkStalenessMutation.isPending}
+            data-testid="button-check-staleness"
+          >
+            {checkStalenessMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Timer className="w-3.5 h-3.5 mr-1.5" />}
+            Check Staleness
+          </Button>
         </div>
       </div>
+
+      {stalenessResult && (stalenessResult.stale > 0 || stalenessResult.critical > 0) && (
+        <Alert variant="destructive" className="border-amber-500/50 bg-amber-50/50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-300" data-testid="alert-staleness-banner">
+          <AlertTriangle className="w-4 h-4" />
+          <AlertDescription className="text-sm">
+            {stalenessResult.stale + stalenessResult.critical} source{stalenessResult.stale + stalenessResult.critical !== 1 ? "s are" : " is"} stale (last processed {kb.stalenessThresholdDays ?? 90}+ days ago). Consider reprocessing to keep agent knowledge current.
+            {stalenessResult.critical > 0 && (
+              <span className="font-medium text-red-700 dark:text-red-400"> {stalenessResult.critical} source{stalenessResult.critical !== 1 ? "s are" : " is"} critically stale.</span>
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList data-testid="tabs-kb-detail">
@@ -569,6 +632,7 @@ export default function KnowledgeBaseDetail() {
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-sm font-medium truncate">{source.name}</span>
                           <StatusBadge status={source.status} />
+                          <FreshnessBadge status={source.freshnessStatus} />
                           {(() => {
                             const alignment = ontologyAlignment?.sources?.find((s) => s.sourceId === source.id);
                             if (!alignment) return null;
@@ -579,6 +643,14 @@ export default function KnowledgeBaseDetail() {
                           <span>{typeConfig.label}</span>
                           {source.fileSize && <span>{(source.fileSize / 1024).toFixed(1)} KB</span>}
                           {source.chunkCount > 0 && <span>{source.chunkCount} chunks</span>}
+                          {source.processedAt && (
+                            <span data-testid={`text-days-since-${source.id}`}>
+                              {(() => {
+                                const days = daysSinceProcessed(source.processedAt);
+                                return days !== null ? `${days}d ago` : null;
+                              })()}
+                            </span>
+                          )}
                           {source.errorMessage && <span className="text-destructive">{source.errorMessage}</span>}
                         </div>
                       </div>
@@ -923,7 +995,7 @@ export default function KnowledgeBaseDetail() {
               <div className="flex items-center justify-between">
                 <CardTitle className="text-sm">Knowledge Base Configuration</CardTitle>
                 {!configEditing ? (
-                  <Button size="sm" variant="outline" onClick={() => { setConfigForm({ vectorDbType: kb.vectorDbType, embeddingModel: kb.embeddingModel, embeddingDimensions: kb.embeddingDimensions, chunkSize: kb.chunkSize, chunkOverlap: kb.chunkOverlap, vectorDbConfig: kb.vectorDbConfig }); setConfigEditing(true); }} data-testid="button-edit-config">
+                  <Button size="sm" variant="outline" onClick={() => { setConfigForm({ vectorDbType: kb.vectorDbType, embeddingModel: kb.embeddingModel, embeddingDimensions: kb.embeddingDimensions, chunkSize: kb.chunkSize, chunkOverlap: kb.chunkOverlap, vectorDbConfig: kb.vectorDbConfig, stalenessThresholdDays: kb.stalenessThresholdDays ?? 90 }); setConfigEditing(true); }} data-testid="button-edit-config">
                     <Settings className="w-3.5 h-3.5 mr-1.5" /> Edit
                   </Button>
                 ) : (
@@ -989,6 +1061,19 @@ export default function KnowledgeBaseDetail() {
                 <div>
                   <Label className="text-xs text-muted-foreground">Embedding Dimensions</Label>
                   <p className="text-sm font-medium">{kb.embeddingDimensions}</p>
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Staleness Threshold (days)</Label>
+                  {configEditing ? (
+                    <Input
+                      type="number"
+                      value={configForm.stalenessThresholdDays}
+                      onChange={(e) => setConfigForm({ ...configForm, stalenessThresholdDays: parseInt(e.target.value) || 90 })}
+                      data-testid="input-staleness-threshold"
+                    />
+                  ) : (
+                    <p className="text-sm font-medium" data-testid="text-staleness-threshold">{kb.stalenessThresholdDays ?? 90} days</p>
+                  )}
                 </div>
               </div>
 

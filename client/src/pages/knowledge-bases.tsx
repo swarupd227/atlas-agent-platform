@@ -17,7 +17,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import {
   Search, Plus, Database, FileText, Globe, Layers,
   BookOpen, Brain, ChevronRight, Loader2, Trash2,
-  Building2, Briefcase, Heart, Factory, Shield, ShoppingCart, ShieldCheck,
+  Building2, Briefcase, Heart, Factory, Shield, ShoppingCart, ShieldCheck, AlertTriangle,
 } from "lucide-react";
 
 const INDUSTRY_CONFIG: Record<string, { label: string; icon: typeof Building2; color: string }> = {
@@ -37,6 +37,36 @@ const VECTOR_DB_LABELS: Record<string, string> = {
   qdrant: "Qdrant",
   chroma: "Chroma",
 };
+
+function KbStalenessBadge({ kbId }: { kbId: string }) {
+  const { data: sources = [] } = useQuery<Array<{ id: string; freshnessStatus: string | null }>>({
+    queryKey: ["/api/knowledge-bases", kbId, "sources"],
+    queryFn: async () => {
+      const res = await fetch(`/api/knowledge-bases/${kbId}/sources`);
+      return res.json();
+    },
+  });
+  const staleCount = sources.filter((s) => s.freshnessStatus === "stale" || s.freshnessStatus === "critical").length;
+  if (staleCount === 0) return null;
+  const hasCritical = sources.some((s) => s.freshnessStatus === "critical");
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Badge
+          variant="outline"
+          className={`text-[10px] ${hasCritical ? "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300" : "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300"}`}
+          data-testid={`badge-kb-staleness-${kbId}`}
+        >
+          <AlertTriangle className="w-2.5 h-2.5 mr-0.5" />
+          {staleCount} stale
+        </Badge>
+      </TooltipTrigger>
+      <TooltipContent side="top">
+        <p className="text-xs">{staleCount} source{staleCount !== 1 ? "s" : ""} {hasCritical ? "critically" : ""} stale</p>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
 
 function KbAlignmentBadge({ kbId }: { kbId: string }) {
   const { data } = useQuery<{ overallAlignment: number | null }>({
@@ -277,6 +307,7 @@ export default function KnowledgeBases() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <span>{kb.embeddingModel}</span>
                         <KbAlignmentBadge kbId={kb.id} />
+                        <KbStalenessBadge kbId={kb.id} />
                       </div>
                       <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform shrink-0" />
                     </div>

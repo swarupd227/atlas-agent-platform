@@ -2,7 +2,7 @@ import { Express, Request, Response } from "express";
 import multer from "multer";
 import { storage } from "./storage";
 import { db } from "./db";
-import { insertKnowledgeBaseSchema, insertKnowledgeSourceSchema, insertAgentKnowledgeBaseSchema, knowledgeChunks } from "@shared/schema";
+import { insertKnowledgeBaseSchema, insertKnowledgeSourceSchema, insertAgentKnowledgeBaseSchema, knowledgeChunks, knowledgeSources } from "@shared/schema";
 import { sql, eq } from "drizzle-orm";
 import OpenAI from "openai";
 import { generateEmbeddings, storeChunkEmbedding } from "./embeddings";
@@ -178,6 +178,8 @@ async function processSourceInBackground(sourceId: string, kbId: string) {
       status: "processed",
       chunkCount: chunks.length,
       processedAt: new Date(),
+      freshnessStatus: "fresh",
+      lastFreshnessCheckAt: new Date(),
       metadata: { ...existingMeta, ...ontologyMeta },
     });
 
@@ -664,6 +666,221 @@ export function registerKnowledgeBaseRoutes(app: Express) {
       res.json({
         answer: completion.choices[0]?.message?.content || "No answer generated",
         sources: searchResults,
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/knowledge-bases/:id/check-staleness", async (req: Request, res: Response) => {
+    try {
+      const kb = await storage.getKnowledgeBase(req.params.id);
+      if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
+
+      const sources = await storage.getKnowledgeSources(req.params.id);
+      const kbThreshold = kb.stalenessThresholdDays ?? 90;
+      const now = new Date();
+      const details: Array<{ sourceId: string; name: string; freshnessStatus: string; processedAt: string | null; daysSinceProcessed: number | null }> = [];
+      let fresh = 0, stale = 0, critical = 0;
+
+      for (const source of sources) {
+        const threshold = source.stalenessThresholdDays ?? kbThreshold;
+        let status = "unknown";
+        let daysSince: number | null = null;
+
+        if (source.processedAt) {
+          daysSince = Math.floor((now.getTime() - new Date(source.processedAt).getTime()) / (1000 * 60 * 60 * 24));
+          if (daysSince > threshold * 2) {
+            status = "critical";
+            critical++;
+          } else if (daysSince > threshold) {
+            status = "stale";
+            stale++;
+          } else {
+            status = "fresh";
+            fresh++;
+          }
+        }
+
+        await storage.updateKnowledgeSource(source.id, {
+          freshnessStatus: status,
+          lastFreshnessCheckAt: now,
+        } as any);
+
+        details.push({
+          sourceId: source.id,
+          name: source.name,
+          freshnessStatus: status,
+          processedAt: source.processedAt ? new Date(source.processedAt).toISOString() : null,
+          daysSinceProcessed: daysSince,
+        });
+      }
+
+      if (stale > 0 || critical > 0) {
+        const agentLinks = await storage.getKnowledgeBaseAgents(req.params.id);
+        const affectedAgentIds = agentLinks.map(l => l.agentId);
+
+        for (const agentId of affectedAgentIds) {
+          await storage.updateAgent(agentId, { requiresRevalidation: true } as any);
+        }
+
+        await storage.createAuditEvent({
+          agentId: affectedAgentIds[0] || "system",
+          eventType: "knowledge.staleness_detected",
+          severity: critical > 0 ? "high" : "medium",
+          description: `KB "${kb.name}" has ${stale} stale and ${critical} critical sources. ${affectedAgentIds.length} agent(s) flagged for revalidation.`,
+          metadata: { kbId: kb.id, kbName: kb.name, stale, critical, affectedAgentIds },
+        });
+
+        if (critical > 0) {
+          const existingIncidents = await storage.getIncidents();
+          for (const agentId of affectedAgentIds) {
+            const hasOpenIncident = existingIncidents.some(
+              (inc: any) => inc.agentId === agentId && inc.sourceMetric === "kb_staleness" && inc.status === "open" && (inc.sourceDetails as any)?.kbId === kb.id
+            );
+            if (!hasOpenIncident) {
+              await storage.createIncident({
+                agentId,
+                title: `Critical KB staleness: "${kb.name}"`,
+                description: `${critical} source(s) in knowledge base "${kb.name}" have not been refreshed in over ${kbThreshold * 2} days. Agent knowledge may be outdated.`,
+                severity: "high",
+                status: "open",
+                sourceMetric: "kb_staleness",
+                sourceDetails: { kbId: kb.id, criticalSources: details.filter(d => d.freshnessStatus === "critical").map(d => d.name) },
+              } as any);
+            }
+          }
+        }
+      }
+
+      res.json({
+        kbId: kb.id,
+        kbName: kb.name,
+        sourcesChecked: sources.length,
+        fresh,
+        stale,
+        critical,
+        affectedAgents: (stale > 0 || critical > 0) ? (await storage.getKnowledgeBaseAgents(req.params.id)).length : 0,
+        details,
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/knowledge-bases/check-all-staleness", async (_req: Request, res: Response) => {
+    try {
+      const allKbs = await storage.getKnowledgeBases();
+      const activeKbs = allKbs.filter(kb => kb.status === "active");
+      const results: Array<{ kbId: string; kbName: string; fresh: number; stale: number; critical: number }> = [];
+      let totalFresh = 0, totalStale = 0, totalCritical = 0;
+
+      for (const kb of activeKbs) {
+        const sources = await storage.getKnowledgeSources(kb.id);
+        const kbThreshold = kb.stalenessThresholdDays ?? 90;
+        const now = new Date();
+        let fresh = 0, stale = 0, critical = 0;
+
+        for (const source of sources) {
+          const threshold = source.stalenessThresholdDays ?? kbThreshold;
+          let status = "unknown";
+
+          if (source.processedAt) {
+            const daysSince = Math.floor((now.getTime() - new Date(source.processedAt).getTime()) / (1000 * 60 * 60 * 24));
+            if (daysSince > threshold * 2) { status = "critical"; critical++; }
+            else if (daysSince > threshold) { status = "stale"; stale++; }
+            else { status = "fresh"; fresh++; }
+          }
+
+          await storage.updateKnowledgeSource(source.id, {
+            freshnessStatus: status,
+            lastFreshnessCheckAt: now,
+          } as any);
+        }
+
+        if (stale > 0 || critical > 0) {
+          const agentLinks = await storage.getKnowledgeBaseAgents(kb.id);
+          const affectedAgentIds = agentLinks.map(l => l.agentId);
+
+          for (const agentId of affectedAgentIds) {
+            await storage.updateAgent(agentId, { requiresRevalidation: true } as any);
+          }
+
+          await storage.createAuditEvent({
+            agentId: affectedAgentIds[0] || "system",
+            eventType: "knowledge.staleness_detected",
+            severity: critical > 0 ? "high" : "medium",
+            description: `KB "${kb.name}" has ${stale} stale and ${critical} critical sources. ${affectedAgentIds.length} agent(s) flagged for revalidation.`,
+            metadata: { kbId: kb.id, kbName: kb.name, stale, critical, affectedAgentIds },
+          });
+
+          if (critical > 0) {
+            const existingIncidents = await storage.getIncidents();
+            for (const agentId of affectedAgentIds) {
+              const hasOpenIncident = existingIncidents.some(
+                (inc: any) => inc.agentId === agentId && inc.sourceMetric === "kb_staleness" && inc.status === "open" && (inc.sourceDetails as any)?.kbId === kb.id
+              );
+              if (!hasOpenIncident) {
+                await storage.createIncident({
+                  agentId,
+                  title: `Critical KB staleness: "${kb.name}"`,
+                  description: `${critical} source(s) in KB "${kb.name}" have not been refreshed in over ${kbThreshold * 2} days.`,
+                  severity: "high",
+                  status: "open",
+                  sourceMetric: "kb_staleness",
+                  sourceDetails: { kbId: kb.id },
+                } as any);
+              }
+            }
+          }
+        }
+
+        totalFresh += fresh;
+        totalStale += stale;
+        totalCritical += critical;
+        results.push({ kbId: kb.id, kbName: kb.name, fresh, stale, critical });
+      }
+
+      res.json({
+        kbsChecked: activeKbs.length,
+        totalFresh,
+        totalStale,
+        totalCritical,
+        results,
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/knowledge-bases/:id/staleness-impact", async (req: Request, res: Response) => {
+    try {
+      const kb = await storage.getKnowledgeBase(req.params.id);
+      if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
+
+      const sources = await storage.getKnowledgeSources(req.params.id);
+      const staleSources = sources.filter(s => s.freshnessStatus === "stale" || s.freshnessStatus === "critical");
+      const agentLinks = await storage.getKnowledgeBaseAgents(req.params.id);
+
+      const affectedAgents: Array<{ agentId: string; agentName: string; priority: number; requiresRevalidation: boolean }> = [];
+      for (const link of agentLinks) {
+        const agent = await storage.getAgent(link.agentId);
+        if (agent) {
+          affectedAgents.push({
+            agentId: agent.id,
+            agentName: agent.name,
+            priority: link.priority,
+            requiresRevalidation: !!(agent as any).requiresRevalidation,
+          });
+        }
+      }
+
+      res.json({
+        kbId: kb.id,
+        kbName: kb.name,
+        staleSources: staleSources.length,
+        criticalSources: staleSources.filter(s => s.freshnessStatus === "critical").length,
+        affectedAgents,
       });
     } catch (error: any) {
       res.status(500).json({ message: error.message });

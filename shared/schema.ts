@@ -1982,6 +1982,7 @@ export const knowledgeBases = pgTable("knowledge_bases", {
   chunkOverlap: integer("chunk_overlap").notNull().default(50),
   totalSources: integer("total_sources").notNull().default(0),
   totalChunks: integer("total_chunks").notNull().default(0),
+  stalenessThresholdDays: integer("staleness_threshold_days").default(90),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -2004,10 +2005,13 @@ export const knowledgeSources = pgTable("knowledge_sources", {
   chunkCount: integer("chunk_count").notNull().default(0),
   errorMessage: text("error_message"),
   processedAt: timestamp("processed_at"),
+  freshnessStatus: varchar("freshness_status", { length: 20 }).default("unknown"),
+  stalenessThresholdDays: integer("staleness_threshold_days"),
+  lastFreshnessCheckAt: timestamp("last_freshness_check_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const insertKnowledgeSourceSchema = createInsertSchema(knowledgeSources).omit({ id: true, createdAt: true, processedAt: true, chunkCount: true });
+export const insertKnowledgeSourceSchema = createInsertSchema(knowledgeSources).omit({ id: true, createdAt: true, processedAt: true, chunkCount: true, freshnessStatus: true, lastFreshnessCheckAt: true });
 export type InsertKnowledgeSource = z.infer<typeof insertKnowledgeSourceSchema>;
 export type KnowledgeSource = typeof knowledgeSources.$inferSelect;
 
