@@ -2129,8 +2129,9 @@ async function executeAgentCycle(agent: RuntimeAgent) {
 async function resolveBlueprint(
   blueprintJson: any,
   availableMcpServerIds: string[],
-  complianceTags?: string[]
-): Promise<{ valid: boolean; error?: string; requirements: RuntimeAgent["blueprintRequirements"]; ontologyWarnings?: string[] }> {
+  complianceTags?: string[],
+  options?: { allowLowAlignment?: boolean }
+): Promise<{ valid: boolean; error?: string; requirements: RuntimeAgent["blueprintRequirements"]; ontologyWarnings?: string[]; lowAlignmentTools?: Array<{ toolName: string; serverName: string; score: number; matched: number; total: number }> }> {
   const nodes = blueprintJson?.nodes || [];
   const edges = blueprintJson?.edges || [];
   const workflowSteps: string[] = [];
@@ -2198,6 +2199,7 @@ async function resolveBlueprint(
   }
 
   const ontologyWarnings: string[] = [];
+  const lowAlignmentTools: Array<{ toolName: string; serverName: string; score: number; matched: number; total: number }> = [];
   if (requiredTools.length > 0 && availableMcpServerIds.length > 0) {
     try {
       const requiredToolsLower = requiredTools.map(t => t.toLowerCase());
@@ -2215,14 +2217,15 @@ async function resolveBlueprint(
           );
           if (!isReferencedByBlueprint) continue;
           const toolMatches = matches.filter(m => m.toolName === st.toolName);
-          if (toolMatches.length === 0) continue;
           const matchedCount = toolMatches.filter(m => m.matchStatus === "matched" || m.matchStatus === "partial").length;
           const totalCount = toolMatches.length;
           const score = totalCount > 0 ? matchedCount / totalCount : 0;
           if (score === 0) {
-            ontologyWarnings.push(`Tool "${st.toolName}" (server: ${st.serverName}) has 0% ontology alignment — none of its ${totalCount} parameter(s) match domain concepts`);
+            ontologyWarnings.push(`Tool "${st.toolName}" (server: ${st.serverName}) has 0% ontology alignment — ${totalCount > 0 ? `none of its ${totalCount} parameter(s) match domain concepts` : "no parameter matches computed"}`);
+            lowAlignmentTools.push({ toolName: st.toolName, serverName: st.serverName, score: 0, matched: 0, total: totalCount });
           } else if (score < 0.5) {
             ontologyWarnings.push(`Tool "${st.toolName}" (server: ${st.serverName}) has ${Math.round(score * 100)}% ontology alignment (${matchedCount}/${totalCount} parameters matched) — below 50% threshold`);
+            lowAlignmentTools.push({ toolName: st.toolName, serverName: st.serverName, score: Math.round(score * 100) / 100, matched: matchedCount, total: totalCount });
           }
         }
       }
@@ -2234,14 +2237,26 @@ async function resolveBlueprint(
     }
   }
 
+  if (lowAlignmentTools.length > 0 && !options?.allowLowAlignment) {
+    const toolList = lowAlignmentTools.map(t => `${t.toolName} (${Math.round(t.score * 100)}%)`).join(", ");
+    return {
+      valid: false,
+      error: `Ontology alignment below 50% threshold for tools: ${toolList}. Use allowLowAlignment option to override.`,
+      requirements: { workflowSteps, requiredTools, escalationTriggers, outputFormat, complianceNodes },
+      ontologyWarnings,
+      lowAlignmentTools,
+    };
+  }
+
   return {
     valid: true,
     requirements: { workflowSteps, requiredTools, escalationTriggers, outputFormat, complianceNodes },
     ontologyWarnings,
+    lowAlignmentTools,
   };
 }
 
-export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?: string, skipInitialCycle?: boolean): Promise<{ started: boolean; message: string }> {
+export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?: string, skipInitialCycle?: boolean, allowLowAlignment?: boolean): Promise<{ started: boolean; message: string }> {
   if (activeAgents.has(deploymentId)) {
     return { started: false, message: "Agent runtime already running for this deployment" };
   }
@@ -2279,7 +2294,7 @@ export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?
 
   let blueprintRequirements: RuntimeAgent["blueprintRequirements"] | undefined;
   if (agentBlueprint?.blueprintJson) {
-    const bpResult = await resolveBlueprint(agentBlueprint.blueprintJson, mcpServerIds, complianceTags);
+    const bpResult = await resolveBlueprint(agentBlueprint.blueprintJson, mcpServerIds, complianceTags, { allowLowAlignment: allowLowAlignment });
     if (!bpResult.valid) {
       return { started: false, message: `Blueprint validation failed: ${bpResult.error}` };
     }

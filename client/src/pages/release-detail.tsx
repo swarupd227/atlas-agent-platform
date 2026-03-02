@@ -80,6 +80,13 @@ interface EvalGateError {
   failingSuites: Array<{ name: string; passRate: number }>;
 }
 
+interface OntologyAlignmentError {
+  blocked: boolean;
+  reason: string;
+  message: string;
+  lowAlignmentTools: Array<{ toolName: string; serverName: string; score: number; matched: number; total: number }>;
+}
+
 interface ReadinessData {
   checks: ReadinessCheck[];
   overallStatus: "ready" | "warning" | "blocked";
@@ -573,16 +580,20 @@ function PromoteDialog({
   deployment,
   onConfirm,
   onBypass,
+  onBypassOntology,
   isPending,
   evalGateError,
+  ontologyAlignmentError,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   deployment: Deployment;
   onConfirm: () => void;
   onBypass: () => void;
+  onBypassOntology: () => void;
   isPending: boolean;
   evalGateError: EvalGateError | null;
+  ontologyAlignmentError: OntologyAlignmentError | null;
 }) {
   const nextEnv = envOrder[envOrder.indexOf(deployment.environment) + 1];
 
@@ -741,12 +752,54 @@ function PromoteDialog({
                 </div>
               </div>
             )}
+
+            {ontologyAlignmentError && (
+              <div className="flex flex-col gap-2 p-3 rounded-md bg-red-500/5 border border-red-500/10" data-testid="ontology-alignment-error">
+                <div className="flex items-center gap-2">
+                  <AlertOctagon className="w-4 h-4 text-red-500 shrink-0" />
+                  <span className="text-xs font-medium text-red-700 dark:text-red-300">
+                    Ontology Alignment Blocked: {ontologyAlignmentError.lowAlignmentTools.length} tool(s) below 50% threshold
+                  </span>
+                </div>
+                <div className="flex flex-col gap-1.5 ml-6">
+                  {ontologyAlignmentError.lowAlignmentTools.map((tool, i) => (
+                    <div key={i} className="flex items-center justify-between gap-2" data-testid={`ontology-tool-${i}`}>
+                      <div className="flex flex-col">
+                        <span className="text-[11px] font-medium">{tool.toolName}</span>
+                        <span className="text-[10px] text-muted-foreground">{tool.serverName}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-muted-foreground">{tool.matched}/{tool.total} params</span>
+                        <Badge variant="outline" className="text-[10px] text-red-600 dark:text-red-400 bg-red-500/10">
+                          {Math.round(tool.score * 100)}%
+                        </Badge>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2 mt-1 p-2 rounded-md bg-amber-500/5 border border-amber-500/10">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                  <span className="text-[10px] text-amber-700 dark:text-amber-300">
+                    Production deployments require all tools to have at least 50% ontology alignment. You can bypass this check — the bypass will be logged in the audit trail.
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
         ) : null}
 
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)} data-testid="button-cancel-promote">Cancel</Button>
-          {evalGateError ? (
+          {ontologyAlignmentError ? (
+            <Button
+              variant="destructive"
+              onClick={onBypassOntology}
+              disabled={isPending}
+              data-testid="button-bypass-ontology"
+            >
+              {isPending ? "Promoting..." : "Bypass Ontology Check & Promote"}
+            </Button>
+          ) : evalGateError ? (
             <Button
               variant="destructive"
               onClick={onBypass}
@@ -968,6 +1021,7 @@ export default function ReleaseDetail() {
   const id = params?.id;
   const [promoteOpen, setPromoteOpen] = useState(false);
   const [evalGateError, setEvalGateError] = useState<EvalGateError | null>(null);
+  const [ontologyAlignmentError, setOntologyAlignmentError] = useState<OntologyAlignmentError | null>(null);
   const [pipelineRunning, setPipelineRunning] = useState(false);
   const [pipelineAnimStep, setPipelineAnimStep] = useState(-1);
 
@@ -986,30 +1040,39 @@ export default function ReleaseDetail() {
   });
 
   const promoteMutation = useMutation({
-    mutationFn: async (opts: { bypassEvalGate?: boolean }) => {
+    mutationFn: async (opts: { bypassEvalGate?: boolean; bypassOntologyCheck?: boolean }) => {
       const role = localStorage.getItem("almp-role") || "admin";
+      const body: Record<string, boolean> = {};
+      if (opts?.bypassEvalGate) body.bypassEvalGate = true;
+      if (opts?.bypassOntologyCheck) body.bypassOntologyCheck = true;
       const res = await fetch(`/api/deployments/${id}/promote`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Role": role },
-        body: JSON.stringify(opts?.bypassEvalGate ? { bypassEvalGate: true } : {}),
+        body: JSON.stringify(body),
         credentials: "include",
       });
-      const body = await res.json();
+      const resBody = await res.json();
       if (!res.ok) {
-        if (body.evalGateBlocked) {
-          const err = new Error(body.message) as Error & { evalGateData: EvalGateError };
-          err.evalGateData = body;
+        if (resBody.evalGateBlocked) {
+          const err = new Error(resBody.message) as Error & { evalGateData: EvalGateError };
+          err.evalGateData = resBody;
           throw err;
         }
-        throw new Error(body.message || "Promotion failed");
+        if (resBody.reason === "ontology_alignment") {
+          const err = new Error(resBody.message) as Error & { ontologyData: OntologyAlignmentError };
+          err.ontologyData = resBody;
+          throw err;
+        }
+        throw new Error(resBody.message || "Promotion failed");
       }
-      return body;
+      return resBody;
     },
     onSuccess: (promoted: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/deployments"] });
       queryClient.invalidateQueries({ queryKey: ["/api/deployments", id] });
       queryClient.invalidateQueries({ queryKey: ["/api/approvals"] });
       setEvalGateError(null);
+      setOntologyAlignmentError(null);
       setPromoteOpen(false);
       if (promoted.evalWarning) {
         toast({ title: "Release promoted with warning", description: promoted.evalWarning });
@@ -1021,6 +1084,8 @@ export default function ReleaseDetail() {
     onError: (err: any) => {
       if (err.evalGateData) {
         setEvalGateError(err.evalGateData as EvalGateError);
+      } else if (err.ontologyData) {
+        setOntologyAlignmentError(err.ontologyData as OntologyAlignmentError);
       } else {
         toast({ title: "Promotion failed", description: err.message, variant: "destructive" });
       }
@@ -1545,13 +1610,18 @@ export default function ReleaseDetail() {
           open={promoteOpen}
           onOpenChange={(open) => {
             setPromoteOpen(open);
-            if (!open) setEvalGateError(null);
+            if (!open) {
+              setEvalGateError(null);
+              setOntologyAlignmentError(null);
+            }
           }}
           deployment={deployment}
           onConfirm={() => promoteMutation.mutate({})}
           onBypass={() => promoteMutation.mutate({ bypassEvalGate: true })}
+          onBypassOntology={() => promoteMutation.mutate({ bypassOntologyCheck: true })}
           isPending={promoteMutation.isPending}
           evalGateError={evalGateError}
+          ontologyAlignmentError={ontologyAlignmentError}
         />
       )}
     </div>

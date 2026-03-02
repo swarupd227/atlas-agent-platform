@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   ArrowLeft, Shield, Wrench, AlertCircle, RefreshCw, Zap,
-  FileText, Hash, Clock, Activity, Settings, Tag,
+  FileText, Hash, Clock, Activity, Settings, Tag, BarChart3,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -33,6 +33,17 @@ interface ToolDetail {
   lastDriftAt: string | null;
   driftStatus: string | null;
   syncedAt: string | null;
+  behaviorBaseline: {
+    avgLatencyMs: number;
+    p95LatencyMs: number;
+    p99LatencyMs: number;
+    errorRate: number;
+    successRate: number;
+    sampleCount: number;
+    computedAt: string;
+  } | null;
+  behavioralDriftStatus: string | null;
+  lastBehavioralCheckAt: string | null;
   serverName: string;
   serverStatus: string;
 }
@@ -103,6 +114,43 @@ export default function ToolDetailPage() {
     },
     onError: (err: Error) => {
       toast({ title: "Failed to request enablement", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const computeBaselineMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/mcp-servers/${tool?.serverId}/tools/${id}/compute-baseline`);
+      return res.json();
+    },
+    onSuccess: (data: { baseline?: unknown; sampleCount?: number; message?: string }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/tool-catalog", id] });
+      if (data.sampleCount === 0) {
+        toast({ title: "No trace data", description: data.message || "No executions found to compute baseline" });
+      } else {
+        toast({ title: "Baseline computed successfully" });
+      }
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to compute baseline", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const checkDriftMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/mcp-servers/${tool?.serverId}/tools/${id}/check-behavioral-drift`);
+      return res.json();
+    },
+    onSuccess: (data: { currentStatus?: string; reasons?: string[] }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/tool-catalog", id] });
+      const status = data.currentStatus || "unknown";
+      toast({
+        title: `Behavioral drift: ${status}`,
+        description: data.reasons?.length ? data.reasons.join("; ") : "No drift detected",
+        variant: status === "drifted" ? "destructive" : undefined,
+      });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to check drift", description: err.message, variant: "destructive" });
     },
   });
 
@@ -208,6 +256,10 @@ export default function ToolDetailPage() {
           <TabsTrigger value="annotations" data-testid="tab-annotations">
             <Tag className="w-3.5 h-3.5 mr-1.5" />
             Annotations
+          </TabsTrigger>
+          <TabsTrigger value="behavioral" data-testid="tab-behavioral">
+            <BarChart3 className="w-3.5 h-3.5 mr-1.5" />
+            Behavioral Profile
           </TabsTrigger>
         </TabsList>
 
@@ -401,6 +453,117 @@ export default function ToolDetailPage() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="behavioral" className="flex flex-col gap-4 mt-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Card data-testid="card-behavioral-baseline">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium flex items-center gap-1.5">
+                  <BarChart3 className="w-4 h-4" />
+                  Baseline Statistics
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-2">
+                {tool.behaviorBaseline ? (
+                  <>
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <span className="text-xs text-muted-foreground">Avg Latency</span>
+                      <span className="text-xs font-medium" data-testid="text-avg-latency">{tool.behaviorBaseline.avgLatencyMs}ms</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <span className="text-xs text-muted-foreground">P95 Latency</span>
+                      <span className="text-xs font-medium" data-testid="text-p95-latency">{tool.behaviorBaseline.p95LatencyMs}ms</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <span className="text-xs text-muted-foreground">P99 Latency</span>
+                      <span className="text-xs font-medium" data-testid="text-p99-latency">{tool.behaviorBaseline.p99LatencyMs}ms</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <span className="text-xs text-muted-foreground">Error Rate</span>
+                      <span className="text-xs font-medium" data-testid="text-error-rate">{(tool.behaviorBaseline.errorRate * 100).toFixed(1)}%</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <span className="text-xs text-muted-foreground">Success Rate</span>
+                      <span className="text-xs font-medium" data-testid="text-success-rate">{(tool.behaviorBaseline.successRate * 100).toFixed(1)}%</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <span className="text-xs text-muted-foreground">Sample Count</span>
+                      <span className="text-xs font-medium" data-testid="text-sample-count">{tool.behaviorBaseline.sampleCount}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <span className="text-xs text-muted-foreground">Computed At</span>
+                      <span className="text-xs" data-testid="text-baseline-computed-at">
+                        {new Date(tool.behaviorBaseline.computedAt).toLocaleString()}
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-sm text-muted-foreground" data-testid="text-no-baseline">
+                    No baseline computed yet. Click "Recompute Baseline" to generate one from recent trace data.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card data-testid="card-behavioral-status">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium flex items-center gap-1.5">
+                  <Activity className="w-4 h-4" />
+                  Behavioral Drift Status
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-3">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-xs text-muted-foreground">Status</span>
+                  <Badge
+                    variant={
+                      tool.behavioralDriftStatus === "drifted" ? "destructive" :
+                      tool.behavioralDriftStatus === "warning" ? "secondary" :
+                      tool.behavioralDriftStatus === "stable" ? "default" : "outline"
+                    }
+                    data-testid="badge-behavioral-drift-status"
+                  >
+                    {tool.behavioralDriftStatus || "unknown"}
+                  </Badge>
+                </div>
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-xs text-muted-foreground">Last Checked</span>
+                  <span className="text-xs" data-testid="text-last-behavioral-check">
+                    {tool.lastBehavioralCheckAt ? new Date(tool.lastBehavioralCheckAt).toLocaleString() : "Never"}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap pt-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => computeBaselineMutation.mutate()}
+                    disabled={computeBaselineMutation.isPending}
+                    data-testid="button-recompute-baseline"
+                  >
+                    {computeBaselineMutation.isPending ? (
+                      <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" />
+                    ) : (
+                      <BarChart3 className="w-4 h-4 mr-1.5" />
+                    )}
+                    Recompute Baseline
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => checkDriftMutation.mutate()}
+                    disabled={checkDriftMutation.isPending || !tool.behaviorBaseline}
+                    data-testid="button-check-drift"
+                  >
+                    {checkDriftMutation.isPending ? (
+                      <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" />
+                    ) : (
+                      <Activity className="w-4 h-4 mr-1.5" />
+                    )}
+                    Check Drift
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
       </Tabs>
     </div>

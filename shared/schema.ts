@@ -824,6 +824,7 @@ export const mcpServers = pgTable("mcp_servers", {
   allowlisted: boolean("allowlisted").default(false),
   capabilities: jsonb("capabilities"),
   serverInfo: jsonb("server_info"),
+  industryId: text("industry_id"),
   healthStatus: text("health_status").default("unknown"),
   lastHealthCheck: timestamp("last_health_check"),
   addedBy: text("added_by"),
@@ -853,10 +854,13 @@ export const mcpServerTools = pgTable("mcp_server_tools", {
   lastDriftAt: timestamp("last_drift_at"),
   driftStatus: varchar("drift_status", { length: 20 }).default("stable"),
   ontologyTags: jsonb("ontology_tags").default(sql`'[]'::jsonb`),
+  behaviorBaseline: jsonb("behavior_baseline"),
+  behavioralDriftStatus: varchar("behavioral_drift_status", { length: 20 }).default("unknown"),
+  lastBehavioralCheckAt: timestamp("last_behavioral_check_at"),
   syncedAt: timestamp("synced_at").defaultNow(),
 });
 
-export const insertMcpServerToolSchema = createInsertSchema(mcpServerTools).omit({ id: true, syncedAt: true, fingerprintHash: true, usageCount: true, lastUsedAt: true, lastDriftAt: true, driftStatus: true });
+export const insertMcpServerToolSchema = createInsertSchema(mcpServerTools).omit({ id: true, syncedAt: true, fingerprintHash: true, usageCount: true, lastUsedAt: true, lastDriftAt: true, driftStatus: true, behaviorBaseline: true, behavioralDriftStatus: true, lastBehavioralCheckAt: true });
 export type InsertMcpServerTool = z.infer<typeof insertMcpServerToolSchema>;
 export type McpServerTool = typeof mcpServerTools.$inferSelect;
 

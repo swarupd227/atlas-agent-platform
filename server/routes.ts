@@ -3,8 +3,8 @@ import { createServer, type Server } from "http";
 import crypto from "crypto";
 import { storage } from "./storage";
 import { db } from "./db";
-import { eq, desc } from "drizzle-orm";
-import { conversations, messages as chatMessages, outcomeContracts, kpiDefinitions } from "@shared/schema";
+import { eq, desc, and } from "drizzle-orm";
+import { conversations, messages as chatMessages, outcomeContracts, kpiDefinitions, traceSpans } from "@shared/schema";
 import { z, ZodError } from "zod";
 import { startWorker, jobEvents } from "./worker";
 import { executePromptWithMcp, executeTeamPipeline, executeKGQueryTemplate, startAgentRuntime, stopAgentRuntime, getActiveRuntimes, isRuntimeActive, runtimeEvents, canonicalJsonStringify, checkOntologyCompliance, type RuntimeAgent } from "./agent-runtime";
@@ -731,6 +731,226 @@ async function generateKpiAlignedEvalSuite(agentId: string, outcomeId: string): 
   });
 
   return { suite, testCases: createdCases };
+}
+
+export interface ParameterMatchResult {
+  toolId: string;
+  toolName: string;
+  parameterName: string;
+  parameterPath: string;
+  matchStatus: string;
+  matchedConceptId: string | null;
+  matchedConceptLabel: string | null;
+  matchMethod: string | null;
+  confidence: number;
+}
+
+export interface ParameterMatchingSummary {
+  serverId: string;
+  serverName: string;
+  totalParams: number;
+  matched: number;
+  partial: number;
+  unmatched: number;
+  alignmentScore: number;
+  results: ParameterMatchResult[];
+}
+
+export async function runParameterMatching(serverId: string, industryId?: string | null): Promise<ParameterMatchingSummary> {
+  const server = await storage.getMcpServer(serverId);
+  if (!server) throw new Error("MCP server not found");
+
+  const tools = await storage.getMcpServerTools(serverId);
+  const resources = await storage.getMcpServerResources(serverId);
+  const allConcepts = industryId
+    ? await storage.getOntologyConcepts(industryId)
+    : await storage.getAllOntologyConcepts();
+
+  const conceptIndex = allConcepts.map(c => ({
+    id: c.id,
+    label: c.label,
+    labelNorm: c.label.toLowerCase().replace(/[\s_-]+/g, ""),
+    synonyms: (c.synonyms || []).map((s: string) => s.toLowerCase().replace(/[\s_-]+/g, "")),
+    tags: (c.tags || []).map((t: string) => t.toLowerCase().replace(/[\s_-]+/g, "")),
+    category: c.category,
+  }));
+
+  function normalizeParam(name: string): string {
+    return name.toLowerCase().replace(/[\s_-]+/g, "");
+  }
+
+  function matchParam(paramName: string): { conceptId: string; conceptLabel: string; method: string; confidence: number } | null {
+    const norm = normalizeParam(paramName);
+    for (const c of conceptIndex) {
+      if (c.labelNorm === norm) {
+        return { conceptId: c.id, conceptLabel: c.label, method: "exact", confidence: 1.0 };
+      }
+    }
+    for (const c of conceptIndex) {
+      if (c.synonyms.includes(norm)) {
+        return { conceptId: c.id, conceptLabel: c.label, method: "synonym", confidence: 0.95 };
+      }
+    }
+    for (const c of conceptIndex) {
+      if (c.tags.includes(norm)) {
+        return { conceptId: c.id, conceptLabel: c.label, method: "tag", confidence: 0.9 };
+      }
+    }
+    for (const c of conceptIndex) {
+      if (norm.includes(c.labelNorm) || c.labelNorm.includes(norm)) {
+        return { conceptId: c.id, conceptLabel: c.label, method: "substring", confidence: 0.75 };
+      }
+      for (const syn of c.synonyms) {
+        if (norm.includes(syn) || syn.includes(norm)) {
+          return { conceptId: c.id, conceptLabel: c.label, method: "substring_synonym", confidence: 0.7 };
+        }
+      }
+    }
+    return null;
+  }
+
+  interface ParamEntry {
+    toolId: string;
+    toolName: string;
+    parameterName: string;
+    parameterPath: string;
+  }
+  const allParams: ParamEntry[] = [];
+
+  for (const tool of tools) {
+    const schema = tool.inputSchema as Record<string, unknown> | null;
+    if (schema && typeof schema === "object") {
+      const props = (schema as any).properties;
+      if (props && typeof props === "object") {
+        for (const paramName of Object.keys(props)) {
+          allParams.push({
+            toolId: tool.id,
+            toolName: tool.name,
+            parameterName: paramName,
+            parameterPath: `${tool.name}.input.${paramName}`,
+          });
+        }
+      }
+    }
+  }
+
+  for (const resource of resources) {
+    const nameParts = resource.name.replace(/[^a-zA-Z0-9_\s-]/g, " ").trim().split(/\s+/);
+    for (const part of nameParts) {
+      if (part.length > 2) {
+        allParams.push({
+          toolId: resource.id,
+          toolName: `resource:${resource.name}`,
+          parameterName: part,
+          parameterPath: `resource.${resource.name}`,
+        });
+      }
+    }
+  }
+
+  const unmatchedNames: string[] = [];
+  const results: ParameterMatchResult[] = [];
+
+  for (const param of allParams) {
+    const match = matchParam(param.parameterName);
+    if (match) {
+      results.push({
+        ...param,
+        matchStatus: "matched",
+        matchedConceptId: match.conceptId,
+        matchedConceptLabel: match.conceptLabel,
+        matchMethod: match.method,
+        confidence: match.confidence,
+      });
+    } else {
+      unmatchedNames.push(param.parameterName);
+      results.push({
+        ...param,
+        matchStatus: "unmatched",
+        matchedConceptId: null,
+        matchedConceptLabel: null,
+        matchMethod: null,
+        confidence: 0,
+      });
+    }
+  }
+
+  if (unmatchedNames.length > 0 && allConcepts.length > 0) {
+    try {
+      const conceptLabels = allConcepts.slice(0, 100).map(c => c.label).join(", ");
+      const aiRes = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `You are a domain vocabulary matcher. Given a list of parameter names and a list of ontology concepts, suggest matches. Return JSON array of objects with: parameterName, matchedConceptLabel (exact match from concept list or null if no match), confidence (0.5-0.85). Only suggest matches where there is a genuine semantic relationship.`,
+          },
+          {
+            role: "user",
+            content: `Parameters: ${unmatchedNames.join(", ")}\n\nOntology concepts: ${conceptLabels}`,
+          },
+        ],
+        response_format: { type: "json_object" },
+        temperature: 0.3,
+      });
+
+      const content = aiRes.choices[0]?.message?.content;
+      if (content) {
+        const parsed = JSON.parse(content);
+        const aiMatches: Array<{ parameterName: string; matchedConceptLabel: string | null; confidence: number }> =
+          Array.isArray(parsed) ? parsed : parsed.matches || parsed.results || [];
+
+        for (const aiMatch of aiMatches) {
+          if (!aiMatch.matchedConceptLabel || !aiMatch.parameterName) continue;
+          const concept = allConcepts.find(c => c.label.toLowerCase() === aiMatch.matchedConceptLabel!.toLowerCase());
+          if (!concept) continue;
+          const idx = results.findIndex(r => r.parameterName === aiMatch.parameterName && r.matchStatus === "unmatched");
+          if (idx >= 0) {
+            results[idx].matchStatus = "matched";
+            results[idx].matchedConceptId = concept.id;
+            results[idx].matchedConceptLabel = concept.label;
+            results[idx].matchMethod = "ai";
+            results[idx].confidence = Math.min(aiMatch.confidence || 0.6, 0.85);
+          }
+        }
+      }
+    } catch (aiErr: any) {
+      console.warn("AI matching failed, continuing with rule-based results:", aiErr.message);
+    }
+  }
+
+  await storage.deleteMcpParameterMatchesByServer(serverId);
+  for (const r of results) {
+    await storage.createMcpParameterMatch({
+      serverId,
+      toolId: r.toolId,
+      toolName: r.toolName,
+      parameterName: r.parameterName,
+      parameterPath: r.parameterPath || null,
+      matchStatus: r.matchStatus,
+      matchedConceptId: r.matchedConceptId || null,
+      matchedConceptLabel: r.matchedConceptLabel || null,
+      matchMethod: r.matchMethod || null,
+      confidence: r.confidence,
+    });
+  }
+
+  const matched = results.filter(r => r.matchStatus === "matched").length;
+  const partial = results.filter(r => r.matchStatus === "matched" && r.confidence < 0.8).length;
+  const unmatched = results.filter(r => r.matchStatus === "unmatched").length;
+  const totalParams = results.length;
+  const alignmentScore = totalParams > 0 ? Math.round((matched / totalParams) * 10000) / 100 : 0;
+
+  return {
+    serverId,
+    serverName: server.name,
+    totalParams,
+    matched,
+    partial,
+    unmatched,
+    alignmentScore,
+    results,
+  };
 }
 
 export async function registerRoutes(
@@ -3457,12 +3677,102 @@ export async function registerRoutes(
 
   app.post("/api/deployments", checkPermission("deploy_staging_pilot"), async (req, res) => {
     try {
-      const data = insertDeploymentSchema.parse(req.body);
+      const bypassOntologyCheck = req.body.bypassOntologyCheck === true;
+      const { bypassOntologyCheck: _boc, ...deploymentBody } = req.body;
+      const data = insertDeploymentSchema.parse(deploymentBody);
+      const env = data.environment || "staging";
+
+      const agent = await storage.getAgent(data.agentId);
+
+      if (env === "prod" && agent) {
+        const blueprints = await storage.getBlueprints();
+        const agentBlueprint = blueprints.find(b => b.agentId === data.agentId);
+        if (agentBlueprint) {
+          const bpJson = agentBlueprint.blueprintJson as any;
+          const nodes = bpJson?.nodes || [];
+          const toolNodes = nodes.filter((n: any) => {
+            const nodeType = (n.type || n.data?.type || "").toLowerCase();
+            return nodeType.includes("tool") || nodeType.includes("mcp") || nodeType.includes("action");
+          });
+          const requiredToolNames = toolNodes.map((n: any) => n.data?.toolName || n.data?.tool || n.toolName || n.label || n.id || "unknown");
+
+          const mcpLinks = await storage.getAgentMcpServers(data.agentId);
+          const agentMcpServerIds = mcpLinks.map(l => l.serverId);
+
+          const lowAlignmentTools: Array<{ toolName: string; serverName: string; score: number; matched: number; total: number }> = [];
+
+          if (agentMcpServerIds.length > 0) {
+            for (const serverId of agentMcpServerIds) {
+              const server = await storage.getMcpServer(serverId);
+              if (!server) continue;
+              const serverTools = await storage.getMcpServerTools(serverId);
+              const matches = await storage.getMcpParameterMatches(serverId);
+
+              for (const tool of serverTools) {
+                const isReferenced = requiredToolNames.length === 0 || requiredToolNames.some((name: string) =>
+                  name.toLowerCase().includes(tool.name.toLowerCase()) ||
+                  tool.name.toLowerCase().includes(name.toLowerCase())
+                );
+                if (!isReferenced) continue;
+
+                const toolMatches = matches.filter(m => m.toolName === tool.name);
+                const matchedCount = toolMatches.filter(m => m.matchStatus === "matched" || m.matchStatus === "partial").length;
+                const totalCount = toolMatches.length;
+                const score = totalCount > 0 ? matchedCount / totalCount : 0;
+
+                if (score < 0.5) {
+                  lowAlignmentTools.push({
+                    toolName: tool.name,
+                    serverName: server.name,
+                    score: Math.round(score * 100) / 100,
+                    matched: matchedCount,
+                    total: totalCount,
+                  });
+                }
+              }
+            }
+          }
+
+          if (lowAlignmentTools.length > 0 && !bypassOntologyCheck) {
+            return res.status(400).json({
+              blocked: true,
+              reason: "ontology_alignment",
+              message: `Deployment to prod blocked: ${lowAlignmentTools.length} tool(s) have ontology alignment below 50% threshold`,
+              lowAlignmentTools,
+            });
+          }
+
+          if (lowAlignmentTools.length > 0 && bypassOntologyCheck) {
+            const auditEvents = await storage.getAuditEvents();
+            const maxSeq = auditEvents.reduce((max, e) => Math.max(max, e.sequenceNum || 0), 0);
+            const lastHash = auditEvents.length > 0 ? auditEvents[auditEvents.length - 1].eventHash || "" : "";
+            const eventData = `${maxSeq + 1}:ontology_bypass:${data.agentId}:${Date.now()}`;
+            const eventHash = `sha256:${crypto.createHash("sha256").update(eventData + lastHash).digest("hex")}`;
+
+            await storage.createAuditEvent({
+              actorType: "user",
+              actorId: "deployment-service",
+              action: "ontology_alignment_bypass",
+              objectType: "deployment",
+              objectId: data.agentId,
+              details: JSON.stringify({
+                environment: env,
+                agentName: agent.name,
+                bypassedTools: lowAlignmentTools,
+                reason: "User explicitly bypassed ontology alignment check for prod deployment",
+              }),
+              sequenceNum: maxSeq + 1,
+              previousHash: lastHash,
+              eventHash,
+              ontologyTags: resolveOntologyTags("deployment", "ontology_alignment_bypass"),
+            });
+          }
+        }
+      }
+
       const deployment = await storage.createDeployment(data);
 
-      const agent = await storage.getAgent(deployment.agentId);
       const riskTier = agent?.riskTier || "LOW";
-      const env = deployment.environment;
       const strategy = deployment.rolloutStrategy || "canary";
 
       const needsApproval =
@@ -3829,6 +4139,87 @@ export async function registerRoutes(
         });
       }
 
+      const bypassOntologyCheck = req.body.bypassOntologyCheck === true;
+      if (nextEnv === "prod") {
+        const blueprints = await storage.getBlueprints();
+        const agentBlueprint = blueprints.find(b => b.agentId === source.agentId);
+        if (agentBlueprint) {
+          const bpJson = agentBlueprint.blueprintJson as any;
+          const nodes = bpJson?.nodes || [];
+          const toolNodes = nodes.filter((n: any) => {
+            const nodeType = (n.type || n.data?.type || "").toLowerCase();
+            return nodeType.includes("tool") || nodeType.includes("mcp") || nodeType.includes("action");
+          });
+          const requiredToolNames = toolNodes.map((n: any) => n.data?.toolName || n.data?.tool || n.toolName || n.label || n.id || "unknown");
+          const mcpLinks = await storage.getAgentMcpServers(source.agentId);
+          const agentMcpServerIds = mcpLinks.map(l => l.serverId);
+          const lowAlignmentTools: Array<{ toolName: string; serverName: string; score: number; matched: number; total: number }> = [];
+
+          for (const serverId of agentMcpServerIds) {
+            const server = await storage.getMcpServer(serverId);
+            if (!server) continue;
+            const serverTools = await storage.getMcpServerTools(serverId);
+            const matches = await storage.getMcpParameterMatches(serverId);
+            for (const tool of serverTools) {
+              const isReferenced = requiredToolNames.length === 0 || requiredToolNames.some((name: string) =>
+                name.toLowerCase().includes(tool.name.toLowerCase()) ||
+                tool.name.toLowerCase().includes(name.toLowerCase())
+              );
+              if (!isReferenced) continue;
+              const toolMatches = matches.filter(m => m.toolName === tool.name);
+              const matchedCount = toolMatches.filter(m => m.matchStatus === "matched" || m.matchStatus === "partial").length;
+              const totalCount = toolMatches.length;
+              const score = totalCount > 0 ? matchedCount / totalCount : 0;
+              if (score < 0.5) {
+                lowAlignmentTools.push({
+                  toolName: tool.name,
+                  serverName: server.name,
+                  score: Math.round(score * 100) / 100,
+                  matched: matchedCount,
+                  total: totalCount,
+                });
+              }
+            }
+          }
+
+          if (lowAlignmentTools.length > 0 && !bypassOntologyCheck) {
+            return res.status(400).json({
+              blocked: true,
+              reason: "ontology_alignment",
+              message: `Promotion to prod blocked: ${lowAlignmentTools.length} tool(s) have ontology alignment below 50% threshold`,
+              lowAlignmentTools,
+            });
+          }
+
+          if (lowAlignmentTools.length > 0 && bypassOntologyCheck) {
+            const auditEventsAll2 = await storage.getAuditEvents();
+            const maxSeqNum2 = auditEventsAll2.reduce((max, e) => Math.max(max, e.sequenceNum || 0), 0);
+            const lastHashVal2 = auditEventsAll2.length > 0 ? auditEventsAll2[auditEventsAll2.length - 1].eventHash || "" : "";
+            const evtData2 = `${maxSeqNum2 + 1}:ontology_bypass:${source.id}:${Date.now()}`;
+            const evtHash2 = `sha256:${crypto.createHash("sha256").update(evtData2 + lastHashVal2).digest("hex")}`;
+
+            await storage.createAuditEvent({
+              actorType: "user",
+              actorId: req.body.approvedBy || "unknown",
+              action: "ontology_alignment_bypass",
+              objectType: "deployment",
+              objectId: source.id,
+              details: JSON.stringify({
+                targetEnv: nextEnv,
+                agentName: source.agentName,
+                version: source.version,
+                bypassedTools: lowAlignmentTools,
+                reason: "User explicitly bypassed ontology alignment check during promotion to prod",
+              }),
+              sequenceNum: maxSeqNum2 + 1,
+              previousHash: lastHashVal2,
+              eventHash: evtHash2,
+              ontologyTags: resolveOntologyTags("deployment", "ontology_alignment_bypass"),
+            });
+          }
+        }
+      }
+
       await storage.updateDeployment(source.id, { status: "promoted", promotedAt: new Date() });
 
       const promoted = await storage.createDeployment({
@@ -4123,8 +4514,6 @@ export async function registerRoutes(
         },
       ];
 
-      const overallStatus = checks.some(c => c.status === "fail") ? "blocked" : checks.some(c => c.status === "warn") ? "warning" : "ready";
-
       const agent = await storage.getAgent(agentId);
       const outcomes = await storage.getOutcomes();
       const boundOutcomes = outcomes.filter(o => {
@@ -4150,7 +4539,79 @@ export async function registerRoutes(
         boundOutcomes: boundOutcomes.map(o => o.name).slice(0, 5),
       };
 
-      res.json({ checks, overallStatus, blastRadius, agentName: agent?.name || "Unknown" });
+      let ontologyCheck: any = { enforced: true, status: "pass", lowAlignmentTools: [] };
+      try {
+        const blueprints = await storage.getBlueprints();
+        const agentBlueprint = blueprints.find(b => b.agentId === agentId);
+        if (agentBlueprint) {
+          const bpJson = agentBlueprint.blueprintJson as any;
+          const bpNodes = bpJson?.nodes || [];
+          const toolNodes = bpNodes.filter((n: any) => {
+            const nodeType = (n.type || n.data?.type || "").toLowerCase();
+            return nodeType.includes("tool") || nodeType.includes("mcp") || nodeType.includes("action");
+          });
+          const requiredToolNames = toolNodes.map((n: any) => n.data?.toolName || n.data?.tool || n.toolName || n.label || n.id || "unknown");
+          const mcpLinks = await storage.getAgentMcpServers(agentId);
+          const agentMcpServerIds = mcpLinks.map(l => l.serverId);
+          const ontologyToolResults: Array<{ toolName: string; serverName: string; score: number; matched: number; total: number }> = [];
+
+          for (const serverId of agentMcpServerIds) {
+            const server = await storage.getMcpServer(serverId);
+            if (!server) continue;
+            const serverTools = await storage.getMcpServerTools(serverId);
+            const matches = await storage.getMcpParameterMatches(serverId);
+
+            for (const tool of serverTools) {
+              const isReferenced = requiredToolNames.length === 0 || requiredToolNames.some((name: string) =>
+                name.toLowerCase().includes(tool.name.toLowerCase()) ||
+                tool.name.toLowerCase().includes(name.toLowerCase())
+              );
+              if (!isReferenced) continue;
+              const toolMatches = matches.filter(m => m.toolName === tool.name);
+              const matchedCount = toolMatches.filter(m => m.matchStatus === "matched" || m.matchStatus === "partial").length;
+              const totalCount = toolMatches.length;
+              const score = totalCount > 0 ? matchedCount / totalCount : 0;
+              if (score < 0.5) {
+                ontologyToolResults.push({
+                  toolName: tool.name,
+                  serverName: server.name,
+                  score: Math.round(score * 100) / 100,
+                  matched: matchedCount,
+                  total: totalCount,
+                });
+              }
+            }
+          }
+
+          if (ontologyToolResults.length > 0) {
+            ontologyCheck = {
+              enforced: true,
+              status: "fail",
+              lowAlignmentTools: ontologyToolResults,
+              message: `${ontologyToolResults.length} tool(s) below 50% ontology alignment threshold`,
+            };
+            checks.push({
+              name: "Ontology Alignment",
+              status: "fail" as any,
+              value: `${ontologyToolResults.length} tool(s) below threshold`,
+              detail: ontologyToolResults.map(t => `${t.toolName}: ${Math.round(t.score * 100)}%`).join(", "),
+              enforced: true,
+            });
+          } else {
+            checks.push({
+              name: "Ontology Alignment",
+              status: "pass" as any,
+              value: "All tools aligned",
+              detail: "All referenced tools meet 50% ontology alignment threshold",
+              enforced: true,
+            });
+          }
+        }
+      } catch {}
+
+      const finalOverallStatus = checks.some(c => c.status === "fail") ? "blocked" : checks.some(c => c.status === "warn") ? "warning" : "ready";
+
+      res.json({ checks, overallStatus: finalOverallStatus, blastRadius, agentName: agent?.name || "Unknown", ontologyCheck });
     } catch (e) {
       handleZodError(res, e);
     }
@@ -18906,12 +19367,43 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
         details: JSON.stringify({ negotiatedVersion, capabilities: Object.keys(capabilities), toolCount: sampleTools.length, resourceCount: sampleResources.length, promptCount: samplePrompts.length }),
       });
 
+      let parameterMatching: { totalParams: number; matched: number; partial: number; unmatched: number; alignmentScore: number } | null = null;
+      const effectiveIndustryId = server.industryId || null;
+      if (effectiveIndustryId) {
+        try {
+          const matchResult = await runParameterMatching(server.id, effectiveIndustryId);
+          parameterMatching = {
+            totalParams: matchResult.totalParams,
+            matched: matchResult.matched,
+            partial: matchResult.partial,
+            unmatched: matchResult.unmatched,
+            alignmentScore: matchResult.alignmentScore,
+          };
+        } catch (matchErr: any) {
+          console.warn("[mcp-initialize] Parameter matching failed:", matchErr.message);
+        }
+      } else {
+        try {
+          const matchResult = await runParameterMatching(server.id);
+          parameterMatching = {
+            totalParams: matchResult.totalParams,
+            matched: matchResult.matched,
+            partial: matchResult.partial,
+            unmatched: matchResult.unmatched,
+            alignmentScore: matchResult.alignmentScore,
+          };
+        } catch (matchErr: any) {
+          console.warn("[mcp-initialize] Parameter matching failed:", matchErr.message);
+        }
+      }
+
       res.json({
         success: true,
         negotiatedVersion,
         capabilities,
         serverInfo,
         catalogs: { tools: sampleTools.length, resources: sampleResources.length, prompts: samplePrompts.length },
+        parameterMatching: parameterMatching || { note: "No industry context available, matching attempted with all concepts" },
       });
     } catch (e) {
       console.error("[mcp-initialize] Error:", e);
@@ -19314,6 +19806,190 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
         }
       }
 
+      const behavioralResults: Array<{ toolName: string; status: string; reasons: string[] }> = [];
+      for (const tool of tools) {
+        const bBaseline = tool.behaviorBaseline as {
+          avgLatencyMs: number; p95LatencyMs: number; p99LatencyMs: number;
+          errorRate: number; successRate: number; sampleCount: number; computedAt: string;
+        } | null;
+
+        if (!bBaseline) continue;
+
+        const recentSpans = await db.select().from(traceSpans)
+          .where(and(
+            eq(traceSpans.mcpToolName, tool.name),
+            eq(traceSpans.mcpServerId, req.params.id as string)
+          ))
+          .orderBy(desc(traceSpans.startedAt))
+          .limit(20);
+
+        if (recentSpans.length === 0) continue;
+
+        const bDurations = recentSpans.map(s => s.durationMs || 0).sort((a, b) => a - b);
+        const bErrorSpans = recentSpans.filter(s => s.status === "error" || s.status === "failed");
+        const bP95Index = Math.floor(bDurations.length * 0.95);
+        const bCurrentP95 = bDurations[Math.min(bP95Index, bDurations.length - 1)];
+        const bCurrentErrorRate = recentSpans.length > 0 ? bErrorSpans.length / recentSpans.length : 0;
+
+        let bNewStatus = "stable";
+        const bReasons: string[] = [];
+
+        if (bBaseline.p95LatencyMs > 0) {
+          const lr = bCurrentP95 / bBaseline.p95LatencyMs;
+          if (lr > 3) { bNewStatus = "drifted"; bReasons.push(`P95 latency ${lr.toFixed(1)}x baseline`); }
+          else if (lr > 2) { bNewStatus = "warning"; bReasons.push(`P95 latency ${lr.toFixed(1)}x baseline`); }
+        }
+        if (bBaseline.errorRate > 0) {
+          const er = bCurrentErrorRate / bBaseline.errorRate;
+          if (er > 3) { bNewStatus = "drifted"; bReasons.push(`Error rate ${er.toFixed(1)}x baseline`); }
+          else if (er > 2 && bNewStatus !== "drifted") { bNewStatus = "warning"; bReasons.push(`Error rate ${er.toFixed(1)}x baseline`); }
+        } else if (bCurrentErrorRate > 0.1) {
+          if (bNewStatus !== "drifted") bNewStatus = "warning";
+          bReasons.push(`Error rate elevated from 0% baseline`);
+        }
+
+        const bPrevStatus = tool.behavioralDriftStatus || "unknown";
+        await storage.updateMcpServerTool(tool.id, { behavioralDriftStatus: bNewStatus, lastBehavioralCheckAt: new Date() });
+
+        if (bNewStatus !== bPrevStatus && bNewStatus !== "stable") {
+          await storage.createAuditEvent({
+            action: "tool_catalog.behavioral_drift",
+            objectType: "mcp_server_tool",
+            objectId: tool.id,
+            actorId: "system",
+            details: JSON.stringify({ serverId: req.params.id, previousStatus: bPrevStatus, newStatus: bNewStatus, reasons: bReasons }),
+          });
+        }
+
+        behavioralResults.push({ toolName: tool.name, status: bNewStatus, reasons: bReasons });
+      }
+
+      const assuranceLoop: {
+        driftedTools: string[];
+        reMatchedCount: number;
+        alignmentChanges: Array<{ toolName: string; before: number; after: number }>;
+        affectedBlueprints: Array<{ id: string; name: string; newReadiness: number }>;
+      } = {
+        driftedTools: driftEvents,
+        reMatchedCount: 0,
+        alignmentChanges: [],
+        affectedBlueprints: [],
+      };
+
+      if (driftEvents.length > 0) {
+        const existingMatches = await storage.getMcpParameterMatches(req.params.id as string);
+        const previousScoresByTool: Record<string, number> = {};
+        for (const tool of tools) {
+          const toolMatches = existingMatches.filter(m => m.toolName === tool.name);
+          if (toolMatches.length > 0) {
+            const matchedCount = toolMatches.filter(m => m.matchStatus === "matched").length;
+            previousScoresByTool[tool.name] = toolMatches.length > 0 ? Math.round((matchedCount / toolMatches.length) * 10000) / 100 : 0;
+          }
+        }
+
+        let effectiveIndustryId: string | null = null;
+        const allAgents = await storage.getAgents();
+        for (const agent of allAgents) {
+          const mcpLinks = await storage.getAgentMcpServers(agent.id);
+          if (mcpLinks.some(l => l.serverId === req.params.id)) {
+            const agentOntologyTags = agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }> | null;
+            if (agentOntologyTags && agentOntologyTags.length > 0) {
+              effectiveIndustryId = (agent as any).industry || null;
+            }
+            break;
+          }
+        }
+
+        try {
+          const matchResult = await runParameterMatching(req.params.id as string, effectiveIndustryId);
+          assuranceLoop.reMatchedCount = matchResult.totalParams;
+
+          for (const tool of tools) {
+            if (!driftEvents.includes(tool.name)) continue;
+            const toolResults = matchResult.results.filter(r => r.toolName === tool.name);
+            const afterMatched = toolResults.filter(r => r.matchStatus === "matched").length;
+            const afterTotal = toolResults.length;
+            const afterScore = afterTotal > 0 ? Math.round((afterMatched / afterTotal) * 10000) / 100 : 0;
+            const beforeScore = previousScoresByTool[tool.name] ?? afterScore;
+
+            if (beforeScore !== afterScore) {
+              assuranceLoop.alignmentChanges.push({
+                toolName: tool.name,
+                before: beforeScore,
+                after: afterScore,
+              });
+
+              if (afterScore < beforeScore) {
+                await storage.createAuditEvent({
+                  action: "governance.alignment_regression",
+                  objectType: "mcp_server_tool",
+                  objectId: tool.id,
+                  actorId: "system",
+                  details: JSON.stringify({
+                    serverId: req.params.id,
+                    serverName: server.name,
+                    toolName: tool.name,
+                    beforeScore,
+                    afterScore,
+                    delta: Math.round((afterScore - beforeScore) * 100) / 100,
+                  }),
+                });
+              }
+            }
+          }
+        } catch (matchErr: any) {
+          console.warn("Assurance loop re-matching failed:", matchErr.message);
+        }
+
+        const allBlueprints = await storage.getBlueprints();
+        for (const bp of allBlueprints) {
+          const bpJson = bp.blueprintJson as any;
+          const nodes = bpJson?.nodes || [];
+          const toolNodes = nodes.filter((n: any) => {
+            const nodeType = (n.type || n.data?.type || "").toLowerCase();
+            return nodeType.includes("tool") || nodeType.includes("mcp") || nodeType.includes("action");
+          });
+          const requiredToolNames = toolNodes.map((n: any) => n.data?.toolName || n.data?.tool || n.toolName || n.label || n.id || "unknown");
+
+          const referencesDrifted = driftEvents.some(driftedName =>
+            requiredToolNames.some((name: string) =>
+              name.toLowerCase().includes(driftedName.toLowerCase()) ||
+              driftedName.toLowerCase().includes(name.toLowerCase())
+            )
+          );
+
+          if (!referencesDrifted) continue;
+
+          let agentMcpServerIds: string[] = [];
+          if (bp.agentId) {
+            const mcpLinks = await storage.getAgentMcpServers(bp.agentId);
+            agentMcpServerIds = mcpLinks.map(l => l.serverId);
+          }
+
+          if (!agentMcpServerIds.includes(req.params.id as string)) {
+            continue;
+          }
+
+          const matches = await storage.getMcpParameterMatches(req.params.id as string);
+          let totalScore = 0;
+          let toolCount = 0;
+
+          for (const tool of tools) {
+            const toolMatches = matches.filter(m => m.toolName === tool.name);
+            const matchedCount = toolMatches.filter(m => m.matchStatus === "matched").length;
+            totalScore += toolMatches.length > 0 ? matchedCount / toolMatches.length : 0;
+            toolCount++;
+          }
+
+          const newReadiness = toolCount > 0 ? Math.round((totalScore / toolCount) * 100) / 100 : 0;
+          assuranceLoop.affectedBlueprints.push({
+            id: bp.id,
+            name: bp.name || `Blueprint ${bp.id}`,
+            newReadiness,
+          });
+        }
+      }
+
       await storage.updateMcpServer(req.params.id as string, { lastHealthCheck: new Date(), healthStatus: "healthy" });
 
       res.json({
@@ -19321,9 +19997,148 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
         catalogs: { tools: tools.length, resources: resources.length, prompts: prompts.length },
         driftDetected: driftEvents.length > 0,
         driftTools: driftEvents,
+        behavioralChecks: behavioralResults,
+        assuranceLoop,
       });
     } catch (e) {
       res.status(500).json({ message: "Failed to sync catalogs" });
+    }
+  });
+
+  app.post("/api/mcp-servers/:id/assurance-check", checkPermission("manage_mcp_servers"), async (req, res) => {
+    try {
+      const server = await storage.getMcpServer(req.params.id);
+      if (!server) return res.status(404).json({ message: "MCP server not found" });
+
+      const tools = await storage.getMcpServerTools(req.params.id as string);
+
+      const existingMatches = await storage.getMcpParameterMatches(req.params.id as string);
+      const previousScoresByTool: Record<string, number> = {};
+      for (const tool of tools) {
+        const toolMatches = existingMatches.filter(m => m.toolName === tool.name);
+        if (toolMatches.length > 0) {
+          const matchedCount = toolMatches.filter(m => m.matchStatus === "matched").length;
+          previousScoresByTool[tool.name] = toolMatches.length > 0 ? Math.round((matchedCount / toolMatches.length) * 10000) / 100 : 0;
+        }
+      }
+
+      let effectiveIndustryId: string | null = null;
+      const allAgents = await storage.getAgents();
+      for (const agent of allAgents) {
+        const mcpLinks = await storage.getAgentMcpServers(agent.id);
+        if (mcpLinks.some(l => l.serverId === req.params.id)) {
+          effectiveIndustryId = (agent as any).industry || null;
+          break;
+        }
+      }
+
+      const matchResult = await runParameterMatching(req.params.id as string, effectiveIndustryId);
+
+      const alignmentChanges: Array<{ toolName: string; before: number; after: number }> = [];
+      for (const tool of tools) {
+        const toolResults = matchResult.results.filter(r => r.toolName === tool.name);
+        const afterMatched = toolResults.filter(r => r.matchStatus === "matched").length;
+        const afterTotal = toolResults.length;
+        const afterScore = afterTotal > 0 ? Math.round((afterMatched / afterTotal) * 10000) / 100 : 0;
+        const beforeScore = previousScoresByTool[tool.name] ?? afterScore;
+
+        if (beforeScore !== afterScore) {
+          alignmentChanges.push({
+            toolName: tool.name,
+            before: beforeScore,
+            after: afterScore,
+          });
+
+          if (afterScore < beforeScore) {
+            await storage.createAuditEvent({
+              action: "governance.alignment_regression",
+              objectType: "mcp_server_tool",
+              objectId: tool.id,
+              actorId: "system",
+              details: JSON.stringify({
+                serverId: req.params.id,
+                serverName: server.name,
+                toolName: tool.name,
+                beforeScore,
+                afterScore,
+                delta: Math.round((afterScore - beforeScore) * 100) / 100,
+              }),
+            });
+          }
+        }
+      }
+
+      const affectedBlueprints: Array<{ id: string; name: string; newReadiness: number }> = [];
+      const allBlueprints = await storage.getBlueprints();
+      for (const bp of allBlueprints) {
+        let agentMcpServerIds: string[] = [];
+        if (bp.agentId) {
+          const mcpLinks = await storage.getAgentMcpServers(bp.agentId);
+          agentMcpServerIds = mcpLinks.map(l => l.serverId);
+        }
+
+        if (!agentMcpServerIds.includes(req.params.id as string)) continue;
+
+        const bpJson = bp.blueprintJson as any;
+        const nodes = bpJson?.nodes || [];
+        const toolNodes = nodes.filter((n: any) => {
+          const nodeType = (n.type || n.data?.type || "").toLowerCase();
+          return nodeType.includes("tool") || nodeType.includes("mcp") || nodeType.includes("action");
+        });
+
+        if (toolNodes.length === 0) continue;
+
+        const matches = await storage.getMcpParameterMatches(req.params.id as string);
+        let totalScore = 0;
+        let toolCount = 0;
+
+        for (const tool of tools) {
+          const toolMatches = matches.filter(m => m.toolName === tool.name);
+          const matchedCount = toolMatches.filter(m => m.matchStatus === "matched").length;
+          totalScore += toolMatches.length > 0 ? matchedCount / toolMatches.length : 0;
+          toolCount++;
+        }
+
+        const newReadiness = toolCount > 0 ? Math.round((totalScore / toolCount) * 100) / 100 : 0;
+        affectedBlueprints.push({
+          id: bp.id,
+          name: bp.name || `Blueprint ${bp.id}`,
+          newReadiness,
+        });
+      }
+
+      await storage.createAuditEvent({
+        action: "governance.assurance_check",
+        objectType: "mcp_server",
+        objectId: req.params.id as string,
+        actorId: "system",
+        details: JSON.stringify({
+          serverName: server.name,
+          totalParams: matchResult.totalParams,
+          matched: matchResult.matched,
+          alignmentScore: matchResult.alignmentScore,
+          alignmentChangesCount: alignmentChanges.length,
+          affectedBlueprintsCount: affectedBlueprints.length,
+        }),
+      });
+
+      res.json({
+        serverId: req.params.id,
+        serverName: server.name,
+        parameterMatching: {
+          totalParams: matchResult.totalParams,
+          matched: matchResult.matched,
+          partial: matchResult.partial,
+          unmatched: matchResult.unmatched,
+          alignmentScore: matchResult.alignmentScore,
+        },
+        alignmentChanges,
+        affectedBlueprints,
+        toolCount: tools.length,
+        checkedAt: new Date().toISOString(),
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: "Failed to run assurance check", error: e.message });
     }
   });
 
@@ -19500,6 +20315,262 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
       res.json(updated);
     } catch (e) {
       res.status(500).json({ message: "Failed to record usage" });
+    }
+  });
+
+  // ── Tool Behavioral Fingerprinting & Statistical Profiling ──
+
+  app.post("/api/mcp-servers/:serverId/tools/:toolId/compute-baseline", checkPermission("manage_mcp_servers"), async (req, res) => {
+    try {
+      const tool = await storage.getMcpServerToolById(req.params.toolId as string);
+      if (!tool) return res.status(404).json({ message: "Tool not found" });
+      if (tool.serverId !== req.params.serverId) return res.status(400).json({ message: "Tool does not belong to this server" });
+
+      const spans = await db.select().from(traceSpans)
+        .where(and(
+          eq(traceSpans.mcpToolName, tool.name),
+          eq(traceSpans.mcpServerId, req.params.serverId as string)
+        ))
+        .orderBy(desc(traceSpans.startedAt))
+        .limit(100);
+
+      if (spans.length === 0) {
+        return res.json({ message: "No trace data available for baseline computation", sampleCount: 0 });
+      }
+
+      const durations = spans.map(s => s.durationMs || 0).sort((a, b) => a - b);
+      const errorSpans = spans.filter(s => s.status === "error" || s.status === "failed");
+      const successSpans = spans.filter(s => s.status === "ok" || s.status === "completed" || s.status === "success");
+      const avgLatencyMs = Math.round(durations.reduce((a, b) => a + b, 0) / durations.length);
+      const p95Index = Math.floor(durations.length * 0.95);
+      const p99Index = Math.floor(durations.length * 0.99);
+      const p95LatencyMs = durations[Math.min(p95Index, durations.length - 1)];
+      const p99LatencyMs = durations[Math.min(p99Index, durations.length - 1)];
+      const errorRate = parseFloat((errorSpans.length / spans.length).toFixed(4));
+      const successRate = parseFloat((successSpans.length / spans.length).toFixed(4));
+
+      const baseline = {
+        avgLatencyMs,
+        p95LatencyMs,
+        p99LatencyMs,
+        errorRate,
+        successRate,
+        sampleCount: spans.length,
+        computedAt: new Date().toISOString(),
+      };
+
+      await storage.updateMcpServerTool(tool.id, {
+        behaviorBaseline: baseline,
+        behavioralDriftStatus: "stable",
+        lastBehavioralCheckAt: new Date(),
+      });
+
+      await storage.createAuditEvent({
+        action: "tool_catalog.baseline_computed",
+        objectType: "mcp_server_tool",
+        objectId: tool.id,
+        actorId: "system",
+        details: JSON.stringify({ serverId: req.params.serverId, baseline }),
+      });
+
+      res.json({ baseline, toolId: tool.id, toolName: tool.name });
+    } catch (e) {
+      res.status(500).json({ message: "Failed to compute behavioral baseline" });
+    }
+  });
+
+  app.post("/api/mcp-servers/:serverId/tools/:toolId/check-behavioral-drift", checkPermission("manage_mcp_servers"), async (req, res) => {
+    try {
+      const tool = await storage.getMcpServerToolById(req.params.toolId as string);
+      if (!tool) return res.status(404).json({ message: "Tool not found" });
+      if (tool.serverId !== req.params.serverId) return res.status(400).json({ message: "Tool does not belong to this server" });
+
+      const baseline = tool.behaviorBaseline as {
+        avgLatencyMs: number;
+        p95LatencyMs: number;
+        p99LatencyMs: number;
+        errorRate: number;
+        successRate: number;
+        sampleCount: number;
+        computedAt: string;
+      } | null;
+
+      if (!baseline) {
+        return res.status(400).json({ message: "No baseline computed yet. Run compute-baseline first." });
+      }
+
+      const recentSpans = await db.select().from(traceSpans)
+        .where(and(
+          eq(traceSpans.mcpToolName, tool.name),
+          eq(traceSpans.mcpServerId, req.params.serverId as string)
+        ))
+        .orderBy(desc(traceSpans.startedAt))
+        .limit(20);
+
+      if (recentSpans.length === 0) {
+        return res.json({ message: "No recent trace data available", status: tool.behavioralDriftStatus });
+      }
+
+      const durations = recentSpans.map(s => s.durationMs || 0).sort((a, b) => a - b);
+      const errorSpans = recentSpans.filter(s => s.status === "error" || s.status === "failed");
+      const p95Index = Math.floor(durations.length * 0.95);
+      const currentP95 = durations[Math.min(p95Index, durations.length - 1)];
+      const currentErrorRate = recentSpans.length > 0 ? errorSpans.length / recentSpans.length : 0;
+
+      let newStatus = "stable";
+      const reasons: string[] = [];
+
+      if (baseline.p95LatencyMs > 0) {
+        const latencyRatio = currentP95 / baseline.p95LatencyMs;
+        if (latencyRatio > 3) {
+          newStatus = "drifted";
+          reasons.push(`P95 latency ${currentP95}ms is ${latencyRatio.toFixed(1)}x baseline ${baseline.p95LatencyMs}ms (>3x threshold)`);
+        } else if (latencyRatio > 2) {
+          if (newStatus !== "drifted") newStatus = "warning";
+          reasons.push(`P95 latency ${currentP95}ms is ${latencyRatio.toFixed(1)}x baseline ${baseline.p95LatencyMs}ms (>2x threshold)`);
+        }
+      }
+
+      if (baseline.errorRate > 0) {
+        const errorRatio = currentErrorRate / baseline.errorRate;
+        if (errorRatio > 3) {
+          newStatus = "drifted";
+          reasons.push(`Error rate ${(currentErrorRate * 100).toFixed(1)}% is ${errorRatio.toFixed(1)}x baseline ${(baseline.errorRate * 100).toFixed(1)}% (>3x threshold)`);
+        } else if (errorRatio > 2) {
+          if (newStatus !== "drifted") newStatus = "warning";
+          reasons.push(`Error rate ${(currentErrorRate * 100).toFixed(1)}% is ${errorRatio.toFixed(1)}x baseline ${(baseline.errorRate * 100).toFixed(1)}% (>2x threshold)`);
+        }
+      } else if (currentErrorRate > 0.1) {
+        if (newStatus !== "drifted") newStatus = "warning";
+        reasons.push(`Error rate ${(currentErrorRate * 100).toFixed(1)}% is elevated (baseline had 0% errors)`);
+      }
+
+      const previousStatus = tool.behavioralDriftStatus || "unknown";
+      await storage.updateMcpServerTool(tool.id, {
+        behavioralDriftStatus: newStatus,
+        lastBehavioralCheckAt: new Date(),
+      });
+
+      if (newStatus !== previousStatus && newStatus !== "stable") {
+        await storage.createAuditEvent({
+          action: "tool_catalog.behavioral_drift",
+          objectType: "mcp_server_tool",
+          objectId: tool.id,
+          actorId: "system",
+          details: JSON.stringify({
+            serverId: req.params.serverId,
+            previousStatus,
+            newStatus,
+            reasons,
+            currentP95,
+            currentErrorRate,
+            baseline: { p95LatencyMs: baseline.p95LatencyMs, errorRate: baseline.errorRate },
+          }),
+        });
+      }
+
+      res.json({
+        toolId: tool.id,
+        toolName: tool.name,
+        previousStatus,
+        currentStatus: newStatus,
+        reasons,
+        currentWindow: {
+          sampleCount: recentSpans.length,
+          p95LatencyMs: currentP95,
+          errorRate: currentErrorRate,
+        },
+        baseline: {
+          p95LatencyMs: baseline.p95LatencyMs,
+          errorRate: baseline.errorRate,
+          sampleCount: baseline.sampleCount,
+          computedAt: baseline.computedAt,
+        },
+      });
+    } catch (e) {
+      res.status(500).json({ message: "Failed to check behavioral drift" });
+    }
+  });
+
+  app.post("/api/mcp-servers/:id/behavioral-audit", checkPermission("manage_mcp_servers"), async (req, res) => {
+    try {
+      const server = await storage.getMcpServer(req.params.id);
+      if (!server) return res.status(404).json({ message: "MCP server not found" });
+
+      const tools = await storage.getMcpServerTools(req.params.id as string);
+      const results: Array<{ toolId: string; toolName: string; status: string; reasons: string[] }> = [];
+      let stable = 0, warning = 0, drifted = 0;
+
+      for (const tool of tools) {
+        const baseline = tool.behaviorBaseline as {
+          avgLatencyMs: number; p95LatencyMs: number; p99LatencyMs: number;
+          errorRate: number; successRate: number; sampleCount: number; computedAt: string;
+        } | null;
+
+        if (!baseline) {
+          results.push({ toolId: tool.id, toolName: tool.name, status: "unknown", reasons: ["No baseline computed"] });
+          continue;
+        }
+
+        const recentSpans = await db.select().from(traceSpans)
+          .where(and(
+            eq(traceSpans.mcpToolName, tool.name),
+            eq(traceSpans.mcpServerId, req.params.id as string)
+          ))
+          .orderBy(desc(traceSpans.startedAt))
+          .limit(20);
+
+        if (recentSpans.length === 0) {
+          results.push({ toolId: tool.id, toolName: tool.name, status: tool.behavioralDriftStatus || "unknown", reasons: ["No recent trace data"] });
+          continue;
+        }
+
+        const durations = recentSpans.map(s => s.durationMs || 0).sort((a, b) => a - b);
+        const errorSpans = recentSpans.filter(s => s.status === "error" || s.status === "failed");
+        const p95Index = Math.floor(durations.length * 0.95);
+        const currentP95 = durations[Math.min(p95Index, durations.length - 1)];
+        const currentErrorRate = recentSpans.length > 0 ? errorSpans.length / recentSpans.length : 0;
+
+        let newStatus = "stable";
+        const reasons: string[] = [];
+
+        if (baseline.p95LatencyMs > 0) {
+          const latencyRatio = currentP95 / baseline.p95LatencyMs;
+          if (latencyRatio > 3) { newStatus = "drifted"; reasons.push(`P95 latency ${latencyRatio.toFixed(1)}x baseline`); }
+          else if (latencyRatio > 2) { newStatus = "warning"; reasons.push(`P95 latency ${latencyRatio.toFixed(1)}x baseline`); }
+        }
+        if (baseline.errorRate > 0) {
+          const errorRatio = currentErrorRate / baseline.errorRate;
+          if (errorRatio > 3) { newStatus = "drifted"; reasons.push(`Error rate ${errorRatio.toFixed(1)}x baseline`); }
+          else if (errorRatio > 2 && newStatus !== "drifted") { newStatus = "warning"; reasons.push(`Error rate ${errorRatio.toFixed(1)}x baseline`); }
+        } else if (currentErrorRate > 0.1) {
+          if (newStatus !== "drifted") newStatus = "warning";
+          reasons.push(`Error rate elevated from 0% baseline`);
+        }
+
+        const previousStatus = tool.behavioralDriftStatus || "unknown";
+        await storage.updateMcpServerTool(tool.id, { behavioralDriftStatus: newStatus, lastBehavioralCheckAt: new Date() });
+
+        if (newStatus !== previousStatus && newStatus !== "stable") {
+          await storage.createAuditEvent({
+            action: "tool_catalog.behavioral_drift",
+            objectType: "mcp_server_tool",
+            objectId: tool.id,
+            actorId: "system",
+            details: JSON.stringify({ serverId: req.params.id, previousStatus, newStatus, reasons }),
+          });
+        }
+
+        if (newStatus === "stable") stable++;
+        else if (newStatus === "warning") warning++;
+        else if (newStatus === "drifted") drifted++;
+
+        results.push({ toolId: tool.id, toolName: tool.name, status: newStatus, reasons });
+      }
+
+      res.json({ toolsChecked: tools.length, stable, warning, drifted, details: results });
+    } catch (e) {
+      res.status(500).json({ message: "Failed to run behavioral audit" });
     }
   });
 
@@ -22103,205 +23174,24 @@ Return ONLY a valid JSON object.`
 
   app.post("/api/ontology/match-parameters", async (req, res) => {
     try {
-      const { serverId } = req.body;
+      const { serverId, industryId } = req.body;
       if (!serverId) return res.status(400).json({ message: "serverId is required" });
 
       const server = await storage.getMcpServer(serverId);
       if (!server) return res.status(404).json({ message: "MCP server not found" });
 
-      const tools = await storage.getMcpServerTools(serverId);
-      const resources = await storage.getMcpServerResources(serverId);
-      const allConcepts = await storage.getAllOntologyConcepts();
-
-      const conceptIndex = allConcepts.map(c => ({
-        id: c.id,
-        label: c.label,
-        labelNorm: c.label.toLowerCase().replace(/[\s_-]+/g, ""),
-        synonyms: (c.synonyms || []).map((s: string) => s.toLowerCase().replace(/[\s_-]+/g, "")),
-        tags: (c.tags || []).map((t: string) => t.toLowerCase().replace(/[\s_-]+/g, "")),
-        category: c.category,
-      }));
-
-      function normalizeParam(name: string): string {
-        return name.toLowerCase().replace(/[\s_-]+/g, "");
-      }
-
-      function matchParam(paramName: string): { conceptId: string; conceptLabel: string; method: string; confidence: number } | null {
-        const norm = normalizeParam(paramName);
-        for (const c of conceptIndex) {
-          if (c.labelNorm === norm) {
-            return { conceptId: c.id, conceptLabel: c.label, method: "exact", confidence: 1.0 };
-          }
-        }
-        for (const c of conceptIndex) {
-          if (c.synonyms.includes(norm)) {
-            return { conceptId: c.id, conceptLabel: c.label, method: "synonym", confidence: 0.95 };
-          }
-        }
-        for (const c of conceptIndex) {
-          if (c.tags.includes(norm)) {
-            return { conceptId: c.id, conceptLabel: c.label, method: "tag", confidence: 0.9 };
-          }
-        }
-        for (const c of conceptIndex) {
-          if (norm.includes(c.labelNorm) || c.labelNorm.includes(norm)) {
-            return { conceptId: c.id, conceptLabel: c.label, method: "substring", confidence: 0.75 };
-          }
-          for (const syn of c.synonyms) {
-            if (norm.includes(syn) || syn.includes(norm)) {
-              return { conceptId: c.id, conceptLabel: c.label, method: "substring_synonym", confidence: 0.7 };
-            }
-          }
-        }
-        return null;
-      }
-
-      interface ParamEntry {
-        toolId: string;
-        toolName: string;
-        parameterName: string;
-        parameterPath: string;
-      }
-      const allParams: ParamEntry[] = [];
-
-      for (const tool of tools) {
-        const schema = tool.inputSchema as Record<string, unknown> | null;
-        if (schema && typeof schema === "object") {
-          const props = (schema as any).properties;
-          if (props && typeof props === "object") {
-            for (const paramName of Object.keys(props)) {
-              allParams.push({
-                toolId: tool.id,
-                toolName: tool.name,
-                parameterName: paramName,
-                parameterPath: `${tool.name}.input.${paramName}`,
-              });
-            }
-          }
-        }
-      }
-
-      for (const resource of resources) {
-        const nameParts = resource.name.replace(/[^a-zA-Z0-9_\s-]/g, " ").trim().split(/\s+/);
-        for (const part of nameParts) {
-          if (part.length > 2) {
-            allParams.push({
-              toolId: resource.id,
-              toolName: `resource:${resource.name}`,
-              parameterName: part,
-              parameterPath: `resource.${resource.name}`,
-            });
-          }
-        }
-      }
-
-      const unmatchedNames: string[] = [];
-      const results: Array<{
-        toolId: string;
-        toolName: string;
-        parameterName: string;
-        parameterPath: string;
-        matchStatus: string;
-        matchedConceptId: string | null;
-        matchedConceptLabel: string | null;
-        matchMethod: string | null;
-        confidence: number;
-      }> = [];
-
-      for (const param of allParams) {
-        const match = matchParam(param.parameterName);
-        if (match) {
-          results.push({
-            ...param,
-            matchStatus: "matched",
-            matchedConceptId: match.conceptId,
-            matchedConceptLabel: match.conceptLabel,
-            matchMethod: match.method,
-            confidence: match.confidence,
-          });
-        } else {
-          unmatchedNames.push(param.parameterName);
-          results.push({
-            ...param,
-            matchStatus: "unmatched",
-            matchedConceptId: null,
-            matchedConceptLabel: null,
-            matchMethod: null,
-            confidence: 0,
-          });
-        }
-      }
-
-      if (unmatchedNames.length > 0 && allConcepts.length > 0) {
-        try {
-          const conceptLabels = allConcepts.slice(0, 100).map(c => c.label).join(", ");
-          const aiRes = await openai.chat.completions.create({
-            model: "gpt-4o-mini",
-            messages: [
-              {
-                role: "system",
-                content: `You are a domain vocabulary matcher. Given a list of parameter names and a list of ontology concepts, suggest matches. Return JSON array of objects with: parameterName, matchedConceptLabel (exact match from concept list or null if no match), confidence (0.5-0.85). Only suggest matches where there is a genuine semantic relationship.`,
-              },
-              {
-                role: "user",
-                content: `Parameters: ${unmatchedNames.join(", ")}\n\nOntology concepts: ${conceptLabels}`,
-              },
-            ],
-            response_format: { type: "json_object" },
-            temperature: 0.3,
-          });
-
-          const content = aiRes.choices[0]?.message?.content;
-          if (content) {
-            const parsed = JSON.parse(content);
-            const aiMatches: Array<{ parameterName: string; matchedConceptLabel: string | null; confidence: number }> =
-              Array.isArray(parsed) ? parsed : parsed.matches || parsed.results || [];
-
-            for (const aiMatch of aiMatches) {
-              if (!aiMatch.matchedConceptLabel || !aiMatch.parameterName) continue;
-              const concept = allConcepts.find(c => c.label.toLowerCase() === aiMatch.matchedConceptLabel!.toLowerCase());
-              if (!concept) continue;
-              const idx = results.findIndex(r => r.parameterName === aiMatch.parameterName && r.matchStatus === "unmatched");
-              if (idx >= 0) {
-                results[idx].matchStatus = "matched";
-                results[idx].matchedConceptId = concept.id;
-                results[idx].matchedConceptLabel = concept.label;
-                results[idx].matchMethod = "ai";
-                results[idx].confidence = Math.min(aiMatch.confidence || 0.6, 0.85);
-              }
-            }
-          }
-        } catch (aiErr: any) {
-          console.warn("AI matching failed, continuing with rule-based results:", aiErr.message);
-        }
-      }
-
-      await storage.deleteMcpParameterMatchesByServer(serverId);
-      for (const r of results) {
-        await storage.createMcpParameterMatch({
-          serverId,
-          toolId: r.toolId,
-          toolName: r.toolName,
-          parameterName: r.parameterName,
-          parameterPath: r.parameterPath || null,
-          matchStatus: r.matchStatus,
-          matchedConceptId: r.matchedConceptId || null,
-          matchedConceptLabel: r.matchedConceptLabel || null,
-          matchMethod: r.matchMethod || null,
-          confidence: r.confidence,
-        });
-      }
-
-      const matched = results.filter(r => r.matchStatus === "matched").length;
-      const unmatched = results.filter(r => r.matchStatus === "unmatched").length;
+      const effectiveIndustryId = industryId || server.industryId || null;
+      const matchResult = await runParameterMatching(serverId, effectiveIndustryId);
 
       res.json({
-        serverId,
-        serverName: server.name,
-        totalParameters: results.length,
-        matched,
-        unmatched,
-        results,
+        serverId: matchResult.serverId,
+        serverName: matchResult.serverName,
+        totalParameters: matchResult.totalParams,
+        matched: matchResult.matched,
+        partial: matchResult.partial,
+        unmatched: matchResult.unmatched,
+        alignmentScore: matchResult.alignmentScore,
+        results: matchResult.results,
       });
     } catch (err: any) {
       console.error("Ontology match-parameters error:", err);
