@@ -5042,7 +5042,7 @@ function AgentDetailInner() {
                     <SelectItem value="manufacturing">Manufacturing</SelectItem>
                     <SelectItem value="insurance">Insurance</SelectItem>
                     <SelectItem value="retail">Retail</SelectItem>
-                    <SelectItem value="technology">Technology</SelectItem>
+                    <SelectItem value="technology_saas">Technology / SaaS</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -9035,7 +9035,8 @@ function AgentKnowledgeBases({ agent }: { agent: any }) {
                   <SelectItem value="manufacturing">Manufacturing</SelectItem>
                   <SelectItem value="insurance">Insurance</SelectItem>
                   <SelectItem value="retail">Retail</SelectItem>
-                  <SelectItem value="technology">Technology / SaaS</SelectItem>
+                  <SelectItem value="technology_saas">Technology / SaaS</SelectItem>
+                  <SelectItem value="cross_industry">Cross-Industry</SelectItem>
                 </SelectContent>
               </Select>
             </div>

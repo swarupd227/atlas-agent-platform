@@ -24570,13 +24570,13 @@ Simulate how the agent would handle the scenario. Return JSON:
         messages: [
           {
             role: "system",
-            content: `You are an expert at creating golden evaluation test cases for AI agents in the ${industry.replace(/_/g, " ")} industry. Generate ${Math.min(count, 10)} diverse test cases for the "${useCase}" use case. Each test case should have varied difficulty tiers and scenario categories.
+            content: `You are an expert at creating golden evaluation test cases for AI agents in the ${industry.replace(/_/g, " ")} industry. Generate ${Math.min(count, 50)} diverse test cases for the "${useCase}" use case. Each test case should have varied difficulty tiers and scenario categories.
 
 Return JSON: { "testCases": [{ "name": string, "inputScenario": string (detailed scenario description), "expectedBehavior": string (what the agent should do), "evaluationCriteria": [{ "dimension": string, "weight": number, "description": string }], "rubricScoring": { "dimensions": [{ "name": string, "maxScore": number, "criteria": string }], "passingScore": number }, "difficultyTier": "routine"|"complex"|"edge_case"|"adversarial", "scenarioCategory": "happy_path"|"edge_case"|"adversarial"|"compliance_critical", "tags": string[] }] }
 
 Mix difficulties evenly across the test cases.`
           },
-          { role: "user", content: `Generate ${Math.min(count, 10)} golden evaluation test cases for "${useCase}" in ${industry.replace(/_/g, " ")}.` }
+          { role: "user", content: `Generate ${Math.min(count, 50)} golden evaluation test cases for "${useCase}" in ${industry.replace(/_/g, " ")}.` }
         ],
         temperature: 0.7,
         response_format: { type: "json_object" },
@@ -24587,7 +24587,7 @@ Mix difficulties evenly across the test cases.`
       try { result = JSON.parse(raw); } catch { result = { testCases: [] }; }
 
       const created = [];
-      for (const tc of (result.testCases || []).slice(0, 10)) {
+      for (const tc of (result.testCases || []).slice(0, 50)) {
         const saved = await storage.createGoldenTestCase({
           datasetId: dataset.id,
           name: tc.name || "Untitled Test Case",
@@ -24628,14 +24628,14 @@ Mix difficulties evenly across the test cases.`
         messages: [
           {
             role: "system",
-            content: `You are an expert at creating golden evaluation test cases for AI agents in the ${industry} industry. Generate ${Math.min(count, 10)} diverse test cases for the "${useCase}" use case. Each test case should have varied difficulty tiers and scenario categories.
+            content: `You are an expert at creating golden evaluation test cases for AI agents in the ${industry} industry. Generate ${Math.min(count, 50)} diverse test cases for the "${useCase}" use case. Each test case should have varied difficulty tiers and scenario categories.
 
 Return JSON: { "testCases": [{ "name": string, "inputScenario": string (detailed scenario description), "expectedBehavior": string (what the agent should do), "evaluationCriteria": [{ "dimension": string, "weight": number, "description": string }], "rubricScoring": { "dimensions": [{ "name": string, "maxScore": number, "criteria": string }], "passingScore": number }, "difficultyTier": "routine"|"complex"|"edge_case"|"adversarial", "scenarioCategory": "happy_path"|"edge_case"|"adversarial"|"compliance_critical", "tags": string[] }] }
 
 ${difficultyMix ? `Difficulty distribution preference: ${JSON.stringify(difficultyMix)}` : "Mix difficulties evenly."}
 ${existingSummary ? `\nExisting test cases (avoid duplicates):\n${existingSummary}` : ""}`
           },
-          { role: "user", content: `Generate ${Math.min(count, 10)} golden evaluation test cases for "${useCase}" in ${industry}.` }
+          { role: "user", content: `Generate ${Math.min(count, 50)} golden evaluation test cases for "${useCase}" in ${industry}.` }
         ],
         temperature: 0.7,
         response_format: { type: "json_object" },
@@ -24646,7 +24646,7 @@ ${existingSummary ? `\nExisting test cases (avoid duplicates):\n${existingSummar
       try { result = JSON.parse(raw); } catch { result = { testCases: [] }; }
 
       const created = [];
-      for (const tc of (result.testCases || []).slice(0, 10)) {
+      for (const tc of (result.testCases || []).slice(0, 50)) {
         const saved = await storage.createGoldenTestCase({
           datasetId,
           name: tc.name || "Untitled Test Case",

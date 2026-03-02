@@ -665,6 +665,7 @@ export default function PolicyEngine() {
                 <SelectItem value="healthcare">Healthcare</SelectItem>
                 <SelectItem value="financial_services">Financial Services</SelectItem>
                 <SelectItem value="manufacturing">Manufacturing</SelectItem>
+                <SelectItem value="insurance">Insurance</SelectItem>
                 <SelectItem value="retail">Retail</SelectItem>
                 <SelectItem value="technology_saas">Technology / SaaS</SelectItem>
               </SelectContent>

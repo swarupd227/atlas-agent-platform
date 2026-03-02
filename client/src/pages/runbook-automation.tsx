@@ -55,6 +55,7 @@ const INDUSTRY_FILTERS = [
   { key: "insurance", label: "Insurance" },
   { key: "retail", label: "Retail" },
   { key: "technology_saas", label: "Tech / SaaS" },
+  { key: "cross_industry", label: "Cross-Industry" },
 ];
 
 const STATUS_FILTERS = [
@@ -1069,6 +1070,7 @@ export default function RunbookAutomation() {
                     <SelectItem value="insurance">Insurance</SelectItem>
                     <SelectItem value="retail">Retail</SelectItem>
                     <SelectItem value="technology_saas">Technology / SaaS</SelectItem>
+                    <SelectItem value="cross_industry">Cross-Industry</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

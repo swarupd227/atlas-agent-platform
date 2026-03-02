@@ -25,6 +25,8 @@ const industryOptions = [
   { label: "Healthcare", value: "healthcare" },
   { label: "Manufacturing", value: "manufacturing" },
   { label: "Retail", value: "retail" },
+  { label: "Technology/SaaS", value: "technology_saas" },
+  { label: "Cross-Industry", value: "cross_industry" },
 ];
 
 const industryLabels: Record<string, string> = {
@@ -33,6 +35,8 @@ const industryLabels: Record<string, string> = {
   healthcare: "Healthcare",
   manufacturing: "Manufacturing",
   retail: "Retail",
+  technology_saas: "Technology/SaaS",
+  cross_industry: "Cross-Industry",
 };
 
 const scenarioCategoryColors: Record<string, string> = {
@@ -226,8 +230,9 @@ export default function GoldenDatasetsPage() {
                     <SelectContent>
                       <SelectItem value="3">3 test cases</SelectItem>
                       <SelectItem value="5">5 test cases</SelectItem>
-                      <SelectItem value="8">8 test cases</SelectItem>
                       <SelectItem value="10">10 test cases</SelectItem>
+                      <SelectItem value="25">25 test cases</SelectItem>
+                      <SelectItem value="50">50 test cases</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
