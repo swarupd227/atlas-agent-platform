@@ -70,6 +70,14 @@ interface ReadinessCheck {
   status: "pass" | "warn" | "fail" | "unknown";
   value: string;
   detail: string;
+  enforced?: boolean;
+}
+
+interface EvalGateError {
+  message: string;
+  evalGateBlocked: boolean;
+  threshold: number;
+  failingSuites: Array<{ name: string; passRate: number }>;
 }
 
 interface ReadinessData {
@@ -564,13 +572,17 @@ function PromoteDialog({
   onOpenChange,
   deployment,
   onConfirm,
+  onBypass,
   isPending,
+  evalGateError,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   deployment: Deployment;
   onConfirm: () => void;
+  onBypass: () => void;
   isPending: boolean;
+  evalGateError: EvalGateError | null;
 }) {
   const nextEnv = envOrder[envOrder.indexOf(deployment.environment) + 1];
 
@@ -643,7 +655,14 @@ function PromoteDialog({
                   {checkStatusIcon(check.status)}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <span className="text-xs font-medium">{check.name}</span>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-xs font-medium">{check.name}</span>
+                        {check.enforced && (
+                          <Badge variant="outline" className="text-[9px] text-blue-600 dark:text-blue-400 bg-blue-500/10" data-testid={`badge-enforced-${i}`}>
+                            Enforced
+                          </Badge>
+                        )}
+                      </div>
                       <span className="text-xs font-mono">{check.value}</span>
                     </div>
                     <span className="text-[10px] text-muted-foreground">{check.detail}</span>
@@ -686,18 +705,65 @@ function PromoteDialog({
                 </span>
               </div>
             )}
+
+            {readiness?.checks.some(c => c.enforced) && (
+              <div className="flex items-center gap-2 p-2.5 rounded-md bg-blue-500/5 border border-blue-500/10">
+                <ShieldCheck className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                <span className="text-[11px] text-muted-foreground">
+                  Eval pass rate is server-enforced. Production requires {"\u2265"}80%, pilot requires {"\u2265"}60%.
+                </span>
+              </div>
+            )}
+
+            {evalGateError && (
+              <div className="flex flex-col gap-2 p-3 rounded-md bg-red-500/5 border border-red-500/10" data-testid="eval-gate-error">
+                <div className="flex items-center gap-2">
+                  <XCircle className="w-4 h-4 text-red-500 shrink-0" />
+                  <span className="text-xs font-medium text-red-700 dark:text-red-300">
+                    Eval Gate Blocked: Pass rate below {evalGateError.threshold}%
+                  </span>
+                </div>
+                <div className="flex flex-col gap-1.5 ml-6">
+                  {evalGateError.failingSuites.map((suite, i) => (
+                    <div key={i} className="flex items-center justify-between gap-2" data-testid={`eval-gate-suite-${i}`}>
+                      <span className="text-[11px] text-muted-foreground">{suite.name}</span>
+                      <Badge variant="outline" className="text-[10px] text-red-600 dark:text-red-400 bg-red-500/10">
+                        {suite.passRate.toFixed(1)}%
+                      </Badge>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2 mt-1 p-2 rounded-md bg-amber-500/5 border border-amber-500/10">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                  <span className="text-[10px] text-amber-700 dark:text-amber-300">
+                    You can bypass this gate with explicit acknowledgment. This will be logged in the audit trail.
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
         ) : null}
 
         <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button
-            onClick={onConfirm}
-            disabled={isPending || readiness?.overallStatus === "blocked"}
-            data-testid="button-confirm-promote"
-          >
-            {isPending ? "Promoting..." : readiness?.overallStatus === "blocked" ? "Blocked" : `Promote to ${nextEnv}`}
-          </Button>
+          <Button variant="outline" onClick={() => onOpenChange(false)} data-testid="button-cancel-promote">Cancel</Button>
+          {evalGateError ? (
+            <Button
+              variant="destructive"
+              onClick={onBypass}
+              disabled={isPending || (readiness?.checks.some(c => c.status === "fail" && !c.enforced) ?? false)}
+              data-testid="button-bypass-eval-gate"
+            >
+              {isPending ? "Promoting..." : (readiness?.checks.some(c => c.status === "fail" && !c.enforced) ? "Other Checks Failing" : "Bypass Eval Gate & Promote")}
+            </Button>
+          ) : (
+            <Button
+              onClick={onConfirm}
+              disabled={isPending || readiness?.overallStatus === "blocked"}
+              data-testid="button-confirm-promote"
+            >
+              {isPending ? "Promoting..." : readiness?.overallStatus === "blocked" ? "Blocked" : `Promote to ${nextEnv}`}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -901,6 +967,7 @@ export default function ReleaseDetail() {
   const { industry: activeIndustry } = useIndustry();
   const id = params?.id;
   const [promoteOpen, setPromoteOpen] = useState(false);
+  const [evalGateError, setEvalGateError] = useState<EvalGateError | null>(null);
   const [pipelineRunning, setPipelineRunning] = useState(false);
   const [pipelineAnimStep, setPipelineAnimStep] = useState(-1);
 
@@ -919,20 +986,44 @@ export default function ReleaseDetail() {
   });
 
   const promoteMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", `/api/deployments/${id}/promote`, {});
-      return res.json();
+    mutationFn: async (opts: { bypassEvalGate?: boolean }) => {
+      const role = localStorage.getItem("almp-role") || "admin";
+      const res = await fetch(`/api/deployments/${id}/promote`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Role": role },
+        body: JSON.stringify(opts?.bypassEvalGate ? { bypassEvalGate: true } : {}),
+        credentials: "include",
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        if (body.evalGateBlocked) {
+          const err = new Error(body.message) as Error & { evalGateData: EvalGateError };
+          err.evalGateData = body;
+          throw err;
+        }
+        throw new Error(body.message || "Promotion failed");
+      }
+      return body;
     },
-    onSuccess: (promoted: Deployment) => {
+    onSuccess: (promoted: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/deployments"] });
       queryClient.invalidateQueries({ queryKey: ["/api/deployments", id] });
       queryClient.invalidateQueries({ queryKey: ["/api/approvals"] });
+      setEvalGateError(null);
       setPromoteOpen(false);
-      toast({ title: "Release promoted", description: `Promoted to ${promoted.environment}` });
+      if (promoted.evalWarning) {
+        toast({ title: "Release promoted with warning", description: promoted.evalWarning });
+      } else {
+        toast({ title: "Release promoted", description: `Promoted to ${promoted.environment}` });
+      }
       navigate(`/deployments/${promoted.id}`);
     },
-    onError: (err: Error) => {
-      toast({ title: "Promotion failed", description: err.message, variant: "destructive" });
+    onError: (err: any) => {
+      if (err.evalGateData) {
+        setEvalGateError(err.evalGateData as EvalGateError);
+      } else {
+        toast({ title: "Promotion failed", description: err.message, variant: "destructive" });
+      }
     },
   });
 
@@ -1452,10 +1543,15 @@ export default function ReleaseDetail() {
       {canPromote && deployment && (
         <PromoteDialog
           open={promoteOpen}
-          onOpenChange={setPromoteOpen}
+          onOpenChange={(open) => {
+            setPromoteOpen(open);
+            if (!open) setEvalGateError(null);
+          }}
           deployment={deployment}
-          onConfirm={() => promoteMutation.mutate()}
+          onConfirm={() => promoteMutation.mutate({})}
+          onBypass={() => promoteMutation.mutate({ bypassEvalGate: true })}
           isPending={promoteMutation.isPending}
+          evalGateError={evalGateError}
         />
       )}
     </div>

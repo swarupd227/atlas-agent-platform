@@ -8842,6 +8842,17 @@ function AgentKnowledgeBases({ agent }: { agent: any }) {
     },
   });
 
+  const { data: evalKbGaps } = useQuery<{ totalFailedCases: number; analyzedCases: number; gaps: any[]; summary: { totalGapsIdentified: number } }>({
+    queryKey: ["/api/agents", agent.id, "eval-kb-gaps"],
+    queryFn: async () => {
+      const res = await fetch(`/api/agents/${agent.id}/eval-kb-gaps`);
+      return res.json();
+    },
+    enabled: !!agent.id,
+  });
+
+  const evalGapCount = evalKbGaps?.summary?.totalGapsIdentified || 0;
+
   const linkedKbIds = new Set(linkedKbs.map((l: any) => l.knowledgeBaseId));
   const availableKbs = allKbs.filter(kb => !linkedKbIds.has(kb.id));
 
@@ -8862,6 +8873,12 @@ function AgentKnowledgeBases({ agent }: { agent: any }) {
           <BookOpen className="w-5 h-5 text-muted-foreground" />
           <h3 className="text-lg font-semibold" data-testid="text-kb-section-title">Linked Knowledge Bases</h3>
           <Badge variant="secondary" className="text-xs" data-testid="badge-kb-count">{linkedKbs.length}</Badge>
+          {evalGapCount > 0 && (
+            <Badge variant="destructive" className="text-[10px]" data-testid="badge-eval-kb-gaps">
+              <AlertTriangle className="w-3 h-3 mr-0.5" />
+              {evalGapCount} Eval Gap{evalGapCount !== 1 ? "s" : ""}
+            </Badge>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <Button size="sm" variant="outline" onClick={() => setCreateDialogOpen(true)} data-testid="button-create-kb">

@@ -23,7 +23,7 @@ import {
   Plus, Loader2, Trash2, RefreshCw, CheckCircle2, XCircle,
   Clock, Bot, Link2, Unlink, Settings, MessageSquare,
   BookOpen, Brain, AlignLeft, Table2, Send, ShieldCheck,
-  AlertTriangle, CircleDot,
+  AlertTriangle, CircleDot, Lightbulb,
 } from "lucide-react";
 
 function StatusBadge({ status }: { status: string }) {
@@ -141,7 +141,7 @@ export default function KnowledgeBaseDetail() {
       const res = await fetch(`/api/knowledge-bases/${kbId}/agents`);
       return res.json();
     },
-    enabled: !!kbId && activeTab === "agents",
+    enabled: !!kbId && (activeTab === "agents" || activeTab === "eval-gaps"),
   });
 
   const { data: allAgents = [] } = useQuery<Agent[]>({
@@ -429,6 +429,9 @@ export default function KnowledgeBaseDetail() {
           </TabsTrigger>
           <TabsTrigger value="agents" data-testid="tab-agents">
             <Bot className="w-3.5 h-3.5 mr-1.5" /> Linked Agents
+          </TabsTrigger>
+          <TabsTrigger value="eval-gaps" data-testid="tab-eval-gaps">
+            <AlertTriangle className="w-3.5 h-3.5 mr-1.5" /> Eval KB Gaps
           </TabsTrigger>
         </TabsList>
 
@@ -1074,7 +1077,188 @@ export default function KnowledgeBaseDetail() {
             </div>
           )}
         </TabsContent>
+
+        <TabsContent value="eval-gaps" className="mt-4 space-y-4">
+          <EvalKbGapsSection kbId={kbId!} agentLinks={agentLinks} />
+        </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+interface EvalKbGap {
+  failedCaseId: string;
+  inputSummary: string;
+  failingReason: string;
+  severity: string;
+  missingTerms: string[];
+  suggestedKbAction: string;
+  linkedKbIds: string[];
+}
+
+interface EvalKbGapsResponse {
+  agentId: string;
+  totalFailedCases: number;
+  analyzedCases: number;
+  gaps: EvalKbGap[];
+  summary: {
+    totalGapsIdentified: number;
+    topMissingTopics: string[];
+    recommendedActions: string[];
+  };
+}
+
+function EvalKbGapsSection({ kbId, agentLinks }: { kbId: string; agentLinks: any[] }) {
+  const agentIds = agentLinks.map((l: any) => l.agentId);
+
+  const { data: gapResults = [], isLoading } = useQuery<Array<{ agentId: string; agentName: string; data: EvalKbGapsResponse }>>({
+    queryKey: ["/api/knowledge-bases", kbId, "eval-kb-gaps", agentIds],
+    queryFn: async () => {
+      const results: Array<{ agentId: string; agentName: string; data: EvalKbGapsResponse }> = [];
+      for (const agentId of agentIds) {
+        try {
+          const res = await fetch(`/api/agents/${agentId}/eval-kb-gaps`);
+          if (res.ok) {
+            const data = await res.json();
+            const relevantGaps = data.gaps.filter((g: EvalKbGap) =>
+              g.linkedKbIds.includes(kbId) || g.linkedKbIds.length === 0
+            );
+            if (relevantGaps.length > 0 || data.totalFailedCases > 0) {
+              results.push({ agentId, agentName: agentId, data: { ...data, gaps: relevantGaps } });
+            }
+          }
+        } catch {}
+      }
+      return results;
+    },
+    enabled: agentIds.length > 0,
+  });
+
+  if (agentIds.length === 0) {
+    return (
+      <Card>
+        <CardContent className="flex flex-col items-center py-8 text-center">
+          <Bot className="w-8 h-8 text-muted-foreground mb-3" />
+          <h3 className="font-medium mb-1">No Linked Agents</h3>
+          <p className="text-sm text-muted-foreground">Link agents to this knowledge base first, then eval failures will be analyzed for KB gaps.</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="space-y-3">
+        <Skeleton className="h-8 w-48" />
+        <Skeleton className="h-24 w-full" />
+        <Skeleton className="h-24 w-full" />
+      </div>
+    );
+  }
+
+  const totalGaps = gapResults.reduce((sum, r) => sum + r.data.gaps.length, 0);
+
+  if (totalGaps === 0) {
+    return (
+      <Card>
+        <CardContent className="flex flex-col items-center py-8 text-center">
+          <CheckCircle2 className="w-8 h-8 text-green-500 mb-3" />
+          <h3 className="font-medium mb-1">No KB Gaps Identified</h3>
+          <p className="text-sm text-muted-foreground">
+            {gapResults.length === 0
+              ? "No eval failures found for linked agents."
+              : "All eval failure topics appear to be covered by this knowledge base."}
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div>
+          <h3 className="text-sm font-semibold" data-testid="text-eval-gaps-title">KB Gaps from Eval Failures</h3>
+          <p className="text-xs text-muted-foreground">Topics from eval failures that could be addressed by enriching this knowledge base</p>
+        </div>
+        <Badge variant="destructive" data-testid="badge-total-gaps">{totalGaps} gap{totalGaps !== 1 ? "s" : ""}</Badge>
+      </div>
+
+      {gapResults.map((result) => (
+        <Card key={result.agentId} data-testid={`card-eval-gaps-${result.agentId}`}>
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-2">
+                <Bot className="w-4 h-4 text-muted-foreground" />
+                <CardTitle className="text-sm">Agent: {result.agentName}</CardTitle>
+                <Badge variant="outline" className="text-[10px]">{result.data.totalFailedCases} failures analyzed</Badge>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {result.data.summary.topMissingTopics.length > 0 && (
+              <div>
+                <p className="text-[11px] text-muted-foreground uppercase tracking-wider mb-1.5">Top Missing Topics</p>
+                <div className="flex flex-wrap gap-1">
+                  {result.data.summary.topMissingTopics.map((topic, i) => (
+                    <Badge key={i} variant="outline" className="text-[10px] bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/20" data-testid={`badge-missing-topic-${i}`}>
+                      {topic}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {result.data.summary.recommendedActions.length > 0 && (
+              <div>
+                <p className="text-[11px] text-muted-foreground uppercase tracking-wider mb-1">Recommended Actions</p>
+                <ul className="space-y-0.5">
+                  {result.data.summary.recommendedActions.map((action, i) => (
+                    <li key={i} className="text-xs flex items-start gap-1.5">
+                      <Lightbulb className="w-3 h-3 mt-0.5 text-amber-500 shrink-0" />
+                      <span>{action}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <Separator />
+
+            <div className="space-y-2">
+              {result.data.gaps.slice(0, 10).map((gap, idx) => (
+                <div key={gap.failedCaseId} className="p-2 rounded-md bg-muted/30 space-y-1.5" data-testid={`gap-item-${gap.failedCaseId}`}>
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <span className="text-xs font-medium truncate flex-1">{gap.inputSummary}</span>
+                    <Badge variant="outline" className={`text-[10px] shrink-0 ${
+                      gap.severity === "high" ? "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300" :
+                      gap.severity === "medium" ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300" :
+                      "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300"
+                    }`} data-testid={`badge-gap-severity-${idx}`}>
+                      {gap.severity}
+                    </Badge>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">{gap.failingReason}</p>
+                  {gap.missingTerms.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {gap.missingTerms.slice(0, 8).map((term, ti) => (
+                        <Badge key={ti} variant="secondary" className="text-[9px]">{term}</Badge>
+                      ))}
+                      {gap.missingTerms.length > 8 && (
+                        <Badge variant="secondary" className="text-[9px]">+{gap.missingTerms.length - 8} more</Badge>
+                      )}
+                    </div>
+                  )}
+                  <p className="text-[11px] text-green-700 dark:text-green-400">{gap.suggestedKbAction}</p>
+                </div>
+              ))}
+              {result.data.gaps.length > 10 && (
+                <p className="text-xs text-muted-foreground text-center">...and {result.data.gaps.length - 10} more gaps</p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      ))}
     </div>
   );
 }

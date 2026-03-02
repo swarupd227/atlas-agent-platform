@@ -3744,6 +3744,91 @@ export async function registerRoutes(
       }
       const nextEnv = envOrder[currentIdx + 1];
 
+      const bypassEvalGate = req.body.bypassEvalGate === true;
+
+      const allEvalSuites = await storage.getEvalSuites();
+      const agentSuites = allEvalSuites.filter(s => s.agentId === source.agentId);
+
+      let evalWarning: string | undefined;
+      const failingSuites: Array<{ name: string; passRate: number }> = [];
+
+      if (agentSuites.length === 0) {
+        evalWarning = "No eval suites configured";
+      } else {
+        for (const suite of agentSuites) {
+          const passRate = suite.passRate ?? 0;
+          if (nextEnv === "prod" && passRate < 80) {
+            failingSuites.push({ name: suite.name, passRate });
+          } else if (nextEnv === "pilot" && passRate < 60) {
+            failingSuites.push({ name: suite.name, passRate });
+          }
+        }
+
+        if (failingSuites.length > 0 && nextEnv === "prod" && !bypassEvalGate) {
+          const auditEventsAll = await storage.getAuditEvents();
+          const maxSeqNum = auditEventsAll.reduce((max, e) => Math.max(max, e.sequenceNum || 0), 0);
+          const lastHashVal = auditEventsAll.length > 0 ? auditEventsAll[auditEventsAll.length - 1].eventHash || "" : "";
+          const evtData = `${maxSeqNum + 1}:eval_gate_blocked:${source.id}:${Date.now()}`;
+          const evtHash = `sha256:${crypto.createHash("sha256").update(evtData + lastHashVal).digest("hex")}`;
+
+          await storage.createAuditEvent({
+            actorType: "system",
+            actorId: "eval-gate",
+            action: "eval_gate_blocked",
+            objectType: "deployment",
+            objectId: source.id,
+            details: JSON.stringify({
+              targetEnv: nextEnv,
+              failingSuites,
+              threshold: 80,
+              agentName: source.agentName,
+              version: source.version,
+            }),
+            sequenceNum: maxSeqNum + 1,
+            previousHash: lastHashVal,
+            eventHash: evtHash,
+          });
+
+          return res.status(400).json({
+            message: "Eval pass rate too low for production promotion",
+            evalGateBlocked: true,
+            threshold: 80,
+            failingSuites,
+          });
+        }
+
+        if (failingSuites.length > 0 && nextEnv === "pilot") {
+          evalWarning = `Eval pass rate below 60% on: ${failingSuites.map(s => `${s.name} (${s.passRate.toFixed(1)}%)`).join(", ")}`;
+        }
+      }
+
+      if (bypassEvalGate && failingSuites.length > 0) {
+        const auditEventsAll = await storage.getAuditEvents();
+        const maxSeqNum = auditEventsAll.reduce((max, e) => Math.max(max, e.sequenceNum || 0), 0);
+        const lastHashVal = auditEventsAll.length > 0 ? auditEventsAll[auditEventsAll.length - 1].eventHash || "" : "";
+        const evtData = `${maxSeqNum + 1}:eval_gate_bypassed:${source.id}:${Date.now()}`;
+        const evtHash = `sha256:${crypto.createHash("sha256").update(evtData + lastHashVal).digest("hex")}`;
+
+        await storage.createAuditEvent({
+          actorType: "user",
+          actorId: req.body.approvedBy || "unknown",
+          action: "eval_gate_bypassed",
+          objectType: "deployment",
+          objectId: source.id,
+          details: JSON.stringify({
+            targetEnv: nextEnv,
+            failingSuites,
+            threshold: nextEnv === "prod" ? 80 : 60,
+            agentName: source.agentName,
+            version: source.version,
+            bypassAcknowledgment: true,
+          }),
+          sequenceNum: maxSeqNum + 1,
+          previousHash: lastHashVal,
+          eventHash: evtHash,
+        });
+      }
+
       await storage.updateDeployment(source.id, { status: "promoted", promotedAt: new Date() });
 
       const promoted = await storage.createDeployment({
@@ -3826,7 +3911,11 @@ export async function registerRoutes(
         });
       }
 
-      res.status(201).json(promoted);
+      const responseBody: any = { ...promoted };
+      if (evalWarning) {
+        responseBody.evalWarning = evalWarning;
+      }
+      res.status(201).json(responseBody);
     } catch (e) {
       handleZodError(res, e);
     }
@@ -3992,9 +4081,10 @@ export async function registerRoutes(
         ? Math.round(recentTraces.reduce((sum, t) => sum + (t.latencyMs || 0), 0) / totalTraces)
         : 0;
 
-      const bestSuite = agentSuites.reduce((best, s) => (!best || (s.passRate || 0) > (best.passRate || 0) ? s : best), agentSuites[0] as typeof agentSuites[0] | undefined);
-      const evalPassRate = bestSuite?.passRate ?? null;
-      const evalSuiteName = bestSuite?.name ?? null;
+      const minEvalPassRate = agentSuites.length > 0
+        ? Math.min(...agentSuites.map(s => s.passRate ?? 0))
+        : null;
+      const failingSuiteNames = agentSuites.filter(s => (s.passRate ?? 0) < 80).map(s => s.name);
 
       const criticalDrift = agentDrift.filter((d: any) => d.severity === "critical");
       const highDrift = agentDrift.filter((d: any) => d.severity === "high");
@@ -4002,9 +4092,10 @@ export async function registerRoutes(
       const checks = [
         {
           name: "Eval Pass Rate",
-          status: evalPassRate === null ? "unknown" : evalPassRate >= 80 ? "pass" : evalPassRate >= 60 ? "warn" : "fail",
-          value: evalPassRate !== null ? `${evalPassRate.toFixed(1)}%` : "No evals",
-          detail: evalSuiteName ? `Suite: ${evalSuiteName}` : "No eval suite found",
+          status: minEvalPassRate === null ? "unknown" : minEvalPassRate >= 80 ? "pass" : minEvalPassRate >= 60 ? "warn" : "fail",
+          value: minEvalPassRate !== null ? `${minEvalPassRate.toFixed(1)}%` : "No evals",
+          detail: failingSuiteNames.length > 0 ? `Failing: ${failingSuiteNames.join(", ")}` : agentSuites.length > 0 ? `${agentSuites.length} suite(s) passing` : "No eval suite found",
+          enforced: true,
         },
         {
           name: "Success Rate",
@@ -29643,6 +29734,190 @@ Return ONLY valid JSON array, no explanation.`;
       res.json({ agentId, recommendations, total: recommendations.length });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/agents/:agentId/eval-kb-gaps", async (req, res) => {
+    try {
+      const { agentId } = req.params;
+      const agent = await storage.getAgent(agentId);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+
+      const evalSuitesList = await storage.getEvalsByAgent(agentId);
+      const failedCaseResults: Array<{ caseResult: any; testCase: any; suite: any }> = [];
+
+      for (const suite of evalSuitesList) {
+        const runs = await storage.getEvalRuns(suite.id);
+        const sortedRuns = runs.sort((a, b) => {
+          const aTime = a.startedAt ? new Date(a.startedAt).getTime() : 0;
+          const bTime = b.startedAt ? new Date(b.startedAt).getTime() : 0;
+          return bTime - aTime;
+        });
+
+        for (const run of sortedRuns.slice(0, 3)) {
+          if (failedCaseResults.length >= 50) break;
+          const caseResults = await storage.getEvalCaseResults(run.id);
+          const failedResults = caseResults.filter(cr => !cr.passed);
+          for (const cr of failedResults) {
+            if (failedCaseResults.length >= 50) break;
+            const testCase = await storage.getEvalTestCase(cr.caseId);
+            failedCaseResults.push({ caseResult: cr, testCase, suite });
+          }
+        }
+        if (failedCaseResults.length >= 50) break;
+      }
+
+      if (failedCaseResults.length === 0) {
+        return res.json({
+          agentId,
+          totalFailedCases: 0,
+          analyzedCases: 0,
+          gaps: [],
+          summary: {
+            totalGapsIdentified: 0,
+            topMissingTopics: [],
+            recommendedActions: ["No eval failures found - knowledge base coverage appears adequate"],
+          },
+        });
+      }
+
+      const agentKbLinks = await storage.getAgentKnowledgeBases(agentId);
+      const perKbCorpus: Map<string, string[]> = new Map();
+      const linkedKbIds: string[] = [];
+
+      for (const link of agentKbLinks) {
+        linkedKbIds.push(link.knowledgeBaseId);
+        const chunks = await storage.getKnowledgeChunks(link.knowledgeBaseId);
+        const contents: string[] = [];
+        for (const chunk of chunks) {
+          if (chunk.content) {
+            contents.push(chunk.content.toLowerCase());
+          }
+        }
+        perKbCorpus.set(link.knowledgeBaseId, contents);
+      }
+
+      const stopwords = new Set([
+        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+        "have", "has", "had", "do", "does", "did", "will", "would", "could",
+        "should", "may", "might", "shall", "can", "to", "of", "in", "for",
+        "on", "with", "at", "by", "from", "as", "into", "through", "during",
+        "before", "after", "above", "below", "between", "out", "off", "over",
+        "under", "again", "further", "then", "once", "here", "there", "when",
+        "where", "why", "how", "all", "each", "every", "both", "few", "more",
+        "most", "other", "some", "such", "no", "nor", "not", "only", "own",
+        "same", "so", "than", "too", "very", "just", "because", "but", "and",
+        "or", "if", "while", "that", "this", "what", "which", "who", "whom",
+        "it", "its", "i", "me", "my", "we", "our", "you", "your", "he", "she",
+        "they", "them", "their", "about", "also", "up", "down",
+      ]);
+
+      function extractKeyTerms(text: string): string[] {
+        if (!text) return [];
+        const str = typeof text === "string" ? text : JSON.stringify(text);
+        const words = str.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(w => w.length > 2 && !stopwords.has(w));
+        return [...new Set(words)];
+      }
+
+      function findMissingTermsWithKbAttribution(terms: string[]): { missingTerms: string[]; relevantKbIds: string[] } {
+        const kbsWithTerm = new Set<string>();
+        const missing: string[] = [];
+        for (const term of terms) {
+          let found = false;
+          for (const [kbId, contents] of perKbCorpus.entries()) {
+            if (contents.some(content => content.includes(term))) {
+              found = true;
+              break;
+            }
+          }
+          if (!found) {
+            missing.push(term);
+          }
+        }
+        for (const [kbId, contents] of perKbCorpus.entries()) {
+          const hasAnyTerm = terms.some(term => contents.some(c => c.includes(term)));
+          if (hasAnyTerm) kbsWithTerm.add(kbId);
+        }
+        const relevantKbIds = kbsWithTerm.size > 0 ? [...kbsWithTerm] : linkedKbIds;
+        return { missingTerms: missing, relevantKbIds };
+      }
+
+      const gaps: Array<{
+        failedCaseId: string;
+        inputSummary: string;
+        failingReason: string;
+        severity: string;
+        missingTerms: string[];
+        suggestedKbAction: string;
+        linkedKbIds: string[];
+      }> = [];
+
+      const allMissingTermsMap = new Map<string, number>();
+
+      for (const { caseResult, testCase, suite } of failedCaseResults) {
+        const inputData = testCase?.inputData;
+        const inputStr = typeof inputData === "string" ? inputData : JSON.stringify(inputData || {});
+        const inputTerms = extractKeyTerms(inputStr);
+        const reasonTerms = extractKeyTerms(caseResult.failingReason || "");
+        const allTerms = [...new Set([...inputTerms, ...reasonTerms])];
+        const { missingTerms, relevantKbIds } = findMissingTermsWithKbAttribution(allTerms);
+
+        for (const term of missingTerms) {
+          allMissingTermsMap.set(term, (allMissingTermsMap.get(term) || 0) + 1);
+        }
+
+        const severity = missingTerms.length > 5 ? "high" : missingTerms.length > 2 ? "medium" : "low";
+
+        let suggestedKbAction = "Review and enrich knowledge base content";
+        if (missingTerms.length > 0) {
+          suggestedKbAction = `Add documentation covering: ${missingTerms.slice(0, 5).join(", ")}`;
+        }
+
+        gaps.push({
+          failedCaseId: caseResult.id,
+          inputSummary: (testCase?.name || inputStr).substring(0, 200),
+          failingReason: caseResult.failingReason || "Unknown failure reason",
+          severity,
+          missingTerms: missingTerms.slice(0, 20),
+          suggestedKbAction,
+          linkedKbIds: relevantKbIds,
+        });
+      }
+
+      const topMissingTopics = [...allMissingTermsMap.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10)
+        .map(([term]) => term);
+
+      const recommendedActions: string[] = [];
+      if (topMissingTopics.length > 0) {
+        recommendedActions.push(`Add content covering frequently missing topics: ${topMissingTopics.slice(0, 5).join(", ")}`);
+      }
+      if (linkedKbIds.length === 0) {
+        recommendedActions.push("Link at least one knowledge base to this agent for RAG grounding");
+      }
+      const highSeverityCount = gaps.filter(g => g.severity === "high").length;
+      if (highSeverityCount > 0) {
+        recommendedActions.push(`Address ${highSeverityCount} high-severity gaps with significant missing coverage`);
+      }
+      if (recommendedActions.length === 0) {
+        recommendedActions.push("Review eval failures and consider adding targeted knowledge content");
+      }
+
+      res.json({
+        agentId,
+        totalFailedCases: failedCaseResults.length,
+        analyzedCases: gaps.length,
+        gaps,
+        summary: {
+          totalGapsIdentified: gaps.length,
+          topMissingTopics,
+          recommendedActions,
+        },
+      });
+    } catch (err: any) {
+      console.error("Eval-KB gaps error:", err);
+      res.status(500).json({ message: err.message || "Failed to analyze eval-KB gaps" });
     }
   });
 
