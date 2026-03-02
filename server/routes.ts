@@ -25115,6 +25115,72 @@ ${existingSummary ? `\nExisting test cases (avoid duplicates):\n${existingSummar
     }
   });
 
+  app.post("/api/ai/enhance-test-case-draft", async (req, res) => {
+    try {
+      const schema = z.object({
+        name: z.string().min(1).max(500),
+        inputScenario: z.string().min(1).max(5000),
+        industry: z.string().max(200).optional().default("general"),
+        useCase: z.string().max(500).optional().default("general"),
+      });
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid input", details: parsed.error.flatten() });
+      }
+      const { name, inputScenario, industry, useCase } = parsed.data;
+
+      const industryLabel = industry.replace(/_/g, " ");
+      const useCaseLabel = useCase || "general";
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert at creating golden evaluation test cases for AI agents in the ${industryLabel} industry, specifically for the "${useCaseLabel}" use case.
+
+Given a test case name and a brief input scenario, enhance and expand all fields to create a comprehensive, production-quality test case.
+
+Return JSON: {
+  "inputScenario": string (enhanced, detailed scenario with realistic context, specific data points, and edge conditions — at least 3-4 sentences),
+  "expectedBehavior": string (detailed description of what the agent should do, step by step),
+  "difficultyTier": "routine"|"complex"|"edge_case"|"adversarial",
+  "scenarioCategory": "happy_path"|"edge_case"|"adversarial"|"compliance_critical",
+  "evaluationCriteria": [{ "dimension": string, "weight": number (0-1), "description": string }],
+  "rubricScoring": { "dimensions": [{ "name": string, "maxScore": number, "criteria": string }], "passingScore": number },
+  "tags": string[]
+}
+
+Choose the difficulty tier and scenario category that best fits the scenario content. Make the enhanced input scenario significantly more detailed than the original while preserving its core intent.`
+          },
+          {
+            role: "user",
+            content: `Test case name: "${name}"\nBrief input scenario: "${inputScenario}"\nIndustry: ${industryLabel}\nUse case: ${useCaseLabel}`
+          }
+        ],
+        temperature: 0.7,
+        response_format: { type: "json_object" },
+      });
+
+      const raw = response.choices[0].message.content || "{}";
+      let enhanced;
+      try { enhanced = JSON.parse(raw); } catch { return res.status(500).json({ error: "Failed to parse AI response" }); }
+
+      res.json({
+        inputScenario: enhanced.inputScenario || inputScenario,
+        expectedBehavior: enhanced.expectedBehavior || "",
+        difficultyTier: enhanced.difficultyTier || "routine",
+        scenarioCategory: enhanced.scenarioCategory || "happy_path",
+        evaluationCriteria: enhanced.evaluationCriteria || [],
+        rubricScoring: enhanced.rubricScoring || { dimensions: [], passingScore: 0.8 },
+        tags: enhanced.tags || [],
+      });
+    } catch (e: any) {
+      console.error("AI enhance test case draft error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // AI: Enhance a golden test case
   app.post("/api/ai/enhance-golden-test-case", async (req, res) => {
     try {

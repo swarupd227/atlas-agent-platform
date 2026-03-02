@@ -67,6 +67,9 @@ export default function GoldenDatasetDetailPage() {
   const [newExpected, setNewExpected] = useState("");
   const [newDifficulty, setNewDifficulty] = useState("routine");
   const [newCategory, setNewCategory] = useState("happy_path");
+  const [newEvalCriteria, setNewEvalCriteria] = useState<any[]>([]);
+  const [newRubricScoring, setNewRubricScoring] = useState<any>(null);
+  const [newTags, setNewTags] = useState<string[]>([]);
   const [enhanceType, setEnhanceType] = useState<Record<string, string>>({});
 
   const { data: dataset, isLoading: datasetLoading } = useQuery<GoldenDataset>({ queryKey: ["/api/golden-datasets", id] });
@@ -96,6 +99,29 @@ export default function GoldenDatasetDetailPage() {
       setNewExpected("");
       setNewDifficulty("routine");
       setNewCategory("happy_path");
+      setNewEvalCriteria([]);
+      setNewRubricScoring(null);
+      setNewTags([]);
+    },
+  });
+
+  const aiEnhanceDraftMutation = useMutation({
+    mutationFn: async (data: { name: string; inputScenario: string; industry: string; useCase: string }) => {
+      const res = await apiRequest("POST", "/api/ai/enhance-test-case-draft", data);
+      return res.json();
+    },
+    onSuccess: (enhanced: any) => {
+      if (enhanced.inputScenario) setNewInput(enhanced.inputScenario);
+      if (enhanced.expectedBehavior) setNewExpected(enhanced.expectedBehavior);
+      if (enhanced.difficultyTier) setNewDifficulty(enhanced.difficultyTier);
+      if (enhanced.scenarioCategory) setNewCategory(enhanced.scenarioCategory);
+      if (enhanced.evaluationCriteria) setNewEvalCriteria(enhanced.evaluationCriteria);
+      if (enhanced.rubricScoring) setNewRubricScoring(enhanced.rubricScoring);
+      if (enhanced.tags) setNewTags(enhanced.tags);
+      toast({ title: "AI Enhancement complete", description: "Fields have been auto-populated by AI" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "AI Enhancement failed", description: err.message, variant: "destructive" });
     },
   });
 
@@ -297,6 +323,30 @@ export default function GoldenDatasetDetailPage() {
                 <Label>Input Scenario</Label>
                 <Textarea value={newInput} onChange={(e) => setNewInput(e.target.value)} rows={3} data-testid="input-add-scenario" />
               </div>
+              <Button
+                variant="outline"
+                disabled={aiEnhanceDraftMutation.isPending || !newName.trim() || !newInput.trim()}
+                onClick={() => aiEnhanceDraftMutation.mutate({
+                  name: newName,
+                  inputScenario: newInput,
+                  industry: dataset?.industry || "general",
+                  useCase: dataset?.useCase || "general",
+                })}
+                className="w-full border-dashed border-primary/40 text-primary hover:bg-primary/5"
+                data-testid="button-ai-enhance-draft"
+              >
+                {aiEnhanceDraftMutation.isPending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                    Enhancing with AI...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4 mr-1.5" />
+                    AI Enhance
+                  </>
+                )}
+              </Button>
               <div className="flex flex-col gap-2">
                 <Label>Expected Behavior</Label>
                 <Textarea value={newExpected} onChange={(e) => setNewExpected(e.target.value)} rows={3} data-testid="input-add-expected" />
@@ -340,6 +390,9 @@ export default function GoldenDatasetDetailPage() {
                   expectedBehavior: newExpected,
                   difficultyTier: newDifficulty,
                   scenarioCategory: newCategory,
+                  ...(newEvalCriteria.length > 0 && { evaluationCriteria: newEvalCriteria }),
+                  ...(newRubricScoring && { rubricScoring: newRubricScoring }),
+                  ...(newTags.length > 0 && { tags: newTags }),
                 })}
                 data-testid="button-add-submit"
               >
