@@ -1366,6 +1366,24 @@ export default function Governance() {
     return [...builtIn, ...customPacks];
   }, [customPacks, packPolicyOverrides]);
 
+  useEffect(() => {
+    if (!policies || policies.length === 0) return;
+    const policyNames = new Set(policies.map((p: any) => p.name));
+    const detected = new Set<string>();
+    for (const pack of allPolicyPacks) {
+      const hasAny = pack.policies.some((p) => policyNames.has(`[${pack.framework}] ${p.name}`));
+      if (hasAny) detected.add(pack.id);
+    }
+    if (detected.size > 0) {
+      setActivatedPacks((prev) => {
+        const next = new Set(prev);
+        detected.forEach((id) => next.add(id));
+        if (next.size === prev.size) return prev;
+        return next;
+      });
+    }
+  }, [policies, allPolicyPacks]);
+
   function updatePackPolicies(packId: string, updatedPolicies: PolicyPackPolicy[]) {
     const isCustom = customPacks.some((p) => p.id === packId);
     if (isCustom) {
@@ -1426,6 +1444,22 @@ export default function Governance() {
     },
   });
 
+  const togglePolicyStatusMutation = useMutation({
+    mutationFn: async ({ id, status }: { id: string; status: string }) => {
+      const res = await apiRequest("PATCH", `/api/policies/${id}`, { status });
+      return res.json();
+    },
+    onSuccess: (_data, { id, status }) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/policies'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/policies', id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/governance/compliance-posture"] });
+      toast({ title: `Policy ${status === "active" ? "activated" : "deactivated"}`, description: `Status changed to ${status}` });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to update policy status", description: err.message, variant: "destructive" });
+    },
+  });
+
   function getPackWithEnhancements(pack: PolicyPack): PolicyPack {
     const enhancements = enhancedPackRules[pack.id];
     if (!enhancements) return pack;
@@ -1441,28 +1475,44 @@ export default function Governance() {
   const activatePackMutation = useMutation({
     mutationFn: async (pack: PolicyPack) => {
       const regulationName = pack.framework;
-      const policyList = pack.policies.map((p) => {
-        const pJson: any = { ...p.policyJson, sourceRegulation: regulationName };
-        if (Array.isArray(pJson.rules)) {
-          pJson.rules = pJson.rules.map((r: any) => ({ ...r, sourceRegulation: regulationName }));
-        }
-        return {
-          name: `[${pack.framework}] ${p.name}`,
-          domain: p.domain,
-          description: p.description,
-          policyJson: pJson,
-          scopeType: "org",
-          status: "active",
-        };
-      });
+      const existingPolicies: any[] = policies || [];
+      const existingNames = new Set(existingPolicies.map((p: any) => p.name));
+      const policyList = pack.policies
+        .map((p) => {
+          const pJson: any = { ...p.policyJson, sourceRegulation: regulationName };
+          if (Array.isArray(pJson.rules)) {
+            pJson.rules = pJson.rules.map((r: any) => ({ ...r, sourceRegulation: regulationName }));
+          }
+          return {
+            name: `[${pack.framework}] ${p.name}`,
+            domain: p.domain,
+            description: p.description,
+            policyJson: pJson,
+            scopeType: "org",
+            status: "active",
+          };
+        })
+        .filter((p) => !existingNames.has(p.name));
+      if (policyList.length === 0) {
+        return { created: 0, skipped: pack.policies.length };
+      }
       const res = await apiRequest("POST", "/api/policies/bulk-create", { policies: policyList });
-      return res.json();
+      const data = await res.json();
+      return { ...data, created: policyList.length, skipped: pack.policies.length - policyList.length };
     },
-    onSuccess: (_data, pack) => {
+    onSuccess: (data, pack) => {
       queryClient.invalidateQueries({ queryKey: ["/api/policies"] });
       queryClient.invalidateQueries({ queryKey: ["/api/governance/compliance-posture"] });
       setActivatedPacks((prev) => new Set(prev).add(pack.id));
-      toast({ title: `${pack.name} activated`, description: `${pack.policies.length} policies created` });
+      const created = data?.created ?? pack.policies.length;
+      const skipped = data?.skipped ?? 0;
+      if (created === 0) {
+        toast({ title: `${pack.name} already synced`, description: `All ${skipped} policies already exist in the library` });
+      } else if (skipped > 0) {
+        toast({ title: `${pack.name} synced`, description: `${created} new policies added, ${skipped} already existed` });
+      } else {
+        toast({ title: `${pack.name} activated`, description: `${created} policies created` });
+      }
     },
     onError: (err: Error) => {
       toast({ title: "Failed to activate policy pack", description: err.message, variant: "destructive" });
@@ -4074,14 +4124,15 @@ export default function Governance() {
                           <Button
                             size="sm"
                             className="flex-1"
-                            disabled={isActivated || activatePackMutation.isPending}
+                            variant={isActivated ? "outline" : "default"}
+                            disabled={activatePackMutation.isPending}
                             onClick={() => activatePackMutation.mutate(getPackWithEnhancements(pack))}
                             data-testid={`button-activate-pack-${pack.id}`}
                           >
-                            {isActivated ? (
-                              <><Check className="h-3.5 w-3.5 mr-1.5" /> Activated</>
-                            ) : activatePackMutation.isPending ? (
+                            {activatePackMutation.isPending ? (
                               "Activating..."
+                            ) : isActivated ? (
+                              <><RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Sync Pack</>
                             ) : (
                               <><Sparkles className="h-3.5 w-3.5 mr-1.5" /> Activate Pack</>
                             )}
@@ -4141,12 +4192,13 @@ export default function Governance() {
                         <Button
                           size="sm"
                           className="flex-1"
-                          disabled={isActivated || activatePackMutation.isPending}
+                          variant={isActivated ? "outline" : "default"}
+                          disabled={activatePackMutation.isPending}
                           onClick={() => activatePackMutation.mutate(getPackWithEnhancements(pack))}
                           data-testid={`button-activate-pack-${pack.id}`}
                         >
                           {isActivated ? (
-                            <><Check className="h-3.5 w-3.5 mr-1.5" /> Activated</>
+                            <><RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Sync</>
                           ) : (
                             "Activate"
                           )}
@@ -4751,6 +4803,7 @@ export default function Governance() {
             open={!!selectedPolicyId}
             onOpenChange={(open) => { if (!open) setSelectedPolicyId(null); }}
             onDelete={(id) => deletePolicyMutation.mutate(id)}
+            onToggleStatus={(id, newStatus) => togglePolicyStatusMutation.mutate({ id, status: newStatus })}
           />
         )}
       </Tabs>
@@ -4842,7 +4895,7 @@ function IndustryTestScenariosSection({ industry, policyDomain, policyFramework,
   );
 }
 
-function PolicyDetailDialog({ policyId, open, onOpenChange, onDelete }: { policyId: string; open: boolean; onOpenChange: (open: boolean) => void; onDelete?: (id: string) => void }) {
+function PolicyDetailDialog({ policyId, open, onOpenChange, onDelete, onToggleStatus }: { policyId: string; open: boolean; onOpenChange: (open: boolean) => void; onDelete?: (id: string) => void; onToggleStatus?: (id: string, newStatus: string) => void }) {
   const { toast } = useToast();
   const { industry } = useIndustry();
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
@@ -5069,11 +5122,30 @@ function PolicyDetailDialog({ policyId, open, onOpenChange, onDelete }: { policy
               <StatusBadge status={policy.status} />
               <Badge variant="secondary" className="text-[10px] capitalize" data-testid="badge-policy-domain">{policy.domain.replace(/_/g, " ")}</Badge>
             </div>
-            {onDelete && (
-              <Button variant="ghost" size="icon" className="shrink-0 text-destructive" onClick={() => setDeleteConfirmOpen(true)} data-testid="button-delete-policy">
-                <Trash2 className="w-4 h-4" />
-              </Button>
-            )}
+            <div className="flex items-center gap-1 shrink-0">
+              {onToggleStatus && policy && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const newStatus = policy.status === "active" ? "inactive" : "active";
+                    onToggleStatus(policyId, newStatus);
+                  }}
+                  data-testid="button-toggle-policy-status"
+                >
+                  {policy.status === "active" ? (
+                    <><XCircle className="w-3.5 h-3.5 mr-1.5" /> Deactivate</>
+                  ) : (
+                    <><Check className="w-3.5 h-3.5 mr-1.5" /> Activate</>
+                  )}
+                </Button>
+              )}
+              {onDelete && (
+                <Button variant="ghost" size="icon" className="shrink-0 text-destructive" onClick={() => setDeleteConfirmOpen(true)} data-testid="button-delete-policy">
+                  <Trash2 className="w-4 h-4" />
+                </Button>
+              )}
+            </div>
           </div>
         </DialogHeader>
         <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
@@ -6222,14 +6294,15 @@ function PolicyPackDetailDialog({
           <PermissionGate action="create_modify_policies">
             <Button
               className="w-full"
-              disabled={isActivated || activating}
+              variant={isActivated ? "outline" : "default"}
+              disabled={activating}
               onClick={handleActivateWithEnhancements}
               data-testid="button-activate-pack-dialog"
             >
-              {isActivated ? (
-                <><Check className="h-4 w-4 mr-2" /> Already Activated</>
-              ) : activating ? (
-                <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Activating...</>
+              {activating ? (
+                <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> {isActivated ? "Syncing..." : "Activating..."}</>
+              ) : isActivated ? (
+                <><RefreshCw className="h-4 w-4 mr-2" /> Sync Pack ({pack.policies.length} policies){hasAnyEnhancements ? " with Enhancements" : ""}</>
               ) : (
                 <><Sparkles className="h-4 w-4 mr-2" /> Activate Pack ({pack.policies.length} policies){hasAnyEnhancements ? " with Enhancements" : ""}</>
               )}

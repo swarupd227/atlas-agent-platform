@@ -5048,13 +5048,21 @@ Respond in JSON format:
       if (!Array.isArray(policyList) || policyList.length === 0) {
         return res.status(400).json({ error: "policies array is required" });
       }
+      const existingPolicies = await storage.getPolicies();
+      const existingNames = new Set(existingPolicies.map((p) => p.name));
       const created = [];
+      let skipped = 0;
       for (const p of policyList) {
+        if (existingNames.has(p.name)) {
+          skipped++;
+          continue;
+        }
         const data = insertPolicySchema.parse(p);
         const policy = await storage.createPolicy(data);
+        existingNames.add(policy.name);
         created.push(policy);
       }
-      res.status(201).json({ created: created.length, policies: created });
+      res.status(201).json({ created: created.length, skipped, policies: created });
     } catch (e) {
       handleZodError(res, e);
     }
