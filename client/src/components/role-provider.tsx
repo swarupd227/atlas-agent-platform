@@ -37,7 +37,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "AD",
     description: "Full platform access, user management, system configuration",
     icon: ShieldCheck,
-    allowedRoutes: ["/dashboard", "/outcomes", "/agents", "/knowledge-bases", "/templates", "/blueprints", "/pipelines", "/evals", "/golden-datasets", "/deployments", "/shadow-replay", "/canary-deployment", "/healing-operations", "/runbook-automation", "/monitor", "/governance", "/autonomy-engine", "/oversight-console", "/audit-trail", "/approvals", "/billing", "/optimization", "/improvements", "/improvement-loop", "/integrations", "/admin", "/ontology", "/skills", "/context-studio", "/memory-architecture", "/rag-pipeline", "/knowledge-graph"],
+    allowedRoutes: ["/dashboard", "/outcomes", "/agents", "/knowledge-bases", "/templates", "/blueprints", "/pipelines", "/evals", "/golden-datasets", "/deployments", "/shadow-replay", "/canary-deployment", "/healing-operations", "/runbook-automation", "/monitor", "/governance", "/autonomy-engine", "/oversight-console", "/audit-trail", "/approvals", "/billing", "/optimization", "/improvements", "/improvement-loop", "/integrations", "/admin", "/ontology", "/skills", "/context-studio", "/memory-architecture", "/rag-pipeline", "/knowledge-graph", "/model-providers", "/developer"],
   },
   {
     id: "outcome_owner",
@@ -55,7 +55,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "AE",
     description: "Designs blueprints, tools, memory, eval suites",
     icon: Bot,
-    allowedRoutes: ["/dashboard", "/outcomes", "/agents", "/knowledge-bases", "/templates", "/blueprints", "/pipelines", "/evals", "/golden-datasets", "/deployments", "/shadow-replay", "/canary-deployment", "/monitor", "/optimization", "/improvements", "/improvement-loop", "/healing-operations", "/runbook-automation", "/integrations", "/ontology", "/skills", "/context-studio", "/memory-architecture", "/rag-pipeline", "/knowledge-graph", "/autonomy-engine", "/oversight-console"],
+    allowedRoutes: ["/dashboard", "/outcomes", "/agents", "/knowledge-bases", "/templates", "/blueprints", "/pipelines", "/evals", "/golden-datasets", "/deployments", "/shadow-replay", "/canary-deployment", "/monitor", "/optimization", "/improvements", "/improvement-loop", "/healing-operations", "/runbook-automation", "/integrations", "/ontology", "/skills", "/context-studio", "/memory-architecture", "/rag-pipeline", "/knowledge-graph", "/autonomy-engine", "/oversight-console", "/model-providers", "/developer"],
   },
   {
     id: "ops_sre",
