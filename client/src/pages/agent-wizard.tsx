@@ -749,6 +749,7 @@ export default function AgentWizard() {
     queryKey: ["/api/outcomes"],
   });
 
+
   const { data: ontologyConcepts } = useQuery<Array<{ id: string; label: string; category: string; description: string; synonyms: string[] | null }>>({
     queryKey: [`/api/ontology/concepts?industryId=${encodeURIComponent(wizardState.industryId || "")}`],
     enabled: !!wizardState.industryId,
@@ -1971,6 +1972,9 @@ function Step1IndustryDefine({
 }) {
   const { industry } = useIndustry();
   const linkedOutcome = outcomeLockedFromUrl && outcomes ? outcomes.find((o) => o.id === state.outcomeId) : null;
+  const { data: llmProviders } = useQuery<Array<{ name: string; displayName: string; configured: boolean; models: Array<{ id: string; name: string; costPer1kInput: number; costPer1kOutput: number; contextWindow: number }> }>>({
+    queryKey: ["/api/llm-providers"],
+  });
   return (
     <div className="flex flex-col gap-6 max-w-2xl">
       <h2 className="text-lg font-medium">Define Your Agent</h2>
@@ -2489,6 +2493,9 @@ function Step2IndustryTools({
   ontologyConcepts: Array<{ id: string; label: string; category: string; description: string; synonyms: string[] | null }>;
 }) {
   const { toast } = useToast();
+  const { data: llmProviders } = useQuery<Array<{ name: string; displayName: string; configured: boolean; models: Array<{ id: string; name: string; costPer1kInput: number; costPer1kOutput: number; contextWindow: number }> }>>({
+    queryKey: ["/api/llm-providers"],
+  });
   const [catalogFilter, setCatalogFilter] = useState<string>("all");
   const [showCatalog, setShowCatalog] = useState(false);
   const [expandedParams, setExpandedParams] = useState<Record<number, boolean>>({});
@@ -2673,26 +2680,69 @@ function Step2IndustryTools({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="flex flex-col gap-2">
               <Label>Model Provider</Label>
-              <Select value={state.modelProvider} onValueChange={(v) => updateState({ modelProvider: v })}>
+              <Select value={state.modelProvider} onValueChange={(v) => {
+                updateState({ modelProvider: v });
+                const prov = llmProviders?.find((p: any) => p.name === v);
+                if (prov && prov.models.length > 0) {
+                  updateState({ modelName: prov.models[0].id });
+                }
+              }}>
                 <SelectTrigger data-testid="select-model-provider">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="openai">OpenAI</SelectItem>
-                  <SelectItem value="anthropic">Anthropic</SelectItem>
-                  <SelectItem value="google">Google</SelectItem>
-                  <SelectItem value="custom">Custom</SelectItem>
+                  {llmProviders?.filter((p: any) => p.models.length > 0).map((p: any) => (
+                    <SelectItem key={p.name} value={p.name}>
+                      <span className="flex items-center gap-2">
+                        {p.displayName}
+                        {p.configured ? (
+                          <span className="inline-block w-2 h-2 rounded-full bg-green-500" />
+                        ) : (
+                          <span className="text-[10px] text-muted-foreground">(not configured)</span>
+                        )}
+                      </span>
+                    </SelectItem>
+                  )) || (
+                    <>
+                      <SelectItem value="openai">OpenAI</SelectItem>
+                      <SelectItem value="anthropic">Anthropic</SelectItem>
+                      <SelectItem value="google">Google</SelectItem>
+                    </>
+                  )}
                 </SelectContent>
               </Select>
             </div>
             <div className="flex flex-col gap-2">
               <Label>Model Name</Label>
-              <Input
-                value={state.modelName}
-                onChange={(e) => updateState({ modelName: e.target.value })}
-                placeholder="e.g., gpt-4.1"
-                data-testid="input-model-name"
-              />
+              {(() => {
+                const providerModels = llmProviders?.find((p: any) => p.name === state.modelProvider)?.models || [];
+                return providerModels.length > 0 ? (
+                  <Select value={state.modelName} onValueChange={(v: string) => updateState({ modelName: v })}>
+                    <SelectTrigger data-testid="input-model-name">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {providerModels.map((m: any) => (
+                        <SelectItem key={m.id} value={m.id}>
+                          <span className="flex items-center gap-2">
+                            {m.name}
+                            <span className="text-[10px] text-muted-foreground font-mono">
+                              ${m.costPer1kInput.toFixed(4)}/1K in
+                            </span>
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input
+                    value={state.modelName}
+                    onChange={(e: any) => updateState({ modelName: e.target.value })}
+                    placeholder="e.g., gpt-4.1"
+                    data-testid="input-model-name"
+                  />
+                );
+              })()}
             </div>
           </div>
 

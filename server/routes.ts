@@ -9,6 +9,7 @@ import { z, ZodError } from "zod";
 import { startWorker, jobEvents } from "./worker";
 import { executePromptWithMcp, executeTeamPipeline, executeKGQueryTemplate, startAgentRuntime, stopAgentRuntime, getActiveRuntimes, isRuntimeActive, runtimeEvents, canonicalJsonStringify, checkOntologyCompliance, type RuntimeAgent } from "./agent-runtime";
 import OpenAI, { toFile } from "openai";
+import { getProvider, getDefaultProvider, getAvailableProviders, type LLMProvider } from "./llm-provider";
 import multer from "multer";
 import { checkPermission, getRequestRole, getTraceRedactionLevel, getRedactionLevel, redactPayload, getOntologySensitivityKeys, invalidateOntologySensitivityCache, redactWithOntologyKeys } from "./permissions";
 import { getSecurityMode, hashPassword, comparePassword, generateToken, verifyToken, setAuthCookie, clearAuthCookie } from "./auth";
@@ -89,6 +90,20 @@ const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
 });
+
+async function routeAIComplete(
+  messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
+  options?: { model?: string; maxTokens?: number; responseFormat?: "text" | "json"; temperature?: number },
+): Promise<{ content: string; tokensUsed: { prompt: number; completion: number; total: number }; costUsd: number }> {
+  const provider = getDefaultProvider();
+  const result = await provider.complete(messages, {
+    model: options?.model,
+    maxTokens: options?.maxTokens || 4096,
+    responseFormat: options?.responseFormat,
+    temperature: options?.temperature,
+  });
+  return { content: result.content, tokensUsed: result.tokensUsed, costUsd: result.costUsd };
+}
 
 function checkPatchSafety(patchData: any): string | null {
   const changeType = patchData.changeType || "";
@@ -31461,6 +31476,61 @@ Return ONLY valid JSON array, no explanation.`;
     }
   });
 
+
+  // === LLM Provider Management Routes ===
+
+  app.get("/api/llm-providers", async (_req, res) => {
+    try {
+      const providers = getAvailableProviders();
+      res.json(providers);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to get providers" });
+    }
+  });
+
+  app.get("/api/llm-providers/health", async (_req, res) => {
+    try {
+      const providers = getAvailableProviders();
+      const healthResults = await Promise.all(
+        providers
+          .filter((p) => p.configured)
+          .map(async (p) => {
+            try {
+              const provider = getProvider(p.name);
+              const health = await provider.healthCheck();
+              return { provider: p.name, displayName: p.displayName, ...health };
+            } catch (err: any) {
+              return { provider: p.name, displayName: p.displayName, ok: false, latencyMs: 0, error: err.message };
+            }
+          }),
+      );
+      res.json(healthResults);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to check health" });
+    }
+  });
+
+  app.get("/api/llm-providers/usage", async (_req, res) => {
+    try {
+      const allTraces = await storage.getTraces();
+      const usageByProvider: Record<string, { totalTokens: number; totalCost: number; totalRuns: number }> = {};
+
+      for (const trace of allTraces) {
+        const summary = (trace.resultSummary as any) || {};
+        const providerUsed = summary.llmProvider || "openai";
+        if (!usageByProvider[providerUsed]) {
+          usageByProvider[providerUsed] = { totalTokens: 0, totalCost: 0, totalRuns: 0 };
+        }
+        usageByProvider[providerUsed].totalRuns++;
+        usageByProvider[providerUsed].totalTokens += (trace as any).totalTokensUsed || summary.totalTokens || 0;
+        usageByProvider[providerUsed].totalCost += (trace as any).totalCostUsd || summary.totalCost || 0;
+      }
+
+      res.json(usageByProvider);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to get usage" });
+    }
+  });
   // Start the job worker
   startWorker();
 

@@ -73,8 +73,11 @@ The Nous Agent Orchestrator employs a modern web stack. The frontend is built wi
 - **AI Enhance for Test Case Drafts**: Uses AI to generate enhanced test case components (input scenario, expected behavior, difficulty, etc.) based on initial inputs.
 - **Security Mode**: Feature-flagged JWT authentication layer with `SECURITY_MODE=demo` for frictionless demo and `SECURITY_MODE=production` for JWT-based login, HTTP-only cookies, password hashing, and role-from-session enforcement.
 
+- **LLM Provider Abstraction Layer**: Multi-provider LLM support (`server/llm-provider.ts`) with uniform `complete()`, `completeWithTools()`, and `embed()` interfaces. Supports OpenAI (fully implemented), Anthropic (fully implemented), with extension points for Google AI, Azure OpenAI, and self-hosted (vLLM/Ollama). Per-agent provider selection via `modelProvider`/`modelName` fields. Provider management UI at `/model-providers` with health checks, model catalog, and usage stats. Agent Wizard dynamically shows configured providers with cost-per-token info.
+
 ## External Dependencies
-- **OpenAI**: Utilized for TTS narration, AI skill generation/enhancement, conversational design, and other AI functionalities.
+- **OpenAI**: Primary LLM provider for agent runtime, evaluations, AI enhancements, and embeddings. Accessed through LLM Provider Abstraction Layer.
+- **Anthropic**: Secondary LLM provider (requires `ANTHROPIC_API_KEY` env var). Supports Claude models with tool calling through the abstraction layer.
 - **PostgreSQL**: The primary database.
 - **Express.js**: The backend web application framework.
 - **React**: The frontend JavaScript library.

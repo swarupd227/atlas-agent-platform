@@ -86,6 +86,7 @@ import AgentPlayground from "@/pages/agent-playground";
 import Pipelines from "@/pages/pipelines";
 import KnowledgeBasesPage from "@/pages/knowledge-bases";
 import KnowledgeBaseDetail from "@/pages/knowledge-base-detail";
+import ModelProviders from "@/pages/model-providers";
 import { Shield, LogOut } from "lucide-react";
 
 function HeaderControls() {
@@ -199,6 +200,7 @@ function DashboardRouter() {
       <Route path="/knowledge-bases" component={KnowledgeBasesPage} />
       <Route path="/healing-operations" component={HealingOperations} />
       <Route path="/runbook-automation" component={RunbookAutomation} />
+      <Route path="/model-providers" component={ModelProviders} />
       <Route path="/admin" component={Admin} />
       <Route component={NotFound} />
     </Switch>

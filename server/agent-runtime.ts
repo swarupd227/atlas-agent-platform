@@ -5,6 +5,7 @@ import OpenAI from "openai";
 import { createHash } from "crypto";
 import { sql } from "drizzle-orm";
 import { searchKnowledgeBaseChunks } from "./embeddings";
+import { getProvider, buildCanonicalTools, type LLMMessage, type LLMProvider, type CanonicalToolCall } from "./llm-provider";
 
 export function canonicalJsonStringify(obj: any): string {
   if (obj === null || obj === undefined) return JSON.stringify(obj);
@@ -96,6 +97,8 @@ export interface RuntimeAgent {
     outputFormat?: string;
     complianceNodes: string[];
   };
+  modelProvider?: string;
+  modelName?: string;
 }
 
 export interface ContextSectionMetric {
@@ -697,7 +700,7 @@ export async function executePromptWithMcp(
   prompt: string,
   industry?: string,
   agentSystemPrompt?: string,
-  options?: { conversational?: boolean; ontologyLabels?: string[]; runtimeConfig?: Record<string, any> },
+  options?: { conversational?: boolean; ontologyLabels?: string[]; runtimeConfig?: Record<string, any>; modelProvider?: string; modelName?: string },
 ): Promise<{ steps: any[]; success: boolean; summary: any; promptInputs?: any; provenanceSnapshot?: any; provenanceHash?: string; retrievedDocs?: any; conversationalResponse?: string; contextSectionMetrics?: ContextSectionMetric[] }> {
   const startTime = Date.now();
   const steps: any[] = [];
@@ -742,7 +745,10 @@ export async function executePromptWithMcp(
     startedAt: new Date().toISOString(),
   });
 
-  const openaiTools = buildOpenAITools(availableTools);
+  const providerName = options?.modelProvider || "openai";
+  const modelName = options?.modelName || "gpt-4.1";
+  const llmProvider = getProvider(providerName);
+  const canonicalTools = buildCanonicalTools(availableTools);
 
   let kbContext = "";
   const kbRetrievals: Array<{ kbId: string; kbName: string; embeddingModel: string; chunks: Array<{ chunkId: string; sourceDocId: string; similarityScore: number; contentHash: string }> }> = [];
@@ -848,36 +854,37 @@ After receiving tool results, provide a structured analysis with key findings, s
   let totalTokens = 0;
 
   try {
-    const planResponse = await openai.chat.completions.create({
-      model: "gpt-4.1",
-      messages: [
+    const planResult = await llmProvider.complete(
+      [
         { role: "system", content: systemMessage },
         { role: "user", content: prompt },
       ],
-      tools: openaiTools.length > 0 ? openaiTools : undefined,
-      max_completion_tokens: 4096,
-    });
+      {
+        model: modelName,
+        tools: canonicalTools.length > 0 ? canonicalTools : undefined,
+        maxTokens: 4096,
+      },
+    );
 
-    if (planResponse.usage) {
-      totalPromptTokens += planResponse.usage.prompt_tokens || 0;
-      totalCompletionTokens += planResponse.usage.completion_tokens || 0;
-      totalTokens += planResponse.usage.total_tokens || 0;
-    }
+    totalPromptTokens += planResult.tokensUsed.prompt;
+    totalCompletionTokens += planResult.tokensUsed.completion;
+    totalTokens += planResult.tokensUsed.total;
 
-    let currentChoice = planResponse.choices[0];
-    let currentToolCalls = (currentChoice?.message?.tool_calls || []).filter(
-      (tc: any) => tc.type === "function"
-    ) as Array<{ id: string; type: "function"; function: { name: string; arguments: string } }>;
+    let currentContent = planResult.content;
+    let currentToolCalls: CanonicalToolCall[] = planResult.toolCalls;
+    let currentRawMessage = planResult.rawAssistantMessage;
 
     steps[steps.length - 1].status = "completed";
     steps[steps.length - 1].completedAt = new Date().toISOString();
     steps[steps.length - 1].output = {
       toolCallsPlanned: currentToolCalls.length,
-      reasoning: currentChoice?.message?.content || "Tool calls planned",
-      toolsSelected: currentToolCalls.map(tc => tc.function.name),
+      reasoning: currentContent || "Tool calls planned",
+      toolsSelected: currentToolCalls.map(tc => tc.name),
+      llmProvider: providerName,
+      llmModel: modelName,
     };
 
-    if (currentToolCalls.length === 0 && currentChoice?.message?.content) {
+    if (currentToolCalls.length === 0 && currentContent) {
       steps.push({
         id: "step_3",
         name: "AI Analysis (No Tools Needed)",
@@ -885,16 +892,16 @@ After receiving tool results, provide a structured analysis with key findings, s
         status: "completed",
         startedAt: new Date().toISOString(),
         completedAt: new Date().toISOString(),
-        output: { analysis: currentChoice.message.content },
+        output: { analysis: currentContent },
       });
       if (options?.conversational) {
-        (steps as any).__conversationalResponse = currentChoice.message.content;
+        (steps as any).__conversationalResponse = currentContent;
       }
     }
 
     const MAX_TOOL_ITERATIONS = 5;
     let iterationsUsed = 0;
-    let conversationMessages: OpenAI.ChatCompletionMessageParam[] = [
+    let conversationMessages: LLMMessage[] = [
       { role: "system", content: systemMessage },
       { role: "user", content: prompt },
     ];
@@ -907,14 +914,8 @@ After receiving tool results, provide a structured analysis with key findings, s
 
       for (let i = 0; i < currentToolCalls.length; i++) {
         const tc = currentToolCalls[i];
-        const funcName = tc.function.name;
-        let args: Record<string, any> = {};
-        try {
-          args = JSON.parse(tc.function.arguments || "{}");
-        } catch {
-          toolCallResults.push({ toolName: funcName, serverName: "unknown", args: {}, result: null, error: "Invalid tool arguments JSON" });
-          continue;
-        }
+        const funcName = tc.name;
+        const args = tc.arguments || {};
 
         const toolIdx = availableTools.findIndex((_, idx) => {
           const expectedName = `mcp_${idx}_${availableTools[idx].toolName.replace(/[^a-zA-Z0-9_]/g, "_")}`;
@@ -962,37 +963,40 @@ After receiving tool results, provide a structured analysis with key findings, s
       }
 
       conversationMessages.push(
-        currentChoice!.message as OpenAI.ChatCompletionAssistantMessageParam,
+        {
+          role: "assistant" as const,
+          content: currentContent || "",
+          tool_calls: currentToolCalls,
+        },
         ...currentToolCalls.map((tc, i) => {
           const resultIdx = iterationStartIdx + i;
           const r = toolCallResults[resultIdx];
           return {
             role: "tool" as const,
-            tool_call_id: tc.id,
             content: JSON.stringify(r?.result || { error: r?.error || "No result" }),
+            tool_call_id: tc.id,
           };
         }),
       );
 
       if (iterationsUsed < MAX_TOOL_ITERATIONS) {
         try {
-          const continueResponse = await openai.chat.completions.create({
-            model: "gpt-4.1",
-            messages: conversationMessages,
-            tools: openaiTools.length > 0 ? openaiTools : undefined,
-            max_completion_tokens: 4096,
-          });
+          const continueResult = await llmProvider.complete(
+            conversationMessages,
+            {
+              model: modelName,
+              tools: canonicalTools.length > 0 ? canonicalTools : undefined,
+              maxTokens: 4096,
+            },
+          );
 
-          if (continueResponse.usage) {
-            totalPromptTokens += continueResponse.usage.prompt_tokens || 0;
-            totalCompletionTokens += continueResponse.usage.completion_tokens || 0;
-            totalTokens += continueResponse.usage.total_tokens || 0;
-          }
+          totalPromptTokens += continueResult.tokensUsed.prompt;
+          totalCompletionTokens += continueResult.tokensUsed.completion;
+          totalTokens += continueResult.tokensUsed.total;
 
-          currentChoice = continueResponse.choices[0];
-          currentToolCalls = (currentChoice?.message?.tool_calls || []).filter(
-            (tc: any) => tc.type === "function"
-          ) as Array<{ id: string; type: "function"; function: { name: string; arguments: string } }>;
+          currentContent = continueResult.content;
+          currentToolCalls = continueResult.toolCalls;
+          currentRawMessage = continueResult.rawAssistantMessage;
 
           if (currentToolCalls.length > 0) {
             steps.push({
@@ -1004,8 +1008,8 @@ After receiving tool results, provide a structured analysis with key findings, s
               completedAt: new Date().toISOString(),
               output: {
                 toolCallsPlanned: currentToolCalls.length,
-                reasoning: currentChoice?.message?.content || "Additional tool calls needed",
-                toolsSelected: currentToolCalls.map(tc => tc.function.name),
+                reasoning: currentContent || "Additional tool calls needed",
+                toolsSelected: currentToolCalls.map(tc => tc.name),
                 iteration: iterationsUsed + 1,
               },
             });
@@ -1056,25 +1060,25 @@ After receiving tool results, provide a structured analysis with key findings, s
         const analysisPrompt = isConversational
           ? `Now respond to the user's original question using the tool results above. Write a helpful, detailed, conversational response in natural language. Include specific data points (numbers, measurements, values) from the tool results. Format your response nicely — use line breaks for readability if the answer is long. Do NOT respond in JSON. Respond as a knowledgeable assistant speaking directly to the user.`
           : `Now analyze the tool results above. Respond in JSON format with fields: summary (string), severity (low/medium/high), riskFactors (array of strings), findings (array of key observations), and recommendedActions (array of strings).${structuredOutputInstructions}`;
-        const analysisMessages: OpenAI.ChatCompletionMessageParam[] = [
+        const analysisMessages: LLMMessage[] = [
           ...conversationMessages,
-          ...(currentChoice && !currentChoice.message?.tool_calls?.length ? [currentChoice.message as OpenAI.ChatCompletionAssistantMessageParam] : []),
+          ...(currentContent && currentToolCalls.length === 0 ? [{ role: "assistant" as const, content: currentContent }] : []),
           { role: "user" as const, content: analysisPrompt },
         ];
-        const analysisResponse = await openai.chat.completions.create({
-          model: "gpt-4.1",
-          messages: analysisMessages,
-          max_completion_tokens: hasRecordData || hasOutputSchema ? 16384 : 4096,
-          ...(isConversational ? {} : { response_format: { type: "json_object" as const } }),
-        });
+        const analysisResult = await llmProvider.complete(
+          analysisMessages,
+          {
+            model: modelName,
+            maxTokens: hasRecordData || hasOutputSchema ? 16384 : 4096,
+            ...(isConversational ? {} : { responseFormat: "json" as const }),
+          },
+        );
 
-        if (analysisResponse.usage) {
-          totalPromptTokens += analysisResponse.usage.prompt_tokens || 0;
-          totalCompletionTokens += analysisResponse.usage.completion_tokens || 0;
-          totalTokens += analysisResponse.usage.total_tokens || 0;
-        }
+        totalPromptTokens += analysisResult.tokensUsed.prompt;
+        totalCompletionTokens += analysisResult.tokensUsed.completion;
+        totalTokens += analysisResult.tokensUsed.total;
 
-        const rawContent = analysisResponse.choices[0]?.message?.content || (isConversational ? "I couldn't generate a response." : "{}");
+        const rawContent = analysisResult.content || (isConversational ? "I couldn't generate a response." : "{}");
         
         let analysis: any = {};
         if (isConversational) {
@@ -1910,7 +1914,7 @@ async function executeAgentCycle(agent: RuntimeAgent) {
           agent.prompt,
           agent.industry,
           enrichedContext || agent.agentSystemPrompt,
-          { ontologyLabels: (agent.ontologyTags || []).map(t => t.conceptLabel), runtimeConfig: agent.runtimeConfig || {} },
+          { ontologyLabels: (agent.ontologyTags || []).map(t => t.conceptLabel), runtimeConfig: agent.runtimeConfig || {}, modelProvider: agent.modelProvider, modelName: agent.modelName },
         );
 
     await storage.updateAgentRuntimeRun(runtimeRun.id, {
@@ -2348,6 +2352,8 @@ export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?
     complianceTags,
     memoryGovernanceRules: (agent.memoryGovernanceRules as Array<{ rule: string; regulation: string; type: string }>) || undefined,
     blueprintRequirements,
+    modelProvider: (agent as any).modelProvider || "openai",
+    modelName: (agent as any).modelName || "gpt-4.1",
   };
 
   if (intervalMinutes > 0) {
