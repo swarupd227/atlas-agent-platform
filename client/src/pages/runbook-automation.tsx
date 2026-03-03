@@ -45,6 +45,7 @@ import {
   ArrowRight,
   X,
   AlertTriangle,
+  Pencil,
 } from "lucide-react";
 
 const INDUSTRY_FILTERS = [
@@ -210,7 +211,7 @@ type TriggerCondition = {
 export default function RunbookAutomation() {
   const { toast } = useToast();
   const { industry } = useIndustry();
-  const industryId = industry?.id || "financial_services";
+  const industryId = industry?.id || "cross_industry";
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [industryFilter, setIndustryFilter] = useState("all");
@@ -223,6 +224,18 @@ export default function RunbookAutomation() {
     name: "",
     description: "",
     industry: industryId,
+    category: "incident_response",
+    triggerType: "manual",
+    severity: "medium",
+    autonomyLevel: "confirm_before",
+    estimatedDuration: "",
+  });
+
+  const [editOpen, setEditOpen] = useState(false);
+  const [editRunbook, setEditRunbook] = useState({
+    name: "",
+    description: "",
+    industry: "cross_industry",
     category: "incident_response",
     triggerType: "manual",
     severity: "medium",
@@ -443,6 +456,49 @@ export default function RunbookAutomation() {
     });
   }
 
+  const KNOWN_INDUSTRIES = ["financial_services", "healthcare", "manufacturing", "insurance", "retail", "technology_saas", "cross_industry"];
+
+  function handleOpenEdit() {
+    if (!selected) return;
+    const normalizedIndustry = KNOWN_INDUSTRIES.includes(selected.industry) ? selected.industry : "cross_industry";
+    setEditRunbook({
+      name: selected.name,
+      description: selected.description || "",
+      industry: normalizedIndustry,
+      category: selected.category || "incident_response",
+      triggerType: selected.triggerType || "manual",
+      severity: selected.severity || "medium",
+      autonomyLevel: selected.autonomyLevel || "confirm_before",
+      estimatedDuration: selected.estimatedDuration || "",
+    });
+    setEditOpen(true);
+  }
+
+  function handleSaveEdit() {
+    if (!selected) return;
+    updateMutation.mutate(
+      {
+        id: selected.id,
+        data: {
+          name: editRunbook.name,
+          description: editRunbook.description,
+          industry: editRunbook.industry,
+          category: editRunbook.category,
+          triggerType: editRunbook.triggerType,
+          severity: editRunbook.severity,
+          autonomyLevel: editRunbook.autonomyLevel,
+          estimatedDuration: editRunbook.estimatedDuration,
+        },
+      },
+      {
+        onSuccess: () => {
+          setEditOpen(false);
+          toast({ title: "Runbook updated", description: "Changes saved successfully." });
+        },
+      }
+    );
+  }
+
   function handleToggleStatus() {
     if (!selected) return;
     const newStatus = selected.status === "active" ? "draft" : "active";
@@ -661,16 +717,27 @@ export default function RunbookAutomation() {
                   <h2 className="text-xl font-semibold" data-testid="text-selected-runbook-name">{selected.name}</h2>
                   <p className="text-sm text-muted-foreground">{selected.description}</p>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleAiEnhance("full")}
-                  disabled={aiEnhanceMutation.isPending}
-                  data-testid="button-ai-enhance-full"
-                >
-                  {aiEnhanceMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1" />}
-                  AI Enhance
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleOpenEdit}
+                    data-testid="button-edit-runbook"
+                  >
+                    <Pencil className="w-4 h-4 mr-1" />
+                    Edit
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleAiEnhance("full")}
+                    disabled={aiEnhanceMutation.isPending}
+                    data-testid="button-ai-enhance-full"
+                  >
+                    {aiEnhanceMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1" />}
+                    AI Enhance
+                  </Button>
+                </div>
               </div>
 
               <Tabs value={detailTab} onValueChange={setDetailTab}>
@@ -1156,6 +1223,126 @@ export default function RunbookAutomation() {
             >
               {createMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Plus className="w-4 h-4 mr-1" />}
               Create Runbook
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Runbook Dialog */}
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit Runbook</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Name</Label>
+              <Input
+                value={editRunbook.name}
+                onChange={(e) => setEditRunbook({ ...editRunbook, name: e.target.value })}
+                placeholder="Runbook name"
+                data-testid="input-edit-runbook-name"
+              />
+            </div>
+            <div>
+              <Label>Description</Label>
+              <Textarea
+                value={editRunbook.description}
+                onChange={(e) => setEditRunbook({ ...editRunbook, description: e.target.value })}
+                placeholder="Describe what this runbook does"
+                data-testid="textarea-edit-runbook-description"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Industry</Label>
+                <Select value={editRunbook.industry} onValueChange={(v: any) => setEditRunbook({ ...editRunbook, industry: v })}>
+                  <SelectTrigger data-testid="select-edit-runbook-industry">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="financial_services">Financial Services</SelectItem>
+                    <SelectItem value="healthcare">Healthcare</SelectItem>
+                    <SelectItem value="manufacturing">Manufacturing</SelectItem>
+                    <SelectItem value="insurance">Insurance</SelectItem>
+                    <SelectItem value="retail">Retail</SelectItem>
+                    <SelectItem value="technology_saas">Technology / SaaS</SelectItem>
+                    <SelectItem value="cross_industry">Cross-Industry</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Category</Label>
+                <Select value={editRunbook.category} onValueChange={(v) => setEditRunbook({ ...editRunbook, category: v })}>
+                  <SelectTrigger data-testid="select-edit-runbook-category">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {CATEGORIES.map((c) => (
+                      <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Trigger Type</Label>
+                <Select value={editRunbook.triggerType} onValueChange={(v) => setEditRunbook({ ...editRunbook, triggerType: v })}>
+                  <SelectTrigger data-testid="select-edit-runbook-trigger-type">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="automatic">Automatic</SelectItem>
+                    <SelectItem value="manual">Manual</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Severity</Label>
+                <Select value={editRunbook.severity} onValueChange={(v) => setEditRunbook({ ...editRunbook, severity: v })}>
+                  <SelectTrigger data-testid="select-edit-runbook-severity">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="low">Low</SelectItem>
+                    <SelectItem value="medium">Medium</SelectItem>
+                    <SelectItem value="high">High</SelectItem>
+                    <SelectItem value="critical">Critical</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Autonomy Level</Label>
+                <Select value={editRunbook.autonomyLevel} onValueChange={(v) => setEditRunbook({ ...editRunbook, autonomyLevel: v })}>
+                  <SelectTrigger data-testid="select-edit-runbook-autonomy">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {AUTONOMY_LEVELS.map((l) => (
+                      <SelectItem key={l.value} value={l.value}>{l.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Estimated Duration</Label>
+                <Input
+                  value={editRunbook.estimatedDuration}
+                  onChange={(e) => setEditRunbook({ ...editRunbook, estimatedDuration: e.target.value })}
+                  placeholder="e.g. 30 minutes"
+                  data-testid="input-edit-runbook-duration"
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              size="sm"
+              onClick={handleSaveEdit}
+              disabled={updateMutation.isPending || !editRunbook.name}
+              data-testid="button-save-edit-runbook"
+            >
+              {updateMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Pencil className="w-4 h-4 mr-1" />}
+              Save Changes
             </Button>
           </DialogFooter>
         </DialogContent>

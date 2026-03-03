@@ -345,7 +345,7 @@ export default function OutcomeDiscover() {
   const [formRiskThreshold, setFormRiskThreshold] = useState(0.8);
   const [formMaxDriftPercent, setFormMaxDriftPercent] = useState(10);
   const [formSlaDescription, setFormSlaDescription] = useState("");
-  const [formKpis, setFormKpis] = useState<Array<{name: string; target: number; unit: string; baseline: number; slaThreshold: number; weight: number}>>([]);
+  const [formKpis, setFormKpis] = useState<Array<{name: string; target: number; unit: string; baseline: number; slaThreshold: number; weight: number; targetOperator: string}>>([]);
   const [formCreatedOutcome, setFormCreatedOutcome] = useState<OutcomeContract | null>(null);
   const [formPlanRequested, setFormPlanRequested] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -391,13 +391,14 @@ export default function OutcomeDiscover() {
         baseline: k.baseline ?? 0,
         slaThreshold: k.slaThreshold ?? 0,
         weight: k.weight ?? 1,
+        targetOperator: (k as any).targetOperator ?? ">=",
       }))
     );
     setFormStep(2);
   }
 
   function addFormKpi() {
-    setFormKpis([...formKpis, { name: "", target: 0, unit: "percent", baseline: 0, slaThreshold: 0, weight: 1 }]);
+    setFormKpis([...formKpis, { name: "", target: 0, unit: "percent", baseline: 0, slaThreshold: 0, weight: 1, targetOperator: ">=" }]);
   }
 
   function removeFormKpi(index: number) {
@@ -406,7 +407,7 @@ export default function OutcomeDiscover() {
 
   function updateFormKpi(index: number, field: string, value: string | number) {
     const updated = [...formKpis];
-    if (field === "name" || field === "unit") {
+    if (field === "name" || field === "unit" || field === "targetOperator") {
       updated[index] = { ...updated[index], [field]: value as string };
     } else {
       updated[index] = { ...updated[index], [field]: Number(value) || 0 };
@@ -436,6 +437,7 @@ export default function OutcomeDiscover() {
           baseline: k.baseline,
           slaThreshold: k.slaThreshold,
           weight: k.weight,
+          targetOperator: k.targetOperator || ">=",
         })),
         constraints: governancePolicies.map((p) => ({
           label: p.label,
@@ -1034,10 +1036,25 @@ export default function OutcomeDiscover() {
                   </div>
                   {formKpis.length === 0 && <p className="text-sm text-muted-foreground">No KPIs configured yet. Add one to get started.</p>}
                   {formKpis.map((kpi, i) => (
-                    <div key={i} className="grid grid-cols-[1fr_80px_80px_auto] gap-2 items-end bg-muted/30 rounded-md p-2" data-testid={`form-kpi-row-${i}`}>
+                    <div key={i} className="grid grid-cols-[1fr_90px_80px_80px_auto] gap-2 items-end bg-muted/30 rounded-md p-2" data-testid={`form-kpi-row-${i}`}>
                       <div className="flex flex-col gap-1">
                         <Label className="text-xs text-muted-foreground">Name</Label>
                         <Input value={kpi.name} onChange={(e) => updateFormKpi(i, "name", e.target.value)} placeholder="KPI name" data-testid={`input-form-kpi-name-${i}`} />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <Label className="text-xs text-muted-foreground">Operator</Label>
+                        <Select value={kpi.targetOperator} onValueChange={(v) => updateFormKpi(i, "targetOperator", v)}>
+                          <SelectTrigger data-testid={`select-form-kpi-operator-${i}`} className="h-9">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value=">">{">"} Greater than</SelectItem>
+                            <SelectItem value=">=">{"≥"} Greater or equal</SelectItem>
+                            <SelectItem value="<">{"<"} Less than</SelectItem>
+                            <SelectItem value="<=">{"≤"} Less or equal</SelectItem>
+                            <SelectItem value="=">{"="} Equal to</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </div>
                       <div className="flex flex-col gap-1">
                         <Label className="text-xs text-muted-foreground">Target</Label>
