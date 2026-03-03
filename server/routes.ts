@@ -5500,6 +5500,63 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     }
   });
 
+  app.post("/api/ai/enhance-policy-pack", checkPermission("create_modify_policies"), async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI service not configured" });
+      }
+      const { packName, framework, description, industry, riskLevel, existingPolicies } = req.body;
+      if (!packName || !framework) {
+        return res.status(400).json({ error: "packName and framework are required" });
+      }
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        max_tokens: 3000,
+        messages: [
+          {
+            role: "system",
+            content: `You are a regulatory compliance expert specializing in AI agent governance. Given a policy pack definition, generate enhanced policy suggestions.
+
+Return a JSON object with:
+- "enhancedDescription": An improved 2-4 sentence description of the policy pack
+- "suggestedPolicies": Array of 3-5 policy objects, each with:
+  - "name": Policy name (concise, actionable)
+  - "domain": One of "data_handling", "tool_permissions", "allowed_actions", "content_boundaries", "logging"
+  - "description": Detailed description of what the policy enforces
+- "complianceNotes": Brief text about regulatory alignment
+- "riskConsiderations": Brief text about risk factors to consider`
+          },
+          {
+            role: "user",
+            content: `Enhance this policy pack:
+
+Pack Name: ${packName}
+Framework: ${framework}
+Industry: ${industry || "cross_industry"}
+Risk Level: ${riskLevel || "high"}
+Description: ${description || "No description provided"}
+Existing Policies: ${JSON.stringify(existingPolicies || [])}
+
+Return ONLY a valid JSON object. Do not include markdown formatting or code blocks.`
+          }
+        ],
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) {
+        return res.status(500).json({ error: "No response from AI" });
+      }
+
+      const enhanced = JSON.parse(content);
+      res.json(enhanced);
+    } catch (e: any) {
+      console.error("AI enhance policy pack error:", e);
+      res.status(500).json({ error: e.message || "Failed to enhance policy pack" });
+    }
+  });
+
   app.post("/api/ai/generate-regulation-policies", checkPermission("create_modify_policies"), async (req, res) => {
     try {
       if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {

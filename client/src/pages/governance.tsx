@@ -418,7 +418,7 @@ interface PolicyPack {
   id: string;
   name: string;
   description: string;
-  industry: IndustryId;
+  industry: string;
   framework: string;
   riskLevel: "low" | "medium" | "high" | "critical";
   policies: PolicyPackPolicy[];
@@ -4169,6 +4169,7 @@ export default function Governance() {
               {allPolicyPacks.filter((p) => !industry || industry.id === "custom" || p.industry !== industry.id).map((pack) => {
                 const isActivated = activatedPacks.has(pack.id);
                 const industryLabel: Record<string, string> = {
+                  cross_industry: "Cross-Industry",
                   financial_services: "Financial Services",
                   healthcare: "Healthcare",
                   manufacturing: "Manufacturing",
@@ -6020,10 +6021,13 @@ function PolicyPackDetailDialog({
   const [removingIdx, setRemovingIdx] = useState<number | null>(null);
 
   const industryLabel: Record<string, string> = {
+    cross_industry: "Cross-Industry",
     financial_services: "Financial Services",
     healthcare: "Healthcare & Life Sciences",
     manufacturing: "Manufacturing & Supply Chain",
     retail: "Retail & E-Commerce",
+    insurance: "Insurance",
+    technology_saas: "Technology / SaaS",
   };
 
   function getEffectiveRules(idx: number): Record<string, unknown> {
@@ -6343,14 +6347,54 @@ function CreatePolicyPackDialog({
   defaultIndustry?: IndustryId;
   defaultFramework?: string;
 }) {
+  const { toast } = useToast();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [packIndustry, setPackIndustry] = useState<IndustryId>(defaultIndustry || "financial_services");
+  const [packIndustry, setPackIndustry] = useState<string>(defaultIndustry || "financial_services");
   const [framework, setFramework] = useState(defaultFramework || "");
   const [riskLevel, setRiskLevel] = useState<"low" | "medium" | "high" | "critical">("high");
   const [packPolicies, setPackPolicies] = useState<PolicyPackPolicy[]>([
     { name: "", domain: "data_handling", description: "", policyJson: {} },
   ]);
+
+  const aiEnhanceMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/ai/enhance-policy-pack", {
+        packName: name,
+        framework,
+        description,
+        industry: packIndustry,
+        riskLevel,
+        existingPolicies: packPolicies.filter(p => p.name.trim()),
+      });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      if (data.enhancedDescription && !description.trim()) {
+        setDescription(data.enhancedDescription);
+      }
+      if (data.suggestedPolicies && Array.isArray(data.suggestedPolicies)) {
+        const existingNames = new Set(packPolicies.map(p => p.name.toLowerCase().trim()).filter(Boolean));
+        const newPolicies = data.suggestedPolicies
+          .filter((sp: any) => sp.name?.trim() && !existingNames.has(sp.name.toLowerCase().trim()))
+          .map((sp: any) => ({
+            name: sp.name.trim(),
+            domain: ["data_handling", "tool_permissions", "allowed_actions", "content_boundaries", "logging"].includes(sp.domain) ? sp.domain : "data_handling",
+            description: sp.description || "",
+            policyJson: {},
+          }));
+        if (newPolicies.length > 0) {
+          const validExisting = packPolicies.filter(p => p.name.trim());
+          setPackPolicies(validExisting.length > 0 ? [...validExisting, ...newPolicies] : newPolicies);
+        }
+      }
+      const addedCount = data.suggestedPolicies?.filter((sp: any) => sp.name?.trim()).length || 0;
+      toast({ title: "AI Enhancement Complete", description: `Added ${addedCount} policy suggestions` });
+    },
+    onError: (err: Error) => {
+      toast({ title: "AI Enhancement Failed", description: err.message, variant: "destructive" });
+    },
+  });
 
   useEffect(() => {
     if (open) {
@@ -6401,7 +6445,8 @@ function CreatePolicyPackDialog({
     { value: "logging", label: "Logging & Audit" },
   ];
 
-  const industryOptions: { value: IndustryId; label: string }[] = [
+  const industryOptions: { value: string; label: string }[] = [
+    { value: "cross_industry", label: "Cross-Industry" },
     { value: "healthcare", label: "Healthcare" },
     { value: "financial_services", label: "Financial Services" },
     { value: "manufacturing", label: "Manufacturing" },
@@ -6456,7 +6501,7 @@ function CreatePolicyPackDialog({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <label className="text-sm font-medium">Industry</label>
-              <Select value={packIndustry} onValueChange={(v) => setPackIndustry(v as IndustryId)}>
+              <Select value={packIndustry} onValueChange={(v) => setPackIndustry(v)}>
                 <SelectTrigger data-testid="select-pack-industry">
                   <SelectValue />
                 </SelectTrigger>
@@ -6534,6 +6579,15 @@ function CreatePolicyPackDialog({
         </div>
         <DialogFooter className="flex items-center gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)} data-testid="button-cancel-create-pack">Cancel</Button>
+          <Button
+            variant="outline"
+            onClick={() => aiEnhanceMutation.mutate()}
+            disabled={!name.trim() || !framework.trim() || aiEnhanceMutation.isPending}
+            data-testid="button-ai-enhance-pack"
+          >
+            {aiEnhanceMutation.isPending ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Sparkles className="h-4 w-4 mr-1.5" />}
+            AI Enhance
+          </Button>
           <Button onClick={handleSave} disabled={!canSave} data-testid="button-save-pack">
             <Layers className="h-4 w-4 mr-1.5" />
             Create Pack ({packPolicies.filter(p => p.name.trim()).length} policies)
