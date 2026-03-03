@@ -1577,6 +1577,7 @@ export default function OutcomeDetail() {
                       unit: fd.get("unit") as string,
                       baseline: parseFloat(fd.get("baseline") as string) || 0,
                       target: parseFloat(fd.get("target") as string) || 0,
+                      targetOperator: fd.get("targetOperator") as string || ">=",
                       weight: parseFloat(fd.get("weight") as string) || 1,
                       slaThreshold: parseFloat(fd.get("slaThreshold") as string) || null,
                       breachLevel: fd.get("breachLevel") as string,
@@ -1601,10 +1602,20 @@ export default function OutcomeDetail() {
                       </select>
                     </div>
                   </div>
-                  <div className="grid grid-cols-3 gap-4">
+                  <div className="grid grid-cols-4 gap-4">
                     <div className="flex flex-col gap-2">
                       <Label htmlFor="kpi-baseline">Baseline</Label>
                       <Input id="kpi-baseline" name="baseline" type="number" step="any" placeholder="0" data-testid="input-kpi-baseline" />
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <Label>Operator</Label>
+                      <select name="targetOperator" className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm" defaultValue=">=" data-testid="select-kpi-operator">
+                        <option value=">">&gt; Greater than</option>
+                        <option value=">=">&gt;= Greater or equal</option>
+                        <option value="<">&lt; Less than</option>
+                        <option value="<=">&lt;= Less or equal</option>
+                        <option value="=">=  Equal to</option>
+                      </select>
                     </div>
                     <div className="flex flex-col gap-2">
                       <Label htmlFor="kpi-target">Target</Label>
@@ -1652,7 +1663,8 @@ export default function OutcomeDetail() {
           <div className="space-y-4">
             {kpis?.map((kpi) => {
               const progress = kpi.target ? ((kpi.currentValue || 0) / kpi.target) * 100 : 0;
-              const isInverse = kpi.name.includes("Time") || kpi.name.includes("Latency");
+              const op = kpi.targetOperator || ">=";
+              const isInverse = op === "<" || op === "<=";
               const isBreaching = kpi.slaThreshold != null && kpi.currentValue != null && (
                 isInverse ? kpi.currentValue > kpi.slaThreshold : kpi.currentValue < kpi.slaThreshold
               );
@@ -1694,7 +1706,7 @@ export default function OutcomeDetail() {
                               </div>
                               <div className="flex flex-col gap-0.5">
                                 <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Target</span>
-                                <span className="text-sm font-medium" data-testid={`text-target-${kpi.id}`}>{kpi.target} {kpi.unit}</span>
+                                <span className="text-sm font-medium" data-testid={`text-target-${kpi.id}`}>{kpi.targetOperator || ">="} {kpi.target} {kpi.unit}</span>
                               </div>
                               <div className="flex flex-col gap-0.5">
                                 <span className="text-[10px] text-muted-foreground uppercase tracking-wider">SLA</span>
@@ -1710,7 +1722,7 @@ export default function OutcomeDetail() {
                                 const bm = getIndustryBenchmark(industry?.id || "", kpi.name, kpi.unit);
                                 if (!bm) return null;
                                 const currentVal = kpi.currentValue || 0;
-                                const isInverse = kpi.name.includes("Time") || kpi.name.includes("Latency") || kpi.name.includes("Downtime") || kpi.name.includes("Abandonment");
+                                const isInverse = (kpi.targetOperator === "<" || kpi.targetOperator === "<=");
                                 const isBetter = isInverse ? currentVal < bm.benchmark : currentVal > bm.benchmark;
                                 return (
                                   <div className="flex flex-col gap-0.5">

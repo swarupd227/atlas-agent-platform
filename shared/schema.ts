@@ -48,6 +48,7 @@ export const kpiDefinitions = pgTable("kpi_definitions", {
   unit: text("unit").notNull().default("count"),
   baseline: real("baseline").default(0),
   target: real("target").notNull(),
+  targetOperator: text("target_operator").default(">="),
   currentValue: real("current_value").default(0),
   weight: real("weight").default(1),
   slaThreshold: real("sla_threshold"),
