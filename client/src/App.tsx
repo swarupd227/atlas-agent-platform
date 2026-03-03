@@ -18,6 +18,8 @@ import { IndustryProvider } from "@/components/industry-provider";
 import { IndustryWorkspaceSelector } from "@/components/industry-workspace-selector";
 import { IndustrySelector } from "@/components/industry-selector";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { AuthProvider, useAuth } from "@/components/auth-provider";
+import LoginPage from "@/pages/login";
 import NotFound from "@/pages/not-found";
 import Landing from "@/pages/landing";
 import Overview from "@/pages/overview";
@@ -84,6 +86,49 @@ import AgentPlayground from "@/pages/agent-playground";
 import Pipelines from "@/pages/pipelines";
 import KnowledgeBasesPage from "@/pages/knowledge-bases";
 import KnowledgeBaseDetail from "@/pages/knowledge-base-detail";
+import { Shield, LogOut } from "lucide-react";
+
+function HeaderControls() {
+  const { securityMode, user, logout } = useAuth();
+
+  if (securityMode === "production") {
+    return (
+      <div className="flex items-center gap-2 flex-wrap">
+        <IndustrySelector />
+        <EnvironmentSelector />
+        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground bg-muted/50 px-2 py-1 rounded-md border" data-testid="badge-security-mode">
+          <Shield className="h-3 w-3" />
+          Production
+        </span>
+        <NotificationCenter />
+        <span className="text-xs text-muted-foreground" data-testid="text-current-user">{user?.username} ({user?.role})</span>
+        <button
+          onClick={logout}
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive px-2 py-1 rounded-md border hover:border-destructive/50 transition-colors"
+          data-testid="button-logout"
+        >
+          <LogOut className="h-3 w-3" />
+          Logout
+        </button>
+        <ThemeToggle />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      <IndustrySelector />
+      <EnvironmentSelector />
+      <RoleSwitcher />
+      <span className="inline-flex items-center gap-1 text-xs text-muted-foreground bg-muted/50 px-2 py-1 rounded-md border" data-testid="badge-security-mode">
+        <Shield className="h-3 w-3" />
+        Demo
+      </span>
+      <NotificationCenter />
+      <ThemeToggle />
+    </div>
+  );
+}
 
 function DashboardRouter() {
   return (
@@ -181,13 +226,8 @@ function DashboardLayout() {
                       <SidebarTrigger data-testid="button-sidebar-toggle" />
                       <GlobalSearch />
                     </div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <IndustrySelector />
-                      <EnvironmentSelector />
-                      <RoleSwitcher />
-                      <NotificationCenter />
-                      <ThemeToggle />
-                    </div>
+
+                    <HeaderControls />
                   </header>
                   <div className="flex-1 overflow-y-auto overflow-x-hidden">
                     <DashboardRouter />
@@ -203,15 +243,36 @@ function DashboardLayout() {
   );
 }
 
-function App() {
+function AuthGate() {
+  const { securityMode, isAuthenticated, isLoading } = useAuth();
   const [location] = useLocation();
   const isLanding = location === "/";
 
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-muted-foreground text-sm">Loading...</div>
+      </div>
+    );
+  }
+
+  if (isLanding) return <Landing />;
+
+  if (securityMode === "production" && !isAuthenticated) {
+    return <LoginPage />;
+  }
+
+  return <DashboardLayout />;
+}
+
+function App() {
   return (
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
-          {isLanding ? <Landing /> : <DashboardLayout />}
+          <AuthProvider>
+            <AuthGate />
+          </AuthProvider>
           <Toaster />
         </TooltipProvider>
       </QueryClientProvider>

@@ -1,4 +1,5 @@
 import type { Request, Response, NextFunction } from "express";
+import { getSecurityMode } from "./auth";
 
 type RoleId =
   | "admin"
@@ -113,6 +114,11 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
 const VALID_ROLES = new Set<string>(Object.keys(PERMISSION_MATRIX));
 
 export function getRequestRole(req: Request): RoleId {
+  if (getSecurityMode() === "production" && req.authUser) {
+    const role = req.authUser.role;
+    if (VALID_ROLES.has(role)) return role as RoleId;
+    return "agent_engineer";
+  }
   const role = req.headers["x-role"] as string;
   if (role && VALID_ROLES.has(role)) return role as RoleId;
   return "admin";

@@ -1,9 +1,11 @@
 import express, { type Request, Response, NextFunction } from "express";
+import cookieParser from "cookie-parser";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { seedDatabase } from "./seed";
 import { autoResumeRuntimes } from "./agent-runtime";
+import { authMiddleware, seedDefaultAdmin, getSecurityMode } from "./auth";
 
 process.on("uncaughtException", (err) => {
   console.error("[CRASH] Uncaught exception:", err.message, err.stack);
@@ -41,6 +43,8 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false }));
+app.use(cookieParser());
+app.use("/api", authMiddleware);
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -84,6 +88,10 @@ app.use((req, res, next) => {
   await seedDatabase().catch((err) => {
     console.error("Seed error:", err);
   });
+  await seedDefaultAdmin().catch((err) => {
+    console.error("Admin seed error:", err);
+  });
+  log(`Security mode: ${getSecurityMode()}`);
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

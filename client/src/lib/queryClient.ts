@@ -1,10 +1,24 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
+let cachedSecurityMode: "demo" | "production" | null = null;
+
+export function setSecurityMode(mode: "demo" | "production") {
+  cachedSecurityMode = mode;
+}
+
 function getRole(): string {
   if (typeof window !== "undefined") {
     return localStorage.getItem("almp-role") || "admin";
   }
   return "admin";
+}
+
+function getHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (cachedSecurityMode !== "production") {
+    headers["X-Role"] = getRole();
+  }
+  return headers;
 }
 
 async function throwIfResNotOk(res: Response) {
@@ -19,7 +33,7 @@ export async function apiRequest(
   url: string,
   data?: unknown | undefined,
 ): Promise<Response> {
-  const headers: Record<string, string> = { "X-Role": getRole() };
+  const headers: Record<string, string> = { ...getHeaders() };
   if (data) {
     headers["Content-Type"] = "application/json";
   }
@@ -42,7 +56,7 @@ export const getQueryFn: <T>(options: {
   async ({ queryKey }) => {
     const res = await fetch(queryKey.join("/") as string, {
       credentials: "include",
-      headers: { "X-Role": getRole() },
+      headers: getHeaders(),
     });
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {
