@@ -104,6 +104,7 @@ export const agents = pgTable("agents", {
   ciCdConfig: jsonb("ci_cd_config"),
   maturityScore: real("maturity_score").default(0),
   maturityFactors: jsonb("maturity_factors").notNull().default(sql`'{}'::jsonb`),
+  maxToolIterations: integer("max_tool_iterations").default(5),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -2156,5 +2157,20 @@ export const contextRecommendations = pgTable("context_recommendations", {
 export const insertContextRecommendationSchema = createInsertSchema(contextRecommendations).omit({ id: true, createdAt: true });
 export type InsertContextRecommendation = z.infer<typeof insertContextRecommendationSchema>;
 export type ContextRecommendation = typeof contextRecommendations.$inferSelect;
+
+export const agentTriggers = pgTable("agent_triggers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  agentId: varchar("agent_id").notNull(),
+  triggerType: text("trigger_type").notNull(),
+  config: jsonb("config"),
+  enabled: boolean("enabled").default(true),
+  lastFiredAt: timestamp("last_fired_at"),
+  fireCount: integer("fire_count").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAgentTriggerSchema = createInsertSchema(agentTriggers).omit({ id: true, createdAt: true });
+export type InsertAgentTrigger = z.infer<typeof insertAgentTriggerSchema>;
+export type AgentTrigger = typeof agentTriggers.$inferSelect;
 
 export * from "./models/chat";

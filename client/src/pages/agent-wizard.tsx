@@ -177,6 +177,7 @@ interface WizardState {
   department: string;
   modelProvider: string;
   modelName: string;
+  maxToolIterations: number;
   toolsConfig: ToolConfig[];
   permissionsConfig: {
     dataAccess: string[];
@@ -275,6 +276,7 @@ const defaultWizardState: WizardState = {
   department: "",
   modelProvider: "openai",
   modelName: "gpt-4.1",
+  maxToolIterations: 5,
   toolsConfig: [],
   permissionsConfig: { dataAccess: [], apiAccess: [], writeAccess: [] },
   memoryRagEnabled: false,
@@ -1220,6 +1222,7 @@ export default function AgentWizard() {
       outcomeId: wizardState.outcomeId || undefined,
       modelProvider: wizardState.modelProvider,
       modelName: wizardState.modelName,
+      maxToolIterations: wizardState.maxToolIterations,
       toolsConfig: wizardState.toolsConfig,
       permissionsConfig: wizardState.permissionsConfig,
       memoryRagConfig: wizardState.memoryRagEnabled ? wizardState.memoryRagConfig : null,
@@ -2744,6 +2747,33 @@ function Step2IndustryTools({
                 );
               })()}
             </div>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="max-tool-iterations">Max Tool Iterations</Label>
+              <div className="group relative">
+                <Info className="w-3.5 h-3.5 text-muted-foreground cursor-help" />
+                <div className="invisible group-hover:visible absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 w-64 p-2 rounded-md bg-popover text-popover-foreground text-xs border z-50">
+                  Maximum number of tool-calling rounds the agent can perform per request. Higher values allow more complex multi-step reasoning but increase latency and cost.
+                </div>
+              </div>
+            </div>
+            <Input
+              id="max-tool-iterations"
+              type="number"
+              min={1}
+              max={20}
+              value={state.maxToolIterations}
+              onChange={(e: any) => {
+                const val = parseInt(e.target.value, 10);
+                if (!isNaN(val)) {
+                  updateState({ maxToolIterations: Math.min(20, Math.max(1, val)) });
+                }
+              }}
+              data-testid="input-max-tool-iterations"
+            />
+            <span className="text-[11px] text-muted-foreground">Range: 1–20 (default: 5)</span>
           </div>
 
           {industryCtx && (

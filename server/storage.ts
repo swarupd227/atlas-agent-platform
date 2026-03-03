@@ -158,6 +158,7 @@ import {
   autonomyBoundaryProposals, type AutonomyBoundaryProposal, type InsertAutonomyBoundaryProposal,
   contextEconomics, type ContextEconomics, type InsertContextEconomics,
   contextRecommendations, type ContextRecommendation, type InsertContextRecommendation,
+  agentTriggers, type AgentTrigger, type InsertAgentTrigger,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -718,6 +719,13 @@ export interface IStorage {
   getContextRecommendations(agentId: string, status?: string): Promise<ContextRecommendation[]>;
   updateContextRecommendation(id: string, data: Partial<ContextRecommendation>): Promise<ContextRecommendation | undefined>;
   getContextRecommendation(id: string): Promise<ContextRecommendation | undefined>;
+
+  getAgentTriggers(agentId: string): Promise<AgentTrigger[]>;
+  getAgentTrigger(id: string): Promise<AgentTrigger | undefined>;
+  createAgentTrigger(trigger: InsertAgentTrigger): Promise<AgentTrigger>;
+  updateAgentTrigger(id: string, data: Partial<AgentTrigger>): Promise<AgentTrigger | undefined>;
+  deleteAgentTrigger(id: string): Promise<boolean>;
+  getAgentTriggersByType(triggerType: string): Promise<AgentTrigger[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2908,6 +2916,34 @@ export class DatabaseStorage implements IStorage {
   async getContextRecommendation(id: string): Promise<ContextRecommendation | undefined> {
     const [rec] = await db.select().from(contextRecommendations).where(eq(contextRecommendations.id, id));
     return rec;
+  }
+
+  async getAgentTriggers(agentId: string): Promise<AgentTrigger[]> {
+    return db.select().from(agentTriggers).where(eq(agentTriggers.agentId, agentId)).orderBy(desc(agentTriggers.createdAt));
+  }
+
+  async getAgentTrigger(id: string): Promise<AgentTrigger | undefined> {
+    const [trigger] = await db.select().from(agentTriggers).where(eq(agentTriggers.id, id));
+    return trigger;
+  }
+
+  async createAgentTrigger(trigger: InsertAgentTrigger): Promise<AgentTrigger> {
+    const [created] = await db.insert(agentTriggers).values(trigger).returning();
+    return created;
+  }
+
+  async updateAgentTrigger(id: string, data: Partial<AgentTrigger>): Promise<AgentTrigger | undefined> {
+    const [updated] = await db.update(agentTriggers).set(data).where(eq(agentTriggers.id, id)).returning();
+    return updated;
+  }
+
+  async deleteAgentTrigger(id: string): Promise<boolean> {
+    const result = await db.delete(agentTriggers).where(eq(agentTriggers.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async getAgentTriggersByType(triggerType: string): Promise<AgentTrigger[]> {
+    return db.select().from(agentTriggers).where(eq(agentTriggers.triggerType, triggerType));
   }
 }
 

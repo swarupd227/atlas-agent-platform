@@ -96,7 +96,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import type { Agent, RunTrace, EvalSuite, OutcomeContract, ImprovementRecommendation, AutonomousActionLog, AgentVersion, Deployment, Policy, Approval, PolicyException, ToolConnector, RemoteAgent, AgentTeam, Skill, McpServer, McpServerTool, McpServerResource, AgentMcpServer, OntologyConcept, Blueprint, KnowledgeBase, AgentKnowledgeBase } from "@shared/schema";
+import type { Agent, RunTrace, EvalSuite, OutcomeContract, ImprovementRecommendation, AutonomousActionLog, AgentVersion, Deployment, Policy, Approval, PolicyException, ToolConnector, RemoteAgent, AgentTeam, Skill, McpServer, McpServerTool, McpServerResource, AgentMcpServer, OntologyConcept, Blueprint, KnowledgeBase, AgentKnowledgeBase, AgentTrigger } from "@shared/schema";
 import { Wifi, WifiOff, Crown, Brain, Sparkles, ShieldAlert, Layers3, BookMarked, Binary, ScrollText, FileCheck, ChevronDown } from "lucide-react";
 import { useIndustry } from "@/components/industry-provider";
 
@@ -689,6 +689,15 @@ function AgentDetailInner() {
     },
     enabled: !!agentId,
     refetchInterval: 15000,
+  });
+  const { data: agentTriggers, refetch: refetchTriggers } = useQuery<AgentTrigger[]>({
+    queryKey: ["/api/agents", agentId, "triggers"],
+    queryFn: async () => {
+      if (!agentId) return [];
+      const res = await fetch(`/api/agents/${agentId}/triggers`);
+      return res.json();
+    },
+    enabled: !!agentId,
   });
   const { industry } = useIndustry();
 
@@ -1624,6 +1633,7 @@ function AgentDetailInner() {
             { value: "ontology", label: "Ontology" },
             { value: "api-gateway", label: "API Gateway" },
             { value: "channels", label: "Channels" },
+            { value: "event-triggers", label: "Event Triggers" },
             { value: "gitops", label: "GitOps" },
             ...(agent.agentType === "remote" ? [{ value: "a2a", label: "A2A Card" }] : []),
             ...(agent.agentType === "team" ? [{ value: "team", label: "Team Members" }] : []),
@@ -4930,6 +4940,10 @@ function AgentDetailInner() {
 
         <TabsContent value="knowledge-base" className="flex flex-col gap-4 mt-0" data-testid="tab-content-knowledge-base">
           <AgentKnowledgeBases agent={agent} />
+        </TabsContent>
+
+        <TabsContent value="event-triggers" className="flex flex-col gap-4 mt-0" data-testid="tab-content-event-triggers">
+          <AgentEventTriggers agent={agent} triggers={agentTriggers || []} onRefresh={refetchTriggers} allAgents={allAgents || []} allMcpServers={allMcpServers || []} />
         </TabsContent>
 
         <TabsContent value="gitops" className="flex flex-col gap-4 mt-0" data-testid="tab-content-gitops">
@@ -9139,6 +9153,384 @@ function AgentKnowledgeBases({ agent }: { agent: any }) {
               data-testid="button-confirm-create-kb"
             >
               {createKbMutation.isPending ? <><Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> Creating...</> : <><Plus className="w-3.5 h-3.5 mr-1" /> Create & Link</>}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function AgentEventTriggers({ agent, triggers, onRefresh, allAgents, allMcpServers }: {
+  agent: Agent;
+  triggers: AgentTrigger[];
+  onRefresh: () => void;
+  allAgents: Agent[];
+  allMcpServers: McpServer[];
+}) {
+  const { toast } = useToast();
+  const [createOpen, setCreateOpen] = useState(false);
+  const [triggerType, setTriggerType] = useState<string>("webhook");
+  const [webhookSecret, setWebhookSecret] = useState("");
+  const [cronExpression, setCronExpression] = useState("0 * * * *");
+  const [sourceAgentId, setSourceAgentId] = useState("");
+  const [mcpServerId, setMcpServerId] = useState("");
+  const [mcpResourceUri, setMcpResourceUri] = useState("");
+
+  const createMutation = useMutation({
+    mutationFn: async () => {
+      const config: Record<string, any> = {};
+      if (triggerType === "webhook") {
+        if (webhookSecret) config.secret = webhookSecret;
+      } else if (triggerType === "schedule") {
+        config.cron = cronExpression;
+      } else if (triggerType === "agent_completion") {
+        config.sourceAgentId = sourceAgentId;
+      } else if (triggerType === "mcp_resource_change") {
+        config.mcpServerId = mcpServerId;
+        config.resourceUri = mcpResourceUri;
+      }
+      return apiRequest("POST", `/api/agents/${agent.id}/triggers`, {
+        triggerType,
+        config,
+        enabled: true,
+      });
+    },
+    onSuccess: () => {
+      onRefresh();
+      setCreateOpen(false);
+      resetForm();
+      toast({ title: "Trigger created", description: `New ${triggerType} trigger has been created.` });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to create trigger", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const toggleMutation = useMutation({
+    mutationFn: async ({ triggerId, enabled }: { triggerId: string; enabled: boolean }) =>
+      apiRequest("PATCH", `/api/agents/${agent.id}/triggers/${triggerId}`, { enabled }),
+    onSuccess: () => {
+      onRefresh();
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to update trigger", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (triggerId: string) =>
+      apiRequest("DELETE", `/api/agents/${agent.id}/triggers/${triggerId}`),
+    onSuccess: () => {
+      onRefresh();
+      toast({ title: "Trigger deleted" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to delete trigger", description: err.message, variant: "destructive" });
+    },
+  });
+
+  function resetForm() {
+    setTriggerType("webhook");
+    setWebhookSecret("");
+    setCronExpression("0 * * * *");
+    setSourceAgentId("");
+    setMcpServerId("");
+    setMcpResourceUri("");
+  }
+
+  const triggerTypeLabels: Record<string, { label: string; icon: any; description: string }> = {
+    webhook: { label: "Webhook", icon: Globe, description: "Receive HTTP POST requests from external systems" },
+    schedule: { label: "Schedule", icon: Clock, description: "Run on a cron schedule" },
+    agent_completion: { label: "Agent Completion", icon: CheckCircle, description: "Fire when another agent completes a run" },
+    mcp_resource_change: { label: "MCP Resource Change", icon: Database, description: "Fire when an MCP server resource changes" },
+  };
+
+  function cronToHuman(cron: string): string {
+    const parts = cron.split(" ");
+    if (parts.length !== 5) return cron;
+    const [min, hour, dom, mon, dow] = parts;
+    if (min === "*" && hour === "*") return "Every minute";
+    if (min === "0" && hour === "*") return "Every hour";
+    if (min === "0" && hour === "0" && dom === "*") return "Every day at midnight";
+    if (min === "*/5") return "Every 5 minutes";
+    if (min === "*/15") return "Every 15 minutes";
+    if (min === "*/30") return "Every 30 minutes";
+    if (hour !== "*" && min !== "*" && dom === "*" && mon === "*" && dow === "*") return `Daily at ${hour.padStart(2, "0")}:${min.padStart(2, "0")}`;
+    return cron;
+  }
+
+  const webhookBaseUrl = typeof window !== "undefined" ? window.location.origin : "";
+
+  return (
+    <div className="flex flex-col gap-4" data-testid="event-triggers-section">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex flex-col gap-0.5">
+          <h3 className="text-base font-semibold flex items-center gap-2">
+            <Zap className="w-4 h-4 text-amber-500" />
+            Event Triggers
+          </h3>
+          <p className="text-xs text-muted-foreground">Configure automated triggers that start this agent in response to external events.</p>
+        </div>
+        <Button size="sm" onClick={() => setCreateOpen(true)} data-testid="button-create-trigger">
+          <Plus className="w-3.5 h-3.5 mr-1" /> Create Trigger
+        </Button>
+      </div>
+
+      {triggers.length === 0 ? (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-10 gap-3">
+            <Zap className="w-8 h-8 text-muted-foreground/40" />
+            <p className="text-sm text-muted-foreground">No event triggers configured</p>
+            <p className="text-xs text-muted-foreground max-w-md text-center">
+              Create triggers to automatically run this agent when webhooks arrive, on a schedule, when other agents complete, or when MCP resources change.
+            </p>
+            <Button size="sm" variant="outline" onClick={() => setCreateOpen(true)} data-testid="button-create-trigger-empty">
+              <Plus className="w-3.5 h-3.5 mr-1" /> Create First Trigger
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {triggers.map((trigger) => {
+            const meta = triggerTypeLabels[trigger.triggerType] || { label: trigger.triggerType, icon: Zap, description: "" };
+            const TriggerIcon = meta.icon;
+            const config = (trigger.config || {}) as Record<string, any>;
+            const webhookUrl = trigger.triggerType === "webhook" ? `${webhookBaseUrl}/api/webhooks/${trigger.id}` : null;
+
+            return (
+              <Card key={trigger.id} data-testid={`card-trigger-${trigger.id}`}>
+                <CardContent className="flex flex-col gap-3 pt-4">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <TriggerIcon className="w-4 h-4 text-muted-foreground shrink-0" />
+                      <span className="text-sm font-semibold" data-testid={`text-trigger-type-${trigger.id}`}>{meta.label}</span>
+                      <Badge variant={trigger.enabled ? "default" : "secondary"} className="text-[10px]" data-testid={`badge-trigger-status-${trigger.id}`}>
+                        {trigger.enabled ? "Enabled" : "Disabled"}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Switch
+                        checked={!!trigger.enabled}
+                        onCheckedChange={(checked) => toggleMutation.mutate({ triggerId: trigger.id, enabled: checked })}
+                        data-testid={`switch-trigger-${trigger.id}`}
+                      />
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => deleteMutation.mutate(trigger.id)}
+                        disabled={deleteMutation.isPending}
+                        data-testid={`button-delete-trigger-${trigger.id}`}
+                      >
+                        <XCircle className="w-4 h-4 text-destructive" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                    {trigger.fireCount != null && (
+                      <span data-testid={`text-fire-count-${trigger.id}`}>
+                        <Activity className="w-3 h-3 inline mr-0.5" />
+                        Fired {trigger.fireCount} time{trigger.fireCount !== 1 ? "s" : ""}
+                      </span>
+                    )}
+                    {trigger.lastFiredAt && (
+                      <span data-testid={`text-last-fired-${trigger.id}`}>
+                        <Clock className="w-3 h-3 inline mr-0.5" />
+                        Last: {new Date(trigger.lastFiredAt).toLocaleString()}
+                      </span>
+                    )}
+                    {trigger.createdAt && (
+                      <span>
+                        Created: {new Date(trigger.createdAt).toLocaleDateString()}
+                      </span>
+                    )}
+                  </div>
+
+                  {trigger.triggerType === "webhook" && webhookUrl && (
+                    <div className="flex flex-col gap-1">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Webhook URL</span>
+                      <div className="flex items-center gap-1">
+                        <code className="text-[11px] bg-muted/40 px-2 py-1 rounded-md font-mono flex-1 truncate" data-testid={`text-webhook-url-${trigger.id}`}>
+                          {webhookUrl}
+                        </code>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => {
+                            navigator.clipboard.writeText(webhookUrl);
+                            toast({ title: "Copied", description: "Webhook URL copied to clipboard." });
+                          }}
+                          data-testid={`button-copy-webhook-${trigger.id}`}
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                      {config.secret && (
+                        <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+                          <Lock className="w-3 h-3" /> Secret configured
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  {trigger.triggerType === "schedule" && config.cron && (
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Schedule</span>
+                      <div className="flex items-center gap-2">
+                        <code className="text-[11px] bg-muted/40 px-2 py-1 rounded-md font-mono">{config.cron}</code>
+                        <span className="text-xs text-muted-foreground">({cronToHuman(config.cron)})</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {trigger.triggerType === "agent_completion" && config.sourceAgentId && (
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Source Agent</span>
+                      <span className="text-xs">
+                        {allAgents.find(a => a.id === config.sourceAgentId)?.name || config.sourceAgentId}
+                      </span>
+                    </div>
+                  )}
+
+                  {trigger.triggerType === "mcp_resource_change" && (
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">MCP Resource</span>
+                      <span className="text-xs">
+                        {allMcpServers.find(s => s.id === config.mcpServerId)?.name || config.mcpServerId}
+                        {config.resourceUri && <span className="ml-1 font-mono text-muted-foreground">({config.resourceUri})</span>}
+                      </span>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      <Dialog open={createOpen} onOpenChange={(open) => { setCreateOpen(open); if (!open) resetForm(); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Zap className="w-4 h-4 text-amber-500" />
+              Create Event Trigger
+            </DialogTitle>
+            <DialogDescription>
+              Configure an automated trigger that will start this agent when a specific event occurs.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-4 py-2">
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs">Trigger Type</Label>
+              <Select value={triggerType} onValueChange={setTriggerType}>
+                <SelectTrigger data-testid="select-trigger-type">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(triggerTypeLabels).map(([key, val]) => (
+                    <SelectItem key={key} value={key}>{val.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[10px] text-muted-foreground">{triggerTypeLabels[triggerType]?.description}</p>
+            </div>
+
+            {triggerType === "webhook" && (
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-xs">Webhook Secret (optional)</Label>
+                <Input
+                  value={webhookSecret}
+                  onChange={(e) => setWebhookSecret(e.target.value)}
+                  placeholder="Optional shared secret for payload verification"
+                  type="password"
+                  className="text-sm font-mono"
+                  data-testid="input-webhook-secret"
+                />
+                <p className="text-[10px] text-muted-foreground">A unique webhook URL will be generated after creation.</p>
+              </div>
+            )}
+
+            {triggerType === "schedule" && (
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-xs">Cron Expression</Label>
+                <Input
+                  value={cronExpression}
+                  onChange={(e) => setCronExpression(e.target.value)}
+                  placeholder="0 * * * *"
+                  className="text-sm font-mono"
+                  data-testid="input-cron-expression"
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  Preview: {cronToHuman(cronExpression)}
+                </p>
+              </div>
+            )}
+
+            {triggerType === "agent_completion" && (
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-xs">Source Agent</Label>
+                <Select value={sourceAgentId} onValueChange={setSourceAgentId}>
+                  <SelectTrigger data-testid="select-source-agent">
+                    <SelectValue placeholder="Select agent..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {allAgents.filter(a => a.id !== agent.id).map(a => (
+                      <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-[10px] text-muted-foreground">This trigger will fire when the selected agent completes a run.</p>
+              </div>
+            )}
+
+            {triggerType === "mcp_resource_change" && (
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs">MCP Server</Label>
+                  <Select value={mcpServerId} onValueChange={setMcpServerId}>
+                    <SelectTrigger data-testid="select-mcp-server-trigger">
+                      <SelectValue placeholder="Select MCP server..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {allMcpServers.map(s => (
+                        <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs">Resource URI</Label>
+                  <Input
+                    value={mcpResourceUri}
+                    onChange={(e) => setMcpResourceUri(e.target.value)}
+                    placeholder="e.g., salesforce://leads/new"
+                    className="text-sm font-mono"
+                    data-testid="input-mcp-resource-uri"
+                  />
+                  <p className="text-[10px] text-muted-foreground">The resource URI to watch for changes.</p>
+                </div>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setCreateOpen(false); resetForm(); }} data-testid="button-cancel-trigger">
+              Cancel
+            </Button>
+            <Button
+              onClick={() => createMutation.mutate()}
+              disabled={
+                createMutation.isPending ||
+                (triggerType === "agent_completion" && !sourceAgentId) ||
+                (triggerType === "mcp_resource_change" && (!mcpServerId || !mcpResourceUri))
+              }
+              data-testid="button-save-trigger"
+            >
+              {createMutation.isPending ? (
+                <><Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> Creating...</>
+              ) : (
+                <><Zap className="w-3.5 h-3.5 mr-1" /> Create Trigger</>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

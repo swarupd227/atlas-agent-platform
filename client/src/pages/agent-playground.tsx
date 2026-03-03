@@ -41,6 +41,10 @@ import {
   BookOpen,
   Columns2,
   Sparkles,
+  Search,
+  Brain,
+  Activity,
+  ListChecks,
 } from "lucide-react";
 import type { Agent } from "@shared/schema";
 
@@ -118,6 +122,32 @@ interface ParsedSegment {
   citations?: Citation[];
 }
 
+type ProgressEventType = "discovery" | "planning" | "tool_call_start" | "tool_call_result" | "llm_thinking" | "iteration_complete" | "final_analysis" | "compliance_check" | "error";
+
+interface ProgressEvent {
+  type: ProgressEventType;
+  timestamp: string;
+  [key: string]: unknown;
+}
+
+interface ExecutionTraceData {
+  events: ProgressEvent[];
+  startedAt?: string;
+  completedAt?: string;
+}
+
+const PROGRESS_LABELS: Record<ProgressEventType, { label: string; icon: typeof Search }> = {
+  discovery: { label: "Discovering tools", icon: Search },
+  planning: { label: "Planning execution", icon: Brain },
+  tool_call_start: { label: "Calling tool", icon: Wrench },
+  tool_call_result: { label: "Tool result", icon: Activity },
+  llm_thinking: { label: "Analyzing", icon: Brain },
+  iteration_complete: { label: "Iteration complete", icon: CheckCircle },
+  final_analysis: { label: "Final analysis", icon: Sparkles },
+  compliance_check: { label: "Compliance check", icon: Shield },
+  error: { label: "Error", icon: AlertTriangle },
+};
+
 function parseStructuredBlocks(text: string): ParsedSegment[] {
   const segments: ParsedSegment[] = [];
   const blockRegex = /```(risk_assessment|decision|approval_required)\s*\n([\s\S]*?)```/g;
@@ -169,6 +199,20 @@ export default function AgentPlayground() {
   const [genericStreamingContent, setGenericStreamingContent] = useState("");
   const [genericMessages, setGenericMessages] = useState<Array<{ role: string; content: string }>>([]);
   const [annotatedCitations, setAnnotatedCitations] = useState<CitationAnnotation[]>([]);
+  const [progressEvents, setProgressEvents] = useState<ProgressEvent[]>([]);
+  const [currentProgressLabel, setCurrentProgressLabel] = useState<string>("");
+  const [executionTraces, setExecutionTraces] = useState<Map<number, ExecutionTraceData>>(new Map());
+  const [nextTraceId, setNextTraceId] = useState(0);
+  const prevSessionRef = useRef<number | null>(null);
+  if (prevSessionRef.current !== activeSessionId) {
+    prevSessionRef.current = activeSessionId;
+    if (executionTraces.size > 0) {
+      setExecutionTraces(new Map());
+      setNextTraceId(0);
+      setProgressEvents([]);
+      setCurrentProgressLabel("");
+    }
+  }
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const genericMessagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -383,11 +427,14 @@ export default function AgentPlayground() {
     const policies = Array.isArray(agent?.policyBindings) ? agent.policyBindings : [];
     const hasComplianceContext = compliance.length > 0 || policies.length > 0;
 
+    const collectedProgressEvents: ProgressEvent[] = [];
+
     const streamResponse = async (
       url: string,
       body: object,
-      onChunk: (accumulated: string) => void
-    ): Promise<string> => {
+      onChunk: (accumulated: string) => void,
+      onProgressEvent?: (event: ProgressEvent) => void,
+    ): Promise<{ content: string; traceEvents: ProgressEvent[] }> => {
       const response = await fetch(url, {
         method: "POST",
         headers: {
@@ -406,21 +453,65 @@ export default function AgentPlayground() {
 
       const decoder = new TextDecoder();
       let accumulated = "";
+      const traceEvents: ProgressEvent[] = [];
+      let lineBuffer = "";
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
         const text = decoder.decode(value, { stream: true });
-        const lines = text.split("\n");
+        lineBuffer += text;
+        const lines = lineBuffer.split("\n");
+        lineBuffer = lines.pop() || "";
         for (const line of lines) {
           if (line.startsWith("data: ")) {
             try {
               const payload = JSON.parse(line.slice(6));
-              if (payload.content) {
+
+              if (payload.type && payload.type !== "complete" && !payload.done) {
+                const progressEvent: ProgressEvent = {
+                  type: payload.type as ProgressEventType,
+                  timestamp: payload.timestamp || new Date().toISOString(),
+                  ...payload,
+                };
+                traceEvents.push(progressEvent);
+                if (onProgressEvent) {
+                  onProgressEvent(progressEvent);
+                }
+
+                const config = PROGRESS_LABELS[payload.type as ProgressEventType];
+                if (config) {
+                  let label = config.label;
+                  if (payload.type === "tool_call_start" && payload.tool) {
+                    label = `Calling ${payload.tool}...`;
+                  } else if (payload.type === "tool_call_result" && payload.tool) {
+                    label = payload.success ? `${payload.tool} completed` : `${payload.tool} failed`;
+                  } else if (payload.type === "discovery" && payload.toolCount) {
+                    label = `Found ${payload.toolCount} tools`;
+                  } else if (payload.type === "planning") {
+                    label = "Planning execution...";
+                  } else if (payload.type === "llm_thinking") {
+                    label = `Analyzing (iteration ${payload.iteration || 1})...`;
+                  } else if (payload.type === "final_analysis") {
+                    label = "Generating response...";
+                  } else if (payload.type === "compliance_check") {
+                    label = payload.allPassed ? "Compliance checks passed" : "Compliance issues detected";
+                  } else if (payload.type === "error") {
+                    label = `Error: ${payload.message || "Unknown"}`;
+                  }
+                  setCurrentProgressLabel(label);
+                }
+              }
+
+              if (payload.type === "complete" && payload.content) {
+                accumulated = payload.content;
+                onChunk(accumulated);
+              } else if (payload.content && !payload.type) {
                 accumulated += payload.content;
                 onChunk(accumulated);
               }
+
               if (payload.error) {
                 toast({ title: "Error", description: payload.error, variant: "destructive" });
               }
@@ -429,17 +520,21 @@ export default function AgentPlayground() {
         }
       }
 
-      return accumulated;
+      return { content: accumulated, traceEvents };
     };
 
     try {
       const contextualizedPromise = streamResponse(
         `/api/agents/${agentId}/playground/chat`,
         { content: msgToSend, sessionId: activeSessionId },
-        (acc) => setStreamingContent(acc)
+        (acc) => setStreamingContent(acc),
+        (event) => {
+          collectedProgressEvents.push(event);
+          setProgressEvents([...collectedProgressEvents]);
+        },
       );
 
-      let genericPromise: Promise<string> | null = null;
+      let genericPromise: Promise<{ content: string; traceEvents: ProgressEvent[] }> | null = null;
       if (compareMode) {
         genericPromise = streamResponse(
           `/api/agents/${agentId}/playground/chat-generic`,
@@ -449,16 +544,31 @@ export default function AgentPlayground() {
       }
 
       const results = await Promise.all(
-        [contextualizedPromise, genericPromise].filter(Boolean) as Promise<string>[]
+        [contextualizedPromise, genericPromise].filter(Boolean) as Promise<{ content: string; traceEvents: ProgressEvent[] }>[]
       );
-      const contextualizedResult = results[0] || "";
+      const contextualizedResult = results[0]?.content || "";
 
       if (compareMode && results[1] !== undefined) {
         setGenericMessages((prev) => [
           ...prev,
           { role: "user", content: msgToSend },
-          { role: "assistant", content: results[1] },
+          { role: "assistant", content: results[1].content },
         ]);
+      }
+
+      const traceEvents = results[0]?.traceEvents || [];
+      if (traceEvents.length > 0) {
+        const traceId = nextTraceId;
+        setNextTraceId((prev) => prev + 1);
+        setExecutionTraces((prev) => {
+          const newMap = new Map(prev);
+          newMap.set(traceId, {
+            events: traceEvents,
+            startedAt: traceEvents[0]?.timestamp,
+            completedAt: traceEvents[traceEvents.length - 1]?.timestamp,
+          });
+          return newMap;
+        });
       }
 
       queryClient.invalidateQueries({
@@ -493,8 +603,10 @@ export default function AgentPlayground() {
       setStreamingContent("");
       setGenericStreamingContent("");
       setPendingUserMsg(null);
+      setProgressEvents([]);
+      setCurrentProgressLabel("");
     }
-  }, [inputValue, activeSessionId, isStreaming, agentId, toast, compareMode, hasWebSearch, agent]);
+  }, [inputValue, activeSessionId, isStreaming, agentId, toast, compareMode, hasWebSearch, agent, nextTraceId]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -553,7 +665,8 @@ export default function AgentPlayground() {
     msgList: Array<{ id?: number; role: string; content: string }>,
     streaming: boolean,
     streamContent: string,
-    endRef: React.RefObject<HTMLDivElement>
+    endRef: React.RefObject<HTMLDivElement>,
+    showProgress?: boolean,
   ) => (
     <div className="space-y-4 max-w-3xl mx-auto">
       {msgList.length === 0 && !streaming && (
@@ -586,15 +699,23 @@ export default function AgentPlayground() {
       )}
 
       {streaming && !streamContent && (
-        <div className="flex gap-3">
-          <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-            <Bot className="h-4 w-4 text-primary" />
+        showProgress ? (
+          <StreamingProgressIndicator
+            agentName={agent.name}
+            progressEvents={progressEvents}
+            currentLabel={currentProgressLabel}
+          />
+        ) : (
+          <div className="flex gap-3">
+            <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+              <Bot className="h-4 w-4 text-primary" />
+            </div>
+            <div className="flex items-center gap-2 text-muted-foreground text-sm">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Thinking...
+            </div>
           </div>
-          <div className="flex items-center gap-2 text-muted-foreground text-sm">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            Thinking...
-          </div>
-        </div>
+        )
       )}
 
       <div ref={endRef} />
@@ -747,7 +868,7 @@ export default function AgentPlayground() {
                       ))}
                     </div>
                   ) : (
-                    renderChatMessages(messages, isStreaming, streamingContent, messagesEndRef)
+                    renderChatMessages(messages, isStreaming, streamingContent, messagesEndRef, true)
                   )}
                 </ScrollArea>
               </div>
@@ -759,7 +880,7 @@ export default function AgentPlayground() {
                   <Badge variant="secondary">No Context</Badge>
                 </div>
                 <ScrollArea className="flex-1 px-4 py-3">
-                  {renderChatMessages(genericMessages, isStreaming, genericStreamingContent, genericMessagesEndRef)}
+                  {renderChatMessages(genericMessages, isStreaming, genericStreamingContent, genericMessagesEndRef, false)}
                 </ScrollArea>
               </div>
             </div>
@@ -807,19 +928,25 @@ export default function AgentPlayground() {
                     </div>
                   )}
 
-                  {messages.map((msg) => (
-                    <MessageBubble
-                      key={msg.id}
-                      role={msg.role}
-                      content={msg.content}
-                      agentName={agent.name}
-                      onApproval={handleApprovalAction}
-                      isStreaming={false}
-                      canInteract={!isStreaming}
-                      annotations={annotatedCitations}
-                      transformText={applyOntologyLabels}
-                    />
-                  ))}
+                  {messages.map((msg, idx) => {
+                    const assistantIdx = messages.filter((m, i) => m.role === "assistant" && i <= idx).length - 1;
+                    const trace = msg.role === "assistant" ? executionTraces.get(assistantIdx) : undefined;
+                    return (
+                      <div key={msg.id}>
+                        <MessageBubble
+                          role={msg.role}
+                          content={msg.content}
+                          agentName={agent.name}
+                          onApproval={handleApprovalAction}
+                          isStreaming={false}
+                          canInteract={!isStreaming}
+                          annotations={annotatedCitations}
+                          transformText={applyOntologyLabels}
+                        />
+                        {trace && <ExecutionTracePanel trace={trace} />}
+                      </div>
+                    );
+                  })}
 
                   {pendingUserMsg && (
                     <MessageBubble role="user" content={pendingUserMsg} agentName={agent.name} onApproval={handleApprovalAction} canInteract={false} annotations={[]} transformText={applyOntologyLabels} />
@@ -830,15 +957,11 @@ export default function AgentPlayground() {
                   )}
 
                   {isStreaming && !streamingContent && (
-                    <div className="flex gap-3">
-                      <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-                        <Bot className="h-4 w-4 text-primary" />
-                      </div>
-                      <div className="flex items-center gap-2 text-muted-foreground text-sm">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        {agent.name} is thinking...
-                      </div>
-                    </div>
+                    <StreamingProgressIndicator
+                      agentName={agent.name}
+                      progressEvents={progressEvents}
+                      currentLabel={currentProgressLabel}
+                    />
                   )}
 
                   <div ref={messagesEndRef} />
@@ -1012,6 +1135,211 @@ export default function AgentPlayground() {
             <ConfigSection title="Version" icon={<Clock className="h-3.5 w-3.5" />}>
               <p className="text-xs text-muted-foreground">v{agent.currentVersion || "1.0.0"}</p>
             </ConfigSection>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StreamingProgressIndicator({
+  agentName,
+  progressEvents,
+  currentLabel,
+}: {
+  agentName: string;
+  progressEvents: ProgressEvent[];
+  currentLabel: string;
+}) {
+  return (
+    <div className="flex gap-3" data-testid="streaming-progress">
+      <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+        <Bot className="h-4 w-4 text-primary" />
+      </div>
+      <div className="flex-1 space-y-2">
+        <div className="flex items-center gap-2 text-sm">
+          <Loader2 className="h-4 w-4 animate-spin text-primary" />
+          <span className="text-foreground font-medium">{currentLabel || `${agentName} is thinking...`}</span>
+        </div>
+        {progressEvents.length > 0 && (
+          <div className="space-y-1 pl-1">
+            {progressEvents.map((event, i) => {
+              const config = PROGRESS_LABELS[event.type];
+              if (!config) return null;
+              const Icon = config.icon;
+              const isLatest = i === progressEvents.length - 1;
+              let detail = "";
+              if (event.type === "discovery") {
+                detail = `Found ${event.toolCount || 0} tools`;
+                if (Array.isArray(event.tools)) {
+                  detail += `: ${(event.tools as Array<{ tool: string }>).map(t => t.tool).join(", ")}`;
+                }
+              } else if (event.type === "tool_call_start") {
+                detail = `${event.tool}${event.server ? ` (${event.server})` : ""}`;
+              } else if (event.type === "tool_call_result") {
+                detail = `${event.tool}: ${event.success ? "success" : "failed"}`;
+              } else if (event.type === "planning") {
+                detail = event.toolCallsPlanned ? `${event.toolCallsPlanned} tool calls planned` : "Planning...";
+              } else if (event.type === "llm_thinking") {
+                detail = `Iteration ${event.iteration || 1}`;
+              } else if (event.type === "compliance_check") {
+                detail = event.allPassed ? "All checks passed" : `${(event.failedChecks as string[] || []).length} issues`;
+              }
+              return (
+                <div
+                  key={i}
+                  className={`flex items-center gap-2 text-xs ${isLatest ? "text-foreground" : "text-muted-foreground"}`}
+                  data-testid={`progress-step-${i}`}
+                >
+                  {event.type === "tool_call_result" ? (
+                    event.success ? (
+                      <CheckCircle className="h-3 w-3 text-green-500 shrink-0" />
+                    ) : (
+                      <XCircle className="h-3 w-3 text-red-500 shrink-0" />
+                    )
+                  ) : event.type === "error" ? (
+                    <AlertTriangle className="h-3 w-3 text-red-500 shrink-0" />
+                  ) : isLatest ? (
+                    <Loader2 className="h-3 w-3 animate-spin shrink-0" />
+                  ) : (
+                    <Icon className="h-3 w-3 shrink-0" />
+                  )}
+                  <span>{detail || config.label}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ExecutionTracePanel({ trace }: { trace: ExecutionTraceData }) {
+  const [expanded, setExpanded] = useState(false);
+
+  const toolCalls = trace.events.filter(e => e.type === "tool_call_start" || e.type === "tool_call_result");
+  const discoveryEvent = trace.events.find(e => e.type === "discovery");
+  const complianceEvent = trace.events.find(e => e.type === "compliance_check");
+  const errors = trace.events.filter(e => e.type === "error");
+  const iterations = trace.events.filter(e => e.type === "iteration_complete");
+
+  let durationMs = 0;
+  if (trace.startedAt && trace.completedAt) {
+    durationMs = new Date(trace.completedAt).getTime() - new Date(trace.startedAt).getTime();
+  }
+
+  const toolCallStarts = trace.events.filter(e => e.type === "tool_call_start");
+  const toolCallResults = trace.events.filter(e => e.type === "tool_call_result");
+  const successfulCalls = toolCallResults.filter(e => e.success);
+  const failedCalls = toolCallResults.filter(e => !e.success);
+
+  return (
+    <div className="ml-11 mt-1" data-testid="execution-trace">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+        data-testid="button-toggle-trace"
+      >
+        <ListChecks className="h-3 w-3" />
+        <span>Execution Trace</span>
+        <span className="text-muted-foreground">
+          ({toolCallStarts.length} tool call{toolCallStarts.length !== 1 ? "s" : ""}
+          {durationMs > 0 ? `, ${(durationMs / 1000).toFixed(1)}s` : ""})
+        </span>
+        {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+      </button>
+
+      {expanded && (
+        <div className="mt-2 space-y-1.5 border-l-2 border-muted pl-3" data-testid="trace-details">
+          {discoveryEvent && (
+            <div className="flex items-center gap-2 text-xs" data-testid="trace-discovery">
+              <Search className="h-3 w-3 text-primary shrink-0" />
+              <span className="text-foreground">
+                Discovered {String(discoveryEvent.toolCount || 0)} tools
+              </span>
+              {Array.isArray(discoveryEvent.tools) && (
+                <span className="text-muted-foreground truncate">
+                  ({(discoveryEvent.tools as Array<{ tool: string }>).map(t => t.tool).join(", ")})
+                </span>
+              )}
+            </div>
+          )}
+
+          {toolCallStarts.map((event, i) => {
+            const result = toolCallResults.find(
+              (r) => r.tool === event.tool && r.iteration === event.iteration
+            ) || toolCallResults[i];
+            return (
+              <div key={i} className="flex items-start gap-2 text-xs" data-testid={`trace-tool-${i}`}>
+                {result ? (
+                  result.success ? (
+                    <CheckCircle className="h-3 w-3 text-green-500 shrink-0 mt-0.5" />
+                  ) : (
+                    <XCircle className="h-3 w-3 text-red-500 shrink-0 mt-0.5" />
+                  )
+                ) : (
+                  <Wrench className="h-3 w-3 text-muted-foreground shrink-0 mt-0.5" />
+                )}
+                <div className="min-w-0">
+                  <span className="font-medium text-foreground">{String(event.tool)}</span>
+                  {event.server ? (
+                    <span className="text-muted-foreground ml-1">({String(event.server)})</span>
+                  ) : null}
+                  {result && !result.success && result.error ? (
+                    <span className="text-red-500 dark:text-red-400 ml-1">{String(result.error)}</span>
+                  ) : null}
+                </div>
+              </div>
+            );
+          })}
+
+          {iterations.length > 1 && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground" data-testid="trace-iterations">
+              <Brain className="h-3 w-3 shrink-0" />
+              <span>{iterations.length} iteration{iterations.length !== 1 ? "s" : ""} completed</span>
+            </div>
+          )}
+
+          {complianceEvent && (
+            <div className="flex items-center gap-2 text-xs" data-testid="trace-compliance">
+              {complianceEvent.allPassed ? (
+                <CheckCircle className="h-3 w-3 text-green-500 shrink-0" />
+              ) : (
+                <AlertTriangle className="h-3 w-3 text-yellow-500 shrink-0" />
+              )}
+              <span className={complianceEvent.allPassed ? "text-foreground" : "text-yellow-600 dark:text-yellow-400"}>
+                {complianceEvent.allPassed
+                  ? `${complianceEvent.checksCount || 0} compliance checks passed`
+                  : `Compliance issues: ${(complianceEvent.failedChecks as string[] || []).join(", ")}`}
+              </span>
+            </div>
+          )}
+
+          {errors.length > 0 && errors.map((err, i) => (
+            <div key={`err-${i}`} className="flex items-center gap-2 text-xs text-red-500 dark:text-red-400" data-testid={`trace-error-${i}`}>
+              <AlertTriangle className="h-3 w-3 shrink-0" />
+              <span>{String(err.message || "Unknown error")}</span>
+            </div>
+          ))}
+
+          <div className="flex items-center gap-3 text-[10px] text-muted-foreground pt-1">
+            {durationMs > 0 && (
+              <span className="flex items-center gap-1">
+                <Clock className="h-2.5 w-2.5" />
+                {(durationMs / 1000).toFixed(1)}s
+              </span>
+            )}
+            <span className="flex items-center gap-1">
+              <Wrench className="h-2.5 w-2.5" />
+              {successfulCalls.length}/{toolCallStarts.length} successful
+            </span>
+            {failedCalls.length > 0 && (
+              <span className="flex items-center gap-1 text-red-500 dark:text-red-400">
+                <XCircle className="h-2.5 w-2.5" />
+                {failedCalls.length} failed
+              </span>
+            )}
           </div>
         </div>
       )}

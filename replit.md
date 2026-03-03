@@ -75,6 +75,12 @@ The Nous Agent Orchestrator employs a modern web stack. The frontend is built wi
 
 - **LLM Provider Abstraction Layer**: Multi-provider LLM support (`server/llm-provider.ts`) with uniform `complete()`, `completeWithTools()`, and `embed()` interfaces. Supports OpenAI (fully implemented), Anthropic (fully implemented), with extension points for Google AI, Azure OpenAI, and self-hosted (vLLM/Ollama). Per-agent provider selection via `modelProvider`/`modelName` fields. Provider management UI at `/model-providers` with health checks, model catalog, and usage stats. Agent Wizard dynamically shows configured providers with cost-per-token info.
 
+- **SSE Streaming for Agent Runtime**: Real-time progress streaming via `RuntimeProgressEvent` callbacks in `executePromptWithMcp`. Events: `discovery`, `planning`, `tool_call_start`, `tool_call_result`, `llm_thinking`, `iteration_complete`, `final_analysis`, `compliance_check`, `error`. Playground chat route streams events via SSE. Frontend shows live progress indicators and collapsible execution trace panels per message.
+
+- **Configurable Tool Iterations**: Per-agent `maxToolIterations` field (integer, default 5, range 1-20) replaces the hardcoded `MAX_TOOL_ITERATIONS = 5`. Configurable in Agent Wizard Step 2. Runtime reads from agent config with fallback to default.
+
+- **Event-Driven Trigger System**: `agentTriggers` table with 4 trigger types: `webhook` (external HTTP endpoint with secret validation), `schedule` (cron expressions), `agent_completion` (cascading from another agent's run), `mcp_resource_change`. CRUD API at `/api/agents/:agentId/triggers`. Webhook receiver at `/api/webhooks/:triggerId`. Internal event dispatcher fires `agent_completion` triggers when agent runs complete. UI in agent detail "Event Triggers" tab with create dialog, enable/disable toggle, webhook URL copy, fire count tracking.
+
 ## External Dependencies
 - **OpenAI**: Primary LLM provider for agent runtime, evaluations, AI enhancements, and embeddings. Accessed through LLM Provider Abstraction Layer.
 - **Anthropic**: Secondary LLM provider (requires `ANTHROPIC_API_KEY` env var). Supports Claude models with tool calling through the abstraction layer.

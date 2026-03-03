@@ -99,11 +99,18 @@ export interface RuntimeAgent {
   };
   modelProvider?: string;
   modelName?: string;
+  maxToolIterations?: number;
 }
 
 export interface ContextSectionMetric {
   category: string;
   tokenCount: number;
+}
+
+export interface RuntimeProgressEvent {
+  type: "discovery" | "planning" | "tool_call_start" | "tool_call_result" | "llm_thinking" | "iteration_complete" | "final_analysis" | "compliance_check" | "error";
+  timestamp: string;
+  data: Record<string, any>;
 }
 
 export interface BuildRuntimeContextResult {
@@ -700,11 +707,18 @@ export async function executePromptWithMcp(
   prompt: string,
   industry?: string,
   agentSystemPrompt?: string,
-  options?: { conversational?: boolean; ontologyLabels?: string[]; runtimeConfig?: Record<string, any>; modelProvider?: string; modelName?: string },
+  options?: { conversational?: boolean; ontologyLabels?: string[]; runtimeConfig?: Record<string, any>; modelProvider?: string; modelName?: string; maxToolIterations?: number },
+  onProgress?: (event: RuntimeProgressEvent) => void,
 ): Promise<{ steps: any[]; success: boolean; summary: any; promptInputs?: any; provenanceSnapshot?: any; provenanceHash?: string; retrievedDocs?: any; conversationalResponse?: string; contextSectionMetrics?: ContextSectionMetric[] }> {
   const startTime = Date.now();
   const steps: any[] = [];
   const promptSectionMetrics: ContextSectionMetric[] = [];
+
+  const emitProgress = (type: RuntimeProgressEvent["type"], data: Record<string, any>) => {
+    if (onProgress) {
+      onProgress({ type, timestamp: new Date().toISOString(), data });
+    }
+  };
 
   steps.push({
     id: "step_1",
@@ -723,6 +737,7 @@ export async function executePromptWithMcp(
     steps[0].status = "failed";
     steps[0].error = errorMsg;
     steps[0].completedAt = new Date().toISOString();
+    emitProgress("error", { message: errorMsg, stage: "discovery" });
     return {
       steps,
       success: false,
@@ -736,6 +751,11 @@ export async function executePromptWithMcp(
     toolCount: availableTools.length,
     tools: availableTools.map(t => ({ server: t.serverName, tool: t.toolName, description: t.toolDescription })),
   };
+
+  emitProgress("discovery", {
+    toolCount: availableTools.length,
+    tools: availableTools.map(t => ({ server: t.serverName, tool: t.toolName })),
+  });
 
   steps.push({
     id: "step_2",
@@ -884,6 +904,14 @@ After receiving tool results, provide a structured analysis with key findings, s
       llmModel: modelName,
     };
 
+    emitProgress("planning", {
+      toolCallsPlanned: currentToolCalls.length,
+      reasoning: currentContent || "Tool calls planned",
+      toolsSelected: currentToolCalls.map(tc => tc.name),
+      llmProvider: providerName,
+      llmModel: modelName,
+    });
+
     if (currentToolCalls.length === 0 && currentContent) {
       steps.push({
         id: "step_3",
@@ -899,7 +927,7 @@ After receiving tool results, provide a structured analysis with key findings, s
       }
     }
 
-    const MAX_TOOL_ITERATIONS = 5;
+    const MAX_TOOL_ITERATIONS = options?.maxToolIterations ?? 5;
     let iterationsUsed = 0;
     let conversationMessages: LLMMessage[] = [
       { role: "system", content: systemMessage },
@@ -937,12 +965,20 @@ After receiving tool results, provide a structured analysis with key findings, s
           iteration: iterationsUsed,
         });
 
+        emitProgress("tool_call_start", {
+          tool: matchedTool?.toolName || funcName,
+          server: matchedTool?.serverName || "unknown",
+          args,
+          iteration: iterationsUsed,
+        });
+
         if (!matchedTool) {
           const lastStep = steps[steps.length - 1];
           lastStep.status = "failed";
           lastStep.error = `Could not resolve tool: ${funcName}`;
           lastStep.completedAt = new Date().toISOString();
           toolCallResults.push({ toolName: funcName, serverName: "unknown", args, result: null, error: "Tool not found" });
+          emitProgress("tool_call_result", { tool: funcName, server: "unknown", success: false, error: "Tool not found", iteration: iterationsUsed });
           continue;
         }
 
@@ -953,12 +989,14 @@ After receiving tool results, provide a structured analysis with key findings, s
           lastStep.completedAt = new Date().toISOString();
           lastStep.output = { source: "mcp_integration", mcpServer: matchedTool.serverName, mcpTool: matchedTool.toolName, data: result };
           toolCallResults.push({ toolName: matchedTool.toolName, serverName: matchedTool.serverName, args, result });
+          emitProgress("tool_call_result", { tool: matchedTool.toolName, server: matchedTool.serverName, success: true, iteration: iterationsUsed });
         } catch (err: any) {
           const lastStep = steps[steps.length - 1];
           lastStep.status = "failed";
           lastStep.error = err.message;
           lastStep.completedAt = new Date().toISOString();
           toolCallResults.push({ toolName: matchedTool.toolName, serverName: matchedTool.serverName, args, result: null, error: err.message });
+          emitProgress("tool_call_result", { tool: matchedTool.toolName, server: matchedTool.serverName, success: false, error: err.message, iteration: iterationsUsed });
         }
       }
 
@@ -1013,7 +1051,19 @@ After receiving tool results, provide a structured analysis with key findings, s
                 iteration: iterationsUsed + 1,
               },
             });
+
+            emitProgress("llm_thinking", {
+              reasoning: currentContent || "Additional tool calls needed",
+              toolCallsPlanned: currentToolCalls.length,
+              iteration: iterationsUsed + 1,
+            });
           }
+
+          emitProgress("iteration_complete", {
+            iteration: iterationsUsed,
+            toolCallsInIteration: currentToolCalls.length,
+            hasMoreIterations: currentToolCalls.length > 0,
+          });
         } catch {
           break;
         }
@@ -1101,6 +1151,13 @@ After receiving tool results, provide a structured analysis with key findings, s
         lastStep.status = "completed";
         lastStep.completedAt = new Date().toISOString();
         lastStep.output = analysis;
+
+        emitProgress("final_analysis", {
+          summary: analysis.summary || rawContent,
+          severity: analysis.severity,
+          iterationsUsed,
+          isConversational,
+        });
         
         if (isConversational) {
           (steps as any).__conversationalResponse = rawContent;
@@ -1110,12 +1167,14 @@ After receiving tool results, provide a structured analysis with key findings, s
         lastStep.status = "failed";
         lastStep.error = err.message;
         lastStep.completedAt = new Date().toISOString();
+        emitProgress("error", { message: err.message, stage: "final_analysis" });
       }
     }
   } catch (err: any) {
     steps[steps.length - 1].status = "failed";
     steps[steps.length - 1].error = err.message;
     steps[steps.length - 1].completedAt = new Date().toISOString();
+    emitProgress("error", { message: err.message, stage: "execution" });
     return {
       steps,
       success: false,
@@ -1179,6 +1238,12 @@ After receiving tool results, provide a structured analysis with key findings, s
     auditId: `AUDIT-${Date.now()}`,
     ...(ontologyComplianceResult ? { ontologyCompliance: ontologyComplianceResult } : {}),
   };
+
+  emitProgress("compliance_check", {
+    allPassed: complianceChecks.every(c => c.status === "pass"),
+    checksCount: complianceChecks.length,
+    failedChecks: complianceChecks.filter(c => c.status !== "pass").map(c => c.rule),
+  });
 
   const failedSteps = steps.filter(s => s.status === "failed");
   const latencyMs = Date.now() - startTime;
@@ -1914,7 +1979,7 @@ async function executeAgentCycle(agent: RuntimeAgent) {
           agent.prompt,
           agent.industry,
           enrichedContext || agent.agentSystemPrompt,
-          { ontologyLabels: (agent.ontologyTags || []).map(t => t.conceptLabel), runtimeConfig: agent.runtimeConfig || {}, modelProvider: agent.modelProvider, modelName: agent.modelName },
+          { ontologyLabels: (agent.ontologyTags || []).map(t => t.conceptLabel), runtimeConfig: agent.runtimeConfig || {}, modelProvider: agent.modelProvider, modelName: agent.modelName, maxToolIterations: agent.maxToolIterations },
         );
 
     await storage.updateAgentRuntimeRun(runtimeRun.id, {
@@ -2354,6 +2419,7 @@ export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?
     blueprintRequirements,
     modelProvider: (agent as any).modelProvider || "openai",
     modelName: (agent as any).modelName || "gpt-4.1",
+    maxToolIterations: agent.maxToolIterations ?? 5,
   };
 
   if (intervalMinutes > 0) {
