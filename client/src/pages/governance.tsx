@@ -4078,7 +4078,7 @@ export default function Governance() {
             </PermissionGate>
           </div>
 
-          {industry && industry.id !== "custom" && (
+          {industry && industry.id !== "custom" && allPolicyPacks.some((p) => p.industry === industry.id) && (
             <div className="space-y-3">
               <div className="flex items-center gap-2">
                 <industry.icon className="h-4 w-4" style={{ color: industry.color }} />
