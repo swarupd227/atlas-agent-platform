@@ -860,6 +860,7 @@ export default function OutcomeDetail() {
       weight: kpi.weight ?? 1,
       slaThreshold: kpi.slaThreshold ?? "",
       breachLevel: kpi.breachLevel ?? "warning",
+      targetOperator: kpi.targetOperator ?? ">=",
     });
   };
 
@@ -872,6 +873,7 @@ export default function OutcomeDetail() {
         weight: parseFloat(editKpiData.weight) || 1,
         slaThreshold: editKpiData.slaThreshold !== "" ? parseFloat(editKpiData.slaThreshold) : null,
         breachLevel: editKpiData.breachLevel,
+        targetOperator: editKpiData.targetOperator,
       },
     });
   };
@@ -1765,10 +1767,20 @@ export default function OutcomeDetail() {
                       </div>
 
                       {editingKpiId === kpi.id && (
-                        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                        <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
                           <div className="flex flex-col gap-1">
                             <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Baseline</span>
                             <Input type="number" step="any" value={editKpiData.baseline} onChange={(e) => setEditKpiData({ ...editKpiData, baseline: e.target.value })} data-testid={`input-edit-baseline-${kpi.id}`} />
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Operator</span>
+                            <select value={editKpiData.targetOperator} onChange={(e) => setEditKpiData({ ...editKpiData, targetOperator: e.target.value })} className="flex h-9 w-full rounded-md border border-input bg-background px-2 py-1 text-sm" data-testid={`select-edit-operator-${kpi.id}`}>
+                              <option value=">">&gt; Greater than</option>
+                              <option value=">=">&ge; Greater or equal</option>
+                              <option value="<">&lt; Less than</option>
+                              <option value="<=">&le; Less or equal</option>
+                              <option value="=">=  Equal to</option>
+                            </select>
                           </div>
                           <div className="flex flex-col gap-1">
                             <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Target</span>
