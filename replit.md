@@ -81,6 +81,8 @@ The Nous Agent Orchestrator employs a modern web stack. The frontend is built wi
 
 - **Event-Driven Trigger System**: `agentTriggers` table with 4 trigger types: `webhook` (external HTTP endpoint with secret validation), `schedule` (cron expressions), `agent_completion` (cascading from another agent's run), `mcp_resource_change`. CRUD API at `/api/agents/:agentId/triggers`. Webhook receiver at `/api/webhooks/:triggerId`. Internal event dispatcher fires `agent_completion` triggers when agent runs complete. UI in agent detail "Event Triggers" tab with create dialog, enable/disable toggle, webhook URL copy, fire count tracking.
 
+- **Developer Portal & API Reference**: Full developer experience layer at `/developer` with four sections: Quick Start guide, Authentication docs, interactive API Reference (fetched from OpenAPI spec), and SDKs & Libraries. OpenAPI 3.0 spec served at `GET /api/openapi.json` with all major endpoints grouped by 25 tag categories. API Reference features: searchable/filterable endpoint list, collapsible groups, per-endpoint tabbed code examples (cURL/Python/TypeScript), in-browser "Try It" API explorer with live request execution, and "Copy as cURL". SDK tab provides downloadable Python (`nous_client.py`) and TypeScript (`nous-client.ts`) client files wrapping core operations (agents, runtime, deployments, governance, knowledge bases, triggers, API keys) with auth, error handling, and usage examples.
+
 ## External Dependencies
 - **OpenAI**: Primary LLM provider for agent runtime, evaluations, AI enhancements, and embeddings. Accessed through LLM Provider Abstraction Layer.
 - **Anthropic**: Secondary LLM provider (requires `ANTHROPIC_API_KEY` env var). Supports Claude models with tool calling through the abstraction layer.

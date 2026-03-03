@@ -976,6 +976,17 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
 
+  app.get("/api/openapi.json", (_req, res) => {
+    const protocol = _req.headers["x-forwarded-proto"] || _req.protocol;
+    const host = _req.headers["x-forwarded-host"] || _req.headers.host;
+    const baseUrl = `${protocol}://${host}`;
+    import("./openapi").then(({ generateOpenAPISpec }) => {
+      res.json(generateOpenAPISpec(baseUrl));
+    }).catch((err) => {
+      res.status(500).json({ message: err.message });
+    });
+  });
+
   app.get("/api/auth/mode", (_req, res) => {
     res.json({ mode: getSecurityMode() });
   });

@@ -35,6 +35,7 @@ import {
   Workflow,
   MoreHorizontal,
   Cpu,
+  Code2,
 } from "lucide-react";
 import {
   Sidebar,
@@ -132,6 +133,7 @@ export function AppSidebar() {
       icon: Settings,
       items: [
         { title: "Model Providers", url: "/model-providers", icon: Cpu },
+        { title: "Developer Portal", url: "/developer", icon: Code2 },
         { title: "Billing", url: "/billing", icon: CreditCard },
         { title: "Ontology", url: "/ontology", icon: BookOpen },
         { title: "Admin", url: "/admin", icon: ShieldCheck },

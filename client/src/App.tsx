@@ -87,6 +87,7 @@ import Pipelines from "@/pages/pipelines";
 import KnowledgeBasesPage from "@/pages/knowledge-bases";
 import KnowledgeBaseDetail from "@/pages/knowledge-base-detail";
 import ModelProviders from "@/pages/model-providers";
+import DeveloperPortal from "@/pages/developer-portal";
 import { Shield, LogOut } from "lucide-react";
 
 function HeaderControls() {
@@ -201,6 +202,7 @@ function DashboardRouter() {
       <Route path="/healing-operations" component={HealingOperations} />
       <Route path="/runbook-automation" component={RunbookAutomation} />
       <Route path="/model-providers" component={ModelProviders} />
+      <Route path="/developer" component={DeveloperPortal} />
       <Route path="/admin" component={Admin} />
       <Route component={NotFound} />
     </Switch>
