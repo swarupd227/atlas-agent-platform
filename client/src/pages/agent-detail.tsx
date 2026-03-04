@@ -1753,6 +1753,9 @@ function AgentDetailInner() {
                     const rc = (agent.runtimeConfig as Record<string, any>) || {};
                     setRtPrompt(rc?.prompt || "");
                     setRtInterval(rc?.scheduleIntervalMinutes || 0);
+                    const go = rc?.promotionGateOverrides || {};
+                    setGateMinEvalPassRate(typeof go.minEvalPassRate === "number" ? go.minEvalPassRate : 80);
+                    setGateMaxLatencyMs(typeof go.maxLatencyMs === "number" ? go.maxLatencyMs : 2000);
                     setRtEditing(true);
                   }} data-testid="button-edit-runtime-config">
                     <Settings className="w-3.5 h-3.5 mr-1" /> Edit
@@ -1772,24 +1775,36 @@ function AgentDetailInner() {
                 (() => {
                   const rc = (agent.runtimeConfig as Record<string, any>) || {};
                   const hasConfig = !!rc?.prompt;
-                  return hasConfig ? (
-                    <div className="flex flex-col gap-2 p-2.5 rounded-md bg-muted/30" data-testid="text-rt-prompt">
-                      <span className="text-xs text-muted-foreground">What this agent does when it runs</span>
-                      <FormattedTaskPrompt prompt={rc.prompt} />
-                      <div className="flex items-center gap-1.5 mt-1">
-                        <Clock className="w-3 h-3 text-muted-foreground" />
-                        <span className="text-[10px] text-muted-foreground" data-testid="text-rt-interval">
-                          {(rc.scheduleIntervalMinutes || 0) === 0
-                            ? "On-demand (triggered manually)"
-                            : `Runs every ${rc.scheduleIntervalMinutes} minute${rc.scheduleIntervalMinutes !== 1 ? "s" : ""}`}
-                        </span>
+                  const go = rc?.promotionGateOverrides || {};
+                  const evalTh = typeof go.minEvalPassRate === "number" ? go.minEvalPassRate : 80;
+                  const latTh = typeof go.maxLatencyMs === "number" ? go.maxLatencyMs : 2000;
+                  return (
+                    <>
+                      {hasConfig ? (
+                        <div className="flex flex-col gap-2 p-2.5 rounded-md bg-muted/30" data-testid="text-rt-prompt">
+                          <span className="text-xs text-muted-foreground">What this agent does when it runs</span>
+                          <FormattedTaskPrompt prompt={rc.prompt} />
+                          <div className="flex items-center gap-1.5 mt-1">
+                            <Clock className="w-3 h-3 text-muted-foreground" />
+                            <span className="text-[10px] text-muted-foreground" data-testid="text-rt-interval">
+                              {(rc.scheduleIntervalMinutes || 0) === 0
+                                ? "On-demand (triggered manually)"
+                                : `Runs every ${rc.scheduleIntervalMinutes} minute${rc.scheduleIntervalMinutes !== 1 ? "s" : ""}`}
+                            </span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col items-center gap-2 py-4 text-center">
+                          <Zap className="w-5 h-5 text-muted-foreground" />
+                          <p className="text-xs text-muted-foreground">No task defined yet. Click Edit to describe what this agent should do when it runs.</p>
+                        </div>
+                      )}
+                      <div className="flex items-center gap-4 p-2 rounded-md bg-muted/20 text-[10px] text-muted-foreground" data-testid="display-gate-thresholds">
+                        <span>Promotion Gates:</span>
+                        <span>Eval Pass Rate {evalTh === 0 ? <Badge variant="outline" className="text-[9px] ml-0.5">Disabled</Badge> : <span className="font-medium text-foreground">{"\u2265"}{evalTh}%</span>}</span>
+                        <span>Max Latency <span className="font-medium text-foreground">{"\u2264"}{latTh.toLocaleString()}ms</span></span>
                       </div>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col items-center gap-2 py-4 text-center">
-                      <Zap className="w-5 h-5 text-muted-foreground" />
-                      <p className="text-xs text-muted-foreground">No task defined yet. Click Edit to describe what this agent should do when it runs.</p>
-                    </div>
+                    </>
                   );
                 })()
               ) : (
