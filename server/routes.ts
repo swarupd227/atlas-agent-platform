@@ -27630,6 +27630,14 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         if (ag) richPrompt = buildAgentSystemPrompt(ag);
       }
       const result = await startAgentRuntime(req.params.id, richPrompt);
+      if (dep && (dep.status === "pending" || dep.status === "inactive")) {
+        if (result.started || result.message?.includes("already running")) {
+          await storage.updateDeployment(req.params.id, {
+            status: "deployed",
+            ...(dep.deployedAt ? {} : { deployedAt: new Date() }),
+          });
+        }
+      }
       res.json(result);
     } catch (e: any) {
       res.status(500).json({ error: e.message });

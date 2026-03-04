@@ -1192,6 +1192,24 @@ export default function ReleaseDetail() {
     return sr.length;
   })();
 
+  const activateDeploymentMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/deployments/${id}/start-runtime`, {});
+      return res.json();
+    },
+    onSuccess: (data: { started: boolean; message: string }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deployments", id] });
+      if (data.started) {
+        toast({ title: "Deployment activated", description: "The agent runtime has been started and the deployment is now live." });
+      } else {
+        toast({ title: "Activation issue", description: data.message, variant: "destructive" });
+      }
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to activate deployment", description: err.message, variant: "destructive" });
+    },
+  });
+
   const collectEvidenceMutation = useMutation({
     mutationFn: async (data: { itemId: string; sourceLink?: string; summary?: string }) => {
       const res = await apiRequest("POST", `/api/deployments/${id}/collect-evidence`, data);
@@ -1277,6 +1295,17 @@ export default function ReleaseDetail() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {(deployment.status === "pending" || deployment.status === "inactive") && (
+            <Button
+              onClick={() => activateDeploymentMutation.mutate()}
+              disabled={activateDeploymentMutation.isPending}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white"
+              data-testid="button-activate-deployment"
+            >
+              <Rocket className="w-4 h-4 mr-1.5" />
+              {activateDeploymentMutation.isPending ? "Activating..." : deployment.status === "inactive" ? "Reactivate Deployment" : "Activate Deployment"}
+            </Button>
+          )}
           {isShadow && (
             <Button
               variant="outline"

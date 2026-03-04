@@ -59,6 +59,7 @@ The Nous Agent Orchestrator employs a modern web stack with a React, Vite, Tailw
 - **LLM Provider Abstraction Layer**: Multi-provider LLM support (OpenAI, Anthropic, with extension points for others) for uniform `complete()`, `completeWithTools()`, and `embed()` interfaces, including per-agent provider selection and management UI.
 - **SSE Streaming for Agent Runtime**: Real-time progress streaming of `RuntimeProgressEvent` callbacks for agent execution via Server-Sent Events (SSE).
 - **Configurable Tool Iterations**: Per-agent `maxToolIterations` setting (default 5, range 1-20) configurable in Agent Wizard.
+- **Deployment Activation Flow**: Pending/inactive deployments can be activated directly from the release detail page. The `start-runtime` endpoint transitions deployment status from `pending`/`inactive` to `deployed` (reconciling stale status even if runtime is already active). UI shows "Activate Deployment" for pending and "Reactivate Deployment" for inactive deployments.
 
 ## External Dependencies
 - **OpenAI**: Primary LLM provider for agent runtime, evaluations, AI enhancements, and embeddings.
