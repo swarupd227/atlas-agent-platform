@@ -1493,7 +1493,7 @@ export default function AgentWizard() {
 
       <div className="min-h-[400px]">
         {currentStep === 0 && (
-          <Step1IndustryDefine state={wizardState} updateState={updateState} outcomes={outcomes} outcomeLockedFromUrl={outcomeLockedFromUrl} domainGlossary={domainGlossary} ontologyConceptCount={ontologyConcepts?.length || 0} />
+          <Step1IndustryDefine state={wizardState} updateState={updateState} outcomes={outcomes} outcomeLockedFromUrl={outcomeLockedFromUrl} domainGlossary={domainGlossary} ontologyConceptCount={ontologyConcepts?.length || 0} isDynamicPreset={isDynamicPreset} dynamicAdjustments={dynamicAdjustments} setDynamicAdjustments={setDynamicAdjustments} setIsDynamicPreset={setIsDynamicPreset} dynamicPresetLoading={dynamicPresetLoading} fetchAndApplyDynamicPresets={fetchAndApplyDynamicPresets} applyDynamicPreset={applyDynamicPreset} adjustmentsExpanded={adjustmentsExpanded} setAdjustmentsExpanded={setAdjustmentsExpanded} />
         )}
         {currentStep === 1 && (
           <Step0GoldenTemplate
@@ -1965,6 +1965,15 @@ function Step1IndustryDefine({
   outcomeLockedFromUrl,
   domainGlossary,
   ontologyConceptCount,
+  isDynamicPreset,
+  dynamicAdjustments,
+  setDynamicAdjustments,
+  setIsDynamicPreset,
+  dynamicPresetLoading,
+  fetchAndApplyDynamicPresets,
+  applyDynamicPreset,
+  adjustmentsExpanded,
+  setAdjustmentsExpanded,
 }: {
   state: WizardState;
   updateState: (u: Partial<WizardState>) => void;
@@ -1972,7 +1981,17 @@ function Step1IndustryDefine({
   domainGlossary?: string;
   ontologyConceptCount?: number;
   outcomeLockedFromUrl?: boolean;
+  isDynamicPreset: boolean;
+  dynamicAdjustments: DynamicPresetAdjustment[];
+  setDynamicAdjustments: (v: DynamicPresetAdjustment[]) => void;
+  setIsDynamicPreset: (v: boolean) => void;
+  dynamicPresetLoading: boolean;
+  fetchAndApplyDynamicPresets: (indId: string, ontTags: OntologyTag[], outcomeIdVal?: string) => Promise<DynamicPresetResponse | null>;
+  applyDynamicPreset: (data: DynamicPresetResponse, overrideIndustryId?: string) => void;
+  adjustmentsExpanded: boolean;
+  setAdjustmentsExpanded: (v: boolean) => void;
 }) {
+  const { toast } = useToast();
   const { industry } = useIndustry();
   const linkedOutcome = outcomeLockedFromUrl && outcomes ? outcomes.find((o) => o.id === state.outcomeId) : null;
   const { data: llmProviders } = useQuery<Array<{ name: string; displayName: string; configured: boolean; models: Array<{ id: string; name: string; costPer1kInput: number; costPer1kOutput: number; contextWindow: number }> }>>({
