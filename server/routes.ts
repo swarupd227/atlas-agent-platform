@@ -27519,12 +27519,14 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
               stageResult.findings.push("Cannot run staging test — no runtime prompt configured");
             } else {
               const mcpLinks = await storage.getAgentMcpServers(deployment.agentId);
-              if (mcpLinks.length === 0) {
+              const agentKbs = await storage.getAgentKnowledgeBases(deployment.agentId);
+              if (mcpLinks.length === 0 && agentKbs.length === 0) {
                 stageResult.passed = false;
-                stageResult.findings.push("Cannot run staging test — no MCP servers linked");
+                stageResult.findings.push("Cannot run staging test — no MCP servers or Knowledge Bases linked");
               } else {
-                stageResult.findings.push("Staging test: Agent configuration validated — prompt and MCP servers present");
-                stageResult.details = { prompt: rtCfg.prompt.substring(0, 100), mcpServers: mcpLinks.length, validConfig: true };
+                const capabilities = [mcpLinks.length > 0 ? `${mcpLinks.length} MCP server(s)` : null, agentKbs.length > 0 ? `${agentKbs.length} Knowledge Base(s)` : null].filter(Boolean).join(" and ");
+                stageResult.findings.push(`Staging test: Agent configuration validated — prompt and ${capabilities} present`);
+                stageResult.details = { prompt: rtCfg.prompt.substring(0, 100), mcpServers: mcpLinks.length, knowledgeBases: agentKbs.length, validConfig: true };
               }
             }
           } else {
@@ -27821,9 +27823,6 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         };
         result = await executeTeamPipeline(teamRuntimeAgent);
       } else {
-        if (mcpServerIds.length === 0) {
-          return res.status(400).json({ error: "No MCP Servers linked to this agent. Link an MCP Server first to enable test runs." });
-        }
         const agentOntologyTags = Array.isArray(agent.ontologyTags) ? (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) : [];
         result = await executePromptWithMcp(
           req.params.id,

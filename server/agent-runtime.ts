@@ -730,10 +730,13 @@ export async function executePromptWithMcp(
 
   const availableTools = await gatherAvailableTools(mcpServerIds);
 
-  if (availableTools.length === 0) {
+  const linkedKbs = await storage.getAgentKnowledgeBases(agentId);
+  const hasKnowledgeBases = linkedKbs.length > 0;
+
+  if (availableTools.length === 0 && !hasKnowledgeBases) {
     const errorMsg = mcpServerIds.length === 0
-      ? "No MCP Server integrations linked to this agent. Configure an MCP Server in the MCP Server Directory and link it to the agent."
-      : "No tools found in linked MCP Servers. Ensure MCP Servers have registered tools with proper descriptions and input schemas.";
+      ? "No MCP Server integrations or Knowledge Bases linked to this agent. Link an MCP Server or Knowledge Base to enable test runs."
+      : "No tools found in linked MCP Servers and no Knowledge Bases linked. Ensure MCP Servers have registered tools or link a Knowledge Base.";
     steps[0].status = "failed";
     steps[0].error = errorMsg;
     steps[0].completedAt = new Date().toISOString();
@@ -750,11 +753,14 @@ export async function executePromptWithMcp(
   steps[0].output = {
     toolCount: availableTools.length,
     tools: availableTools.map(t => ({ server: t.serverName, tool: t.toolName, description: t.toolDescription })),
+    knowledgeBases: linkedKbs.length,
+    mode: availableTools.length > 0 ? "tools+kb" : "kb-only",
   };
 
   emitProgress("discovery", {
     toolCount: availableTools.length,
     tools: availableTools.map(t => ({ server: t.serverName, tool: t.toolName })),
+    knowledgeBases: linkedKbs.length,
   });
 
   steps.push({
@@ -773,7 +779,6 @@ export async function executePromptWithMcp(
   let kbContext = "";
   const kbRetrievals: Array<{ kbId: string; kbName: string; embeddingModel: string; chunks: Array<{ chunkId: string; sourceDocId: string; similarityScore: number; contentHash: string }> }> = [];
   try {
-    const linkedKbs = await storage.getAgentKnowledgeBases(agentId);
     if (linkedKbs.length > 0) {
       const ontologyLabels = options?.ontologyLabels || [];
       const augmentedQuery = ontologyLabels.length > 0
@@ -848,17 +853,30 @@ export async function executePromptWithMcp(
     }
   } catch {}
 
-  const toolSchemaText = JSON.stringify(availableTools.map(t => ({ server: t.serverName, tool: t.toolName, description: t.toolDescription, inputSchema: t.toolInputSchema })));
-  promptSectionMetrics.push({ category: "tool_schemas", tokenCount: estimateTokenCount(toolSchemaText) });
+  const toolSchemaText = availableTools.length > 0
+    ? JSON.stringify(availableTools.map(t => ({ server: t.serverName, tool: t.toolName, description: t.toolDescription, inputSchema: t.toolInputSchema })))
+    : "[]";
+  if (availableTools.length > 0) {
+    promptSectionMetrics.push({ category: "tool_schemas", tokenCount: estimateTokenCount(toolSchemaText) });
+  }
 
-  const baseInstructions = `You have access to MCP (Model Context Protocol) server tools for executing real API calls.
+  const kbOnlyMode = availableTools.length === 0 && hasKnowledgeBases;
+
+  const baseInstructions = kbOnlyMode
+    ? `You are a knowledge-based assistant. Use the knowledge base context provided to answer the user's question accurately and helpfully.
+If the knowledge base context contains relevant information, use it to provide a detailed, well-structured response.
+If the context does not contain enough information to fully answer the question, say so clearly and provide what you can.
+Provide a structured analysis with key findings and recommended actions where applicable.`
+    : `You have access to MCP (Model Context Protocol) server tools for executing real API calls.
 Your job is to fulfill the user's prompt by calling the appropriate tools and then analyzing the results.
 Think step-by-step about what data you need and which tools to call.
 Always call at least one tool if relevant tools are available.
 After receiving tool results, provide a structured analysis with key findings, severity/risk assessment if applicable, and recommended actions.`;
 
+  const instructionHeader = kbOnlyMode ? "## KNOWLEDGE-BASED ASSISTANT INSTRUCTIONS" : "## MCP TOOL EXECUTION INSTRUCTIONS";
+
   const systemMessage = agentSystemPrompt
-    ? `${agentSystemPrompt}\n\n## MCP TOOL EXECUTION INSTRUCTIONS\n${baseInstructions}${kbContext}`
+    ? `${agentSystemPrompt}\n\n${instructionHeader}\n${baseInstructions}${kbContext}`
     : `You are an autonomous agent executing a task.\nIndustry context: ${industry || "general"}.\n\n${baseInstructions}${kbContext}`;
 
   let toolCallResults: Array<{
@@ -2365,8 +2383,9 @@ export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?
   const mcpLinks = await storage.getAgentMcpServers(deployment.agentId);
   const mcpServerIds = mcpLinks.map(l => l.serverId);
 
-  if (mcpServerIds.length === 0) {
-    return { started: false, message: "Cannot start runtime: No MCP Server integrations linked to this agent. Configure an MCP Server in the MCP Server Directory and link it to the agent before deploying." };
+  const agentKbs = await storage.getAgentKnowledgeBases(deployment.agentId);
+  if (mcpServerIds.length === 0 && agentKbs.length === 0) {
+    return { started: false, message: "Cannot start runtime: No MCP Server integrations or Knowledge Bases linked to this agent. Link an MCP Server or Knowledge Base before deploying." };
   }
 
   const rtConfig = (agent.runtimeConfig as Record<string, any>) || {};
