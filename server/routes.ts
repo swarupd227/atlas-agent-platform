@@ -2894,6 +2894,23 @@ export async function registerRoutes(
 
   app.get("/api/agents/:id/versions", async (req, res) => {
     const versions = await storage.getAgentVersions(req.params.id);
+    const deployments = await storage.getDeployments();
+    const agentDeps = deployments.filter(d => d.agentId === req.params.id && d.version);
+    const existingSemvers = new Set(versions.map(v => v.semver));
+    const missingVersions: string[] = [];
+    for (const dep of agentDeps) {
+      if (dep.version && !existingSemvers.has(dep.version)) {
+        existingSemvers.add(dep.version);
+        missingVersions.push(dep.version);
+      }
+    }
+    for (const sv of missingVersions) {
+      await storage.ensureAgentVersion(req.params.id, sv, "active");
+    }
+    if (missingVersions.length > 0) {
+      const refreshed = await storage.getAgentVersions(req.params.id);
+      return res.json(refreshed);
+    }
     res.json(versions);
   });
 
@@ -3880,6 +3897,10 @@ export async function registerRoutes(
 
       const deployment = await storage.createDeployment(data);
 
+      if (deployment.version && deployment.agentId) {
+        await storage.ensureAgentVersion(deployment.agentId, deployment.version, "active");
+      }
+
       const riskTier = agent?.riskTier || "LOW";
       const strategy = deployment.rolloutStrategy || "canary";
 
@@ -4350,6 +4371,10 @@ export async function registerRoutes(
         canaryConfig: source.canaryConfig as any,
         rollbackConfig: source.rollbackConfig as any,
       });
+
+      if (promoted.version && promoted.agentId) {
+        await storage.ensureAgentVersion(promoted.agentId, promoted.version, "active");
+      }
 
       if (nextEnv === "prod") {
         const agent = await storage.getAgent(source.agentId);
@@ -27791,6 +27816,8 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
           requiredApprovals: 0,
           currentApprovals: 0,
         });
+        const depVersion = deployment.version || agent.currentVersion || "1.0.0";
+        await storage.ensureAgentVersion(req.params.id, depVersion, "active");
       }
 
       if (deployment.status !== "deployed") {

@@ -272,6 +272,7 @@ export interface IStorage {
   createAutonomousActionLog(log: InsertAutonomousActionLog): Promise<AutonomousActionLog>;
 
   getAgentVersions(agentId: string): Promise<AgentVersion[]>;
+  ensureAgentVersion(agentId: string, semver: string, status?: string): Promise<AgentVersion>;
 
   getImprovementCycles(): Promise<ImprovementCycle[]>;
   getImprovementCyclesByAgent(agentId: string): Promise<ImprovementCycle[]>;
@@ -1177,6 +1178,14 @@ export class DatabaseStorage implements IStorage {
 
   async getAgentVersions(agentId: string) {
     return db.select().from(agentVersions).where(eq(agentVersions.agentId, agentId));
+  }
+
+  async ensureAgentVersion(agentId: string, semver: string, status: string = "active"): Promise<AgentVersion> {
+    const existing = await db.select().from(agentVersions)
+      .where(and(eq(agentVersions.agentId, agentId), eq(agentVersions.semver, semver)));
+    if (existing.length > 0) return existing[0];
+    const [created] = await db.insert(agentVersions).values({ agentId, semver, status }).returning();
+    return created;
   }
 
   async getImprovementCycles() {
