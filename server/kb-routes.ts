@@ -348,12 +348,23 @@ async function crawlAndIngest(parentSourceId: string, kbId: string, rootUrl: str
 
   await updateCrawlProgress("complete", pagesCreated, visited.size);
 
-  const allSources = await storage.getKnowledgeSources(kbId);
-  const totalChunks = allSources.reduce((sum, s) => sum + (s.chunkCount || 0), 0);
-  await storage.updateKnowledgeBase(kbId, {
-    totalSources: allSources.length,
-    totalChunks,
-  });
+  const refreshKbStats = async () => {
+    const allSources = await storage.getKnowledgeSources(kbId);
+    const totalChunks = allSources.reduce((sum, s) => sum + (s.chunkCount || 0), 0);
+    await storage.updateKnowledgeBase(kbId, {
+      totalSources: allSources.length,
+      totalChunks,
+    });
+    return totalChunks;
+  };
+
+  await refreshKbStats();
+  setTimeout(async () => {
+    try { await refreshKbStats(); } catch {}
+  }, 30000);
+  setTimeout(async () => {
+    try { await refreshKbStats(); } catch {}
+  }, 90000);
 
   console.log(`[kb-crawl] Crawl complete for ${rootUrl}: ${pagesCreated} pages ingested from ${visited.size} discovered`);
 }
@@ -736,6 +747,22 @@ export function registerKnowledgeBaseRoutes(app: Express) {
     });
 
     res.json({ success: true });
+  });
+
+  app.post("/api/knowledge-bases/:id/refresh-stats", async (req, res) => {
+    try {
+      const kb = await storage.getKnowledgeBase(req.params.id);
+      if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
+      const allSources = await storage.getKnowledgeSources(req.params.id);
+      const totalChunks = allSources.reduce((sum, s) => sum + (s.chunkCount || 0), 0);
+      await storage.updateKnowledgeBase(req.params.id, {
+        totalSources: allSources.length,
+        totalChunks,
+      });
+      res.json({ totalSources: allSources.length, totalChunks });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
   });
 
   app.get("/api/knowledge-bases/:id/chunks", async (req, res) => {

@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute, Link } from "wouter";
 import type { KnowledgeBase, KnowledgeSource, KnowledgeChunk, Agent } from "@shared/schema";
@@ -162,6 +162,16 @@ export default function KnowledgeBaseDetail() {
     enabled: !!kbId,
     refetchInterval: 5000,
   });
+
+  const computedChunkCount = sources.reduce((sum, s) => sum + (s.chunkCount || 0), 0);
+
+  useEffect(() => {
+    if (kbId && kb && sources.length > 0 && (kb.totalChunks !== computedChunkCount || kb.totalSources !== sources.length)) {
+      apiRequest("POST", `/api/knowledge-bases/${kbId}/refresh-stats`).then(() => {
+        queryClient.invalidateQueries({ queryKey: ["/api/knowledge-bases", kbId] });
+      }).catch(() => {});
+    }
+  }, [kbId, sources.length, computedChunkCount]);
 
   const { data: chunks = [] } = useQuery<KnowledgeChunk[]>({
     queryKey: ["/api/knowledge-bases", kbId, "chunks"],
@@ -509,12 +519,12 @@ export default function KnowledgeBaseDetail() {
         </div>
         <div className="flex items-center gap-2 text-xs text-muted-foreground shrink-0">
           <div className="text-center px-3">
-            <div className="font-semibold text-base text-foreground" data-testid="text-total-sources">{kb.totalSources}</div>
+            <div className="font-semibold text-base text-foreground" data-testid="text-total-sources">{sources.length || kb.totalSources}</div>
             <div>Sources</div>
           </div>
           <Separator orientation="vertical" className="h-8" />
           <div className="text-center px-3">
-            <div className="font-semibold text-base text-foreground" data-testid="text-total-chunks">{kb.totalChunks}</div>
+            <div className="font-semibold text-base text-foreground" data-testid="text-total-chunks">{sources.reduce((sum, s) => sum + (s.chunkCount || 0), 0) || kb.totalChunks}</div>
             <div>Chunks</div>
           </div>
           <Separator orientation="vertical" className="h-8" />
@@ -554,7 +564,7 @@ export default function KnowledgeBaseDetail() {
             <FileText className="w-3.5 h-3.5 mr-1.5" /> Sources ({sources.length})
           </TabsTrigger>
           <TabsTrigger value="chunks" data-testid="tab-chunks">
-            <Layers className="w-3.5 h-3.5 mr-1.5" /> Chunks ({kb.totalChunks})
+            <Layers className="w-3.5 h-3.5 mr-1.5" /> Chunks ({sources.reduce((sum, s) => sum + (s.chunkCount || 0), 0) || kb.totalChunks})
           </TabsTrigger>
           <TabsTrigger value="search" data-testid="tab-search">
             <Search className="w-3.5 h-3.5 mr-1.5" /> Search & Query
