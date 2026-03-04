@@ -1592,7 +1592,7 @@ export default function ReleaseDetail() {
         </Card>
       )}
 
-      {deployment && deployment.status === "deployed" && (
+      {deployment && (deployment.status === "deployed" || deployment.status === "pending" || deployment.status === "inactive") && (
         <RuntimeStatusCard deploymentId={deployment.id} agentId={deployment.agentId} />
       )}
 
