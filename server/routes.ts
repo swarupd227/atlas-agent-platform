@@ -11726,18 +11726,49 @@ For "executionGraph", provide an explicit stage-by-stage execution plan:
           { role: "system", content: systemPrompt },
           { role: "user", content: `Generate an agent development plan for the outcome "${outcomeContract?.name}" targeting ${kpiDetails.length} KPIs: ${kpiDetails.map((k: any) => `${k.name} (baseline: ${k.baseline} → target: ${k.target}, weight: ${k.weight}, SLA: ${k.slaThreshold || "none"})`).join("; ")}` },
         ],
-        max_completion_tokens: 4000,
+        response_format: { type: "json_object" },
+        max_completion_tokens: 8000,
       });
 
       const content = response.choices[0]?.message?.content || "";
-      const jsonMatch = content.match(/```json\s*([\s\S]*?)```/);
-      let parsed: any = null;
-      if (jsonMatch) {
-        parsed = JSON.parse(jsonMatch[1]);
+      let jsonStr = content;
+      const fencedMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (fencedMatch) {
+        jsonStr = fencedMatch[1].trim();
       } else {
-        try {
-          parsed = JSON.parse(content);
-        } catch {
+        const openFence = content.match(/```(?:json)?\s*([\s\S]*)/);
+        if (openFence) {
+          jsonStr = openFence[1].trim();
+        }
+      }
+      if (jsonStr.endsWith(",") || jsonStr.endsWith(",\n")) {
+        jsonStr = jsonStr.replace(/,\s*$/, "");
+      }
+
+      let parsed: any = null;
+      try {
+        parsed = JSON.parse(jsonStr);
+      } catch {
+        const braceStart = jsonStr.indexOf("{");
+        if (braceStart >= 0) {
+          let truncated = jsonStr.slice(braceStart);
+          let openBraces = 0, openBrackets = 0;
+          for (const ch of truncated) {
+            if (ch === "{") openBraces++;
+            if (ch === "}") openBraces--;
+            if (ch === "[") openBrackets++;
+            if (ch === "]") openBrackets--;
+          }
+          while (openBrackets > 0) { truncated += "]"; openBrackets--; }
+          while (openBraces > 0) { truncated += "}"; openBraces--; }
+          truncated = truncated.replace(/,\s*([}\]])/g, "$1");
+          try {
+            parsed = JSON.parse(truncated);
+          } catch {
+            console.error("Could not repair truncated JSON from AI response");
+          }
+        }
+        if (!parsed) {
           res.json({ agents: [], orchestrator: null, pipeline: null, raw: content });
           return;
         }
