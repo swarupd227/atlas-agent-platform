@@ -27625,17 +27625,21 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
     try {
       const dep = await storage.getDeployment(req.params.id);
       let richPrompt: string | undefined;
+      let agent: any = null;
       if (dep) {
-        const ag = await storage.getAgent(dep.agentId);
-        if (ag) richPrompt = buildAgentSystemPrompt(ag);
+        agent = await storage.getAgent(dep.agentId);
+        if (agent) richPrompt = buildAgentSystemPrompt(agent);
       }
       const result = await startAgentRuntime(req.params.id, richPrompt);
-      if (dep && (dep.status === "pending" || dep.status === "inactive")) {
-        if (result.started || result.message?.includes("already running")) {
+      if (dep && (result.started || result.message?.includes("already running"))) {
+        if (dep.status === "pending" || dep.status === "inactive") {
           await storage.updateDeployment(req.params.id, {
             status: "deployed",
             ...(dep.deployedAt ? {} : { deployedAt: new Date() }),
           });
+        }
+        if (agent && agent.status !== "deployed") {
+          await storage.updateAgent(dep.agentId, { status: "deployed" });
         }
       }
       res.json(result);
