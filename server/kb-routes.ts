@@ -247,6 +247,11 @@ async function extractTextFromFile(buffer: Buffer, mimeType: string, filename: s
 }
 
 async function fetchWebContent(url: string): Promise<string> {
+  const { text } = await fetchWebContentWithLinks(url);
+  return text;
+}
+
+async function fetchWebContentWithLinks(url: string): Promise<{ text: string; links: string[] }> {
   const response = await fetch(url, {
     headers: { "User-Agent": "NousAgent-KB/1.0" },
     signal: AbortSignal.timeout(15000),
@@ -256,7 +261,101 @@ async function fetchWebContent(url: string): Promise<string> {
   const $ = cheerio.load(html);
   $("script, style, nav, footer, header, iframe, noscript").remove();
   const text = $("body").text().replace(/\s+/g, " ").trim();
-  return text;
+
+  const baseUrl = new URL(url);
+  const links: string[] = [];
+  $("a[href]").each((_i: number, el: any) => {
+    try {
+      const href = $(el).attr("href");
+      if (!href || href.startsWith("#") || href.startsWith("mailto:") || href.startsWith("javascript:") || href.startsWith("tel:")) return;
+      const resolved = new URL(href, url);
+      if (resolved.hostname === baseUrl.hostname && (resolved.protocol === "http:" || resolved.protocol === "https:")) {
+        resolved.hash = "";
+        const normalized = resolved.toString();
+        if (!links.includes(normalized) && normalized !== url) {
+          links.push(normalized);
+        }
+      }
+    } catch {}
+  });
+
+  return { text, links };
+}
+
+async function crawlAndIngest(parentSourceId: string, kbId: string, rootUrl: string, crawlDepth: number, maxPages: number) {
+  const visited = new Set<string>();
+  const queue: Array<{ url: string; depth: number }> = [{ url: rootUrl, depth: 0 }];
+  let pagesCreated = 0;
+
+  visited.add(rootUrl);
+
+  const updateCrawlProgress = async (status: string, crawledPages: number, totalDiscovered: number) => {
+    try {
+      const src = await storage.getKnowledgeSource(parentSourceId);
+      const existingMeta = (src?.metadata && typeof src.metadata === "object") ? src.metadata as Record<string, any> : {};
+      await storage.updateKnowledgeSource(parentSourceId, {
+        metadata: { ...existingMeta, crawlStatus: status, crawledPages, totalDiscovered },
+      });
+    } catch {}
+  };
+
+  await updateCrawlProgress("crawling", 0, 0);
+
+  while (queue.length > 0 && pagesCreated < maxPages) {
+    const item = queue.shift();
+    if (!item) break;
+
+    if (item.depth > 0) {
+      try {
+        const { text, links } = await fetchWebContentWithLinks(item.url);
+        if (text && text.trim().length > 100) {
+          const childSource = await storage.createKnowledgeSource({
+            knowledgeBaseId: kbId,
+            name: `${new URL(item.url).pathname || item.url} (crawled)`,
+            sourceType: "url",
+            status: "pending",
+            url: item.url,
+            metadata: { url: item.url, crawledFrom: parentSourceId, crawlDepth: item.depth },
+          });
+          pagesCreated++;
+          await updateCrawlProgress("crawling", pagesCreated, visited.size);
+          processSourceInBackground(childSource.id, kbId);
+
+          if (item.depth < crawlDepth) {
+            for (const link of links) {
+              if (!visited.has(link) && visited.size < maxPages * 3) {
+                visited.add(link);
+                queue.push({ url: link, depth: item.depth + 1 });
+              }
+            }
+          }
+        }
+      } catch (err: any) {
+        console.log(`[kb-crawl] Failed to fetch ${item.url}: ${err.message}`);
+      }
+    } else {
+      try {
+        const { links } = await fetchWebContentWithLinks(item.url);
+        for (const link of links) {
+          if (!visited.has(link)) {
+            visited.add(link);
+            queue.push({ url: link, depth: item.depth + 1 });
+          }
+        }
+      } catch {}
+    }
+  }
+
+  await updateCrawlProgress("complete", pagesCreated, visited.size);
+
+  const allSources = await storage.getKnowledgeSources(kbId);
+  const totalChunks = allSources.reduce((sum, s) => sum + (s.chunkCount || 0), 0);
+  await storage.updateKnowledgeBase(kbId, {
+    totalSources: allSources.length,
+    totalChunks,
+  });
+
+  console.log(`[kb-crawl] Crawl complete for ${rootUrl}: ${pagesCreated} pages ingested from ${visited.size} discovered`);
 }
 
 async function processSourceInBackground(sourceId: string, kbId: string) {
@@ -315,7 +414,8 @@ async function processSourceInBackground(sourceId: string, kbId: string) {
       console.log(`[kb] Ontology alignment check failed for source ${sourceId}:`, err.message);
     }
 
-    const existingMeta = (source.metadata && typeof source.metadata === "object") ? source.metadata as Record<string, any> : {};
+    const freshSource = await storage.getKnowledgeSource(sourceId);
+    const existingMeta = (freshSource?.metadata && typeof freshSource.metadata === "object") ? freshSource.metadata as Record<string, any> : {};
     await storage.updateKnowledgeSource(sourceId, {
       status: "processed",
       chunkCount: chunks.length,
@@ -422,8 +522,22 @@ export function registerKnowledgeBaseRoutes(app: Express) {
       const kb = await storage.getKnowledgeBase(req.params.id);
       if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
 
-      const { url, name } = req.body;
+      const { url, name, crawl, crawlDepth: rawDepth, maxPages: rawMax } = req.body;
       if (!url) return res.status(400).json({ message: "URL is required" });
+
+      const enableCrawl = crawl === true;
+      const crawlDepth = Math.min(Math.max(parseInt(rawDepth) || 1, 1), 3);
+      const maxPages = Math.min(Math.max(parseInt(rawMax) || 10, 1), 50);
+
+      const metadata: Record<string, any> = { url };
+      if (enableCrawl) {
+        metadata.crawl = true;
+        metadata.crawlDepth = crawlDepth;
+        metadata.maxPages = maxPages;
+        metadata.crawlStatus = "pending";
+        metadata.crawledPages = 0;
+        metadata.totalDiscovered = 0;
+      }
 
       const source = await storage.createKnowledgeSource({
         knowledgeBaseId: req.params.id,
@@ -431,13 +545,20 @@ export function registerKnowledgeBaseRoutes(app: Express) {
         sourceType: "url",
         status: "pending",
         url,
-        metadata: { url },
+        metadata,
       });
 
       const allSources = await storage.getKnowledgeSources(req.params.id);
       await storage.updateKnowledgeBase(req.params.id, { totalSources: allSources.length });
 
       processSourceInBackground(source.id, req.params.id);
+
+      if (enableCrawl) {
+        crawlAndIngest(source.id, req.params.id, url, crawlDepth, maxPages).catch((err) => {
+          console.error(`[kb-crawl] Crawl failed for ${url}:`, err.message);
+        });
+      }
+
       res.status(201).json(source);
     } catch (error: any) {
       res.status(500).json({ message: error.message });

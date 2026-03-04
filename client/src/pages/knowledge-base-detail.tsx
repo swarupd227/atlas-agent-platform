@@ -27,6 +27,7 @@ import {
   Gauge, Zap, TrendingUp, Archive,
 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Switch } from "@/components/ui/switch";
 
 function StatusBadge({ status }: { status: string }) {
   const config: Record<string, { color: string; icon: typeof Clock }> = {
@@ -122,7 +123,7 @@ export default function KnowledgeBaseDetail() {
   const [addUrlOpen, setAddUrlOpen] = useState(false);
   const [addTextOpen, setAddTextOpen] = useState(false);
   const [addStructuredOpen, setAddStructuredOpen] = useState(false);
-  const [urlForm, setUrlForm] = useState({ url: "", name: "" });
+  const [urlForm, setUrlForm] = useState({ url: "", name: "", crawl: false, crawlDepth: 1, maxPages: 10 });
   const [textForm, setTextForm] = useState({ title: "", content: "" });
   const [structuredForm, setStructuredForm] = useState({ name: "", data: "" });
   const [searchQuery, setSearchQuery] = useState("");
@@ -264,16 +265,19 @@ export default function KnowledgeBaseDetail() {
   });
 
   const addUrlMutation = useMutation({
-    mutationFn: async (data: { url: string; name: string }) => {
+    mutationFn: async (data: { url: string; name: string; crawl: boolean; crawlDepth: number; maxPages: number }) => {
       const res = await apiRequest("POST", `/api/knowledge-bases/${kbId}/sources/url`, data);
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (_data: any, variables: { crawl: boolean }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/knowledge-bases", kbId, "sources"] });
       queryClient.invalidateQueries({ queryKey: ["/api/knowledge-bases", kbId] });
       setAddUrlOpen(false);
-      setUrlForm({ url: "", name: "" });
-      toast({ title: "URL added", description: "Content will be fetched and processed" });
+      setUrlForm({ url: "", name: "", crawl: false, crawlDepth: 1, maxPages: 10 });
+      toast({
+        title: "URL added",
+        description: variables.crawl ? "Content will be fetched and linked pages will be crawled" : "Content will be fetched and processed",
+      });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -602,11 +606,42 @@ export default function KnowledgeBaseDetail() {
                     <Label>Name (optional)</Label>
                     <Input value={urlForm.name} onChange={(e) => setUrlForm({ ...urlForm, name: e.target.value })} placeholder="My Documentation Page" />
                   </div>
+                  <Separator />
+                  <div className="flex items-center justify-between">
+                    <div className="flex flex-col gap-0.5">
+                      <Label htmlFor="crawl-toggle" className="text-sm font-medium">Crawl linked pages</Label>
+                      <p className="text-xs text-muted-foreground">Follow links on the page and ingest content from linked pages on the same domain</p>
+                    </div>
+                    <Switch id="crawl-toggle" checked={urlForm.crawl} onCheckedChange={(v) => setUrlForm({ ...urlForm, crawl: v })} data-testid="switch-crawl" />
+                  </div>
+                  {urlForm.crawl && (
+                    <div className="grid grid-cols-2 gap-3 pl-1 border-l-2 border-primary/20 ml-1">
+                      <div className="flex flex-col gap-1">
+                        <Label className="text-xs">Crawl Depth</Label>
+                        <Select value={String(urlForm.crawlDepth)} onValueChange={(v) => setUrlForm({ ...urlForm, crawlDepth: parseInt(v) })}>
+                          <SelectTrigger data-testid="select-crawl-depth" className="h-8 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="1">1 level (direct links)</SelectItem>
+                            <SelectItem value="2">2 levels</SelectItem>
+                            <SelectItem value="3">3 levels (deep)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <p className="text-[10px] text-muted-foreground">How many link hops to follow</p>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <Label className="text-xs">Max Pages</Label>
+                        <Input type="number" min={1} max={50} value={urlForm.maxPages} onChange={(e) => setUrlForm({ ...urlForm, maxPages: Math.min(50, Math.max(1, parseInt(e.target.value) || 1)) })} className="h-8 text-xs" data-testid="input-max-pages" />
+                        <p className="text-[10px] text-muted-foreground">Maximum linked pages to ingest (max 50)</p>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <DialogFooter>
                   <DialogClose asChild><Button variant="outline">Cancel</Button></DialogClose>
                   <Button onClick={() => addUrlMutation.mutate(urlForm)} disabled={!urlForm.url || addUrlMutation.isPending} data-testid="button-submit-url">
-                    {addUrlMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />} Add
+                    {addUrlMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />} {urlForm.crawl ? "Add & Crawl" : "Add"}
                   </Button>
                 </DialogFooter>
               </DialogContent>
@@ -707,6 +742,21 @@ export default function KnowledgeBaseDetail() {
                           <span className="text-sm font-medium truncate">{source.name}</span>
                           <StatusBadge status={source.status} />
                           <FreshnessBadge status={source.freshnessStatus} />
+                          {(() => {
+                            const meta = source.metadata as Record<string, any> | null;
+                            if (meta?.crawledFrom) {
+                              return <Badge variant="outline" className="text-[10px] bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300" data-testid={`badge-crawled-${source.id}`}><Link2 className="w-2.5 h-2.5 mr-1" />via crawl</Badge>;
+                            }
+                            if (meta?.crawl && meta?.crawlStatus) {
+                              const label = meta.crawlStatus === "complete"
+                                ? `Crawled ${meta.crawledPages || 0} pages`
+                                : meta.crawlStatus === "crawling"
+                                  ? `Crawling... ${meta.crawledPages || 0}/${meta.maxPages || "?"}`
+                                  : "Crawl pending";
+                              return <Badge variant="outline" className="text-[10px] bg-purple-50 text-purple-700 dark:bg-purple-900/20 dark:text-purple-300" data-testid={`badge-crawl-status-${source.id}`}><Globe className="w-2.5 h-2.5 mr-1" />{label}</Badge>;
+                            }
+                            return null;
+                          })()}
                           {(() => {
                             const alignment = ontologyAlignment?.sources?.find((s) => s.sourceId === source.id);
                             if (!alignment) return null;
