@@ -1007,13 +1007,21 @@ function AgentDetailInner() {
   const [rtPrompt, setRtPrompt] = useState(existingRtConfig?.prompt || "");
   const [rtInterval, setRtInterval] = useState<number>(existingRtConfig?.scheduleIntervalMinutes || 0);
   const [rtEditing, setRtEditing] = useState(false);
+  const existingGateOverrides = existingRtConfig?.promotionGateOverrides || {};
+  const [gateMinEvalPassRate, setGateMinEvalPassRate] = useState<number>(typeof existingGateOverrides.minEvalPassRate === "number" ? existingGateOverrides.minEvalPassRate : 80);
+  const [gateMaxLatencyMs, setGateMaxLatencyMs] = useState<number>(typeof existingGateOverrides.maxLatencyMs === "number" ? existingGateOverrides.maxLatencyMs : 2000);
 
   const rtConfigMutationInner = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("PATCH", `/api/agents/${agentId}`, {
         runtimeConfig: {
+          ...existingRtConfig,
           prompt: rtPrompt.trim(),
           scheduleIntervalMinutes: rtInterval,
+          promotionGateOverrides: {
+            minEvalPassRate: gateMinEvalPassRate,
+            maxLatencyMs: gateMaxLatencyMs,
+          },
         },
       });
       return res.json();
@@ -1029,7 +1037,7 @@ function AgentDetailInner() {
   const rtConfigMutation = {
     ...rtConfigMutationInner,
     mutate: () => {
-      const changes = { runtimeConfig: { prompt: rtPrompt.trim(), scheduleIntervalMinutes: rtInterval } };
+      const changes = { runtimeConfig: { ...existingRtConfig, prompt: rtPrompt.trim(), scheduleIntervalMinutes: rtInterval, promotionGateOverrides: { minEvalPassRate: gateMinEvalPassRate, maxLatencyMs: gateMaxLatencyMs } } };
       validateAndApplyConfig(changes, () => rtConfigMutationInner.mutate());
     },
   };
@@ -1752,7 +1760,7 @@ function AgentDetailInner() {
                 ) : (
                   <div className="flex gap-1">
                     <Button variant="ghost" size="sm" onClick={() => setRtEditing(false)} data-testid="button-cancel-runtime-config">Cancel</Button>
-                    <Button size="sm" onClick={() => rtConfigMutation.mutate()} disabled={rtConfigMutation.isPending || !rtPrompt.trim()} data-testid="button-save-runtime-config">
+                    <Button size="sm" onClick={() => rtConfigMutation.mutate()} disabled={rtConfigMutation.isPending} data-testid="button-save-runtime-config">
                       {rtConfigMutation.isPending ? "Saving..." : "Save"}
                     </Button>
                   </div>
@@ -1815,6 +1823,21 @@ function AgentDetailInner() {
                       </select>
                     </div>
                     <span className="text-[10px] text-muted-foreground">The agent will use its connected tools (MCP Servers) to fulfill this task automatically on this schedule when deployed.</span>
+                  </div>
+                  <div className="flex flex-col gap-1.5 pt-2 border-t border-border/50">
+                    <label className="text-xs font-medium text-muted-foreground">Promotion Gate Thresholds</label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[10px] text-muted-foreground">Min Eval Pass Rate (%)</label>
+                        <Input type="number" min={0} max={100} value={gateMinEvalPassRate} onChange={e => setGateMinEvalPassRate(Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))} className="h-7 text-xs" data-testid="input-gate-eval-threshold" />
+                        <span className="text-[9px] text-muted-foreground">Set to 0 to disable eval gate</span>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[10px] text-muted-foreground">Max Latency (ms)</label>
+                        <Input type="number" min={500} max={60000} value={gateMaxLatencyMs} onChange={e => setGateMaxLatencyMs(Math.min(60000, Math.max(500, parseInt(e.target.value) || 2000)))} className="h-7 text-xs" data-testid="input-gate-latency-threshold" />
+                        <span className="text-[9px] text-muted-foreground">Max acceptable latency for promotion</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}

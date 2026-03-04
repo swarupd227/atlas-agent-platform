@@ -4164,20 +4164,25 @@ export async function registerRoutes(
 
       const bypassEvalGate = req.body.bypassEvalGate === true;
 
+      const promoteAgent = await storage.getAgent(source.agentId);
+      const promoteRtConfig = (promoteAgent?.runtimeConfig as Record<string, any>) || {};
+      const promoteGateOverrides = promoteRtConfig.promotionGateOverrides || {};
+      const configuredEvalThreshold = typeof promoteGateOverrides.minEvalPassRate === "number" ? promoteGateOverrides.minEvalPassRate : (nextEnv === "prod" ? 80 : 60);
+
       const allEvalSuites = await storage.getEvalSuites();
       const agentSuites = allEvalSuites.filter(s => s.agentId === source.agentId);
 
       let evalWarning: string | undefined;
       const failingSuites: Array<{ name: string; passRate: number }> = [];
 
-      if (agentSuites.length === 0) {
+      if (configuredEvalThreshold === 0) {
+        evalWarning = undefined;
+      } else if (agentSuites.length === 0) {
         evalWarning = "No eval suites configured";
       } else {
         for (const suite of agentSuites) {
           const passRate = suite.passRate ?? 0;
-          if (nextEnv === "prod" && passRate < 80) {
-            failingSuites.push({ name: suite.name, passRate });
-          } else if (nextEnv === "pilot" && passRate < 60) {
+          if (passRate < configuredEvalThreshold) {
             failingSuites.push({ name: suite.name, passRate });
           }
         }
@@ -4210,13 +4215,13 @@ export async function registerRoutes(
           return res.status(400).json({
             message: "Eval pass rate too low for production promotion",
             evalGateBlocked: true,
-            threshold: 80,
+            threshold: configuredEvalThreshold,
             failingSuites,
           });
         }
 
         if (failingSuites.length > 0 && nextEnv === "pilot") {
-          evalWarning = `Eval pass rate below 60% on: ${failingSuites.map(s => `${s.name} (${s.passRate.toFixed(1)}%)`).join(", ")}`;
+          evalWarning = `Eval pass rate below ${configuredEvalThreshold}% on: ${failingSuites.map(s => `${s.name} (${s.passRate.toFixed(1)}%)`).join(", ")}`;
         }
       }
 
@@ -4236,7 +4241,7 @@ export async function registerRoutes(
           details: JSON.stringify({
             targetEnv: nextEnv,
             failingSuites,
-            threshold: nextEnv === "prod" ? 80 : 60,
+            threshold: configuredEvalThreshold,
             agentName: source.agentName,
             version: source.version,
             bypassAcknowledgment: true,
@@ -4580,21 +4585,36 @@ export async function registerRoutes(
         ? Math.round(recentTraces.reduce((sum, t) => sum + (t.latencyMs || 0), 0) / totalTraces)
         : 0;
 
+      const agent = await storage.getAgent(agentId);
+      const rtConfig = (agent?.runtimeConfig as Record<string, any>) || {};
+      const gateOverrides = rtConfig.promotionGateOverrides || {};
+
+      const evalPassThreshold = typeof gateOverrides.minEvalPassRate === "number" ? gateOverrides.minEvalPassRate : 80;
+      const evalWarnThreshold = Math.max(0, evalPassThreshold * 0.75);
+      const latencyPassThreshold = typeof gateOverrides.maxLatencyMs === "number" ? gateOverrides.maxLatencyMs : 2000;
+      const latencyWarnThreshold = typeof gateOverrides.maxLatencyWarnMs === "number" ? gateOverrides.maxLatencyWarnMs : Math.max(latencyPassThreshold, 5000);
+
       const minEvalPassRate = agentSuites.length > 0
         ? Math.min(...agentSuites.map(s => s.passRate ?? 0))
         : null;
-      const failingSuiteNames = agentSuites.filter(s => (s.passRate ?? 0) < 80).map(s => s.name);
+      const failingSuiteNames = agentSuites.filter(s => (s.passRate ?? 0) < evalPassThreshold).map(s => s.name);
 
       const criticalDrift = agentDrift.filter((d: any) => d.severity === "critical");
       const highDrift = agentDrift.filter((d: any) => d.severity === "high");
 
+      const evalStatus = minEvalPassRate === null ? "unknown"
+        : evalPassThreshold === 0 ? "pass"
+        : minEvalPassRate >= evalPassThreshold ? "pass"
+        : minEvalPassRate >= evalWarnThreshold ? "warn" : "fail";
+
       const checks = [
         {
           name: "Eval Pass Rate",
-          status: minEvalPassRate === null ? "unknown" : minEvalPassRate >= 80 ? "pass" : minEvalPassRate >= 60 ? "warn" : "fail",
+          status: evalStatus,
           value: minEvalPassRate !== null ? `${minEvalPassRate.toFixed(1)}%` : "No evals",
           detail: failingSuiteNames.length > 0 ? `Failing: ${failingSuiteNames.join(", ")}` : agentSuites.length > 0 ? `${agentSuites.length} suite(s) passing` : "No eval suite found",
-          enforced: true,
+          enforced: evalPassThreshold > 0,
+          threshold: evalPassThreshold,
         },
         {
           name: "Success Rate",
@@ -4610,9 +4630,10 @@ export async function registerRoutes(
         },
         {
           name: "Avg Latency",
-          status: avgLatency <= 2000 ? "pass" : avgLatency <= 5000 ? "warn" : "fail",
+          status: avgLatency <= latencyPassThreshold ? "pass" : avgLatency <= latencyWarnThreshold ? "warn" : "fail",
           value: `${avgLatency}ms`,
-          detail: avgLatency <= 2000 ? "Within threshold" : avgLatency <= 5000 ? "Elevated" : "Exceeds threshold",
+          detail: avgLatency <= latencyPassThreshold ? "Within threshold" : avgLatency <= latencyWarnThreshold ? "Elevated" : "Exceeds threshold",
+          threshold: latencyPassThreshold,
         },
         {
           name: "Error Rate",
@@ -4622,7 +4643,6 @@ export async function registerRoutes(
         },
       ];
 
-      const agent = await storage.getAgent(agentId);
       const outcomes = await storage.getOutcomes();
       const boundOutcomes = outcomes.filter(o => {
         const agents = (o.attributionRules as any)?.agents;
@@ -4813,7 +4833,11 @@ export async function registerRoutes(
         }
       }
 
-      if (successRate < 95 || (agentSuites.length > 0 && latestPassRate < 80)) {
+      const autoPromoteRtConfig = (agent.runtimeConfig as Record<string, any>) || {};
+      const autoPromoteGateOverrides = autoPromoteRtConfig.promotionGateOverrides || {};
+      const autoPromoteEvalThreshold = typeof autoPromoteGateOverrides.minEvalPassRate === "number" ? autoPromoteGateOverrides.minEvalPassRate : 80;
+
+      if (successRate < 95 || (autoPromoteEvalThreshold > 0 && agentSuites.length > 0 && latestPassRate < autoPromoteEvalThreshold)) {
         return res.status(400).json({
           message: "Auto-promote blocked: readiness checks not passing",
           eligible: false,
