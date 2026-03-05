@@ -75,6 +75,8 @@ import {
   ListOrdered,
   Crosshair,
   Minus,
+  Pencil,
+  Check,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -847,6 +849,10 @@ function AgentDetailInner() {
   const [retirementChecklist, setRetirementChecklist] = useState<boolean[]>([false, false, false, false, false, false, false, false]);
   const [expandedTrace, setExpandedTrace] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("summary");
+  const [editingDescription, setEditingDescription] = useState(false);
+  const [editDescValue, setEditDescValue] = useState("");
+  const [editingName, setEditingName] = useState(false);
+  const [editNameValue, setEditNameValue] = useState("");
   const [shadowReplayOpen, setShadowReplayOpen] = useState(false);
   const [shadowTimeWindow, setShadowTimeWindow] = useState("24h");
   const [shadowEnvironment, setShadowEnvironment] = useState("staging");
@@ -1356,14 +1362,85 @@ function AgentDetailInner() {
             <ArrowLeft className="w-4 h-4" />
           </Button>
         </Link>
-        <div className="flex flex-col gap-0.5">
+        <div className="flex flex-col gap-0.5 flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-agent-name">{agent.name}</h1>
+            {editingName ? (
+              <div className="flex items-center gap-1.5">
+                <input
+                  className="text-2xl font-semibold tracking-tight bg-transparent border-b border-primary outline-none"
+                  value={editNameValue}
+                  onChange={e => setEditNameValue(e.target.value)}
+                  onKeyDown={async e => {
+                    if (e.key === "Enter" && editNameValue.trim()) {
+                      await apiRequest("PATCH", `/api/agents/${agentId}`, { name: editNameValue.trim() });
+                      queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId] });
+                      setEditingName(false);
+                      toast({ title: "Agent name updated" });
+                    }
+                    if (e.key === "Escape") setEditingName(false);
+                  }}
+                  autoFocus
+                  data-testid="input-edit-name"
+                />
+                <Button variant="ghost" size="icon" className="h-6 w-6" onClick={async () => {
+                  if (editNameValue.trim()) {
+                    await apiRequest("PATCH", `/api/agents/${agentId}`, { name: editNameValue.trim() });
+                    queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId] });
+                    setEditingName(false);
+                    toast({ title: "Agent name updated" });
+                  }
+                }} data-testid="button-save-name"><Check className="w-3.5 h-3.5" /></Button>
+                <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setEditingName(false)} data-testid="button-cancel-name"><XCircle className="w-3.5 h-3.5" /></Button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 group">
+                <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-agent-name">{agent.name}</h1>
+                <Button variant="ghost" size="icon" className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => { setEditNameValue(agent.name); setEditingName(true); }} data-testid="button-edit-name">
+                  <Pencil className="w-3 h-3" />
+                </Button>
+              </div>
+            )}
             <StatusBadge status={agent.status} />
             <StatusBadge status={agent.riskTier} />
             <StatusBadge status={agent.autonomyMode} />
           </div>
-          <p className="text-sm text-muted-foreground">{agent.description || "No description"}</p>
+          {editingDescription ? (
+            <div className="flex items-start gap-1.5">
+              <textarea
+                className="text-sm text-muted-foreground bg-transparent border border-border rounded-md p-1.5 w-full min-h-[60px] outline-none focus:border-primary resize-y"
+                value={editDescValue}
+                onChange={e => setEditDescValue(e.target.value)}
+                onKeyDown={async e => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    await apiRequest("PATCH", `/api/agents/${agentId}`, { description: editDescValue.trim() });
+                    queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId] });
+                    setEditingDescription(false);
+                    toast({ title: "Description updated" });
+                  }
+                  if (e.key === "Escape") setEditingDescription(false);
+                }}
+                autoFocus
+                data-testid="input-edit-description"
+              />
+              <div className="flex flex-col gap-0.5 shrink-0">
+                <Button variant="ghost" size="icon" className="h-6 w-6" onClick={async () => {
+                  await apiRequest("PATCH", `/api/agents/${agentId}`, { description: editDescValue.trim() });
+                  queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId] });
+                  setEditingDescription(false);
+                  toast({ title: "Description updated" });
+                }} data-testid="button-save-description"><Check className="w-3.5 h-3.5" /></Button>
+                <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setEditingDescription(false)} data-testid="button-cancel-description"><XCircle className="w-3.5 h-3.5" /></Button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-start gap-1.5 group">
+              <p className="text-sm text-muted-foreground" data-testid="text-agent-description">{agent.description || "No description"}</p>
+              <Button variant="ghost" size="icon" className="h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5" onClick={() => { setEditDescValue(agent.description || ""); setEditingDescription(true); }} data-testid="button-edit-description">
+                <Pencil className="w-3 h-3" />
+              </Button>
+            </div>
+          )}
         </div>
       </div>
 
