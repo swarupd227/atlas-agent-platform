@@ -229,10 +229,14 @@ async function extractTextFromFile(buffer: Buffer, mimeType: string, filename: s
     return buffer.toString("utf-8");
   }
   if (mimeType === "application/pdf" || filename.endsWith(".pdf")) {
-    const pdfModule = await import("pdf-parse");
-    const pdfParse = pdfModule.default || pdfModule;
-    const data = await (pdfParse as any)(buffer);
-    return data.text;
+    const { PDFParse } = await import("pdf-parse");
+    const parser = new PDFParse({ data: buffer });
+    try {
+      const result = await parser.getText();
+      return result.text;
+    } finally {
+      await parser.destroy();
+    }
   }
   if (mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || filename.endsWith(".docx")) {
     const mammoth = await import("mammoth");
