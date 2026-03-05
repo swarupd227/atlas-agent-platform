@@ -28139,6 +28139,8 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       const mcpLinks = await storage.getAgentMcpServers(req.params.id);
       const hasPrompt = !!(rtConfig.prompt || agent.systemPrompt || agent.description);
       const hasMcpServers = mcpLinks.length > 0;
+      const linkedKbs = await storage.getAgentKnowledgeBases(req.params.id);
+      const hasKnowledgeBases = linkedKbs.length > 0;
 
       res.json({
         isActive,
@@ -28150,8 +28152,9 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         readiness: {
           hasPrompt,
           hasMcpServers,
+          hasKnowledgeBases,
           isDeployed: !!activeDeployment,
-          canRun: hasPrompt && hasMcpServers,
+          canRun: hasPrompt && (hasMcpServers || hasKnowledgeBases),
         },
       });
     } catch (e: any) {

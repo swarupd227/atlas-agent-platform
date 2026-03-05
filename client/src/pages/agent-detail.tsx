@@ -626,6 +626,25 @@ function AgentDetailInner() {
   const { data: allDeployments } = useQuery<Deployment[]>({
     queryKey: ["/api/deployments"],
   });
+  const { data: activeRuntimes } = useQuery<Array<{ deploymentId: string; agentId: string; agentName: string }>>({
+    queryKey: ["/api/agent-runtime/active"],
+    refetchInterval: 15000,
+  });
+  const stopDeploymentRuntimeMutation = useMutation({
+    mutationFn: async (deploymentId: string) => {
+      const res = await apiRequest("POST", `/api/deployments/${deploymentId}/stop-runtime`, {});
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agent-runtime/active"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/deployments"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId, "runtime-status"] });
+      toast({ title: "Runtime stopped" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to stop runtime", description: err.message, variant: "destructive" });
+    },
+  });
   const { data: allPolicies } = useQuery<Policy[]>({
     queryKey: ["/api/policies"],
   });
@@ -2613,14 +2632,21 @@ function AgentDetailInner() {
             <CardContent>
               {agentDeployments.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3" data-testid="linked-deployments">
-                  {[...agentDeployments].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()).map(dep => (
-                    <Link key={dep.id} href={`/deployments/${dep.id}`}>
-                      <Card className="hover-elevate" data-testid={`deployment-card-${dep.id}`}>
+                  {[...agentDeployments].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()).map(dep => {
+                    const isRunning = activeRuntimes?.some(r => r.deploymentId === dep.id) || false;
+                    return (
+                      <Card key={dep.id} className="hover-elevate" data-testid={`deployment-card-${dep.id}`}>
                         <CardContent className="p-4 flex flex-col gap-2">
                           <div className="flex items-center gap-2 flex-wrap">
                             <StatusBadge status={dep.environment} />
                             <StatusBadge status={dep.rolloutStrategy || "direct"} />
                             <StatusBadge status={dep.status} />
+                            {isRunning && (
+                              <Badge className="text-[10px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" data-testid={`badge-runtime-running-${dep.id}`}>
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1 animate-pulse" />
+                                Running
+                              </Badge>
+                            )}
                           </div>
                           <div className="flex items-center gap-2 flex-wrap">
                             {dep.version && (
@@ -2632,13 +2658,34 @@ function AgentDetailInner() {
                               </span>
                             )}
                           </div>
-                          <span className="text-[11px] text-muted-foreground">
-                            {dep.createdAt ? new Date(dep.createdAt).toLocaleDateString() : ""}
-                          </span>
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] text-muted-foreground">
+                              {dep.createdAt ? new Date(dep.createdAt).toLocaleDateString() : ""}
+                            </span>
+                            <div className="flex items-center gap-1.5">
+                              {isRunning && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-6 text-[11px] px-2 text-red-600 hover:text-red-700 dark:text-red-400"
+                                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); stopDeploymentRuntimeMutation.mutate(dep.id); }}
+                                  disabled={stopDeploymentRuntimeMutation.isPending}
+                                  data-testid={`button-stop-runtime-${dep.id}`}
+                                >
+                                  <XCircle className="w-3 h-3 mr-1" /> Stop
+                                </Button>
+                              )}
+                              <Link href={`/deployments/${dep.id}`}>
+                                <Button variant="outline" size="sm" className="h-6 text-[11px] px-2" data-testid={`button-view-deployment-${dep.id}`}>
+                                  <Eye className="w-3 h-3 mr-1" /> View
+                                </Button>
+                              </Link>
+                            </div>
+                          </div>
                         </CardContent>
                       </Card>
-                    </Link>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground text-center py-4">No deployments found</p>
