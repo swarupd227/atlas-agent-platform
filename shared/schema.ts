@@ -106,9 +106,10 @@ export const agents = pgTable("agents", {
   maturityFactors: jsonb("maturity_factors").notNull().default(sql`'{}'::jsonb`),
   maxToolIterations: integer("max_tool_iterations").default(5),
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-export const insertAgentSchema = createInsertSchema(agents).omit({ id: true, createdAt: true });
+export const insertAgentSchema = createInsertSchema(agents).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertAgent = z.infer<typeof insertAgentSchema>;
 export type Agent = typeof agents.$inferSelect;
 
