@@ -10518,8 +10518,9 @@ function AgentChannels({ agent }: { agent: any }) {
                 const widgetToken = channel.channelType === "web_widget" && channel.webhookUrl
                   ? channel.webhookUrl.split("/").pop() || ""
                   : "";
+                const safeName = agent.name.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
                 const embedSnippet = widgetToken
-                  ? `<script src="${window.location.origin}/widget.js"\n  data-agent-channel="${widgetToken}"\n  data-title="${agent.name}"\n  data-theme="dark"\n  data-position="bottom-right"></script>`
+                  ? `<script src="${window.location.origin}/widget.js"\n  data-agent-channel="${widgetToken}"\n  data-title="${safeName}"\n  data-theme="dark"\n  data-position="bottom-right"\n  data-greeting="Hi! I'm ${safeName}. How can I help you today?"\n  data-starters="What can you help me with?,Tell me about your capabilities,Get started"></script>`
                   : "";
                 return (
                   <div key={channel.id} className="flex flex-col rounded-md border bg-card" data-testid={`channel-card-${channel.id}`}>
@@ -10613,7 +10614,7 @@ function AgentChannels({ agent }: { agent: any }) {
                         </div>
                         <pre className="text-[11px] font-mono bg-muted/30 p-3 rounded-md overflow-x-auto whitespace-pre select-all" data-testid={`code-embed-${channel.id}`}>{embedSnippet}</pre>
                         <p className="text-[10px] text-muted-foreground mt-1.5">
-                          Add this script tag before the closing <code className="text-[10px] bg-muted/50 px-1 rounded">&lt;/body&gt;</code> tag. The widget will appear as a floating chat bubble. Customize with <code className="text-[10px] bg-muted/50 px-1 rounded">data-theme="light"</code> or <code className="text-[10px] bg-muted/50 px-1 rounded">data-position="bottom-left"</code>.
+                          Add this script tag before the closing <code className="text-[10px] bg-muted/50 px-1 rounded">&lt;/body&gt;</code> tag. The widget will appear as a floating chat bubble. Customize with <code className="text-[10px] bg-muted/50 px-1 rounded">data-theme="light"</code>, <code className="text-[10px] bg-muted/50 px-1 rounded">data-position="bottom-left"</code>, <code className="text-[10px] bg-muted/50 px-1 rounded">data-greeting="..."</code>, or <code className="text-[10px] bg-muted/50 px-1 rounded">data-starters="prompt1,prompt2,prompt3"</code>.
                         </p>
                       </div>
                     )}

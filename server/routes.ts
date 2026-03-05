@@ -16811,6 +16811,163 @@ Eval Suites: ${evalSuites.length} configured`,
     }
   });
 
+  const widgetRateLimit = new Map<string, { count: number; resetAt: number }>();
+  function checkWidgetRateLimit(key: string, maxPerMinute: number = 10): boolean {
+    const now = Date.now();
+    const entry = widgetRateLimit.get(key);
+    if (!entry || now > entry.resetAt) {
+      widgetRateLimit.set(key, { count: 1, resetAt: now + 60000 });
+      return true;
+    }
+    if (entry.count >= maxPerMinute) return false;
+    entry.count++;
+    return true;
+  }
+
+  app.options("/api/widget/:token/message-stream", (_req, res) => {
+    res.set({
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+      "Access-Control-Max-Age": "86400",
+    });
+    res.sendStatus(204);
+  });
+
+  app.post("/api/widget/:token/message-stream", async (req, res) => {
+    res.set("Access-Control-Allow-Origin", "*");
+    try {
+      const { token } = req.params;
+      const channel = await storage.getAgentChannelByToken(token, "web_widget");
+
+      if (!channel) {
+        return res.status(404).json({ error: "channel_not_found", message: "Widget channel not found." });
+      }
+      if (channel.status !== "connected") {
+        return res.status(422).json({ error: "channel_paused", message: `Channel is ${channel.status}` });
+      }
+
+      const agent = await storage.getAgent(channel.agentId);
+      if (!agent) {
+        return res.status(404).json({ error: "agent_not_found", message: "Agent not found" });
+      }
+      if (agent.status !== "deployed") {
+        return res.status(422).json({ error: "agent_not_deployed", message: "Agent is not deployed" });
+      }
+
+      const rateLimitKey = token + ":" + (req.ip || "unknown");
+      if (!checkWidgetRateLimit(rateLimitKey)) {
+        return res.status(429).json({ error: "rate_limited", message: "Too many messages. Please wait a moment before sending another." });
+      }
+
+      const rawMessage = req.body.message || req.body.input || req.body.text || "";
+      const userMessage = typeof rawMessage === "string" ? rawMessage.substring(0, 2000) : "";
+      if (!userMessage) {
+        return res.status(400).json({ error: "no_message", message: "Please provide a message." });
+      }
+
+      const conversationHistory: string[] = Array.isArray(req.body.history)
+        ? req.body.history.slice(-10).map((h: any) => typeof h === "string" ? h.substring(0, 500) : "")
+        : [];
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+
+      res.write(`data: ${JSON.stringify({ type: "status", content: "Thinking..." })}\n\n`);
+
+      const agentMcpLinks = await storage.getAgentMcpServers(agent.id);
+      const mcpServerIds = agentMcpLinks.map((l: any) => l.serverId);
+      const richPrompt = buildAgentSystemPrompt(agent);
+
+      const historyContext = conversationHistory.length > 0
+        ? `## Conversation History\n${conversationHistory.join("\n\n")}\n\n## Current User Message\n${userMessage}`
+        : userMessage;
+
+      const onProgress = (event: RuntimeProgressEvent) => {
+        try {
+          const progressData: Record<string, any> = { type: event.type, timestamp: event.timestamp };
+          if (event.type === "tool_call_start") {
+            progressData.content = `Using ${event.data.tool || "tool"}...`;
+          } else if (event.type === "llm_thinking") {
+            progressData.content = "Analyzing...";
+          } else if (event.type === "compliance_check") {
+            progressData.content = "Checking compliance...";
+          }
+          res.write(`data: ${JSON.stringify(progressData)}\n\n`);
+        } catch {}
+      };
+
+      const result = await executePromptWithMcp(
+        agent.id,
+        undefined,
+        undefined,
+        mcpServerIds,
+        historyContext,
+        (agent as any).industry || "technology",
+        richPrompt,
+        { conversational: true, maxToolIterations: agent.maxToolIterations ?? 5 },
+        onProgress,
+      );
+
+      let fullResponse = "";
+      if (!result.success && result.summary?.error) {
+        fullResponse = `I wasn't able to complete your request: ${result.summary.error}`;
+      } else {
+        fullResponse = result.conversationalResponse
+          || extractResponseText(result)
+          || "I processed your request but couldn't generate a detailed response.";
+      }
+
+      res.write(`data: ${JSON.stringify({ type: "complete", content: fullResponse })}\n\n`);
+
+      const suggestedActions: string[] = [];
+      try {
+        const suggestResult = await openai.chat.completions.create({
+          model: "gpt-4.1-nano",
+          messages: [
+            { role: "system", content: "Generate exactly 3 brief follow-up questions or actions the user might want to take next, based on the conversation. Return them as a JSON array of strings. Each should be under 40 characters. Be specific and contextual, not generic." },
+            { role: "user", content: `User asked: "${userMessage.substring(0, 200)}"\n\nAgent replied: "${fullResponse.substring(0, 500)}"` },
+          ],
+          response_format: { type: "json_object" },
+          max_tokens: 150,
+        });
+        const parsed = JSON.parse(suggestResult.choices[0]?.message?.content || "{}");
+        const items = parsed.actions || parsed.suggestions || parsed.questions || Object.values(parsed).find(Array.isArray) || [];
+        if (Array.isArray(items)) {
+          suggestedActions.push(...items.slice(0, 3).map((s: any) => String(s)));
+        }
+      } catch {}
+
+      if (suggestedActions.length === 0) {
+        suggestedActions.push("Tell me more", "What else can you help with?", "Can you elaborate?");
+      }
+
+      res.write(`data: ${JSON.stringify({ type: "suggested_actions", actions: suggestedActions })}\n\n`);
+      res.write("data: [DONE]\n\n");
+      res.end();
+
+      try {
+        await storage.updateAgentChannel(channel.id, {
+          messageCount: (channel.messageCount || 0) + 1,
+          lastMessageAt: new Date(),
+        });
+      } catch {}
+
+    } catch (e: any) {
+      console.error("[widget-stream] Error processing widget message:", e);
+      try {
+        if (!res.headersSent) {
+          res.status(500).json({ error: "widget_error", message: "Failed to process message." });
+        } else {
+          res.write(`data: ${JSON.stringify({ type: "error", content: "Sorry, something went wrong. Please try again." })}\n\n`);
+          res.write("data: [DONE]\n\n");
+          res.end();
+        }
+      } catch {}
+    }
+  });
+
   app.post("/api/gateway/v1/invoke/:agentId", async (req, res) => {
     const startTime = Date.now();
     try {
