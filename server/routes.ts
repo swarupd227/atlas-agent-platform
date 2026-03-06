@@ -20941,10 +20941,12 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
   });
 
   const toolCatalogPatchSchema = z.object({
+    name: z.string().min(1).optional(),
     riskClassification: z.enum(["low", "medium", "high", "critical"]).optional(),
     owner: z.string().max(255).optional(),
     enabled: z.boolean().optional(),
     description: z.string().optional(),
+    inputSchema: z.any().optional(),
   });
 
   app.patch("/api/tool-catalog/:id", checkPermission("manage_mcp_servers"), async (req, res) => {

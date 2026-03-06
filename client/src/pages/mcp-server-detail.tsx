@@ -16,7 +16,7 @@ import {
   ArrowLeft, Server, Shield, Activity, CheckCircle2, AlertCircle,
   Globe, Terminal, Wrench, FileText, MessageSquare, Lock,
   RefreshCw, Clock, Zap, Play, Plus, Brain, XCircle, Tag,
-  BookOpen, AlertTriangle, Loader2, Link2, Search,
+  BookOpen, AlertTriangle, Loader2, Link2, Search, Pencil, Save,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -176,6 +176,54 @@ export default function McpServerDetail() {
   const [newToolRisk, setNewToolRisk] = useState("low");
   const [newToolOwner, setNewToolOwner] = useState("");
   const [newToolSchemaError, setNewToolSchemaError] = useState<string | null>(null);
+
+  const [editToolId, setEditToolId] = useState<string | null>(null);
+  const [editToolName, setEditToolName] = useState("");
+  const [editToolDescription, setEditToolDescription] = useState("");
+  const [editToolInputSchema, setEditToolInputSchema] = useState("");
+  const [editToolRisk, setEditToolRisk] = useState("low");
+  const [editToolOwner, setEditToolOwner] = useState("");
+  const [editToolSaving, setEditToolSaving] = useState(false);
+
+  function openEditTool(tool: McpServerTool) {
+    setEditToolId(tool.id);
+    setEditToolName(tool.name);
+    setEditToolDescription(tool.description || "");
+    setEditToolInputSchema(tool.inputSchema ? JSON.stringify(tool.inputSchema, null, 2) : '{\n  "type": "object",\n  "properties": {},\n  "required": []\n}');
+    setEditToolRisk(tool.riskClassification || "low");
+    setEditToolOwner(tool.owner || "");
+  }
+
+  async function handleSaveEditTool() {
+    if (!editToolId) return;
+    setEditToolSaving(true);
+    try {
+      let parsedSchema: Record<string, unknown> | undefined;
+      if (editToolInputSchema.trim()) {
+        try {
+          parsedSchema = JSON.parse(editToolInputSchema);
+        } catch {
+          toast({ title: "Invalid JSON in input schema", variant: "destructive" });
+          setEditToolSaving(false);
+          return;
+        }
+      }
+      await apiRequest("PATCH", `/api/tool-catalog/${editToolId}`, {
+        name: editToolName,
+        description: editToolDescription,
+        riskClassification: editToolRisk,
+        owner: editToolOwner || undefined,
+        inputSchema: parsedSchema,
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/mcp-servers", id, "tools"] });
+      toast({ title: "Tool updated" });
+      setEditToolId(null);
+    } catch (err: any) {
+      toast({ title: "Failed to update tool", description: err.message, variant: "destructive" });
+    } finally {
+      setEditToolSaving(false);
+    }
+  }
 
   const addToolMutation = useMutation({
     mutationFn: async () => {
@@ -852,6 +900,15 @@ export default function McpServerDetail() {
                         <Badge variant={tool.enabled ? "default" : "secondary"} className="text-[10px]" data-testid={`badge-tool-enabled-${tool.id}`}>
                           {tool.enabled ? "Enabled" : "Disabled"}
                         </Badge>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7"
+                          onClick={() => openEditTool(tool)}
+                          data-testid={`button-edit-tool-${tool.id}`}
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </Button>
                       </div>
                     </div>
                   </CardHeader>
@@ -931,6 +988,81 @@ export default function McpServerDetail() {
               ))}
             </div>
           )}
+
+          <Dialog open={editToolId !== null} onOpenChange={(open) => { if (!open) setEditToolId(null); }}>
+            <DialogContent data-testid="dialog-edit-tool">
+              <DialogHeader>
+                <DialogTitle>Edit Tool</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="edit-tool-name">Name</Label>
+                  <Input
+                    id="edit-tool-name"
+                    value={editToolName}
+                    onChange={(e) => setEditToolName(e.target.value)}
+                    data-testid="input-edit-tool-name"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="edit-tool-description">Description</Label>
+                  <Textarea
+                    id="edit-tool-description"
+                    value={editToolDescription}
+                    onChange={(e) => setEditToolDescription(e.target.value)}
+                    rows={3}
+                    data-testid="input-edit-tool-description"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <Label>Risk Classification</Label>
+                    <Select value={editToolRisk} onValueChange={setEditToolRisk}>
+                      <SelectTrigger data-testid="select-edit-tool-risk">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="low">Low</SelectItem>
+                        <SelectItem value="medium">Medium</SelectItem>
+                        <SelectItem value="high">High</SelectItem>
+                        <SelectItem value="critical">Critical</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="edit-tool-owner">Owner</Label>
+                    <Input
+                      id="edit-tool-owner"
+                      value={editToolOwner}
+                      onChange={(e) => setEditToolOwner(e.target.value)}
+                      placeholder="e.g. platform-team"
+                      data-testid="input-edit-tool-owner"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="edit-tool-schema">Input Schema (JSON)</Label>
+                  <Textarea
+                    id="edit-tool-schema"
+                    value={editToolInputSchema}
+                    onChange={(e) => setEditToolInputSchema(e.target.value)}
+                    rows={8}
+                    className="font-mono text-xs"
+                    data-testid="input-edit-tool-schema"
+                  />
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button variant="ghost" onClick={() => setEditToolId(null)} data-testid="button-cancel-edit-tool">
+                    Cancel
+                  </Button>
+                  <Button onClick={handleSaveEditTool} disabled={editToolSaving || !editToolName.trim()} data-testid="button-save-edit-tool">
+                    {editToolSaving ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Save className="w-4 h-4 mr-1.5" />}
+                    Save Changes
+                  </Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
         </TabsContent>
 
         <TabsContent value="resources" className="flex flex-col gap-4 mt-4">
