@@ -88,6 +88,8 @@ interface OntologyRelationship {
   type: "parent" | "child" | "related" | "depends_on";
   targetId: string;
   label: string;
+  exists?: boolean;
+  resolvedTargetId?: string;
 }
 
 interface LinkedRegulation {
@@ -247,6 +249,8 @@ export default function OntologyExplorer() {
   const [newSynonyms, setNewSynonyms] = useState("");
   const [newTags, setNewTags] = useState("");
   const [newRelateTo, setNewRelateTo] = useState("");
+  const [reconcileDialogOpen, setReconcileDialogOpen] = useState(false);
+  const [reconcileResults, setReconcileResults] = useState<{ orphaned: any[]; total: number } | null>(null);
   const [kgPanelOpen, setKgPanelOpen] = useState(false);
   const [kgSuggestions, setKgSuggestions] = useState<KgSuggestion[]>([]);
   const [kgDismissed, setKgDismissed] = useState<Set<number>>(new Set());
@@ -361,6 +365,42 @@ export default function OntologyExplorer() {
 
   const [localEnriched, setLocalEnriched] = useState<Record<string, EnrichedConcept>>({});
 
+  const reconcileScanMutation = useMutation({
+    mutationFn: async () => {
+      if (!industryId) throw new Error("No industry selected");
+      const res = await apiRequest("POST", "/api/ontology/reconcile-relationships", { industryId });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setReconcileResults(data);
+      setReconcileDialogOpen(true);
+    },
+    onError: (err: Error) => {
+      toast({ title: "Scan failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const reconcileActionMutation = useMutation({
+    mutationFn: async (action: "remove" | "create_stubs") => {
+      if (!industryId) throw new Error("No industry selected");
+      const res = await apiRequest("POST", "/api/ontology/reconcile-relationships", { industryId, action });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setReconcileDialogOpen(false);
+      setReconcileResults(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/ontology/concepts"] });
+      if (data.action === "remove") {
+        toast({ title: "Relationships cleaned", description: `Removed ${data.removed} orphaned relationship(s)` });
+      } else {
+        toast({ title: "Concepts created", description: `Created ${data.created?.length || 0} stub concept(s)` });
+      }
+    },
+    onError: (err: Error) => {
+      toast({ title: "Reconciliation failed", description: err.message, variant: "destructive" });
+    },
+  });
+
   const enhanceMutation = useMutation({
     mutationFn: async (concept: ConceptView) => {
       const res = await apiRequest("POST", "/api/ai/enhance-ontology-concept", {
@@ -418,7 +458,14 @@ export default function OntologyExplorer() {
       }
       if (enriched.suggestedRelationships && enriched.suggestedRelationships.length > 0) {
         const existingKeys = new Set(concept.relationships.map((r) => `${r.type}-${r.targetId}`));
-        const newRels = enriched.suggestedRelationships.filter((r) => !existingKeys.has(`${r.type}-${r.targetId}`));
+        const newRels = enriched.suggestedRelationships
+          .filter((r) => r.exists !== false)
+          .map((r) => ({
+            type: r.type,
+            targetId: r.resolvedTargetId || r.targetId,
+            label: r.label,
+          }))
+          .filter((r) => !existingKeys.has(`${r.type}-${r.targetId}`));
         if (newRels.length > 0) {
           updatePayload.relationships = [...concept.relationships, ...newRels];
         }
@@ -942,6 +989,20 @@ export default function OntologyExplorer() {
               >
                 <Database className="w-4 h-4 mr-1" />
                 KG Builder
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => reconcileScanMutation.mutate()}
+                disabled={reconcileScanMutation.isPending}
+                data-testid="button-reconcile-relationships"
+              >
+                {reconcileScanMutation.isPending ? (
+                  <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                ) : (
+                  <RotateCcw className="w-4 h-4 mr-1" />
+                )}
+                Reconcile
               </Button>
             </div>
           </div>
@@ -1928,17 +1989,38 @@ export default function OntologyExplorer() {
                                 <div className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
                                   <Link2 className="w-3 h-3" />
                                   Suggested Relationships
+                                  {enrichment.suggestedRelationships.some(r => r.exists === false) && (
+                                    <Badge variant="outline" className="text-[9px] border-amber-500/50 text-amber-600 dark:text-amber-400 ml-1">
+                                      {enrichment.suggestedRelationships.filter(r => r.exists === false).length} unmatched
+                                    </Badge>
+                                  )}
                                 </div>
                                 <div className="grid gap-2 sm:grid-cols-2">
                                   {enrichment.suggestedRelationships.map((rel, i) => (
-                                    <div key={i} className="p-3 rounded-md border" data-testid={`preview-relationship-${i}`}>
+                                    <div key={i} className={`p-3 rounded-md border ${rel.exists === false ? "border-amber-500/30 bg-amber-50/30 dark:bg-amber-950/20" : ""}`} data-testid={`preview-relationship-${i}`}>
                                       <div className="flex items-center gap-2 mb-1 flex-wrap">
                                         <Badge className={`text-[10px] ${relationshipTypeColors[rel.type] || ""}`}>
                                           {rel.type.replace("_", " ")}
                                         </Badge>
+                                        {rel.exists === false ? (
+                                          <Badge variant="outline" className="text-[9px] border-amber-500/50 text-amber-600 dark:text-amber-400">
+                                            <AlertTriangle className="w-2.5 h-2.5 mr-0.5" />
+                                            Not in ontology
+                                          </Badge>
+                                        ) : rel.exists === true ? (
+                                          <Badge variant="outline" className="text-[9px] border-green-500/50 text-green-600 dark:text-green-400">
+                                            <Check className="w-2.5 h-2.5 mr-0.5" />
+                                            Matched
+                                          </Badge>
+                                        ) : null}
                                       </div>
                                       <div className="text-xs font-medium">{rel.targetId}</div>
                                       <div className="text-[11px] text-muted-foreground mt-0.5">{rel.label}</div>
+                                      {rel.exists === false && (
+                                        <div className="text-[10px] text-amber-600 dark:text-amber-400 mt-1 italic">
+                                          Will be skipped when applied — target concept doesn't exist
+                                        </div>
+                                      )}
                                     </div>
                                   ))}
                                 </div>
@@ -2423,6 +2505,74 @@ export default function OntologyExplorer() {
               </>
             );
           })()}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={reconcileDialogOpen} onOpenChange={setReconcileDialogOpen}>
+        <DialogContent data-testid="dialog-reconcile-relationships">
+          <DialogHeader>
+            <DialogTitle>Reconcile Relationships</DialogTitle>
+            <DialogDescription>
+              Scan for relationships that reference concepts not present in this ontology.
+            </DialogDescription>
+          </DialogHeader>
+          {reconcileResults && (
+            <div className="space-y-4">
+              {reconcileResults.total === 0 ? (
+                <div className="flex flex-col items-center gap-3 py-6 text-center">
+                  <CheckCircle className="w-10 h-10 text-green-500" />
+                  <div>
+                    <p className="font-medium text-sm">All relationships are valid</p>
+                    <p className="text-xs text-muted-foreground mt-1">Every relationship points to an existing concept in this ontology.</p>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-center gap-2 p-3 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                    <p className="text-sm text-amber-800 dark:text-amber-300">
+                      Found <strong>{reconcileResults.total}</strong> orphaned relationship(s) pointing to non-existent concepts.
+                    </p>
+                  </div>
+                  <div className="max-h-[240px] overflow-y-auto space-y-2">
+                    {reconcileResults.orphaned.map((o: any, i: number) => (
+                      <div key={i} className="flex items-start gap-2 p-2 rounded-md border text-xs" data-testid={`orphaned-rel-${i}`}>
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-500 mt-0.5 shrink-0" />
+                        <div className="min-w-0">
+                          <span className="font-medium">{o.conceptLabel}</span>
+                          <span className="text-muted-foreground"> → </span>
+                          <span className="text-amber-600 dark:text-amber-400">{o.relationship?.targetId || "unknown"}</span>
+                          <span className="text-muted-foreground ml-1">({o.relationship?.type})</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <DialogFooter className="gap-2 sm:gap-0">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => reconcileActionMutation.mutate("create_stubs")}
+                      disabled={reconcileActionMutation.isPending}
+                      data-testid="button-reconcile-create"
+                    >
+                      {reconcileActionMutation.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Plus className="w-3 h-3 mr-1" />}
+                      Create Missing Concepts
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => reconcileActionMutation.mutate("remove")}
+                      disabled={reconcileActionMutation.isPending}
+                      data-testid="button-reconcile-remove"
+                    >
+                      {reconcileActionMutation.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Trash2 className="w-3 h-3 mr-1" />}
+                      Remove Orphaned
+                    </Button>
+                  </DialogFooter>
+                </>
+              )}
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

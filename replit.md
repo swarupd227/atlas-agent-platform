@@ -48,6 +48,7 @@ The Nous Agent Orchestrator employs a modern web stack with a React, Vite, Tailw
 - **Agent Config Versioning & GitOps**: Full lifecycle versioning and Git-based config management.
 - **End-to-End Provenance Graph**: Tamper-proof execution environment reconstruction for historical agent decisions.
 - **Ontology Design-Time Validation Layer**: Integrates ontology validation across KB concepts, Eval I/O schema, MCP tool alignment, and prompt vocabulary.
+- **Ontology Relationship Reconciliation**: AI Enhance now constrains relationship suggestions to existing ontology concepts (with fuzzy matching fallback) and marks each suggestion as "Matched" or "Not in ontology". The apply flow resolves targetIds to actual concept IDs. A "Reconcile" button in the ontology sidebar scans for orphaned relationships and offers bulk "Remove Orphaned" or "Create Missing Concepts" actions via `POST /api/ontology/reconcile-relationships`.
 - **Eval-Driven Operational Intelligence Fixes**: Server-side eval gates for deployment promotion and direct eval failure to KB gap analysis.
 - **Context Window Economics Engine**: ROI optimization engine for token consumption, outcome quality, and cost.
 - **MCP Governance & Semantic Interoperability Layer**: Governed, ontology-validated bridge between AI agents and enterprise MCP tool ecosystems.

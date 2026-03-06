@@ -5223,6 +5223,17 @@ Return ONLY a valid JSON object with an enriched "rules" array. Do not include m
       }
 
       const existingTags = req.body.tags || [];
+
+      const existingConcepts = await storage.getOntologyConcepts(industry || "");
+      const conceptLabelMap = new Map<string, string>();
+      for (const c of existingConcepts) {
+        conceptLabelMap.set(c.label.toLowerCase(), c.id);
+      }
+      const availableConceptLabels = existingConcepts.map(c => c.label);
+      const conceptListStr = availableConceptLabels.length > 0
+        ? `\n\nAVAILABLE CONCEPTS IN THIS ONTOLOGY (you MUST only reference these as relationship targets):\n${availableConceptLabels.join(", ")}`
+        : "";
+
       const response = await openai.chat.completions.create({
         model: "gpt-4.1",
         max_tokens: 3000,
@@ -5240,7 +5251,7 @@ When given an ontology concept, produce a comprehensive JSON enrichment with ALL
 - "implementationGuidance": Brief guidance on implementing AI agents that work with this concept
 - "riskFactors": Array of 2-3 risk factors to consider
 - "suggestedProperties": Array of 2-4 additional properties that would enrich this concept. Each object must have: {"name": "camelCaseName", "type": "string|decimal|date|enum|boolean|integer", "description": "Brief description"}. Only suggest properties NOT already present.
-- "suggestedRelationships": Array of 1-3 additional relationships this concept should have. Each object must have: {"type": "related|parent|child|depends_on", "targetId": "Human-readable concept name (e.g. 'Corporate Actions', 'Reference Data Source', 'Market Data Feed'). Do NOT use internal IDs like fibo-15 — use the actual concept name.", "label": "Human-readable relationship description"}. Be specific about what concepts this should relate to.
+- "suggestedRelationships": Array of 1-3 additional relationships this concept should have. Each object must have: {"type": "related|parent|child|depends_on", "targetId": "The EXACT concept name from the available concepts list", "label": "Human-readable relationship description"}. CRITICAL: The targetId MUST be the exact name of a concept that exists in the available concepts list. Do NOT invent or suggest concepts that are not in the list. If no suitable existing concept exists for a relationship, omit that relationship.
 - "suggestedTags": Array of 3-5 additional classification tags for this concept. Only suggest tags NOT already present in the existing tags.
 - "agentSkills": Array of 3-5 specific skills an AI agent would need to work with THIS concept (e.g., "Trade Lifecycle Tracking", "Counterparty Exposure Calculation"). Be concept-specific, not generic.
 - "agentTypes": Array of 2-4 specific AI agent types that would directly operate on THIS concept (e.g., "Derivatives Pricing Agent", "Settlement Reconciliation Agent"). Be concept-specific, not generic.`
@@ -5254,7 +5265,7 @@ Category: ${category}
 Description: ${description}
 Properties: ${JSON.stringify(properties || [])}
 Relationships: ${JSON.stringify(relationships || [])}
-Existing Tags: ${JSON.stringify(existingTags)}
+Existing Tags: ${JSON.stringify(existingTags)}${conceptListStr}
 
 Return ONLY a valid JSON object. Do not include markdown formatting or code blocks.`
           }
@@ -5268,6 +5279,29 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
       }
 
       const enriched = JSON.parse(content);
+
+      if (enriched.suggestedRelationships && Array.isArray(enriched.suggestedRelationships)) {
+        const validated: any[] = [];
+        const unmatched: any[] = [];
+        for (const rel of enriched.suggestedRelationships) {
+          const targetName = (rel.targetId || "").toLowerCase();
+          const matchedId = conceptLabelMap.get(targetName);
+          if (matchedId) {
+            validated.push({ ...rel, resolvedTargetId: matchedId, exists: true });
+          } else {
+            const fuzzyMatch = availableConceptLabels.find(l =>
+              l.toLowerCase().includes(targetName) || targetName.includes(l.toLowerCase())
+            );
+            if (fuzzyMatch) {
+              validated.push({ ...rel, targetId: fuzzyMatch, resolvedTargetId: conceptLabelMap.get(fuzzyMatch.toLowerCase()), exists: true });
+            } else {
+              unmatched.push({ ...rel, exists: false });
+            }
+          }
+        }
+        enriched.suggestedRelationships = [...validated, ...unmatched];
+      }
+
       res.json({ enriched });
     } catch (e: any) {
       console.error("AI enhance ontology concept error:", e);
@@ -23970,6 +24004,91 @@ Return ONLY a valid JSON object.`
     }
   });
 
+  app.post("/api/ontology/reconcile-relationships", checkPermission("create_modify_policies"), async (req, res) => {
+    try {
+      const { industryId, action } = req.body;
+      if (!industryId) return res.status(400).json({ error: "industryId is required" });
+
+      const concepts = await storage.getOntologyConcepts(industryId);
+      const conceptIdSet = new Set(concepts.map(c => c.id));
+      const conceptLabelMap = new Map(concepts.map(c => [c.label.toLowerCase(), c.id]));
+
+      const orphaned: Array<{ conceptId: string; conceptLabel: string; relationship: any; index: number }> = [];
+      for (const concept of concepts) {
+        const rels = Array.isArray(concept.relationships) ? (concept.relationships as any[]) : [];
+        rels.forEach((rel, idx) => {
+          const targetId = rel.targetId || "";
+          const targetExists = conceptIdSet.has(targetId) || conceptLabelMap.has(targetId.toLowerCase());
+          if (!targetExists) {
+            orphaned.push({
+              conceptId: concept.id,
+              conceptLabel: concept.label,
+              relationship: rel,
+              index: idx,
+            });
+          }
+        });
+      }
+
+      if (action === "remove") {
+        let removedCount = 0;
+        const affectedConceptIds = new Set(orphaned.map(o => o.conceptId));
+        for (const cid of affectedConceptIds) {
+          const c = concepts.find(c => c.id === cid);
+          const rels = Array.isArray(c?.relationships) ? (c!.relationships as any[]) : [];
+          const cleanedRels = rels
+            .filter(rel => {
+              const tid = (rel.targetId || "").toLowerCase();
+              return conceptIdSet.has(rel.targetId) || conceptLabelMap.has(tid);
+            })
+            .map(rel => {
+              if (!conceptIdSet.has(rel.targetId)) {
+                const resolvedId = conceptLabelMap.get((rel.targetId || "").toLowerCase());
+                if (resolvedId) return { ...rel, targetId: resolvedId };
+              }
+              return rel;
+            });
+          await storage.updateOntologyConcept(cid, { relationships: cleanedRels });
+          removedCount += rels.length - cleanedRels.length;
+        }
+        return res.json({ orphaned: orphaned.length, removed: removedCount, action: "remove" });
+      }
+
+      if (action === "create_stubs") {
+        const createdConcepts: string[] = [];
+        const uniqueTargets = new Set(orphaned.map(o => o.relationship.targetId || "").filter(Boolean));
+        for (const targetLabel of uniqueTargets) {
+          if (conceptLabelMap.has(targetLabel.toLowerCase())) continue;
+          const newId = `custom-${targetLabel.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+          if (conceptIdSet.has(newId)) continue;
+          try {
+            await storage.createOntologyConcept({
+              id: newId,
+              industryId,
+              label: targetLabel,
+              category: "Custom",
+              description: `Auto-created stub for relationship target: ${targetLabel}`,
+              properties: [],
+              relationships: [],
+              synonyms: [],
+              tags: [],
+              source: "custom-extension",
+            });
+            conceptIdSet.add(newId);
+            conceptLabelMap.set(targetLabel.toLowerCase(), newId);
+            createdConcepts.push(targetLabel);
+          } catch {}
+        }
+        return res.json({ orphaned: orphaned.length, created: createdConcepts, action: "create_stubs" });
+      }
+
+      res.json({ orphaned, total: orphaned.length });
+    } catch (e: any) {
+      console.error("Reconcile relationships error:", e);
+      res.status(500).json({ error: e.message || "Failed to reconcile relationships" });
+    }
+  });
+
   app.delete("/api/ontology/concepts/:id", checkPermission("create_modify_policies"), async (req, res) => {
     try {
       const concept = await storage.getOntologyConcept(req.params.id);
@@ -24336,14 +24455,15 @@ Return ONLY a valid JSON object.`
       if (process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
         try {
           const concepts = await storage.getOntologyConcepts(industry || "");
-          const conceptLabels = concepts.slice(0, 30).map(c => c.label).join(", ");
+          const conceptLabels = concepts.map(c => c.label).join(", ");
+          const conceptLabelSet = new Set(concepts.map(c => c.label.toLowerCase()));
 
           const response = await openai.chat.completions.create({
             model: "gpt-4o-mini",
             messages: [
               {
                 role: "system",
-                content: `You are an industry ontology expert. Given an ontology term and its industry context, suggest meaningful relationships to other entities. Return a JSON array of objects with: type (e.g., "applies_to", "required_in", "governs", "depends_on", "related_to", "part_of", "regulates", "measured_by"), targetEntity (the related entity name), and context (brief explanation of the relationship). Suggest 4-8 relationships that would be valuable for an AI agent operating in this domain. Consider regulatory, operational, and domain-specific relationships.`
+                content: `You are an industry ontology expert. Given an ontology term and its industry context, suggest meaningful relationships to other entities. Return a JSON array of objects with: type (e.g., "applies_to", "required_in", "governs", "depends_on", "related_to", "part_of", "regulates", "measured_by"), targetEntity (the related entity name — MUST be from the provided existing concepts list), and context (brief explanation of the relationship). Suggest 4-8 relationships that would be valuable for an AI agent operating in this domain. CRITICAL: Only suggest relationships to concepts that exist in the provided list. Do NOT invent new concept names.`
               },
               {
                 role: "user",
@@ -24362,6 +24482,7 @@ Return ONLY a valid JSON object.`
             source: "ai_suggestion",
             confidence: 0.7,
             context: s.context || s.explanation || null,
+            existsInOntology: conceptLabelSet.has((s.targetEntity || s.target || "").toLowerCase()),
           })).filter((s: any) => s.targetEntity);
         } catch (aiErr: any) {
           console.error("AI suggestion error:", aiErr.message);
