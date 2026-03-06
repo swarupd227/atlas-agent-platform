@@ -623,7 +623,7 @@ export default function OutcomeDiscover() {
       });
       if (!res.ok) throw new Error("Enhancement failed");
       const data = await res.json();
-      setProposal(data);
+      setProposal((prev) => prev ? { ...prev, outcomeContract: { ...prev.outcomeContract, ...data } } : prev);
       toast({ title: "Outcome enhanced", description: "AI has improved the outcome contract." });
     } catch (err: any) {
       toast({ title: "Enhancement failed", description: err.message || "Could not enhance outcome.", variant: "destructive" });
