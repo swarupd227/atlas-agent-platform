@@ -254,6 +254,9 @@ export default function OntologyExplorer() {
   const [kgPanelOpen, setKgPanelOpen] = useState(false);
   const [kgSuggestions, setKgSuggestions] = useState<KgSuggestion[]>([]);
   const [kgDismissed, setKgDismissed] = useState<Set<number>>(new Set());
+  const [kgAccepted, setKgAccepted] = useState<Set<number>>(new Set());
+  const [kgPendingIdx, setKgPendingIdx] = useState<Set<number>>(new Set());
+  const [kgApplyingAll, setKgApplyingAll] = useState(false);
   const [kgBuilderOpen, setKgBuilderOpen] = useState(false);
   const [kgBuilderStep, setKgBuilderStep] = useState<"configure" | "generating" | "review">("configure");
   const [kgSubdomain, setKgSubdomain] = useState("");
@@ -561,6 +564,8 @@ export default function OntologyExplorer() {
     onSuccess: (data) => {
       setKgSuggestions(data.suggestions);
       setKgDismissed(new Set());
+      setKgAccepted(new Set());
+      setKgPendingIdx(new Set());
       setKgPanelOpen(true);
       if (data.suggestions.length === 0) {
         toast({ title: "No suggestions found", description: "The Knowledge Graph did not return any related entities for this term." });
@@ -573,35 +578,65 @@ export default function OntologyExplorer() {
     },
   });
 
-  const acceptKgRelationshipMutation = useMutation({
-    mutationFn: async ({ concept, suggestion }: { concept: ConceptView; suggestion: KgSuggestion }) => {
-      const validTypes: OntologyRelationship["type"][] = ["parent", "child", "related", "depends_on"];
-      const normalizedType: OntologyRelationship["type"] = validTypes.includes(suggestion.type as any)
-        ? (suggestion.type as OntologyRelationship["type"])
-        : "related";
-      const newRelationship: OntologyRelationship = {
-        type: normalizedType,
-        targetId: suggestion.targetEntity,
-        label: suggestion.context || `${suggestion.type.replace(/_/g, " ")}: ${suggestion.targetEntity}`,
-      };
-      const existingKeys = new Set(concept.relationships.map(r => `${r.type}-${r.targetId}`));
-      if (existingKeys.has(`${newRelationship.type}-${newRelationship.targetId}`)) {
-        throw new Error("Relationship already exists on this concept");
-      }
-      const updatedRelationships = [...concept.relationships, newRelationship];
-      await apiRequest("PUT", `/api/ontology/concepts/${concept.id}`, {
-        relationships: updatedRelationships,
-      });
-      return { conceptId: concept.id };
-    },
-    onSuccess: () => {
+  async function acceptSingleKgRelationship(concept: ConceptView, suggestion: KgSuggestion, idx: number) {
+    const validTypes: OntologyRelationship["type"][] = ["parent", "child", "related", "depends_on"];
+    const normalizedType: OntologyRelationship["type"] = validTypes.includes(suggestion.type as any)
+      ? (suggestion.type as OntologyRelationship["type"])
+      : "related";
+    const newRelationship: OntologyRelationship = {
+      type: normalizedType,
+      targetId: suggestion.targetEntity,
+      label: suggestion.context || `${suggestion.type.replace(/_/g, " ")}: ${suggestion.targetEntity}`,
+    };
+    const freshConcepts = await fetch(`/api/ontology/concepts?industry=${encodeURIComponent(industryId || "")}`).then(r => r.json()) as ConceptView[];
+    const freshConcept = freshConcepts.find(c => c.id === concept.id);
+    const currentRels = freshConcept?.relationships || concept.relationships;
+    const existingKeys = new Set(currentRels.map((r: any) => `${r.type}-${r.targetId}`));
+    if (existingKeys.has(`${newRelationship.type}-${newRelationship.targetId}`)) {
+      throw new Error("Relationship already exists on this concept");
+    }
+    const updatedRelationships = [...currentRels, newRelationship];
+    await apiRequest("PUT", `/api/ontology/concepts/${concept.id}`, {
+      relationships: updatedRelationships,
+    });
+  }
+
+  async function handleAcceptKgSuggestion(concept: ConceptView, suggestion: KgSuggestion, idx: number) {
+    setKgPendingIdx(prev => new Set([...prev, idx]));
+    try {
+      await acceptSingleKgRelationship(concept, suggestion, idx);
+      setKgAccepted(prev => new Set([...prev, idx]));
       queryClient.invalidateQueries({ queryKey: ["/api/ontology/concepts", industryId] });
-      toast({ title: "Relationship added", description: "The suggested relationship was added to this concept." });
-    },
-    onError: (err: Error) => {
+      toast({ title: "Relationship added", description: `Added "${suggestion.targetEntity}" relationship.` });
+    } catch (err: any) {
       toast({ title: "Failed to add relationship", description: err.message, variant: "destructive" });
-    },
-  });
+    } finally {
+      setKgPendingIdx(prev => { const next = new Set([...prev]); next.delete(idx); return next; });
+    }
+  }
+
+  async function handleAcceptAllKgSuggestions(concept: ConceptView) {
+    setKgApplyingAll(true);
+    let added = 0;
+    let skipped = 0;
+    for (let idx = 0; idx < kgSuggestions.length; idx++) {
+      if (kgDismissed.has(idx) || kgAccepted.has(idx)) continue;
+      const suggestion = kgSuggestions[idx];
+      setKgPendingIdx(prev => new Set([...prev, idx]));
+      try {
+        await acceptSingleKgRelationship(concept, suggestion, idx);
+        setKgAccepted(prev => new Set([...prev, idx]));
+        added++;
+      } catch {
+        skipped++;
+      } finally {
+        setKgPendingIdx(prev => { const next = new Set([...prev]); next.delete(idx); return next; });
+      }
+    }
+    queryClient.invalidateQueries({ queryKey: ["/api/ontology/concepts", industryId] });
+    toast({ title: "Bulk accept complete", description: `Added ${added} relationship${added !== 1 ? "s" : ""}${skipped > 0 ? `, ${skipped} skipped (duplicates)` : ""}.` });
+    setKgApplyingAll(false);
+  }
 
   const resetDialog = () => {
     setAddDialogOpen(false);
@@ -2070,10 +2105,26 @@ export default function OntologyExplorer() {
               <X className="w-4 h-4" />
             </Button>
           </div>
-          <div className="px-3 py-2 border-b">
+          <div className="px-3 py-2 border-b flex items-center justify-between gap-2">
             <p className="text-xs text-muted-foreground">
               Showing relationship suggestions for <span className="font-medium text-foreground">{selectedConcept.label}</span> from Knowledge Graph and AI analysis.
             </p>
+            {kgSuggestions.length > 0 && kgSuggestions.some((_, idx) => !kgDismissed.has(idx) && !kgAccepted.has(idx)) && (
+              <Button
+                size="sm"
+                variant="default"
+                onClick={() => handleAcceptAllKgSuggestions(selectedConcept)}
+                disabled={kgApplyingAll || kgPendingIdx.size > 0}
+                data-testid="button-accept-all-suggestions"
+              >
+                {kgApplyingAll ? (
+                  <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                ) : (
+                  <Check className="w-3 h-3 mr-1" />
+                )}
+                Accept All
+              </Button>
+            )}
           </div>
           <ScrollArea className="flex-1">
             <div className="p-3 space-y-2">
@@ -2085,8 +2136,10 @@ export default function OntologyExplorer() {
               ) : (
                 kgSuggestions.map((suggestion, idx) => {
                   if (kgDismissed.has(idx)) return null;
+                  const isAccepted = kgAccepted.has(idx);
+                  const isPending = kgPendingIdx.has(idx);
                   const existingKeys = new Set(selectedConcept.relationships.map(r => `${r.type}-${r.targetId}`));
-                  const alreadyAdded = existingKeys.has(`${suggestion.type}-${suggestion.targetEntity}`);
+                  const alreadyAdded = isAccepted || existingKeys.has(`${suggestion.type}-${suggestion.targetEntity}`);
                   return (
                     <Card key={idx} className={alreadyAdded ? "opacity-60" : ""} data-testid={`card-kg-suggestion-${idx}`}>
                       <CardContent className="p-3 space-y-2">
@@ -2129,20 +2182,20 @@ export default function OntologyExplorer() {
                           <p className="text-[11px] text-muted-foreground" data-testid={`text-kg-context-${idx}`}>{suggestion.context}</p>
                         )}
                         {alreadyAdded ? (
-                          <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                          <div className="flex items-center gap-1.5 text-[11px] text-green-600 dark:text-green-400">
                             <CheckCircle className="w-3 h-3" />
-                            Already added
+                            {isAccepted ? "Accepted" : "Already added"}
                           </div>
                         ) : (
                           <div className="flex items-center gap-1.5">
                             <Button
                               size="sm"
                               variant="default"
-                              onClick={() => acceptKgRelationshipMutation.mutate({ concept: selectedConcept, suggestion })}
-                              disabled={acceptKgRelationshipMutation.isPending}
+                              onClick={() => handleAcceptKgSuggestion(selectedConcept, suggestion, idx)}
+                              disabled={isPending || kgApplyingAll}
                               data-testid={`button-accept-suggestion-${idx}`}
                             >
-                              {acceptKgRelationshipMutation.isPending ? (
+                              {isPending ? (
                                 <Loader2 className="w-3 h-3 mr-1 animate-spin" />
                               ) : (
                                 <Check className="w-3 h-3 mr-1" />
@@ -2153,6 +2206,7 @@ export default function OntologyExplorer() {
                               size="sm"
                               variant="ghost"
                               onClick={() => setKgDismissed(prev => { const next = new Set(Array.from(prev)); next.add(idx); return next; })}
+                              disabled={isPending || kgApplyingAll}
                               data-testid={`button-reject-suggestion-${idx}`}
                             >
                               <X className="w-3 h-3 mr-1" />

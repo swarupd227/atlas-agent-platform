@@ -24469,7 +24469,7 @@ Return ONLY a valid JSON object.`
             messages: [
               {
                 role: "system",
-                content: `You are an industry ontology expert. Given an ontology term and its industry context, suggest meaningful relationships to other entities. Return a JSON array of objects with: type (e.g., "applies_to", "required_in", "governs", "depends_on", "related_to", "part_of", "regulates", "measured_by"), targetEntity (the related entity name — MUST be from the provided existing concepts list), and context (brief explanation of the relationship). Suggest 4-8 relationships that would be valuable for an AI agent operating in this domain. CRITICAL: Only suggest relationships to concepts that exist in the provided list. Do NOT invent new concept names.`
+                content: `You are an industry ontology expert. Given an ontology term and its industry context, suggest meaningful relationships to other entities. Return a JSON object with a "relationships" array where each object has: type (e.g., "applies_to", "required_in", "governs", "depends_on", "related_to", "part_of", "regulates", "measured_by"), targetEntity (the related entity name — MUST be from the provided existing concepts list), confidence (a number between 0.0 and 1.0 reflecting how strong/certain this relationship is — use varied scores, not the same for all), and context (brief explanation of the relationship). Suggest 4-8 relationships that would be valuable for an AI agent operating in this domain. CRITICAL: Only suggest relationships to concepts that exist in the provided list. Do NOT invent new concept names.`
               },
               {
                 role: "user",
@@ -24486,7 +24486,7 @@ Return ONLY a valid JSON object.`
             type: s.type || "related_to",
             targetEntity: s.targetEntity || s.target || "",
             source: "ai_suggestion",
-            confidence: 0.7,
+            confidence: typeof s.confidence === "number" ? Math.min(1, Math.max(0, s.confidence)) : 0.7,
             context: s.context || s.explanation || null,
             existsInOntology: conceptLabelSet.has((s.targetEntity || s.target || "").toLowerCase()),
           })).filter((s: any) => s.targetEntity);
