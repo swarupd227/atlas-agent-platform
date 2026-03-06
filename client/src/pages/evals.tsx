@@ -911,7 +911,7 @@ export default function Evals() {
                   <Card>
                     <CardContent className="p-4 flex flex-col gap-2">
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs text-muted-foreground">Golden Dataset Coverage</span>
+                        <span className="text-xs text-muted-foreground">Eval Dataset Coverage</span>
                         <Badge variant="outline" className="text-[10px]">
                           {industryAssurance.linkedDatasets.length}/{industryAssurance.totalDatasets}
                         </Badge>

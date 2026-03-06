@@ -2559,7 +2559,7 @@ export default function EvalDetail() {
                 <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-3">
                   <CardTitle className="text-sm font-medium flex items-center gap-2">
                     <BookOpen className="w-4 h-4 text-muted-foreground" />
-                    Golden Dataset Baseline
+                    Eval Dataset Baseline
                   </CardTitle>
                 </CardHeader>
                 <CardContent>

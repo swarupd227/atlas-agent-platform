@@ -104,7 +104,7 @@ export function AppSidebar() {
       icon: FlaskConical,
       items: [
         { title: "Evaluations", url: "/evals", icon: FlaskConical },
-        { title: "Golden Datasets", url: "/golden-datasets", icon: Database },
+        { title: "Eval Datasets", url: "/golden-datasets", icon: Database },
       ],
     },
     {

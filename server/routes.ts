@@ -25186,6 +25186,43 @@ Simulate how the agent would handle the scenario. Return JSON:
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  app.get("/api/golden-datasets/:datasetId/data-records", async (req, res) => {
+    try {
+      const records = await storage.getGoldenDataRecords(req.params.datasetId);
+      res.json(records);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/golden-datasets/:datasetId/data-records", async (req, res) => {
+    try {
+      const record = await storage.createGoldenDataRecord({
+        ...req.body,
+        datasetId: req.params.datasetId,
+      });
+      res.status(201).json(record);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/golden-datasets/:datasetId/data-records/bulk", async (req, res) => {
+    try {
+      const { records } = req.body;
+      if (!Array.isArray(records) || records.length === 0) {
+        return res.status(400).json({ error: "records array is required" });
+      }
+      const withDatasetId = records.map((r: any) => ({ ...r, datasetId: req.params.datasetId }));
+      const created = await storage.bulkCreateGoldenDataRecords(withDatasetId);
+      res.status(201).json({ created: created.length, records: created });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.delete("/api/golden-data-records/:id", async (req, res) => {
+    try {
+      const deleted = await storage.deleteGoldenDataRecord(req.params.id);
+      if (!deleted) return res.status(404).json({ error: "Data record not found" });
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   app.get("/api/golden-datasets/:id/promotion-candidates", async (req, res) => {
     try {
       const datasetId = req.params.id;
@@ -25595,6 +25632,92 @@ Mix difficulties evenly across the test cases.`
       res.json({ dataset, testCases: created });
     } catch (e: any) {
       console.error("AI generate golden dataset error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/ai/generate-data-records", async (req, res) => {
+    try {
+      const { datasetId, category, count = 10, description, industry, useCase } = req.body;
+      if (!datasetId || !category || !industry || !useCase) {
+        return res.status(400).json({ error: "datasetId, category, industry, and useCase are required" });
+      }
+      const numRecords = Math.min(Math.max(1, count), 50);
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert at generating evaluation data records for AI agent testing in the ${industry} industry. Generate ${numRecords} realistic structured data records for the "${useCase}" use case, specifically for the "${category}" evaluation category.
+
+Each record represents a real-world input that an AI agent would process, paired with the known-correct output (ground truth). Records should be diverse, realistic, and cover various complexity levels.
+
+${description ? `Additional context: ${description}` : ""}
+
+Return JSON: { "records": [{ "inputData": object (realistic structured input the agent would receive), "expectedOutput": object (the known-correct output/result), "metadata": { "complexity": "low"|"medium"|"high", "expertLabels": string[], "notes": string }, "tags": string[] }] }
+
+Make inputData and expectedOutput realistic structured objects with multiple fields relevant to the industry and use case. Vary the complexity and edge cases across records.`
+          },
+          { role: "user", content: `Generate ${numRecords} evaluation data records for category "${category}" in the "${useCase}" use case (${industry} industry).${description ? ` Focus: ${description}` : ""}` }
+        ],
+        temperature: 0.7,
+        response_format: { type: "json_object" },
+      });
+
+      const raw = response.choices[0].message.content || "{}";
+      let result;
+      try { result = JSON.parse(raw); } catch { result = { records: [] }; }
+
+      const recordsToCreate = (result.records || []).slice(0, 50).map((r: any) => ({
+        datasetId,
+        category,
+        inputData: r.inputData || {},
+        expectedOutput: r.expectedOutput || {},
+        metadata: r.metadata || {},
+        tags: r.tags || [],
+        status: "active" as const,
+      }));
+
+      const created = await storage.bulkCreateGoldenDataRecords(recordsToCreate);
+      res.json({ generated: created.length, records: created });
+    } catch (e: any) {
+      console.error("AI generate data records error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/ai/suggest-benchmarks", async (req, res) => {
+    try {
+      const { datasetId, industry, useCase, categories } = req.body;
+      if (!datasetId || !industry || !useCase) {
+        return res.status(400).json({ error: "datasetId, industry, and useCase are required" });
+      }
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert at defining performance benchmarks for AI agent evaluation in the ${industry} industry. Given a use case and data categories, suggest appropriate performance benchmarks.
+
+Return JSON: { "benchmarks": [{ "name": string, "type": "latency"|"throughput"|"accuracy"|"detection"|"custom", "target": string (human readable target), "threshold": number (0-1 for percentages, or raw number), "unit": string, "category": string (which eval category this applies to), "description": string }] }
+
+Include benchmarks for latency, throughput, accuracy per category, and any industry-specific requirements.`
+          },
+          { role: "user", content: `Suggest performance benchmarks for "${useCase}" in ${industry}.${categories?.length ? ` Data categories: ${categories.join(", ")}` : ""}` }
+        ],
+        temperature: 0.7,
+        response_format: { type: "json_object" },
+      });
+
+      const raw = response.choices[0].message.content || "{}";
+      let result;
+      try { result = JSON.parse(raw); } catch { result = { benchmarks: [] }; }
+
+      res.json(result);
+    } catch (e: any) {
+      console.error("AI suggest benchmarks error:", e);
       res.status(500).json({ error: e.message });
     }
   });

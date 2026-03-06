@@ -122,6 +122,8 @@ import {
   type GoldenDataset, type InsertGoldenDataset,
   goldenTestCases,
   type GoldenTestCase, type InsertGoldenTestCase,
+  goldenDataRecords,
+  type GoldenDataRecord, type InsertGoldenDataRecord,
   contextProfiles,
   type ContextProfile, type InsertContextProfile,
   memoryProfiles,
@@ -542,6 +544,11 @@ export interface IStorage {
   createGoldenTestCase(testCase: InsertGoldenTestCase): Promise<GoldenTestCase>;
   updateGoldenTestCase(id: string, data: Partial<GoldenTestCase>): Promise<GoldenTestCase | undefined>;
   deleteGoldenTestCase(id: string): Promise<boolean>;
+
+  getGoldenDataRecords(datasetId: string): Promise<GoldenDataRecord[]>;
+  createGoldenDataRecord(record: InsertGoldenDataRecord): Promise<GoldenDataRecord>;
+  bulkCreateGoldenDataRecords(records: InsertGoldenDataRecord[]): Promise<GoldenDataRecord[]>;
+  deleteGoldenDataRecord(id: string): Promise<boolean>;
 
   getContextProfiles(): Promise<ContextProfile[]>;
   getContextProfile(id: string): Promise<ContextProfile | undefined>;
@@ -2164,6 +2171,33 @@ export class DatabaseStorage implements IStorage {
     });
     await db.update(goldenDatasets).set({ testCaseCount: cases.length, scenarioCategories: categories }).where(eq(goldenDatasets.id, datasetId));
   }
+
+  private async updateDatasetDataRecordCount(datasetId: string) {
+    const records = await db.select().from(goldenDataRecords).where(eq(goldenDataRecords.datasetId, datasetId));
+    await db.update(goldenDatasets).set({ dataRecordCount: records.length }).where(eq(goldenDatasets.id, datasetId));
+  }
+
+  async getGoldenDataRecords(datasetId: string): Promise<GoldenDataRecord[]> {
+    return db.select().from(goldenDataRecords).where(eq(goldenDataRecords.datasetId, datasetId)).orderBy(desc(goldenDataRecords.createdAt));
+  }
+  async createGoldenDataRecord(record: InsertGoldenDataRecord): Promise<GoldenDataRecord> {
+    const [created] = await db.insert(goldenDataRecords).values(record).returning();
+    await this.updateDatasetDataRecordCount(record.datasetId);
+    return created;
+  }
+  async bulkCreateGoldenDataRecords(records: InsertGoldenDataRecord[]): Promise<GoldenDataRecord[]> {
+    if (records.length === 0) return [];
+    const created = await db.insert(goldenDataRecords).values(records).returning();
+    if (records.length > 0) await this.updateDatasetDataRecordCount(records[0].datasetId);
+    return created;
+  }
+  async deleteGoldenDataRecord(id: string): Promise<boolean> {
+    const [record] = await db.select().from(goldenDataRecords).where(eq(goldenDataRecords.id, id));
+    const result = await db.delete(goldenDataRecords).where(eq(goldenDataRecords.id, id));
+    if (record) await this.updateDatasetDataRecordCount(record.datasetId);
+    return (result as any).rowCount > 0;
+  }
+
   async getContextProfiles(): Promise<ContextProfile[]> {
     return db.select().from(contextProfiles).orderBy(desc(contextProfiles.createdAt));
   }

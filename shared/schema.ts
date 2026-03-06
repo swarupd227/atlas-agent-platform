@@ -1471,6 +1471,8 @@ export const goldenDatasets = pgTable("golden_datasets", {
   status: text("status").notNull().default("active"),
   tags: text("tags").array().default(sql`'{}'::text[]`),
   aiGenerated: boolean("ai_generated").default(false),
+  performanceBenchmarks: jsonb("performance_benchmarks").default(sql`'[]'::jsonb`),
+  dataRecordCount: integer("data_record_count").notNull().default(0),
   lastUpdatedAt: timestamp("last_updated_at").defaultNow(),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -1499,6 +1501,22 @@ export const goldenTestCases = pgTable("golden_test_cases", {
 export const insertGoldenTestCaseSchema = createInsertSchema(goldenTestCases).omit({ id: true, createdAt: true });
 export type InsertGoldenTestCase = z.infer<typeof insertGoldenTestCaseSchema>;
 export type GoldenTestCase = typeof goldenTestCases.$inferSelect;
+
+export const goldenDataRecords = pgTable("golden_data_records", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  datasetId: varchar("dataset_id").notNull(),
+  category: text("category").notNull().default("general"),
+  inputData: jsonb("input_data").notNull(),
+  expectedOutput: jsonb("expected_output").notNull(),
+  metadata: jsonb("metadata").default(sql`'{}'::jsonb`),
+  tags: text("tags").array().default(sql`'{}'::text[]`),
+  status: text("status").notNull().default("active"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertGoldenDataRecordSchema = createInsertSchema(goldenDataRecords).omit({ id: true, createdAt: true });
+export type InsertGoldenDataRecord = z.infer<typeof insertGoldenDataRecordSchema>;
+export type GoldenDataRecord = typeof goldenDataRecords.$inferSelect;
 
 export const contextProfiles = pgTable("context_profiles", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

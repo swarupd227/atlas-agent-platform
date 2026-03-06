@@ -182,7 +182,7 @@ export default function GoldenDatasetsPage() {
             <Database className="w-4 h-4 text-primary" />
           </div>
           <div className="flex flex-col gap-0.5">
-            <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-page-title">Golden Datasets</h1>
+            <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-page-title">Eval Datasets</h1>
             <p className="text-sm text-muted-foreground" data-testid="text-page-subtitle">Industry-specific evaluation datasets & benchmarks</p>
           </div>
         </div>
@@ -256,7 +256,7 @@ export default function GoldenDatasetsPage() {
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>Create Golden Dataset</DialogTitle>
+                <DialogTitle>Create Eval Dataset</DialogTitle>
               </DialogHeader>
               <div className="flex flex-col gap-4">
                 <div className="flex flex-col gap-2">

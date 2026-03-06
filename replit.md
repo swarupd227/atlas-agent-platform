@@ -56,6 +56,7 @@ The Nous Agent Orchestrator employs a modern web stack with a React, Vite, Tailw
 - **Proactive Design-Time Governance Enforcement**: Policy gates for agent creation, sensitivity validation for KB sources, and blueprint policy compatibility.
 - **Live Compliance Posture Dashboard**: Real-time per-framework control coverage with agent-level mapping.
 - **AI Enhance for Test Case Drafts**: AI assistance for generating enhanced test case components.
+- **Eval Dataset Transformation**: Renamed "Golden Dataset" to "Eval Dataset" across UI. Added structured Data Records (JSON input/output pairs with categories, metadata, tags) alongside existing test cases via `golden_data_records` table. AI Generate Data Records endpoint generates realistic evaluation data per category. Performance Benchmarks (latency, throughput, accuracy, detection targets) stored on datasets with AI-suggested benchmarks. Detail page now has 3 tabs: Test Cases, Data Records, Benchmarks.
 - **Security Mode**: Feature-flagged JWT authentication layer (`SECURITY_MODE=demo` or `SECURITY_MODE=production`).
 - **LLM Provider Abstraction Layer**: Multi-provider LLM support (OpenAI, Anthropic, with extension points for others) for uniform `complete()`, `completeWithTools()`, and `embed()` interfaces, including per-agent provider selection and management UI.
 - **SSE Streaming for Agent Runtime**: Real-time progress streaming of `RuntimeProgressEvent` callbacks for agent execution via Server-Sent Events (SSE).
