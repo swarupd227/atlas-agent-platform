@@ -183,7 +183,11 @@ export default function McpServersPage() {
         </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {servers.map((server) => (
+          {[...servers].sort((a, b) => {
+            const dateA = new Date(a.updatedAt || a.createdAt || 0).getTime();
+            const dateB = new Date(b.updatedAt || b.createdAt || 0).getTime();
+            return dateB - dateA;
+          }).map((server) => (
             <Link key={server.id} href={`/integrations/mcp-servers/${server.id}`}>
               <Card className="hover-elevate cursor-pointer" data-testid={`card-mcp-server-${server.id}`}>
                 <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0 pb-2">
