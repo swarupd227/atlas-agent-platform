@@ -1124,7 +1124,13 @@ export async function registerRoutes(
         slaConfig: constraints ? { constraints, ...(outcomeData.slaConfig || {}) } : outcomeData.slaConfig,
       });
       const parsedKpis = (kpiData && Array.isArray(kpiData))
-        ? kpiData.map((kpi: any) => insertKpiDefinitionSchema.omit({ outcomeId: true }).parse(kpi))
+        ? kpiData.map((kpi: any) => insertKpiDefinitionSchema.omit({ outcomeId: true }).parse({
+            ...kpi,
+            target: typeof kpi.target === "number" ? kpi.target : (parseFloat(kpi.target) || 0),
+            baseline: typeof kpi.baseline === "number" ? kpi.baseline : (parseFloat(kpi.baseline) || 0),
+            slaThreshold: kpi.slaThreshold != null ? (typeof kpi.slaThreshold === "number" ? kpi.slaThreshold : (parseFloat(kpi.slaThreshold) || 0)) : undefined,
+            weight: kpi.weight != null ? (typeof kpi.weight === "number" ? kpi.weight : (parseFloat(kpi.weight) || 1)) : 1,
+          }))
         : [];
       const result = await db.transaction(async (tx) => {
         const [outcome] = await tx.insert(outcomeContracts).values(parsedOutcome).returning();
