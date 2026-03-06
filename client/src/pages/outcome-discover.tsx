@@ -432,11 +432,11 @@ export default function OutcomeDiscover() {
         },
         kpis: formKpis.map((k) => ({
           name: k.name,
-          target: k.target,
-          unit: k.unit,
-          baseline: k.baseline,
-          slaThreshold: k.slaThreshold,
-          weight: k.weight,
+          target: typeof k.target === "number" ? k.target : (parseFloat(k.target as any) || 0),
+          unit: k.unit || "count",
+          baseline: typeof k.baseline === "number" ? k.baseline : (parseFloat(k.baseline as any) || 0),
+          slaThreshold: typeof k.slaThreshold === "number" ? k.slaThreshold : (parseFloat(k.slaThreshold as any) || 0),
+          weight: k.weight ?? 1.0,
           targetOperator: k.targetOperator || ">=",
         })),
         constraints: governancePolicies.map((p) => ({
@@ -472,14 +472,17 @@ export default function OutcomeDiscover() {
 
   const createOutcomeMutation = useMutation({
     mutationFn: async (data: any) => {
-      const kpis = (proposal?.kpis || []).map((k: any) => ({
-        name: k.name,
-        target: k.target,
-        unit: k.unit,
-        baseline: k.currentBaseline ?? 0,
-        slaThreshold: k.target * 0.9,
-        weight: 1.0,
-      }));
+      const kpis = (proposal?.kpis || []).map((k: any) => {
+        const target = typeof k.target === "number" ? k.target : (parseFloat(k.target) || 0);
+        return {
+          name: k.name,
+          target,
+          unit: k.unit || "count",
+          baseline: k.currentBaseline ?? 0,
+          slaThreshold: target * 0.9,
+          weight: 1.0,
+        };
+      });
       const governanceConstraints = industry?.defaultGovernancePolicies || [];
       const res = await apiRequest("POST", "/api/outcomes/with-kpis", {
         outcome: data,
