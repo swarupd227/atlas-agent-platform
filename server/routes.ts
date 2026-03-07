@@ -25638,7 +25638,7 @@ Mix difficulties evenly across the test cases.`
 
   app.post("/api/ai/generate-data-records", async (req, res) => {
     try {
-      const { datasetId, category, count = 10, description, industry, useCase } = req.body;
+      const { datasetId, category, count = 10, description, promptGuideline, industry, useCase } = req.body;
       if (!datasetId || !category || !industry || !useCase) {
         return res.status(400).json({ error: "datasetId, category, industry, and useCase are required" });
       }
@@ -25655,11 +25655,13 @@ Each record represents a real-world input that an AI agent would process, paired
 
 ${description ? `Additional context: ${description}` : ""}
 
+${promptGuideline ? `IMPORTANT — User-provided generation guidelines (follow these closely):\n${promptGuideline}` : ""}
+
 Return JSON: { "records": [{ "inputData": object (realistic structured input the agent would receive), "expectedOutput": object (the known-correct output/result), "metadata": { "complexity": "low"|"medium"|"high", "expertLabels": string[], "notes": string }, "tags": string[] }] }
 
-Make inputData and expectedOutput realistic structured objects with multiple fields relevant to the industry and use case. Vary the complexity and edge cases across records.`
+Make inputData and expectedOutput realistic structured objects with multiple fields relevant to the industry and use case. Vary the complexity and edge cases across records.${promptGuideline ? " Follow the user's generation guidelines for field structure, value ranges, edge case distribution, and data formats." : ""}`
           },
-          { role: "user", content: `Generate ${numRecords} evaluation data records for category "${category}" in the "${useCase}" use case (${industry} industry).${description ? ` Focus: ${description}` : ""}` }
+          { role: "user", content: `Generate ${numRecords} evaluation data records for category "${category}" in the "${useCase}" use case (${industry} industry).${description ? ` Focus: ${description}` : ""}${promptGuideline ? `\n\nGeneration guidelines:\n${promptGuideline}` : ""}` }
         ],
         temperature: 0.7,
         response_format: { type: "json_object" },

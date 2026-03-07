@@ -92,6 +92,7 @@ function DataRecordsTab({ dataset, id }: { dataset: GoldenDataset; id: string })
   const [aiCategory, setAiCategory] = useState("completeness");
   const [aiCount, setAiCount] = useState(10);
   const [aiDescription, setAiDescription] = useState("");
+  const [aiPromptGuideline, setAiPromptGuideline] = useState("");
 
   const { data: dataRecords = [], isLoading: recordsLoading } = useQuery<GoldenDataRecord[]>({
     queryKey: ["/api/golden-datasets", id, "data-records"],
@@ -205,11 +206,23 @@ function DataRecordsTab({ dataset, id }: { dataset: GoldenDataset; id: string })
               </div>
               <div className="flex flex-col gap-2">
                 <Label>Description (optional)</Label>
-                <Textarea value={aiDescription} onChange={(e) => setAiDescription(e.target.value)} placeholder="Describe what these records should test..." rows={3} data-testid="input-ai-description" />
+                <Textarea value={aiDescription} onChange={(e) => setAiDescription(e.target.value)} placeholder="Describe what these records should test..." rows={2} data-testid="input-ai-description" />
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label>Generation Prompt Guideline</Label>
+                <p className="text-xs text-muted-foreground">Provide detailed instructions for how records should be structured, what fields to include, edge cases to cover, data formats, realistic value ranges, etc.</p>
+                <Textarea
+                  value={aiPromptGuideline}
+                  onChange={(e) => setAiPromptGuideline(e.target.value)}
+                  placeholder={"e.g. Each input record should be a notification object with fields: source (string), timestamp (ISO 8601), severity (low/medium/high/critical), message (string), metadata (object with host, service, region). Expected output should include: parsed_category, urgency_score (0-1), is_duplicate (boolean), recommended_action. Include at least 20% edge cases with malformed timestamps, missing fields, or duplicate messages. Use realistic enterprise monitoring data."}
+                  rows={6}
+                  className="text-xs"
+                  data-testid="input-ai-prompt-guideline"
+                />
               </div>
               <Button
                 disabled={aiGenerateMutation.isPending || !aiCategory.trim()}
-                onClick={() => aiGenerateMutation.mutate({ datasetId: id, category: aiCategory, count: aiCount, description: aiDescription, industry: dataset.industry, useCase: dataset.useCase })}
+                onClick={() => aiGenerateMutation.mutate({ datasetId: id, category: aiCategory, count: aiCount, description: aiDescription, promptGuideline: aiPromptGuideline, industry: dataset.industry, useCase: dataset.useCase })}
                 data-testid="button-ai-generate-submit"
               >
                 {aiGenerateMutation.isPending ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" />Generating...</> : <><Sparkles className="w-4 h-4 mr-1.5" />Generate</>}
