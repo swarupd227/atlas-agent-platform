@@ -79,7 +79,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { Agent, OutcomeContract, Approval } from "@shared/schema";
 
-type SortBy = "name" | "revenue" | "margin" | "roi" | "health" | "safety";
+type SortBy = "recent" | "name" | "revenue" | "margin" | "roi" | "health" | "safety";
 
 const EU_AI_ACT_MAP: Record<string, { label: string; className: string }> = {
   CRITICAL: { label: "Unacceptable Risk", className: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20" },
@@ -162,7 +162,7 @@ export default function Agents() {
   const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkAction, setBulkAction] = useState<BulkAction | null>(null);
-  const [sortBy, setSortBy] = useState<SortBy>("name");
+  const [sortBy, setSortBy] = useState<SortBy>("recent");
 
   const [filterOutcome, setFilterOutcome] = useState<string>("all");
   const [filterEnv, setFilterEnv] = useState<string>("all");
@@ -270,6 +270,13 @@ export default function Agents() {
         });
         break;
       }
+      case "recent":
+        arr.sort((a, b) => {
+          const dateA = new Date(a.updatedAt || a.createdAt || 0).getTime();
+          const dateB = new Date(b.updatedAt || b.createdAt || 0).getTime();
+          return dateB - dateA;
+        });
+        break;
       case "name":
       default:
         arr.sort((a, b) => a.name.localeCompare(b.name));
@@ -408,6 +415,7 @@ export default function Agents() {
             <SelectValue placeholder="Sort by" />
           </SelectTrigger>
           <SelectContent>
+            <SelectItem value="recent">Recent</SelectItem>
             <SelectItem value="name">Name</SelectItem>
             <SelectItem value="revenue">Revenue</SelectItem>
             <SelectItem value="margin">Margin</SelectItem>
