@@ -429,6 +429,8 @@ export const agentTemplates = pgTable("agent_templates", {
   estimatedTimeToProd: text("estimated_time_to_prod").default("2-4 weeks"),
   costProfile: jsonb("cost_profile"),
   preloadedSkills: jsonb("preloaded_skills").default(sql`'[]'::jsonb`),
+  requiredSkills: jsonb("required_skills").default(sql`'[]'::jsonb`),
+  optionalSkills: jsonb("optional_skills").default(sql`'[]'::jsonb`),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

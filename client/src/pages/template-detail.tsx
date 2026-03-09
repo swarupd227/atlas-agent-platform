@@ -29,6 +29,7 @@ import {
   Pencil,
   Trash2,
   ArrowRight,
+  ArrowUpDown,
   Plus,
   X,
   Save,
@@ -116,6 +117,7 @@ type MemoryRagConfig = { vectorStore: string; retrievalStrategy: string; chunkSi
 type PolicyBinding = { policyName: string; enforcement: string };
 type EvalBinding = { suiteName: string; schedule: string };
 type RollbackPlan = { triggerConditions: string[]; rollbackTargetVersion: string } | null;
+type SkillEntry = { skillId: string; skillName: string; domain: string; executionOrder: number };
 
 const iconMap: Record<string, LucideIcon> = {
   headphones: Headphones,
@@ -288,6 +290,8 @@ export default function TemplateDetail() {
     evalBindings: [] as EvalBinding[],
     triggerConditions: [""],
     rollbackTargetVersion: "previous_stable",
+    requiredSkills: [] as SkillEntry[],
+    optionalSkills: [] as SkillEntry[],
   } : {});
 
   const { data: template, isLoading } = useQuery<AgentTemplate>({
@@ -336,6 +340,8 @@ export default function TemplateDetail() {
         evalBindings: evals.map(e => ({ ...e })),
         rollbackPlan: rollbackData ? { triggerConditions: [...rollbackData.triggerConditions], rollbackTargetVersion: rollbackData.rollbackTargetVersion } : null,
         preloadedSkills: Array.isArray(template.preloadedSkills) ? (template.preloadedSkills as any[]).map((s: any) => ({ ...s })) : [],
+        requiredSkills: Array.isArray(template.requiredSkills) ? (template.requiredSkills as any[]).map((s: any, i: number) => ({ skillId: s.skillId || "", skillName: s.skillName || "", domain: s.domain || "", executionOrder: s.executionOrder ?? i + 1 })) : [],
+        optionalSkills: Array.isArray(template.optionalSkills) ? (template.optionalSkills as any[]).map((s: any, i: number) => ({ skillId: s.skillId || "", skillName: s.skillName || "", domain: s.domain || "", executionOrder: s.executionOrder ?? i + 1 })) : [],
         newTriggerCondition: "",
       });
     }
@@ -491,6 +497,22 @@ export default function TemplateDetail() {
           domain: s.domain || "",
         }));
       }
+      if (enhanced.requiredSkills && Array.isArray(enhanced.requiredSkills)) {
+        merged.requiredSkills = enhanced.requiredSkills.map((s: any, i: number) => ({
+          skillId: s.skillId || "",
+          skillName: s.skillName || "",
+          domain: s.domain || "",
+          executionOrder: s.executionOrder ?? i + 1,
+        }));
+      }
+      if (enhanced.optionalSkills && Array.isArray(enhanced.optionalSkills)) {
+        merged.optionalSkills = enhanced.optionalSkills.map((s: any, i: number) => ({
+          skillId: s.skillId || "",
+          skillName: s.skillName || "",
+          domain: s.domain || "",
+          executionOrder: s.executionOrder ?? i + 1,
+        }));
+      }
       if (enhanced.complexity && ["low","medium","high"].includes(enhanced.complexity)) merged.complexity = enhanced.complexity;
       if (enhanced.defaultRiskTier && ["LOW","MEDIUM","HIGH","CRITICAL"].includes(enhanced.defaultRiskTier)) merged.defaultRiskTier = enhanced.defaultRiskTier;
       if (enhanced.defaultAutonomyMode && ["autonomous","assisted","supervised","manual"].includes(enhanced.defaultAutonomyMode)) merged.defaultAutonomyMode = enhanced.defaultAutonomyMode;
@@ -539,6 +561,8 @@ export default function TemplateDetail() {
       evalBindings: evals.map(e => ({ ...e })),
       rollbackPlan: rollback ? { triggerConditions: [...rollback.triggerConditions], rollbackTargetVersion: rollback.rollbackTargetVersion } : null,
       preloadedSkills: Array.isArray(template.preloadedSkills) ? (template.preloadedSkills as any[]).map((s: any) => ({ ...s })) : [],
+      requiredSkills: Array.isArray(template.requiredSkills) ? (template.requiredSkills as any[]).map((s: any, i: number) => ({ skillId: s.skillId || "", skillName: s.skillName || "", domain: s.domain || "", executionOrder: s.executionOrder ?? i + 1 })) : [],
+      optionalSkills: Array.isArray(template.optionalSkills) ? (template.optionalSkills as any[]).map((s: any, i: number) => ({ skillId: s.skillId || "", skillName: s.skillName || "", domain: s.domain || "", executionOrder: s.executionOrder ?? i + 1 })) : [],
       newTriggerCondition: "",
     });
     setEditing(true);
@@ -574,6 +598,8 @@ export default function TemplateDetail() {
       evalBindings: editData.evalBindings,
       rollbackPlan: editData.rollbackPlan,
       preloadedSkills: editData.preloadedSkills || [],
+      requiredSkills: editData.requiredSkills || [],
+      optionalSkills: editData.optionalSkills || [],
     };
 
     if (isNew) {
@@ -659,6 +685,8 @@ export default function TemplateDetail() {
       policyBindings: pb.map(p => ({ ...p })),
       evalBindings: eb.map(e => ({ ...e })),
       rollbackPlan: rb ? { triggerConditions: [...rb.triggerConditions], rollbackTargetVersion: rb.rollbackTargetVersion } : null,
+      requiredSkills: Array.isArray(template.requiredSkills) ? (template.requiredSkills as any[]).map((s: any, i: number) => ({ skillId: s.skillId || "", skillName: s.skillName || "", domain: s.domain || "", executionOrder: s.executionOrder ?? i + 1 })) : [],
+      optionalSkills: Array.isArray(template.optionalSkills) ? (template.optionalSkills as any[]).map((s: any, i: number) => ({ skillId: s.skillId || "", skillName: s.skillName || "", domain: s.domain || "", executionOrder: s.executionOrder ?? i + 1 })) : [],
       newTriggerCondition: "",
     };
 
@@ -1499,6 +1527,191 @@ export default function TemplateDetail() {
                 </div>
               </CardContent>
             </Card>
+
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-muted-foreground" /> Required Skills ({editData.requiredSkills?.length || 0})
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-2">
+                {(editData.requiredSkills || []).map((s: SkillEntry, idx: number) => (
+                  <div key={idx} className="flex items-center gap-2 p-3 rounded-md bg-muted/30" data-testid={`required-skill-${idx}`}>
+                    <Lock className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                    <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
+                      <Input
+                        value={s.skillName}
+                        onChange={(e) => {
+                          const updated = [...editData.requiredSkills];
+                          updated[idx] = { ...updated[idx], skillName: e.target.value };
+                          setEditData({ ...editData, requiredSkills: updated });
+                        }}
+                        placeholder="Skill name"
+                        className="flex-1 min-w-[120px]"
+                        data-testid={`input-required-skill-name-${idx}`}
+                      />
+                      <Input
+                        value={s.domain}
+                        onChange={(e) => {
+                          const updated = [...editData.requiredSkills];
+                          updated[idx] = { ...updated[idx], domain: e.target.value };
+                          setEditData({ ...editData, requiredSkills: updated });
+                        }}
+                        placeholder="Domain"
+                        className="w-32"
+                        data-testid={`input-required-skill-domain-${idx}`}
+                      />
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <label className="text-[10px] text-muted-foreground">Order</label>
+                      <Input
+                        type="number"
+                        value={s.executionOrder}
+                        onChange={(e) => {
+                          const updated = [...editData.requiredSkills];
+                          updated[idx] = { ...updated[idx], executionOrder: parseInt(e.target.value) || 1 };
+                          setEditData({ ...editData, requiredSkills: updated });
+                        }}
+                        className="w-16"
+                        min={1}
+                        data-testid={`input-required-skill-order-${idx}`}
+                      />
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => {
+                        const skill = editData.requiredSkills[idx];
+                        const newRequired = editData.requiredSkills.filter((_: any, i: number) => i !== idx);
+                        const newOptional = [...(editData.optionalSkills || []), { ...skill }];
+                        setEditData({ ...editData, requiredSkills: newRequired, optionalSkills: newOptional });
+                      }}
+                      title="Move to Optional"
+                      data-testid={`button-move-to-optional-${idx}`}
+                    >
+                      <ArrowUpDown className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => {
+                        const updated = editData.requiredSkills.filter((_: any, i: number) => i !== idx);
+                        setEditData({ ...editData, requiredSkills: updated });
+                      }}
+                      data-testid={`button-remove-required-skill-${idx}`}
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
+                  </div>
+                ))}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const nextOrder = (editData.requiredSkills || []).length + 1;
+                    setEditData({
+                      ...editData,
+                      requiredSkills: [...(editData.requiredSkills || []), { skillId: "", skillName: "", domain: "", executionOrder: nextOrder }],
+                    });
+                  }}
+                  data-testid="button-add-required-skill"
+                >
+                  <Plus className="w-4 h-4 mr-1.5" /> Add Required Skill
+                </Button>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-muted-foreground" /> Optional Skills ({editData.optionalSkills?.length || 0})
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-2">
+                {(editData.optionalSkills || []).map((s: SkillEntry, idx: number) => (
+                  <div key={idx} className="flex items-center gap-2 p-3 rounded-md bg-muted/30" data-testid={`optional-skill-${idx}`}>
+                    <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
+                      <Input
+                        value={s.skillName}
+                        onChange={(e) => {
+                          const updated = [...editData.optionalSkills];
+                          updated[idx] = { ...updated[idx], skillName: e.target.value };
+                          setEditData({ ...editData, optionalSkills: updated });
+                        }}
+                        placeholder="Skill name"
+                        className="flex-1 min-w-[120px]"
+                        data-testid={`input-optional-skill-name-${idx}`}
+                      />
+                      <Input
+                        value={s.domain}
+                        onChange={(e) => {
+                          const updated = [...editData.optionalSkills];
+                          updated[idx] = { ...updated[idx], domain: e.target.value };
+                          setEditData({ ...editData, optionalSkills: updated });
+                        }}
+                        placeholder="Domain"
+                        className="w-32"
+                        data-testid={`input-optional-skill-domain-${idx}`}
+                      />
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <label className="text-[10px] text-muted-foreground">Order</label>
+                      <Input
+                        type="number"
+                        value={s.executionOrder}
+                        onChange={(e) => {
+                          const updated = [...editData.optionalSkills];
+                          updated[idx] = { ...updated[idx], executionOrder: parseInt(e.target.value) || 1 };
+                          setEditData({ ...editData, optionalSkills: updated });
+                        }}
+                        className="w-16"
+                        min={1}
+                        data-testid={`input-optional-skill-order-${idx}`}
+                      />
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => {
+                        const skill = editData.optionalSkills[idx];
+                        const newOptional = editData.optionalSkills.filter((_: any, i: number) => i !== idx);
+                        const newRequired = [...(editData.requiredSkills || []), { ...skill }];
+                        setEditData({ ...editData, optionalSkills: newOptional, requiredSkills: newRequired });
+                      }}
+                      title="Move to Required"
+                      data-testid={`button-move-to-required-${idx}`}
+                    >
+                      <ArrowUpDown className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => {
+                        const updated = editData.optionalSkills.filter((_: any, i: number) => i !== idx);
+                        setEditData({ ...editData, optionalSkills: updated });
+                      }}
+                      data-testid={`button-remove-optional-skill-${idx}`}
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
+                  </div>
+                ))}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const nextOrder = (editData.optionalSkills || []).length + 1;
+                    setEditData({
+                      ...editData,
+                      optionalSkills: [...(editData.optionalSkills || []), { skillId: "", skillName: "", domain: "", executionOrder: nextOrder }],
+                    });
+                  }}
+                  data-testid="button-add-optional-skill"
+                >
+                  <Plus className="w-4 h-4 mr-1.5" /> Add Optional Skill
+                </Button>
+              </CardContent>
+            </Card>
           </div>
         </>
       ) : (
@@ -1591,13 +1804,53 @@ export default function TemplateDetail() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="flex flex-col gap-2">
-                  <div className="text-xs text-muted-foreground font-medium">Pre-loaded Industry Skills</div>
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <Badge variant="secondary" className="text-[10px]" data-testid="badge-skill-category">{categoryLabels[displayTemplate?.category || "general"] || displayTemplate?.category}</Badge>
                     <Badge variant="secondary" className="text-[10px]" data-testid="badge-skill-industry">{industryLabels[displayTemplate?.industry || "cross_industry"] || displayTemplate?.industry}</Badge>
                   </div>
                   {(() => {
+                    const required = Array.isArray(displayTemplate?.requiredSkills) ? (displayTemplate.requiredSkills as SkillEntry[]) : [];
+                    const optional = Array.isArray(displayTemplate?.optionalSkills) ? (displayTemplate.optionalSkills as SkillEntry[]) : [];
                     const preloaded = Array.isArray(displayTemplate?.preloadedSkills) ? (displayTemplate.preloadedSkills as Array<{ skillId: string; skillName: string; domain: string }>) : [];
+                    const hasStructuredSkills = required.length > 0 || optional.length > 0;
+
+                    if (hasStructuredSkills) {
+                      return (
+                        <div className="flex flex-col gap-3 mt-1">
+                          {required.length > 0 && (
+                            <div>
+                              <div className="text-xs text-muted-foreground font-medium mb-1 flex items-center gap-1">
+                                <Lock className="w-3 h-3" /> Required Skills ({required.length})
+                              </div>
+                              <div className="flex flex-col gap-1">
+                                {[...required].sort((a, b) => (a.executionOrder || 0) - (b.executionOrder || 0)).map((s, idx) => (
+                                  <div key={s.skillId || idx} className="flex items-center gap-2 text-xs" data-testid={`view-required-skill-${idx}`}>
+                                    <span className="text-muted-foreground w-4 shrink-0">{s.executionOrder}.</span>
+                                    <Badge variant="outline" className="text-[10px] gap-1">
+                                      <Zap className="w-2.5 h-2.5" />{s.skillName}
+                                    </Badge>
+                                    {s.domain && <span className="text-muted-foreground text-[10px]">{s.domain}</span>}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {optional.length > 0 && (
+                            <div>
+                              <div className="text-xs text-muted-foreground font-medium mb-1">Optional Skills ({optional.length})</div>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                {[...optional].sort((a, b) => (a.executionOrder || 0) - (b.executionOrder || 0)).map((s, idx) => (
+                                  <Badge key={s.skillId || idx} variant="outline" className="text-[10px] gap-1" data-testid={`view-optional-skill-${idx}`}>
+                                    <Zap className="w-2.5 h-2.5" />{s.skillName}
+                                  </Badge>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    }
+
                     if (preloaded.length > 0) {
                       return (
                         <div className="flex items-center gap-1.5 flex-wrap mt-1">
@@ -2608,6 +2861,44 @@ export default function TemplateDetail() {
                         {s.skillName}
                         {s.domain && <span className="text-muted-foreground ml-0.5">({s.domain})</span>}
                         <button onClick={() => { const skills = enhancePreview.preloadedSkills.filter((_: any, idx: number) => idx !== i); setEnhancePreview({ ...enhancePreview, preloadedSkills: skills }); }} className="ml-0.5 rounded-full" data-testid={`button-remove-preview-skill-${i}`}>
+                          <X className="w-2.5 h-2.5" />
+                        </button>
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {enhancePreview.requiredSkills && Array.isArray(enhancePreview.requiredSkills) && enhancePreview.requiredSkills.length > 0 && (
+                <div>
+                  <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1 flex items-center gap-1">
+                    <Lock className="w-3 h-3" /> Required Skills
+                  </h4>
+                  <div className="flex flex-col gap-1">
+                    {enhancePreview.requiredSkills.map((s: any, i: number) => (
+                      <div key={i} className="flex items-center gap-2 text-xs" data-testid={`preview-required-skill-${i}`}>
+                        <span className="text-muted-foreground w-4 shrink-0">{s.executionOrder || i + 1}.</span>
+                        <Badge variant="outline" className="text-[10px] gap-1">
+                          <Zap className="w-2.5 h-2.5" />{s.skillName}
+                        </Badge>
+                        {s.domain && <span className="text-muted-foreground text-[10px]">{s.domain}</span>}
+                        <button onClick={() => { const skills = enhancePreview.requiredSkills.filter((_: any, idx: number) => idx !== i); setEnhancePreview({ ...enhancePreview, requiredSkills: skills }); }} className="ml-auto" data-testid={`button-remove-preview-required-skill-${i}`}>
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {enhancePreview.optionalSkills && Array.isArray(enhancePreview.optionalSkills) && enhancePreview.optionalSkills.length > 0 && (
+                <div>
+                  <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Optional Skills</h4>
+                  <div className="flex flex-wrap gap-1.5">
+                    {enhancePreview.optionalSkills.map((s: any, i: number) => (
+                      <Badge key={i} variant="outline" className="text-[10px] gap-1 pr-1" data-testid={`preview-optional-skill-${i}`}>
+                        <Zap className="w-2.5 h-2.5" />
+                        {s.skillName}
+                        {s.domain && <span className="text-muted-foreground ml-0.5">({s.domain})</span>}
+                        <button onClick={() => { const skills = enhancePreview.optionalSkills.filter((_: any, idx: number) => idx !== i); setEnhancePreview({ ...enhancePreview, optionalSkills: skills }); }} className="ml-0.5 rounded-full" data-testid={`button-remove-preview-optional-skill-${i}`}>
                           <X className="w-2.5 h-2.5" />
                         </button>
                       </Badge>

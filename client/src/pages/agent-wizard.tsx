@@ -70,6 +70,9 @@ import {
   ChevronRight,
   ArrowRightLeft,
   CheckCircle,
+  Lock,
+  Square,
+  CheckSquare,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -220,6 +223,12 @@ interface WizardState {
   contextBudget: Array<{ category: string; pct: number; tokens: number }>;
   memoryGovernanceRules: Array<{ rule: string; regulation: string; type: string }>;
   industryAutoApplied: boolean;
+  templateSkills: {
+    required: Array<{ skillId: string; skillName: string; domain: string; executionOrder: number }>;
+    optional: Array<{ skillId: string; skillName: string; domain: string; executionOrder: number }>;
+    selectedOptional: string[];
+    templateId: string | null;
+  };
 }
 
 interface DynamicPresetAdjustment {
@@ -315,6 +324,12 @@ const defaultWizardState: WizardState = {
   contextBudget: [],
   memoryGovernanceRules: [],
   industryAutoApplied: false,
+  templateSkills: {
+    required: [],
+    optional: [],
+    selectedOptional: [],
+    templateId: null,
+  },
 };
 
 const INDUSTRY_PRESETS: Record<string, {
@@ -1092,6 +1107,44 @@ export default function AgentWizard() {
           ? template.rollbackPlan
           : JSON.stringify(template.rollbackPlan)
         : "",
+      templateSkills: (() => {
+        const reqSkills = Array.isArray(template.requiredSkills)
+          ? (template.requiredSkills as any[]).map((s: any, i: number) => ({
+              skillId: s.skillId || "",
+              skillName: s.skillName || "",
+              domain: s.domain || "",
+              executionOrder: s.executionOrder ?? i + 1,
+            }))
+          : [];
+        const optSkills = Array.isArray(template.optionalSkills)
+          ? (template.optionalSkills as any[]).map((s: any, i: number) => ({
+              skillId: s.skillId || "",
+              skillName: s.skillName || "",
+              domain: s.domain || "",
+              executionOrder: s.executionOrder ?? i + 1,
+            }))
+          : [];
+        if (reqSkills.length === 0 && optSkills.length === 0 && Array.isArray(template.preloadedSkills)) {
+          const fallbackOptional = (template.preloadedSkills as any[]).map((s: any, i: number) => ({
+            skillId: s.skillId || s.id || `skill_${i}`,
+            skillName: s.skillName || s.name || String(s),
+            domain: s.domain || "",
+            executionOrder: s.executionOrder ?? i + 1,
+          }));
+          return {
+            required: [],
+            optional: fallbackOptional,
+            selectedOptional: fallbackOptional.map((s: any) => s.skillId || s.skillName),
+            templateId: template.id,
+          };
+        }
+        return {
+          required: reqSkills,
+          optional: optSkills,
+          selectedOptional: optSkills.map((s: any) => s.skillId || s.skillName),
+          templateId: template.id,
+        };
+      })(),
     });
     toast({ title: `Template "${template.name}" applied` });
   }
@@ -1245,6 +1298,21 @@ export default function AgentWizard() {
       runtimeConfig: autoPrompt ? { prompt: autoPrompt, scheduleIntervalMinutes: 5 } : undefined,
       memoryGovernanceRules: wizardState.memoryGovernanceRules.length > 0 ? wizardState.memoryGovernanceRules : undefined,
     };
+    const ts = wizardState.templateSkills;
+    if (ts.required.length > 0 || ts.optional.length > 0) {
+      const mergedSkills = [
+        ...ts.required.sort((a, b) => a.executionOrder - b.executionOrder).map(s => s.skillName),
+        ...ts.optional
+          .filter(s => ts.selectedOptional.includes(s.skillId || s.skillName))
+          .sort((a, b) => a.executionOrder - b.executionOrder)
+          .map(s => s.skillName),
+      ];
+      if (mergedSkills.length > 0) {
+        const existingRt = (payload.runtimeConfig as Record<string, any>) || {};
+        payload.runtimeConfig = { ...existingRt, matchedSkills: mergedSkills };
+        (payload as any).agentSkills = mergedSkills;
+      }
+    }
     createMutation.mutate(payload);
   }
 
@@ -1537,6 +1605,15 @@ export default function AgentWizard() {
             outcomeKpis={outcomeKpis}
             isDynamicPreset={isDynamicPreset}
             dynamicAdjustmentCount={dynamicAdjustments.length}
+            onToggleOptionalSkill={(skillId: string) => {
+              setWizardState(prev => {
+                const sel = prev.templateSkills.selectedOptional;
+                const newSel = sel.includes(skillId)
+                  ? sel.filter(id => id !== skillId)
+                  : [...sel, skillId];
+                return { ...prev, templateSkills: { ...prev.templateSkills, selectedOptional: newSel } };
+              });
+            }}
           />
         )}
       </div>
@@ -4867,6 +4944,7 @@ function StepReview({
   outcomeKpis,
   isDynamicPreset,
   dynamicAdjustmentCount,
+  onToggleOptionalSkill,
 }: {
   state: WizardState;
   onCreate: () => void;
@@ -4879,6 +4957,7 @@ function StepReview({
   outcomeKpis?: KpiDefinition[];
   isDynamicPreset?: boolean;
   dynamicAdjustmentCount?: number;
+  onToggleOptionalSkill?: (skillId: string) => void;
 }) {
   const linkedOutcome = outcomes?.find((o) => o.id === state.outcomeId);
   const [governanceOverride, setGovernanceOverride] = useState(false);
@@ -5150,6 +5229,60 @@ function StepReview({
           )}
         </CardContent>
       </Card>
+
+      {(state.templateSkills.required.length > 0 || state.templateSkills.optional.length > 0) && (
+        <Card data-testid="card-template-skills">
+          <CardHeader className="pb-3">
+            <div className="flex items-center gap-2">
+              <Zap className="w-4 h-4 text-muted-foreground" />
+              <CardTitle className="text-sm font-medium">Template Skills</CardTitle>
+              {state.templateSkills.templateId && (
+                <Badge variant="outline" className="text-[10px] ml-auto">From Template</Badge>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            {state.templateSkills.required.length > 0 && (
+              <div className="flex flex-col gap-1.5">
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Required Skills</span>
+                {[...state.templateSkills.required].sort((a, b) => a.executionOrder - b.executionOrder).map((skill, i) => (
+                  <div key={skill.skillId || i} className="flex items-center gap-2 text-sm" data-testid={`review-required-skill-${i}`}>
+                    <Lock className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                    <span className="font-medium">{skill.skillName}</span>
+                    {skill.domain && <Badge variant="outline" className="text-[9px]">{skill.domain}</Badge>}
+                    <Badge variant="secondary" className="text-[9px] ml-auto">#{skill.executionOrder}</Badge>
+                  </div>
+                ))}
+              </div>
+            )}
+            {state.templateSkills.optional.length > 0 && (
+              <div className="flex flex-col gap-1.5">
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Optional Skills</span>
+                {[...state.templateSkills.optional].sort((a, b) => a.executionOrder - b.executionOrder).map((skill, i) => {
+                  const isSelected = state.templateSkills.selectedOptional.includes(skill.skillId || skill.skillName);
+                  return (
+                    <div
+                      key={skill.skillId || i}
+                      className="flex items-center gap-2 text-sm cursor-pointer hover-elevate rounded-md p-1 -m-1"
+                      onClick={() => onToggleOptionalSkill?.(skill.skillId || skill.skillName)}
+                      data-testid={`review-optional-skill-${i}`}
+                    >
+                      {isSelected ? (
+                        <CheckSquare className="w-3.5 h-3.5 text-primary shrink-0" />
+                      ) : (
+                        <Square className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                      )}
+                      <span className={isSelected ? "font-medium" : "text-muted-foreground"}>{skill.skillName}</span>
+                      {skill.domain && <Badge variant="outline" className="text-[9px]">{skill.domain}</Badge>}
+                      <Badge variant="secondary" className="text-[9px] ml-auto">#{skill.executionOrder}</Badge>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {state.memoryRagEnabled && (
         <Card>

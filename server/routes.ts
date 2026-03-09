@@ -8587,9 +8587,15 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
       };
 
       const preloadedSkills: any[] = [];
+      const requiredSkills: any[] = [];
       if (Array.isArray(rtConfig.matchedSkills)) {
-        for (const skill of rtConfig.matchedSkills) {
-          preloadedSkills.push({ name: typeof skill === "string" ? skill : skill.name, source: "agent_config" });
+        for (let i = 0; i < rtConfig.matchedSkills.length; i++) {
+          const skill = rtConfig.matchedSkills[i];
+          const skillName = typeof skill === "string" ? skill : (skill.name || skill.skillName || "");
+          const skillId = typeof skill === "string" ? "" : (skill.skillId || skill.id || "");
+          const domain = typeof skill === "string" ? "" : (skill.domain || "");
+          preloadedSkills.push({ name: skillName, source: "agent_config" });
+          requiredSkills.push({ skillId, skillName, domain, executionOrder: i + 1 });
         }
       }
 
@@ -8613,6 +8619,8 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
         defaultRiskTier: agent.riskTier || "MEDIUM",
         defaultAutonomyMode: agent.autonomyMode || "assisted",
         preloadedSkills,
+        requiredSkills,
+        optionalSkills: [],
         estimatedTimeToProd: "1-2 weeks",
         costProfile: {},
       });
@@ -13631,11 +13639,13 @@ Required sections in your JSON response:
 11. "defaultRiskTier" (string): One of: LOW, MEDIUM, HIGH, CRITICAL.
 12. "defaultAutonomyMode" (string): One of: autonomous, assisted, supervised, manual.
 13. "preloadedSkills" (array of objects with "skillId", "skillName", "domain" fields): Select 3-8 skills from the AVAILABLE SKILL LIBRARY below that are most relevant for this agent's purpose. You MUST ONLY select skills from this list — do NOT invent or fabricate skill names. Each object must have "skillId" (exact ID from the catalog), "skillName" (exact name from the catalog), and "domain" (the skill's domain from the catalog).
+14. "requiredSkills" (array of objects with "skillId", "skillName", "domain", "executionOrder" fields): From the skills you selected in preloadedSkills, pick the 2-4 most critical ones that MUST be present when this template is used. Set executionOrder as integers starting from 1 to define execution sequence.
+15. "optionalSkills" (array of objects with "skillId", "skillName", "domain", "executionOrder" fields): The remaining skills from preloadedSkills that are recommended but not mandatory. Set executionOrder as integers continuing from the required skills sequence.
 
 AVAILABLE SKILL LIBRARY (${industryFilter} industry — select ONLY from these):
 ${JSON.stringify(skillCatalogSummary, null, 2)}
 
-IMPORTANT: Preserve the agent's core identity (name, category, industry) but significantly enrich all other fields. If a field already has good content, improve it rather than replacing it entirely. You MUST include ALL 13 sections listed above in your response. For preloadedSkills, you MUST select ONLY from the skill catalog provided above — never invent skill names.
+IMPORTANT: Preserve the agent's core identity (name, category, industry) but significantly enrich all other fields. If a field already has good content, improve it rather than replacing it entirely. You MUST include ALL 15 sections listed above in your response. For preloadedSkills, requiredSkills, and optionalSkills, you MUST select ONLY from the skill catalog provided above — never invent skill names.
 
 Return a JSON object with all the enhanced template fields. The response must be valid JSON with no markdown wrapping.`
           },
@@ -13693,6 +13703,28 @@ Enhance this template to be production-ready and comprehensive. For preloadedSki
           }
           return ps;
         });
+      }
+
+      const validateSkillEntries = (entries: any[]) => {
+        const validSkillIds = new Set(industrySkills.map(s => s.id));
+        const validSkillNames = new Set(industrySkills.map(s => s.name.toLowerCase()));
+        return entries.filter((ps: any) =>
+          validSkillIds.has(ps.skillId) || validSkillNames.has((ps.skillName || "").toLowerCase())
+        ).map((ps: any, i: number) => {
+          const matchedSkill = industrySkills.find(s => s.id === ps.skillId) ||
+            industrySkills.find(s => s.name.toLowerCase() === (ps.skillName || "").toLowerCase());
+          if (matchedSkill) {
+            return { skillId: matchedSkill.id, skillName: matchedSkill.name, domain: matchedSkill.domain, executionOrder: ps.executionOrder ?? i + 1 };
+          }
+          return { ...ps, executionOrder: ps.executionOrder ?? i + 1 };
+        });
+      };
+
+      if (enhanced.requiredSkills && Array.isArray(enhanced.requiredSkills)) {
+        enhanced.requiredSkills = validateSkillEntries(enhanced.requiredSkills);
+      }
+      if (enhanced.optionalSkills && Array.isArray(enhanced.optionalSkills)) {
+        enhanced.optionalSkills = validateSkillEntries(enhanced.optionalSkills);
       }
 
       res.json({ enhanced, model: "gpt-4.1", availableSkillCount: industrySkills.length });
