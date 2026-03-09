@@ -205,22 +205,152 @@ async function performSensitivityScan(
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
+async function convertHtmlTablesToMarkdown(html: string): Promise<string> {
+  const cheerio = await import("cheerio");
+  const $ = cheerio.load(html);
+
+  $("table").each((_i: number, table: any) => {
+    const rows: string[][] = [];
+    $(table).find("tr").each((_j: number, tr: any) => {
+      const cells: string[] = [];
+      $(tr).find("th, td").each((_k: number, cell: any) => {
+        cells.push($(cell).text().replace(/\|/g, "\\|").replace(/\n/g, " ").trim());
+      });
+      if (cells.length > 0) rows.push(cells);
+    });
+
+    if (rows.length === 0) return;
+
+    const colCount = Math.max(...rows.map(r => r.length));
+    const normalizedRows = rows.map(r => {
+      while (r.length < colCount) r.push("");
+      return r;
+    });
+
+    const headerRow = normalizedRows[0];
+    const dataRows = normalizedRows.slice(1);
+
+    const lines: string[] = [];
+    lines.push("| " + headerRow.join(" | ") + " |");
+    lines.push("| " + headerRow.map(() => "---").join(" | ") + " |");
+    for (const row of dataRows) {
+      lines.push("| " + row.join(" | ") + " |");
+    }
+
+    const mdTable = "\n\n" + lines.join("\n") + "\n\n";
+    $(table).replaceWith(mdTable);
+  });
+
+  let text = $("body").html() || $.html();
+  text = text.replace(/<br\s*\/?>/gi, "\n");
+  text = text.replace(/<\/p>/gi, "\n");
+  text = text.replace(/<\/div>/gi, "\n");
+  text = text.replace(/<\/li>/gi, "\n");
+  text = text.replace(/<\/h[1-6]>/gi, "\n");
+  text = text.replace(/<[^>]+>/g, "");
+  text = text.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, " ");
+  text = text.replace(/\n{3,}/g, "\n\n");
+  return text.trim();
+}
+
 function chunkText(text: string, chunkSize: number = 512, overlap: number = 50): string[] {
   const chunks: string[] = [];
-  const sentences = text.split(/(?<=[.!?\n])\s+/);
-  let current = "";
+  const lines = text.split("\n");
 
-  for (const sentence of sentences) {
-    if ((current + " " + sentence).trim().length > chunkSize && current.length > 0) {
-      chunks.push(current.trim());
-      const words = current.split(" ");
-      const overlapWords = words.slice(-Math.floor(overlap / 5));
-      current = overlapWords.join(" ") + " " + sentence;
+  const segments: { type: "text" | "table"; content: string }[] = [];
+  let currentText: string[] = [];
+  let tableLines: string[] = [];
+  let inTable = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    const isTableRow = line.startsWith("|") && line.endsWith("|");
+    const isSeparator = isTableRow && /^\|[\s\-:|]+\|$/.test(line);
+
+    if (!inTable && isTableRow) {
+      if (currentText.length > 0) {
+        const joined = currentText.join("\n").trim();
+        if (joined) segments.push({ type: "text", content: joined });
+        currentText = [];
+      }
+      inTable = true;
+      tableLines = [lines[i]];
+    } else if (inTable && (isTableRow || isSeparator)) {
+      tableLines.push(lines[i]);
+    } else if (inTable && !isTableRow) {
+      if (line === "" && i + 1 < lines.length) {
+        const nextLine = lines[i + 1]?.trim() || "";
+        if (nextLine.startsWith("|") && nextLine.endsWith("|")) {
+          continue;
+        }
+      }
+      segments.push({ type: "table", content: tableLines.join("\n") });
+      tableLines = [];
+      inTable = false;
+      currentText.push(lines[i]);
     } else {
-      current = current ? current + " " + sentence : sentence;
+      currentText.push(lines[i]);
     }
   }
-  if (current.trim()) chunks.push(current.trim());
+
+  if (inTable && tableLines.length > 0) {
+    segments.push({ type: "table", content: tableLines.join("\n") });
+  }
+  if (currentText.length > 0) {
+    const joined = currentText.join("\n").trim();
+    if (joined) segments.push({ type: "text", content: joined });
+  }
+
+  for (const seg of segments) {
+    if (seg.type === "table") {
+      const tLines = seg.content.split("\n").filter(l => l.trim());
+      if (tLines.length < 2) {
+        chunks.push(seg.content.trim());
+        continue;
+      }
+
+      const headerLine = tLines[0];
+      const sepIdx = tLines.findIndex(l => /^\|[\s\-:|]+\|$/.test(l.trim()));
+      const separatorLine = sepIdx >= 0 ? tLines[sepIdx] : "| " + headerLine.split("|").filter(c => c.trim()).map(() => "---").join(" | ") + " |";
+      const dataLines = tLines.filter((_, idx) => idx !== 0 && idx !== sepIdx);
+
+      if (seg.content.length <= chunkSize || dataLines.length === 0) {
+        chunks.push(seg.content.trim());
+      } else {
+        let currentChunkLines: string[] = [headerLine, separatorLine];
+        let currentLen = headerLine.length + separatorLine.length + 2;
+
+        for (const line of dataLines) {
+          if (currentLen + line.length + 1 > chunkSize && currentChunkLines.length > 2) {
+            chunks.push(currentChunkLines.join("\n"));
+            currentChunkLines = [headerLine, separatorLine, line];
+            currentLen = headerLine.length + separatorLine.length + line.length + 3;
+          } else {
+            currentChunkLines.push(line);
+            currentLen += line.length + 1;
+          }
+        }
+        if (currentChunkLines.length > 2) {
+          chunks.push(currentChunkLines.join("\n"));
+        }
+      }
+    } else {
+      const sentences = seg.content.split(/(?<=[.!?\n])\s+/);
+      let current = "";
+      for (const sentence of sentences) {
+        if ((current + " " + sentence).trim().length > chunkSize && current.length > 0) {
+          chunks.push(current.trim());
+          const words = current.split(" ");
+          const overlapWords = words.slice(-Math.floor(overlap / 5));
+          current = overlapWords.join(" ") + " " + sentence;
+        } else {
+          current = current ? current + " " + sentence : sentence;
+        }
+      }
+      if (current.trim()) chunks.push(current.trim());
+    }
+  }
+
   return chunks;
 }
 
@@ -240,8 +370,12 @@ async function extractTextFromFile(buffer: Buffer, mimeType: string, filename: s
   }
   if (mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || filename.endsWith(".docx")) {
     const mammoth = await import("mammoth");
-    const result = await mammoth.extractRawText({ buffer });
-    return result.value;
+    const htmlResult = await mammoth.convertToHtml({ buffer });
+    if (htmlResult.value && htmlResult.value.includes("<table")) {
+      return await convertHtmlTablesToMarkdown(htmlResult.value);
+    }
+    const textResult = await mammoth.extractRawText({ buffer });
+    return textResult.value;
   }
   if (mimeType === "application/json" || filename.endsWith(".json")) {
     const json = JSON.parse(buffer.toString("utf-8"));
@@ -264,7 +398,12 @@ async function fetchWebContentWithLinks(url: string): Promise<{ text: string; li
   const cheerio = await import("cheerio");
   const $ = cheerio.load(html);
   $("script, style, nav, footer, header, iframe, noscript").remove();
-  const text = $("body").text().replace(/\s+/g, " ").trim();
+  let text: string;
+  if ($("table").length > 0) {
+    text = await convertHtmlTablesToMarkdown($.html());
+  } else {
+    text = $("body").text().replace(/\s+/g, " ").trim();
+  }
 
   const baseUrl = new URL(url);
   const links: string[] = [];
