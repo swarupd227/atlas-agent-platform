@@ -641,6 +641,50 @@ export function registerKnowledgeBaseRoutes(app: Express) {
       const file = req.file;
       if (!file) return res.status(400).json({ message: "No file provided" });
 
+      const isJsonFile = file.originalname.toLowerCase().endsWith(".json") || file.mimetype === "application/json";
+
+      if (isJsonFile) {
+        const jsonText = file.buffer.toString("utf-8");
+        let parsed: any;
+        try {
+          parsed = JSON.parse(jsonText);
+        } catch {
+          return res.status(400).json({ message: "Invalid JSON file" });
+        }
+        const rows = Array.isArray(parsed) ? parsed : [parsed];
+        if (rows.length === 0 || rows.some((r: any) => typeof r !== "object" || r === null)) {
+          return res.status(400).json({ message: "JSON must be an object or array of objects" });
+        }
+        const textParts = rows.map((row: any) =>
+          Object.entries(row).map(([k, v]) => `${k}: ${v}`).join("\n")
+        );
+        const combinedText = textParts.join("\n\n---\n\n");
+
+        const source = await storage.createKnowledgeSource({
+          knowledgeBaseId: req.params.id,
+          name: file.originalname,
+          sourceType: "structured",
+          status: "pending",
+          content: combinedText,
+          metadata: { originalName: file.originalname, rowCount: rows.length },
+          fileSize: file.size,
+          mimeType: file.mimetype,
+        });
+
+        const allSources = await storage.getKnowledgeSources(req.params.id);
+        await storage.updateKnowledgeBase(req.params.id, { totalSources: allSources.length });
+
+        let sensitivityWarnings: SensitivityWarning[] = [];
+        try {
+          sensitivityWarnings = await performSensitivityScan(combinedText, req.params.id, kb.industry);
+        } catch (err: any) {
+          console.log("[kb] Sensitivity scan failed (non-blocking):", err.message);
+        }
+
+        processSourceInBackground(source.id, req.params.id);
+        return res.status(201).json({ ...source, sensitivityWarnings: sensitivityWarnings.length > 0 ? sensitivityWarnings : undefined });
+      }
+
       const text = await extractTextFromFile(file.buffer, file.mimetype, file.originalname);
 
       const source = await storage.createKnowledgeSource({

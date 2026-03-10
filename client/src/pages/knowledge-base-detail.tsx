@@ -130,6 +130,7 @@ export default function KnowledgeBaseDetail() {
   const [urlForm, setUrlForm] = useState({ url: "", name: "", crawl: false, crawlDepth: 1, maxPages: 10 });
   const [textForm, setTextForm] = useState({ title: "", content: "" });
   const [structuredForm, setStructuredForm] = useState({ name: "", data: "" });
+  const jsonFileInputRef = useRef<HTMLInputElement>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [hasSearched, setHasSearched] = useState(false);
@@ -735,10 +736,37 @@ export default function KnowledgeBaseDetail() {
                 <div className="space-y-3">
                   <div>
                     <Label>Name</Label>
-                    <Input value={structuredForm.name} onChange={(e) => setStructuredForm({ ...structuredForm, name: e.target.value })} placeholder="e.g., Product Catalog" />
+                    <Input value={structuredForm.name} onChange={(e) => setStructuredForm({ ...structuredForm, name: e.target.value })} placeholder="e.g., Product Catalog" data-testid="input-structured-name" />
                   </div>
                   <div>
                     <Label>JSON Data (array of objects)</Label>
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <input
+                        ref={jsonFileInputRef}
+                        type="file"
+                        className="hidden"
+                        accept=".json"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          const reader = new FileReader();
+                          reader.onload = (ev) => {
+                            const content = ev.target?.result as string;
+                            setStructuredForm((prev) => ({
+                              ...prev,
+                              data: content,
+                              name: prev.name || file.name.replace(/\.json$/i, ""),
+                            }));
+                          };
+                          reader.readAsText(file);
+                          e.target.value = "";
+                        }}
+                      />
+                      <Button size="sm" variant="outline" type="button" onClick={() => jsonFileInputRef.current?.click()} data-testid="button-choose-json-file">
+                        <Upload className="w-3.5 h-3.5 mr-1.5" /> Choose JSON File
+                      </Button>
+                      <span className="text-xs text-muted-foreground">or paste JSON below</span>
+                    </div>
                     <Textarea
                       data-testid="input-structured-data"
                       value={structuredForm.data}

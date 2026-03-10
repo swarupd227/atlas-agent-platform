@@ -21,7 +21,7 @@ The Nous Agent Orchestrator employs a modern web stack with a React, Vite, Tailw
 - **Validation and Deployment Safety**: Features Shadow Replay Studio for zero-risk deployment validation and a Canary Deployment Console for graduated rollouts with industry-specific safety controls.
 - **Governance & Compliance**: A Certified Agent Compliance Layer provides policy management, enforcement, and immutable audit trails, supported by Ontology Structural Enforcement and Regulatory Change Propagation.
 - **Optimization & Healing**: Autonomous optimization, self-healing mechanisms, and AI-proposed changes.
-- **Knowledge Management**: Utilizes vector-embedded document collections for RAG grounding, including web crawl ingestion for knowledge bases and features for knowledge staleness tracking and usage analytics.
+- **Knowledge Management**: Utilizes vector-embedded document collections for RAG grounding, including web crawl ingestion for knowledge bases and features for knowledge staleness tracking and usage analytics. Structured data import supports both pasting JSON and uploading `.json` files; uploaded `.json` files via the document upload flow are auto-detected and processed as structured data.
 - **Conversational AI**: Outcome Builder for defining goals and generating AI agent development plans.
 - **Multi-Agent Orchestration**: Supports team-based multi-agent orchestration, an Agent Skills Library, and a Context Engineering Studio for managing agent context.
 - **API Gateway**: Exposes deployed agents as REST API endpoints with API key management and tracing.
