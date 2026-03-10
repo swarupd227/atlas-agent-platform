@@ -16,9 +16,16 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Search, Plus, Database, FileText, Globe, Layers,
-  BookOpen, Brain, ChevronRight, Loader2, Trash2,
+  BookOpen, Brain, ChevronRight, Loader2, Trash2, Pencil, MoreVertical,
   Building2, Briefcase, Heart, Factory, Shield, ShoppingCart, ShieldCheck, AlertTriangle,
 } from "lucide-react";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const INDUSTRY_CONFIG: Record<string, { label: string; icon: typeof Building2; color: string }> = {
   general: { label: "General", icon: Building2, color: "text-gray-600 dark:text-gray-400" },
@@ -110,6 +117,9 @@ export default function KnowledgeBases() {
   const [industryFilter, setIndustryFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [newKb, setNewKb] = useState({ name: "", description: "", industry: "general", vectorDbType: "pgvector", embeddingModel: "text-embedding-3-small", chunkSize: 512, chunkOverlap: 50 });
+  const [editOpen, setEditOpen] = useState(false);
+  const [editKb, setEditKb] = useState<{ id: string; name: string; description: string; industry: string }>({ id: "", name: "", description: "", industry: "general" });
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const { toast } = useToast();
 
   const { data: knowledgeBases = [], isLoading } = useQuery<KnowledgeBase[]>({
@@ -136,8 +146,22 @@ export default function KnowledgeBases() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/knowledge-bases"] });
+      setDeleteConfirmId(null);
       toast({ title: "Knowledge Base deleted" });
     },
+  });
+
+  const editMutation = useMutation({
+    mutationFn: async (data: { id: string; name: string; description: string; industry: string }) => {
+      const res = await apiRequest("PATCH", `/api/knowledge-bases/${data.id}`, { name: data.name, description: data.description, industry: data.industry });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/knowledge-bases"] });
+      setEditOpen(false);
+      toast({ title: "Knowledge Base updated" });
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   const filtered = knowledgeBases.filter((kb) => {
@@ -261,8 +285,8 @@ export default function KnowledgeBases() {
             const ind = INDUSTRY_CONFIG[kb.industry] || INDUSTRY_CONFIG.general;
             const IndustryIcon = ind.icon;
             return (
-              <Link key={kb.id} href={`/knowledge-bases/${kb.id}`}>
-                <Card className="cursor-pointer hover:border-primary/50 transition-colors group" data-testid={`card-kb-${kb.id}`}>
+              <Card key={kb.id} className="cursor-pointer hover:border-primary/50 transition-colors group" data-testid={`card-kb-${kb.id}`}>
+                <Link href={`/knowledge-bases/${kb.id}`}>
                   <CardHeader className="pb-3">
                     <div className="flex items-start justify-between">
                       <div className="flex items-center gap-2 min-w-0">
@@ -277,9 +301,26 @@ export default function KnowledgeBases() {
                           </div>
                         </div>
                       </div>
-                      <Badge variant={kb.status === "active" ? "default" : "secondary"} className="text-[10px] shrink-0">
-                        {kb.status}
-                      </Badge>
+                      <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.preventDefault()}>
+                        <Badge variant={kb.status === "active" ? "default" : "secondary"} className="text-[10px]">
+                          {kb.status}
+                        </Badge>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity" data-testid={`button-kb-menu-${kb.id}`}>
+                              <MoreVertical className="w-3.5 h-3.5" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => { setEditKb({ id: kb.id, name: kb.name, description: kb.description || "", industry: kb.industry }); setEditOpen(true); }} data-testid={`menu-edit-kb-${kb.id}`}>
+                              <Pencil className="w-3.5 h-3.5 mr-2" /> Edit
+                            </DropdownMenuItem>
+                            <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDeleteConfirmId(kb.id)} data-testid={`menu-delete-kb-${kb.id}`}>
+                              <Trash2 className="w-3.5 h-3.5 mr-2" /> Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
                     </div>
                   </CardHeader>
                   <CardContent className="pt-0 space-y-3">
@@ -312,12 +353,73 @@ export default function KnowledgeBases() {
                       <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform shrink-0" />
                     </div>
                   </CardContent>
-                </Card>
-              </Link>
+                </Link>
+              </Card>
             );
           })}
         </div>
       )}
+
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Knowledge Base</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-4 py-2">
+            <div>
+              <Label>Name</Label>
+              <Input value={editKb.name} onChange={(e) => setEditKb({ ...editKb, name: e.target.value })} data-testid="input-edit-kb-name" />
+            </div>
+            <div>
+              <Label>Description</Label>
+              <Textarea value={editKb.description} onChange={(e) => setEditKb({ ...editKb, description: e.target.value })} rows={3} data-testid="input-edit-kb-description" />
+            </div>
+            <div>
+              <Label>Industry</Label>
+              <Select value={editKb.industry} onValueChange={(v) => setEditKb({ ...editKb, industry: v })}>
+                <SelectTrigger data-testid="select-edit-kb-industry">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(INDUSTRY_CONFIG).map(([key, { label }]) => (
+                    <SelectItem key={key} value={key}>{label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline">Cancel</Button>
+            </DialogClose>
+            <Button onClick={() => editMutation.mutate(editKb)} disabled={editMutation.isPending || !editKb.name.trim()} data-testid="button-save-edit-kb">
+              {editMutation.isPending && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />} Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={!!deleteConfirmId} onOpenChange={(open) => { if (!open) setDeleteConfirmId(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Knowledge Base</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete this knowledge base along with all its sources, chunks, and embeddings. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-cancel-delete-kb">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => { if (deleteConfirmId) deleteMutation.mutate(deleteConfirmId); }}
+              disabled={deleteMutation.isPending}
+              data-testid="button-confirm-delete-kb"
+            >
+              {deleteMutation.isPending && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />} Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

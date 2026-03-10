@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useRoute, Link } from "wouter";
+import { useRoute, Link, useLocation } from "wouter";
 import type { KnowledgeBase, KnowledgeSource, KnowledgeChunk, Agent } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -24,8 +24,12 @@ import {
   Clock, Bot, Link2, Unlink, Settings, MessageSquare,
   BookOpen, Brain, AlignLeft, Table2, Send, ShieldCheck,
   AlertTriangle, CircleDot, Lightbulb, Timer, BarChart3,
-  Gauge, Zap, TrendingUp, Archive,
+  Gauge, Zap, TrendingUp, Archive, Pencil,
 } from "lucide-react";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Switch } from "@/components/ui/switch";
 
@@ -147,6 +151,10 @@ export default function KnowledgeBaseDetail() {
     regulation: string;
   }>>([]);
   const [sensitivityDialogOpen, setSensitivityDialogOpen] = useState(false);
+  const [, navigate] = useLocation();
+  const [editInfoOpen, setEditInfoOpen] = useState(false);
+  const [editInfoForm, setEditInfoForm] = useState({ name: "", description: "", industry: "general" });
+  const [deleteKbOpen, setDeleteKbOpen] = useState(false);
 
   const { data: kb, isLoading: kbLoading } = useQuery<KnowledgeBase>({
     queryKey: ["/api/knowledge-bases", kbId],
@@ -390,6 +398,32 @@ export default function KnowledgeBaseDetail() {
     },
   });
 
+  const editInfoMutation = useMutation({
+    mutationFn: async (data: { name: string; description: string; industry: string }) => {
+      const res = await apiRequest("PATCH", `/api/knowledge-bases/${kbId}`, data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/knowledge-bases", kbId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/knowledge-bases"] });
+      setEditInfoOpen(false);
+      toast({ title: "Knowledge Base updated" });
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const deleteKbMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("DELETE", `/api/knowledge-bases/${kbId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/knowledge-bases"] });
+      toast({ title: "Knowledge Base deleted" });
+      navigate("/knowledge-bases");
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
   const checkStalenessMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", `/api/knowledge-bases/${kbId}/check-staleness`);
@@ -516,6 +550,14 @@ export default function KnowledgeBaseDetail() {
             <Badge variant={kb.status === "active" ? "default" : "secondary"}>{kb.status}</Badge>
           </div>
           {kb.description && <p className="text-sm text-muted-foreground mt-1">{kb.description}</p>}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <Button variant="outline" size="sm" onClick={() => { setEditInfoForm({ name: kb.name, description: kb.description || "", industry: kb.industry }); setEditInfoOpen(true); }} data-testid="button-edit-kb-info">
+            <Pencil className="w-3.5 h-3.5 mr-1.5" /> Edit
+          </Button>
+          <Button variant="outline" size="sm" className="text-destructive hover:text-destructive" onClick={() => setDeleteKbOpen(true)} data-testid="button-delete-kb">
+            <Trash2 className="w-3.5 h-3.5 mr-1.5" /> Delete
+          </Button>
         </div>
         <div className="flex items-center gap-2 text-xs text-muted-foreground shrink-0">
           <div className="text-center px-3">
@@ -1567,6 +1609,71 @@ export default function KnowledgeBaseDetail() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={editInfoOpen} onOpenChange={setEditInfoOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Knowledge Base</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-4 py-2">
+            <div>
+              <Label>Name</Label>
+              <Input value={editInfoForm.name} onChange={(e) => setEditInfoForm({ ...editInfoForm, name: e.target.value })} data-testid="input-edit-kb-name" />
+            </div>
+            <div>
+              <Label>Description</Label>
+              <Textarea value={editInfoForm.description} onChange={(e) => setEditInfoForm({ ...editInfoForm, description: e.target.value })} rows={3} data-testid="input-edit-kb-description" />
+            </div>
+            <div>
+              <Label>Industry</Label>
+              <Select value={editInfoForm.industry} onValueChange={(v) => setEditInfoForm({ ...editInfoForm, industry: v })}>
+                <SelectTrigger data-testid="select-edit-kb-industry">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="general">General</SelectItem>
+                  <SelectItem value="financial_services">Financial Services</SelectItem>
+                  <SelectItem value="healthcare">Healthcare</SelectItem>
+                  <SelectItem value="manufacturing">Manufacturing</SelectItem>
+                  <SelectItem value="insurance">Insurance</SelectItem>
+                  <SelectItem value="retail">Retail</SelectItem>
+                  <SelectItem value="technology">Technology/SaaS</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline">Cancel</Button>
+            </DialogClose>
+            <Button onClick={() => editInfoMutation.mutate(editInfoForm)} disabled={editInfoMutation.isPending || !editInfoForm.name.trim()} data-testid="button-save-edit-kb">
+              {editInfoMutation.isPending && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />} Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={deleteKbOpen} onOpenChange={setDeleteKbOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Knowledge Base</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete "{kb.name}" along with all its sources, chunks, and embeddings. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-cancel-delete-kb">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => deleteKbMutation.mutate()}
+              disabled={deleteKbMutation.isPending}
+              data-testid="button-confirm-delete-kb"
+            >
+              {deleteKbMutation.isPending && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />} Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
