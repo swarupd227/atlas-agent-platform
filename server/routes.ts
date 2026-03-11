@@ -17349,27 +17349,72 @@ Eval Suites: ${evalSuites.length} configured`,
 
   // --- Export Code Package helpers ---
 
+  interface AgentYamlExtras {
+    industry?: string | null;
+    autonomyMode?: string | null;
+    riskTier?: string | null;
+    skills?: Array<{ name: string; executionOrder?: number }>;
+    knowledgeBases?: Array<{ name: string; embeddingModel?: string | null }>;
+    outcomeContract?: { name: string; kpis: Array<{ name: string; target: number; operator: string; unit?: string | null }> } | null;
+    ontologyTags?: Array<{ conceptId: string; conceptLabel: string }>;
+    permissions?: any;
+    contextProfileName?: string | null;
+    memoryProfileName?: string | null;
+  }
+
   function generateAgentYaml(
     agent: { name: string; description: string | null; modelProvider: string | null; modelName: string | null },
     tools: Array<{ name: string }>,
     systemPrompt: string,
     maxIterations: number,
-    completionPromise: string
+    completionPromise: string,
+    extras?: AgentYamlExtras
   ): string {
     const toolsList = tools.map(t => `  - ${t.name}`).join("\n");
-    return [
+    const lines = [
       `name: "${agent.name}"`,
       `description: "${(agent.description || "").replace(/"/g, '\\"')}"`,
       `model:`,
       `  provider: "${agent.modelProvider || "openai"}"`,
       `  name: "${agent.modelName || "gpt-4.1"}"`,
+    ];
+    if (extras?.industry) lines.push(`industry: "${extras.industry}"`);
+    if (extras?.autonomyMode) lines.push(`autonomy_mode: "${extras.autonomyMode}"`);
+    if (extras?.riskTier) lines.push(`risk_tier: "${extras.riskTier}"`);
+    lines.push(
       `system_prompt: |`,
       ...systemPrompt.split("\n").map(line => `  ${line}`),
       `tools:`,
       toolsList || "  []",
       `max_iterations: ${maxIterations}`,
       `completion_promise: "${completionPromise}"`,
-    ].join("\n");
+    );
+    if (extras?.skills && extras.skills.length > 0) {
+      lines.push(`skills:`);
+      for (const s of extras.skills) lines.push(`  - name: "${s.name}"${s.executionOrder != null ? `\n    execution_order: ${s.executionOrder}` : ""}`);
+    }
+    if (extras?.knowledgeBases && extras.knowledgeBases.length > 0) {
+      lines.push(`knowledge_bases:`);
+      for (const kb of extras.knowledgeBases) lines.push(`  - name: "${kb.name}"${kb.embeddingModel ? `\n    embedding_model: "${kb.embeddingModel}"` : ""}`);
+    }
+    if (extras?.outcomeContract) {
+      lines.push(`outcome:`);
+      lines.push(`  name: "${extras.outcomeContract.name}"`);
+      lines.push(`  kpis:`);
+      for (const kpi of extras.outcomeContract.kpis) {
+        lines.push(`    - name: "${kpi.name}"\n      target: ${kpi.target}\n      operator: "${kpi.operator}"${kpi.unit ? `\n      unit: "${kpi.unit}"` : ""}`);
+      }
+    }
+    if (extras?.ontologyTags && extras.ontologyTags.length > 0) {
+      lines.push(`ontology_tags:`);
+      for (const t of extras.ontologyTags) lines.push(`  - concept_id: "${t.conceptId}"\n    label: "${t.conceptLabel}"`);
+    }
+    if (extras?.permissions && Object.keys(extras.permissions).length > 0) {
+      lines.push(`permissions: ${JSON.stringify(extras.permissions)}`);
+    }
+    if (extras?.contextProfileName) lines.push(`context_profile: "${extras.contextProfileName}"`);
+    if (extras?.memoryProfileName) lines.push(`memory_profile: "${extras.memoryProfileName}"`);
+    return lines.join("\n");
   }
 
   function generateTsEntrypointOpenAI(
@@ -17840,10 +17885,11 @@ def ${tool.name}(args: dict) -> dict:
       const agent = await storage.getAgent(req.params.id);
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
+      const agentMaxIter = agent.maxToolIterations || 5;
       const exportSchema = z.object({
         format: z.enum(["typescript", "python"]).default("typescript"),
         llmProvider: z.enum(["openai", "anthropic"]).default("openai"),
-        maxIterations: z.number().int().positive().default(20),
+        maxIterations: z.number().int().positive().default(agentMaxIter),
         completionPromise: z.string().default("TASK_COMPLETE"),
         framework: z.enum(["generic", "langgraph", "crewai", "foundry", "bedrock", "n8n", "vertex"]).default("generic"),
         toolAdapters: z.record(z.enum(["builtin", "customer", "stub"])).optional(),
@@ -17869,7 +17915,62 @@ def ${tool.name}(args: dict) -> dict:
         parameters: t.parameters || {},
       }));
 
-      const agentYaml = generateAgentYaml(agent, tools, systemPrompt, maxIterations, completionPromise);
+      const rtConfig = (agent.runtimeConfig as Record<string, any>) || {};
+      const matchedSkills: Array<{ name: string; executionOrder?: number }> = Array.isArray(rtConfig.matchedSkills)
+        ? rtConfig.matchedSkills.map((s: any) => ({ name: s.name || s, executionOrder: s.executionOrder }))
+        : [];
+
+      const agentKbLinks = await storage.getAgentKnowledgeBases(agent.id);
+      const kbDetails: Array<{ name: string; embeddingModel: string | null; chunkSize: number | null; chunkOverlap: number | null }> = [];
+      for (const link of agentKbLinks) {
+        const kb = await storage.getKnowledgeBase(link.knowledgeBaseId);
+        if (kb) kbDetails.push({ name: kb.name, embeddingModel: kb.embeddingModel, chunkSize: kb.chunkSize, chunkOverlap: kb.chunkOverlap });
+      }
+
+      let outcomeData: AgentYamlExtras["outcomeContract"] = null;
+      if (agent.outcomeId) {
+        const outcome = await storage.getOutcome(agent.outcomeId);
+        if (outcome) {
+          const kpis = await storage.getKpisByOutcome(agent.outcomeId);
+          outcomeData = {
+            name: outcome.name,
+            kpis: kpis.map(k => ({ name: k.name, target: Number(k.targetValue) || 0, operator: k.operator || ">=", unit: k.unit })),
+          };
+        }
+      }
+
+      const ontologyTags = (agent.ontologyTags || []) as Array<{ conceptId: string; conceptLabel: string }>;
+      const permissionsConfig = agent.permissionsConfig || {};
+
+      let linkedPolicies: Array<{ id: string; name: string; domain: string | null; policyJson: any }> = [];
+      const agentPolicyBindings = (agent.policyBindings || []) as any[];
+      if (agentPolicyBindings.length > 0) {
+        const allPolicies = await storage.getPolicies();
+        const policyIds = new Set(agentPolicyBindings.map((b: any) => b.policyId || b.id).filter(Boolean));
+        linkedPolicies = allPolicies
+          .filter(p => policyIds.has(p.id))
+          .map(p => ({ id: p.id, name: p.name, domain: p.domain, policyJson: p.policyJson }));
+      }
+
+      const allContextProfiles = await storage.getContextProfiles();
+      const contextProfile = allContextProfiles.find(cp => cp.agentId === agent.id) || null;
+      const allMemoryProfiles = await storage.getMemoryProfiles();
+      const memoryProfile = allMemoryProfiles.find(mp => mp.agentId === agent.id) || null;
+
+      const yamlExtras: AgentYamlExtras = {
+        industry: (agent as any).industry || null,
+        autonomyMode: agent.autonomyMode,
+        riskTier: agent.riskTier,
+        skills: matchedSkills,
+        knowledgeBases: kbDetails.map(kb => ({ name: kb.name, embeddingModel: kb.embeddingModel })),
+        outcomeContract: outcomeData,
+        ontologyTags,
+        permissions: permissionsConfig,
+        contextProfileName: contextProfile?.name || null,
+        memoryProfileName: memoryProfile?.name || null,
+      };
+
+      const agentYaml = generateAgentYaml(agent, tools, systemPrompt, maxIterations, completionPromise, yamlExtras);
       const agentSlug = agent.name.toLowerCase().replace(/[^a-z0-9-]/g, "-");
 
       const files: Record<string, string> = {
@@ -17916,7 +18017,7 @@ def ${tool.name}(args: dict) -> dict:
         const generatedAt = new Date().toISOString();
         const agentVersion = agent.currentVersion || "1.0.0";
 
-        const manifestJson = JSON.stringify({
+        const manifestData: Record<string, any> = {
           name: agent.name,
           description: agent.description || "",
           version: agentVersion,
@@ -17925,7 +18026,20 @@ def ${tool.name}(args: dict) -> dict:
           format,
           llmProvider,
           generatedAt,
-        }, null, 2);
+          industry: (agent as any).industry || null,
+          autonomyMode: agent.autonomyMode || null,
+          riskTier: agent.riskTier || null,
+        };
+        if (matchedSkills.length > 0) manifestData.skills = matchedSkills;
+        if (kbDetails.length > 0) manifestData.knowledgeBases = kbDetails.map(kb => ({ name: kb.name, embeddingModel: kb.embeddingModel }));
+        if (outcomeData) manifestData.outcome = outcomeData;
+        if (ontologyTags.length > 0) manifestData.ontologyTags = ontologyTags;
+        if (linkedPolicies.length > 0) manifestData.policies = linkedPolicies.map(p => ({ name: p.name, domain: p.domain }));
+        if (permissionsConfig && Object.keys(permissionsConfig as any).length > 0) manifestData.permissions = permissionsConfig;
+        if (contextProfile) manifestData.contextProfile = { name: contextProfile.name, version: contextProfile.version };
+        if (memoryProfile) manifestData.memoryProfile = { name: memoryProfile.name, version: memoryProfile.version };
+
+        const manifestJson = JSON.stringify(manifestData, null, 2);
 
         files["almp.manifest.json"] = `${manifestJson}\n`;
 
@@ -17936,6 +18050,40 @@ def ${tool.name}(args: dict) -> dict:
         files["src/agent/schemas/input.json"] = JSON.stringify(inputSchema, null, 2) + "\n";
         files["src/agent/schemas/output.json"] = JSON.stringify(outputSchema, null, 2) + "\n";
 
+        if (linkedPolicies.length > 0) {
+          files["src/agent/policies.json"] = JSON.stringify(linkedPolicies.map(p => ({
+            id: p.id, name: p.name, domain: p.domain, rules: p.policyJson,
+          })), null, 2) + "\n";
+        }
+
+        if (outcomeData) {
+          files["src/agent/outcome.json"] = JSON.stringify({
+            name: outcomeData.name,
+            kpis: outcomeData.kpis,
+          }, null, 2) + "\n";
+        }
+
+        if (contextProfile) {
+          files["src/agent/context-profile.json"] = JSON.stringify({
+            name: contextProfile.name,
+            sources: contextProfile.sources,
+            priorityOrder: contextProfile.priorityOrder,
+            budgetAllocations: contextProfile.budgetAllocations,
+            totalCapacity: contextProfile.totalCapacity,
+            version: contextProfile.version,
+          }, null, 2) + "\n";
+        }
+
+        if (memoryProfile) {
+          files["src/agent/memory-profile.json"] = JSON.stringify({
+            name: memoryProfile.name,
+            tierConfigs: memoryProfile.tierConfigs,
+            forgettingPolicies: memoryProfile.forgettingPolicies,
+            industryRules: memoryProfile.industryRules,
+            version: memoryProfile.version,
+          }, null, 2) + "\n";
+        }
+
         const envLines = [
           llmProvider === "openai" ? "OPENAI_API_KEY=sk-your-api-key-here" : "ANTHROPIC_API_KEY=sk-ant-your-api-key-here",
           `AGENT_NAME=${agent.name}`,
@@ -17943,6 +18091,10 @@ def ${tool.name}(args: dict) -> dict:
         if (otelEnabled) {
           envLines.push("OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318");
           envLines.push(`OTEL_SERVICE_NAME=${agentSlug}`);
+        }
+        if (kbDetails.length > 0) {
+          envLines.push("VECTOR_DB_URL=");
+          envLines.push("EMBEDDING_API_KEY=");
         }
         files[".env.example"] = envLines.join("\n") + "\n";
 
@@ -17961,7 +18113,11 @@ def ${tool.name}(args: dict) -> dict:
           files["src/tools/index.ts"] = generateTsToolsIndex(tools);
           for (const tool of tools) { files[`src/tools/${tool.name}.ts`] = generateTsToolAdapter(tool, getAdapterType(tool.name)); }
 
-          files["src/runtime/policy.ts"] = `// ALMP-generated: Policy evaluation hooks (stub)\n// Replace with your policy enforcement logic\n\nexport interface PolicyContext {\n  agentName: string;\n  action: string;\n  toolName?: string;\n  input?: Record<string, any>;\n}\n\nexport interface PolicyResult {\n  allowed: boolean;\n  reason?: string;\n}\n\nexport async function evaluatePolicy(ctx: PolicyContext): Promise<PolicyResult> {\n  // Stub: allow all actions by default\n  return { allowed: true };\n}\n\nexport async function onBeforeToolCall(toolName: string, args: Record<string, any>): Promise<PolicyResult> {\n  return evaluatePolicy({ agentName: "${agent.name}", action: "tool_call", toolName, input: args });\n}\n\nexport async function onBeforeResponse(response: string): Promise<PolicyResult> {\n  return evaluatePolicy({ agentName: "${agent.name}", action: "respond" });\n}\n`;
+          if (linkedPolicies.length > 0) {
+            files["src/runtime/policy.ts"] = `// ALMP-generated: Policy evaluation hooks (data-driven)\nimport * as fs from "fs";\nimport * as path from "path";\n\nexport interface PolicyContext {\n  agentName: string;\n  action: string;\n  toolName?: string;\n  input?: Record<string, any>;\n}\n\nexport interface PolicyResult {\n  allowed: boolean;\n  reason?: string;\n  policyName?: string;\n}\n\ninterface PolicyRule {\n  id: string;\n  name: string;\n  domain: string | null;\n  rules: any;\n}\n\nlet policies: PolicyRule[] = [];\ntry {\n  const raw = fs.readFileSync(path.resolve(__dirname, "../agent/policies.json"), "utf-8");\n  policies = JSON.parse(raw);\n} catch { /* no policies file */ }\n\nexport async function evaluatePolicy(ctx: PolicyContext): Promise<PolicyResult> {\n  for (const policy of policies) {\n    const rules = policy.rules;\n    if (!rules) continue;\n    if (rules.blockedTools && ctx.toolName && rules.blockedTools.includes(ctx.toolName)) {\n      return { allowed: false, reason: \`Tool "\${ctx.toolName}" blocked by policy "\${policy.name}"\`, policyName: policy.name };\n    }\n    if (rules.blockedActions && rules.blockedActions.includes(ctx.action)) {\n      return { allowed: false, reason: \`Action "\${ctx.action}" blocked by policy "\${policy.name}"\`, policyName: policy.name };\n    }\n    if (rules.requireApproval && rules.requireApproval.includes(ctx.action)) {\n      return { allowed: false, reason: \`Action "\${ctx.action}" requires approval per policy "\${policy.name}"\`, policyName: policy.name };\n    }\n  }\n  return { allowed: true };\n}\n\nexport async function onBeforeToolCall(toolName: string, args: Record<string, any>): Promise<PolicyResult> {\n  return evaluatePolicy({ agentName: "${agent.name}", action: "tool_call", toolName, input: args });\n}\n\nexport async function onBeforeResponse(response: string): Promise<PolicyResult> {\n  return evaluatePolicy({ agentName: "${agent.name}", action: "respond" });\n}\n\nexport function listPolicies(): Array<{ name: string; domain: string | null }> {\n  return policies.map(p => ({ name: p.name, domain: p.domain }));\n}\n`;
+          } else {
+            files["src/runtime/policy.ts"] = `// ALMP-generated: Policy evaluation hooks (stub)\n// Replace with your policy enforcement logic\n\nexport interface PolicyContext {\n  agentName: string;\n  action: string;\n  toolName?: string;\n  input?: Record<string, any>;\n}\n\nexport interface PolicyResult {\n  allowed: boolean;\n  reason?: string;\n}\n\nexport async function evaluatePolicy(ctx: PolicyContext): Promise<PolicyResult> {\n  // Stub: allow all actions by default\n  return { allowed: true };\n}\n\nexport async function onBeforeToolCall(toolName: string, args: Record<string, any>): Promise<PolicyResult> {\n  return evaluatePolicy({ agentName: "${agent.name}", action: "tool_call", toolName, input: args });\n}\n\nexport async function onBeforeResponse(response: string): Promise<PolicyResult> {\n  return evaluatePolicy({ agentName: "${agent.name}", action: "respond" });\n}\n`;
+          }
 
           if (otelEnabled) {
             files["src/runtime/tracing.ts"] = `// ALMP-generated: OpenTelemetry tracing setup\nimport { NodeSDK } from "@opentelemetry/sdk-node";\nimport { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";\nimport { trace, SpanStatusCode } from "@opentelemetry/api";\n\nconst exporter = new OTLPTraceExporter({\n  url: process.env.OTEL_EXPORTER_OTLP_ENDPOINT || "http://localhost:4318/v1/traces",\n});\n\nconst sdk = new NodeSDK({\n  traceExporter: exporter,\n  serviceName: process.env.OTEL_SERVICE_NAME || "${agentSlug}",\n});\n\nsdk.start();\nprocess.on("SIGTERM", () => sdk.shutdown());\n\nconst tracer = trace.getTracer("${agentSlug}");\n\nexport type SpanGranularity = "none" | "agent" | "tool" | "full";\nconst granularity: SpanGranularity = "${spanGranularity}" as SpanGranularity;\n\nexport function startAgentSpan(name: string) {\n  if (granularity === "none") return undefined;\n  return tracer.startSpan(name);\n}\n\nexport function startToolSpan(name: string) {\n  if (granularity === "none" || granularity === "agent") return undefined;\n  return tracer.startSpan(\`tool.\${name}\`);\n}\n\nexport { tracer, SpanStatusCode };\n`;
@@ -17974,6 +18130,15 @@ def ${tool.name}(args: dict) -> dict:
             ? blueprintNodes.map(n => `  { id: ${JSON.stringify(n.id || "")}, type: ${JSON.stringify(n.type || "")}, label: ${JSON.stringify(n.label || "")} }`).join(",\n")
             : `  { id: "start", type: "entry", label: "Start" },\n  { id: "agent_loop", type: "agent", label: "Agent Loop" },\n  { id: "end", type: "exit", label: "End" }`;
           files["src/agent/graph.ts"] = `// ALMP-generated: Graph construction from blueprint configuration\n\nexport interface GraphNode {\n  id: string;\n  type: string;\n  label: string;\n}\n\nexport const agentName = ${JSON.stringify(agent.name)};\nexport const maxIterations = ${maxIterations};\nexport const completionPromise = ${JSON.stringify(completionPromise)};\n\nexport const nodes: GraphNode[] = [\n${nodesLiteral}\n];\n\nexport function getNode(id: string): GraphNode | undefined {\n  return nodes.find(n => n.id === id);\n}\n\nexport function getEntryNode(): GraphNode | undefined {\n  return nodes.find(n => n.type === "entry") || nodes[0];\n}\n`;
+
+          if (kbDetails.length > 0) {
+            const kbConfigJson = JSON.stringify(kbDetails.map(kb => ({ name: kb.name, embeddingModel: kb.embeddingModel, chunkSize: kb.chunkSize, chunkOverlap: kb.chunkOverlap })), null, 2);
+            files["src/agent/knowledge.ts"] = `// ALMP-generated: Knowledge Base retrieval configuration\nimport * as fs from "fs";\nimport * as path from "path";\n\nexport interface KnowledgeBaseConfig {\n  name: string;\n  embeddingModel: string | null;\n  chunkSize: number | null;\n  chunkOverlap: number | null;\n}\n\nexport const knowledgeBases: KnowledgeBaseConfig[] = ${kbConfigJson};\n\nexport interface RetrievalResult {\n  content: string;\n  source: string;\n  score: number;\n}\n\n/**\n * Retrieve relevant context from configured knowledge bases.\n * Replace this stub with your vector DB client (e.g., Pinecone, pgvector, Weaviate).\n */\nexport async function retrieve(query: string, topK: number = 5): Promise<RetrievalResult[]> {\n  // TODO: Connect to your vector database\n  // 1. Generate embedding for the query using the configured embedding model\n  // 2. Perform similarity search against stored knowledge base chunks\n  // 3. Return top-K results\n  console.log(\`[knowledge] Retrieving top \${topK} results for query: "\${query.substring(0, 50)}..."\`);\n  console.log(\`[knowledge] Knowledge bases: \${knowledgeBases.map(kb => kb.name).join(", ")}\`);\n  return [];\n}\n`;
+          }
+
+          if (outcomeData) {
+            files["src/agent/outcome.ts"] = `// ALMP-generated: Outcome contract & KPI configuration\nimport * as fs from "fs";\nimport * as path from "path";\n\nexport interface KpiTarget {\n  name: string;\n  target: number;\n  operator: string;\n  unit?: string;\n}\n\nexport interface OutcomeContract {\n  name: string;\n  kpis: KpiTarget[];\n}\n\nconst outcomeJson = fs.readFileSync(path.resolve(__dirname, "../agent/outcome.json"), "utf-8");\nexport const outcome: OutcomeContract = JSON.parse(outcomeJson);\n\nexport function checkKpi(kpiName: string, actualValue: number): { passed: boolean; message: string } {\n  const kpi = outcome.kpis.find(k => k.name === kpiName);\n  if (!kpi) return { passed: true, message: \`KPI "\${kpiName}" not found in outcome contract\` };\n  let passed = false;\n  switch (kpi.operator) {\n    case ">=": passed = actualValue >= kpi.target; break;\n    case "<=": passed = actualValue <= kpi.target; break;\n    case ">": passed = actualValue > kpi.target; break;\n    case "<": passed = actualValue < kpi.target; break;\n    case "==": passed = actualValue === kpi.target; break;\n    default: passed = actualValue >= kpi.target;\n  }\n  return { passed, message: \`KPI "\${kpiName}": actual=\${actualValue} \${kpi.operator} target=\${kpi.target}\${kpi.unit ? " " + kpi.unit : ""} → \${passed ? "PASS" : "FAIL"}\` };\n}\n`;
+          }
 
           files["tests/eval_smoke.test.ts"] = `// ALMP-generated: Smoke evaluation test\nimport * as assert from "assert";\n\nasync function smokeTest() {\n  const orchestrator = await import("../src/runtime/orchestrator");\n  assert.ok(orchestrator, "Orchestrator module should be importable");\n  console.log("[PASS] Smoke test: orchestrator module loads successfully");\n\n  const graph = await import("../src/agent/graph");\n  assert.ok(graph.nodes, "Graph nodes should be defined");\n  assert.ok(graph.nodes.length > 0, "Graph should have at least one node");\n  console.log("[PASS] Smoke test: graph module loads with nodes");\n\n  const policy = await import("../src/runtime/policy");\n  const result = await policy.evaluatePolicy({ agentName: ${JSON.stringify(agent.name)}, action: "test" });\n  assert.strictEqual(result.allowed, true, "Default policy should allow actions");\n  console.log("[PASS] Smoke test: policy stub allows actions");\n\n  console.log("[ALL PASS] Smoke evaluation complete");\n}\n\nsmokeTest().catch((err) => {\n  console.error("[FAIL]", err);\n  process.exit(1);\n});\n`;
 
@@ -17994,7 +18159,11 @@ def ${tool.name}(args: dict) -> dict:
           files["src/tools/__init__.py"] = generatePyToolsInit(tools);
           for (const tool of tools) { files[`src/tools/${tool.name}.py`] = generatePyToolAdapter(tool, getAdapterType(tool.name)); }
 
-          files["src/runtime/policy.py"] = `# ALMP-generated: Policy evaluation hooks (stub)\n# Replace with your policy enforcement logic\n\nfrom typing import Optional\n\n\ndef evaluate_policy(agent_name: str, action: str, tool_name: Optional[str] = None, input_data: Optional[dict] = None) -> dict:\n    \"\"\"Evaluate whether an action is allowed by policy. Stub: allows all.\"\"\"\n    return {"allowed": True}\n\n\ndef on_before_tool_call(tool_name: str, args: dict) -> dict:\n    return evaluate_policy("${agent.name}", "tool_call", tool_name=tool_name, input_data=args)\n\n\ndef on_before_response(response: str) -> dict:\n    return evaluate_policy("${agent.name}", "respond")\n`;
+          if (linkedPolicies.length > 0) {
+            files["src/runtime/policy.py"] = `# ALMP-generated: Policy evaluation hooks (data-driven)\nimport json\nimport os\nfrom typing import Optional\n\nPOLICIES = []\ntry:\n    _policy_path = os.path.join(os.path.dirname(__file__), "..", "agent", "policies.json")\n    with open(_policy_path) as f:\n        POLICIES = json.load(f)\nexcept FileNotFoundError:\n    pass\n\n\ndef evaluate_policy(agent_name: str, action: str, tool_name: Optional[str] = None, input_data: Optional[dict] = None) -> dict:\n    for policy in POLICIES:\n        rules = policy.get("rules") or {}\n        if rules.get("blockedTools") and tool_name in rules["blockedTools"]:\n            return {"allowed": False, "reason": f'Tool "{tool_name}" blocked by policy "{policy["name"]}"', "policyName": policy["name"]}\n        if rules.get("blockedActions") and action in rules["blockedActions"]:\n            return {"allowed": False, "reason": f'Action "{action}" blocked by policy "{policy["name"]}"', "policyName": policy["name"]}\n        if rules.get("requireApproval") and action in rules["requireApproval"]:\n            return {"allowed": False, "reason": f'Action "{action}" requires approval per policy "{policy["name"]}"', "policyName": policy["name"]}\n    return {"allowed": True}\n\n\ndef on_before_tool_call(tool_name: str, args: dict) -> dict:\n    return evaluate_policy("${agent.name}", "tool_call", tool_name=tool_name, input_data=args)\n\n\ndef on_before_response(response: str) -> dict:\n    return evaluate_policy("${agent.name}", "respond")\n\n\ndef list_policies():\n    return [{"name": p["name"], "domain": p.get("domain")} for p in POLICIES]\n`;
+          } else {
+            files["src/runtime/policy.py"] = `# ALMP-generated: Policy evaluation hooks (stub)\n# Replace with your policy enforcement logic\n\nfrom typing import Optional\n\n\ndef evaluate_policy(agent_name: str, action: str, tool_name: Optional[str] = None, input_data: Optional[dict] = None) -> dict:\n    \"\"\"Evaluate whether an action is allowed by policy. Stub: allows all.\"\"\"\n    return {"allowed": True}\n\n\ndef on_before_tool_call(tool_name: str, args: dict) -> dict:\n    return evaluate_policy("${agent.name}", "tool_call", tool_name=tool_name, input_data=args)\n\n\ndef on_before_response(response: str) -> dict:\n    return evaluate_policy("${agent.name}", "respond")\n`;
+          }
 
           if (otelEnabled) {
             files["src/runtime/tracing.py"] = `# ALMP-generated: OpenTelemetry tracing setup\nimport os\nfrom opentelemetry import trace\nfrom opentelemetry.sdk.trace import TracerProvider\nfrom opentelemetry.sdk.trace.export import BatchSpanProcessor\nfrom opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter\n\nendpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318/v1/traces")\nservice_name = os.environ.get("OTEL_SERVICE_NAME", "${agentSlug}")\n\nprovider = TracerProvider()\nexporter = OTLPSpanExporter(endpoint=endpoint)\nprovider.add_span_processor(BatchSpanProcessor(exporter))\ntrace.set_tracer_provider(provider)\n\ntracer = trace.get_tracer(service_name)\n\nSPAN_GRANULARITY = "${spanGranularity}"\n\n\ndef start_agent_span(name: str):\n    if SPAN_GRANULARITY == "none":\n        return None\n    return tracer.start_span(name)\n\n\ndef start_tool_span(name: str):\n    if SPAN_GRANULARITY in ("none", "agent"):\n        return None\n    return tracer.start_span(f"tool.{name}")\n`;
@@ -18007,6 +18176,15 @@ def ${tool.name}(args: dict) -> dict:
             ? blueprintNodes.map(n => `    {"id": ${JSON.stringify(n.id || "")}, "type": ${JSON.stringify(n.type || "")}, "label": ${JSON.stringify(n.label || "")}}`).join(",\n")
             : `    {"id": "start", "type": "entry", "label": "Start"},\n    {"id": "agent_loop", "type": "agent", "label": "Agent Loop"},\n    {"id": "end", "type": "exit", "label": "End"}`;
           files["src/agent/graph.py"] = `# ALMP-generated: Graph construction from blueprint configuration\n\nAGENT_NAME = ${JSON.stringify(agent.name)}\nMAX_ITERATIONS = ${maxIterations}\nCOMPLETION_PROMISE = ${JSON.stringify(completionPromise)}\n\nNODES = [\n${nodesLiteral}\n]\n\n\ndef get_node(node_id: str):\n    return next((n for n in NODES if n["id"] == node_id), None)\n\n\ndef get_entry_node():\n    entry = next((n for n in NODES if n["type"] == "entry"), None)\n    return entry or (NODES[0] if NODES else None)\n`;
+
+          if (kbDetails.length > 0) {
+            const kbConfigPy = kbDetails.map(kb => `    {"name": ${JSON.stringify(kb.name)}, "embedding_model": ${JSON.stringify(kb.embeddingModel)}, "chunk_size": ${kb.chunkSize || "None"}, "chunk_overlap": ${kb.chunkOverlap || "None"}}`).join(",\n");
+            files["src/agent/knowledge.py"] = `# ALMP-generated: Knowledge Base retrieval configuration\n\nKNOWLEDGE_BASES = [\n${kbConfigPy}\n]\n\n\ndef retrieve(query: str, top_k: int = 5) -> list:\n    \"\"\"Retrieve relevant context from configured knowledge bases.\n    Replace this stub with your vector DB client (e.g., Pinecone, pgvector, Weaviate).\n    \"\"\"\n    # TODO: Connect to your vector database\n    # 1. Generate embedding for the query using the configured embedding model\n    # 2. Perform similarity search against stored knowledge base chunks\n    # 3. Return top-K results\n    print(f'[knowledge] Retrieving top {top_k} results for query: "{query[:50]}..."')\n    print(f'[knowledge] Knowledge bases: {", ".join(kb["name"] for kb in KNOWLEDGE_BASES)}')\n    return []\n`;
+          }
+
+          if (outcomeData) {
+            files["src/agent/outcome.py"] = `# ALMP-generated: Outcome contract & KPI configuration\nimport json\nimport os\n\n_outcome_path = os.path.join(os.path.dirname(__file__), "outcome.json")\nwith open(_outcome_path) as f:\n    OUTCOME = json.load(f)\n\n\ndef check_kpi(kpi_name: str, actual_value: float) -> dict:\n    \"\"\"Check if a KPI target is met.\"\"\"\n    kpi = next((k for k in OUTCOME["kpis"] if k["name"] == kpi_name), None)\n    if not kpi:\n        return {"passed": True, "message": f'KPI "{kpi_name}" not found in outcome contract'}\n    target = kpi["target"]\n    op = kpi.get("operator", ">=")\n    ops = {">=": actual_value >= target, "<=": actual_value <= target, ">": actual_value > target, "<": actual_value < target, "==": actual_value == target}\n    passed = ops.get(op, actual_value >= target)\n    unit = f' {kpi["unit"]}' if kpi.get("unit") else ""\n    return {"passed": passed, "message": f'KPI "{kpi_name}": actual={actual_value} {op} target={target}{unit} → {"PASS" if passed else "FAIL"}'}\n`;
+          }
 
           files["tests/eval_smoke_test.py"] = `# ALMP-generated: Smoke evaluation test\nimport importlib\nimport sys\n\n\ndef smoke_test():\n    orchestrator = importlib.import_module("src.runtime.orchestrator")\n    assert orchestrator is not None, "Orchestrator module should be importable"\n    print("[PASS] Smoke test: orchestrator module loads successfully")\n\n    graph = importlib.import_module("src.agent.graph")\n    assert hasattr(graph, "NODES"), "Graph NODES should be defined"\n    assert len(graph.NODES) > 0, "Graph should have at least one node"\n    print("[PASS] Smoke test: graph module loads with nodes")\n\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.evaluate_policy(${JSON.stringify(agent.name)}, "test")\n    assert result["allowed"] is True, "Default policy should allow actions"\n    print("[PASS] Smoke test: policy stub allows actions")\n\n    print("[ALL PASS] Smoke evaluation complete")\n\n\nif __name__ == "__main__":\n    try:\n        smoke_test()\n    except Exception as e:\n        print(f"[FAIL] {e}")\n        sys.exit(1)\n`;
 
