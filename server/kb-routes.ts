@@ -253,6 +253,83 @@ async function convertHtmlTablesToMarkdown(html: string): Promise<string> {
   return text.trim();
 }
 
+function jsonValueToString(value: any): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value !== "object") return String(value);
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "[]";
+    if (value.every(v => typeof v !== "object" || v === null)) return value.join(", ");
+    return JSON.stringify(value);
+  }
+  return JSON.stringify(value);
+}
+
+function flattenObject(obj: any, prefix: string = ""): Array<[string, string]> {
+  const entries: Array<[string, string]> = [];
+  for (const [key, value] of Object.entries(obj)) {
+    const fullKey = prefix ? `${prefix}.${key}` : key;
+    if (value === null || value === undefined) {
+      entries.push([fullKey, ""]);
+    } else if (Array.isArray(value)) {
+      if (value.length === 0) {
+        entries.push([fullKey, "[]"]);
+      } else if (value.every(v => typeof v !== "object" || v === null)) {
+        entries.push([fullKey, value.join(", ")]);
+      } else {
+        entries.push([fullKey, `(${value.length} items)`]);
+        for (let i = 0; i < value.length; i++) {
+          if (typeof value[i] === "object" && value[i] !== null) {
+            entries.push(...flattenObject(value[i], `${fullKey}[${i}]`));
+          } else {
+            entries.push([`${fullKey}[${i}]`, String(value[i] ?? "")]);
+          }
+        }
+      }
+    } else if (typeof value === "object") {
+      entries.push(...flattenObject(value, fullKey));
+    } else {
+      entries.push([fullKey, String(value)]);
+    }
+  }
+  return entries;
+}
+
+function jsonRowToText(row: any): string {
+  const flat = flattenObject(row);
+  return flat.map(([k, v]) => `${k}: ${v}`).join("\n");
+}
+
+function jsonToStructuredText(data: any): string {
+  if (Array.isArray(data)) {
+    return data.map((row, i) => jsonRowToText(row)).join("\n\n---\n\n");
+  }
+  const topLevelKeys = Object.keys(data);
+  const hasNestedSections = topLevelKeys.some(k => typeof data[k] === "object" && data[k] !== null);
+
+  if (hasNestedSections && !Array.isArray(data)) {
+    const sections: string[] = [];
+    for (const key of topLevelKeys) {
+      const value = data[key];
+      if (Array.isArray(value) && value.length > 0 && typeof value[0] === "object") {
+        for (let i = 0; i < value.length; i++) {
+          const heading = `[${key} #${i + 1}]`;
+          const flat = flattenObject(value[i]);
+          sections.push(heading + "\n" + flat.map(([k, v]) => `${k}: ${v}`).join("\n"));
+        }
+      } else if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+        const heading = `[${key}]`;
+        const flat = flattenObject(value);
+        sections.push(heading + "\n" + flat.map(([k, v]) => `${k}: ${v}`).join("\n"));
+      } else {
+        sections.push(`${key}: ${jsonValueToString(value)}`);
+      }
+    }
+    return sections.join("\n\n---\n\n");
+  }
+
+  return jsonRowToText(data);
+}
+
 function chunkText(text: string, chunkSize: number = 512, overlap: number = 50): string[] {
   const chunks: string[] = [];
   const lines = text.split("\n");
@@ -655,10 +732,10 @@ export function registerKnowledgeBaseRoutes(app: Express) {
         if (rows.length === 0 || rows.some((r: any) => typeof r !== "object" || r === null)) {
           return res.status(400).json({ message: "JSON must be an object or array of objects" });
         }
-        const textParts = rows.map((row: any) =>
-          Object.entries(row).map(([k, v]) => `${k}: ${v}`).join("\n")
-        );
-        const combinedText = textParts.join("\n\n---\n\n");
+        const combinedText = rows.length === 1
+          ? jsonToStructuredText(rows[0])
+          : jsonToStructuredText(rows);
+        const rowCount = Array.isArray(parsed) ? parsed.length : 1;
 
         const source = await storage.createKnowledgeSource({
           knowledgeBaseId: req.params.id,
@@ -666,7 +743,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
           sourceType: "structured",
           status: "pending",
           content: combinedText,
-          metadata: { originalName: file.originalname, rowCount: rows.length },
+          metadata: { originalName: file.originalname, rowCount },
           fileSize: file.size,
           mimeType: file.mimetype,
         });
@@ -809,10 +886,10 @@ export function registerKnowledgeBaseRoutes(app: Express) {
       const textParts = rows.map((row: any) => {
         if (fieldMapping) {
           return Object.entries(fieldMapping)
-            .map(([key, label]) => `${label}: ${row[key] ?? ""}`)
+            .map(([key, label]) => `${label}: ${jsonValueToString(row[key])}`)
             .join("\n");
         }
-        return Object.entries(row).map(([k, v]) => `${k}: ${v}`).join("\n");
+        return jsonRowToText(row);
       });
       const combinedText = textParts.join("\n\n---\n\n");
 
