@@ -12033,7 +12033,14 @@ For "executionGraph", provide an explicit stage-by-stage execution plan:
         model: "gpt-4.1",
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content: `Generate an agent development plan for the outcome "${outcomeContract?.name}" targeting ${kpiDetails.length} KPIs: ${kpiDetails.map((k: any) => `${k.name} (baseline: ${k.baseline} → target: ${k.target}, weight: ${k.weight}, SLA: ${k.slaThreshold || "none"})`).join("; ")}` },
+          { role: "user", content: stagedPipelines.length > 0
+            ? `Generate an agent development plan for the outcome "${outcomeContract?.name}".
+
+MANDATORY: You MUST create EXACTLY ${stagedPipelines[0].count} worker agents — one per pipeline stage from your system instructions. Required stages: ${stagedPipelines[0].stages.map((s: string, i: number) => `${i + 1}. ${s}`).join(", ")}.
+
+After assigning one agent to each stage, bind the following ${kpiDetails.length} KPIs to the most relevant existing stage agent (do NOT create extra agents for KPIs): ${kpiDetails.map((k: any) => `${k.name} (baseline: ${k.baseline} → target: ${k.target}, weight: ${k.weight}, SLA: ${k.slaThreshold || "none"})`).join("; ")}`
+            : `Generate an agent development plan for the outcome "${outcomeContract?.name}" targeting ${kpiDetails.length} KPIs: ${kpiDetails.map((k: any) => `${k.name} (baseline: ${k.baseline} → target: ${k.target}, weight: ${k.weight}, SLA: ${k.slaThreshold || "none"})`).join("; ")}`
+          },
         ],
         response_format: { type: "json_object" },
         max_completion_tokens: 8000,
@@ -12137,6 +12144,17 @@ For "executionGraph", provide an explicit stage-by-stage execution plan:
         };
       }
 
+      function findCoveringServer(systemName: string, coverageMap: Record<string, string>): string | null {
+        const nameLower = systemName.toLowerCase().trim();
+        for (const [coveredName, serverName] of Object.entries(coverageMap)) {
+          const coveredLower = coveredName.toLowerCase().trim();
+          if (coveredLower.includes(nameLower) || nameLower.includes(coveredLower)) {
+            return serverName;
+          }
+        }
+        return null;
+      }
+
       let result: any;
       if (parsed && parsed.orchestrator && parsed.agents) {
         result = {
@@ -12148,6 +12166,25 @@ For "executionGraph", provide an explicit stage-by-stage execution plan:
         result = { agents: parsed.map(normalizeAgent), orchestrator: null, pipeline: null };
       } else {
         result = { agents: [], orchestrator: null, pipeline: null, raw: content };
+      }
+
+      // Post-process: enforce pre-computed coverage — LLM cannot reliably derive this
+      if (result.pipeline?.systemsExtracted && Object.keys(systemCoverageGT).length > 0) {
+        result.pipeline.systemsExtracted = result.pipeline.systemsExtracted.map((s: any) => {
+          if (s.systemRole === "target_system") {
+            return { ...s, mcpCoverage: "not_applicable", requiredCapabilities: [], existingMcpServer: null };
+          }
+          const coveringServer = findCoveringServer(s.name, systemCoverageGT);
+          if (coveringServer) {
+            return { ...s, mcpCoverage: "covered", existingMcpServer: coveringServer };
+          }
+          return s;
+        });
+        if (result.pipeline.mcpGaps) {
+          result.pipeline.mcpGaps = result.pipeline.mcpGaps.filter((g: any) => {
+            return !findCoveringServer(g.system, systemCoverageGT);
+          });
+        }
       }
 
       if (outcomeContract?.id && (result.agents?.length > 0 || result.orchestrator)) {

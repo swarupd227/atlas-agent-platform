@@ -3696,11 +3696,11 @@ function PipelineVisualization({ orchestrator, agents, pipeline }: {
               </button>
               {integrationsOpen && (
                 <div className="px-3 pb-3 pt-0 space-y-1.5">
-                  {pipeline.systemsExtracted.map((sys, idx) => {
+                  {pipeline.systemsExtracted.filter(s => !s.systemRole || s.systemRole === "orchestration_system").map((sys, idx) => {
                     const gap = pipeline.mcpGaps?.find(g => g.system === sys.name);
-                    const isTarget = sys.systemRole === "target_system";
+                    const isTarget = false;
                     return (
-                      <div key={idx} className={`rounded-md border p-2.5 ${isTarget ? "border-border/20 bg-muted/10 opacity-70" : "border-border/40 bg-background/50"}`} data-testid={`integration-entry-${idx}`}>
+                      <div key={idx} className="rounded-md border p-2.5 border-border/40 bg-background/50" data-testid={`integration-entry-${idx}`}>
                         <div className="flex items-center gap-2 mb-1">
                           <Database className={`w-3 h-3 shrink-0 ${isTarget ? "text-muted-foreground" : "text-cyan-500"}`} />
                           <span className={`text-[11px] font-semibold flex-1 ${isTarget ? "text-muted-foreground" : ""}`}>{sys.name}</span>
