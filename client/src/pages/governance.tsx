@@ -1688,6 +1688,7 @@ export default function Governance() {
   };
 
   const [regulationGroupFilter, setRegulationGroupFilter] = useState<string>("all");
+  const [policySort, setPolicySort] = useState<string>("recent");
 
   const regulationGroupedPolicies = useMemo(() => {
     const groups: Record<string, { regulation: string; framework: string; policies: Policy[]; activeCount: number; lastReview: string }> = {};
@@ -1728,8 +1729,22 @@ export default function Governance() {
         groups[name] = { regulation: name, framework: name, policies: [], activeCount: 0, lastReview: "" };
       }
     });
-    return { groups: Object.values(groups).sort((a, b) => b.policies.length - a.policies.length), ungrouped };
-  }, [filtered, detectedRegulations]);
+    const toMs = (p: Policy) => p.createdAt ? new Date(p.createdAt).getTime() : 0;
+    const sortPols = (arr: Policy[]) => policySort === "recent"
+      ? [...arr].sort((a, b) => toMs(b) - toMs(a))
+      : arr;
+    const groupsArr = Object.values(groups).map(g => ({ ...g, policies: sortPols(g.policies) }));
+    if (policySort === "recent") {
+      groupsArr.sort((a, b) => {
+        const aMs = a.policies.length ? toMs(a.policies[0]) : 0;
+        const bMs = b.policies.length ? toMs(b.policies[0]) : 0;
+        return bMs - aMs;
+      });
+    } else {
+      groupsArr.sort((a, b) => b.policies.length - a.policies.length);
+    }
+    return { groups: groupsArr, ungrouped: sortPols(ungrouped) };
+  }, [filtered, detectedRegulations, policySort]);
 
   const filteredRegGroupPolicies = useMemo(() => {
     if (regulationGroupFilter === "all") return regulationGroupedPolicies;
@@ -2314,6 +2329,15 @@ export default function Governance() {
                 </SelectContent>
               </Select>
             )}
+            <Select value={policySort} onValueChange={setPolicySort}>
+              <SelectTrigger className="w-[170px]" data-testid="select-policy-sort">
+                <SelectValue placeholder="Sort by" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="recent">Most Recent First</SelectItem>
+                <SelectItem value="default">By Policy Count</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
           {filteredRegGroupPolicies.groups.map((group) => {
