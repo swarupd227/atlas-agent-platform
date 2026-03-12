@@ -501,7 +501,15 @@ export async function recomputeOutcomeKpis(outcomeId: string): Promise<{
       }
     } else if (kpiNameLower.includes("latency") || kpiNameLower.includes("time") || kpiNameLower.includes("response")) {
       if (totalTraces > 0) {
-        newValue = Math.round(relevantTraces.reduce((s, t) => s + (t.latencyMs || 0), 0) / totalTraces);
+        const avgLatencyMs = relevantTraces.reduce((s, t) => s + (t.latencyMs || 0), 0) / totalTraces;
+        const unitLower = (kpi.unit || "").toLowerCase();
+        if (unitLower === "minutes" || unitLower === "min") {
+          newValue = Math.round((avgLatencyMs / 60000) * 100) / 100;
+        } else if (unitLower === "seconds" || unitLower === "sec" || unitLower === "s") {
+          newValue = Math.round((avgLatencyMs / 1000) * 10) / 10;
+        } else {
+          newValue = Math.round(avgLatencyMs);
+        }
       }
     } else if (kpiNameLower.includes("volume") || kpiNameLower.includes("count") || kpiNameLower.includes("throughput") ||
                kpiNameLower.includes("resolution") || kpiNameLower.includes("processed") || kpiNameLower.includes("moderated") ||
