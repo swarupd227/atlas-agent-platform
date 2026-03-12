@@ -30483,6 +30483,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
 
   app.post("/api/agents/:agentId/playground/chat", async (req, res) => {
     try {
+      const playgroundStartTime = Date.now();
       const { agentId } = req.params;
       const { content, sessionId } = req.body;
 
@@ -30635,6 +30636,18 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
           fullResponse += citationBlock;
           res.write(`data: ${JSON.stringify({ content: citationBlock })}\n\n`);
         }
+
+        try {
+          await storage.createTrace({
+            agentId,
+            environment: "playground",
+            status: "completed",
+            latencyMs: Date.now() - playgroundStartTime,
+            inputSummary: `Playground: ${content.length > 120 ? content.substring(0, 117) + "..." : content}`,
+            outputSummary: fullResponse.length > 300 ? fullResponse.substring(0, 297) + "..." : fullResponse,
+            modelId: agent.modelName || "gpt-4.1",
+          });
+        } catch {}
       } else {
         const chatMsgs: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
           { role: "system", content: systemPrompt },
@@ -30658,6 +30671,18 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
             res.write(`data: ${JSON.stringify({ content: c })}\n\n`);
           }
         }
+
+        try {
+          await storage.createTrace({
+            agentId,
+            environment: "playground",
+            status: "completed",
+            latencyMs: Date.now() - playgroundStartTime,
+            inputSummary: `Playground: ${content.length > 120 ? content.substring(0, 117) + "..." : content}`,
+            outputSummary: fullResponse.length > 300 ? fullResponse.substring(0, 297) + "..." : fullResponse,
+            modelId: agent.modelName || "gpt-4.1",
+          });
+        } catch {}
       }
 
       await db.insert(chatMessages).values({
