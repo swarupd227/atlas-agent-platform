@@ -17891,7 +17891,7 @@ def ${tool.name}(args: dict) -> dict:
         llmProvider: z.enum(["openai", "anthropic"]).default("openai"),
         maxIterations: z.number().int().positive().default(agentMaxIter),
         completionPromise: z.string().default("TASK_COMPLETE"),
-        framework: z.enum(["generic", "langgraph", "crewai", "foundry", "bedrock", "n8n", "vertex"]).default("generic"),
+        framework: z.enum(["generic", "langgraph", "crewai", "foundry", "bedrock", "n8n", "vertex", "databricks"]).default("generic"),
         toolAdapters: z.record(z.enum(["builtin", "customer", "stub"])).optional(),
         pinVersions: z.boolean().default(true),
         otelEnabled: z.boolean().default(false),
@@ -18357,6 +18357,35 @@ def ${tool.name}(args: dict) -> dict:
           files["requirements.txt"] = reqs.join("\n") + "\n";
         }
         files["Dockerfile"] = format === "typescript" ? dockerfile : dockerfilePy;
+      } else if (framework === "databricks") {
+        // Databricks AgentBricks (Mosaic AI Agent Framework) — Python only
+        const dbxEndpoint = llmProvider === "openai" ? "databricks-meta-llama-3-1-70b-instruct" : "databricks-claude-3-5-sonnet";
+        const agentSlugDbx = (agent.name || "agent").toLowerCase().replace(/[^a-z0-9]+/g, "_");
+
+        files["config.yaml"] = `# Databricks AgentBricks Configuration\n# Generated for: ${agent.name}\nagent:\n  name: "${agent.name}"\n  description: "${(agent.description || "").replace(/"/g, '\\"')}"\n  max_iterations: ${maxIterations}\n  completion_token: "${completionPromise}"\n\nmodel:\n  endpoint: "${dbxEndpoint}"\n  max_tokens: 4096\n  temperature: 0.1\n\ntools:\n${tools.map(t => `  - name: "${t.name}"\n    description: "${(t.description || "").replace(/"/g, '\\"')}"`).join("\n")}\n\nmlflow:\n  experiment_name: "/Shared/${agentSlugDbx}_experiment"\n  registered_model_name: "catalog.schema.${agentSlugDbx}"\n`;
+
+        files["agent.py"] = `# Databricks AgentBricks Agent\n# Generated for: ${agent.name}\n# Framework: Mosaic AI Agent Framework (MLflow + LangChain)\nimport yaml\nimport mlflow\nfrom databricks_langchain import ChatDatabricks\nfrom langchain_core.messages import AIMessage, HumanMessage, ToolMessage\nfrom langchain_core.tools import tool\nfrom tools import load_tools\n\n# Enable automatic MLflow tracing for LangChain\nmlflow.langchain.autolog()\n\n# Load agent configuration\nwith open("config.yaml") as f:\n    config = yaml.safe_load(f)\n\n# Initialize Databricks-hosted LLM\nllm = ChatDatabricks(\n    endpoint=config["model"]["endpoint"],\n    max_tokens=config["model"].get("max_tokens", 4096),\n    temperature=config["model"].get("temperature", 0.1),\n)\n\n# Load and bind tools\nagent_tools = load_tools()\nllm_with_tools = llm.bind_tools(agent_tools)\ntool_map = {t.name: t for t in agent_tools}\n\n\ndef run_agent(messages: list) -> list:\n    """Run the agent loop until completion or max iterations."""\n    max_iter = config["agent"].get("max_iterations", ${maxIterations})\n    completion_token = config["agent"].get("completion_token", "${completionPromise}")\n\n    for _ in range(max_iter):\n        response = llm_with_tools.invoke(messages)\n        messages.append(response)\n\n        # Check for completion signal\n        if isinstance(response, AIMessage) and completion_token in (response.content or ""):\n            break\n\n        # Process tool calls\n        if not response.tool_calls:\n            break\n\n        for tool_call in response.tool_calls:\n            name = tool_call["name"]\n            args = tool_call["args"]\n            call_id = tool_call["id"]\n\n            if name in tool_map:\n                try:\n                    result = tool_map[name].invoke(args)\n                except Exception as exc:\n                    result = f"Tool error: {exc}"\n            else:\n                result = f"Unknown tool: {name}"\n\n            messages.append(ToolMessage(content=str(result), tool_call_id=call_id))\n\n    return messages\n\n\nclass ${agentSlugDbx.replace(/(?:^|_)([a-z])/g, (_: string, c: string) => c.toUpperCase())}Agent(mlflow.pyfunc.PythonModel):\n    """MLflow PythonModel wrapper for AgentBricks deployment."""\n\n    def predict(self, context, model_input, params=None):\n        raw = model_input.get("messages", [])\n        messages = [HumanMessage(content=m["content"]) if m.get("role") == "user" else AIMessage(content=m["content"]) for m in raw]\n        result = run_agent(messages)\n        return {"messages": [{"role": "assistant" if isinstance(m, AIMessage) else "tool", "content": m.content} for m in result if hasattr(m, "content")]}\n\n\nif __name__ == "__main__":\n    experiment_name = config["mlflow"]["experiment_name"]\n    model_name = config["mlflow"]["registered_model_name"]\n\n    mlflow.set_experiment(experiment_name)\n    with mlflow.start_run():\n        mlflow.pyfunc.log_model(\n            artifact_path="agent",\n            python_model=${agentSlugDbx.replace(/(?:^|_)([a-z])/g, (_: string, c: string) => c.toUpperCase())}Agent(),\n            pip_requirements=["-r requirements.txt"],\n            registered_model_name=model_name,\n        )\n        print(f"[AgentBricks] Logged and registered: {model_name}")\n`;
+
+        files["tools/__init__.py"] = `# AgentBricks Tool Registry\n# Generated for: ${agent.name}\n${tools.map(t => `from tools.${t.name} import ${t.name}`).join("\n")}\n\n\ndef load_tools():\n    """Return all tool callables for binding to the LLM."""\n    return [${tools.map(t => t.name).join(", ")}]\n`;
+
+        for (const tool of tools) {
+          files[`tools/${tool.name}.py`] = generatePyToolAdapter(tool, getAdapterType(tool.name));
+        }
+
+        files["databricks.yml"] = `# Databricks Asset Bundle (DAB)\n# Deploy with: databricks bundle deploy\nbundle:\n  name: ${agentSlugDbx}_bundle\n\nworkspace:\n  host: \${DATABRICKS_HOST}\n  root_path: /Shared/.bundle/\${bundle.name}/\${bundle.environment}\n\ntargets:\n  dev:\n    default: true\n    mode: development\n    workspace:\n      host: \${DATABRICKS_HOST}\n\n  staging:\n    mode: development\n    workspace:\n      host: \${DATABRICKS_HOST}\n\n  prod:\n    mode: production\n    workspace:\n      host: \${DATABRICKS_HOST}\n\nresources:\n  jobs:\n    deploy_agent:\n      name: Deploy ${agent.name}\n      tasks:\n        - task_key: log_model\n          python_wheel_task:\n            entry_point: agent.py\n          job_cluster_key: agent_cluster\n      job_clusters:\n        - job_cluster_key: agent_cluster\n          new_cluster:\n            spark_version: 15.4.x-scala2.12\n            node_type_id: Standard_DS3_v2\n            num_workers: 1\n            spark_env_vars:\n              DATABRICKS_HOST: \${DATABRICKS_HOST}\n              DATABRICKS_TOKEN: \${DATABRICKS_TOKEN}\n`;
+
+        files["MLproject"] = `name: ${agentSlugDbx}\n\nconda_env: conda.yaml\n\nentry_points:\n  main:\n    parameters:\n      experiment_name:\n        type: str\n        default: /Shared/${agentSlugDbx}_experiment\n    command: "python agent.py --experiment_name {experiment_name}"\n\n  evaluate:\n    command: "python evaluate.py"\n`;
+
+        files["conda.yaml"] = `name: ${agentSlugDbx}_env\nchannels:\n  - defaults\ndependencies:\n  - python=3.11\n  - pip:\n    - mlflow>=2.18.0\n    - databricks-sdk>=0.36.0\n    - databricks-langchain>=0.3.0\n    - langchain-core>=0.3.0\n    - pyyaml>=6.0\n`;
+
+        const dbxReqs = [
+          pin ? "mlflow==2.18.0" : "mlflow>=2.18.0",
+          pin ? "databricks-sdk==0.36.0" : "databricks-sdk>=0.36.0",
+          pin ? "databricks-langchain==0.3.0" : "databricks-langchain>=0.3.0",
+          pin ? "langchain-core==0.3.28" : "langchain-core>=0.3.0",
+          pin ? "pyyaml==6.0.2" : "pyyaml>=6.0",
+        ];
+        files["requirements.txt"] = dbxReqs.join("\n") + "\n";
       }
 
       if (!files[".env.example"]) {

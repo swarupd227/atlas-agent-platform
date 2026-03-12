@@ -5725,6 +5725,7 @@ function AgentDetailInner() {
               { id: "bedrock", label: "AWS Bedrock Agent", desc: "Action groups with Lambda handlers and OpenAPI specs", icon: Cloud },
               { id: "n8n", label: "N8N Workflow", desc: "Workflow JSON with custom node stubs and credentials", icon: Workflow },
               { id: "vertex", label: "GCP Vertex AI Agent", desc: "Vertex Agent Builder layout with tools and extensions", icon: Box },
+              { id: "databricks", label: "Databricks AgentBricks", desc: "Mosaic AI Agent Framework with MLflow tracking and Unity Catalog tools", icon: Database },
             ];
             const frameworkFileMap: Record<string, Array<{ label: string; desc: string }>> = {
               generic: [
@@ -5794,6 +5795,17 @@ function AgentDetailInner() {
                 { label: ".env.example", desc: "Environment variables" },
                 { label: "Dockerfile", desc: "Container build for CI/CD" },
               ],
+              databricks: [
+                { label: "agent.yaml", desc: "Agent manifest with config" },
+                { label: "agent.py", desc: "MLflow ChatAgent with tool-calling loop" },
+                { label: "config.yaml", desc: "AgentBricks model and tool configuration" },
+                { label: "tools/__init__.py", desc: "Tool registry for Unity Catalog binding" },
+                { label: "databricks.yml", desc: "Asset Bundle for CI/CD deployment" },
+                { label: "MLproject", desc: "MLflow project definition" },
+                { label: "conda.yaml", desc: "Conda environment spec" },
+                { label: "requirements.txt", desc: "Python package dependencies" },
+                { label: ".env.example", desc: "Environment variables" },
+              ],
             };
             const currentFiles = frameworkFileMap[exportFramework] || frameworkFileMap.generic;
             return (
@@ -5831,7 +5843,7 @@ function AgentDetailInner() {
                       <div
                         key={fw.id}
                         className={`flex items-start gap-2.5 p-2.5 rounded-md border cursor-pointer hover-elevate ${selected ? "border-primary bg-primary/5" : ""}`}
-                        onClick={() => setExportFramework(fw.id)}
+                        onClick={() => { setExportFramework(fw.id); if (fw.id === "databricks") setExportFormat("python"); }}
                         data-testid={`framework-${fw.id}`}
                       >
                         <Icon className={`w-4 h-4 mt-0.5 shrink-0 ${selected ? "text-primary" : "text-muted-foreground"}`} />
@@ -5839,6 +5851,7 @@ function AgentDetailInner() {
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="text-xs font-medium truncate">{fw.label}</span>
                             {fw.recommended && <Badge variant="secondary" className="text-[9px] px-1.5 py-0">Recommended</Badge>}
+                            {fw.id === "databricks" && <Badge variant="outline" className="text-[9px] px-1.5 py-0 text-amber-600 border-amber-400/40">Python only</Badge>}
                           </div>
                           <span className="text-[10px] text-muted-foreground leading-tight">{fw.desc}</span>
                         </div>
@@ -6166,6 +6179,12 @@ function AgentDetailInner() {
                 if (fw === "crewai") reqs.push({ name: "crewai", pinned: "0.80.0", range: ">=0.80.0" });
                 if (fw === "bedrock") reqs.push({ name: "boto3", pinned: "1.34.162", range: ">=1.34.0" });
                 if (fw === "vertex") reqs.push({ name: "google-cloud-aiplatform", pinned: "1.60.0", range: ">=1.60.0" });
+                if (fw === "databricks") {
+                  reqs.push({ name: "mlflow", pinned: "2.18.0", range: ">=2.18.0" });
+                  reqs.push({ name: "databricks-sdk", pinned: "0.36.0", range: ">=0.36.0" });
+                  reqs.push({ name: "databricks-langchain", pinned: "0.3.0", range: ">=0.3.0" });
+                  reqs.push({ name: "langchain-core", pinned: "0.3.28", range: ">=0.3.0" });
+                }
 
                 const content = reqs.map(r => pinVersions ? `${r.name}==${r.pinned}` : `${r.name}${r.range}`).join("\n") + "\n";
                 const depsMap: Record<string, string> = {};
@@ -6197,6 +6216,9 @@ function AgentDetailInner() {
             }
             if (exportFramework === "langgraph") {
               warnings.push("LangGraph + LangChain pull in transitive dependencies — consider pinning sub-dependencies in a lockfile.");
+            }
+            if (exportFramework === "databricks") {
+              warnings.push("Databricks AgentBricks requires a Databricks workspace with Model Serving enabled. MLflow and databricks-langchain are large transitive dependencies — pin versions for reproducible deployments.");
             }
             if (!pinVersions) {
               warnings.push("Unpinned versions may cause non-reproducible builds — enable pinning for production deployments.");
@@ -6328,6 +6350,12 @@ function AgentDetailInner() {
             if (exportFramework === "vertex") {
               envVars.push({ key: "GOOGLE_APPLICATION_CREDENTIALS", description: "Path to GCP service account JSON", category: "infra", required: true, example: "/path/to/credentials.json" });
               envVars.push({ key: "GCP_PROJECT_ID", description: "Google Cloud project identifier", category: "infra", required: true, example: "my-project-123" });
+            }
+            if (exportFramework === "databricks") {
+              envVars.push({ key: "DATABRICKS_HOST", description: "Databricks workspace URL", category: "infra", required: true, example: "https://adb-1234567890.1.azuredatabricks.net" });
+              envVars.push({ key: "DATABRICKS_TOKEN", description: "Databricks personal access token", category: "infra", required: true, example: "dapi..." });
+              envVars.push({ key: "DATABRICKS_SERVING_ENDPOINT", description: "Model Serving endpoint name for the deployed agent", category: "infra", required: false, example: "my-agent-endpoint" });
+              envVars.push({ key: "MLFLOW_TRACKING_URI", description: "MLflow tracking server URI (defaults to Databricks workspace)", category: "infra", required: false, example: "databricks" });
             }
 
             const agentTools = Array.isArray(agent?.toolsConfig) ? agent.toolsConfig as any[] : [];
