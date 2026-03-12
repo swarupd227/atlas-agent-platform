@@ -404,7 +404,7 @@ function SpanCard({ span, children, isLast, semconvEnabled }: { span: TraceSpan;
                         <span className="text-xs font-mono text-violet-600 dark:text-violet-400" data-testid={`text-linked-span-${span.id}`}>{span.linkedSpanId}</span>
                       </div>
                     )}
-                    <span className="text-[10px] text-muted-foreground/70">Cross-agent trace correlation via ALMP trace ID in A2A metadata</span>
+                    <span className="text-[10px] text-muted-foreground/70">Cross-agent trace correlation via ATLAS trace ID in A2A metadata</span>
                   </div>
                 </div>
               )}

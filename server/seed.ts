@@ -4359,7 +4359,7 @@ export async function seedDatabase() {
       {
         key: "A2A_TRACE_LINKING_ENABLED",
         value: "true",
-        description: "Inject ALMP trace IDs into A2A metadata to enable cross-agent trace correlation.",
+        description: "Inject ATLAS trace IDs into A2A metadata to enable cross-agent trace correlation.",
         category: "observability",
       },
     ]);

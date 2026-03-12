@@ -2548,7 +2548,7 @@ export default function Governance() {
                           <TableHead>Description</TableHead>
                           <TableHead className="w-[100px]">Severity</TableHead>
                           <TableHead className="w-[200px]">Implementing Policy</TableHead>
-                          <TableHead className="w-[160px]">ALMP Control</TableHead>
+                          <TableHead className="w-[160px]">ATLAS Control</TableHead>
                           <TableHead className="w-[80px]">Status</TableHead>
                         </TableRow>
                       </TableHeader>

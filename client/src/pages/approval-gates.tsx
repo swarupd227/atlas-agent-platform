@@ -159,7 +159,7 @@ export default function ApprovalGates() {
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div>
           <h1 className="text-xl font-semibold" data-testid="text-page-title">Approval Gates</h1>
-          <p className="text-sm text-muted-foreground">MCP elicitation flows and ALMP expert validation gates</p>
+          <p className="text-sm text-muted-foreground">MCP elicitation flows and ATLAS expert validation gates</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Link href="/approvals">

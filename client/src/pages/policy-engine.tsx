@@ -1351,7 +1351,7 @@ export default function PolicyEngine() {
                   <TableRow>
                     <TableHead className="text-xs w-[100px]">Ref</TableHead>
                     <TableHead className="text-xs">Requirement</TableHead>
-                    <TableHead className="text-xs">ALMP Control</TableHead>
+                    <TableHead className="text-xs">ATLAS Control</TableHead>
                     <TableHead className="text-xs w-[110px]">Module</TableHead>
                     <TableHead className="text-xs">Evidence Artifact</TableHead>
                     <TableHead className="text-xs w-[90px]">Coverage</TableHead>

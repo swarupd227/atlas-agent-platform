@@ -5618,7 +5618,7 @@ function AgentDetailInner() {
                       : exportStep === "envvars"
                         ? "Review the environment variables your deployed agent will need at runtime."
                         : exportStep === "observability"
-                          ? "Preserve the ALMP flight recorder by configuring OpenTelemetry trace settings."
+                          ? "Preserve the ATLAS flight recorder by configuring OpenTelemetry trace settings."
                           : exportStep === "buildtest"
                             ? "Validate the generated export before finalizing — compile check and eval suite."
                             : exportStep === "preview"
@@ -6775,7 +6775,7 @@ function AgentDetailInner() {
                         <span className="text-sm font-medium">Run Eval Suite Locally</span>
                       </div>
                       <span className="text-[11px] text-muted-foreground ml-6">
-                        Executes the same evaluation bundles ALMP uses for this agent — scorer thresholds, regression checks, and assertion tests against the generated code.
+                        Executes the same evaluation bundles ATLAS uses for this agent — scorer thresholds, regression checks, and assertion tests against the generated code.
                       </span>
                     </div>
                     <Button

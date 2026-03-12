@@ -182,7 +182,7 @@ export function AppSidebar() {
               <Zap className="w-4 h-4 text-primary-foreground" />
             </div>
             <div className="flex flex-col">
-              <span className="text-sm font-semibold text-sidebar-foreground" data-testid="text-app-name">ALMP</span>
+              <span className="text-sm font-semibold text-sidebar-foreground" data-testid="text-app-name">ATLAS</span>
               <span className="text-[10px] text-muted-foreground leading-tight">Agent Lifecycle Mgmt</span>
             </div>
           </div>
