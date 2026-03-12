@@ -11592,10 +11592,48 @@ You MUST incorporate this feedback into the new plan. Adjust the agents, roles, 
         trustTier: s.trustTier,
       }));
 
-      const mcpToolSummary = Object.entries(mcpToolsByServer).map(([serverName, tools]) => ({
-        server: serverName,
-        tools: tools.slice(0, 10).map(t => ({ name: t.name, description: t.description })),
-      }));
+      function extractSchemaEntityHints(inputSchema: any): string[] {
+        if (!inputSchema || typeof inputSchema !== "object") return [];
+        const hints = new Set<string>();
+        const props = inputSchema.properties || {};
+        for (const prop of Object.values(props) as any[]) {
+          if (prop && typeof prop.description === "string") {
+            const egMatches = prop.description.matchAll(/\(e\.g\.,?\s*([^)]+)\)/gi);
+            for (const m of egMatches) {
+              m[1].split(/,\s*/).map((s: string) => s.trim()).filter((s: string) => s.length > 1 && /[A-Z]/.test(s)).forEach((s: string) => hints.add(s));
+            }
+          }
+          if (Array.isArray(prop?.enum)) {
+            (prop.enum as any[]).filter((e: any) => typeof e === "string" && e.length > 1).forEach((e: string) => hints.add(e));
+          }
+        }
+        return Array.from(hints);
+      }
+
+      function parseDeclaredStageCount(description: string): number | null {
+        if (!description) return null;
+        const nStepMatch = description.match(/(\d+)[- ]step/i);
+        if (nStepMatch) return parseInt(nStepMatch[1], 10);
+        const arrowCount = (description.match(/→/g) || []).length;
+        if (arrowCount >= 2) return arrowCount + 1;
+        return null;
+      }
+
+      const mcpToolSummary = Object.entries(mcpToolsByServer).map(([serverName, tools]) => {
+        const serverRecord = allMcpServers.find(s => s.name === serverName);
+        const serverDescription = serverRecord?.description || null;
+        const declaredStageCount = serverDescription ? parseDeclaredStageCount(serverDescription) : null;
+        return {
+          server: serverName,
+          serverDescription,
+          declaredStageCount,
+          tools: tools.slice(0, 10).map(t => ({
+            name: t.name,
+            description: t.description,
+            schemaEntityHints: extractSchemaEntityHints(t.inputSchema),
+          })),
+        };
+      });
 
       const policySummary = activePolicies.map(p => ({
         name: p.name,
@@ -11761,7 +11799,7 @@ Respond with a JSON object:
   ],
   "pipeline": {
     "systemsExtracted": [
-      {"name": "string - system name e.g. 'SailPoint'", "purpose": "string - what this system does in the workflow", "mcpCoverage": "covered | partial | missing", "existingMcpServer": "string | null - name of matching MCP server if covered/partial", "requiredCapabilities": ["string - tool capabilities needed from this system"]}
+      {"name": "string - exact proper noun of the system", "purpose": "string - what this system does in the workflow", "mcpCoverage": "covered | partial | missing", "existingMcpServer": "string | null - name of matching MCP server if covered/partial", "requiredCapabilities": ["string - tool capabilities needed from this system"], "source": "outcome_text | server_description | tool_description | schema_hint", "quote": "string - exact substring (max 80 chars) where this system name appeared in the source"}
     ],
     "mcpGaps": [
       {"system": "string - system name with missing/partial coverage", "purpose": "string - what it does", "missingCapabilities": ["string - specific tools or API operations needed"], "suggestedMcpServerName": "string - proposed name for new MCP server", "priority": "critical | high | medium - based on whether system is in the workflow critical path"}
@@ -11786,10 +11824,22 @@ SYSTEM EXTRACTION & MCP GAP ANALYSIS (MANDATORY — DO THIS FIRST)
 ═══════════════════════════════════════════
 Before proposing any agents, you MUST extract ALL external systems mentioned in the outcome contract.
 
-Step 1 — EXTRACT: Read TWO sources to build the full systems list:
-  (a) The outcome contract's description, system prompt, workflow steps, and KPI definitions. Identify every external system, platform, API, database, or application mentioned by name.
-  (b) The description field of EVERY MCP tool in the MCP SERVERS & TOOLS registry above. Tool descriptions often name underlying real-world platforms the tool interacts with (e.g., a tool described as "Register identity against Aquera SCIM connectors, triggering Aquera to push to SailPoint" means both "Aquera" and "SailPoint" are systems). Extract ALL such platform names as additional systems.
-Combine both sources into a single deduplicated systems list. Examples: "SailPoint", "Aquera", "Bloomberg Terminal", "Aladdin OMS", "ServiceNow", "Brainwave", "RadiantOne", "Charles River IMS", "Salesforce", "Marketo", "Workday", "CyberArk", etc.
+Step 1 — EXTRACT (STRICT EVIDENTIARY MODE):
+Scan FOUR named sources. Extract ONLY systems that are EXPLICITLY NAMED as proper nouns in the provided text. Do NOT infer, generalize, extrapolate, or add systems you believe are implied or typical for the domain. If a system is not named verbatim, do not include it.
+
+Source A — Outcome contract text: description, systemPrompt, workflowSteps, KPI definitions.
+Source B — MCP server descriptions: the "serverDescription" field of each entry in the MCP SERVERS & TOOLS registry above.
+Source C — MCP tool descriptions: the "description" field of each individual tool.
+Source D — Schema entity hints: the "schemaEntityHints" arrays on each tool (these are proper-noun system names extracted directly from tool parameter examples).
+
+For every extracted system, record:
+- "name": exact proper noun as it appears in the source
+- "source": one of "outcome_text" | "server_description" | "tool_description" | "schema_hint"
+- "quote": the exact substring (max 80 chars) from the source text where the name appeared
+
+Combine all four sources into a single deduplicated list by system name. If the same system appears in multiple sources, use the most descriptive source in the "source" field and keep the most precise "quote".
+
+ABSTENTION RULE: If you are uncertain whether a name refers to a real external system vs. an internal concept or generic term, omit it. Do NOT add placeholder systems like "HR System", "ERP System", or "Identity Provider" unless those exact strings appear verbatim in the source text.
 
 Step 2 — CHECK COVERAGE: For each extracted system, check the MCP SERVERS & TOOLS registry provided above. Determine the coverage status:
   - "covered": An existing MCP server in the registry handles this system and has the required tools.
@@ -11813,7 +11863,7 @@ CRITICAL GUIDELINES
 8. NO DUPLICATES: Do not propose agents that overlap with existing agents already created for this outcome.
 9. REGULATORY AWARENESS: Include applicable regulatory frameworks as complianceTags. Reference linkedRegulations from ontology concepts.
 10. SYSTEM PROMPTS: Generate detailed, industry-specific system prompts that reference the agent's domain, ontology concepts, compliance requirements, and KPI responsibilities.
-11. Propose as many worker agents as the workflow has distinct stages — typically 2–7. One agent per major workflow step or governance checkpoint. Do NOT collapse multiple distinct systems or governance steps into one agent just to fit a small count. Quality of alignment to the outcome's actual workflow beats brevity. Always include 1 orchestrator.
+11. AGENT COUNT — HARD CONSTRAINT: Check the MCP SERVERS & TOOLS registry above. If any server entry has a "declaredStageCount" value (a number parsed from its description, e.g., a "7-step pipeline" sets declaredStageCount=7), you MUST produce AT LEAST that many worker agents — one per declared stage. Do NOT merge stages to reduce count. If no declaredStageCount is present, use judgment: one agent per major distinct system interaction or governance checkpoint, typically 2–7. Always include 1 orchestrator in addition to the workers.
 12. KNOWLEDGE BASE GROUNDING: Assign relevant Knowledge Bases from the registry to agents that need domain-specific RAG grounding. Use exact KB IDs and names. Agents doing research, analysis, or compliance checks benefit most from KB linkage.
 13. STRUCTURED OUTPUT SCHEMA: For each worker agent that retrieves, processes, scores, or classifies batches of data records (leads, transactions, claims, patients, items, etc.), you MUST define an outputSchema with type="record_list". The fields array should describe the per-record structured output the agent must produce — include id, name/label, score (0-100), decision/classification, reasoning, and any domain-specific fields (e.g. escalation, riskLevel). Workers that only produce aggregate summaries or single metrics should use type="summary". The description should clearly state what each record represents. This enables the platform to render per-record results as interactive data tables.
 
@@ -11928,6 +11978,22 @@ For "executionGraph", provide an explicit stage-by-stage execution plan:
           res.json({ agents: [], orchestrator: null, pipeline: null, raw: content });
           return;
         }
+      }
+
+      const agentPlanShape = z.object({
+        orchestrator: z.object({ name: z.string(), role: z.string() }),
+        agents: z.array(z.object({ name: z.string(), role: z.string() })).min(1),
+        pipeline: z.object({
+          pattern: z.string(),
+          systemsExtracted: z.array(z.any()).optional(),
+        }).optional(),
+      });
+      const agentPlanValidation = agentPlanShape.safeParse(parsed);
+      if (!agentPlanValidation.success) {
+        console.error("[propose-agents] LLM response failed schema validation:", agentPlanValidation.error.message);
+        console.error("[propose-agents] Raw LLM response (first 2000 chars):", content.slice(0, 2000));
+        res.status(422).json({ error: "Agent plan generation failed: invalid response structure", details: agentPlanValidation.error.message });
+        return;
       }
 
       function normalizeAgent(a: any): any {
