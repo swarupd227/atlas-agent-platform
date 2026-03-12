@@ -3427,10 +3427,13 @@ interface AgentDependencyEntry {
 
 interface SystemExtracted {
   name: string;
+  systemRole?: "orchestration_system" | "target_system";
   purpose: string;
-  mcpCoverage: "covered" | "partial" | "missing";
+  mcpCoverage: "covered" | "partial" | "missing" | "not_applicable";
   existingMcpServer: string | null;
   requiredCapabilities: string[];
+  source?: string;
+  quote?: string;
 }
 
 interface McpGap {
@@ -3669,10 +3672,12 @@ function PipelineVisualization({ orchestrator, agents, pipeline }: {
                 data-testid="button-toggle-integrations"
               >
                 <Database className="w-3.5 h-3.5 text-cyan-500 shrink-0" />
-                <span className="text-[11px] font-medium flex-1">Required Integrations</span>
+                <span className="text-[11px] font-medium flex-1">System Integrations</span>
                 {(() => {
+                  const orchestrationSystems = pipeline.systemsExtracted.filter(s => !s.systemRole || s.systemRole === "orchestration_system");
                   const gaps = pipeline.mcpGaps?.length || 0;
-                  const covered = pipeline.systemsExtracted.filter(s => s.mcpCoverage === "covered").length;
+                  const covered = orchestrationSystems.filter(s => s.mcpCoverage === "covered").length;
+                  const targetCount = pipeline.systemsExtracted.filter(s => s.systemRole === "target_system").length;
                   return (
                     <div className="flex items-center gap-1.5">
                       {covered > 0 && (
@@ -3680,6 +3685,9 @@ function PipelineVisualization({ orchestrator, agents, pipeline }: {
                       )}
                       {gaps > 0 && (
                         <Badge variant="outline" className="text-[8px] px-1.5 py-0 h-4 border-red-500/20 text-red-500">{gaps} need MCP</Badge>
+                      )}
+                      {targetCount > 0 && (
+                        <Badge variant="outline" className="text-[8px] px-1.5 py-0 h-4 border-slate-400/20 text-slate-400">{targetCount} targets</Badge>
                       )}
                     </div>
                   );
@@ -3690,40 +3698,44 @@ function PipelineVisualization({ orchestrator, agents, pipeline }: {
                 <div className="px-3 pb-3 pt-0 space-y-1.5">
                   {pipeline.systemsExtracted.map((sys, idx) => {
                     const gap = pipeline.mcpGaps?.find(g => g.system === sys.name);
+                    const isTarget = sys.systemRole === "target_system";
                     return (
-                      <div key={idx} className="rounded-md border border-border/40 bg-background/50 p-2.5" data-testid={`integration-entry-${idx}`}>
+                      <div key={idx} className={`rounded-md border p-2.5 ${isTarget ? "border-border/20 bg-muted/10 opacity-70" : "border-border/40 bg-background/50"}`} data-testid={`integration-entry-${idx}`}>
                         <div className="flex items-center gap-2 mb-1">
-                          <Database className="w-3 h-3 text-cyan-500 shrink-0" />
-                          <span className="text-[11px] font-semibold flex-1">{sys.name}</span>
-                          {sys.mcpCoverage === "covered" && (
+                          <Database className={`w-3 h-3 shrink-0 ${isTarget ? "text-muted-foreground" : "text-cyan-500"}`} />
+                          <span className={`text-[11px] font-semibold flex-1 ${isTarget ? "text-muted-foreground" : ""}`}>{sys.name}</span>
+                          {isTarget && (
+                            <Badge variant="outline" className="text-[8px] px-1.5 py-0 h-4 border-slate-400/20 text-slate-400">Target Resource</Badge>
+                          )}
+                          {!isTarget && sys.mcpCoverage === "covered" && (
                             <Badge variant="outline" className="text-[8px] px-1.5 py-0 h-4 border-emerald-500/20 text-emerald-500">
                               <CheckCircle className="w-2.5 h-2.5 mr-0.5" /> Covered
                             </Badge>
                           )}
-                          {sys.mcpCoverage === "partial" && (
+                          {!isTarget && sys.mcpCoverage === "partial" && (
                             <Badge variant="outline" className="text-[8px] px-1.5 py-0 h-4 border-amber-500/20 text-amber-500">
                               <AlertTriangle className="w-2.5 h-2.5 mr-0.5" /> Partial
                             </Badge>
                           )}
-                          {sys.mcpCoverage === "missing" && (
+                          {!isTarget && sys.mcpCoverage === "missing" && (
                             <Badge variant="outline" className="text-[8px] px-1.5 py-0 h-4 border-red-500/20 text-red-500">
                               <AlertOctagon className="w-2.5 h-2.5 mr-0.5" /> MCP Required
                             </Badge>
                           )}
-                          {gap?.priority && (
+                          {!isTarget && gap?.priority && (
                             <Badge variant="outline" className={`text-[8px] px-1.5 py-0 h-4 ${gap.priority === "critical" ? "border-red-500/20 text-red-500" : gap.priority === "high" ? "border-amber-500/20 text-amber-500" : "border-blue-500/20 text-blue-500"}`}>
                               {gap.priority}
                             </Badge>
                           )}
                         </div>
                         <p className="text-[10px] text-muted-foreground ml-5 mb-1">{sys.purpose}</p>
-                        {sys.existingMcpServer && (
+                        {!isTarget && sys.existingMcpServer && (
                           <div className="ml-5 mb-1">
                             <span className="text-[9px] text-muted-foreground">MCP Server: </span>
                             <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400">{sys.existingMcpServer}</span>
                           </div>
                         )}
-                        {sys.requiredCapabilities.length > 0 && (
+                        {!isTarget && sys.requiredCapabilities.length > 0 && (
                           <div className="ml-5 mt-1">
                             <span className="text-[9px] text-muted-foreground uppercase tracking-wider">Required Capabilities</span>
                             <div className="flex flex-wrap gap-1 mt-0.5">
@@ -3733,7 +3745,7 @@ function PipelineVisualization({ orchestrator, agents, pipeline }: {
                             </div>
                           </div>
                         )}
-                        {gap && gap.missingCapabilities.length > 0 && (
+                        {!isTarget && gap && gap.missingCapabilities.length > 0 && (
                           <div className="ml-5 mt-1.5 rounded bg-red-500/5 border border-red-500/10 p-2">
                             <span className="text-[9px] text-red-500 uppercase tracking-wider font-medium">Missing — New MCP Server Needed</span>
                             <div className="text-[10px] text-muted-foreground mt-0.5">

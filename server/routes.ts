@@ -11799,7 +11799,7 @@ Respond with a JSON object:
   ],
   "pipeline": {
     "systemsExtracted": [
-      {"name": "string - exact proper noun of the system", "purpose": "string - what this system does in the workflow", "mcpCoverage": "covered | partial | missing", "existingMcpServer": "string | null - name of matching MCP server if covered/partial", "requiredCapabilities": ["string - tool capabilities needed from this system"], "source": "outcome_text | server_description | tool_description | schema_hint", "quote": "string - exact substring (max 80 chars) where this system name appeared in the source"}
+      {"name": "string - exact proper noun of the system", "systemRole": "orchestration_system | target_system", "purpose": "string - what this system does in the workflow", "mcpCoverage": "covered | partial | missing | not_applicable", "existingMcpServer": "string | null - name of matching MCP server if covered/partial", "requiredCapabilities": ["string - tool capabilities needed (empty for target_system)"], "source": "outcome_text | server_description | tool_description | schema_hint", "quote": "string - exact substring (max 80 chars) where this system name appeared in the source"}
     ],
     "mcpGaps": [
       {"system": "string - system name with missing/partial coverage", "purpose": "string - what it does", "missingCapabilities": ["string - specific tools or API operations needed"], "suggestedMcpServerName": "string - proposed name for new MCP server", "priority": "critical | high | medium - based on whether system is in the workflow critical path"}
@@ -11836,17 +11836,26 @@ For every extracted system, record:
 - "name": exact proper noun as it appears in the source
 - "source": one of "outcome_text" | "server_description" | "tool_description" | "schema_hint"
 - "quote": the exact substring (max 80 chars) from the source text where the name appeared
+- "systemRole": CRITICAL — classify each system as exactly one of:
+    "orchestration_system" — a system that ACTIVELY EXECUTES steps in the provisioning pipeline (calls are made TO this system during workflow execution; it performs identity operations, provisioning actions, certifications, compliance checks, or workflow tracking). Examples: Aquera, SailPoint, RadiantOne, Brainwave, ServiceNow (as workflow tracker).
+    "target_system" — a system that is the DESTINATION or RESOURCE being managed; it receives the result of provisioning but the orchestrator does NOT call it directly. These are downstream applications or platforms that synthetic workers will ACCESS after provisioning is complete. Examples: Aladdin OMS, Charles River IMS, Bloomberg Terminal (when mentioned as systems that need access, not as provisioning intermediaries).
 
-Combine all four sources into a single deduplicated list by system name. If the same system appears in multiple sources, use the most descriptive source in the "source" field and keep the most precise "quote".
+CLASSIFICATION RULES:
+- A system is "orchestration_system" if: it has MCP tools in the registry, its name appears in a tool description as the system a tool acts upon, or the outcome/MCP text describes it as a step-executor in the pipeline.
+- A system is "target_system" if: it appears in phrases like "access to X", "accounts on X", "critical systems including X", or "applications including X" — meaning it is the destination of provisioning, not a provisioning executor.
+- When uncertain, check the MCP registry: if no tool exists for the system, and it is mentioned as a provisioning destination, classify as "target_system".
+
+Combine all four sources into a single deduplicated list by system name.
 
 ABSTENTION RULE: If you are uncertain whether a name refers to a real external system vs. an internal concept or generic term, omit it. Do NOT add placeholder systems like "HR System", "ERP System", or "Identity Provider" unless those exact strings appear verbatim in the source text.
 
-Step 2 — CHECK COVERAGE: For each extracted system, check the MCP SERVERS & TOOLS registry provided above. Determine the coverage status:
-  - "covered": An existing MCP server in the registry handles this system and has the required tools.
-  - "partial": An existing MCP server covers this system but is missing some required tool capabilities mentioned in the outcome.
-  - "missing": No MCP server in the registry covers this system at all.
+Step 2 — CHECK COVERAGE (orchestration_systems ONLY): For each "orchestration_system" entry, check the MCP SERVERS & TOOLS registry. Determine coverage:
+  - "covered": An existing MCP server handles this system and has the required tools.
+  - "partial": An MCP server exists but is missing some required capabilities.
+  - "missing": No MCP server covers this system at all.
+  For "target_system" entries, set mcpCoverage = "not_applicable" — they do NOT need MCP coverage since the orchestrator never calls them directly.
 
-Step 3 — OUTPUT: Include ALL extracted systems in "systemsExtracted" inside the pipeline object (see Response Format). For systems with "missing" or "partial" coverage, also include entries in "mcpGaps" with the tools that would be needed. This alerts the user that new MCP servers must be set up before the agents can fully operate.
+Step 3 — OUTPUT: Include ALL extracted systems in "systemsExtracted". Only add entries to "mcpGaps" for "orchestration_system" entries with "missing" or "partial" coverage. Do NOT add target_systems to mcpGaps.
 
 For each agent you propose, reference the specific external systems it interacts with in its description and workflowSteps — do NOT use only generic tool names.
 
@@ -11863,7 +11872,7 @@ CRITICAL GUIDELINES
 8. NO DUPLICATES: Do not propose agents that overlap with existing agents already created for this outcome.
 9. REGULATORY AWARENESS: Include applicable regulatory frameworks as complianceTags. Reference linkedRegulations from ontology concepts.
 10. SYSTEM PROMPTS: Generate detailed, industry-specific system prompts that reference the agent's domain, ontology concepts, compliance requirements, and KPI responsibilities.
-11. AGENT COUNT — HARD CONSTRAINT: Check the MCP SERVERS & TOOLS registry above. If any server entry has a "declaredStageCount" value (a number parsed from its description, e.g., a "7-step pipeline" sets declaredStageCount=7), you MUST produce AT LEAST that many worker agents — one per declared stage. Do NOT merge stages to reduce count. If no declaredStageCount is present, use judgment: one agent per major distinct system interaction or governance checkpoint, typically 2–7. Always include 1 orchestrator in addition to the workers.
+11. AGENT COUNT — HARD CONSTRAINT: Worker agents are ONLY created for "orchestration_system" classified systems — systems that have MCP tools or that actively execute pipeline steps. NEVER create agents for "target_system" entries (downstream resources being provisioned to). Check the MCP registry: if any server entry has a "declaredStageCount" value (e.g., a "7-step pipeline" sets declaredStageCount=7), you MUST produce exactly that many worker agents — one per declared pipeline stage. Map each stage name from the pipeline description to a dedicated agent. Do NOT merge stages to reduce count. If no declaredStageCount is present, use judgment: one agent per orchestration_system or major governance checkpoint, typically 2–7. Always include 1 orchestrator in addition to the workers.
 12. KNOWLEDGE BASE GROUNDING: Assign relevant Knowledge Bases from the registry to agents that need domain-specific RAG grounding. Use exact KB IDs and names. Agents doing research, analysis, or compliance checks benefit most from KB linkage.
 13. STRUCTURED OUTPUT SCHEMA: For each worker agent that retrieves, processes, scores, or classifies batches of data records (leads, transactions, claims, patients, items, etc.), you MUST define an outputSchema with type="record_list". The fields array should describe the per-record structured output the agent must produce — include id, name/label, score (0-100), decision/classification, reasoning, and any domain-specific fields (e.g. escalation, riskLevel). Workers that only produce aggregate summaries or single metrics should use type="summary". The description should clearly state what each record represents. This enables the platform to render per-record results as interactive data tables.
 
