@@ -564,7 +564,7 @@ function SailPointScreen() {
               ["Owner (Manager)", "Jennifer Walsh"],
               ["Executive Sponsor", "Mark Chen"],
               ["Department", "Multi-Asset Strategies"],
-              ["Lifecycle State", accounts.some((a) => a.status === "Active") ? "Active" : "Pending"],
+              ["Lifecycle State", accounts.some((a) => a.status === "Active") ? "Active" : accounts.length === 0 ? "Not Yet Provisioned" : "Pending"],
               ["Authentication", "X.509 Certificate"],
             ].map(([k, v], i) => (
               <div key={i} className="flex justify-between border-b border-border pb-1">
@@ -594,20 +594,28 @@ function SailPointScreen() {
           {activeTab === "accounts" && (
             <div className="space-y-2">
               <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">Application Accounts ({accounts.length})</h3>
-              {accounts.map((a, i) => (
-                <div key={i} className="bg-muted/30 rounded-lg p-3 flex items-center justify-between" data-testid={`sailpoint-account-${i}`}>
-                  <div>
-                    <div className="font-semibold">{a.app}</div>
-                    <div className="text-xs text-muted-foreground">{a.acct} &middot; {a.role}</div>
-                  </div>
-                  <div className="text-right">
-                    <Badge variant={a.status === "Active" ? "default" : "secondary"} className={a.status === "Active" ? "bg-green-600 text-white" : ""}>
-                      {a.status}
-                    </Badge>
-                    <div className="text-xs text-muted-foreground mt-1">{a.provisioned !== "\u2014" ? `Provisioned: ${a.provisioned}` : ""}</div>
-                  </div>
+              {accounts.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-8 text-muted-foreground border border-dashed border-border rounded-lg bg-muted/20" data-testid="text-sailpoint-not-provisioned">
+                  <span className="text-3xl mb-2">⏳</span>
+                  <span className="font-semibold text-sm">No accounts provisioned yet</span>
+                  <span className="text-xs mt-1">BMSA-SYNTH-001 will appear here once the pipeline runs.</span>
                 </div>
-              ))}
+              ) : (
+                accounts.map((a, i) => (
+                  <div key={i} className="bg-muted/30 rounded-lg p-3 flex items-center justify-between" data-testid={`sailpoint-account-${i}`}>
+                    <div>
+                      <div className="font-semibold">{a.app}</div>
+                      <div className="text-xs text-muted-foreground">{a.acct} &middot; {a.role}</div>
+                    </div>
+                    <div className="text-right">
+                      <Badge variant={a.status === "Active" ? "default" : "secondary"} className={a.status === "Active" ? "bg-green-600 text-white" : ""}>
+                        {a.status}
+                      </Badge>
+                      <div className="text-xs text-muted-foreground mt-1">{a.provisioned !== "\u2014" ? `Provisioned: ${a.provisioned}` : ""}</div>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           )}
 
@@ -773,6 +781,13 @@ function BrainwaveScreen() {
                 </td>
               </tr>
             ))}
+            {!synthIdentity && (
+              <tr className="border-t border-dashed border-border/40" data-testid="brainwave-synth-pending">
+                <td colSpan={7} className="p-3 text-center text-xs text-muted-foreground italic">
+                  BMSA-SYNTH-001 not yet in campaign — will be added once the pipeline certifies the identity.
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>

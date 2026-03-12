@@ -123,12 +123,7 @@ function createInitialState(): DemoState {
       { app: "Bloomberg Terminal", appOwner: "Market Data Services", source: "Bloomberg SCIM", scimEndpoint: "https://aquera.blk.com/scim/bbg", entitlement: "Market_Data_Reader", synthStatus: "Not Registered", registeredAt: "—" },
       { app: "ServiceNow", appOwner: "IT Operations", source: "ServiceNow - ITSM", scimEndpoint: "https://aquera.blk.com/scim/snow", entitlement: "Workflow_Initiator", synthStatus: "Not Registered", registeredAt: "—" },
     ],
-    sailpoint: [
-      { app: "Aladdin OMS", acct: "bmsa-synth-001@aladdin", status: "Pending", role: "Portfolio_Rebalancer", provisioned: "—", lastUsed: "—" },
-      { app: "Charles River IMS", acct: "bmsa-synth-001@charlesriver", status: "Pending", role: "Compliance_Checker", provisioned: "—", lastUsed: "—" },
-      { app: "Bloomberg Terminal", acct: "bmsa-synth-001@bloomberg", status: "Pending", role: "Market_Data_Reader", provisioned: "—", lastUsed: "—" },
-      { app: "ServiceNow", acct: "bmsa-synth-001@servicenow", status: "Pending", role: "Workflow_Initiator", provisioned: "—", lastUsed: "—" },
-    ],
+    sailpoint: [],
     brainwave: {
       campaign: "Q2 2026 BMSA Access Recertification",
       due: "April 30, 2026",
@@ -138,7 +133,6 @@ function createInitialState(): DemoState {
         { name: "Lisa Wang", type: "Employee", apps: 4, ents: 15, certifier: "Jennifer Walsh", status: "Certified", risk: "Low" },
         { name: "David Kim", type: "Employee", apps: 7, ents: 31, certifier: "Jennifer Walsh", status: "Pending", risk: "Medium" },
         { name: "Emily Zhang", type: "Employee", apps: 3, ents: 11, certifier: "Jennifer Walsh", status: "Certified", risk: "Low" },
-        { name: "BMSA-SYNTH-001", type: "Synthetic Worker", apps: 4, ents: 12, certifier: "Jennifer Walsh", status: "Pending", risk: "Low" },
       ],
     },
     auditLog: [],
@@ -188,21 +182,43 @@ export function activateIdentity(identityId: string): { success: boolean; messag
 }
 
 export function provisionAccount(identityId: string, app: string, role: string): { success: boolean; message: string } {
-  const account = state.sailpoint.find((a) => a.app === app);
-  if (!account) return { success: false, message: `Application ${app} not found` };
-  account.status = "Active";
-  account.role = role;
-  account.provisioned = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-  account.lastUsed = "Just now";
+  const now = new Date();
+  const provisionedDate = now.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  const existing = state.sailpoint.find((a) => a.app === app);
+  if (existing) {
+    existing.status = "Active";
+    existing.role = role;
+    existing.provisioned = provisionedDate;
+    existing.lastUsed = "Just now";
+  } else {
+    const slug = app.toLowerCase().replace(/[^a-z0-9]/g, "");
+    state.sailpoint.push({
+      app,
+      acct: `bmsa-synth-001@${slug}`,
+      status: "Active",
+      role,
+      provisioned: provisionedDate,
+      lastUsed: "Just now",
+    });
+  }
   return { success: true, message: `${app} account provisioned for ${identityId} with role ${role}` };
 }
 
 export function certifyIdentity(identityId: string): { success: boolean; message: string } {
-  const identity = state.brainwave.identities.find(
-    (i) => i.name === identityId
-  );
-  if (!identity) return { success: false, message: "Identity not found in certification campaign" };
-  identity.status = "Certified";
+  const identity = state.brainwave.identities.find((i) => i.name === identityId);
+  if (identity) {
+    identity.status = "Certified";
+  } else {
+    state.brainwave.identities.push({
+      name: identityId,
+      type: "Synthetic Worker",
+      apps: Math.max(state.sailpoint.length, 4),
+      ents: Math.max(state.sailpoint.length * 3, 12),
+      certifier: "Jennifer Walsh",
+      status: "Certified",
+      risk: "Low",
+    });
+  }
   return { success: true, message: `${identityId} certification scheduled` };
 }
 
