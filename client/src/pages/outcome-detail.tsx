@@ -4569,7 +4569,9 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
   const [proposals, setProposals] = useState<AgentProposal[]>([]);
   const [orchestrator, setOrchestrator] = useState<AgentProposal | null>(null);
   const [pipeline, setPipeline] = useState<PipelineDefinition | null>(null);
-  const [generating, setGenerating] = useState(false);
+  const [generatingFresh, setGeneratingFresh] = useState(false);
+  const [generatingWithFeedback, setGeneratingWithFeedback] = useState(false);
+  const generating = generatingFresh || generatingWithFeedback;
   const [generated, setGenerated] = useState(false);
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
   const [orchestratorSelected, setOrchestratorSelected] = useState(true);
@@ -4921,7 +4923,7 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
       toast({ title: "Please provide feedback", description: "Tell us what to change about the plan.", variant: "destructive" });
       return;
     }
-    setGenerating(true);
+    setGeneratingWithFeedback(true);
     setShowFeedback(false);
     try {
       const res = await apiRequest("POST", "/api/ai/propose-agents", {
@@ -4956,7 +4958,7 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
     } catch (err) {
       toast({ title: "Failed to regenerate", description: "Please try again.", variant: "destructive" });
     } finally {
-      setGenerating(false);
+      setGeneratingWithFeedback(false);
     }
   }
 
@@ -5123,7 +5125,7 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
   };
 
   async function generateProposals() {
-    setGenerating(true);
+    setGeneratingFresh(true);
     try {
       const res = await apiRequest("POST", "/api/ai/propose-agents", {
         outcomeContract: outcome,
@@ -5148,7 +5150,7 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
     } catch (err) {
       toast({ title: "Failed to generate proposals", description: "Please try again.", variant: "destructive" });
     } finally {
-      setGenerating(false);
+      setGeneratingFresh(false);
     }
   }
 
@@ -5332,11 +5334,11 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
               <div className="flex items-center gap-2 justify-end">
                 <Button variant="ghost" size="sm" onClick={() => { setShowFeedback(false); setFeedbackText(""); }} data-testid="button-cancel-feedback">Cancel</Button>
                 <Button variant="outline" size="sm" onClick={generateProposals} disabled={generating} data-testid="button-regenerate-fresh">
-                  <Sparkles className="w-3.5 h-3.5 mr-1.5" />
+                  {generatingFresh ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}
                   Fresh Regenerate
                 </Button>
                 <Button size="sm" onClick={generateProposalsWithFeedback} disabled={generating || !feedbackText.trim()} data-testid="button-submit-feedback">
-                  {generating ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}
+                  {generatingWithFeedback ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}
                   Regenerate with Feedback
                 </Button>
               </div>
