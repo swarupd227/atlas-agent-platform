@@ -1724,7 +1724,7 @@ export default function OutcomeDetail() {
                               </div>
                               <div className="flex flex-col gap-0.5">
                                 <span className="text-[10px] text-muted-foreground uppercase tracking-wider">30d Projected</span>
-                                <span className={`text-sm font-medium ${projected30d >= (kpi.target || 0) ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`} data-testid={`text-projected-${kpi.id}`}>
+                                <span className={`text-sm font-medium ${(isInverse ? projected30d <= (kpi.target || 0) : projected30d >= (kpi.target || 0)) ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`} data-testid={`text-projected-${kpi.id}`}>
                                   {projected30d.toFixed(1)} {kpi.unit}
                                 </span>
                               </div>

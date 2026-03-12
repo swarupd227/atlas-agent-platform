@@ -1392,7 +1392,15 @@ export async function registerRoutes(
             }
           } else if (kpiNameLower.includes("latency") || kpiNameLower.includes("time") || kpiNameLower.includes("response")) {
             if (dayTraces.length > 0) {
-              value = Math.round(dayTraces.reduce((s, t) => s + (t.latencyMs || 0), 0) / dayTraces.length);
+              const avgMs = dayTraces.reduce((s, t) => s + (t.latencyMs || 0), 0) / dayTraces.length;
+              const unitLower = (kpi.unit || "").toLowerCase();
+              if (unitLower === "minutes" || unitLower === "min") {
+                value = Math.round((avgMs / 60000) * 100) / 100;
+              } else if (unitLower === "seconds" || unitLower === "sec" || unitLower === "s") {
+                value = Math.round((avgMs / 1000) * 10) / 10;
+              } else {
+                value = Math.round(avgMs);
+              }
             } else {
               value = kpi.currentValue || kpi.baseline || 0;
             }
