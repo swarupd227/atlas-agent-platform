@@ -3418,6 +3418,13 @@ interface PipelineEdge {
   type: string;
 }
 
+interface AgentDependencyEntry {
+  agent: string;
+  inputs: string[];
+  outputs: string[];
+  dependsOn: string[];
+}
+
 interface PipelineDefinition {
   pattern: string;
   description: string;
@@ -3425,6 +3432,7 @@ interface PipelineDefinition {
   errorHandling: string;
   handoffRules: string;
   patternReasoning?: string;
+  agentDependencyMatrix?: AgentDependencyEntry[];
   parallelGroups?: string[][];
   executionGraph?: Array<{ stage: number; agents: string[]; waitForAll: boolean }>;
 }
@@ -3518,6 +3526,7 @@ function PipelineVisualization({ orchestrator, agents, pipeline }: {
   const patternInfo = PATTERN_LABELS[pipeline?.pattern || "supervisor"] || PATTERN_LABELS.supervisor;
   const totalTools = agents.reduce((sum, a) => sum + a.tools.length + (a.mcpToolBindings?.length || 0), 0) + orchestrator.tools.length + (orchestrator.mcpToolBindings?.length || 0);
   const [reasoningOpen, setReasoningOpen] = useState(false);
+  const [dependencyMatrixOpen, setDependencyMatrixOpen] = useState(false);
 
   const hasExecutionTiers = pipeline && (
     (pipeline.executionGraph && pipeline.executionGraph.length > 0) ||
@@ -3561,6 +3570,72 @@ function PipelineVisualization({ orchestrator, agents, pipeline }: {
                   <p className="text-[11px] text-muted-foreground leading-relaxed" data-testid="text-pattern-reasoning">
                     {pipeline.patternReasoning}
                   </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {pipeline?.agentDependencyMatrix && pipeline.agentDependencyMatrix.length > 0 && (
+            <div className="rounded-lg border border-border/60 bg-muted/20" data-testid="section-dependency-matrix">
+              <button
+                type="button"
+                onClick={() => setDependencyMatrixOpen(!dependencyMatrixOpen)}
+                className="flex items-center gap-2 w-full px-3 py-2 text-left hover:bg-muted/30 transition-colors rounded-lg"
+                data-testid="button-toggle-dependency-matrix"
+              >
+                <GitBranch className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                <span className="text-[11px] font-medium flex-1">Agent Dependency Matrix</span>
+                <Badge variant="outline" className="text-[8px] px-1.5 py-0 h-4 border-blue-500/20 text-blue-500">{pipeline.agentDependencyMatrix.length} agents</Badge>
+                <ChevronDown className={`w-3 h-3 text-muted-foreground transition-transform ${dependencyMatrixOpen ? "rotate-180" : ""}`} />
+              </button>
+              {dependencyMatrixOpen && (
+                <div className="px-3 pb-3 pt-0 space-y-2">
+                  {pipeline.agentDependencyMatrix.map((entry, idx) => (
+                    <div key={idx} className="rounded-md border border-border/40 bg-background/50 p-2.5" data-testid={`dependency-entry-${idx}`}>
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <Bot className="w-3 h-3 text-violet-500 shrink-0" />
+                        <span className="text-[11px] font-semibold">{entry.agent}</span>
+                        {entry.dependsOn.length > 0 && (
+                          <Badge variant="outline" className="text-[8px] px-1.5 py-0 h-4 border-amber-500/20 text-amber-500">
+                            depends on {entry.dependsOn.length}
+                          </Badge>
+                        )}
+                        {entry.dependsOn.length === 0 && (
+                          <Badge variant="outline" className="text-[8px] px-1.5 py-0 h-4 border-emerald-500/20 text-emerald-500">
+                            independent
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 ml-5">
+                        <div>
+                          <span className="text-[9px] text-muted-foreground uppercase tracking-wider">Inputs</span>
+                          <div className="flex flex-wrap gap-1 mt-0.5">
+                            {entry.inputs.map((inp, i) => (
+                              <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400">{inp}</span>
+                            ))}
+                          </div>
+                        </div>
+                        <div>
+                          <span className="text-[9px] text-muted-foreground uppercase tracking-wider">Outputs</span>
+                          <div className="flex flex-wrap gap-1 mt-0.5">
+                            {entry.outputs.map((out, i) => (
+                              <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">{out}</span>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                      {entry.dependsOn.length > 0 && (
+                        <div className="ml-5 mt-1.5">
+                          <span className="text-[9px] text-muted-foreground uppercase tracking-wider">Depends On</span>
+                          <div className="flex flex-wrap gap-1 mt-0.5">
+                            {entry.dependsOn.map((dep, i) => (
+                              <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400">{dep}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

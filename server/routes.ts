@@ -11760,8 +11760,11 @@ Respond with a JSON object:
     }
   ],
   "pipeline": {
+    "agentDependencyMatrix": [
+      {"agent": "string - agent role name", "inputs": ["string - what this agent needs to start"], "outputs": ["string - what this agent produces"], "dependsOn": ["string - roles of agents whose output this agent requires"]}
+    ],
     "pattern": "sequential | parallel | fan_out_fan_in | supervisor",
-    "patternReasoning": "string - explain WHY this pattern was chosen based on KPI dependencies, agent roles, and data flow analysis",
+    "patternReasoning": "string - explain WHY this pattern was chosen: (1) dependency relationships from the matrix, (2) ordering signals detected in the outcome, (3) why the pattern matches, (4) if parallel, why agents have no data dependencies",
     "description": "string",
     "edges": [{"from": "string", "to": "string", "label": "string", "type": "sequential | parallel | conditional"}],
     "parallelGroups": [["string - agent roles that execute concurrently"], ["string - next group after previous completes"]],
@@ -11790,25 +11793,56 @@ CRITICAL GUIDELINES
 13. STRUCTURED OUTPUT SCHEMA: For each worker agent that retrieves, processes, scores, or classifies batches of data records (leads, transactions, claims, patients, items, etc.), you MUST define an outputSchema with type="record_list". The fields array should describe the per-record structured output the agent must produce — include id, name/label, score (0-100), decision/classification, reasoning, and any domain-specific fields (e.g. escalation, riskLevel). Workers that only produce aggregate summaries or single metrics should use type="summary". The description should clearly state what each record represents. This enables the platform to render per-record results as interactive data tables.
 
 ═══════════════════════════════════════════
-ORCHESTRATION PATTERN SELECTION (CRITICAL)
+ORCHESTRATION PATTERN SELECTION (CRITICAL — TWO-PHASE PROCESS)
 ═══════════════════════════════════════════
-You MUST intelligently select the pipeline pattern based on the KPI structure, agent dependencies, and data flow. Do NOT default to sequential. Analyze the agents you propose and pick the best pattern:
 
-- "sequential": Use when each agent's output is the direct input for the next agent. Ideal for data transformation chains, enrichment pipelines, or step-by-step processing where order matters. Example: Data Collector → Enricher → Scorer → Reporter.
-- "parallel": Use when agents work on independent sub-tasks that do NOT depend on each other's output. Ideal for multi-channel analysis, parallel data collection from different sources, or independent KPI tracking. Example: Email Analyzer + Social Media Monitor + CRM Scanner all run simultaneously.
-- "fan_out_fan_in": Use when a single dataset or task needs to be processed by multiple agents independently, then their results aggregated. Ideal for scoring + review + compliance checks on the same data, multi-perspective analysis, or parallel validation. Example: Lead data → [Lead Scorer, Compliance Checker, Risk Assessor] → Report Aggregator.
-- "supervisor": Use when the orchestrator needs to dynamically decide which agents to call based on intermediate results. Ideal for complex reasoning, conditional branching, exception handling, or adaptive workflows. Example: Orchestrator evaluates initial analysis, then routes to specialist agents based on findings.
+You MUST follow a strict two-phase process to select the correct orchestration pattern. Do NOT skip Phase 1.
 
-For "patternReasoning", explain your choice by referencing:
-  - Whether agent outputs feed into each other (sequential dependency) or are independent
-  - Whether multiple agents need the same input data (fan-out signal)
-  - Whether results need aggregation (fan-in signal)
-  - KPI independence (separate KPIs tracked by separate agents = parallel opportunity)
+─── PHASE 1: AGENT DEPENDENCY MATRIX (mandatory) ───
+Before selecting any pattern, you MUST analyse the data-flow dependencies between the agents you are proposing. For each agent, determine:
+  - INPUTS: What data, state, or results does this agent need before it can start? (e.g. "needs provisioned account IDs from the Provisioning Agent")
+  - OUTPUTS: What does this agent produce when done? (e.g. "produces audit evidence report")
+
+Then build the dependency matrix:
+  - If Agent B's INPUT requires Agent A's OUTPUT → they have a sequential dependency (A must run before B).
+  - If two agents share no input/output dependency → they are independent and MAY run in parallel.
+  - If multiple agents all consume the SAME input and produce independent outputs → that is a fan-out signal.
+
+You MUST include this matrix in "agentDependencyMatrix" inside the pipeline object (array of {agent, inputs, outputs, dependsOn}).
+
+─── PHASE 1b: WORKFLOW ORDERING SIGNALS ───
+Read the outcome contract's description, system prompt, and workflow steps carefully. Look for:
+  - Numbered sequences (1. 2. 3. ... or Step 1, Step 2, etc.)
+  - Imperative ordering language: "then", "after", "next", "before proceeding", "once X is done", "if empty, stop"
+  - Conditional gates: "if compliance check fails, stop" (implies the check must precede downstream steps)
+
+If the outcome contains a numbered, ordered pipeline where steps explicitly depend on prior steps, this is a STRONG sequential signal. You MUST respect this ordering in parallelGroups and executionGraph — each ordered step maps to its own sequential tier UNLESS the source material explicitly states steps can run concurrently.
+
+This rule applies ONLY when ordering language is present. If the outcome describes independent parallel tasks (e.g. "monitor email, social media, and CRM simultaneously"), honour that parallelism.
+
+─── PHASE 2: PATTERN SELECTION (derived from Phase 1) ───
+Using the dependency matrix and ordering signals from Phase 1, select the pattern that matches the actual data flow:
+
+- "sequential": Agent A's output feeds Agent B, which feeds Agent C, etc. Each agent depends on the previous one's results. Use when the dependency matrix shows a LINEAR chain of dependencies. Example: Data Collector → Enricher → Scorer → Reporter.
+- "parallel": Agents work on INDEPENDENT sub-tasks with NO data dependencies between them. Use when the dependency matrix shows ZERO cross-agent dependencies. Example: Email Analyzer + Social Media Monitor + CRM Scanner all run simultaneously on different data sources.
+- "fan_out_fan_in": Multiple agents all receive the SAME input data independently, then their results are aggregated. Use when the dependency matrix shows several agents sharing one input but producing independent outputs, followed by an aggregation step. Example: Lead data → [Lead Scorer, Compliance Checker, Risk Assessor] → Report Aggregator.
+- "supervisor": The orchestrator must dynamically decide which agents to invoke based on intermediate results. Use when conditional branching or adaptive routing is needed. Example: Orchestrator evaluates initial analysis, then routes to specialist agents based on findings.
+
+CRITICAL RULES:
+  - If ANY agent's input depends on another agent's output, those two agents MUST NOT be in the same parallel group — they must be in separate sequential tiers.
+  - Only place agents in the same parallel tier when the dependency matrix PROVES they have zero mutual data dependencies.
+  - The pattern must follow the DATA FLOW, not the KPI labels. Separate KPIs do NOT automatically mean parallel execution — agents tracking different KPIs often still have sequential data dependencies.
+
+For "patternReasoning", you MUST explain:
+  1. The dependency relationships discovered in Phase 1 (which agent depends on which)
+  2. Whether ordering signals from the outcome contract were detected
+  3. Why the chosen pattern matches these dependencies
+  4. If parallel: explicitly state why the parallel agents have NO data dependencies
 
 For "parallelGroups", define execution tiers as arrays of agent role names:
-  - Each inner array contains agents that can run concurrently (no mutual dependencies)
+  - Each inner array contains agents that can run concurrently (PROVEN independent by the dependency matrix)
   - Arrays are ordered: the first group runs first, then the second group after all in the first complete, etc.
-  - Example: [["Lead Scorer", "Compliance Checker"], ["Report Generator"]] means Lead Scorer and Compliance Checker run in parallel, then Report Generator runs after both complete.
+  - Example: [["Lead Scorer", "Compliance Checker"], ["Report Generator"]] means Lead Scorer and Compliance Checker run in parallel (proven independent), then Report Generator runs after both complete.
   - For sequential patterns, each group should contain exactly one agent role.
 
 For "executionGraph", provide an explicit stage-by-stage execution plan:
@@ -11895,6 +11929,7 @@ For "executionGraph", provide an explicit stage-by-stage execution plan:
         if (!p) return null;
         return {
           ...p,
+          agentDependencyMatrix: Array.isArray(p.agentDependencyMatrix) ? p.agentDependencyMatrix : [],
           pattern: p.pattern || "sequential",
           patternReasoning: p.patternReasoning || "",
           description: p.description || "",
