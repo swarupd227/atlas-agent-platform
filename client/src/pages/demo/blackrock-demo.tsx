@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { Link } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,8 +21,17 @@ import {
   BookOpen,
   Copy,
   Check,
+  ExternalLink,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+
+const AGENTS = {
+  orchestrator: { id: "e9507c06-19cf-425f-8b59-fe58ba221121", name: "Synthetic Worker Access Orchestrator" },
+  aquera:       { id: "c21b6549-e24d-4384-b667-9032619e3dd7", name: "Aquera Identity Provisioning Agent" },
+  sailpoint:    { id: "dacfb0d1-9e9e-4b4f-b0be-6f2824c5c05f", name: "SailPoint Entitlement Assignment Agent" },
+  radiantone:   { id: "67de43a1-c6b1-4f3a-b354-39140e6128a3", name: "RadiantOne Directory Synchronization Agent" },
+  brainwave:    { id: "e57e6394-c256-46cd-b0be-86510ab0a1be", name: "Brainwave Access Audit and Compliance Agent" },
+};
 
 interface ApprovalStep {
   role: string;
@@ -139,7 +149,7 @@ function PipelineBanner({ activeScreen, servicenowDone, aqueraDone, sailpointDon
 }) {
   const nodes = [
     { id: "servicenow", label: "ServiceNow", done: servicenowDone },
-    { id: "orchestrator", label: "Atlas Orchestrator", done: false, isOrchestrator: true },
+    { id: "orchestrator", label: AGENTS.orchestrator.name, done: false, isOrchestrator: true },
     { id: "aquera", label: "Aquera", done: aqueraDone },
     { id: "sailpoint", label: "SailPoint", done: sailpointDone },
     { id: "brainwave", label: "Brainwave / RadiantOne", done: brainwaveDone },
@@ -206,49 +216,49 @@ function PollCountdown({ auditLogLength }: { auditLogLength: number }) {
 
 function SetupGuide() {
   const [open, setOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
 
-  const copyPrompt = useCallback(() => {
-    navigator.clipboard.writeText(SYSTEM_PROMPT);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }, []);
+  const agentRows = [
+    { ...AGENTS.orchestrator, type: "Orchestrator", mcp: "BlackRock Synthetic Worker MCP", badge: "bg-orange-500/20 text-orange-400 border-orange-500/30" },
+    { ...AGENTS.aquera,       type: "Worker",       mcp: "Aquera SCIM MCP Server + BlackRock MCP", badge: "bg-blue-500/20 text-blue-400 border-blue-500/30" },
+    { ...AGENTS.sailpoint,    type: "Worker",       mcp: "SailPoint IdentityIQ MCP + BlackRock MCP", badge: "bg-blue-500/20 text-blue-400 border-blue-500/30" },
+    { ...AGENTS.radiantone,   type: "Worker",       mcp: "RadiantOne Identity MCP + BlackRock MCP", badge: "bg-cyan-500/20 text-cyan-400 border-cyan-500/30" },
+    { ...AGENTS.brainwave,    type: "Worker",       mcp: "Brainwave Access Intelligence MCP + BlackRock MCP", badge: "bg-purple-500/20 text-purple-400 border-purple-500/30" },
+  ];
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <CollapsibleTrigger asChild>
         <Button variant="outline" size="sm" className="gap-1.5" data-testid="button-setup-guide">
           <BookOpen className="w-4 h-4" />
-          Demo Setup Guide
+          Agent Team
           <ChevronDown className={`w-3 h-3 transition-transform ${open ? "" : "-rotate-90"}`} />
         </Button>
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <Card className="mt-2 border-orange-500/30 bg-orange-500/5 absolute right-4 z-50 w-[520px]">
+        <Card className="mt-2 border-emerald-500/30 bg-emerald-500/5 absolute right-4 z-50 w-[560px]">
           <CardContent className="p-4 space-y-3 text-sm">
-            <h4 className="font-semibold text-orange-400">Setup Steps (before demo)</h4>
-            <ol className="list-decimal pl-4 space-y-1.5 text-muted-foreground">
-              <li>Go to <strong>Agents &rarr; New Agent</strong></li>
-              <li>Name: <code className="text-xs bg-muted px-1 py-0.5 rounded">BlackRock Synthetic Worker Agent</code></li>
-              <li>Industry: <strong>Financial Services</strong></li>
-              <li>Link the <strong>"BlackRock Synthetic Worker MCP"</strong> integration (already seeded)</li>
-              <li>Set schedule interval to <strong>1 minute</strong></li>
-              <li>Paste the system prompt below</li>
-              <li>Deploy the agent</li>
-            </ol>
-            <div className="relative">
-              <div className="bg-muted rounded-lg p-3 text-xs font-mono max-h-32 overflow-y-auto text-muted-foreground leading-relaxed">
-                {SYSTEM_PROMPT}
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="absolute top-1 right-1 h-7 w-7 p-0"
-                onClick={copyPrompt}
-                data-testid="button-copy-prompt"
-              >
-                {copied ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
-              </Button>
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-emerald-400" />
+              <h4 className="font-semibold text-emerald-400">Pre-configured Agent Team</h4>
+            </div>
+            <p className="text-xs text-muted-foreground">All agents are created, linked to their MCP servers, and ready to deploy against this outcome.</p>
+            <div className="space-y-2">
+              {agentRows.map((agent) => (
+                <div key={agent.id} className="flex items-start gap-2 rounded-lg border border-border/40 bg-background/50 p-2.5">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[11px] font-semibold truncate">{agent.name}</span>
+                      <Badge variant="outline" className={`text-[8px] px-1.5 py-0 h-4 ${agent.badge}`}>{agent.type}</Badge>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">{agent.mcp}</p>
+                  </div>
+                  <Link href={`/agents/${agent.id}`}>
+                    <Button variant="ghost" size="sm" className="h-7 px-2 gap-1 text-[10px] shrink-0" data-testid={`button-view-agent-${agent.id}`}>
+                      View <ExternalLink className="w-3 h-3" />
+                    </Button>
+                  </Link>
+                </div>
+              ))}
             </div>
           </CardContent>
         </Card>
