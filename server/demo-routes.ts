@@ -548,5 +548,33 @@ export async function seedWorkerMcpEndpoints(storage: IStorage): Promise<void> {
     if (Object.keys(updates).length > 0) {
       await storage.updateAgent(agentId, updates);
     }
+
+    // Refresh stored stats so list views show real values (not seed defaults)
+    try {
+      const traces = await storage.getTracesByAgent(agentId);
+      if (traces.length > 0) {
+        const withLat = traces.filter(t => t.latencyMs && t.latencyMs > 0);
+        const avgLatencyMs = withLat.length > 0
+          ? Math.round(withLat.reduce((s, t) => s + (t.latencyMs || 0), 0) / withLat.length)
+          : 0;
+        const isSuccess = (s: string | null) => s === "completed" || s === "success";
+        const isFailed  = (s: string | null) => s === "failed" || s === "error";
+        const successRate = traces.filter(t => isSuccess(t.status)).length / traces.length;
+        const recentTraces = traces.slice(-10);
+        const recentFailures = recentTraces.filter(t => isFailed(t.status)).length;
+        const recentSuccessRate = recentTraces.length > 0
+          ? recentTraces.filter(t => isSuccess(t.status)).length / recentTraces.length : 0;
+        const healthScore = Math.max(0, Math.min(100, Math.round(
+          (successRate * 40) + (recentSuccessRate * 30) +
+          ((avgLatencyMs < 5000 ? 1 : avgLatencyMs < 15000 ? 0.7 : 0.4) * 20) +
+          ((recentFailures === 0 ? 1 : recentFailures <= 2 ? 0.6 : 0.3) * 10),
+        )));
+        const refreshedAgent = await storage.getAgent(agentId);
+        const currentLat = (refreshedAgent as any)?.avgLatencyMs ?? 0;
+        if (currentLat !== avgLatencyMs) {
+          await storage.updateAgent(agentId, { avgLatencyMs, successRate, healthScore });
+        }
+      }
+    } catch {}
   }
 }

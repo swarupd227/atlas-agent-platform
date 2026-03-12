@@ -19,9 +19,10 @@ export function formatDate(date: string | Date | null | undefined) {
 }
 
 export function formatMs(ms: number | null | undefined) {
-  if (!ms) return "\u2014";
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(2)}s`;
+  if (ms == null || ms === 0) return "\u2014";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${(ms / 60000).toFixed(1)}min`;
 }
 
 export function formatHash(hash: string | null | undefined) {

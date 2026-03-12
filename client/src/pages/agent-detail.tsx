@@ -101,6 +101,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import type { Agent, RunTrace, EvalSuite, OutcomeContract, ImprovementRecommendation, AutonomousActionLog, AgentVersion, Deployment, Policy, Approval, PolicyException, ToolConnector, RemoteAgent, AgentTeam, Skill, McpServer, McpServerTool, McpServerResource, AgentMcpServer, OntologyConcept, Blueprint, KnowledgeBase, AgentKnowledgeBase, AgentTrigger } from "@shared/schema";
 import { Wifi, WifiOff, Crown, Brain, Sparkles, ShieldAlert, Layers3, BookMarked, Binary, ScrollText, FileCheck, ChevronDown } from "lucide-react";
 import { useIndustry } from "@/components/industry-provider";
+import { formatMs } from "@/components/shared-utils";
 
 
 class AgentDetailErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error: Error | null }> {
@@ -1816,7 +1817,7 @@ function AgentDetailInner() {
                   />
                   <StatCard
                     title="Avg Latency"
-                    value={`${al}ms`}
+                    value={formatMs(al)}
                     icon={Clock}
                     variant={al < 5000 ? "default" : al < 15000 ? "warning" : "danger"}
                     testId="stat-agent-latency"
@@ -2276,7 +2277,7 @@ function AgentDetailInner() {
                         <div className="flex flex-col min-w-0">
                           <span className="text-xs font-medium truncate">{trace.inputSummary || "Run"}</span>
                           <span className="text-[11px] text-muted-foreground">
-                            {trace.environment} | {trace.latencyMs}ms | ${trace.costUsd?.toFixed(4)}
+                            {trace.environment} | {formatMs(trace.latencyMs)} | ${trace.costUsd?.toFixed(4)}
                             {trace.modelId ? ` | ${trace.modelId}` : ""}
                           </span>
                         </div>
@@ -3519,7 +3520,7 @@ function AgentDetailInner() {
             const anomalies: Array<{ icon: typeof AlertCircle; severity: string; description: string; timestamp: string }> = [];
             if ((agent.healthScore || 0) < 80) anomalies.push({ icon: AlertTriangle, severity: "warning", description: "Health score degradation detected", timestamp: new Date(Date.now() - 3600000).toISOString() });
             if ((agent.successRate || 0) < 0.9) anomalies.push({ icon: XCircle, severity: "critical", description: "Success rate below threshold", timestamp: new Date(Date.now() - 7200000).toISOString() });
-            if ((agent.avgLatencyMs || 0) > 400) anomalies.push({ icon: Clock, severity: "warning", description: "Latency spike detected", timestamp: new Date(Date.now() - 1800000).toISOString() });
+            if ((agent.avgLatencyMs || 0) > 30000) anomalies.push({ icon: Clock, severity: "warning", description: "Latency spike detected", timestamp: new Date(Date.now() - 1800000).toISOString() });
             if ((agent.costPerRun || 0) > 0.1) anomalies.push({ icon: DollarSign, severity: "warning", description: "Cost per run exceeding budget", timestamp: new Date(Date.now() - 5400000).toISOString() });
             if (anomalies.length === 0) anomalies.push({ icon: CheckCircle, severity: "info", description: "No critical anomalies in last 24h", timestamp: new Date().toISOString() });
 
@@ -7809,7 +7810,7 @@ function BlueprintModelConfig({ agent }: { agent: Agent }) {
           </div>
           <div className="flex flex-col gap-0.5">
             <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Avg Latency</span>
-            <span className="text-sm font-medium">{agent.avgLatencyMs}ms</span>
+            <span className="text-sm font-medium">{formatMs(agent.avgLatencyMs)}</span>
           </div>
           <div className="flex flex-col gap-0.5">
             <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Autonomy Mode</span>
@@ -8978,7 +8979,7 @@ print(result["output"])`;
                 <span className="text-[11px] font-medium text-muted-foreground">Response</span>
                 {tryItResult.usage && (
                   <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-                    <span>{tryItResult.usage.latencyMs}ms</span>
+                    <span>{formatMs(tryItResult.usage.latencyMs)}</span>
                     <span>${tryItResult.usage.costUsd?.toFixed(5)}</span>
                     <span>{tryItResult.usage.tokens?.total_tokens} tokens</span>
                   </div>

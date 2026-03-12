@@ -43,6 +43,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { StatCard } from "@/components/stat-card";
 import { OutcomeKpiStrip } from "@/components/outcome-kpi-strip";
+import { formatMs } from "@/components/shared-utils";
 import { StatusBadge } from "@/components/status-badge";
 import { PolicyViolationDialog } from "@/components/policy-violation-dialog";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -383,7 +384,7 @@ function RunDetailPanel({ run }: { run: any }) {
 
       <div className="flex items-center gap-3 pt-2 border-t text-[10px] text-muted-foreground">
         <span>Run ID: {(run.id || "").slice(0, 8)}...</span>
-        {run.latencyMs > 0 && <span>Latency: {run.latencyMs}ms</span>}
+        {run.latencyMs > 0 && <span>Latency: {formatMs(run.latencyMs)}</span>}
         {run.startedAt && <span>Started: {new Date(run.startedAt).toLocaleString()}</span>}
         {run.completedAt && <span>Completed: {new Date(run.completedAt).toLocaleString()}</span>}
       </div>
@@ -503,7 +504,7 @@ function AgentRuntimeTab() {
                               {run.startedAt ? new Date(run.startedAt).toLocaleString() : ""}
                             </span>
                             {run.latencyMs > 0 && (
-                              <span className="text-[10px] text-muted-foreground">{run.latencyMs}ms</span>
+                              <span className="text-[10px] text-muted-foreground">{formatMs(run.latencyMs)}</span>
                             )}
                             <Badge variant="outline" className="text-[9px] px-1 py-0">
                               {run.triggerType === "manual" ? "Manual" : "Scheduled"}
@@ -804,7 +805,7 @@ export default function Monitor() {
     events.push({
       type: "run_completed",
       label: trace.status === "completed" ? "Run Completed" : trace.status === "failed" ? "Run Failed" : "Run Blocked",
-      detail: `Latency: ${trace.latencyMs}ms | Cost: $${(trace.costUsd || 0).toFixed(4)} | Output: ${(trace.outputSummary || "N/A").slice(0, 80)}`,
+      detail: `Latency: ${formatMs(trace.latencyMs)} | Cost: $${(trace.costUsd || 0).toFixed(4)} | Output: ${(trace.outputSummary || "N/A").slice(0, 80)}`,
       timestamp: trace.endedAt ? new Date(trace.endedAt).toLocaleTimeString() : "\u2014",
     });
 
@@ -863,7 +864,7 @@ export default function Monitor() {
 
   const chartDefinitions = [
     { id: "success-rate", title: "Success Rate", currentValue: `${successRate}%`, color: "#10b981", type: "area" as const, data: generateTimeSeriesData(7, 95, 3, "stable") },
-    { id: "p95-latency", title: "P95 Latency", currentValue: `${avgLatency || 800}ms`, color: "#3b82f6", type: "line" as const, data: generateTimeSeriesData(7, 800, 200, "stable") },
+    { id: "p95-latency", title: "P95 Latency", currentValue: formatMs(avgLatency || 800), color: "#3b82f6", type: "line" as const, data: generateTimeSeriesData(7, 800, 200, "stable") },
     { id: "cost-per-run", title: "Cost per Run", currentValue: `$0.12`, color: "#8b5cf6", type: "bar" as const, data: generateTimeSeriesData(7, 0.12, 0.05) },
     { id: "policy-violations", title: "Policy Violations", currentValue: `${policyViolationCount}`, color: "#ef4444", type: "area" as const, data: generateTimeSeriesData(7, 3, 2) },
     { id: "drift-score", title: "Hallucination/Drift Score", currentValue: "92%", color: "#f59e0b", type: "line" as const, data: generateTimeSeriesData(7, 92, 5, "down") },
@@ -1005,7 +1006,7 @@ export default function Monitor() {
 
       <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
         <StatCard title="Success Rate" value={`${successRate}%`} icon={CheckCircle} variant="success" trend="up" trendValue="0.3%" testId="stat-success-rate" />
-        <StatCard title="Avg Latency" value={`${avgLatency}ms`} icon={Clock} variant="default" trend="down" trendValue="12ms" testId="stat-avg-latency" />
+        <StatCard title="Avg Latency" value={formatMs(avgLatency)} icon={Clock} variant="default" trend="down" trendValue="12ms" testId="stat-avg-latency" />
         <StatCard title="Total Cost" value={`$${totalCost.toFixed(2)}`} icon={BarChart3} variant="default" testId="stat-total-cost" />
         <StatCard title="Policy Violations" value={policyViolationCount} icon={Shield} variant={policyViolationCount > 0 ? "danger" : "success"} testId="stat-policy-violations" />
         <StatCard title="Customer Impact" value={customerImpactCount} icon={Users} variant={customerImpactCount > 0 ? "warning" : "success"} subtitle="outcomes with breached KPIs" testId="stat-customer-impact" />
@@ -1395,7 +1396,7 @@ export default function Monitor() {
                         </div>
                         <div className="flex flex-col gap-0.5">
                           <span className="text-[9px] text-muted-foreground uppercase tracking-wider">Avg Latency</span>
-                          <span className="text-sm font-semibold">{connector.avgLatencyMs}ms</span>
+                          <span className="text-sm font-semibold">{formatMs(connector.avgLatencyMs)}</span>
                         </div>
                       </div>
                       {connector.errorCount > 0 && (
@@ -1471,7 +1472,7 @@ export default function Monitor() {
                       <div className={`flex items-center justify-center w-2 h-2 rounded-full shrink-0 ${trace.status === "completed" ? "bg-emerald-500" : trace.status === "failed" ? "bg-red-500" : "bg-amber-500"}`} />
                       <div className="flex flex-col min-w-0">
                         <span className="text-xs font-medium truncate">{trace.inputSummary || "Run execution"}</span>
-                        <span className="text-[11px] text-muted-foreground">{trace.environment} | {trace.latencyMs}ms | ${trace.costUsd?.toFixed(4)}</span>
+                        <span className="text-[11px] text-muted-foreground">{trace.environment} | {formatMs(trace.latencyMs)} | ${trace.costUsd?.toFixed(4)}</span>
                       </div>
                     </div>
                     <StatusBadge status={trace.status} />
@@ -1842,8 +1843,8 @@ export default function Monitor() {
                         </div>
                         <div className="flex flex-col gap-1">
                           <span className="text-[10px] text-muted-foreground uppercase tracking-wider">P95 Latency</span>
-                          <span className="text-sm font-semibold">{agent.avgLatencyMs}ms</span>
-                          <Progress value={Math.max(0, 100 - ((agent.avgLatencyMs || 0) / 50))} className="h-1" />
+                          <span className="text-sm font-semibold">{formatMs(agent.avgLatencyMs)}</span>
+                          <Progress value={Math.max(0, 100 - ((agent.avgLatencyMs || 0) / 200))} className="h-1" />
                         </div>
                         <div className="flex flex-col gap-1">
                           <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Health</span>
@@ -2146,7 +2147,7 @@ export default function Monitor() {
                   </div>
                   <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/30">
                     <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Avg Latency</span>
-                    <span className="text-lg font-bold">{agent.avgLatencyMs}ms</span>
+                    <span className="text-lg font-bold">{formatMs(agent.avgLatencyMs)}</span>
                   </div>
                   <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/30">
                     <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Cost / Run</span>
@@ -2235,7 +2236,7 @@ export default function Monitor() {
                         <span className="text-[11px] truncate">{trace.inputSummary || "Run"}</span>
                       </div>
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-[10px] text-muted-foreground">{trace.latencyMs}ms</span>
+                        <span className="text-[10px] text-muted-foreground">{formatMs(trace.latencyMs)}</span>
                         <span className="text-[10px] text-muted-foreground">${(trace.costUsd || 0).toFixed(4)}</span>
                         <StatusBadge status={trace.status} />
                       </div>
