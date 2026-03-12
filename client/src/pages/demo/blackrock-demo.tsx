@@ -461,7 +461,7 @@ function AqueraScreen() {
       <div className="bg-blue-800/20 border border-blue-700/40 rounded-lg px-4 py-2 flex items-center gap-3">
         <span className="text-lg font-bold text-blue-400">Aquera</span>
         <span className="text-blue-300/70 text-sm">Application Onboarding Gateway</span>
-        <span className="ml-auto text-sm text-blue-300/70">SCIM 2.0 Connector Management</span>
+        <span className="ml-auto text-sm text-blue-300/70">SCIM 2.0 Connector Status for BMSA-SYNTH-001</span>
       </div>
 
       <div className="flex items-center justify-between">
@@ -853,7 +853,7 @@ export default function BlackRockDemo() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold" data-testid="text-demo-title">BlackRock Synthetic Worker Demo</h1>
-          <p className="text-sm text-muted-foreground">Atlas Orchestrated &middot; Aquera &rarr; SailPoint &rarr; Brainwave/RadiantOne</p>
+          <p className="text-sm text-muted-foreground">Atlas Orchestrated | Same Pipeline, Governed Automation</p>
         </div>
         <div className="flex items-center gap-3">
           <PollCountdown auditLogLength={auditEntries.length} />
