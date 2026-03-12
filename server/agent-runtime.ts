@@ -2456,6 +2456,54 @@ export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?
   }
 }
 
+export async function runAgentOnce(deploymentId: string, promptOverride?: string): Promise<{ success: boolean; message: string }> {
+  const deployment = await storage.getDeployment(deploymentId);
+  if (!deployment) return { success: false, message: "Deployment not found" };
+
+  const agent = await storage.getAgent(deployment.agentId);
+  if (!agent) return { success: false, message: "Agent not found" };
+
+  const mcpLinks = await storage.getAgentMcpServers(deployment.agentId);
+  const mcpServerIds = mcpLinks.map(l => l.serverId);
+
+  const rtConfig = (agent.runtimeConfig as Record<string, any>) || {};
+  const prompt = promptOverride || rtConfig.prompt;
+
+  if (!prompt) return { success: false, message: `${agent.name}: No prompt configured` };
+
+  const rawOntologyTags = (agent as any).ontologyTags;
+  const ontologyTags = Array.isArray(rawOntologyTags) ? rawOntologyTags as Array<{ conceptId: string; conceptLabel: string }> : undefined;
+
+  const runtimeAgent: RuntimeAgent = {
+    deploymentId,
+    agentId: deployment.agentId,
+    agentName: agent.name,
+    blueprintId: undefined,
+    mcpServerIds,
+    intervalMs: 0,
+    industry: deployment.industry || (agent as any).industry,
+    prompt,
+    agentSystemPrompt: undefined,
+    outcomeId: (agent as any).outcomeId || undefined,
+    agentType: (agent as any).agentType || "single",
+    runtimeConfig: rtConfig,
+    ontologyTags,
+    complianceTags: undefined,
+    memoryGovernanceRules: undefined,
+    blueprintRequirements: undefined,
+    modelProvider: (agent as any).modelProvider || "openai",
+    modelName: (agent as any).modelName || "gpt-4.1",
+    maxToolIterations: agent.maxToolIterations ?? 5,
+  };
+
+  try {
+    await executeAgentCycle(runtimeAgent);
+    return { success: true, message: `${agent.name} cycle completed` };
+  } catch (err: any) {
+    return { success: false, message: err.message || "Cycle failed" };
+  }
+}
+
 export function stopAgentRuntime(deploymentId: string): { stopped: boolean; message: string } {
   const entry = activeAgents.get(deploymentId);
   if (!entry) return { stopped: false, message: "No active runtime for this deployment" };

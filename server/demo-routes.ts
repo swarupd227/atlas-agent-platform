@@ -48,6 +48,7 @@ demoRouter.post("/servicenow/requests/:id/complete", (req: Request, res: Respons
   res.json(result);
 });
 
+// ── Aquera SCIM (orchestrator tools) ────────────────────────────────────────
 demoRouter.get("/aquera/connectors", (_req: Request, res: Response) => {
   res.json({ connectors: getState().aquera });
 });
@@ -63,11 +64,99 @@ demoRouter.post("/aquera/connectors/:id/activate", (req: Request, res: Response)
   res.json(result);
 });
 
+// ── Aquera SCIM worker agent tools ──────────────────────────────────────────
+demoRouter.post("/aquera/scim/compliance-check", (_req: Request, res: Response) => {
+  res.json({
+    success: true,
+    passed: true,
+    checks: [
+      { rule: "SoD Conflict Check", status: "pass", detail: "No separation-of-duties conflicts detected for BMSA-SYNTH-001" },
+      { rule: "Risk Tier Validation", status: "pass", detail: "Identity risk tier MEDIUM is within acceptable threshold" },
+      { rule: "Regulatory Scope", status: "pass", detail: "IOSCO Code of Conduct and SR 11-7 compliance confirmed" },
+    ],
+    identityId: "BMSA-SYNTH-001",
+    timestamp: new Date().toISOString(),
+  });
+});
+
+demoRouter.post("/aquera/scim/register", (req: Request, res: Response) => {
+  const { identityId, connector } = req.body;
+  const id = identityId || "BMSA-SYNTH-001";
+  const result = activateIdentity(id);
+  res.json({ ...result, connector: connector || "all", identityId: id });
+});
+
+demoRouter.get("/aquera/scim/status", (req: Request, res: Response) => {
+  const id = (req.query.identityId as string) || "BMSA-SYNTH-001";
+  const state = getState();
+  const connectors = state.aquera.map((c) => ({
+    connector: c.app,
+    status: c.status,
+    lastSync: c.lastSync,
+  }));
+  res.json({ identityId: id, connectors, allRegistered: connectors.every((c) => c.status === "registered") });
+});
+
+demoRouter.post("/aquera/scim/deregister", (req: Request, res: Response) => {
+  res.json({ success: true, message: "Identity deregistered from SCIM connectors", identityId: req.body.identityId || "BMSA-SYNTH-001" });
+});
+
+// ── RadiantOne (orchestrator & worker agent tools) ───────────────────────────
 demoRouter.post("/radiantone/identities/:id/activate", (req: Request, res: Response) => {
-  const result = activateIdentity(req.params.id);
+  const result = activateIdentity(req.params.id || req.body.identityId || "BMSA-SYNTH-001");
   res.json(result);
 });
 
+demoRouter.post("/radiantone/activate", (req: Request, res: Response) => {
+  const id = req.body.identityId || "BMSA-SYNTH-001";
+  const result = activateIdentity(id);
+  res.json(result);
+});
+
+demoRouter.post("/radiantone/sync", (req: Request, res: Response) => {
+  const id = req.body.identityId || "BMSA-SYNTH-001";
+  res.json({
+    success: true,
+    identityId: id,
+    syncedSources: ["Active Directory", "LDAP", "SailPoint IIQ", "Aquera SCIM"],
+    attributesSynced: 24,
+    timestamp: new Date().toISOString(),
+    message: `Directory sync complete for ${id} across all connected sources`,
+  });
+});
+
+demoRouter.get("/radiantone/lineage", (req: Request, res: Response) => {
+  const id = (req.query.identityId as string) || "BMSA-SYNTH-001";
+  res.json({
+    identityId: id,
+    lineageIntact: true,
+    auditTrail: [
+      { step: "Identity Created", source: "ServiceNow REQ0084721", timestamp: new Date(Date.now() - 300000).toISOString() },
+      { step: "Aquera SCIM Registration", source: "Aquera Identity Provisioning Agent", timestamp: new Date(Date.now() - 240000).toISOString() },
+      { step: "SailPoint Entitlements Assigned", source: "SailPoint Entitlement Assignment Agent", timestamp: new Date(Date.now() - 180000).toISOString() },
+      { step: "Directory Synchronized", source: "RadiantOne Directory Synchronization Agent", timestamp: new Date().toISOString() },
+    ],
+    complianceStatus: "SR 11-7 compliant",
+    dataLineageScore: 100,
+  });
+});
+
+demoRouter.get("/radiantone/search", (req: Request, res: Response) => {
+  const id = (req.query.identityId as string) || "BMSA-SYNTH-001";
+  res.json({
+    found: true,
+    identityId: id,
+    attributes: {
+      displayName: "BMSA-SYNTH-001",
+      type: "SyntheticWorker",
+      status: "active",
+      riskTier: "MEDIUM",
+      createdAt: new Date(Date.now() - 300000).toISOString(),
+    },
+  });
+});
+
+// ── SailPoint (orchestrator & worker agent tools) ────────────────────────────
 demoRouter.get("/sailpoint/accounts/:identityId", (_req: Request, res: Response) => {
   res.json({ accounts: getState().sailpoint });
 });
@@ -81,6 +170,40 @@ demoRouter.post("/sailpoint/provision", (req: Request, res: Response) => {
   res.json(result);
 });
 
+demoRouter.post("/sailpoint/entitlement", (req: Request, res: Response) => {
+  const { identityId, application, role } = req.body;
+  const id = identityId || "BMSA-SYNTH-001";
+  const app = application || "Unknown Application";
+  const r = role || "ReadOnly";
+  const result = provisionAccount(id, app, r);
+  res.json({ ...result, identityId: id, application: app, role: r, entitlementId: `ENT-${Date.now()}` });
+});
+
+demoRouter.post("/sailpoint/entitlement/validate", (req: Request, res: Response) => {
+  const { identityId, application } = req.body;
+  const state = getState();
+  const account = state.sailpoint.find((a) => a.app === application);
+  res.json({
+    valid: true,
+    identityId: identityId || "BMSA-SYNTH-001",
+    application: application || "Unknown",
+    status: account?.status || "Active",
+    roleAssigned: account?.role || "ReadOnly",
+    leastPrivilegeCompliant: true,
+    timestamp: new Date().toISOString(),
+  });
+});
+
+demoRouter.post("/sailpoint/revoke", (req: Request, res: Response) => {
+  res.json({ success: true, message: "Access revoked", identityId: req.body.identityId, application: req.body.application });
+});
+
+demoRouter.get("/sailpoint/entitlements", (_req: Request, res: Response) => {
+  const state = getState();
+  res.json({ accounts: state.sailpoint, total: state.sailpoint.length });
+});
+
+// ── Brainwave (orchestrator & worker agent tools) ────────────────────────────
 demoRouter.get("/brainwave/certifications", (_req: Request, res: Response) => {
   res.json(getState().brainwave);
 });
@@ -90,6 +213,40 @@ demoRouter.post("/brainwave/certify/:identityId", (req: Request, res: Response) 
   res.json(result);
 });
 
+demoRouter.post("/brainwave/escalate", (req: Request, res: Response) => {
+  res.json({ success: true, incidentId: `INC-${Date.now()}`, severity: req.body.severity || "low", message: "Incident logged — no escalation required for BMSA-SYNTH-001" });
+});
+
+demoRouter.post("/brainwave/recertification/:identityId", (req: Request, res: Response) => {
+  const result = certifyIdentity(req.params.identityId);
+  res.json({ ...result, certificationCampaign: "Q1-2026-SyntheticWorker", dueDate: new Date(Date.now() + 86400000 * 30).toISOString() });
+});
+
+demoRouter.get("/brainwave/audit", (req: Request, res: Response) => {
+  const id = (req.query.identityId as string) || "BMSA-SYNTH-001";
+  const state = getState();
+  const entries = state.auditLog.filter((e) =>
+    e.details.includes(id) || e.details.includes("BMSA-SYNTH-001")
+  ).slice(0, 20);
+  res.json({ identityId: id, events: entries, total: entries.length, compliant: true });
+});
+
+demoRouter.get("/brainwave/events", (req: Request, res: Response) => {
+  const id = (req.query.identityId as string) || "BMSA-SYNTH-001";
+  res.json({
+    identityId: id,
+    anomaliesDetected: 0,
+    accessEvents: [
+      { event: "Account Created", system: "Aquera SCIM", timestamp: new Date(Date.now() - 300000).toISOString(), risk: "none" },
+      { event: "Entitlements Assigned", system: "SailPoint IIQ", timestamp: new Date(Date.now() - 240000).toISOString(), risk: "none" },
+      { event: "Directory Sync", system: "RadiantOne", timestamp: new Date(Date.now() - 180000).toISOString(), risk: "none" },
+    ],
+    riskScore: 0,
+    status: "clean",
+  });
+});
+
+// ── Shared ────────────────────────────────────────────────────────────────────
 demoRouter.post("/audit-log", (req: Request, res: Response) => {
   const { action, system, details } = req.body;
   const state = getState();
@@ -115,6 +272,7 @@ demoRouter.post("/reset", (_req: Request, res: Response) => {
 
 const BASE_URL = `http://localhost:${process.env.PORT || 5000}`;
 
+// ── Seed: BlackRock Synthetic Worker MCP (orchestrator) ──────────────────────
 export async function seedDemoMcpServer(storage: IStorage): Promise<void> {
   const existing = (await storage.getMcpServers()).find(
     (s) => s.name === "BlackRock Synthetic Worker MCP"
@@ -124,7 +282,7 @@ export async function seedDemoMcpServer(storage: IStorage): Promise<void> {
   const server = await storage.createMcpServer({
     name: "BlackRock Synthetic Worker MCP",
     description:
-      "Atlas Synthetic Worker Orchestrator for BlackRock. Implements the 7-step governed automation pipeline: Task Intake \u2192 Identity Validation \u2192 Compliance Pre-Check \u2192 Aquera Registration \u2192 Execute via SailPoint \u2192 Triple Verify + Audit \u2192 Lifecycle Agent.",
+      "Atlas Synthetic Worker Orchestrator for BlackRock. Implements the 7-step governed automation pipeline: Task Intake → Identity Validation → Compliance Pre-Check → Aquera Registration → Execute via SailPoint → Triple Verify + Audit → Lifecycle Agent.",
     url: `${BASE_URL}/demo-api`,
     transportType: "streamable-http",
     status: "production-enabled",
@@ -135,44 +293,36 @@ export async function seedDemoMcpServer(storage: IStorage): Promise<void> {
   const tools = [
     {
       name: "check_pending_requests",
-      description:
-        "Poll the SailPoint workflow queue for approved, unprocessed Synthetic Worker access requests. Returns a list of requests ready for agent processing.",
+      description: "Poll the SailPoint workflow queue for approved, unprocessed Synthetic Worker access requests. Returns a list of requests ready for agent processing.",
       endpoint: "/servicenow/requests?status=approved&unprocessed=true",
       method: "GET",
       inputSchema: { type: "object", properties: {} },
     },
     {
       name: "complete_request",
-      description:
-        "Mark a workflow task as fully processed after all provisioning and verification steps are complete.",
+      description: "Mark a workflow task as fully processed after all provisioning and verification steps are complete.",
       endpoint: "/servicenow/requests/{requestId}/complete",
       method: "POST",
       inputSchema: {
         type: "object",
-        properties: {
-          requestId: { type: "string", description: "The ServiceNow request ID (e.g., REQ0084721)" },
-        },
+        properties: { requestId: { type: "string", description: "The ServiceNow request ID (e.g., REQ0084721)" } },
         required: ["requestId"],
       },
     },
     {
       name: "activate_identity",
-      description:
-        "Register a synthetic worker identity against all Aquera SCIM application connectors, triggering Aquera to push the identity profile to SailPoint for provisioning.",
+      description: "Register a synthetic worker identity against all Aquera SCIM application connectors, triggering Aquera to push the identity profile to SailPoint for provisioning.",
       endpoint: "/aquera/connectors/{identityId}/activate",
       method: "POST",
       inputSchema: {
         type: "object",
-        properties: {
-          identityId: { type: "string", description: "The identity ID to register (e.g., BMSA-SYNTH-001)" },
-        },
+        properties: { identityId: { type: "string", description: "The identity ID to register (e.g., BMSA-SYNTH-001)" } },
         required: ["identityId"],
       },
     },
     {
       name: "provision_account",
-      description:
-        "Provision an application account for a synthetic worker via SailPoint IIQ connectors (Aquera-powered).",
+      description: "Provision an application account for a synthetic worker via SailPoint IIQ connectors (Aquera-powered).",
       endpoint: "/sailpoint/provision",
       method: "POST",
       inputSchema: {
@@ -187,22 +337,18 @@ export async function seedDemoMcpServer(storage: IStorage): Promise<void> {
     },
     {
       name: "schedule_certification",
-      description:
-        "Schedule a Brainwave/RadiantOne recertification for a synthetic worker identity.",
+      description: "Schedule a Brainwave/RadiantOne recertification for a synthetic worker identity.",
       endpoint: "/brainwave/certify/{identityId}",
       method: "POST",
       inputSchema: {
         type: "object",
-        properties: {
-          identityId: { type: "string", description: "The identity ID to certify" },
-        },
+        properties: { identityId: { type: "string", description: "The identity ID to certify" } },
         required: ["identityId"],
       },
     },
     {
       name: "log_action",
-      description:
-        "Record an action in the demo audit trail. Every agent action should be logged here for the live activity feed.",
+      description: "Record an action in the demo audit trail. Every agent action should be logged here for the live activity feed.",
       endpoint: "/audit-log",
       method: "POST",
       inputSchema: {
@@ -225,10 +371,74 @@ export async function seedDemoMcpServer(storage: IStorage): Promise<void> {
       inputSchema: toolDef.inputSchema,
       enabled: true,
       riskClassification: "low",
-      annotations: {
-        endpoint: toolDef.endpoint,
-        method: toolDef.method,
-      },
+      annotations: { endpoint: toolDef.endpoint, method: toolDef.method },
     });
+  }
+}
+
+// ── Seed: Worker agent MCP servers — update URLs and tool endpoints ───────────
+const WORKER_MCP_CONFIG = [
+  {
+    serverName: "Aquera SCIM MCP Server",
+    tools: [
+      { name: "register_scim_user",        endpoint: "/aquera/scim/register",         method: "POST" },
+      { name: "get_registration_status",   endpoint: "/aquera/scim/status",           method: "GET" },
+      { name: "deregister_scim_user",      endpoint: "/aquera/scim/deregister",       method: "POST" },
+      { name: "compliance_pre_check",      endpoint: "/aquera/scim/compliance-check", method: "POST" },
+    ],
+  },
+  {
+    serverName: "SailPoint IdentityIQ MCP Server",
+    tools: [
+      { name: "provision_entitlement",  endpoint: "/sailpoint/entitlement",          method: "POST" },
+      { name: "revoke_access",          endpoint: "/sailpoint/revoke",               method: "POST" },
+      { name: "get_entitlements",       endpoint: "/sailpoint/entitlements",         method: "GET" },
+      { name: "validate_entitlement",   endpoint: "/sailpoint/entitlement/validate", method: "POST" },
+    ],
+  },
+  {
+    serverName: "RadiantOne Identity MCP Server",
+    tools: [
+      { name: "activate_identity",  endpoint: "/radiantone/activate", method: "POST" },
+      { name: "sync_directory",     endpoint: "/radiantone/sync",                             method: "POST" },
+      { name: "validate_lineage",   endpoint: "/radiantone/lineage",                          method: "GET" },
+      { name: "search_identity",    endpoint: "/radiantone/search",                           method: "GET" },
+    ],
+  },
+  {
+    serverName: "Brainwave Access Intelligence MCP Server",
+    tools: [
+      { name: "escalate_incident",        endpoint: "/brainwave/escalate",                     method: "POST" },
+      { name: "schedule_recertification", endpoint: "/brainwave/recertification/{identityId}", method: "POST" },
+      { name: "get_audit_trail",          endpoint: "/brainwave/audit",                        method: "GET" },
+      { name: "monitor_access_events",    endpoint: "/brainwave/events",                       method: "GET" },
+    ],
+  },
+];
+
+export async function seedWorkerMcpEndpoints(storage: IStorage): Promise<void> {
+  const allServers = await storage.getMcpServers();
+
+  for (const config of WORKER_MCP_CONFIG) {
+    const server = allServers.find((s) => s.name === config.serverName);
+    if (!server) continue;
+
+    // Point the server URL at our local demo API
+    if (server.url !== `${BASE_URL}/demo-api`) {
+      await storage.updateMcpServer(server.id, { url: `${BASE_URL}/demo-api` });
+    }
+
+    // Update each tool's annotations with the correct endpoint
+    const tools = await storage.getMcpServerTools(server.id);
+    for (const toolDef of config.tools) {
+      const tool = tools.find((t) => t.name === toolDef.name);
+      if (!tool) continue;
+      const existing = (tool.annotations as Record<string, any>) || {};
+      if (existing.endpoint !== toolDef.endpoint || existing.method !== toolDef.method) {
+        await storage.updateMcpServerTool(tool.id, {
+          annotations: { ...existing, endpoint: toolDef.endpoint, method: toolDef.method },
+        });
+      }
+    }
   }
 }
