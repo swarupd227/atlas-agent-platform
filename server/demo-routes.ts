@@ -416,6 +416,25 @@ const WORKER_MCP_CONFIG = [
   },
 ];
 
+const WORKER_AGENT_TASKS: Record<string, { task: string; scheduleIntervalMinutes: number }> = {
+  "c21b6549-e24d-4384-b667-9032619e3dd7": {
+    task: "Receive the ServiceNow-approved provisioning request for synthetic worker BMSA-SYNTH-001 and register its identity across all 4 SCIM connectors (Aladdin OMS, Charles River IMS, Bloomberg Terminal, ServiceNow) via Aquera. Run compliance pre-checks before each registration and confirm status after each step.",
+    scheduleIntervalMinutes: 0,
+  },
+  "dacfb0d1-9e9e-4b4f-b0be-6f2824c5c05f": {
+    task: "Provision role-based access entitlements for BMSA-SYNTH-001 across all 4 BlackRock financial applications using SailPoint IdentityIQ: Aladdin OMS (ReadOnly Portfolio Analytics), Charles River IMS (Read Order Flow), Bloomberg Terminal (Market Data Viewer), and ServiceNow (ITSM Consumer). Validate each entitlement after assignment.",
+    scheduleIntervalMinutes: 0,
+  },
+  "67de43a1-c6b1-4f3a-b354-39140e6128a3": {
+    task: "Activate BMSA-SYNTH-001 in the RadiantOne federated meta-directory and synchronize all identity attributes across connected directory services. Validate the complete data lineage to confirm audit trail integrity and SR 11-7 compliance before signalling completion.",
+    scheduleIntervalMinutes: 0,
+  },
+  "e57e6394-c256-46cd-b0be-86510ab0a1be": {
+    task: "Audit and certify the access provisioned for BMSA-SYNTH-001 using the Brainwave GRC platform. Review the full audit trail, monitor for anomalous or unauthorized access events, and schedule lifecycle recertification across all provisioned systems in accordance with IOSCO and Model Risk Management (SR 11-7) requirements.",
+    scheduleIntervalMinutes: 0,
+  },
+};
+
 export async function seedWorkerMcpEndpoints(storage: IStorage): Promise<void> {
   const allServers = await storage.getMcpServers();
 
@@ -439,6 +458,18 @@ export async function seedWorkerMcpEndpoints(storage: IStorage): Promise<void> {
           annotations: { ...existing, endpoint: toolDef.endpoint, method: toolDef.method },
         });
       }
+    }
+  }
+
+  // Ensure each worker agent has a human-readable task description in runtimeConfig
+  for (const [agentId, cfg] of Object.entries(WORKER_AGENT_TASKS)) {
+    const agent = await storage.getAgent(agentId);
+    if (!agent) continue;
+    const rc = (agent.runtimeConfig as Record<string, any>) || {};
+    if (rc.prompt !== cfg.task) {
+      await storage.updateAgent(agentId, {
+        runtimeConfig: { ...rc, prompt: cfg.task, scheduleIntervalMinutes: cfg.scheduleIntervalMinutes },
+      });
     }
   }
 }
