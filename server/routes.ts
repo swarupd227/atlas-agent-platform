@@ -11760,6 +11760,12 @@ Respond with a JSON object:
     }
   ],
   "pipeline": {
+    "systemsExtracted": [
+      {"name": "string - system name e.g. 'SailPoint'", "purpose": "string - what this system does in the workflow", "mcpCoverage": "covered | partial | missing", "existingMcpServer": "string | null - name of matching MCP server if covered/partial", "requiredCapabilities": ["string - tool capabilities needed from this system"]}
+    ],
+    "mcpGaps": [
+      {"system": "string - system name with missing/partial coverage", "purpose": "string - what it does", "missingCapabilities": ["string - specific tools or API operations needed"], "suggestedMcpServerName": "string - proposed name for new MCP server", "priority": "critical | high | medium - based on whether system is in the workflow critical path"}
+    ],
     "agentDependencyMatrix": [
       {"agent": "string - agent role name", "inputs": ["string - what this agent needs to start"], "outputs": ["string - what this agent produces"], "dependsOn": ["string - roles of agents whose output this agent requires"]}
     ],
@@ -11776,9 +11782,25 @@ Respond with a JSON object:
 \`\`\`
 
 ═══════════════════════════════════════════
+SYSTEM EXTRACTION & MCP GAP ANALYSIS (MANDATORY — DO THIS FIRST)
+═══════════════════════════════════════════
+Before proposing any agents, you MUST extract ALL external systems mentioned in the outcome contract.
+
+Step 1 — EXTRACT: Read the outcome contract's description, system prompt, workflow steps, and KPI definitions. Identify every external system, platform, API, database, or application mentioned by name. Examples: "SailPoint", "Aquera", "Bloomberg Terminal", "Aladdin OMS", "ServiceNow", "Brainwave", "RadiantOne", "Charles River IMS", "Salesforce", "Marketo", etc.
+
+Step 2 — CHECK COVERAGE: For each extracted system, check the MCP SERVERS & TOOLS registry provided above. Determine the coverage status:
+  - "covered": An existing MCP server in the registry handles this system and has the required tools.
+  - "partial": An existing MCP server covers this system but is missing some required tool capabilities mentioned in the outcome.
+  - "missing": No MCP server in the registry covers this system at all.
+
+Step 3 — OUTPUT: Include ALL extracted systems in "systemsExtracted" inside the pipeline object (see Response Format). For systems with "missing" or "partial" coverage, also include entries in "mcpGaps" with the tools that would be needed. This alerts the user that new MCP servers must be set up before the agents can fully operate.
+
+For each agent you propose, reference the specific external systems it interacts with in its description and workflowSteps — do NOT use only generic tool names.
+
+═══════════════════════════════════════════
 CRITICAL GUIDELINES
 ═══════════════════════════════════════════
-1. USE REAL PLATFORM DATA: Assign tools from the MCP registry, skills from the Skills Library, and reference ontology concepts. Do NOT invent tools or skills that don't exist in the platform.
+1. USE REAL PLATFORM DATA: For systems that DO exist in the MCP registry, assign only real tools from that registry. For systems mentioned in the outcome that have NO MCP coverage, flag them in "mcpGaps" — do NOT silently omit them or substitute unrelated tools. Skills and ontology concepts must also be real.
 2. KPI-DRIVEN DESIGN: Higher-weight KPIs should have dedicated agents. Use baseline→target gaps to estimate impact. Agents bound to KPIs with tight SLA thresholds need lower risk tolerance.
 3. POLICY COMPLIANCE: If active policies restrict tool usage, data handling, or autonomy levels, agents must respect these. Include relevant policy names in policyConstraints.
 4. ONTOLOGY GROUNDING: Agent roles and descriptions should use industry domain vocabulary from ontology concepts. Reference concept labels to ensure domain accuracy.
@@ -11929,6 +11951,8 @@ For "executionGraph", provide an explicit stage-by-stage execution plan:
         if (!p) return null;
         return {
           ...p,
+          systemsExtracted: Array.isArray(p.systemsExtracted) ? p.systemsExtracted : [],
+          mcpGaps: Array.isArray(p.mcpGaps) ? p.mcpGaps : [],
           agentDependencyMatrix: Array.isArray(p.agentDependencyMatrix) ? p.agentDependencyMatrix : [],
           pattern: p.pattern || "sequential",
           patternReasoning: p.patternReasoning || "",

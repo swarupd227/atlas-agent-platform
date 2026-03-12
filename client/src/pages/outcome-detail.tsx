@@ -3425,6 +3425,22 @@ interface AgentDependencyEntry {
   dependsOn: string[];
 }
 
+interface SystemExtracted {
+  name: string;
+  purpose: string;
+  mcpCoverage: "covered" | "partial" | "missing";
+  existingMcpServer: string | null;
+  requiredCapabilities: string[];
+}
+
+interface McpGap {
+  system: string;
+  purpose: string;
+  missingCapabilities: string[];
+  suggestedMcpServerName: string;
+  priority: "critical" | "high" | "medium";
+}
+
 interface PipelineDefinition {
   pattern: string;
   description: string;
@@ -3432,6 +3448,8 @@ interface PipelineDefinition {
   errorHandling: string;
   handoffRules: string;
   patternReasoning?: string;
+  systemsExtracted?: SystemExtracted[];
+  mcpGaps?: McpGap[];
   agentDependencyMatrix?: AgentDependencyEntry[];
   parallelGroups?: string[][];
   executionGraph?: Array<{ stage: number; agents: string[]; waitForAll: boolean }>;
@@ -3527,6 +3545,7 @@ function PipelineVisualization({ orchestrator, agents, pipeline }: {
   const totalTools = agents.reduce((sum, a) => sum + a.tools.length + (a.mcpToolBindings?.length || 0), 0) + orchestrator.tools.length + (orchestrator.mcpToolBindings?.length || 0);
   const [reasoningOpen, setReasoningOpen] = useState(false);
   const [dependencyMatrixOpen, setDependencyMatrixOpen] = useState(false);
+  const [integrationsOpen, setIntegrationsOpen] = useState(false);
 
   const hasExecutionTiers = pipeline && (
     (pipeline.executionGraph && pipeline.executionGraph.length > 0) ||
@@ -3570,6 +3589,100 @@ function PipelineVisualization({ orchestrator, agents, pipeline }: {
                   <p className="text-[11px] text-muted-foreground leading-relaxed" data-testid="text-pattern-reasoning">
                     {pipeline.patternReasoning}
                   </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {pipeline?.systemsExtracted && pipeline.systemsExtracted.length > 0 && (
+            <div className="rounded-lg border border-border/60 bg-muted/20" data-testid="section-required-integrations">
+              <button
+                type="button"
+                onClick={() => setIntegrationsOpen(!integrationsOpen)}
+                className="flex items-center gap-2 w-full px-3 py-2 text-left hover:bg-muted/30 transition-colors rounded-lg"
+                data-testid="button-toggle-integrations"
+              >
+                <Database className="w-3.5 h-3.5 text-cyan-500 shrink-0" />
+                <span className="text-[11px] font-medium flex-1">Required Integrations</span>
+                {(() => {
+                  const gaps = pipeline.mcpGaps?.length || 0;
+                  const covered = pipeline.systemsExtracted.filter(s => s.mcpCoverage === "covered").length;
+                  return (
+                    <div className="flex items-center gap-1.5">
+                      {covered > 0 && (
+                        <Badge variant="outline" className="text-[8px] px-1.5 py-0 h-4 border-emerald-500/20 text-emerald-500">{covered} covered</Badge>
+                      )}
+                      {gaps > 0 && (
+                        <Badge variant="outline" className="text-[8px] px-1.5 py-0 h-4 border-red-500/20 text-red-500">{gaps} need MCP</Badge>
+                      )}
+                    </div>
+                  );
+                })()}
+                <ChevronDown className={`w-3 h-3 text-muted-foreground transition-transform ${integrationsOpen ? "rotate-180" : ""}`} />
+              </button>
+              {integrationsOpen && (
+                <div className="px-3 pb-3 pt-0 space-y-1.5">
+                  {pipeline.systemsExtracted.map((sys, idx) => {
+                    const gap = pipeline.mcpGaps?.find(g => g.system === sys.name);
+                    return (
+                      <div key={idx} className="rounded-md border border-border/40 bg-background/50 p-2.5" data-testid={`integration-entry-${idx}`}>
+                        <div className="flex items-center gap-2 mb-1">
+                          <Database className="w-3 h-3 text-cyan-500 shrink-0" />
+                          <span className="text-[11px] font-semibold flex-1">{sys.name}</span>
+                          {sys.mcpCoverage === "covered" && (
+                            <Badge variant="outline" className="text-[8px] px-1.5 py-0 h-4 border-emerald-500/20 text-emerald-500">
+                              <CheckCircle className="w-2.5 h-2.5 mr-0.5" /> Covered
+                            </Badge>
+                          )}
+                          {sys.mcpCoverage === "partial" && (
+                            <Badge variant="outline" className="text-[8px] px-1.5 py-0 h-4 border-amber-500/20 text-amber-500">
+                              <AlertTriangle className="w-2.5 h-2.5 mr-0.5" /> Partial
+                            </Badge>
+                          )}
+                          {sys.mcpCoverage === "missing" && (
+                            <Badge variant="outline" className="text-[8px] px-1.5 py-0 h-4 border-red-500/20 text-red-500">
+                              <AlertOctagon className="w-2.5 h-2.5 mr-0.5" /> MCP Required
+                            </Badge>
+                          )}
+                          {gap?.priority && (
+                            <Badge variant="outline" className={`text-[8px] px-1.5 py-0 h-4 ${gap.priority === "critical" ? "border-red-500/20 text-red-500" : gap.priority === "high" ? "border-amber-500/20 text-amber-500" : "border-blue-500/20 text-blue-500"}`}>
+                              {gap.priority}
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-muted-foreground ml-5 mb-1">{sys.purpose}</p>
+                        {sys.existingMcpServer && (
+                          <div className="ml-5 mb-1">
+                            <span className="text-[9px] text-muted-foreground">MCP Server: </span>
+                            <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400">{sys.existingMcpServer}</span>
+                          </div>
+                        )}
+                        {sys.requiredCapabilities.length > 0 && (
+                          <div className="ml-5 mt-1">
+                            <span className="text-[9px] text-muted-foreground uppercase tracking-wider">Required Capabilities</span>
+                            <div className="flex flex-wrap gap-1 mt-0.5">
+                              {sys.requiredCapabilities.map((cap, i) => (
+                                <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-600 dark:text-cyan-400">{cap}</span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {gap && gap.missingCapabilities.length > 0 && (
+                          <div className="ml-5 mt-1.5 rounded bg-red-500/5 border border-red-500/10 p-2">
+                            <span className="text-[9px] text-red-500 uppercase tracking-wider font-medium">Missing — New MCP Server Needed</span>
+                            <div className="text-[10px] text-muted-foreground mt-0.5">
+                              Suggested: <span className="font-medium text-foreground">{gap.suggestedMcpServerName}</span>
+                            </div>
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {gap.missingCapabilities.map((mc, i) => (
+                                <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-600 dark:text-red-400">{mc}</span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
