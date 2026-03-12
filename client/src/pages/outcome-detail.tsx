@@ -909,14 +909,22 @@ export default function OutcomeDetail() {
   const attribution = (outcome.attributionRules || {}) as Record<string, any>;
   const gates = (outcome.approvalGates || []) as Array<Record<string, any>>;
   const tiers = (outcome.pricingTiers || []) as Array<Record<string, any>>;
+  const kpiProgress = (k: { currentValue?: number | null; target?: number | null; targetOperator?: string | null; name?: string | null }): number => {
+    const current = k.currentValue ?? 0;
+    const target = k.target;
+    if (target == null) return 0;
+    const op = k.targetOperator || ">=";
+    const isInverse = op === "<=" || op === "<" || /time|latency|incident|error|fail/i.test(k.name || "");
+    if (target === 0) return current === 0 ? 100 : Math.max(0, 100 - current * 10);
+    if (isInverse) return Math.min(100, Math.max(0, (target / Math.max(current, 0.001)) * 100));
+    return Math.min(100, Math.max(0, (current / target) * 100));
+  };
   const avgProgress = kpis?.length
-    ? kpis.reduce((sum, k) => sum + (k.target ? ((k.currentValue || 0) / k.target) * 100 : 0), 0) / kpis.length
+    ? kpis.reduce((sum, k) => sum + kpiProgress(k), 0) / kpis.length
     : 0;
   const weightedProgress = kpis?.length
-    ? kpis.reduce((sum, k) => {
-        const progress = k.target ? ((k.currentValue || 0) / k.target) * 100 : 0;
-        return sum + progress * (k.weight || 1);
-      }, 0) / kpis.reduce((sum, k) => sum + (k.weight || 1), 0)
+    ? kpis.reduce((sum, k) => sum + kpiProgress(k) * (k.weight || 1), 0) /
+      kpis.reduce((sum, k) => sum + (k.weight || 1), 0)
     : 0;
 
   const breachCount = kpis?.filter(k => {
@@ -1664,9 +1672,9 @@ export default function OutcomeDetail() {
 
           <div className="space-y-4">
             {kpis?.map((kpi) => {
-              const progress = kpi.target ? ((kpi.currentValue || 0) / kpi.target) * 100 : 0;
+              const progress = kpiProgress(kpi);
               const op = kpi.targetOperator || ">=";
-              const isInverse = op === "<" || op === "<=";
+              const isInverse = op === "<" || op === "<=" || /time|latency|incident|error|fail/i.test(kpi.name || "");
               const isBreaching = kpi.slaThreshold != null && kpi.currentValue != null && (
                 isInverse ? kpi.currentValue > kpi.slaThreshold : kpi.currentValue < kpi.slaThreshold
               );
