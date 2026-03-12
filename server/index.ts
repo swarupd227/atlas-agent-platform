@@ -6,6 +6,7 @@ import { createServer } from "http";
 import { seedDatabase } from "./seed";
 import { autoResumeRuntimes } from "./agent-runtime";
 import { authMiddleware, seedDefaultAdmin, getSecurityMode } from "./auth";
+import { storage } from "./storage";
 
 process.on("uncaughtException", (err) => {
   console.error("[CRASH] Uncaught exception:", err.message, err.stack);
@@ -91,6 +92,9 @@ app.use((req, res, next) => {
   await seedDefaultAdmin().catch((err) => {
     console.error("Admin seed error:", err);
   });
+  const { seedDemoMcpServer, demoRouter } = await import("./demo-routes");
+  await seedDemoMcpServer(storage).catch((err) => { console.error("Demo MCP seed error:", err); });
+  app.use("/demo-api", demoRouter);
   log(`Security mode: ${getSecurityMode()}`);
   await registerRoutes(httpServer, app);
 

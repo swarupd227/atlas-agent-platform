@@ -36,6 +36,8 @@ import {
   MoreHorizontal,
   Cpu,
   Code2,
+  PlayCircle,
+  Building2,
 } from "lucide-react";
 import {
   Sidebar,
@@ -217,6 +219,35 @@ export function AppSidebar() {
             onManualToggle={() => setAdvancedManuallyOpened(true)}
           />
         )}
+        <SidebarGroup className="py-0">
+          <Collapsible defaultOpen={location.startsWith("/demo/")}>
+            <CollapsibleTrigger asChild>
+              <button
+                type="button"
+                className="flex items-center gap-2 w-full px-3 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wider hover:bg-sidebar-accent/50 rounded-md transition-colors"
+                data-testid="button-demo-toggle"
+              >
+                <PlayCircle className="w-3.5 h-3.5" />
+                <span className="flex-1 text-left">Demo</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild data-active={location.startsWith("/demo/blackrock")}>
+                      <Link href="/demo/blackrock" data-testid="link-nav-blackrock-demo">
+                        <Building2 className="w-4 h-4" />
+                        <span>BlackRock</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </CollapsibleContent>
+          </Collapsible>
+        </SidebarGroup>
       </SidebarContent>
       <SidebarFooter />
     </Sidebar>

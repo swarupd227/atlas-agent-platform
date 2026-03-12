@@ -88,6 +88,7 @@ import KnowledgeBasesPage from "@/pages/knowledge-bases";
 import KnowledgeBaseDetail from "@/pages/knowledge-base-detail";
 import ModelProviders from "@/pages/model-providers";
 import DeveloperPortal from "@/pages/developer-portal";
+import BlackRockDemo from "@/pages/demo/blackrock-demo";
 import { Shield, LogOut } from "lucide-react";
 
 function HeaderControls() {
@@ -203,6 +204,7 @@ function DashboardRouter() {
       <Route path="/runbook-automation" component={RunbookAutomation} />
       <Route path="/model-providers" component={ModelProviders} />
       <Route path="/developer" component={DeveloperPortal} />
+      <Route path="/demo/blackrock" component={BlackRockDemo} />
       <Route path="/admin" component={Admin} />
       <Route component={NotFound} />
     </Switch>
