@@ -164,13 +164,14 @@ function PipelineBanner({ activeScreen, servicenowDone, radiantoneDone, sailpoin
 
 function PollCountdown({ auditLogLength }: { auditLogLength: number }) {
   const [seconds, setSeconds] = useState(60);
-  const prevLength = useState(auditLogLength)[0];
+  const prevLengthRef = useState({ value: auditLogLength })[0];
 
   useEffect(() => {
-    if (auditLogLength > 0 && auditLogLength !== prevLength) {
+    if (auditLogLength !== prevLengthRef.value) {
       setSeconds(60);
+      prevLengthRef.value = auditLogLength;
     }
-  }, [auditLogLength, prevLength]);
+  }, [auditLogLength, prevLengthRef]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -825,7 +826,7 @@ export default function BlackRockDemo() {
   const resetMutation = useMutation({
     mutationFn: () => apiRequest("POST", "/demo-api/reset"),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/demo-api"] });
+      queryClient.invalidateQueries({ predicate: (query) => typeof query.queryKey[0] === "string" && query.queryKey[0].startsWith("/demo-api") });
       toast({ title: "Demo reset", description: "All state restored to initial values" });
     },
   });
