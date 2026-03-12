@@ -23,6 +23,86 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
+interface ApprovalStep {
+  role: string;
+  person: string;
+  status: "approved" | "pending" | "waiting";
+  date: string;
+}
+
+interface ServiceNowRequest {
+  id: string;
+  title: string;
+  requestedBy: string;
+  department: string;
+  type: string;
+  priority: string;
+  justification: string;
+  approvalChain: ApprovalStep[];
+  status: string;
+  processed: boolean;
+  targetApps: { app: string; access: string; risk: string }[];
+  governance: { owner: string; sponsor: string; authMethod: string; platform: string };
+  riskAssessment: { dataSensitivity: string; regulatoryImpact: string; overallTier: string };
+}
+
+interface RadiantOneIdentity {
+  id: string;
+  name: string;
+  type: string;
+  dept: string;
+  owner: string;
+  status: "Active" | "Pending";
+  risk: string;
+  lastAct: string;
+  details?: Record<string, string>;
+}
+
+interface SailPointAccount {
+  app: string;
+  acct: string;
+  status: "Active" | "Pending";
+  role: string;
+  provisioned: string;
+  lastUsed: string;
+}
+
+interface BrainwaveIdentity {
+  name: string;
+  type: string;
+  apps: number;
+  ents: number;
+  certifier: string;
+  status: "Certified" | "Pending";
+  risk: string;
+}
+
+interface BrainwaveCertification {
+  campaign: string;
+  due: string;
+  identities: BrainwaveIdentity[];
+}
+
+interface AuditEntry {
+  id: number;
+  timestamp: string;
+  action: string;
+  system: string;
+  details: string;
+}
+
+interface AuditLogResponse {
+  entries: AuditEntry[];
+}
+
+interface IdentitiesResponse {
+  identities: RadiantOneIdentity[];
+}
+
+interface AccountsResponse {
+  accounts: SailPointAccount[];
+}
+
 const POLL_INTERVAL = 3000;
 
 const SYSTEM_PROMPT = `You are the Atlas Synthetic Worker Orchestrator for BlackRock. Every time you run, call \`check_pending_requests\`. If the result is empty, call \`log_action\` with \`{"action": "poll", "system": "ServiceNow", "details": "No pending requests found."}\` and stop. If you find approved requests, process each one in sequence: (1) call \`log_action\` to record discovery, (2) call \`activate_identity\` with \`{"identityId": "AIM-SYNTH-001"}\`, (3) call \`provision_account\` four times for apps: Aladdin OMS (role: AIM_Notify_Processor), Charles River IMS (role: Order_Viewer), Bloomberg Terminal (role: Data_Reader), ServiceNow (role: Task_Processor), logging each with \`log_action\`, (4) call \`schedule_certification\` with \`{"identityId": "AIM-SYNTH-001"}\`, (5) call \`complete_request\` to mark the request done, (6) call \`log_action\` with a completion summary. Be concise. Always log every action.`;
@@ -161,12 +241,12 @@ function SetupGuide() {
 }
 
 function ActivityFeed() {
-  const { data } = useQuery({
+  const { data } = useQuery<AuditLogResponse>({
     queryKey: ["/demo-api/audit-log"],
     refetchInterval: POLL_INTERVAL,
   });
 
-  const entries = (data as any)?.entries || [];
+  const entries = data?.entries ?? [];
 
   return (
     <Card data-testid="activity-feed">
@@ -183,7 +263,7 @@ function ActivityFeed() {
           </div>
         ) : (
           <div className="space-y-1.5 max-h-48 overflow-y-auto">
-            {[...entries].reverse().map((entry: any) => (
+            {[...entries].reverse().map((entry) => (
               <div key={entry.id} className="flex items-start gap-2 text-xs" data-testid={`audit-entry-${entry.id}`}>
                 <span className="text-muted-foreground font-mono w-16 shrink-0">
                   {new Date(entry.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
@@ -203,7 +283,7 @@ function ActivityFeed() {
 
 function ServiceNowScreen() {
   const { toast } = useToast();
-  const { data, isLoading } = useQuery({
+  const { data: req, isLoading } = useQuery<ServiceNowRequest>({
     queryKey: ["/demo-api/servicenow/requests", "REQ0084721"],
     queryFn: () => fetch("/demo-api/servicenow/requests/REQ0084721").then((r) => r.json()),
     refetchInterval: POLL_INTERVAL,
@@ -217,11 +297,10 @@ function ServiceNowScreen() {
     },
   });
 
-  if (isLoading || !data) return <div className="flex items-center justify-center h-64"><Loader2 className="w-6 h-6 animate-spin" /></div>;
+  if (isLoading || !req) return <div className="flex items-center justify-center h-64"><Loader2 className="w-6 h-6 animate-spin" /></div>;
 
-  const req = data;
-  const allApproved = req.approvalChain?.every((s: any) => s.status === "approved");
-  const hasPending = req.approvalChain?.some((s: any) => s.status === "pending");
+  const allApproved = req.approvalChain?.every((s) => s.status === "approved");
+  const hasPending = req.approvalChain?.some((s) => s.status === "pending");
 
   return (
     <div className="space-y-4" data-testid="screen-servicenow">
@@ -259,7 +338,7 @@ function ServiceNowScreen() {
               <CardTitle className="text-sm text-blue-400 uppercase tracking-wider">Target Applications</CardTitle>
             </CardHeader>
             <CardContent className="px-4 pb-4 space-y-2">
-              {req.targetApps?.map((app: any, i: number) => (
+              {req.targetApps?.map((app, i) => (
                 <div key={i} className="flex items-center justify-between bg-muted/50 rounded px-3 py-2">
                   <div>
                     <div className="font-semibold text-sm">{app.app}</div>
@@ -294,7 +373,7 @@ function ServiceNowScreen() {
               <CardTitle className="text-sm text-yellow-400 uppercase tracking-wider">Approval Chain</CardTitle>
             </CardHeader>
             <CardContent className="px-4 pb-4 space-y-3">
-              {req.approvalChain?.map((step: any, i: number) => (
+              {req.approvalChain?.map((step, i) => (
                 <div key={i} className="flex items-start gap-2">
                   <span className="mt-0.5 text-sm">
                     {step.status === "approved" ? <CheckCircle2 className="w-4 h-4 text-green-400" /> : step.status === "pending" ? <Clock className="w-4 h-4 text-yellow-400" /> : <Circle className="w-4 h-4 text-muted-foreground" />}
@@ -350,7 +429,7 @@ function ServiceNowScreen() {
 }
 
 function RadiantOneScreen() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading } = useQuery<IdentitiesResponse>({
     queryKey: ["/demo-api/radiantone/identities"],
     refetchInterval: POLL_INTERVAL,
   });
@@ -359,7 +438,7 @@ function RadiantOneScreen() {
 
   if (isLoading || !data) return <div className="flex items-center justify-center h-64"><Loader2 className="w-6 h-6 animate-spin" /></div>;
 
-  const identities = (data as any).identities || [];
+  const identities = data.identities ?? [];
   const typeColors: Record<string, string> = {
     Employee: "bg-blue-600",
     Contractor: "bg-teal-600",
@@ -392,7 +471,7 @@ function RadiantOneScreen() {
             </tr>
           </thead>
           <tbody>
-            {identities.map((id: any, i: number) => (
+            {identities.map((id, i) => (
               <tr
                 key={i}
                 onClick={() => setExpanded(expanded === i ? null : i)}
@@ -451,7 +530,7 @@ function RadiantOneScreen() {
 
 function SailPointScreen() {
   const [activeTab, setActiveTab] = useState("accounts");
-  const { data, isLoading } = useQuery({
+  const { data, isLoading } = useQuery<AccountsResponse>({
     queryKey: ["/demo-api/sailpoint/accounts", "AIM-SYNTH-001"],
     queryFn: () => fetch("/demo-api/sailpoint/accounts/AIM-SYNTH-001").then((r) => r.json()),
     refetchInterval: POLL_INTERVAL,
@@ -459,7 +538,7 @@ function SailPointScreen() {
 
   if (isLoading || !data) return <div className="flex items-center justify-center h-64"><Loader2 className="w-6 h-6 animate-spin" /></div>;
 
-  const accounts = (data as any).accounts || [];
+  const accounts = data.accounts ?? [];
   const tabs = ["accounts", "entitlements", "certifications", "activity"];
 
   return (
@@ -484,7 +563,7 @@ function SailPointScreen() {
               ["Owner (Manager)", "Michael Yoder"],
               ["Executive Sponsor", "Ian Hogg"],
               ["Department", "AIM"],
-              ["Lifecycle State", accounts.some((a: any) => a.status === "Active") ? "Active" : "Pending"],
+              ["Lifecycle State", accounts.some((a) => a.status === "Active") ? "Active" : "Pending"],
               ["Authentication", "X.509 Certificate"],
             ].map(([k, v], i) => (
               <div key={i} className="flex justify-between border-b border-border pb-1">
@@ -514,7 +593,7 @@ function SailPointScreen() {
           {activeTab === "accounts" && (
             <div className="space-y-2">
               <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">Application Accounts ({accounts.length})</h3>
-              {accounts.map((a: any, i: number) => (
+              {accounts.map((a, i) => (
                 <div key={i} className="bg-muted/30 rounded-lg p-3 flex items-center justify-between" data-testid={`sailpoint-account-${i}`}>
                   <div>
                     <div className="font-semibold">{a.app}</div>
@@ -599,18 +678,17 @@ function SailPointScreen() {
 }
 
 function BrainwaveScreen() {
-  const { data, isLoading } = useQuery({
+  const { data: bw, isLoading } = useQuery<BrainwaveCertification>({
     queryKey: ["/demo-api/brainwave/certifications"],
     refetchInterval: POLL_INTERVAL,
   });
 
-  if (isLoading || !data) return <div className="flex items-center justify-center h-64"><Loader2 className="w-6 h-6 animate-spin" /></div>;
+  if (isLoading || !bw) return <div className="flex items-center justify-center h-64"><Loader2 className="w-6 h-6 animate-spin" /></div>;
 
-  const bw = data as any;
-  const certifiedCount = bw.identities?.filter((i: any) => i.status === "Certified").length || 0;
-  const totalCount = bw.identities?.length || 0;
+  const certifiedCount = bw.identities?.filter((i) => i.status === "Certified").length ?? 0;
+  const totalCount = bw.identities?.length ?? 0;
   const pct = totalCount > 0 ? Math.round((certifiedCount / totalCount) * 100) : 0;
-  const synthIdentity = bw.identities?.find((i: any) => i.type === "Synthetic Worker");
+  const synthIdentity = bw.identities?.find((i) => i.type === "Synthetic Worker");
 
   return (
     <div className="space-y-4" data-testid="screen-brainwave">
@@ -654,7 +732,7 @@ function BrainwaveScreen() {
             </tr>
           </thead>
           <tbody>
-            {bw.identities?.map((id: any, i: number) => (
+            {bw.identities?.map((id, i) => (
               <tr
                 key={i}
                 className={`border-t ${id.type === "Synthetic Worker" ? "bg-orange-500/10" : ""}`}
@@ -717,29 +795,29 @@ export default function BlackRockDemo() {
   const [activeScreen, setActiveScreen] = useState("servicenow");
   const { toast } = useToast();
 
-  const { data: auditData } = useQuery({
+  const { data: auditData } = useQuery<AuditLogResponse>({
     queryKey: ["/demo-api/audit-log"],
     refetchInterval: POLL_INTERVAL,
   });
 
-  const { data: snData } = useQuery({
+  const { data: snData } = useQuery<ServiceNowRequest>({
     queryKey: ["/demo-api/servicenow/requests", "REQ0084721"],
     queryFn: () => fetch("/demo-api/servicenow/requests/REQ0084721").then((r) => r.json()),
     refetchInterval: POLL_INTERVAL,
   });
 
-  const { data: riData } = useQuery({
+  const { data: riData } = useQuery<IdentitiesResponse>({
     queryKey: ["/demo-api/radiantone/identities"],
     refetchInterval: POLL_INTERVAL,
   });
 
-  const { data: spData } = useQuery({
+  const { data: spData } = useQuery<AccountsResponse>({
     queryKey: ["/demo-api/sailpoint/accounts", "AIM-SYNTH-001"],
     queryFn: () => fetch("/demo-api/sailpoint/accounts/AIM-SYNTH-001").then((r) => r.json()),
     refetchInterval: POLL_INTERVAL,
   });
 
-  const { data: bwData } = useQuery({
+  const { data: bwData } = useQuery<BrainwaveCertification>({
     queryKey: ["/demo-api/brainwave/certifications"],
     refetchInterval: POLL_INTERVAL,
   });
@@ -752,12 +830,12 @@ export default function BlackRockDemo() {
     },
   });
 
-  const auditEntries = (auditData as any)?.entries || [];
+  const auditEntries = auditData?.entries ?? [];
 
   const servicenowDone = snData?.processed === true;
-  const radiantoneDone = (riData as any)?.identities?.find((i: any) => i.id === "AIM-SYNTH-001")?.status === "Active";
-  const sailpointDone = ((spData as any)?.accounts || []).every((a: any) => a.status === "Active");
-  const brainwaveDone = (bwData as any)?.identities?.find((i: any) => i.name === "AIM-SYNTH-001")?.status === "Certified";
+  const radiantoneDone = riData?.identities?.find((i) => i.id === "AIM-SYNTH-001")?.status === "Active";
+  const sailpointDone = (spData?.accounts ?? []).every((a) => a.status === "Active");
+  const brainwaveDone = bwData?.identities?.find((i) => i.name === "AIM-SYNTH-001")?.status === "Certified";
 
   const screens = [
     { id: "servicenow", label: "ServiceNow", color: "bg-green-700 hover:bg-green-600" },
