@@ -9838,7 +9838,7 @@ Only include templates with matchScore >= 30. Respond ONLY with a valid JSON arr
       }
       const { messages, wizardState } = req.body;
 
-      const systemPrompt = `You are an AI Agent Design Assistant for the ATLAS (Agent Lifecycle Management Platform). You help users design and configure AI agents.
+      const systemPrompt = `You are an AI Agent Design Assistant for the ATLAS (Nous Agent Orchestrator Platform). You help users design and configure AI agents.
 
 You understand the ATLAS data model:
 - Agents have: name, description, owner, riskTier (LOW/MEDIUM/HIGH), autonomyMode (manual/assisted/autonomous), modelProvider, modelName
@@ -12827,7 +12827,7 @@ Revenue:
 
       const industryContext = industry ? `\n\nIMPORTANT: The user is operating in the "${industry.label}" industry workspace. Tailor all suggestions, KPIs, agent designs, and compliance considerations to this industry. Use industry-standard terminology and reference relevant regulations (${industry.id === 'financial_services' ? 'BSA/AML, SOX, PCI-DSS, EU AI Act' : industry.id === 'healthcare' ? 'HIPAA, HITECH, CMS, FDA 21 CFR Part 11' : industry.id === 'manufacturing' ? 'ISO 9001, OSHA, EPA' : industry.id === 'insurance' ? 'State Insurance Regulations, NAIC, ACORD' : industry.id === 'retail' ? 'PCI-DSS, CCPA/CPRA, FTC Act' : industry.id === 'technology_saas' ? 'SOC 2 Type II, GDPR, CCPA, ISO 27001, FedRAMP' : 'general compliance frameworks'}). When proposing agents, include industry-specific skills, MCP connections for industry systems, and note which governance policies will auto-apply.` : '';
 
-      const systemPrompt = `You are a Business Outcome Discovery Assistant for the ATLAS (Agent Lifecycle Management Platform). You help non-technical business users define what they want to achieve, then propose AI agent solutions.${industryContext}
+      const systemPrompt = `You are a Business Outcome Discovery Assistant for the ATLAS (Nous Agent Orchestrator Platform). You help non-technical business users define what they want to achieve, then propose AI agent solutions.${industryContext}
 
 Your role is to:
 1. LISTEN to business problems described in plain language (e.g., "our customer churn is too high", "support tickets take too long")
@@ -13931,7 +13931,7 @@ Active agents: ${JSON.stringify(activeAgents.map(a => ({ id: a.id, name: a.name,
         messages: [
           {
             role: "system",
-            content: `You are an expert AI agent architect for the ATLAS (Agent Lifecycle Management Platform). Your task is to enhance and enrich an existing agent template to make it more robust, production-ready, and comprehensive.
+            content: `You are an expert AI agent architect for the ATLAS (Nous Agent Orchestrator Platform). Your task is to enhance and enrich an existing agent template to make it more robust, production-ready, and comprehensive.
 
 You MUST return recommendations for ALL of the following sections — no exceptions. Every section must be present in your JSON response even if you only make minor improvements to existing content.
 
@@ -23651,7 +23651,7 @@ Return ONLY a valid JSON object.`
         messages: [
           {
             role: "system",
-            content: `You are an expert in AI governance compliance remediation. You analyze compliance gaps in an Agent Lifecycle Management Platform (ATLAS) and suggest specific, actionable remediation steps.
+            content: `You are an expert in AI governance compliance remediation. You analyze compliance gaps in a Nous Agent Orchestrator Platform (ATLAS) and suggest specific, actionable remediation steps.
 
 The ATLAS has these modules: Agent Design, Blueprint Studio, Deployment, Monitor, Governance, Audit, Billing, Eval Studio, Self-Heal, Tool Registry.
 
@@ -33053,7 +33053,7 @@ RULES:
     return parts.join("\n");
   }
 
-  parts.push(`You are "${agent.name}", an AI agent managed on the ATLAS (Agent Lifecycle Management Platform).`);
+  parts.push(`You are "${agent.name}", an AI agent managed on the ATLAS (Nous Agent Orchestrator Platform).`);
   parts.push(`\nUNLIKE a generic AI assistant, you operate within a specific INDUSTRY CONTEXT with regulatory guardrails, policy enforcement, and domain ontology. Every response you give MUST reflect this context. This is what makes you different from ChatGPT or any generic LLM.`);
 
   if (agent.description) {

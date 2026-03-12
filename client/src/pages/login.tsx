@@ -39,7 +39,7 @@ export default function LoginPage() {
             <Shield className="h-8 w-8 text-primary" />
           </div>
           <h1 className="text-2xl font-bold tracking-tight" data-testid="text-app-title">Nous Agent Orchestrator</h1>
-          <p className="text-sm text-muted-foreground">Enterprise AI Agent Lifecycle Management</p>
+          <p className="text-sm text-muted-foreground">Nous Agent Orchestrator Platform</p>
         </div>
 
         <Card>

@@ -183,7 +183,7 @@ export function AppSidebar() {
             </div>
             <div className="flex flex-col">
               <span className="text-sm font-semibold text-sidebar-foreground" data-testid="text-app-name">ATLAS</span>
-              <span className="text-[10px] text-muted-foreground leading-tight">Agent Lifecycle Mgmt</span>
+              <span className="text-[10px] text-muted-foreground leading-tight">Nous Agent Orchestrator Platform</span>
             </div>
           </div>
         </Link>
