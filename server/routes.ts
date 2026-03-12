@@ -28922,26 +28922,53 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         const successRate = traces.length > 0 ? successfulTraces.length / traces.length : 0;
         const agentShareOfTeam = 1 / totalBoundAgentCount;
 
+        // Detect inverse / lower-is-better KPIs (incidents, time, latency, errors)
+        const isInverse = kpi.targetOperator === "<=" || kpi.targetOperator === "<"
+          || /time|latency|incident|error|fail/i.test(kpi.name || "");
+
         let agentContribution = 0;
 
         if (kpi.unit === "percent") {
           agentContribution = Math.round((kpi.target || 100) * successRate * agentShareOfTeam * 10) / 10;
         } else if (kpi.unit === "hours" || kpi.unit === "minutes") {
+          // For time KPIs show this agent's actual measured latency in the KPI unit
           const avgLatencyMs = traces.length > 0 ? traces.reduce((s, t) => s + (t.latencyMs || 0), 0) / traces.length : 0;
-          const latencyInUnit = kpi.unit === "hours" ? avgLatencyMs / 3600000 : avgLatencyMs / 60000;
-          const baselineVal = kpi.baseline || (kpi.target || 0) * 2;
-          const reduction = Math.max(0, baselineVal - latencyInUnit);
-          agentContribution = Math.round(reduction * agentShareOfTeam * 100) / 100;
+          agentContribution = Math.round((kpi.unit === "hours" ? avgLatencyMs / 3600000 : avgLatencyMs / 60000) * 100) / 100;
         } else if (kpi.unit === "USD" || kpi.unit === "usd") {
           agentContribution = Math.round((kpi.target || 0) * successRate * agentShareOfTeam);
+        } else if (isInverse) {
+          // For inverse count/numeric KPIs (e.g. incidents): agent contributes 0 when successRate=1
+          agentContribution = Math.round(Math.max(0, (1 - successRate)) * (kpi.target || 0) * 100) / 100;
         } else {
           agentContribution = Math.round((kpi.target || 0) * successRate * agentShareOfTeam * 100) / 100;
         }
 
-        const currentValue = kpi.currentValue || 0;
-        const estimatedCurrent = currentValue > 0 ? currentValue : Math.min(agentContribution * totalBoundAgentCount, kpi.target || 0);
-        const progressPct = kpi.target ? Math.min(100, Math.round((estimatedCurrent / kpi.target) * 1000) / 10) : 0;
-        const agentSharePct = estimatedCurrent > 0 ? Math.round((agentContribution / estimatedCurrent) * 1000) / 10 : 0;
+        const currentValue = kpi.currentValue ?? 0;
+        // Use DB-stored currentValue when available; otherwise estimate
+        const estimatedCurrent = kpi.currentValue != null ? kpi.currentValue
+          : isInverse ? agentContribution
+          : Math.min(agentContribution * totalBoundAgentCount, kpi.target || 0);
+
+        // Compute progress correctly for inverse vs normal KPIs
+        let progressPct: number;
+        if (isInverse) {
+          // Lower-is-better: currentValue <= target is good (100%), currentValue > target is bad
+          if (kpi.target == null) {
+            progressPct = 100;
+          } else if (kpi.target === 0) {
+            progressPct = estimatedCurrent === 0 ? 100 : Math.max(0, Math.round(100 - estimatedCurrent * 100));
+          } else if (estimatedCurrent <= kpi.target) {
+            progressPct = 100; // at or ahead of target
+          } else {
+            progressPct = Math.max(0, Math.round((kpi.target / estimatedCurrent) * 1000) / 10);
+          }
+        } else {
+          progressPct = kpi.target ? Math.min(100, Math.round((estimatedCurrent / kpi.target) * 1000) / 10) : 0;
+        }
+
+        const agentSharePct = isInverse
+          ? 100 // this agent owns its own provisioning time
+          : (estimatedCurrent > 0 ? Math.round((agentContribution / estimatedCurrent) * 1000) / 10 : 0);
 
         return {
           kpiId: kpi.id,
@@ -28955,7 +28982,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
           agentContribution,
           agentSharePct: Math.min(100, agentSharePct),
           agentTraces: agentTraceCount,
-          status: progressPct >= 90 ? "met" : progressPct >= 60 ? "on_track" : progressPct >= 30 ? "at_risk" : "behind",
+          status: progressPct >= 100 ? "met" : progressPct >= 80 ? "on_track" : progressPct >= 50 ? "at_risk" : "behind",
         };
       });
 
