@@ -105,7 +105,7 @@ interface AccountsResponse {
 
 const POLL_INTERVAL = 3000;
 
-const SYSTEM_PROMPT = `You are the Atlas Synthetic Worker Orchestrator for BlackRock. Every time you run, call \`check_pending_requests\`. If the result is empty, call \`log_action\` with \`{"action": "poll", "system": "ServiceNow", "details": "No pending requests found."}\` and stop. If you find approved requests, process each one in sequence: (1) call \`log_action\` to record discovery, (2) call \`activate_identity\` with \`{"identityId": "AIM-SYNTH-001"}\`, (3) call \`provision_account\` four times for apps: Aladdin OMS (role: AIM_Notify_Processor), Charles River IMS (role: Order_Viewer), Bloomberg Terminal (role: Data_Reader), ServiceNow (role: Task_Processor), logging each with \`log_action\`, (4) call \`schedule_certification\` with \`{"identityId": "AIM-SYNTH-001"}\`, (5) call \`complete_request\` to mark the request done, (6) call \`log_action\` with a completion summary. Be concise. Always log every action.`;
+const SYSTEM_PROMPT = `You are the Atlas Synthetic Worker Orchestrator for BlackRock. Every time you run, call \`check_pending_requests\`. If the result is empty, call \`log_action\` with \`{"action": "poll", "system": "ServiceNow", "details": "No pending requests found."}\` and stop. If you find approved requests, process each one in sequence: (1) call \`log_action\` to record discovery, (2) call \`activate_identity\` with \`{"identityId": "BMSA-SYNTH-001"}\`, (3) call \`provision_account\` four times for apps: Aladdin OMS (role: Portfolio_Rebalancer), Charles River IMS (role: Compliance_Checker), Bloomberg Terminal (role: Market_Data_Reader), ServiceNow (role: Workflow_Initiator), logging each with \`log_action\`, (4) call \`schedule_certification\` with \`{"identityId": "BMSA-SYNTH-001"}\`, (5) call \`complete_request\` to mark the request done, (6) call \`log_action\` with a completion summary. Be concise. Always log every action.`;
 
 const SYSTEM_COLORS: Record<string, string> = {
   ServiceNow: "bg-green-600",
@@ -532,8 +532,8 @@ function RadiantOneScreen() {
 function SailPointScreen() {
   const [activeTab, setActiveTab] = useState("accounts");
   const { data, isLoading } = useQuery<AccountsResponse>({
-    queryKey: ["/demo-api/sailpoint/accounts", "AIM-SYNTH-001"],
-    queryFn: () => fetch("/demo-api/sailpoint/accounts/AIM-SYNTH-001").then((r) => r.json()),
+    queryKey: ["/demo-api/sailpoint/accounts", "BMSA-SYNTH-001"],
+    queryFn: () => fetch("/demo-api/sailpoint/accounts/BMSA-SYNTH-001").then((r) => r.json()),
     refetchInterval: POLL_INTERVAL,
   });
 
@@ -555,15 +555,15 @@ function SailPointScreen() {
           <div className="flex items-center gap-3 mb-2">
             <div className="w-12 h-12 bg-orange-500 rounded-full flex items-center justify-center text-white text-xl">&#x1F916;</div>
             <div>
-              <div className="font-bold text-lg">AIM-SYNTH-001</div>
+              <div className="font-bold text-lg">BMSA-SYNTH-001</div>
               <Badge className="bg-orange-500 text-white text-[10px]">Synthetic Worker</Badge>
             </div>
           </div>
           <div className="space-y-2 text-sm">
             {[
-              ["Owner (Manager)", "Michael Yoder"],
-              ["Executive Sponsor", "Ian Hogg"],
-              ["Department", "AIM"],
+              ["Owner (Manager)", "Jennifer Walsh"],
+              ["Executive Sponsor", "Mark Chen"],
+              ["Department", "Multi-Asset Strategies"],
               ["Lifecycle State", accounts.some((a) => a.status === "Active") ? "Active" : "Pending"],
               ["Authentication", "X.509 Certificate"],
             ].map(([k, v], i) => (
@@ -615,11 +615,11 @@ function SailPointScreen() {
             <div className="space-y-2">
               <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">Entitlements</h3>
               {[
-                { app: "Aladdin OMS", ent: "AIM_Notify_Processor", type: "Role", risk: "Medium" },
+                { app: "Aladdin OMS", ent: "Portfolio_Rebalancer", type: "Role", risk: "Medium" },
                 { app: "Aladdin OMS", ent: "Fund_Data_Reader", type: "Permission", risk: "Low" },
-                { app: "Charles River", ent: "Order_Viewer", type: "Role", risk: "Low" },
-                { app: "Bloomberg", ent: "Data_Reader", type: "Role", risk: "Low" },
-                { app: "ServiceNow", ent: "Task_Processor", type: "Role", risk: "Low" },
+                { app: "Charles River", ent: "Compliance_Checker", type: "Role", risk: "Medium" },
+                { app: "Bloomberg", ent: "Market_Data_Reader", type: "Role", risk: "Low" },
+                { app: "ServiceNow", ent: "Workflow_Initiator", type: "Role", risk: "Low" },
               ].map((e, i) => (
                 <div key={i} className="flex items-center justify-between bg-muted/30 rounded px-3 py-2 text-sm">
                   <div className="flex items-center gap-2">
@@ -641,11 +641,11 @@ function SailPointScreen() {
               <Card className="border-purple-500/30 bg-purple-500/5">
                 <CardContent className="p-4">
                   <div className="flex justify-between items-center mb-2">
-                    <span className="font-bold text-purple-400">Q2 2026 AIM Team Recertification</span>
+                    <span className="font-bold text-purple-400">Q2 2026 BMSA Recertification</span>
                     <Badge className="bg-yellow-600 text-white">Scheduled</Badge>
                   </div>
                   <div className="text-sm space-y-1 text-muted-foreground">
-                    <div>Certifier: <strong className="text-foreground">Michael Yoder</strong></div>
+                    <div>Certifier: <strong className="text-foreground">Jennifer Walsh</strong></div>
                     <div>Campaign Due: <strong className="text-foreground">April 30, 2026</strong></div>
                     <div>Items to Certify: <strong className="text-foreground">4 applications, 12 entitlements</strong></div>
                   </div>
@@ -767,7 +767,7 @@ function BrainwaveScreen() {
         <Card className="border-orange-500/30 bg-orange-500/5">
           <CardContent className="p-4">
             <h3 className="font-bold text-orange-400 mb-2 flex items-center gap-1.5">
-              <span>&#x1F916;</span> AIM-SYNTH-001 — Synthetic Worker Certification Details
+              <span>&#x1F916;</span> BMSA-SYNTH-001 — Synthetic Worker Certification Details
             </h3>
             <div className="grid grid-cols-4 gap-4 text-sm mb-3">
               {[
@@ -813,8 +813,8 @@ export default function BlackRockDemo() {
   });
 
   const { data: spData } = useQuery<AccountsResponse>({
-    queryKey: ["/demo-api/sailpoint/accounts", "AIM-SYNTH-001"],
-    queryFn: () => fetch("/demo-api/sailpoint/accounts/AIM-SYNTH-001").then((r) => r.json()),
+    queryKey: ["/demo-api/sailpoint/accounts", "BMSA-SYNTH-001"],
+    queryFn: () => fetch("/demo-api/sailpoint/accounts/BMSA-SYNTH-001").then((r) => r.json()),
     refetchInterval: POLL_INTERVAL,
   });
 
@@ -834,9 +834,9 @@ export default function BlackRockDemo() {
   const auditEntries = auditData?.entries ?? [];
 
   const servicenowDone = snData?.processed === true;
-  const radiantoneDone = riData?.identities?.find((i) => i.id === "AIM-SYNTH-001")?.status === "Active";
+  const radiantoneDone = riData?.identities?.find((i) => i.id === "BMSA-SYNTH-001")?.status === "Active";
   const sailpointDone = (spData?.accounts ?? []).every((a) => a.status === "Active");
-  const brainwaveDone = bwData?.identities?.find((i) => i.name === "AIM-SYNTH-001")?.status === "Certified";
+  const brainwaveDone = bwData?.identities?.find((i) => i.name === "BMSA-SYNTH-001")?.status === "Certified";
 
   const screens = [
     { id: "servicenow", label: "ServiceNow", color: "bg-green-700 hover:bg-green-600" },

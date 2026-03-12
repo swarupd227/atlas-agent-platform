@@ -88,12 +88,12 @@ function createInitialState(): DemoState {
     servicenow: {
       id: "REQ0084721",
       title: "Synthetic Worker Access Request",
-      requestedBy: "David Chen, Head of Fund Operations",
-      department: "Investment Operations",
+      requestedBy: "Rachel Torres, Head of Portfolio Implementation",
+      department: "Multi-Asset Strategies",
       type: "New Synthetic Worker",
       priority: "High",
       justification:
-        "Our team processes 2,000+ AIM Notify provisioning tasks per quarter at 45 min each. We need a synthetic worker to automate standard provisioning, deprovisioning, and entitlement changes for our AIM Notify applications, freeing analysts for complex exception handling.",
+        "Our team executes 1,200+ daily rebalancing events across 280+ model portfolios. Each event requires manual coordination across Aladdin OMS, Charles River, and Bloomberg — order staging, compliance pre-checks, and post-trade reconciliation — consuming 5–6 analyst hours per day. A Synthetic Worker will automate routine compliance validation, order staging, and settlement reconciliation, reducing analyst intervention to exception handling only.",
       approvalChain: [
         { role: "IT Security Review", person: "Sarah Kim, CISO Office", status: "approved", date: "Mar 5" },
         { role: "AI Risk Operating Committee", person: "AI ROC Board", status: "pending", date: "Pending" },
@@ -102,20 +102,20 @@ function createInitialState(): DemoState {
       status: "approved_partial",
       processed: false,
       targetApps: [
-        { app: "Aladdin OMS", access: "AIM_Notify_Processor role", risk: "Medium" },
-        { app: "Charles River IMS", access: "Order_Viewer, Provision_Agent roles", risk: "Medium" },
-        { app: "Bloomberg Terminal", access: "Data_Reader role", risk: "Low" },
-        { app: "ServiceNow", access: "Task_Processor, Ticket_Creator roles", risk: "Low" },
+        { app: "Aladdin OMS", access: "Portfolio_Rebalancer role", risk: "Medium" },
+        { app: "Charles River IMS", access: "Compliance_Checker role", risk: "Medium" },
+        { app: "Bloomberg Terminal", access: "Market_Data_Reader role", risk: "Low" },
+        { app: "ServiceNow", access: "Workflow_Initiator role", risk: "Low" },
       ],
       governance: {
-        owner: "Michael Yoder, AIM Team Lead",
-        sponsor: "Ian Hogg, VP Technology",
+        owner: "Jennifer Walsh, BMSA Operations Lead",
+        sponsor: "Mark Chen, Managing Director, Multi-Asset Strategies",
         authMethod: "X.509 Certificate (90-day rotation)",
         platform: "Atlas Agent Orchestrator",
       },
       riskAssessment: {
         dataSensitivity: "Medium (MNPI via Aladdin)",
-        regulatoryImpact: "SOX, FINRA 3110",
+        regulatoryImpact: "SOX, MiFID II",
         overallTier: "Tier 2",
       },
     },
@@ -127,17 +127,17 @@ function createInitialState(): DemoState {
       { id: "CON-20045", name: "James Liu", type: "Contractor", dept: "IT Ops", owner: "Vendor Mgr", status: "Active", risk: "Medium", lastAct: "3 hrs ago" },
       { id: "SVC-30012", name: "Aladdin-SVC-Batch", type: "Service Acct", dept: "Technology", owner: "System", status: "Active", risk: "Medium", lastAct: "30 min ago" },
       {
-        id: "AIM-SYNTH-001",
-        name: "AIM-SYNTH-001",
+        id: "BMSA-SYNTH-001",
+        name: "BMSA-SYNTH-001",
         type: "Synthetic Worker",
-        dept: "AIM",
-        owner: "M. Yoder",
+        dept: "Multi-Asset Strategies",
+        owner: "J. Walsh",
         status: "Pending",
         risk: "Low",
         lastAct: "—",
         details: {
-          owner: "Michael Yoder",
-          sponsor: "Ian Hogg",
+          owner: "Jennifer Walsh",
+          sponsor: "Mark Chen",
           credential: "X.509 Certificate",
           certExpiry: "Jun 12, 2026 (92 days)",
           created: "Mar 8, 2026",
@@ -148,21 +148,21 @@ function createInitialState(): DemoState {
       },
     ],
     sailpoint: [
-      { app: "Aladdin OMS", acct: "aim-synth-001@aladdin", status: "Pending", role: "AIM_Notify_Processor", provisioned: "—", lastUsed: "—" },
-      { app: "Charles River IMS", acct: "synth-proc-001", status: "Pending", role: "Order_Viewer", provisioned: "—", lastUsed: "—" },
-      { app: "Bloomberg Terminal", acct: "BRK-SYNTH-001", status: "Pending", role: "Data_Reader", provisioned: "—", lastUsed: "—" },
-      { app: "ServiceNow", acct: "aim.synth.001", status: "Pending", role: "Task_Processor", provisioned: "—", lastUsed: "—" },
+      { app: "Aladdin OMS", acct: "bmsa-synth-001@aladdin", status: "Pending", role: "Portfolio_Rebalancer", provisioned: "—", lastUsed: "—" },
+      { app: "Charles River IMS", acct: "bmsa-synth-001@charlesriver", status: "Pending", role: "Compliance_Checker", provisioned: "—", lastUsed: "—" },
+      { app: "Bloomberg Terminal", acct: "bmsa-synth-001@bloomberg", status: "Pending", role: "Market_Data_Reader", provisioned: "—", lastUsed: "—" },
+      { app: "ServiceNow", acct: "bmsa-synth-001@servicenow", status: "Pending", role: "Workflow_Initiator", provisioned: "—", lastUsed: "—" },
     ],
     brainwave: {
-      campaign: "Q2 2026 AIM Team Access Recertification",
+      campaign: "Q2 2026 BMSA Access Recertification",
       due: "April 30, 2026",
       identities: [
         { name: "Sarah Chen", type: "Employee", apps: 6, ents: 24, certifier: "Tom Walsh", status: "Certified", risk: "Low" },
         { name: "John Park", type: "Employee", apps: 5, ents: 19, certifier: "Tom Walsh", status: "Certified", risk: "Low" },
-        { name: "Lisa Wang", type: "Employee", apps: 4, ents: 15, certifier: "Michael Yoder", status: "Certified", risk: "Low" },
-        { name: "David Kim", type: "Employee", apps: 7, ents: 31, certifier: "Michael Yoder", status: "Pending", risk: "Medium" },
-        { name: "Emily Zhang", type: "Employee", apps: 3, ents: 11, certifier: "Michael Yoder", status: "Certified", risk: "Low" },
-        { name: "AIM-SYNTH-001", type: "Synthetic Worker", apps: 4, ents: 12, certifier: "Michael Yoder", status: "Pending", risk: "Low" },
+        { name: "Lisa Wang", type: "Employee", apps: 4, ents: 15, certifier: "Jennifer Walsh", status: "Certified", risk: "Low" },
+        { name: "David Kim", type: "Employee", apps: 7, ents: 31, certifier: "Jennifer Walsh", status: "Pending", risk: "Medium" },
+        { name: "Emily Zhang", type: "Employee", apps: 3, ents: 11, certifier: "Jennifer Walsh", status: "Certified", risk: "Low" },
+        { name: "BMSA-SYNTH-001", type: "Synthetic Worker", apps: 4, ents: 12, certifier: "Jennifer Walsh", status: "Pending", risk: "Low" },
       ],
     },
     auditLog: [],
@@ -226,7 +226,7 @@ export function provisionAccount(identityId: string, app: string, role: string):
 
 export function certifyIdentity(identityId: string): { success: boolean; message: string } {
   const identity = state.brainwave.identities.find(
-    (i) => i.name === identityId || (identityId === "AIM-SYNTH-001" && i.name === "AIM-SYNTH-001")
+    (i) => i.name === identityId || (identityId === "BMSA-SYNTH-001" && i.name === "BMSA-SYNTH-001")
   );
   if (!identity) return { success: false, message: "Identity not found in certification campaign" };
   identity.status = "Certified";
