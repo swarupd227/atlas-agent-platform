@@ -22,6 +22,7 @@ import {
   Copy,
   Check,
   ExternalLink,
+  Zap,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -844,6 +845,20 @@ export default function BlackRockDemo() {
     },
   });
 
+  const runPipelineMutation = useMutation({
+    mutationFn: () => apiRequest("POST", "/demo-api/run-pipeline"),
+    onSuccess: () => {
+      toast({
+        title: "Pipeline started",
+        description: "The orchestrator agent is now running the full 7-step provisioning pipeline. Watch the activity feed below.",
+      });
+      queryClient.invalidateQueries({ predicate: (query) => typeof query.queryKey[0] === "string" && query.queryKey[0].startsWith("/demo-api") });
+    },
+    onError: (err: any) => {
+      toast({ title: "Pipeline error", description: err.message || "Failed to start pipeline", variant: "destructive" });
+    },
+  });
+
   const auditEntries = auditData?.entries ?? [];
 
   const servicenowDone = snData?.processed === true;
@@ -866,7 +881,28 @@ export default function BlackRockDemo() {
           <p className="text-sm text-muted-foreground">Atlas Orchestrated | Same Pipeline, Governed Automation</p>
         </div>
         <div className="flex items-center gap-3">
-          <PollCountdown auditLogLength={auditEntries.length} />
+          {runPipelineMutation.isPending ? (
+            <div className="flex items-center gap-2 text-sm text-orange-400 font-medium animate-pulse" data-testid="pipeline-running-indicator">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Pipeline running…
+            </div>
+          ) : brainwaveDone ? (
+            <div className="flex items-center gap-2 text-sm text-green-400 font-medium" data-testid="pipeline-complete-indicator">
+              <CheckCircle2 className="w-4 h-4" />
+              Pipeline complete
+            </div>
+          ) : (
+            <Button
+              size="sm"
+              className="gap-1.5 bg-orange-600 hover:bg-orange-500 text-white"
+              onClick={() => runPipelineMutation.mutate()}
+              disabled={runPipelineMutation.isPending}
+              data-testid="button-run-pipeline"
+            >
+              <Zap className="w-3.5 h-3.5" />
+              Run Live Pipeline
+            </Button>
+          )}
           <SetupGuide />
           <Button
             variant="outline"
@@ -877,7 +913,7 @@ export default function BlackRockDemo() {
             data-testid="button-reset-demo"
           >
             <RotateCcw className="w-3.5 h-3.5" />
-            Reset Demo
+            Reset
           </Button>
         </div>
       </div>

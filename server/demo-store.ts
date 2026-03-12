@@ -94,10 +94,10 @@ function createInitialState(): DemoState {
         "Our team executes 1,200+ daily rebalancing events across 280+ model portfolios. Each event requires manual coordination across Aladdin OMS, Charles River, and Bloomberg — order staging, compliance pre-checks, and post-trade reconciliation — consuming 5–6 analyst hours per day. A Synthetic Worker will automate routine compliance validation, order staging, and settlement reconciliation, reducing analyst intervention to exception handling only.",
       approvalChain: [
         { role: "IT Security Review", person: "Sarah Kim, CISO Office", status: "approved", date: "Mar 5" },
-        { role: "AI Risk Operating Committee", person: "AI ROC Board", status: "pending", date: "Pending" },
-        { role: "AIM Team Acceptance", person: "Michael Yoder", status: "waiting", date: "Waiting" },
+        { role: "AI Risk Operating Committee", person: "AI ROC Board", status: "approved", date: "Mar 6" },
+        { role: "AIM Team Acceptance", person: "Michael Yoder", status: "approved", date: "Mar 7" },
       ],
-      status: "approved_partial",
+      status: "approved",
       processed: false,
       targetApps: [
         { app: "Aladdin OMS", access: "Portfolio_Rebalancer role", risk: "Medium" },

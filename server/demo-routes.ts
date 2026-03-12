@@ -63,6 +63,11 @@ demoRouter.post("/aquera/connectors/:id/activate", (req: Request, res: Response)
   res.json(result);
 });
 
+demoRouter.post("/radiantone/identities/:id/activate", (req: Request, res: Response) => {
+  const result = activateIdentity(req.params.id);
+  res.json(result);
+});
+
 demoRouter.get("/sailpoint/accounts/:identityId", (_req: Request, res: Response) => {
   res.json({ accounts: getState().sailpoint });
 });

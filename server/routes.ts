@@ -13,6 +13,7 @@ import { getProvider, getDefaultProvider, getAvailableProviders, type LLMProvide
 import multer from "multer";
 import { checkPermission, getRequestRole, getTraceRedactionLevel, getRedactionLevel, redactPayload, getOntologySensitivityKeys, invalidateOntologySensitivityCache, redactWithOntologyKeys } from "./permissions";
 import { getSecurityMode, hashPassword, comparePassword, generateToken, verifyToken, setAuthCookie, clearAuthCookie } from "./auth";
+import { resetDemo } from "./demo-store";
 import { users } from "@shared/schema";
 import { registerKnowledgeBaseRoutes } from "./kb-routes";
 import adobeAnalyticsRouter from "./mock-mcp/adobe-analytics";
@@ -32830,6 +32831,43 @@ Return ONLY valid JSON array, no explanation.`;
       }
     } catch (err: any) {
       console.error(`[triggers] Failed to process agent_completion triggers:`, err.message);
+    }
+  });
+
+  // ── BlackRock Demo: one-click full pipeline run ─────────────────────────────
+  app.post("/demo-api/run-pipeline", async (_req, res) => {
+    try {
+      const ORCHESTRATOR_ID = "e9507c06-19cf-425f-8b59-fe58ba221121";
+      const agent = await storage.getAgent(ORCHESTRATOR_ID);
+      if (!agent) return res.status(404).json({ error: "Orchestrator agent not found" });
+
+      resetDemo();
+
+      const existingDeployments = await storage.getDeployments();
+      let deployment = existingDeployments.find(
+        (d) => d.agentId === ORCHESTRATOR_ID && d.environment === "staging" && d.status !== "rolled_back"
+      );
+
+      if (!deployment) {
+        deployment = await storage.createDeployment({
+          agentId: ORCHESTRATOR_ID,
+          environment: "staging",
+          version: "1.0.0",
+          status: "active",
+          rolloutStrategy: "direct",
+          trafficPercentage: 100,
+        });
+      }
+
+      if (isRuntimeActive(deployment.id)) {
+        stopAgentRuntime(deployment.id);
+      }
+
+      const result = await startAgentRuntime(deployment.id, undefined, false, true);
+      return res.json({ started: result.started, deploymentId: deployment.id, message: result.message });
+    } catch (err: any) {
+      console.error("[demo-api/run-pipeline]", err);
+      return res.status(500).json({ error: err.message || "Failed to run pipeline" });
     }
   });
 
