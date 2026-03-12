@@ -290,7 +290,7 @@ function ActivityFeed() {
             Waiting for agent activity...
           </div>
         ) : (
-          <div className="space-y-1.5 max-h-48 overflow-y-auto">
+          <div className="space-y-1.5 max-h-[520px] overflow-y-auto pr-1">
             {[...entries].reverse().map((entry) => (
               <div key={entry.id} className="flex items-start gap-2 text-xs" data-testid={`audit-entry-${entry.id}`}>
                 <span className="text-muted-foreground font-mono w-16 shrink-0">
