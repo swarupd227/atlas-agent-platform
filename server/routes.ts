@@ -11709,6 +11709,8 @@ You MUST incorporate this feedback into the new plan. Adjust the agents, roles, 
         const coveredLines = top.coveredSystems.length > 0
           ? top.coveredSystems.map(s => `  - ${s}: COVERED by "${top.server}" (has MCP tools)`).join("\n")
           : "  (none detected from tool descriptions)";
+        const stageSummaryEntry = mcpToolSummary.find(s => s.server === top.server);
+        const toolLines = stageSummaryEntry?.tools.map(t => `    • ${t.name}${t.description ? `: ${t.description.slice(0, 100)}` : ""}`).join("\n") || "    (no tools listed)";
         return `
 ⚡⚡⚡ MANDATORY AGENT BLUEPRINT — HIGHEST PRIORITY — OVERRIDE ALL OTHER REASONING ⚡⚡⚡
 ════════════════════════════════════════════════════════════════════════════
@@ -11719,6 +11721,12 @@ DO NOT merge stages. DO NOT skip stages. DO NOT create fewer than ${top.count} w
 
 REQUIRED STAGES (create one worker agent per stage):
 ${stageLines}
+
+VALID MCP TOOLS — assign ONLY these to mcpToolBindings (server: "${top.server}"):
+${toolLines}
+  ⚠ DO NOT reference any other MCP server. Only use tools listed above.
+  Each stage agent should receive the 1-2 tools most relevant to its stage function.
+  Stages with no matching tool (e.g. manual/external steps) may have an empty mcpToolBindings array.
 
 PRE-COMPUTED SYSTEM COVERAGE (DO NOT OVERRIDE — use these as-is in systemsExtracted):
 ${coveredLines}
@@ -12184,6 +12192,23 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
           result.pipeline.mcpGaps = result.pipeline.mcpGaps.filter((g: any) => {
             return !findCoveringServer(g.system, systemCoverageGT);
           });
+        }
+      }
+
+      // Post-process: strip mcpToolBindings that reference servers not in the valid set
+      // Valid servers = those that cover any orchestration system (from systemCoverageGT)
+      const validMcpServerNames = new Set(Object.values(systemCoverageGT));
+      if (validMcpServerNames.size > 0) {
+        const allResultAgents = [
+          ...(Array.isArray(result.agents) ? result.agents : []),
+          ...(result.orchestrator ? [result.orchestrator] : []),
+        ];
+        for (const agent of allResultAgents) {
+          if (Array.isArray(agent.mcpToolBindings)) {
+            agent.mcpToolBindings = agent.mcpToolBindings.filter((b: any) =>
+              validMcpServerNames.has(b.server)
+            );
+          }
         }
       }
 
