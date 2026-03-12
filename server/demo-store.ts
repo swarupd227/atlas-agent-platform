@@ -226,7 +226,7 @@ export function provisionAccount(identityId: string, app: string, role: string):
 
 export function certifyIdentity(identityId: string): { success: boolean; message: string } {
   const identity = state.brainwave.identities.find(
-    (i) => i.name === identityId || (identityId === "BMSA-SYNTH-001" && i.name === "BMSA-SYNTH-001")
+    (i) => i.name === identityId
   );
   if (!identity) return { success: false, message: "Identity not found in certification campaign" };
   identity.status = "Certified";

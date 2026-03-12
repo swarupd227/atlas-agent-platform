@@ -617,8 +617,8 @@ function SailPointScreen() {
               {[
                 { app: "Aladdin OMS", ent: "Portfolio_Rebalancer", type: "Role", risk: "Medium" },
                 { app: "Aladdin OMS", ent: "Fund_Data_Reader", type: "Permission", risk: "Low" },
-                { app: "Charles River", ent: "Compliance_Checker", type: "Role", risk: "Medium" },
-                { app: "Bloomberg", ent: "Market_Data_Reader", type: "Role", risk: "Low" },
+                { app: "Charles River IMS", ent: "Compliance_Checker", type: "Role", risk: "Medium" },
+                { app: "Bloomberg Terminal", ent: "Market_Data_Reader", type: "Role", risk: "Low" },
                 { app: "ServiceNow", ent: "Workflow_Initiator", type: "Role", risk: "Low" },
               ].map((e, i) => (
                 <div key={i} className="flex items-center justify-between bg-muted/30 rounded px-3 py-2 text-sm">
