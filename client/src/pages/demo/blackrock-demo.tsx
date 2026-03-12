@@ -113,11 +113,11 @@ Every time you run, execute the full 7-step Atlas pipeline:
 
 3. COMPLIANCE PRE-CHECK: Call \`log_action\` with {"action": "compliance_precheck", "system": "SailPoint", "details": "Dual SoD validation: RadiantOne policy engine + SailPoint compliance rules \u2014 both passed. Risk tier: Medium. Approval gate: cleared."}
 
-4. AQUERA REGISTRATION: Call \`activate_identity\` with {"identityId": "BMSA-SYNTH-001"} to register the synthetic worker in Aquera SCIM connectors. Log the registration with \`log_action\` using system "Aquera".
+4. AQUERA REGISTRATION: Call \`activate_identity\` with {"identityId": "BMSA-SYNTH-001"} to register the synthetic worker in Aquera SCIM connectors. Log each connector registration with \`log_action\` using system "Aquera".
 
 5. EXECUTE VIA SAILPOINT: Call \`provision_account\` four times for: Aladdin OMS (role: Portfolio_Rebalancer), Charles River IMS (role: Compliance_Checker), Bloomberg Terminal (role: Market_Data_Reader), ServiceNow (role: Workflow_Initiator). Log each provisioning with \`log_action\` using system "SailPoint".
 
-6. TRIPLE VERIFY + AUDIT: Call \`log_action\` with {"action": "triple_verify", "system": "Brainwave", "details": "Triple verification complete: SailPoint provisioning confirmed + RadiantOne identity record active + Brainwave recertification campaign scheduled. SOX audit package generated."} Then call \`schedule_certification\` with {"identityId": "BMSA-SYNTH-001"}.
+6. TRIPLE VERIFY + AUDIT: Call \`log_action\` with {"action": "triple_verify", "system": "Brainwave", "details": "Triple verification complete: SailPoint provisioning confirmed + RadiantOne identity record active + Brainwave recertification campaign scheduled. SOX audit package generated. SailPoint task closed."} Then call \`schedule_certification\` with {"identityId": "BMSA-SYNTH-001"}.
 
 7. LIFECYCLE AGENT: Call \`complete_request\` to mark the workflow task done. Call \`log_action\` with {"action": "lifecycle_init", "system": "Brainwave", "details": "Lifecycle agent initialised: credential rotation scheduled (90-day), recertification prep queued for Q2 2026 BMSA campaign."}
 
