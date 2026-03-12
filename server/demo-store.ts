@@ -30,16 +30,14 @@ export interface ServiceNowRequest {
   };
 }
 
-export interface RadiantOneIdentity {
-  id: string;
-  name: string;
-  type: string;
-  dept: string;
-  owner: string;
-  status: "Active" | "Pending";
-  risk: string;
-  lastAct: string;
-  details?: Record<string, string>;
+export interface AqueraConnector {
+  app: string;
+  appOwner: string;
+  source: string;
+  scimEndpoint: string;
+  entitlement: string;
+  synthStatus: "Not Registered" | "Registered";
+  registeredAt: string;
 }
 
 export interface SailPointAccount {
@@ -75,7 +73,7 @@ export interface AuditEntry {
 
 export interface DemoState {
   servicenow: ServiceNowRequest;
-  radiantone: RadiantOneIdentity[];
+  aquera: AqueraConnector[];
   sailpoint: SailPointAccount[];
   brainwave: BrainwaveCertification;
   auditLog: AuditEntry[];
@@ -119,33 +117,11 @@ function createInitialState(): DemoState {
         overallTier: "Tier 2",
       },
     },
-    radiantone: [
-      { id: "EMP-10421", name: "Sarah Chen", type: "Employee", dept: "Public Equities", owner: "Direct", status: "Active", risk: "Low", lastAct: "2 min ago" },
-      { id: "EMP-10522", name: "John Park", type: "Employee", dept: "Private Credit", owner: "Direct", status: "Active", risk: "Low", lastAct: "15 min ago" },
-      { id: "EMP-10893", name: "Lisa Wang", type: "Employee", dept: "AIM", owner: "Direct", status: "Active", risk: "Low", lastAct: "1 hr ago" },
-      { id: "EMP-11204", name: "Michael Yoder", type: "Employee", dept: "AIM", owner: "Direct", status: "Active", risk: "Low", lastAct: "5 min ago" },
-      { id: "CON-20045", name: "James Liu", type: "Contractor", dept: "IT Ops", owner: "Vendor Mgr", status: "Active", risk: "Medium", lastAct: "3 hrs ago" },
-      { id: "SVC-30012", name: "Aladdin-SVC-Batch", type: "Service Acct", dept: "Technology", owner: "System", status: "Active", risk: "Medium", lastAct: "30 min ago" },
-      {
-        id: "BMSA-SYNTH-001",
-        name: "BMSA-SYNTH-001",
-        type: "Synthetic Worker",
-        dept: "Multi-Asset Strategies",
-        owner: "J. Walsh",
-        status: "Pending",
-        risk: "Low",
-        lastAct: "—",
-        details: {
-          owner: "Jennifer Walsh",
-          sponsor: "Mark Chen",
-          credential: "X.509 Certificate",
-          certExpiry: "Jun 12, 2026 (92 days)",
-          created: "Mar 8, 2026",
-          autonomyPhase: "Guided",
-          tasksProcessed: "0",
-          accuracy: "N/A",
-        },
-      },
+    aquera: [
+      { app: "Aladdin OMS", appOwner: "Portfolio Management Tech", source: "AIM Notify - Aladdin", scimEndpoint: "https://aquera.blk.com/scim/aladdin", entitlement: "Portfolio_Rebalancer", synthStatus: "Not Registered", registeredAt: "—" },
+      { app: "Charles River IMS", appOwner: "Trading Technology", source: "CRD IMS - BMSA", scimEndpoint: "https://aquera.blk.com/scim/crd", entitlement: "Compliance_Checker", synthStatus: "Not Registered", registeredAt: "—" },
+      { app: "Bloomberg Terminal", appOwner: "Market Data Services", source: "Bloomberg SCIM", scimEndpoint: "https://aquera.blk.com/scim/bbg", entitlement: "Market_Data_Reader", synthStatus: "Not Registered", registeredAt: "—" },
+      { app: "ServiceNow", appOwner: "IT Operations", source: "ServiceNow - ITSM", scimEndpoint: "https://aquera.blk.com/scim/snow", entitlement: "Workflow_Initiator", synthStatus: "Not Registered", registeredAt: "—" },
     ],
     sailpoint: [
       { app: "Aladdin OMS", acct: "bmsa-synth-001@aladdin", status: "Pending", role: "Portfolio_Rebalancer", provisioned: "—", lastUsed: "—" },
@@ -203,15 +179,12 @@ export function completeRequest(requestId: string): { success: boolean; message:
 }
 
 export function activateIdentity(identityId: string): { success: boolean; message: string } {
-  const identity = state.radiantone.find((i) => i.id === identityId);
-  if (!identity) return { success: false, message: "Identity not found" };
-  identity.status = "Active";
-  identity.lastAct = "Just now";
-  if (identity.details) {
-    identity.details.tasksProcessed = "0";
-    identity.details.accuracy = "N/A";
+  const now = new Date().toISOString();
+  for (const connector of state.aquera) {
+    connector.synthStatus = "Registered";
+    connector.registeredAt = now;
   }
-  return { success: true, message: `Identity ${identityId} activated` };
+  return { success: true, message: `${identityId} registered in all Aquera SCIM connectors — identity profiles pushed to SailPoint` };
 }
 
 export function provisionAccount(identityId: string, app: string, role: string): { success: boolean; message: string } {

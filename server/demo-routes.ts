@@ -48,17 +48,17 @@ demoRouter.post("/servicenow/requests/:id/complete", (req: Request, res: Respons
   res.json(result);
 });
 
-demoRouter.get("/radiantone/identities", (_req: Request, res: Response) => {
-  res.json({ identities: getState().radiantone });
+demoRouter.get("/aquera/connectors", (_req: Request, res: Response) => {
+  res.json({ connectors: getState().aquera });
 });
 
-demoRouter.get("/radiantone/identities/:id", (req: Request, res: Response) => {
-  const identity = getState().radiantone.find((i) => i.id === req.params.id);
-  if (!identity) return res.status(404).json({ error: "Identity not found" });
-  res.json(identity);
+demoRouter.get("/aquera/connectors/:app", (req: Request, res: Response) => {
+  const connector = getState().aquera.find((c) => c.app === req.params.app);
+  if (!connector) return res.status(404).json({ error: "Connector not found" });
+  res.json(connector);
 });
 
-demoRouter.post("/radiantone/identities/:id/activate", (req: Request, res: Response) => {
+demoRouter.post("/aquera/connectors/:id/activate", (req: Request, res: Response) => {
   const result = activateIdentity(req.params.id);
   res.json(result);
 });
@@ -119,7 +119,7 @@ export async function seedDemoMcpServer(storage: IStorage): Promise<void> {
   const server = await storage.createMcpServer({
     name: "BlackRock Synthetic Worker MCP",
     description:
-      "Mock MCP server for the BlackRock Synthetic Worker provisioning demo. Provides tools to poll ServiceNow, activate identities in RadiantOne, provision accounts in SailPoint, schedule certifications in Brainwave, and log audit actions.",
+      "Atlas Synthetic Worker Orchestrator for BlackRock. Implements the 7-step governed automation pipeline: Task Intake \u2192 Identity Validation \u2192 Compliance Pre-Check \u2192 Aquera Registration \u2192 Execute via SailPoint \u2192 Triple Verify + Audit \u2192 Lifecycle Agent.",
     url: `${BASE_URL}/demo-api`,
     transportType: "streamable-http",
     status: "production-enabled",
@@ -131,7 +131,7 @@ export async function seedDemoMcpServer(storage: IStorage): Promise<void> {
     {
       name: "check_pending_requests",
       description:
-        "Poll ServiceNow for approved, unprocessed Synthetic Worker access requests. Returns a list of requests ready for agent processing.",
+        "Poll the SailPoint workflow queue for approved, unprocessed Synthetic Worker access requests. Returns a list of requests ready for agent processing.",
       endpoint: "/servicenow/requests?status=approved&unprocessed=true",
       method: "GET",
       inputSchema: { type: "object", properties: {} },
@@ -139,7 +139,7 @@ export async function seedDemoMcpServer(storage: IStorage): Promise<void> {
     {
       name: "complete_request",
       description:
-        "Mark a ServiceNow request as fully processed after all provisioning steps are complete.",
+        "Mark a workflow task as fully processed after all provisioning and verification steps are complete.",
       endpoint: "/servicenow/requests/{requestId}/complete",
       method: "POST",
       inputSchema: {
@@ -153,13 +153,13 @@ export async function seedDemoMcpServer(storage: IStorage): Promise<void> {
     {
       name: "activate_identity",
       description:
-        "Activate a synthetic worker identity in RadiantOne Identity Data Platform.",
-      endpoint: "/radiantone/identities/{identityId}/activate",
+        "Register a synthetic worker identity against all Aquera SCIM application connectors, triggering Aquera to push the identity profile to SailPoint for provisioning.",
+      endpoint: "/aquera/connectors/{identityId}/activate",
       method: "POST",
       inputSchema: {
         type: "object",
         properties: {
-          identityId: { type: "string", description: "The identity ID to activate (e.g., AIM-SYNTH-001)" },
+          identityId: { type: "string", description: "The identity ID to register (e.g., BMSA-SYNTH-001)" },
         },
         required: ["identityId"],
       },
@@ -167,7 +167,7 @@ export async function seedDemoMcpServer(storage: IStorage): Promise<void> {
     {
       name: "provision_account",
       description:
-        "Provision an application account for a synthetic worker in SailPoint IdentityIQ.",
+        "Provision an application account for a synthetic worker via SailPoint IIQ connectors (Aquera-powered).",
       endpoint: "/sailpoint/provision",
       method: "POST",
       inputSchema: {
@@ -175,7 +175,7 @@ export async function seedDemoMcpServer(storage: IStorage): Promise<void> {
         properties: {
           identityId: { type: "string", description: "The identity ID to provision for" },
           app: { type: "string", description: "Application name (e.g., Aladdin OMS)" },
-          role: { type: "string", description: "Role to assign (e.g., AIM_Notify_Processor)" },
+          role: { type: "string", description: "Role to assign (e.g., Portfolio_Rebalancer)" },
         },
         required: ["identityId", "app", "role"],
       },
@@ -183,7 +183,7 @@ export async function seedDemoMcpServer(storage: IStorage): Promise<void> {
     {
       name: "schedule_certification",
       description:
-        "Schedule a Brainwave recertification for a synthetic worker identity.",
+        "Schedule a Brainwave/RadiantOne recertification for a synthetic worker identity.",
       endpoint: "/brainwave/certify/{identityId}",
       method: "POST",
       inputSchema: {
@@ -203,8 +203,8 @@ export async function seedDemoMcpServer(storage: IStorage): Promise<void> {
       inputSchema: {
         type: "object",
         properties: {
-          action: { type: "string", description: "Short action name (e.g., poll, activate_identity, provision_account)" },
-          system: { type: "string", description: "System name (e.g., ServiceNow, RadiantOne, SailPoint, Brainwave)" },
+          action: { type: "string", description: "Short action name (e.g., poll, identity_validation, compliance_precheck, provision_account, triple_verify)" },
+          system: { type: "string", description: "System name (e.g., ServiceNow, Aquera, SailPoint, Brainwave)" },
           details: { type: "string", description: "Human-readable description of what happened" },
         },
         required: ["action", "system", "details"],

@@ -46,16 +46,14 @@ interface ServiceNowRequest {
   riskAssessment: { dataSensitivity: string; regulatoryImpact: string; overallTier: string };
 }
 
-interface RadiantOneIdentity {
-  id: string;
-  name: string;
-  type: string;
-  dept: string;
-  owner: string;
-  status: "Active" | "Pending";
-  risk: string;
-  lastAct: string;
-  details?: Record<string, string>;
+interface AqueraConnector {
+  app: string;
+  appOwner: string;
+  source: string;
+  scimEndpoint: string;
+  entitlement: string;
+  synthStatus: "Not Registered" | "Registered";
+  registeredAt: string;
 }
 
 interface SailPointAccount {
@@ -95,8 +93,8 @@ interface AuditLogResponse {
   entries: AuditEntry[];
 }
 
-interface IdentitiesResponse {
-  identities: RadiantOneIdentity[];
+interface ConnectorsResponse {
+  connectors: AqueraConnector[];
 }
 
 interface AccountsResponse {
@@ -105,28 +103,46 @@ interface AccountsResponse {
 
 const POLL_INTERVAL = 3000;
 
-const SYSTEM_PROMPT = `You are the Atlas Synthetic Worker Orchestrator for BlackRock. Every time you run, call \`check_pending_requests\`. If the result is empty, call \`log_action\` with \`{"action": "poll", "system": "ServiceNow", "details": "No pending requests found."}\` and stop. If you find approved requests, process each one in sequence: (1) call \`log_action\` to record discovery, (2) call \`activate_identity\` with \`{"identityId": "BMSA-SYNTH-001"}\`, (3) call \`provision_account\` four times for apps: Aladdin OMS (role: Portfolio_Rebalancer), Charles River IMS (role: Compliance_Checker), Bloomberg Terminal (role: Market_Data_Reader), ServiceNow (role: Workflow_Initiator), logging each with \`log_action\`, (4) call \`schedule_certification\` with \`{"identityId": "BMSA-SYNTH-001"}\`, (5) call \`complete_request\` to mark the request done, (6) call \`log_action\` with a completion summary. Be concise. Always log every action.`;
+const SYSTEM_PROMPT = `You are the Atlas Synthetic Worker Orchestrator for BlackRock. You replace the manual analyst workflow with governed automation inside the same Aquera \u2192 SailPoint \u2192 Brainwave/RadiantOne governance pipeline.
+
+Every time you run, execute the full 7-step Atlas pipeline:
+
+1. TASK INTAKE: Call \`check_pending_requests\` to poll the SailPoint workflow queue. If empty, call \`log_action\` with {"action": "poll", "system": "SailPoint", "details": "No pending workflow tasks found."} and stop.
+
+2. IDENTITY VALIDATION: Call \`log_action\` with {"action": "identity_validation", "system": "SailPoint", "details": "Dual check: RadiantOne identity data + SailPoint entitlement schema validated for BMSA-SYNTH-001."}
+
+3. COMPLIANCE PRE-CHECK: Call \`log_action\` with {"action": "compliance_precheck", "system": "SailPoint", "details": "Dual SoD validation: RadiantOne policy engine + SailPoint compliance rules \u2014 both passed. Risk tier: Medium. Approval gate: cleared."}
+
+4. AQUERA REGISTRATION: Call \`activate_identity\` with {"identityId": "BMSA-SYNTH-001"} to register the synthetic worker in Aquera SCIM connectors. Log the registration with \`log_action\` using system "Aquera".
+
+5. EXECUTE VIA SAILPOINT: Call \`provision_account\` four times for: Aladdin OMS (role: Portfolio_Rebalancer), Charles River IMS (role: Compliance_Checker), Bloomberg Terminal (role: Market_Data_Reader), ServiceNow (role: Workflow_Initiator). Log each provisioning with \`log_action\` using system "SailPoint".
+
+6. TRIPLE VERIFY + AUDIT: Call \`log_action\` with {"action": "triple_verify", "system": "Brainwave", "details": "Triple verification complete: SailPoint provisioning confirmed + RadiantOne identity record active + Brainwave recertification campaign scheduled. SOX audit package generated."} Then call \`schedule_certification\` with {"identityId": "BMSA-SYNTH-001"}.
+
+7. LIFECYCLE AGENT: Call \`complete_request\` to mark the workflow task done. Call \`log_action\` with {"action": "lifecycle_init", "system": "Brainwave", "details": "Lifecycle agent initialised: credential rotation scheduled (90-day), recertification prep queued for Q2 2026 BMSA campaign."}
+
+Be concise. Always log every action. Never skip steps.`;
 
 const SYSTEM_COLORS: Record<string, string> = {
   ServiceNow: "bg-green-600",
-  RadiantOne: "bg-purple-600",
+  Aquera: "bg-blue-600",
   SailPoint: "bg-blue-600",
   Brainwave: "bg-purple-800",
 };
 
-function PipelineBanner({ activeScreen, servicenowDone, radiantoneDone, sailpointDone, brainwaveDone }: {
+function PipelineBanner({ activeScreen, servicenowDone, aqueraDone, sailpointDone, brainwaveDone }: {
   activeScreen: string;
   servicenowDone: boolean;
-  radiantoneDone: boolean;
+  aqueraDone: boolean;
   sailpointDone: boolean;
   brainwaveDone: boolean;
 }) {
   const nodes = [
     { id: "servicenow", label: "ServiceNow", done: servicenowDone },
     { id: "orchestrator", label: "Atlas Orchestrator", done: false, isOrchestrator: true },
-    { id: "radiantone", label: "RadiantOne", done: radiantoneDone },
+    { id: "aquera", label: "Aquera", done: aqueraDone },
     { id: "sailpoint", label: "SailPoint", done: sailpointDone },
-    { id: "brainwave", label: "Brainwave", done: brainwaveDone },
+    { id: "brainwave", label: "Brainwave / RadiantOne", done: brainwaveDone },
   ];
 
   return (
@@ -429,101 +445,74 @@ function ServiceNowScreen() {
   );
 }
 
-function RadiantOneScreen() {
-  const { data, isLoading } = useQuery<IdentitiesResponse>({
-    queryKey: ["/demo-api/radiantone/identities"],
+function AqueraScreen() {
+  const { data, isLoading } = useQuery<ConnectorsResponse>({
+    queryKey: ["/demo-api/aquera/connectors"],
     refetchInterval: POLL_INTERVAL,
   });
 
-  const [expanded, setExpanded] = useState<number | null>(null);
-
   if (isLoading || !data) return <div className="flex items-center justify-center h-64"><Loader2 className="w-6 h-6 animate-spin" /></div>;
 
-  const identities = data.identities ?? [];
-  const typeColors: Record<string, string> = {
-    Employee: "bg-blue-600",
-    Contractor: "bg-teal-600",
-    "Service Acct": "bg-gray-500",
-    "Synthetic Worker": "bg-orange-500",
-  };
+  const connectors = data.connectors ?? [];
+  const allRegistered = connectors.every((c) => c.synthStatus === "Registered");
 
   return (
-    <div className="space-y-4" data-testid="screen-radiantone">
-      <div className="bg-purple-900/20 border border-purple-700/40 rounded-lg px-4 py-2 flex items-center gap-3">
-        <span className="text-lg font-bold text-purple-400">RadiantOne</span>
-        <span className="text-purple-300/70 text-sm">Identity Data Platform</span>
-        <span className="ml-auto text-sm text-purple-300/70">Unified Identity Fabric</span>
+    <div className="space-y-4" data-testid="screen-aquera">
+      <div className="bg-blue-800/20 border border-blue-700/40 rounded-lg px-4 py-2 flex items-center gap-3">
+        <span className="text-lg font-bold text-blue-400">Aquera</span>
+        <span className="text-blue-300/70 text-sm">Application Onboarding Gateway</span>
+        <span className="ml-auto text-sm text-blue-300/70">SCIM 2.0 Connector Management</span>
       </div>
 
-      <h2 className="text-lg font-bold">All Identities</h2>
-
-      <div className="rounded-lg border overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-muted/50 text-muted-foreground text-xs uppercase">
-              <th className="text-left p-3">Identity ID</th>
-              <th className="text-left p-3">Name</th>
-              <th className="text-left p-3">Type</th>
-              <th className="text-left p-3">Department</th>
-              <th className="text-left p-3">Owner</th>
-              <th className="text-left p-3">Status</th>
-              <th className="text-left p-3">Risk</th>
-              <th className="text-left p-3">Last Activity</th>
-            </tr>
-          </thead>
-          <tbody>
-            {identities.map((id, i) => (
-              <tr
-                key={i}
-                onClick={() => setExpanded(expanded === i ? null : i)}
-                className={`border-t cursor-pointer transition-colors ${
-                  id.type === "Synthetic Worker"
-                    ? id.status === "Active"
-                      ? "bg-orange-500/10 hover:bg-orange-500/20"
-                      : "bg-muted/30 hover:bg-muted/50"
-                    : "hover:bg-muted/30"
-                } ${expanded === i ? "bg-muted/50" : ""}`}
-                data-testid={`row-identity-${id.id}`}
-              >
-                <td className="p-3 font-mono text-xs">{id.id}</td>
-                <td className="p-3 font-semibold">
-                  <span className="flex items-center gap-1.5">
-                    {id.type === "Synthetic Worker" && <span>&#x1F916;</span>}
-                    {id.name}
-                  </span>
-                </td>
-                <td className="p-3">
-                  <Badge className={`${typeColors[id.type] || "bg-gray-600"} text-white text-[10px]`}>{id.type}</Badge>
-                </td>
-                <td className="p-3">{id.dept}</td>
-                <td className="p-3">{id.owner}</td>
-                <td className="p-3">
-                  <span className={id.status === "Active" ? "text-green-400" : "text-muted-foreground"}>
-                    {id.status === "Active" ? "●" : "○"} {id.status}
-                  </span>
-                </td>
-                <td className="p-3">
-                  <span className={id.risk === "Medium" ? "text-yellow-400" : "text-green-400"}>{id.risk}</span>
-                </td>
-                <td className="p-3 text-muted-foreground">{id.lastAct}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        {expanded !== null && identities[expanded]?.type === "Synthetic Worker" && identities[expanded]?.details && (
-          <div className="bg-orange-500/10 border-t-2 border-orange-500 p-4">
-            <div className="grid grid-cols-4 gap-4 text-sm">
-              {Object.entries(identities[expanded].details).map(([key, val]: [string, any]) => (
-                <div key={key}>
-                  <span className="text-muted-foreground capitalize">{key.replace(/([A-Z])/g, " $1")}</span>
-                  <br />
-                  <span className="font-semibold">{val}</span>
-                </div>
-              ))}
-            </div>
-          </div>
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-bold">Registering BMSA-SYNTH-001 Synthetic Worker Identity</h2>
+        {allRegistered && (
+          <Badge className="bg-green-600 text-white">All Connectors Synced</Badge>
         )}
+      </div>
+
+      {allRegistered && (
+        <div className="bg-green-500/10 border border-green-500/30 rounded-lg px-4 py-3 text-sm text-green-400 font-semibold" data-testid="text-aquera-complete">
+          &#x2713; BMSA-SYNTH-001 registered in Aquera — identity profiles pushed to SailPoint
+        </div>
+      )}
+
+      <div className="space-y-3">
+        {connectors.map((c, i) => (
+          <Card key={i} className={`transition-all ${c.synthStatus === "Registered" ? "border-green-500/40 bg-green-500/5" : "border-border"}`} data-testid={`aquera-connector-${i}`}>
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-3">
+                  <div className="font-bold text-base">{c.app}</div>
+                  <span className="text-sm text-muted-foreground">&middot; {c.appOwner}</span>
+                </div>
+                <Badge className={c.synthStatus === "Registered" ? "bg-green-600 text-white" : "bg-yellow-600 text-white"}>
+                  {c.synthStatus === "Registered" ? "Registered \u2192 Syncing to SailPoint" : "Not Registered"}
+                </Badge>
+              </div>
+              <div className="grid grid-cols-4 gap-4 text-sm">
+                <div>
+                  <span className="text-muted-foreground text-xs">SailPoint Source</span>
+                  <div className="font-semibold">{c.source}</div>
+                </div>
+                <div>
+                  <span className="text-muted-foreground text-xs">Entitlement</span>
+                  <div><Badge variant="outline" className="text-xs">{c.entitlement}</Badge></div>
+                </div>
+                <div>
+                  <span className="text-muted-foreground text-xs">SCIM Endpoint</span>
+                  <div className="font-mono text-xs text-muted-foreground truncate">{c.scimEndpoint}</div>
+                </div>
+                <div>
+                  <span className="text-muted-foreground text-xs">Registered At</span>
+                  <div className={`text-sm ${c.registeredAt !== "\u2014" ? "text-green-400" : "text-muted-foreground"}`}>
+                    {c.registeredAt !== "\u2014" ? new Date(c.registeredAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "\u2014"}
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
       </div>
     </div>
   );
@@ -604,7 +593,7 @@ function SailPointScreen() {
                     <Badge variant={a.status === "Active" ? "default" : "secondary"} className={a.status === "Active" ? "bg-green-600 text-white" : ""}>
                       {a.status}
                     </Badge>
-                    <div className="text-xs text-muted-foreground mt-1">{a.provisioned !== "—" ? `Provisioned: ${a.provisioned}` : ""}</div>
+                    <div className="text-xs text-muted-foreground mt-1">{a.provisioned !== "\u2014" ? `Provisioned: ${a.provisioned}` : ""}</div>
                   </div>
                 </div>
               ))}
@@ -694,9 +683,23 @@ function BrainwaveScreen() {
   return (
     <div className="space-y-4" data-testid="screen-brainwave">
       <div className="bg-purple-800/20 border border-purple-700/40 rounded-lg px-4 py-2 flex items-center gap-3">
-        <span className="text-lg font-bold text-purple-400">Brainwave</span>
-        <span className="text-purple-300/70 text-sm">/ RadiantOne Identity Analytics</span>
-        <span className="ml-auto text-sm text-purple-300/70">Access Recertification</span>
+        <span className="text-lg font-bold text-purple-400">Brainwave / RadiantOne</span>
+        <span className="text-purple-300/70 text-sm">Identity Analytics &middot; Access Recertification &middot; 360&deg; Visibility</span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div className="bg-purple-500/5 border border-purple-500/20 rounded-lg px-4 py-3">
+          <div className="flex items-center gap-2 mb-1">
+            <Badge className="bg-purple-700 text-white text-[10px]">RadiantOne</Badge>
+          </div>
+          <p className="text-xs text-muted-foreground">Identity data aggregation, dual SoD validation source, triple-verify input</p>
+        </div>
+        <div className="bg-purple-500/5 border border-purple-500/20 rounded-lg px-4 py-3">
+          <div className="flex items-center gap-2 mb-1">
+            <Badge className="bg-purple-900 text-white text-[10px]">Brainwave</Badge>
+          </div>
+          <p className="text-xs text-muted-foreground">Access recertification campaigns, risk scoring, entitlement analytics</p>
+        </div>
       </div>
 
       <Card>
@@ -751,7 +754,7 @@ function BrainwaveScreen() {
                 <td className="p-3">{id.certifier}</td>
                 <td className="p-3">
                   <span className={id.status === "Certified" ? "text-green-400" : "text-yellow-400"}>
-                    {id.status === "Certified" ? "●" : "○"} {id.status}
+                    {id.status === "Certified" ? "\u25CF" : "\u25CB"} {id.status}
                   </span>
                 </td>
                 <td className="p-3">
@@ -807,8 +810,8 @@ export default function BlackRockDemo() {
     refetchInterval: POLL_INTERVAL,
   });
 
-  const { data: riData } = useQuery<IdentitiesResponse>({
-    queryKey: ["/demo-api/radiantone/identities"],
+  const { data: aqData } = useQuery<ConnectorsResponse>({
+    queryKey: ["/demo-api/aquera/connectors"],
     refetchInterval: POLL_INTERVAL,
   });
 
@@ -834,15 +837,15 @@ export default function BlackRockDemo() {
   const auditEntries = auditData?.entries ?? [];
 
   const servicenowDone = snData?.processed === true;
-  const radiantoneDone = riData?.identities?.find((i) => i.id === "BMSA-SYNTH-001")?.status === "Active";
+  const aqueraDone = (aqData?.connectors ?? []).every((c) => c.synthStatus === "Registered");
   const sailpointDone = (spData?.accounts ?? []).every((a) => a.status === "Active");
   const brainwaveDone = bwData?.identities?.find((i) => i.name === "BMSA-SYNTH-001")?.status === "Certified";
 
   const screens = [
     { id: "servicenow", label: "ServiceNow", color: "bg-green-700 hover:bg-green-600" },
-    { id: "radiantone", label: "RadiantOne", color: "bg-purple-700 hover:bg-purple-600" },
-    { id: "sailpoint", label: "SailPoint", color: "bg-blue-700 hover:bg-blue-600" },
-    { id: "brainwave", label: "Brainwave", color: "bg-purple-800 hover:bg-purple-700" },
+    { id: "aquera", label: "Aquera", color: "bg-blue-700 hover:bg-blue-600" },
+    { id: "sailpoint", label: "SailPoint IIQ", color: "bg-blue-700 hover:bg-blue-600" },
+    { id: "brainwave", label: "Brainwave / RadiantOne", color: "bg-purple-800 hover:bg-purple-700" },
   ];
 
   return (
@@ -850,7 +853,7 @@ export default function BlackRockDemo() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold" data-testid="text-demo-title">BlackRock Synthetic Worker Demo</h1>
-          <p className="text-sm text-muted-foreground">Live orchestration — ServiceNow &rarr; RadiantOne &rarr; SailPoint &rarr; Brainwave</p>
+          <p className="text-sm text-muted-foreground">Atlas Orchestrated &middot; Aquera &rarr; SailPoint &rarr; Brainwave/RadiantOne</p>
         </div>
         <div className="flex items-center gap-3">
           <PollCountdown auditLogLength={auditEntries.length} />
@@ -872,7 +875,7 @@ export default function BlackRockDemo() {
       <PipelineBanner
         activeScreen={activeScreen}
         servicenowDone={servicenowDone}
-        radiantoneDone={radiantoneDone}
+        aqueraDone={aqueraDone}
         sailpointDone={sailpointDone}
         brainwaveDone={brainwaveDone}
       />
@@ -895,7 +898,7 @@ export default function BlackRockDemo() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2">
           {activeScreen === "servicenow" && <ServiceNowScreen />}
-          {activeScreen === "radiantone" && <RadiantOneScreen />}
+          {activeScreen === "aquera" && <AqueraScreen />}
           {activeScreen === "sailpoint" && <SailPointScreen />}
           {activeScreen === "brainwave" && <BrainwaveScreen />}
         </div>
