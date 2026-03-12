@@ -5333,11 +5333,11 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
               />
               <div className="flex items-center gap-2 justify-end">
                 <Button variant="ghost" size="sm" onClick={() => { setShowFeedback(false); setFeedbackText(""); }} data-testid="button-cancel-feedback">Cancel</Button>
-                <Button variant="outline" size="sm" onClick={generateProposals} disabled={generating} data-testid="button-regenerate-fresh">
+                <Button variant="outline" size="sm" onClick={generateProposals} disabled={generatingFresh} data-testid="button-regenerate-fresh">
                   {generatingFresh ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}
                   Fresh Regenerate
                 </Button>
-                <Button size="sm" onClick={generateProposalsWithFeedback} disabled={generating || !feedbackText.trim()} data-testid="button-submit-feedback">
+                <Button size="sm" onClick={generateProposalsWithFeedback} disabled={generatingWithFeedback || !feedbackText.trim()} data-testid="button-submit-feedback">
                   {generatingWithFeedback ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}
                   Regenerate with Feedback
                 </Button>
