@@ -4162,11 +4162,11 @@ function AgentProposalCard({ agent, index, isOrchestrator, isSelected, onToggle,
               </div>
               <span className="text-[11px] text-emerald-700 dark:text-emerald-300 leading-snug">{agent.estimatedImpact}</span>
             </div>
-            <CollapsibleSection title="Role & Workflow" icon={<Workflow className="w-3 h-3" />} defaultOpen={false} count={agent.workflowSteps.length} testId={`section-workflow-${isOrchestrator ? "orch" : index}`}>
+            <CollapsibleSection title="Role & Workflow" icon={<Workflow className="w-3 h-3" />} defaultOpen={false} count={agent.workflowSteps?.length || 0} testId={`section-workflow-${isOrchestrator ? "orch" : index}`}>
               <div className="flex flex-col gap-2">
                 <span className="text-xs">{agent.role}</span>
                 <div className="flex items-center gap-1 flex-wrap">
-                  {agent.workflowSteps.map((step, j) => (
+                  {(agent.workflowSteps || []).map((step, j) => (
                     <span key={j} className="flex items-center gap-0.5">
                       {j > 0 && <ChevronRight className="w-2.5 h-2.5 text-muted-foreground" />}
                       <Badge variant="secondary" className="text-[9px]">{step}</Badge>
@@ -4175,10 +4175,10 @@ function AgentProposalCard({ agent, index, isOrchestrator, isSelected, onToggle,
                 </div>
               </div>
             </CollapsibleSection>
-            {(agent.tools.length > 0 || (agent.mcpToolBindings && agent.mcpToolBindings.length > 0)) && (
-              <CollapsibleSection title="Tools & MCP Bindings" icon={<Wrench className="w-3 h-3" />} defaultOpen={false} count={(agent.tools.length || 0) + (agent.mcpToolBindings?.length || 0)} testId={`section-tools-${isOrchestrator ? "orch" : index}`}>
+            {((agent.tools?.length || 0) > 0 || (agent.mcpToolBindings && agent.mcpToolBindings.length > 0)) && (
+              <CollapsibleSection title="Tools & MCP Bindings" icon={<Wrench className="w-3 h-3" />} defaultOpen={false} count={(agent.tools?.length || 0) + (agent.mcpToolBindings?.length || 0)} testId={`section-tools-${isOrchestrator ? "orch" : index}`}>
                 <div className="flex flex-col gap-2">
-                  {agent.tools.length > 0 && (
+                  {(agent.tools?.length || 0) > 0 && (
                     <div className="flex flex-wrap gap-1">
                       {agent.tools.map((tool, j) => (
                         <Badge key={j} variant="outline" className="text-[9px]">{tool.name}</Badge>
@@ -4195,10 +4195,10 @@ function AgentProposalCard({ agent, index, isOrchestrator, isSelected, onToggle,
                 </div>
               </CollapsibleSection>
             )}
-            {agent.kpiBindings.length > 0 && (
-              <CollapsibleSection title="KPI Bindings" icon={<BarChart3 className="w-3 h-3" />} defaultOpen={false} count={agent.kpiBindings.length} testId={`section-kpi-${isOrchestrator ? "orch" : index}`}>
+            {(agent.kpiBindings?.length || 0) > 0 && (
+              <CollapsibleSection title="KPI Bindings" icon={<BarChart3 className="w-3 h-3" />} defaultOpen={false} count={agent.kpiBindings?.length || 0} testId={`section-kpi-${isOrchestrator ? "orch" : index}`}>
                 <div className="flex flex-wrap gap-1">
-                  {agent.kpiBindings.map((kpi, j) => (
+                  {(agent.kpiBindings || []).map((kpi, j) => (
                     <Badge key={j} variant="outline" className="text-[9px] text-green-600 dark:text-green-400 border-green-200 dark:border-green-800">{kpi}</Badge>
                   ))}
                 </div>
