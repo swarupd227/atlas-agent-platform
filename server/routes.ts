@@ -11786,7 +11786,10 @@ SYSTEM EXTRACTION & MCP GAP ANALYSIS (MANDATORY — DO THIS FIRST)
 ═══════════════════════════════════════════
 Before proposing any agents, you MUST extract ALL external systems mentioned in the outcome contract.
 
-Step 1 — EXTRACT: Read the outcome contract's description, system prompt, workflow steps, and KPI definitions. Identify every external system, platform, API, database, or application mentioned by name. Examples: "SailPoint", "Aquera", "Bloomberg Terminal", "Aladdin OMS", "ServiceNow", "Brainwave", "RadiantOne", "Charles River IMS", "Salesforce", "Marketo", etc.
+Step 1 — EXTRACT: Read TWO sources to build the full systems list:
+  (a) The outcome contract's description, system prompt, workflow steps, and KPI definitions. Identify every external system, platform, API, database, or application mentioned by name.
+  (b) The description field of EVERY MCP tool in the MCP SERVERS & TOOLS registry above. Tool descriptions often name underlying real-world platforms the tool interacts with (e.g., a tool described as "Register identity against Aquera SCIM connectors, triggering Aquera to push to SailPoint" means both "Aquera" and "SailPoint" are systems). Extract ALL such platform names as additional systems.
+Combine both sources into a single deduplicated systems list. Examples: "SailPoint", "Aquera", "Bloomberg Terminal", "Aladdin OMS", "ServiceNow", "Brainwave", "RadiantOne", "Charles River IMS", "Salesforce", "Marketo", "Workday", "CyberArk", etc.
 
 Step 2 — CHECK COVERAGE: For each extracted system, check the MCP SERVERS & TOOLS registry provided above. Determine the coverage status:
   - "covered": An existing MCP server in the registry handles this system and has the required tools.
@@ -11810,7 +11813,7 @@ CRITICAL GUIDELINES
 8. NO DUPLICATES: Do not propose agents that overlap with existing agents already created for this outcome.
 9. REGULATORY AWARENESS: Include applicable regulatory frameworks as complianceTags. Reference linkedRegulations from ontology concepts.
 10. SYSTEM PROMPTS: Generate detailed, industry-specific system prompts that reference the agent's domain, ontology concepts, compliance requirements, and KPI responsibilities.
-11. Propose 2-4 worker agents + 1 orchestrator.
+11. Propose as many worker agents as the workflow has distinct stages — typically 2–7. One agent per major workflow step or governance checkpoint. Do NOT collapse multiple distinct systems or governance steps into one agent just to fit a small count. Quality of alignment to the outcome's actual workflow beats brevity. Always include 1 orchestrator.
 12. KNOWLEDGE BASE GROUNDING: Assign relevant Knowledge Bases from the registry to agents that need domain-specific RAG grounding. Use exact KB IDs and names. Agents doing research, analysis, or compliance checks benefit most from KB linkage.
 13. STRUCTURED OUTPUT SCHEMA: For each worker agent that retrieves, processes, scores, or classifies batches of data records (leads, transactions, claims, patients, items, etc.), you MUST define an outputSchema with type="record_list". The fields array should describe the per-record structured output the agent must produce — include id, name/label, score (0-100), decision/classification, reasoning, and any domain-specific fields (e.g. escalation, riskLevel). Workers that only produce aggregate summaries or single metrics should use type="summary". The description should clearly state what each record represents. This enables the platform to render per-record results as interactive data tables.
 
