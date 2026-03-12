@@ -416,6 +416,77 @@ const WORKER_MCP_CONFIG = [
   },
 ];
 
+const WORKER_AGENT_BLUEPRINTS: Record<string, object> = {
+  "c21b6549-e24d-4384-b667-9032619e3dd7": {
+    nodes: [
+      { id: "n1", type: "trigger",       label: "ServiceNow Request Intake" },
+      { id: "n2", type: "policy_check",  label: "Compliance Pre-Check" },
+      { id: "n3", type: "tool_call",     label: "SCIM Register — Aladdin OMS" },
+      { id: "n4", type: "tool_call",     label: "SCIM Register — Charles River IMS" },
+      { id: "n5", type: "tool_call",     label: "SCIM Register — Bloomberg Terminal" },
+      { id: "n6", type: "tool_call",     label: "SCIM Register — ServiceNow" },
+      { id: "n7", type: "tool_call",     label: "Verify Registration Status (×4)" },
+      { id: "n8", type: "audit_log",     label: "Provisioning Audit Event" },
+      { id: "n9", type: "output",        label: "Identity Registered ✓" },
+    ],
+    edges: [
+      { from: "n1", to: "n2" }, { from: "n2", to: "n3" },
+      { from: "n3", to: "n4" }, { from: "n4", to: "n5" },
+      { from: "n5", to: "n6" }, { from: "n6", to: "n7" },
+      { from: "n7", to: "n8" }, { from: "n8", to: "n9" },
+    ],
+  },
+  "dacfb0d1-9e9e-4b4f-b0be-6f2824c5c05f": {
+    nodes: [
+      { id: "n1", type: "trigger",      label: "Aquera Registration Complete" },
+      { id: "n2", type: "tool_call",    label: "Provision Entitlement — Aladdin OMS" },
+      { id: "n3", type: "tool_call",    label: "Provision Entitlement — Charles River IMS" },
+      { id: "n4", type: "tool_call",    label: "Provision Entitlement — Bloomberg Terminal" },
+      { id: "n5", type: "tool_call",    label: "Provision Entitlement — ServiceNow" },
+      { id: "n6", type: "tool_call",    label: "Validate All Entitlements (×4)" },
+      { id: "n7", type: "policy_check", label: "Compliance Validation" },
+      { id: "n8", type: "output",       label: "Entitlements Active ✓" },
+    ],
+    edges: [
+      { from: "n1", to: "n2" }, { from: "n2", to: "n3" },
+      { from: "n3", to: "n4" }, { from: "n4", to: "n5" },
+      { from: "n5", to: "n6" }, { from: "n6", to: "n7" },
+      { from: "n7", to: "n8" },
+    ],
+  },
+  "67de43a1-c6b1-4f3a-b354-39140e6128a3": {
+    nodes: [
+      { id: "n1", type: "trigger",      label: "SailPoint Entitlements Confirmed" },
+      { id: "n2", type: "tool_call",    label: "Activate Identity (RadiantOne)" },
+      { id: "n3", type: "tool_call",    label: "Sync Directory Attributes" },
+      { id: "n4", type: "tool_call",    label: "Validate Data Lineage" },
+      { id: "n5", type: "audit_log",    label: "SR 11-7 Lineage Audit Record" },
+      { id: "n6", type: "output",       label: "Directory Synchronized ✓" },
+    ],
+    edges: [
+      { from: "n1", to: "n2" }, { from: "n2", to: "n3" },
+      { from: "n3", to: "n4" }, { from: "n4", to: "n5" },
+      { from: "n5", to: "n6" },
+    ],
+  },
+  "e57e6394-c256-46cd-b0be-86510ab0a1be": {
+    nodes: [
+      { id: "n1", type: "trigger",     label: "RadiantOne Sync Complete" },
+      { id: "n2", type: "tool_call",   label: "Retrieve Audit Trail" },
+      { id: "n3", type: "tool_call",   label: "Monitor Access Events" },
+      { id: "n4", type: "conditional", label: "Anomalies Detected?" },
+      { id: "n5", type: "tool_call",   label: "Schedule Lifecycle Recertification" },
+      { id: "n6", type: "audit_log",   label: "IOSCO / SR 11-7 Compliance Report" },
+      { id: "n7", type: "output",      label: "Access Certified ✓" },
+    ],
+    edges: [
+      { from: "n1", to: "n2" }, { from: "n2", to: "n3" },
+      { from: "n3", to: "n4" }, { from: "n4", to: "n5" },
+      { from: "n5", to: "n6" }, { from: "n6", to: "n7" },
+    ],
+  },
+};
+
 const WORKER_AGENT_TASKS: Record<string, { task: string; scheduleIntervalMinutes: number }> = {
   "c21b6549-e24d-4384-b667-9032619e3dd7": {
     task: "Receive the ServiceNow-approved provisioning request for synthetic worker BMSA-SYNTH-001 and register its identity across all 4 SCIM connectors (Aladdin OMS, Charles River IMS, Bloomberg Terminal, ServiceNow) via Aquera. Run compliance pre-checks before each registration and confirm status after each step.",
@@ -461,15 +532,21 @@ export async function seedWorkerMcpEndpoints(storage: IStorage): Promise<void> {
     }
   }
 
-  // Ensure each worker agent has a human-readable task description in runtimeConfig
+  // Ensure each worker agent has a human-readable task description and blueprint workflow graph
   for (const [agentId, cfg] of Object.entries(WORKER_AGENT_TASKS)) {
     const agent = await storage.getAgent(agentId);
     if (!agent) continue;
     const rc = (agent.runtimeConfig as Record<string, any>) || {};
+    const updates: Record<string, any> = {};
     if (rc.prompt !== cfg.task) {
-      await storage.updateAgent(agentId, {
-        runtimeConfig: { ...rc, prompt: cfg.task, scheduleIntervalMinutes: cfg.scheduleIntervalMinutes },
-      });
+      updates.runtimeConfig = { ...rc, prompt: cfg.task, scheduleIntervalMinutes: cfg.scheduleIntervalMinutes };
+    }
+    const blueprint = WORKER_AGENT_BLUEPRINTS[agentId];
+    if (blueprint && !agent.blueprintJson) {
+      updates.blueprintJson = blueprint;
+    }
+    if (Object.keys(updates).length > 0) {
+      await storage.updateAgent(agentId, updates);
     }
   }
 }
