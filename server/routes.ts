@@ -11619,21 +11619,114 @@ You MUST incorporate this feedback into the new plan. Adjust the agents, roles, 
         return null;
       }
 
+      function parseDeclaredStages(description: string): string[] {
+        if (!description) return [];
+        const parts = description.split("→");
+        if (parts.length < 3) return [];
+        return parts.map((s, i) => {
+          let clean = s.trim();
+          if (i === 0) {
+            // First part may have "7-step pipeline: Stage Name" prefix
+            const colonIdx = clean.lastIndexOf(":");
+            if (colonIdx !== -1) clean = clean.slice(colonIdx + 1).trim();
+          }
+          // Remove trailing sentence content (after period, comma, or "Provides")
+          clean = clean.split(/\.\s+[A-Z]/)[0].replace(/[.,]$/, "").trim();
+          return clean;
+        }).filter(s => s.length > 0);
+      }
+
+      function extractCoveredSystemsFromText(textParts: string[]): string[] {
+        // Generic words that are NOT system names — any proper-noun group starting with these is skipped
+        const genericFirstWords = new Set([
+          "The", "A", "An", "This", "All", "Each", "New", "Old", "Synthetic", "Worker",
+          "Mock", "Demo", "Created", "Approved", "Poll", "Activate", "Provision", "Schedule",
+          "Log", "Mark", "Record", "Returns", "Every", "Agent", "Action", "Real", "MCP",
+          "Tool", "Server", "API", "Platform", "Registry", "Process", "Data", "Access",
+          "Identity", "Request", "Response", "System", "Service", "Application",
+          "Task", "Stage", "Step", "Pipeline", "Workflow", "Account", "Management",
+          "Lifecycle", "Compliance", "Validation", "Verification", "Audit",
+          "Registration", "Provisioning", "Certification", "Intake", "Review", "Check",
+          "Triple", "Governed", "Provides", "Registered",
+        ]);
+        const propNounPattern = /\b([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+){0,2})\b/g;
+        const systems = new Set<string>();
+        for (const text of textParts) {
+          if (!text) continue;
+          for (const match of text.matchAll(propNounPattern)) {
+            const name = match[1].trim();
+            const firstWord = name.split(" ")[0];
+            if (!genericFirstWords.has(firstWord) && name.length > 3) {
+              // Strip trailing generic words from multi-word matches
+              const words = name.split(" ");
+              const trimmed = words.filter((w, i) => i === 0 || !genericFirstWords.has(w)).join(" ");
+              systems.add(trimmed.trim());
+            }
+          }
+        }
+        return Array.from(systems);
+      }
+
       const mcpToolSummary = Object.entries(mcpToolsByServer).map(([serverName, tools]) => {
         const serverRecord = allMcpServers.find(s => s.name === serverName);
         const serverDescription = serverRecord?.description || null;
         const declaredStageCount = serverDescription ? parseDeclaredStageCount(serverDescription) : null;
+        const declaredStages = serverDescription ? parseDeclaredStages(serverDescription) : [];
+        const toolSlice = tools.slice(0, 10).map(t => ({
+          name: t.name,
+          description: t.description,
+          schemaEntityHints: extractSchemaEntityHints(t.inputSchema),
+        }));
+        // Coverage = systems with ACTUAL MCP tools (tool descriptions only, not server description)
+        const coveredSystems = extractCoveredSystemsFromText(toolSlice.map(t => t.description || ""));
         return {
           server: serverName,
           serverDescription,
           declaredStageCount,
-          tools: tools.slice(0, 10).map(t => ({
-            name: t.name,
-            description: t.description,
-            schemaEntityHints: extractSchemaEntityHints(t.inputSchema),
-          })),
+          declaredStages,
+          coveredSystems,
+          tools: toolSlice,
         };
       });
+
+      // Pre-compute agent blueprint and coverage ground truth for injection into prompt
+      interface StagedPipeline { server: string; count: number; stages: string[]; coveredSystems: string[] }
+      const stagedPipelines: StagedPipeline[] = mcpToolSummary
+        .filter(s => s.declaredStageCount && s.declaredStageCount >= 2 && s.declaredStages.length >= 2)
+        .map(s => ({ server: s.server, count: s.declaredStageCount!, stages: s.declaredStages, coveredSystems: s.coveredSystems }));
+
+      // Build system→server coverage map: any system name found in coveredSystems → that server
+      const systemCoverageGT: Record<string, string> = {};
+      for (const entry of mcpToolSummary) {
+        for (const sys of entry.coveredSystems) {
+          systemCoverageGT[sys] = entry.server;
+        }
+      }
+
+      const mandateSection = stagedPipelines.length > 0 ? (() => {
+        const top = stagedPipelines[0];
+        const stageLines = top.stages.map((s, i) => `  Stage ${i + 1}: "${s}" → create one dedicated worker agent named after this stage`).join("\n");
+        const coveredLines = top.coveredSystems.length > 0
+          ? top.coveredSystems.map(s => `  - ${s}: COVERED by "${top.server}" (has MCP tools)`).join("\n")
+          : "  (none detected from tool descriptions)";
+        return `
+⚡⚡⚡ MANDATORY AGENT BLUEPRINT — HIGHEST PRIORITY — OVERRIDE ALL OTHER REASONING ⚡⚡⚡
+════════════════════════════════════════════════════════════════════════════
+The registered MCP server "${top.server}" declares a ${top.count}-stage pipeline.
+
+YOU MUST CREATE EXACTLY ${top.count} WORKER AGENTS — one for each stage listed below.
+DO NOT merge stages. DO NOT skip stages. DO NOT create fewer than ${top.count} workers.
+
+REQUIRED STAGES (create one worker agent per stage):
+${stageLines}
+
+PRE-COMPUTED SYSTEM COVERAGE (DO NOT OVERRIDE — use these as-is in systemsExtracted):
+${coveredLines}
+  - Systems named in the outcome contract as "critical systems" targets (e.g. Aladdin OMS, Charles River IMS, Bloomberg Terminal) are target_system entries — they are NOT orchestration pipeline systems and must NOT appear in mcpGaps.
+
+────────────────────────────────────────────────────────────────────────────
+`;
+      })() : "";
 
       const policySummary = activePolicies.map(p => ({
         name: p.name,
@@ -11672,7 +11765,7 @@ You MUST incorporate this feedback into the new plan. Adjust the agents, roles, 
       const { id: _oid, createdAt: _oCreated, ...outcomeDetails } = outcomeContract || {} as any;
 
       const systemPrompt = `You are an Agent Proposal Generator for the Nous Agent Orchestrator (ALMP) platform. You have access to the full platform intelligence. Generate a multi-agent pipeline that leverages REAL platform resources — not generic placeholders.
-${feedbackSection}
+${mandateSection}${feedbackSection}
 
 ═══════════════════════════════════════════
 OUTCOME CONTRACT (the business goal to deliver)
@@ -11849,13 +11942,14 @@ Combine all four sources into a single deduplicated list by system name.
 
 ABSTENTION RULE: If you are uncertain whether a name refers to a real external system vs. an internal concept or generic term, omit it. Do NOT add placeholder systems like "HR System", "ERP System", or "Identity Provider" unless those exact strings appear verbatim in the source text.
 
-Step 2 — CHECK COVERAGE (orchestration_systems ONLY): For each "orchestration_system" entry, check the MCP SERVERS & TOOLS registry. Determine coverage:
-  - "covered": An existing MCP server handles this system and has the required tools.
-  - "partial": An MCP server exists but is missing some required capabilities.
-  - "missing": No MCP server covers this system at all.
-  For "target_system" entries, set mcpCoverage = "not_applicable" — they do NOT need MCP coverage since the orchestrator never calls them directly.
+Step 2 — ASSIGN COVERAGE (use PRE-COMPUTED values — DO NOT compute independently):
+  If a MANDATORY AGENT BLUEPRINT section appears at the top of this prompt, it contains a "PRE-COMPUTED SYSTEM COVERAGE" list. Use those coverage values EXACTLY as stated:
+  - Systems listed as "COVERED" → set mcpCoverage = "covered", existingMcpServer = the server name shown
+  - Systems NOT in the covered list but that are orchestration_systems → set mcpCoverage = "missing"
+  - target_system entries → set mcpCoverage = "not_applicable"
+  Do NOT override pre-computed coverage values. Do NOT mark covered systems as missing.
 
-Step 3 — OUTPUT: Include ALL extracted systems in "systemsExtracted". Only add entries to "mcpGaps" for "orchestration_system" entries with "missing" or "partial" coverage. Do NOT add target_systems to mcpGaps.
+Step 3 — OUTPUT: Include ALL extracted systems in "systemsExtracted". Only add entries to "mcpGaps" for "orchestration_system" entries with "missing" coverage. Do NOT add target_systems to mcpGaps. Do NOT add covered orchestration_systems to mcpGaps.
 
 For each agent you propose, reference the specific external systems it interacts with in its description and workflowSteps — do NOT use only generic tool names.
 
