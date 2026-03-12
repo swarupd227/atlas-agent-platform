@@ -3545,7 +3545,7 @@ function PipelineVisualization({ orchestrator, agents, pipeline }: {
   pipeline: PipelineDefinition | null;
 }) {
   const patternInfo = PATTERN_LABELS[pipeline?.pattern || "supervisor"] || PATTERN_LABELS.supervisor;
-  const totalTools = agents.reduce((sum, a) => sum + a.tools.length + (a.mcpToolBindings?.length || 0), 0) + orchestrator.tools.length + (orchestrator.mcpToolBindings?.length || 0);
+  const totalTools = agents.reduce((sum, a) => sum + (a.tools?.length || 0) + (a.mcpToolBindings?.length || 0), 0) + (orchestrator.tools?.length || 0) + (orchestrator.mcpToolBindings?.length || 0);
   const [reasoningOpen, setReasoningOpen] = useState(false);
   const [dependencyMatrixOpen, setDependencyMatrixOpen] = useState(false);
   const [integrationsOpen, setIntegrationsOpen] = useState(false);
