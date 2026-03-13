@@ -443,19 +443,19 @@ function ServiceNowScreen() {
                   data-testid="button-approve-step"
                 >
                   {approveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-                  Simulate: Approve Next Step
+                  Approve Next Step
                 </Button>
               )}
 
               {allApproved && !req.processed && (
                 <div className="mt-3 bg-green-500/10 border border-green-500/30 rounded p-2 text-center text-sm text-green-400 font-semibold" data-testid="text-fully-approved">
-                  All Approvals Complete — Atlas Agent will detect this on next poll
+                  All Approvals Complete — Pipeline will proceed automatically
                 </div>
               )}
 
               {req.processed && (
                 <div className="mt-3 bg-blue-500/10 border border-blue-500/30 rounded p-2 text-center text-sm text-blue-400 font-semibold" data-testid="text-processed">
-                  Processed by Atlas Agent
+                  Provisioning Request Processed
                 </div>
               )}
             </CardContent>
@@ -833,7 +833,7 @@ function BrainwaveScreen() {
               ))}
             </div>
             <div className="text-xs text-orange-300/80">
-              Atlas-provided insight: All 4 application entitlements actively used in the last 30 days. No excess access detected. Worker operating in Guided Autonomy phase. Recommend: Certify all access.
+              Brainwave Intelligence: All 4 application entitlements actively used in the last 30 days. No excess access detected. Worker operating within defined scope. Recommendation: Certify all access.
             </div>
           </CardContent>
         </Card>
@@ -1019,7 +1019,7 @@ function SodContextView({ onTrigger, isPending }: { onTrigger: () => void; isPen
               ))}
             </div>
             <p className="text-xs text-amber-300/80">
-              Without ATLAS, this grant is invisible to SailPoint. A standard IGA review would never flag it.
+              This grant exists only in Active Directory — outside SailPoint's provisioning scope. A standard IGA review would not detect it.
             </p>
           </CardContent>
         </Card>
@@ -1032,7 +1032,7 @@ function SodContextView({ onTrigger, isPending }: { onTrigger: () => void; isPen
           </CardHeader>
           <CardContent className="px-4 pb-4 space-y-3 text-sm">
             <p className="text-muted-foreground text-xs">
-              New entitlement request for BMSA-SYNTH-001, now entering the ATLAS pipeline:
+              New entitlement request for BMSA-SYNTH-001 entering the provisioning pipeline:
             </p>
             <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 space-y-2">
               {[
@@ -1068,10 +1068,10 @@ function SodContextView({ onTrigger, isPending }: { onTrigger: () => void; isPen
           <div className="flex items-center justify-between gap-4">
             <div>
               <h3 className="font-bold text-orange-400 flex items-center gap-2">
-                <Zap className="w-4 h-4" /> Run the ATLAS Pipeline
+                <Zap className="w-4 h-4" /> Run Pipeline
               </h3>
               <p className="text-sm text-muted-foreground mt-1">
-                The Orchestrator agent picks up REQ0084721 and routes it through the provisioning pipeline. Aquera's compliance gate will cross-reference the full identity fabric — including the AD grant that SailPoint cannot see — and halt provisioning before any entitlement moves.
+                REQ0084721 enters the provisioning pipeline. Aquera's compliance gate cross-references the full identity fabric — including the AD grant that SailPoint cannot see — and halts provisioning before any entitlement moves.
               </p>
             </div>
             <Button
@@ -1090,7 +1090,7 @@ function SodContextView({ onTrigger, isPending }: { onTrigger: () => void; isPen
       {/* Without ATLAS callout */}
       <Card className="border-muted/40">
         <CardHeader className="py-3 px-4">
-          <CardTitle className="text-xs text-muted-foreground uppercase tracking-wider">Without ATLAS — The Manual Reality</CardTitle>
+          <CardTitle className="text-xs text-muted-foreground uppercase tracking-wider">The Manual Reality — Without Governed Automation</CardTitle>
         </CardHeader>
         <CardContent className="px-4 pb-4">
           <div className="grid grid-cols-3 gap-3 text-sm">
@@ -1301,7 +1301,7 @@ function SodViolationCard({ sod, onNext }: { sod: SodViolationState; onNext: () 
           </div>
 
           <div className="bg-muted/30 rounded-lg p-3 border border-border/40">
-            <div className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">ATLAS Analysis</div>
+            <div className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">Compliance Analysis</div>
             <p className="text-sm">
               Granting both <span className="font-mono text-amber-300">Order_Approver</span> and <span className="font-mono text-blue-300">Portfolio_Rebalancer</span> to the same identity creates a complete, unbroken approval chain under a single control point. Under SOX §404, the initiator and approver of financial transactions must be separate entities. This configuration would allow BMSA-SYNTH-001 to stage <em>and</em> approve its own trades — a direct SOX wall violation with material financial reporting risk.
             </p>
@@ -1482,7 +1482,7 @@ function SodResolutionPanel({
           <div className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Platform Value Delivered</div>
           <div className="grid grid-cols-2 gap-4 text-sm">
             <div className="space-y-2">
-              <div className="font-semibold text-green-400">With ATLAS</div>
+              <div className="font-semibold text-green-400">Governed Pipeline</div>
               {[
                 "Violation caught before any entitlement granted",
                 "Zero manual analyst effort required",
@@ -1496,7 +1496,7 @@ function SodResolutionPanel({
               ))}
             </div>
             <div className="space-y-2">
-              <div className="font-semibold text-red-400">Without ATLAS</div>
+              <div className="font-semibold text-red-400">Manual Approach</div>
               {[
                 "Manual analyst checks 4 apps × 1,200 daily events",
                 "AD grant invisible to SailPoint — never cross-referenced",
@@ -1636,7 +1636,7 @@ export default function BlackRockDemo() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold" data-testid="text-demo-title">BlackRock Synthetic Worker Demo</h1>
-          <p className="text-sm text-muted-foreground">Atlas Orchestrated | Same Pipeline, Governed Automation</p>
+          <p className="text-sm text-muted-foreground">Governed Identity Automation | BlackRock Enterprise</p>
         </div>
         <div className="flex items-center gap-3">
           {activeScenario === "scenario1" && (
