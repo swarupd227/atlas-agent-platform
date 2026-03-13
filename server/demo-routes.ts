@@ -8,6 +8,9 @@ import {
   certifyIdentity,
   addAuditEntry,
   resetDemo,
+  getSodViolation,
+  triggerSodViolation,
+  resolveSodViolation,
 } from "./demo-store";
 import type { IStorage } from "./storage";
 
@@ -66,6 +69,32 @@ demoRouter.post("/aquera/connectors/:id/activate", (req: Request, res: Response)
 
 // ── Aquera SCIM worker agent tools ──────────────────────────────────────────
 demoRouter.post("/aquera/scim/compliance-check", (_req: Request, res: Response) => {
+  const sod = getSodViolation();
+  if (sod.active && !sod.resolutionPath) {
+    return res.json({
+      success: false,
+      passed: false,
+      checks: [
+        {
+          rule: "SoD Conflict Check",
+          status: "fail",
+          detail: `VIOLATION: Portfolio_Rebalancer (requested) conflicts with Order_Approver (existing manual grant) on Aladdin OMS — SOX §404 Separation of Duties. Provisioning halted.`,
+        },
+        { rule: "Risk Tier Validation", status: "pass", detail: "Identity risk tier MEDIUM is within acceptable threshold" },
+        { rule: "Regulatory Scope", status: "pass", detail: "IOSCO Code of Conduct and SR 11-7 compliance confirmed" },
+      ],
+      violation: {
+        type: "SoD_CONFLICT",
+        regulation: "SOX §404",
+        requestedRole: "Portfolio_Rebalancer",
+        conflictingRole: "Order_Approver",
+        application: "Aladdin OMS",
+        incidentId: "INC-SOD-20260313",
+      },
+      identityId: "BMSA-SYNTH-001",
+      timestamp: new Date().toISOString(),
+    });
+  }
   res.json({
     success: true,
     passed: true,
@@ -77,6 +106,25 @@ demoRouter.post("/aquera/scim/compliance-check", (_req: Request, res: Response) 
     identityId: "BMSA-SYNTH-001",
     timestamp: new Date().toISOString(),
   });
+});
+
+// ── SoD Violation (Scenario 2) ───────────────────────────────────────────────
+demoRouter.get("/sod-violation", (_req: Request, res: Response) => {
+  res.json(getSodViolation());
+});
+
+demoRouter.post("/sod-violation/trigger", (_req: Request, res: Response) => {
+  const result = triggerSodViolation();
+  res.json(result);
+});
+
+demoRouter.post("/sod-violation/resolve", (req: Request, res: Response) => {
+  const { path, resolvedBy } = req.body;
+  if (path !== "revoke" && path !== "exception") {
+    return res.status(400).json({ error: "path must be 'revoke' or 'exception'" });
+  }
+  const result = resolveSodViolation(path, resolvedBy);
+  res.json(result);
 });
 
 demoRouter.post("/aquera/scim/register", (req: Request, res: Response) => {

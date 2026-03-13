@@ -36,8 +36,13 @@ export interface AqueraConnector {
   source: string;
   scimEndpoint: string;
   entitlement: string;
-  synthStatus: "Not Registered" | "Registered";
+  synthStatus: "Not Registered" | "Registered" | "Policy Blocked";
   registeredAt: string;
+  sodBlock?: {
+    conflictingRole: string;
+    violationType: string;
+    regulation: string;
+  };
 }
 
 export interface SailPointAccount {
@@ -71,15 +76,46 @@ export interface AuditEntry {
   details: string;
 }
 
+export interface SodViolationState {
+  active: boolean;
+  conflictDetectedAt: string | null;
+  requestedRole: string;
+  conflictingRole: string;
+  application: string;
+  violationType: string;
+  regulation: string;
+  regulationSection: string;
+  resolutionPath: "revoke" | "exception" | null;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
+}
+
 export interface DemoState {
   servicenow: ServiceNowRequest;
   aquera: AqueraConnector[];
   sailpoint: SailPointAccount[];
   brainwave: BrainwaveCertification;
   auditLog: AuditEntry[];
+  sodViolation: SodViolationState;
 }
 
 let auditCounter = 0;
+
+function createInitialSodState(): SodViolationState {
+  return {
+    active: false,
+    conflictDetectedAt: null,
+    requestedRole: "Portfolio_Rebalancer",
+    conflictingRole: "Order_Approver",
+    application: "Aladdin OMS",
+    violationType: "Separation of Duties",
+    regulation: "SOX",
+    regulationSection: "Section 404",
+    resolutionPath: null,
+    resolvedAt: null,
+    resolvedBy: null,
+  };
+}
 
 function createInitialState(): DemoState {
   return {
@@ -136,6 +172,7 @@ function createInitialState(): DemoState {
       ],
     },
     auditLog: [],
+    sodViolation: createInitialSodState(),
   };
 }
 
@@ -143,6 +180,74 @@ let state: DemoState = createInitialState();
 
 export function getState(): DemoState {
   return state;
+}
+
+export function getSodViolation(): SodViolationState {
+  return state.sodViolation;
+}
+
+export function triggerSodViolation(): { success: boolean; sodViolation: SodViolationState } {
+  const now = new Date().toISOString();
+  state.sodViolation = {
+    ...createInitialSodState(),
+    active: true,
+    conflictDetectedAt: now,
+  };
+
+  const aladdin = state.aquera.find((c) => c.app === "Aladdin OMS");
+  if (aladdin) {
+    aladdin.synthStatus = "Policy Blocked";
+    aladdin.sodBlock = {
+      conflictingRole: "Order_Approver",
+      violationType: "SoD Conflict",
+      regulation: "SOX §404",
+    };
+  }
+
+  auditCounter++;
+  state.auditLog.push({ id: auditCounter, timestamp: now, action: "SoD_VIOLATION", system: "Aquera", details: "SoD_VIOLATION | SOX_S404 | Compliance pre-check detected conflict: Portfolio_Rebalancer (requested) + Order_Approver (existing manual grant) violates SOX §404 Separation of Duties. Provisioning suspended pending remediation." });
+  auditCounter++;
+  state.auditLog.push({ id: auditCounter, timestamp: new Date().toISOString(), action: "POLICY_BLOCKED", system: "Aquera", details: "Aladdin OMS connector marked Policy Blocked. BMSA-SYNTH-001 provisioning halted. Orchestrator routing to human review queue — SailPoint step bypassed." });
+  auditCounter++;
+  state.auditLog.push({ id: auditCounter, timestamp: new Date().toISOString(), action: "HUMAN_REVIEW_QUEUED", system: "ATLAS Orchestrator", details: "Violation incident INC-SOD-20260313 created. Routed to Jennifer Walsh (BMSA Operations Lead) for remediation decision. Dual sign-off required for exception path." });
+
+  return { success: true, sodViolation: state.sodViolation };
+}
+
+export function resolveSodViolation(path: "revoke" | "exception", resolvedBy?: string): { success: boolean; sodViolation: SodViolationState } {
+  if (!state.sodViolation.active) {
+    return { success: false, sodViolation: state.sodViolation };
+  }
+
+  const now = new Date().toISOString();
+  const resolver = resolvedBy || "Jennifer Walsh";
+  state.sodViolation.resolutionPath = path;
+  state.sodViolation.resolvedAt = now;
+  state.sodViolation.resolvedBy = resolver;
+
+  const aladdin = state.aquera.find((c) => c.app === "Aladdin OMS");
+
+  if (path === "revoke") {
+    if (aladdin) {
+      aladdin.synthStatus = "Not Registered";
+      delete aladdin.sodBlock;
+    }
+    auditCounter++;
+    state.auditLog.push({ id: auditCounter, timestamp: now, action: "SOD_RESOLVED_REVOKE", system: "SailPoint", details: `Resolution path A selected by ${resolver}: Legacy role Order_Approver revoked from BMSA-SYNTH-001 in Aladdin OMS. SoD conflict cleared. Provisioning pipeline may now resume.` });
+    auditCounter++;
+    state.auditLog.push({ id: auditCounter, timestamp: new Date().toISOString(), action: "AUDIT_SOX_S404", system: "Brainwave", details: "SOX §404 audit record updated: SoD violation remediated via role revocation. Incident INC-SOD-20260313 closed. Compliance posture restored." });
+  } else {
+    if (aladdin) {
+      aladdin.synthStatus = "Not Registered";
+      delete aladdin.sodBlock;
+    }
+    auditCounter++;
+    state.auditLog.push({ id: auditCounter, timestamp: now, action: "SOD_RESOLVED_EXCEPTION", system: "ATLAS Orchestrator", details: `Resolution path B selected: Exception approved with dual sign-off — ${resolver} + Mark Chen (Managing Director). Compensating controls: enhanced monitoring, 30-day review cycle, Brainwave alert threshold lowered to HIGH.` });
+    auditCounter++;
+    state.auditLog.push({ id: auditCounter, timestamp: new Date().toISOString(), action: "AUDIT_SOX_S404", system: "Brainwave", details: "SOX §404 audit record updated: SoD exception granted with dual-approver sign-off. Compensating control package attached. Incident INC-SOD-20260313 closed — exception tracked." });
+  }
+
+  return { success: true, sodViolation: state.sodViolation };
 }
 
 export function approveStep(): { success: boolean; message: string } {
@@ -175,8 +280,10 @@ export function completeRequest(requestId: string): { success: boolean; message:
 export function activateIdentity(identityId: string): { success: boolean; message: string } {
   const now = new Date().toISOString();
   for (const connector of state.aquera) {
-    connector.synthStatus = "Registered";
-    connector.registeredAt = now;
+    if (connector.synthStatus !== "Policy Blocked") {
+      connector.synthStatus = "Registered";
+      connector.registeredAt = now;
+    }
   }
   return { success: true, message: `${identityId} registered in all Aquera SCIM connectors — identity profiles pushed to SailPoint` };
 }

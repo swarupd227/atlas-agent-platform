@@ -23,6 +23,12 @@ import {
   Check,
   ExternalLink,
   Zap,
+  ShieldX,
+  AlertTriangle,
+  Ban,
+  Users,
+  Trash2,
+  FileCheck,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -110,6 +116,20 @@ interface ConnectorsResponse {
 
 interface AccountsResponse {
   accounts: SailPointAccount[];
+}
+
+interface SodViolationState {
+  active: boolean;
+  conflictDetectedAt: string | null;
+  requestedRole: string;
+  conflictingRole: string;
+  application: string;
+  violationType: string;
+  regulation: string;
+  regulationSection: string;
+  resolutionPath: "revoke" | "exception" | null;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
 }
 
 const POLL_INTERVAL = 3000;
@@ -821,7 +841,526 @@ function BrainwaveScreen() {
   );
 }
 
+// ── Scenario 2: SoD Context View ─────────────────────────────────────────────
+function SodContextView({ onTrigger, isPending }: { onTrigger: () => void; isPending: boolean }) {
+  return (
+    <div className="space-y-4" data-testid="screen-sod-context">
+      <div className="bg-red-900/20 border border-red-700/40 rounded-lg px-4 py-2 flex items-center gap-3">
+        <ShieldX className="w-5 h-5 text-red-400" />
+        <span className="text-lg font-bold text-red-400">Scenario 2 — SoD Conflict: SOX Wall Violation</span>
+        <Badge className="ml-auto bg-red-700 text-white text-[10px]">COMPLIANCE INCIDENT</Badge>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <Card className="border-amber-500/30 bg-amber-500/5">
+          <CardHeader className="py-3 px-4">
+            <CardTitle className="text-sm text-amber-400 uppercase tracking-wider flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4" /> Pre-existing Access Grant Detected
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="px-4 pb-4 space-y-3 text-sm">
+            <p className="text-muted-foreground text-xs">
+              Before this provisioning request arrived, BMSA-SYNTH-001 was manually granted the following access outside the ATLAS pipeline:
+            </p>
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Application</span>
+                <span className="font-semibold">Aladdin OMS</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Legacy Role</span>
+                <Badge className="bg-amber-700 text-white font-mono text-xs">Order_Approver</Badge>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Granted By</span>
+                <span className="font-semibold">Marcus Rowe (manual, Mar 1)</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Source System</span>
+                <span className="text-xs text-muted-foreground">Direct AD Group — bypassed SailPoint</span>
+              </div>
+            </div>
+            <p className="text-xs text-amber-300/80">
+              This manual grant was never detected because it was applied directly in Active Directory, outside SailPoint's provisioning scope. Without ATLAS, it would have remained invisible.
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="border-blue-500/30 bg-blue-500/5">
+          <CardHeader className="py-3 px-4">
+            <CardTitle className="text-sm text-blue-400 uppercase tracking-wider flex items-center gap-2">
+              <Users className="w-4 h-4" /> New Provisioning Request
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="px-4 pb-4 space-y-3 text-sm">
+            <p className="text-muted-foreground text-xs">
+              REQ0084721 requests the following role for BMSA-SYNTH-001 on Aladdin OMS:
+            </p>
+            <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Application</span>
+                <span className="font-semibold">Aladdin OMS</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Requested Role</span>
+                <Badge className="bg-blue-700 text-white font-mono text-xs">Portfolio_Rebalancer</Badge>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Requested By</span>
+                <span className="font-semibold">Rachel Torres</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Business Justification</span>
+                <span className="text-xs text-muted-foreground">Automated rebalancing pipeline</span>
+              </div>
+            </div>
+            <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+              <div className="flex items-start gap-2">
+                <ShieldX className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
+                <div>
+                  <div className="font-semibold text-red-400 text-xs">SOX §404 SoD Violation</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">
+                    Holding both <span className="text-amber-300 font-mono">Order_Approver</span> and <span className="text-blue-300 font-mono">Portfolio_Rebalancer</span> on Aladdin OMS means a single identity can both initiate <em>and</em> approve orders — a direct SOX §404 wall violation.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card className="border-orange-500/30 bg-orange-500/5">
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="font-bold text-orange-400 flex items-center gap-2">
+                <Zap className="w-4 h-4" /> Run Aquera Compliance Pre-Check
+              </h3>
+              <p className="text-sm text-muted-foreground mt-1">
+                Simulate the Aquera agent running the compliance pre-check for this provisioning request. ATLAS will detect the SoD conflict and halt provisioning before any entitlement is granted.
+              </p>
+            </div>
+            <Button
+              className="bg-red-700 hover:bg-red-600 text-white gap-2 shrink-0 ml-4"
+              onClick={onTrigger}
+              disabled={isPending}
+              data-testid="button-trigger-sod"
+            >
+              {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldX className="w-4 h-4" />}
+              Run SoD Detection
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-muted/40">
+        <CardHeader className="py-3 px-4">
+          <CardTitle className="text-xs text-muted-foreground uppercase tracking-wider">Without ATLAS — The Manual Reality</CardTitle>
+        </CardHeader>
+        <CardContent className="px-4 pb-4">
+          <div className="grid grid-cols-3 gap-3 text-sm">
+            {[
+              { stat: "4 apps", label: "to check manually", color: "text-yellow-400" },
+              { stat: "1,200+", label: "daily access events", color: "text-yellow-400" },
+              { stat: "~0%", label: "chance this gets caught", color: "text-red-400" },
+            ].map(({ stat, label, color }, i) => (
+              <div key={i} className="bg-muted/30 rounded-lg p-3 text-center">
+                <div className={`text-2xl font-bold ${color}`}>{stat}</div>
+                <div className="text-xs text-muted-foreground mt-1">{label}</div>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground mt-3">
+            A human analyst would need to cross-reference Aladdin OMS Active Directory groups, SailPoint entitlement records, and the SOX §404 SoD matrix — for every one of 1,200 daily events across 4 systems. The Order_Approver role was granted directly in AD, invisible to SailPoint. This conflict would never have been caught.
+          </p>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ── Scenario 2: SoD Aquera View ───────────────────────────────────────────────
+function SodAqueraView({ sod }: { sod: SodViolationState }) {
+  const { data, isLoading } = useQuery<ConnectorsResponse>({
+    queryKey: ["/demo-api/aquera/connectors"],
+    refetchInterval: POLL_INTERVAL,
+  });
+
+  if (isLoading || !data) return <div className="flex items-center justify-center h-64"><Loader2 className="w-6 h-6 animate-spin" /></div>;
+
+  const connectors = data.connectors ?? [];
+
+  return (
+    <div className="space-y-4" data-testid="screen-sod-aquera">
+      <div className="bg-red-900/20 border border-red-700/40 rounded-lg px-4 py-2 flex items-center gap-3">
+        <Ban className="w-5 h-5 text-red-400" />
+        <span className="text-lg font-bold text-red-400">Aquera</span>
+        <span className="text-red-300/70 text-sm">Compliance Pre-Check</span>
+        <Badge className="ml-auto bg-red-700 text-white">Provisioning Halted</Badge>
+      </div>
+
+      <div className="bg-red-500/10 border border-red-500/40 rounded-lg px-4 py-3 flex items-start gap-3" data-testid="sod-halt-banner">
+        <ShieldX className="w-5 h-5 text-red-400 mt-0.5 shrink-0" />
+        <div>
+          <div className="font-bold text-red-400">SoD Violation Detected — Provisioning Suspended</div>
+          <div className="text-sm text-muted-foreground mt-1">
+            Aquera compliance pre-check failed for BMSA-SYNTH-001. Aladdin OMS connector marked <span className="text-red-400 font-semibold">Policy Blocked</span>. Pipeline routed to human review queue. SailPoint step bypassed.
+          </div>
+          {sod.conflictDetectedAt && (
+            <div className="text-xs text-muted-foreground mt-1">
+              Detected: {new Date(sod.conflictDetectedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })} · Incident: INC-SOD-20260313
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        {connectors.map((c, i) => {
+          const isBlocked = c.synthStatus === "Policy Blocked";
+          return (
+            <Card
+              key={i}
+              className={`transition-all ${isBlocked ? "border-red-500/60 bg-red-500/10 ring-1 ring-red-500/30" : "border-border opacity-60"}`}
+              data-testid={`sod-connector-${i}`}
+            >
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-3">
+                    {isBlocked && <Ban className="w-4 h-4 text-red-400 shrink-0" />}
+                    <div className="font-bold text-base">{c.app}</div>
+                    <span className="text-sm text-muted-foreground">· {c.appOwner}</span>
+                  </div>
+                  <Badge className={isBlocked ? "bg-red-700 text-white" : "bg-muted text-muted-foreground"}>
+                    {isBlocked ? "Policy Blocked" : "Pending — Not Started"}
+                  </Badge>
+                </div>
+
+                {isBlocked && (
+                  <div className="mb-3 bg-red-500/10 border border-red-500/30 rounded-lg p-3 space-y-2">
+                    <div className="text-xs font-bold text-red-400 uppercase tracking-wider">Conflicting Role Access</div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="bg-blue-500/10 border border-blue-500/30 rounded p-2">
+                        <div className="text-xs text-muted-foreground">Requested (this request)</div>
+                        <div className="font-mono font-bold text-blue-300 mt-1">Portfolio_Rebalancer</div>
+                        <div className="text-xs text-muted-foreground">Initiates portfolio orders</div>
+                      </div>
+                      <div className="bg-amber-500/10 border border-amber-500/30 rounded p-2">
+                        <div className="text-xs text-muted-foreground">Existing (manual AD grant)</div>
+                        <div className="font-mono font-bold text-amber-300 mt-1">Order_Approver</div>
+                        <div className="text-xs text-muted-foreground">Approves order execution</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 pt-1">
+                      <AlertTriangle className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                      <span className="text-xs text-red-300">SOX §404: Same identity cannot initiate AND approve orders</span>
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-4 gap-4 text-sm">
+                  <div>
+                    <span className="text-muted-foreground text-xs">SailPoint Source</span>
+                    <div className="font-semibold">{c.source}</div>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground text-xs">Entitlement Requested</span>
+                    <div><Badge variant="outline" className={`text-xs ${isBlocked ? "border-red-500/50 text-red-400 line-through" : ""}`}>{c.entitlement}</Badge></div>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground text-xs">SCIM Endpoint</span>
+                    <div className="font-mono text-xs text-muted-foreground truncate">{c.scimEndpoint}</div>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground text-xs">Status</span>
+                    <div className={`text-sm font-semibold ${isBlocked ? "text-red-400" : "text-muted-foreground"}`}>
+                      {isBlocked ? "Blocked — not provisioned" : "Awaiting compliance gate"}
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Scenario 2: Policy Violation Card ────────────────────────────────────────
+function SodViolationCard({ sod }: { sod: SodViolationState }) {
+  return (
+    <div className="space-y-4" data-testid="screen-sod-violation">
+      <div className="bg-red-900/20 border border-red-700/40 rounded-lg px-4 py-2 flex items-center gap-3">
+        <ShieldX className="w-5 h-5 text-red-400" />
+        <span className="text-lg font-bold text-red-400">Policy Violation</span>
+        <span className="text-red-300/70 text-sm">SOX §404 — Separation of Duties</span>
+        <Badge className="ml-auto bg-red-700 text-white">CRITICAL</Badge>
+      </div>
+
+      <Card className="border-red-500/50 bg-red-500/5" data-testid="sod-violation-card">
+        <CardContent className="p-5 space-y-4">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-full bg-red-500/20 border border-red-500/40 flex items-center justify-center shrink-0">
+              <ShieldX className="w-5 h-5 text-red-400" />
+            </div>
+            <div>
+              <h3 className="font-bold text-red-400 text-lg">Separation of Duties Violation</h3>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                SOX Section 404 — Internal Controls over Financial Reporting
+              </p>
+              {sod.conflictDetectedAt && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  Detected {new Date(sod.conflictDetectedAt).toLocaleString()} · Incident INC-SOD-20260313
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4 text-sm">
+            <div className="space-y-2">
+              <div className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Violation Details</div>
+              {[
+                ["Violation Type", "Separation of Duties (SoD)"],
+                ["Regulatory Framework", "SOX — Sarbanes-Oxley Act"],
+                ["Specific Requirement", "Section 404 — Internal Controls"],
+                ["Application", "Aladdin OMS (Portfolio Mgmt)"],
+                ["Identity", "BMSA-SYNTH-001"],
+              ].map(([k, v]) => (
+                <div key={k} className="flex justify-between border-b border-border/40 pb-1.5">
+                  <span className="text-muted-foreground">{k}</span>
+                  <span className="font-semibold text-right text-xs">{v}</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="space-y-2">
+              <div className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Conflicting Roles</div>
+              <div className="space-y-2">
+                <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <Badge className="bg-amber-700 text-white text-[10px] font-mono">Order_Approver</Badge>
+                    <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-600">EXISTING</Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground">Approves and executes portfolio orders in Aladdin OMS. Granted manually via AD group on Mar 1 — outside SailPoint.</p>
+                </div>
+                <div className="rounded-lg border border-blue-500/40 bg-blue-500/10 p-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <Badge className="bg-blue-700 text-white text-[10px] font-mono">Portfolio_Rebalancer</Badge>
+                    <Badge variant="outline" className="text-[10px] text-blue-400 border-blue-600">REQUESTED</Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground">Initiates and stages portfolio rebalancing orders in Aladdin OMS. Requested via REQ0084721.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-muted/30 rounded-lg p-3 border border-border/40">
+            <div className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">ATLAS Analysis</div>
+            <p className="text-sm">
+              Granting both <span className="font-mono text-amber-300">Order_Approver</span> and <span className="font-mono text-blue-300">Portfolio_Rebalancer</span> to the same identity creates a complete, unbroken approval chain under a single control point. Under SOX §404, the initiator and approver of financial transactions must be separate entities. This configuration would allow BMSA-SYNTH-001 to stage <em>and</em> approve its own trades — a direct SOX wall violation with material financial reporting risk.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-3 gap-3">
+            {[
+              { label: "Regulatory Risk", value: "CRITICAL", color: "text-red-400" },
+              { label: "Financial Exposure", value: "Material", color: "text-red-400" },
+              { label: "Entitlements Blocked", value: "1 of 4", color: "text-yellow-400" },
+            ].map(({ label, value, color }) => (
+              <div key={label} className="bg-muted/40 rounded-lg p-3 text-center">
+                <div className={`font-bold text-lg ${color}`}>{value}</div>
+                <div className="text-xs text-muted-foreground">{label}</div>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-muted/40 bg-muted/5">
+        <CardHeader className="py-3 px-4">
+          <CardTitle className="text-xs text-muted-foreground uppercase tracking-wider">Audit Trail — SoD Incident</CardTitle>
+        </CardHeader>
+        <CardContent className="px-4 pb-4 space-y-2">
+          {[
+            { code: "SoD_VIOLATION", label: "SOX_S404 | Compliance pre-check failed — Portfolio_Rebalancer + Order_Approver conflict detected on Aladdin OMS", color: "bg-red-700" },
+            { code: "POLICY_BLOCKED", label: "Aladdin OMS connector marked Policy Blocked. Provisioning halted.", color: "bg-red-700" },
+            { code: "HUMAN_REVIEW", label: "Orchestrator routed to human review queue — SailPoint step bypassed. Incident INC-SOD-20260313 created.", color: "bg-orange-700" },
+          ].map(({ code, label, color }, i) => (
+            <div key={i} className="flex items-start gap-2 text-xs">
+              <Badge className={`${color} text-white text-[9px] shrink-0 font-mono`}>{code}</Badge>
+              <span className="text-muted-foreground">{label}</span>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ── Scenario 2: Resolution Panel ──────────────────────────────────────────────
+function SodResolutionPanel({
+  sod,
+  onResolve,
+  isPending,
+}: {
+  sod: SodViolationState;
+  onResolve: (path: "revoke" | "exception") => void;
+  isPending: boolean;
+}) {
+  const isResolved = !!sod.resolutionPath;
+
+  return (
+    <div className="space-y-4" data-testid="screen-sod-resolution">
+      <div className="bg-orange-900/20 border border-orange-700/40 rounded-lg px-4 py-2 flex items-center gap-3">
+        <FileCheck className="w-5 h-5 text-orange-400" />
+        <span className="text-lg font-bold text-orange-400">Resolution Path</span>
+        <span className="text-orange-300/70 text-sm">Choose remediation action to clear the SoD violation</span>
+        {isResolved && <Badge className="ml-auto bg-green-700 text-white">Resolved</Badge>}
+      </div>
+
+      {isResolved ? (
+        <Card className="border-green-500/40 bg-green-500/5" data-testid="sod-resolved-card">
+          <CardContent className="p-5 space-y-3">
+            <div className="flex items-center gap-3">
+              <CheckCircle2 className="w-6 h-6 text-green-400" />
+              <div>
+                <h3 className="font-bold text-green-400">
+                  {sod.resolutionPath === "revoke" ? "Resolution A: Legacy Role Revoked" : "Resolution B: Exception Approved with Dual Sign-off"}
+                </h3>
+                <p className="text-sm text-muted-foreground">
+                  {sod.resolutionPath === "revoke"
+                    ? "Order_Approver has been revoked from BMSA-SYNTH-001. The SoD conflict is cleared. Provisioning pipeline may now resume."
+                    : "Exception approved with compensating controls: enhanced monitoring, 30-day review cycle, elevated Brainwave alert threshold."}
+                </p>
+                {sod.resolvedAt && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Resolved {new Date(sod.resolvedAt).toLocaleTimeString()} · By: {sod.resolvedBy}
+                  </p>
+                )}
+              </div>
+            </div>
+            {[
+              { code: sod.resolutionPath === "revoke" ? "SOD_RESOLVED_REVOKE" : "SOD_RESOLVED_EXCEPTION", label: sod.resolutionPath === "revoke" ? "Legacy role Order_Approver revoked. SoD conflict cleared." : "Exception approved. Dual sign-off recorded. Compensating controls applied.", color: "bg-green-700" },
+              { code: "AUDIT_SOX_S404", label: "SOX §404 audit record updated. Incident INC-SOD-20260313 closed.", color: "bg-purple-700" },
+            ].map(({ code, label, color }, i) => (
+              <div key={i} className="flex items-start gap-2 text-xs">
+                <Badge className={`${color} text-white text-[9px] shrink-0 font-mono`}>{code}</Badge>
+                <span className="text-muted-foreground">{label}</span>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-2 gap-4">
+          <Card className="border-red-500/30 hover:border-red-500/60 transition-colors" data-testid="sod-path-revoke">
+            <CardContent className="p-5 space-y-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full bg-red-500/20 border border-red-500/40 flex items-center justify-center">
+                  <Trash2 className="w-4 h-4 text-red-400" />
+                </div>
+                <div>
+                  <div className="font-bold text-sm">Path A — Revoke Legacy Role</div>
+                  <Badge variant="outline" className="text-[9px] border-red-500/40 text-red-400 mt-0.5">Recommended</Badge>
+                </div>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Revoke the <span className="font-mono text-amber-300">Order_Approver</span> role from BMSA-SYNTH-001 in Aladdin OMS. The conflicting legacy grant is removed. The provisioning pipeline can then proceed cleanly.
+              </p>
+              <div className="space-y-1 text-xs">
+                {["Conflict fully eliminated", "No ongoing compensating controls needed", "Cleanest SOX §404 audit posture", "Pipeline resumes after revocation"].map((item) => (
+                  <div key={item} className="flex items-center gap-1.5 text-muted-foreground">
+                    <CheckCircle2 className="w-3 h-3 text-green-400 shrink-0" /> {item}
+                  </div>
+                ))}
+              </div>
+              <Button
+                className="w-full bg-red-700 hover:bg-red-600 text-white gap-2"
+                onClick={() => onResolve("revoke")}
+                disabled={isPending}
+                data-testid="button-resolve-revoke"
+              >
+                {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                Revoke Order_Approver
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card className="border-orange-500/30 hover:border-orange-500/60 transition-colors" data-testid="sod-path-exception">
+            <CardContent className="p-5 space-y-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full bg-orange-500/20 border border-orange-500/40 flex items-center justify-center">
+                  <Users className="w-4 h-4 text-orange-400" />
+                </div>
+                <div>
+                  <div className="font-bold text-sm">Path B — Approve Exception</div>
+                  <Badge variant="outline" className="text-[9px] border-orange-500/40 text-orange-400 mt-0.5">Dual Sign-off Required</Badge>
+                </div>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Approve a SOX §404 exception with documented compensating controls. Requires dual sign-off from two named approvers. Access is granted with enhanced monitoring.
+              </p>
+              <div className="space-y-1 text-xs">
+                {["Jennifer Walsh (Ops Lead) sign-off", "Mark Chen (MD) counter-sign", "Compensating: 30-day review cycle", "Compensating: Brainwave HIGH alert"].map((item) => (
+                  <div key={item} className="flex items-center gap-1.5 text-muted-foreground">
+                    <CheckCircle2 className="w-3 h-3 text-orange-400 shrink-0" /> {item}
+                  </div>
+                ))}
+              </div>
+              <Button
+                className="w-full bg-orange-700 hover:bg-orange-600 text-white gap-2"
+                onClick={() => onResolve("exception")}
+                disabled={isPending}
+                data-testid="button-resolve-exception"
+              >
+                {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Users className="w-4 h-4" />}
+                Approve Exception (Dual Sign-off)
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      <Card className="border-muted/40">
+        <CardContent className="p-4">
+          <div className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Platform Value Delivered</div>
+          <div className="grid grid-cols-2 gap-4 text-sm">
+            <div className="space-y-2">
+              <div className="font-semibold text-green-400">With ATLAS</div>
+              {[
+                "Violation caught before any entitlement granted",
+                "Zero manual analyst effort required",
+                "Full audit trail auto-generated",
+                "Clear resolution paths presented immediately",
+                "SOX §404 posture maintained automatically",
+              ].map((item) => (
+                <div key={item} className="flex items-start gap-1.5 text-xs text-muted-foreground">
+                  <CheckCircle2 className="w-3 h-3 text-green-400 shrink-0 mt-0.5" /> {item}
+                </div>
+              ))}
+            </div>
+            <div className="space-y-2">
+              <div className="font-semibold text-red-400">Without ATLAS</div>
+              {[
+                "Manual analyst checks 4 apps × 1,200 daily events",
+                "AD grant invisible to SailPoint — never cross-referenced",
+                "Violation undetected until SOX audit (months later)",
+                "Material weakness finding in 10-K filing",
+                "Potential SEC enforcement action",
+              ].map((item) => (
+                <div key={item} className="flex items-start gap-1.5 text-xs text-muted-foreground">
+                  <AlertTriangle className="w-3 h-3 text-red-400 shrink-0 mt-0.5" /> {item}
+                </div>
+              ))}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 export default function BlackRockDemo() {
+  const [activeScenario, setActiveScenario] = useState<"scenario1" | "scenario2">("scenario1");
   const [activeScreen, setActiveScreen] = useState("servicenow");
   const { toast } = useToast();
 
@@ -852,10 +1391,51 @@ export default function BlackRockDemo() {
     refetchInterval: POLL_INTERVAL,
   });
 
+  const { data: sodData } = useQuery<SodViolationState>({
+    queryKey: ["/demo-api/sod-violation"],
+    refetchInterval: POLL_INTERVAL,
+  });
+
+  const sod: SodViolationState = sodData ?? {
+    active: false,
+    conflictDetectedAt: null,
+    requestedRole: "Portfolio_Rebalancer",
+    conflictingRole: "Order_Approver",
+    application: "Aladdin OMS",
+    violationType: "Separation of Duties",
+    regulation: "SOX",
+    regulationSection: "Section 404",
+    resolutionPath: null,
+    resolvedAt: null,
+    resolvedBy: null,
+  };
+
+  const triggerSodMutation = useMutation({
+    mutationFn: () => apiRequest("POST", "/demo-api/sod-violation/trigger"),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ predicate: (q) => typeof q.queryKey[0] === "string" && q.queryKey[0].startsWith("/demo-api") });
+      toast({ title: "SoD Violation Detected", description: "Aquera compliance pre-check failed. Aladdin OMS marked Policy Blocked.", variant: "destructive" });
+    },
+  });
+
+  const resolveSodMutation = useMutation({
+    mutationFn: (path: "revoke" | "exception") => apiRequest("POST", "/demo-api/sod-violation/resolve", { path }),
+    onSuccess: (_data, path) => {
+      queryClient.invalidateQueries({ predicate: (q) => typeof q.queryKey[0] === "string" && q.queryKey[0].startsWith("/demo-api") });
+      toast({
+        title: path === "revoke" ? "Legacy Role Revoked" : "Exception Approved",
+        description: path === "revoke" ? "Order_Approver revoked. SoD conflict cleared." : "Exception approved with dual sign-off and compensating controls.",
+      });
+    },
+  });
+
+  const [activeSodScreen, setActiveSodScreen] = useState<"context" | "aquera" | "violation" | "resolution">("context");
+
   const resetMutation = useMutation({
     mutationFn: () => apiRequest("POST", "/demo-api/reset"),
     onSuccess: () => {
       queryClient.invalidateQueries({ predicate: (query) => typeof query.queryKey[0] === "string" && query.queryKey[0].startsWith("/demo-api") });
+      setActiveSodScreen("context");
       toast({ title: "Demo reset", description: "All state restored to initial values" });
     },
   });
@@ -881,11 +1461,24 @@ export default function BlackRockDemo() {
   const sailpointDone = (spData?.accounts ?? []).every((a) => a.status === "Active");
   const brainwaveDone = bwData?.identities?.find((i) => i.name === "BMSA-SYNTH-001")?.status === "Certified";
 
+  useEffect(() => {
+    if (activeScenario === "scenario2" && sod.active && activeSodScreen === "context") {
+      setActiveSodScreen("aquera");
+    }
+  }, [sod.active, activeScenario, activeSodScreen]);
+
   const screens = [
     { id: "servicenow", label: "ServiceNow", color: "bg-green-700 hover:bg-green-600" },
     { id: "aquera", label: "Aquera", color: "bg-blue-700 hover:bg-blue-600" },
     { id: "sailpoint", label: "SailPoint IIQ", color: "bg-blue-700 hover:bg-blue-600" },
     { id: "brainwave", label: "Brainwave / RadiantOne", color: "bg-purple-800 hover:bg-purple-700" },
+  ];
+
+  const sodScreens = [
+    { id: "context" as const, label: "Context", color: "bg-amber-700 hover:bg-amber-600" },
+    { id: "aquera" as const, label: "Aquera — Policy Block", color: "bg-red-700 hover:bg-red-600" },
+    { id: "violation" as const, label: "Policy Violation", color: "bg-red-900 hover:bg-red-800" },
+    { id: "resolution" as const, label: "Resolution Path", color: "bg-orange-700 hover:bg-orange-600" },
   ];
 
   return (
@@ -896,27 +1489,29 @@ export default function BlackRockDemo() {
           <p className="text-sm text-muted-foreground">Atlas Orchestrated | Same Pipeline, Governed Automation</p>
         </div>
         <div className="flex items-center gap-3">
-          {runPipelineMutation.isPending ? (
-            <div className="flex items-center gap-2 text-sm text-orange-400 font-medium animate-pulse" data-testid="pipeline-running-indicator">
-              <Loader2 className="w-4 h-4 animate-spin" />
-              Pipeline running…
-            </div>
-          ) : brainwaveDone ? (
-            <div className="flex items-center gap-2 text-sm text-green-400 font-medium" data-testid="pipeline-complete-indicator">
-              <CheckCircle2 className="w-4 h-4" />
-              Pipeline complete
-            </div>
-          ) : (
-            <Button
-              size="sm"
-              className="gap-1.5 bg-orange-600 hover:bg-orange-500 text-white"
-              onClick={() => runPipelineMutation.mutate()}
-              disabled={runPipelineMutation.isPending}
-              data-testid="button-run-pipeline"
-            >
-              <Zap className="w-3.5 h-3.5" />
-              Run Live Pipeline
-            </Button>
+          {activeScenario === "scenario1" && (
+            runPipelineMutation.isPending ? (
+              <div className="flex items-center gap-2 text-sm text-orange-400 font-medium animate-pulse" data-testid="pipeline-running-indicator">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Pipeline running…
+              </div>
+            ) : brainwaveDone ? (
+              <div className="flex items-center gap-2 text-sm text-green-400 font-medium" data-testid="pipeline-complete-indicator">
+                <CheckCircle2 className="w-4 h-4" />
+                Pipeline complete
+              </div>
+            ) : (
+              <Button
+                size="sm"
+                className="gap-1.5 bg-orange-600 hover:bg-orange-500 text-white"
+                onClick={() => runPipelineMutation.mutate()}
+                disabled={runPipelineMutation.isPending}
+                data-testid="button-run-pipeline"
+              >
+                <Zap className="w-3.5 h-3.5" />
+                Run Live Pipeline
+              </Button>
+            )
           )}
           <SetupGuide />
           <Button
@@ -933,40 +1528,119 @@ export default function BlackRockDemo() {
         </div>
       </div>
 
-      <PipelineBanner
-        activeScreen={activeScreen}
-        servicenowDone={servicenowDone}
-        aqueraDone={aqueraDone}
-        sailpointDone={sailpointDone}
-        brainwaveDone={brainwaveDone}
-      />
-
-      <div className="flex items-center gap-2">
-        {screens.map((s) => (
-          <Button
-            key={s.id}
-            size="sm"
-            variant={activeScreen === s.id ? "default" : "outline"}
-            className={activeScreen === s.id ? `${s.color} text-white border-0` : ""}
-            onClick={() => setActiveScreen(s.id)}
-            data-testid={`button-screen-${s.id}`}
-          >
-            {s.label}
-          </Button>
-        ))}
+      {/* Scenario Selector */}
+      <div className="flex items-center gap-1 p-1 bg-muted/30 rounded-lg border border-border/40 w-fit" data-testid="scenario-selector">
+        <button
+          onClick={() => setActiveScenario("scenario1")}
+          className={`px-4 py-2 rounded-md text-sm font-semibold transition-all ${
+            activeScenario === "scenario1"
+              ? "bg-background shadow-sm text-foreground border border-border"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+          data-testid="button-scenario1"
+        >
+          Scenario 1 — Synthetic Worker Provisioning
+        </button>
+        <button
+          onClick={() => setActiveScenario("scenario2")}
+          className={`px-4 py-2 rounded-md text-sm font-semibold transition-all flex items-center gap-2 ${
+            activeScenario === "scenario2"
+              ? "bg-red-900/60 shadow-sm text-red-300 border border-red-700/50"
+              : "text-muted-foreground hover:text-red-400"
+          }`}
+          data-testid="button-scenario2"
+        >
+          <ShieldX className="w-3.5 h-3.5" />
+          Scenario 2 — SoD Conflict: SOX Wall Violation
+        </button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2">
-          {activeScreen === "servicenow" && <ServiceNowScreen />}
-          {activeScreen === "aquera" && <AqueraScreen />}
-          {activeScreen === "sailpoint" && <SailPointScreen />}
-          {activeScreen === "brainwave" && <BrainwaveScreen />}
-        </div>
-        <div>
-          <ActivityFeed />
-        </div>
-      </div>
+      {activeScenario === "scenario1" && (
+        <>
+          <PipelineBanner
+            activeScreen={activeScreen}
+            servicenowDone={servicenowDone}
+            aqueraDone={aqueraDone}
+            sailpointDone={sailpointDone}
+            brainwaveDone={brainwaveDone}
+          />
+
+          <div className="flex items-center gap-2">
+            {screens.map((s) => (
+              <Button
+                key={s.id}
+                size="sm"
+                variant={activeScreen === s.id ? "default" : "outline"}
+                className={activeScreen === s.id ? `${s.color} text-white border-0` : ""}
+                onClick={() => setActiveScreen(s.id)}
+                data-testid={`button-screen-${s.id}`}
+              >
+                {s.label}
+              </Button>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div className="lg:col-span-2">
+              {activeScreen === "servicenow" && <ServiceNowScreen />}
+              {activeScreen === "aquera" && <AqueraScreen />}
+              {activeScreen === "sailpoint" && <SailPointScreen />}
+              {activeScreen === "brainwave" && <BrainwaveScreen />}
+            </div>
+            <div>
+              <ActivityFeed />
+            </div>
+          </div>
+        </>
+      )}
+
+      {activeScenario === "scenario2" && (
+        <>
+          <div className="flex items-center gap-2" data-testid="sod-screen-tabs">
+            {sodScreens.map((s) => {
+              const needsSod = s.id !== "context";
+              const disabled = needsSod && !sod.active;
+              return (
+                <Button
+                  key={s.id}
+                  size="sm"
+                  variant={activeSodScreen === s.id ? "default" : "outline"}
+                  className={activeSodScreen === s.id ? `${s.color} text-white border-0` : disabled ? "opacity-40" : ""}
+                  onClick={() => !disabled && setActiveSodScreen(s.id)}
+                  disabled={disabled}
+                  data-testid={`button-sod-screen-${s.id}`}
+                >
+                  {s.id === "violation" && sod.active && <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse mr-1.5" />}
+                  {s.label}
+                </Button>
+              );
+            })}
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div className="lg:col-span-2">
+              {activeSodScreen === "context" && (
+                <SodContextView
+                  onTrigger={() => triggerSodMutation.mutate()}
+                  isPending={triggerSodMutation.isPending}
+                />
+              )}
+              {activeSodScreen === "aquera" && <SodAqueraView sod={sod} />}
+              {activeSodScreen === "violation" && <SodViolationCard sod={sod} />}
+              {activeSodScreen === "resolution" && (
+                <SodResolutionPanel
+                  sod={sod}
+                  onResolve={(path) => resolveSodMutation.mutate(path)}
+                  isPending={resolveSodMutation.isPending}
+                />
+              )}
+            </div>
+            <div>
+              <ActivityFeed />
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
