@@ -204,9 +204,19 @@ export const POLICY_PACKS: PolicyPack[] = [
 ];
 
 export function findPolicyPackName(policyName: string, policyDomain: string): string | null {
+  const cleanName = policyName.replace(/^\[[^\]]+\]\s*/, "");
   for (const pack of POLICY_PACKS) {
     for (const pol of pack.policies) {
-      if (pol.name === policyName && pol.domain === policyDomain) {
+      if ((pol.name === policyName || pol.name === cleanName) && pol.domain === policyDomain) {
+        return pack.name;
+      }
+    }
+  }
+  for (const pack of POLICY_PACKS) {
+    const bracketMatch = policyName.match(/^\[([^\]]+)\]/);
+    if (bracketMatch) {
+      const prefix = bracketMatch[1].toLowerCase();
+      if (pack.framework.toLowerCase().includes(prefix) || prefix.includes(pack.framework.toLowerCase())) {
         return pack.name;
       }
     }

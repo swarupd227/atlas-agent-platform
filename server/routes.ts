@@ -12885,8 +12885,9 @@ When you have enough information (usually after 2-3 exchanges), produce a struct
   "applicablePolicies": [
     {
       "policyId": "string - the exact policy id from the platform policy list",
-      "name": "string - policy name",
+      "name": "string - policy name exactly as listed",
       "domain": "string - policy domain",
+      "packName": "string or null - if the policy name has a [Framework] prefix (e.g. '[SOX] Financial Data Integrity'), set this to the compliance pack name (e.g. 'SOX Compliance Pack'); otherwise null",
       "rationale": "string - one sentence explaining why this platform policy applies to this specific outcome"
     }
   ],
@@ -12930,7 +12931,7 @@ Guidelines:
 - CRITICAL: If STRUCTURED CONTEXT FROM USER INPUTS is present above, you MUST use it: incorporate process steps, pain points, actor names, timing data, and identified opportunities directly into the proposal. Do not ignore this data.
 - CRITICAL: If CURRENT PROPOSAL TO REFINE is present, output a new full proposal JSON that addresses the user's latest request while preserving the parts they haven't asked to change. Always output the complete JSON, not a partial update.
 - CRITICAL: Always include a regulatoryConstraints array in the proposal with 4–8 EXTERNAL statutory or regulatory frameworks (e.g. SOX, GDPR, FINRA, HIPAA, PCI-DSS, NIST). Do NOT put internal platform governance policies in this array — those go in applicablePolicies. Do not dump generic industry regulations; select only those genuinely relevant to this specific outcome. For each, include 2-4 specific requirements.
-- CRITICAL: Always include an applicablePolicies array. Review the ACTIVE PLATFORM GOVERNANCE POLICIES listed above and select ONLY the ones that are directly applicable to this specific outcome. For each selected policy include its exact policyId (the id shown after the domain tag), name, domain, and a one-sentence rationale. If none apply, return an empty array.`;
+- CRITICAL: Always include an applicablePolicies array. Review the ACTIVE PLATFORM GOVERNANCE POLICIES listed above and select ONLY the ones that are directly applicable to this specific outcome. For each selected policy include its exact policyId (the id shown after "id:" in the list), name exactly as listed (including any [Framework] prefix), domain, a one-sentence rationale, and packName (if the policy name starts with "[Framework]" extract that text to derive the compliance pack name, e.g. "[SOX]" → "SOX Compliance Pack", "[MiFID II]" → "MiFID II Compliance Pack"; otherwise set to null). If none apply, return an empty array.`;
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");

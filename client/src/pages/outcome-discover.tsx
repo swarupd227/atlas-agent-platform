@@ -76,6 +76,7 @@ interface ApplicablePolicy {
   policyId: string;
   name: string;
   domain: string;
+  packName?: string;
   rationale: string;
 }
 
@@ -1891,7 +1892,7 @@ export default function OutcomeDiscover() {
                         </div>
                       ) : (
                         activeApplicablePolicies.map((pol, i) => {
-                          const packName = findPolicyPackName(pol.name, pol.domain);
+                          const packName = pol.packName || findPolicyPackName(pol.name, pol.domain);
                           return (
                           <div key={i} className="flex flex-col gap-1.5 p-2 rounded-md bg-muted/50" data-testid={`applicable-policy-${i}`}>
                             <div className="flex items-start justify-between gap-2">
