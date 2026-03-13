@@ -29,6 +29,7 @@ import {
   Users,
   Trash2,
   FileCheck,
+  ArrowRight,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -841,6 +842,96 @@ function BrainwaveScreen() {
   );
 }
 
+// ── Scenario 2: Step Progress Rail ───────────────────────────────────────────
+const SOD_STEPS = [
+  { id: "context",   num: 1, label: "Setup",     sublabel: "Pre-existing grant + new request" },
+  { id: "aquera",    num: 2, label: "Detection",  sublabel: "Aquera halts provisioning" },
+  { id: "violation", num: 3, label: "Violation",  sublabel: "SOX §404 incident card" },
+  { id: "resolution",num: 4, label: "Resolution", sublabel: "Choose remediation path" },
+] as const;
+
+type SodStepId = typeof SOD_STEPS[number]["id"];
+
+function SodStepRail({
+  activeStep,
+  sodActive,
+  resolved,
+  onStepClick,
+}: {
+  activeStep: SodStepId;
+  sodActive: boolean;
+  resolved: boolean;
+  onStepClick: (id: SodStepId) => void;
+}) {
+  const activeIdx = SOD_STEPS.findIndex((s) => s.id === activeStep);
+
+  function stepState(idx: number): "completed" | "active" | "locked" {
+    if (idx < activeIdx) return "completed";
+    if (idx === activeIdx) return "active";
+    const step = SOD_STEPS[idx];
+    if (step.id === "context") return "active";
+    if (!sodActive) return "locked";
+    if (step.id === "resolution" && !sodActive) return "locked";
+    return "locked";
+  }
+
+  function isClickable(idx: number): boolean {
+    const st = stepState(idx);
+    return st === "completed" || st === "active";
+  }
+
+  return (
+    <div className="flex items-center gap-0 w-full" data-testid="sod-step-rail">
+      {SOD_STEPS.map((step, idx) => {
+        const state = stepState(idx);
+        const clickable = isClickable(idx);
+        const isLast = idx === SOD_STEPS.length - 1;
+
+        return (
+          <div key={step.id} className="flex items-center flex-1 min-w-0">
+            <button
+              onClick={() => clickable && onStepClick(step.id)}
+              disabled={!clickable}
+              className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-all w-full text-left ${
+                state === "active"
+                  ? "bg-background border-primary ring-1 ring-primary/30 shadow-sm"
+                  : state === "completed"
+                  ? "bg-green-500/5 border-green-500/30 hover:border-green-500/50 cursor-pointer"
+                  : "bg-muted/20 border-border/30 opacity-40 cursor-not-allowed"
+              }`}
+              data-testid={`sod-step-${step.id}`}
+            >
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-sm font-bold border-2 ${
+                state === "completed"
+                  ? "bg-green-500 border-green-400 text-white"
+                  : state === "active"
+                  ? "bg-primary border-primary text-primary-foreground"
+                  : "bg-muted border-border text-muted-foreground"
+              }`}>
+                {state === "completed" ? <CheckCircle2 className="w-4 h-4" /> : step.num}
+              </div>
+              <div className="min-w-0">
+                <div className={`text-sm font-semibold leading-tight ${
+                  state === "active" ? "text-foreground" : state === "completed" ? "text-green-400" : "text-muted-foreground"
+                }`}>
+                  {step.label}
+                  {state === "completed" && <span className="ml-1.5 text-[10px] text-green-500 font-normal">✓ done</span>}
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-0.5 truncate">{step.sublabel}</div>
+              </div>
+            </button>
+            {!isLast && (
+              <div className={`h-0.5 w-6 shrink-0 mx-1 rounded-full ${
+                state === "completed" ? "bg-green-500/50" : "bg-border/40"
+              }`} />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── Scenario 2: SoD Context View ─────────────────────────────────────────────
 function SodContextView({ onTrigger, isPending }: { onTrigger: () => void; isPending: boolean }) {
   return (
@@ -980,7 +1071,7 @@ function SodContextView({ onTrigger, isPending }: { onTrigger: () => void; isPen
 }
 
 // ── Scenario 2: SoD Aquera View ───────────────────────────────────────────────
-function SodAqueraView({ sod }: { sod: SodViolationState }) {
+function SodAqueraView({ sod, onNext }: { sod: SodViolationState; onNext: () => void }) {
   const { data, isLoading } = useQuery<ConnectorsResponse>({
     queryKey: ["/demo-api/aquera/connectors"],
     refetchInterval: POLL_INTERVAL,
@@ -1082,12 +1173,23 @@ function SodAqueraView({ sod }: { sod: SodViolationState }) {
           );
         })}
       </div>
+
+      <div className="flex justify-end pt-2">
+        <Button
+          onClick={onNext}
+          className="gap-2 bg-primary hover:bg-primary/90 text-primary-foreground"
+          data-testid="button-sod-next-to-violation"
+        >
+          Next: View Violation Details
+          <ArrowRight className="w-4 h-4" />
+        </Button>
+      </div>
     </div>
   );
 }
 
 // ── Scenario 2: Policy Violation Card ────────────────────────────────────────
-function SodViolationCard({ sod }: { sod: SodViolationState }) {
+function SodViolationCard({ sod, onNext }: { sod: SodViolationState; onNext: () => void }) {
   return (
     <div className="space-y-4" data-testid="screen-sod-violation">
       <div className="bg-red-900/20 border border-red-700/40 rounded-lg px-4 py-2 flex items-center gap-3">
@@ -1193,6 +1295,17 @@ function SodViolationCard({ sod }: { sod: SodViolationState }) {
           ))}
         </CardContent>
       </Card>
+
+      <div className="flex justify-end pt-2">
+        <Button
+          onClick={onNext}
+          className="gap-2 bg-primary hover:bg-primary/90 text-primary-foreground"
+          data-testid="button-sod-next-to-resolution"
+        >
+          Next: Choose Resolution Path
+          <ArrowRight className="w-4 h-4" />
+        </Button>
+      </div>
     </div>
   );
 }
@@ -1474,13 +1587,6 @@ export default function BlackRockDemo() {
     { id: "brainwave", label: "Brainwave / RadiantOne", color: "bg-purple-800 hover:bg-purple-700" },
   ];
 
-  const sodScreens = [
-    { id: "context" as const, label: "Context", color: "bg-amber-700 hover:bg-amber-600" },
-    { id: "aquera" as const, label: "Aquera — Policy Block", color: "bg-red-700 hover:bg-red-600" },
-    { id: "violation" as const, label: "Policy Violation", color: "bg-red-900 hover:bg-red-800" },
-    { id: "resolution" as const, label: "Resolution Path", color: "bg-orange-700 hover:bg-orange-600" },
-  ];
-
   return (
     <div className="p-6 space-y-4 max-w-[1400px] mx-auto" data-testid="page-blackrock-demo">
       <div className="flex items-center justify-between">
@@ -1596,26 +1702,12 @@ export default function BlackRockDemo() {
 
       {activeScenario === "scenario2" && (
         <>
-          <div className="flex items-center gap-2" data-testid="sod-screen-tabs">
-            {sodScreens.map((s) => {
-              const needsSod = s.id !== "context";
-              const disabled = needsSod && !sod.active;
-              return (
-                <Button
-                  key={s.id}
-                  size="sm"
-                  variant={activeSodScreen === s.id ? "default" : "outline"}
-                  className={activeSodScreen === s.id ? `${s.color} text-white border-0` : disabled ? "opacity-40" : ""}
-                  onClick={() => !disabled && setActiveSodScreen(s.id)}
-                  disabled={disabled}
-                  data-testid={`button-sod-screen-${s.id}`}
-                >
-                  {s.id === "violation" && sod.active && <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse mr-1.5" />}
-                  {s.label}
-                </Button>
-              );
-            })}
-          </div>
+          <SodStepRail
+            activeStep={activeSodScreen as SodStepId}
+            sodActive={sod.active}
+            resolved={!!sod.resolutionPath}
+            onStepClick={(id) => setActiveSodScreen(id)}
+          />
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             <div className="lg:col-span-2">
@@ -1625,8 +1717,18 @@ export default function BlackRockDemo() {
                   isPending={triggerSodMutation.isPending}
                 />
               )}
-              {activeSodScreen === "aquera" && <SodAqueraView sod={sod} />}
-              {activeSodScreen === "violation" && <SodViolationCard sod={sod} />}
+              {activeSodScreen === "aquera" && (
+                <SodAqueraView
+                  sod={sod}
+                  onNext={() => setActiveSodScreen("violation")}
+                />
+              )}
+              {activeSodScreen === "violation" && (
+                <SodViolationCard
+                  sod={sod}
+                  onNext={() => setActiveSodScreen("resolution")}
+                />
+              )}
               {activeSodScreen === "resolution" && (
                 <SodResolutionPanel
                   sod={sod}
