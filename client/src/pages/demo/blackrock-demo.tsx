@@ -936,43 +936,90 @@ function SodStepRail({
 function SodContextView({ onTrigger, isPending }: { onTrigger: () => void; isPending: boolean }) {
   return (
     <div className="space-y-4" data-testid="screen-sod-context">
-      <div className="bg-red-900/20 border border-red-700/40 rounded-lg px-4 py-2 flex items-center gap-3">
-        <ShieldX className="w-5 h-5 text-red-400" />
-        <span className="text-lg font-bold text-red-400">Scenario 2 — SoD Conflict: SOX Wall Violation</span>
-        <Badge className="ml-auto bg-red-700 text-white text-[10px]">COMPLIANCE INCIDENT</Badge>
+
+      {/* ServiceNow Ticket Header */}
+      <div className="bg-green-900/20 border border-green-700/40 rounded-lg px-4 py-2 flex items-center gap-3">
+        <span className="text-lg font-bold text-green-400">ServiceNow</span>
+        <span className="text-green-300/70 text-sm">IT Service Management</span>
+        <span className="ml-auto text-sm text-green-300/70">BlackRock Enterprise</span>
       </div>
 
+      {/* Ticket summary */}
+      <div className="flex items-center gap-2">
+        <Badge variant="outline" className="text-yellow-400 border-yellow-600">REQ0084721</Badge>
+        <Badge variant="outline" className="text-purple-400 border-purple-600">AI / Synthetic Worker</Badge>
+        <Badge variant="outline" className="text-blue-400 border-blue-600">New Entitlement Request</Badge>
+      </div>
+      <h2 className="text-xl font-bold">Synthetic Worker Access Provisioning — Aladdin OMS</h2>
+
+      {/* Ticket detail row */}
+      <div className="grid grid-cols-4 gap-3 text-sm">
+        {[
+          { label: "Requested By", value: "Rachel Torres" },
+          { label: "Department",   value: "Portfolio Operations" },
+          { label: "Priority",     value: "High" },
+          { label: "Status",       value: "Awaiting Pipeline" },
+        ].map(({ label, value }) => (
+          <div key={label} className="bg-muted/30 rounded-lg p-3">
+            <div className="text-xs text-muted-foreground">{label}</div>
+            <div className="font-semibold mt-0.5">{value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Pipeline flow banner */}
+      <div className="flex items-center justify-center gap-1 py-3 px-4 bg-muted/20 rounded-xl border border-border/40" data-testid="sod-pipeline-banner">
+        {[
+          { label: "ServiceNow",   color: "bg-green-500/20 border-green-500 text-green-400",   icon: <CheckCircle2 className="w-3.5 h-3.5" /> },
+          { label: "Orchestrator", color: "bg-orange-500/20 border-orange-500 text-orange-400", icon: <span>&#x1F537;</span> },
+          { label: "Aquera",       color: "bg-primary/20 border-primary text-primary ring-1 ring-primary/50", icon: <Circle className="w-3.5 h-3.5" /> },
+          { label: "SailPoint",    color: "bg-muted/50 border-border text-muted-foreground opacity-40",       icon: <Circle className="w-3.5 h-3.5" /> },
+          { label: "Brainwave",    color: "bg-muted/50 border-border text-muted-foreground opacity-40",       icon: <Circle className="w-3.5 h-3.5" /> },
+        ].map((node, i, arr) => (
+          <div key={node.label} className="flex items-center gap-1">
+            <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border ${node.color}`}>
+              {node.icon}
+              {node.label}
+            </div>
+            {i < arr.length - 1 && <ChevronRight className="w-4 h-4 text-muted-foreground" />}
+          </div>
+        ))}
+        <div className="flex items-center gap-1 ml-1">
+          <ChevronRight className="w-4 h-4 text-red-400" />
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border bg-red-500/10 border-red-500/50 text-red-400">
+            <Ban className="w-3.5 h-3.5" />
+            Compliance Gate
+          </div>
+        </div>
+      </div>
+
+      {/* Pre-existing grant + new request side by side */}
       <div className="grid grid-cols-2 gap-4">
         <Card className="border-amber-500/30 bg-amber-500/5">
           <CardHeader className="py-3 px-4">
             <CardTitle className="text-sm text-amber-400 uppercase tracking-wider flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4" /> Pre-existing Access Grant Detected
+              <AlertTriangle className="w-4 h-4" /> Pre-existing Grant (Invisible to IGA)
             </CardTitle>
           </CardHeader>
           <CardContent className="px-4 pb-4 space-y-3 text-sm">
             <p className="text-muted-foreground text-xs">
-              Before this provisioning request arrived, BMSA-SYNTH-001 was manually granted the following access outside the ATLAS pipeline:
+              BMSA-SYNTH-001 was manually granted this role directly in Active Directory — bypassing SailPoint entirely:
             </p>
             <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Application</span>
-                <span className="font-semibold">Aladdin OMS</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Legacy Role</span>
-                <Badge className="bg-amber-700 text-white font-mono text-xs">Order_Approver</Badge>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Granted By</span>
-                <span className="font-semibold">Marcus Rowe (manual, Mar 1)</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Source System</span>
-                <span className="text-xs text-muted-foreground">Direct AD Group — bypassed SailPoint</span>
-              </div>
+              {[
+                { label: "Application",  value: "Aladdin OMS" },
+                { label: "Legacy Role",  value: <Badge className="bg-amber-700 text-white font-mono text-xs">Order_Approver</Badge> },
+                { label: "Granted By",   value: "Marcus Rowe (manual, Mar 1)" },
+                { label: "Source",       value: <span className="text-xs text-muted-foreground">Direct AD group — bypassed SailPoint</span> },
+              ].map(({ label, value }) => (
+                <div key={label} className="flex items-center justify-between">
+                  <span className="text-muted-foreground">{label}</span>
+                  <span className="font-semibold">{value}</span>
+                </div>
+              ))}
             </div>
             <p className="text-xs text-amber-300/80">
-              This manual grant was never detected because it was applied directly in Active Directory, outside SailPoint's provisioning scope. Without ATLAS, it would have remained invisible.
+              Without ATLAS, this grant is invisible to SailPoint. A standard IGA review would never flag it.
             </p>
           </CardContent>
         </Card>
@@ -980,38 +1027,33 @@ function SodContextView({ onTrigger, isPending }: { onTrigger: () => void; isPen
         <Card className="border-blue-500/30 bg-blue-500/5">
           <CardHeader className="py-3 px-4">
             <CardTitle className="text-sm text-blue-400 uppercase tracking-wider flex items-center gap-2">
-              <Users className="w-4 h-4" /> New Provisioning Request
+              <Users className="w-4 h-4" /> Incoming Request — REQ0084721
             </CardTitle>
           </CardHeader>
           <CardContent className="px-4 pb-4 space-y-3 text-sm">
             <p className="text-muted-foreground text-xs">
-              REQ0084721 requests the following role for BMSA-SYNTH-001 on Aladdin OMS:
+              New entitlement request for BMSA-SYNTH-001, now entering the ATLAS pipeline:
             </p>
             <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Application</span>
-                <span className="font-semibold">Aladdin OMS</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Requested Role</span>
-                <Badge className="bg-blue-700 text-white font-mono text-xs">Portfolio_Rebalancer</Badge>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Requested By</span>
-                <span className="font-semibold">Rachel Torres</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Business Justification</span>
-                <span className="text-xs text-muted-foreground">Automated rebalancing pipeline</span>
-              </div>
+              {[
+                { label: "Application",     value: "Aladdin OMS" },
+                { label: "Requested Role",  value: <Badge className="bg-blue-700 text-white font-mono text-xs">Portfolio_Rebalancer</Badge> },
+                { label: "Requested By",    value: "Rachel Torres" },
+                { label: "Justification",   value: <span className="text-xs text-muted-foreground">Automated rebalancing pipeline</span> },
+              ].map(({ label, value }) => (
+                <div key={label} className="flex items-center justify-between">
+                  <span className="text-muted-foreground">{label}</span>
+                  <span className="font-semibold">{value}</span>
+                </div>
+              ))}
             </div>
             <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
               <div className="flex items-start gap-2">
                 <ShieldX className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
                 <div>
-                  <div className="font-semibold text-red-400 text-xs">SOX §404 SoD Violation</div>
+                  <div className="font-semibold text-red-400 text-xs">SOX §404 Wall Violation</div>
                   <div className="text-xs text-muted-foreground mt-0.5">
-                    Holding both <span className="text-amber-300 font-mono">Order_Approver</span> and <span className="text-blue-300 font-mono">Portfolio_Rebalancer</span> on Aladdin OMS means a single identity can both initiate <em>and</em> approve orders — a direct SOX §404 wall violation.
+                    Holding both <span className="text-amber-300 font-mono">Order_Approver</span> and <span className="text-blue-300 font-mono">Portfolio_Rebalancer</span> on Aladdin OMS lets a single identity initiate <em>and</em> approve orders.
                   </div>
                 </div>
               </div>
@@ -1020,30 +1062,32 @@ function SodContextView({ onTrigger, isPending }: { onTrigger: () => void; isPen
         </Card>
       </div>
 
+      {/* Run pipeline CTA */}
       <Card className="border-orange-500/30 bg-orange-500/5">
         <CardContent className="p-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-4">
             <div>
               <h3 className="font-bold text-orange-400 flex items-center gap-2">
-                <Zap className="w-4 h-4" /> Run Aquera Compliance Pre-Check
+                <Zap className="w-4 h-4" /> Run the ATLAS Pipeline
               </h3>
               <p className="text-sm text-muted-foreground mt-1">
-                Simulate the Aquera agent running the compliance pre-check for this provisioning request. ATLAS will detect the SoD conflict and halt provisioning before any entitlement is granted.
+                The Orchestrator agent picks up REQ0084721 and routes it through the provisioning pipeline. Aquera's compliance gate will cross-reference the full identity fabric — including the AD grant that SailPoint cannot see — and halt provisioning before any entitlement moves.
               </p>
             </div>
             <Button
-              className="bg-red-700 hover:bg-red-600 text-white gap-2 shrink-0 ml-4"
+              className="bg-orange-600 hover:bg-orange-500 text-white gap-2 shrink-0"
               onClick={onTrigger}
               disabled={isPending}
               data-testid="button-trigger-sod"
             >
-              {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldX className="w-4 h-4" />}
-              Run SoD Detection
+              {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+              Run Pipeline
             </Button>
           </div>
         </CardContent>
       </Card>
 
+      {/* Without ATLAS callout */}
       <Card className="border-muted/40">
         <CardHeader className="py-3 px-4">
           <CardTitle className="text-xs text-muted-foreground uppercase tracking-wider">Without ATLAS — The Manual Reality</CardTitle>
@@ -1051,9 +1095,9 @@ function SodContextView({ onTrigger, isPending }: { onTrigger: () => void; isPen
         <CardContent className="px-4 pb-4">
           <div className="grid grid-cols-3 gap-3 text-sm">
             {[
-              { stat: "4 apps", label: "to check manually", color: "text-yellow-400" },
-              { stat: "1,200+", label: "daily access events", color: "text-yellow-400" },
-              { stat: "~0%", label: "chance this gets caught", color: "text-red-400" },
+              { stat: "4 apps",  label: "to check manually",          color: "text-yellow-400" },
+              { stat: "1,200+",  label: "daily access events",         color: "text-yellow-400" },
+              { stat: "~0%",     label: "chance this gets caught",     color: "text-red-400" },
             ].map(({ stat, label, color }, i) => (
               <div key={i} className="bg-muted/30 rounded-lg p-3 text-center">
                 <div className={`text-2xl font-bold ${color}`}>{stat}</div>
