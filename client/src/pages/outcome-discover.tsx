@@ -36,6 +36,7 @@ import {
   CheckCircle2,
   ChevronLeft,
   Activity,
+  X,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -333,6 +334,7 @@ export default function OutcomeDiscover() {
   const [detectingRegulations, setDetectingRegulations] = useState(false);
   const [showKpiBenchmarks, setShowKpiBenchmarks] = useState(false);
   const [expandedRegulations, setExpandedRegulations] = useState<Set<number>>(new Set());
+  const [activeRegConstraints, setActiveRegConstraints] = useState<RegulatoryConstraint[] | null>(null);
   const [createdOutcome, setCreatedOutcome] = useState<OutcomeContract | null>(null);
   const [planRequested, setPlanRequested] = useState(false);
   const [builderMode, setBuilderMode] = useState<"ai" | "form">("ai");
@@ -356,7 +358,7 @@ export default function OutcomeDiscover() {
   const starterPrompts = INDUSTRY_STARTER_PROMPTS[(industry?.id ?? "null") as keyof typeof INDUSTRY_STARTER_PROMPTS] || INDUSTRY_STARTER_PROMPTS["null"];
 
   const industryKpis = industry && industry.id !== "custom" ? INDUSTRY_KPI_LIBRARY[industry.id] : null;
-  const regulatoryConstraints = industry && industry.id !== "custom" ? INDUSTRY_REGULATORY_CONSTRAINTS[industry.id] : null;
+  const regulatoryConstraints = activeRegConstraints ?? (industry && industry.id !== "custom" ? INDUSTRY_REGULATORY_CONSTRAINTS[industry.id] : null);
 
   const industryTemplates = OUTCOME_TEMPLATES.filter((t) => t.industry === industry?.id);
   const otherTemplates = OUTCOME_TEMPLATES.filter((t) => t.industry !== industry?.id);
@@ -659,6 +661,16 @@ export default function OutcomeDiscover() {
     }
   }
 
+  function removeRegConstraint(idx: number) {
+    const base = regulatoryConstraints || [];
+    setActiveRegConstraints(base.filter((_, i) => i !== idx));
+    setExpandedRegulations(prev => {
+      const next = new Set<number>();
+      prev.forEach(n => { if (n < idx) next.add(n); else if (n > idx) next.add(n - 1); });
+      return next;
+    });
+  }
+
   async function handleDetectRegulations() {
     if (!proposal || detectingRegulations) return;
     setDetectingRegulations(true);
@@ -672,8 +684,20 @@ export default function OutcomeDiscover() {
         }),
       });
       if (!res.ok) throw new Error("Regulatory detection failed");
-      const data = await res.json();
-      toast({ title: "Regulations detected", description: `Found ${data.length || 0} applicable regulations.` });
+      const data: Array<{ regulation: string; classification?: string; requirements?: string[]; autoApplied?: boolean }> = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        const mapped: RegulatoryConstraint[] = data.map(d => ({
+          regulation: d.regulation || "Unknown",
+          classification: (d.classification as RegulatoryConstraint["classification"]) || "High-Risk",
+          requirements: d.requirements || [],
+          autoApplied: d.autoApplied ?? true,
+        }));
+        setActiveRegConstraints(mapped);
+        setExpandedRegulations(new Set());
+        toast({ title: "Regulations updated", description: `Detected ${mapped.length} regulation${mapped.length !== 1 ? "s" : ""} specific to this outcome.` });
+      } else {
+        toast({ title: "No regulations detected", description: "No specific regulations found for this outcome. Industry defaults are shown.", variant: "destructive" });
+      }
     } catch (err: any) {
       toast({ title: "Detection failed", description: err.message || "Could not detect regulations.", variant: "destructive" });
     } finally {
@@ -1746,17 +1770,35 @@ export default function OutcomeDiscover() {
                         <div className="flex items-center gap-1.5">
                           <Shield className="w-3.5 h-3.5" />
                           Regulatory Constraints
+                          {activeRegConstraints ? (
+                            <Badge variant="outline" className="text-[9px] text-primary border-primary/40">AI Detected</Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-[9px] text-muted-foreground">Industry Defaults</Badge>
+                          )}
                         </div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={handleDetectRegulations}
-                          disabled={detectingRegulations}
-                          data-testid="button-ai-detect-regulations"
-                        >
-                          {detectingRegulations ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Sparkles className="w-3.5 h-3.5 mr-1" />}
-                          AI Detect
-                        </Button>
+                        <div className="flex items-center gap-1">
+                          {activeRegConstraints && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-[10px] h-6 px-2"
+                              onClick={() => { setActiveRegConstraints(null); setExpandedRegulations(new Set()); }}
+                              data-testid="button-reset-regulations"
+                            >
+                              Reset
+                            </Button>
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={handleDetectRegulations}
+                            disabled={detectingRegulations}
+                            data-testid="button-ai-detect-regulations"
+                          >
+                            {detectingRegulations ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Sparkles className="w-3.5 h-3.5 mr-1" />}
+                            AI Detect
+                          </Button>
+                        </div>
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="p-3 pt-0 flex flex-col gap-2">
@@ -1772,7 +1814,7 @@ export default function OutcomeDiscover() {
                                 {reg.classification}
                               </Badge>
                             </div>
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex items-center gap-0.5">
                               {reg.autoApplied ? (
                                 <Check className="w-3.5 h-3.5 text-green-600 dark:text-green-400" />
                               ) : (
@@ -1781,10 +1823,20 @@ export default function OutcomeDiscover() {
                               <Button
                                 variant="ghost"
                                 size="icon"
+                                className="w-6 h-6"
                                 onClick={() => toggleRegulation(i)}
                                 data-testid={`button-toggle-regulation-${i}`}
                               >
                                 <ChevronDown className={`w-3 h-3 transition-transform ${expandedRegulations.has(i) ? "rotate-180" : ""}`} />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="w-6 h-6 text-muted-foreground hover:text-destructive"
+                                onClick={() => removeRegConstraint(i)}
+                                data-testid={`button-remove-regulation-${i}`}
+                              >
+                                <X className="w-3 h-3" />
                               </Button>
                             </div>
                           </div>
