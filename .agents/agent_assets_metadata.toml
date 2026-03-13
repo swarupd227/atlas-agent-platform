@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "tOjcpb5iqxXhLW0zshGJ1"
+uri = "file://demo-script-scenario2.md"
+type = "text"
+title = "ATLAS Demo Script — Scenario 2: SoD Conflict"
