@@ -13,7 +13,7 @@ import { getProvider, getDefaultProvider, getAvailableProviders, type LLMProvide
 import multer from "multer";
 import { checkPermission, getRequestRole, getTraceRedactionLevel, getRedactionLevel, redactPayload, getOntologySensitivityKeys, invalidateOntologySensitivityCache, redactWithOntologyKeys } from "./permissions";
 import { getSecurityMode, hashPassword, comparePassword, generateToken, verifyToken, setAuthCookie, clearAuthCookie } from "./auth";
-import { resetDemo } from "./demo-store";
+import { resetDemo, setSodPending } from "./demo-store";
 import { users } from "@shared/schema";
 import { registerKnowledgeBaseRoutes } from "./kb-routes";
 import adobeAnalyticsRouter from "./mock-mcp/adobe-analytics";
@@ -32949,9 +32949,39 @@ Return ONLY valid JSON array, no explanation.`;
   });
 
   // ── BlackRock Demo: one-click full pipeline run ─────────────────────────────
-  app.post("/demo-api/run-pipeline", async (_req, res) => {
+  app.post("/demo-api/run-pipeline", async (req, res) => {
     try {
+      const { scenario } = req.body || {};
+      const isSod = scenario === "sod";
+
       const ORCHESTRATOR_ID  = "e9507c06-19cf-425f-8b59-fe58ba221121";
+
+      const SOD_ORCHESTRATOR_PROMPT = `You are the BlackRock Synthetic Worker Provisioning Orchestrator handling request REQ0084721.
+
+Execute the following steps:
+
+1. TASK INTAKE: Call check_pending_requests. Log detection of REQ0084721: BMSA-SYNTH-001 requesting Portfolio_Rebalancer entitlement on Aladdin OMS. Worker type: Synthetic AI agent, Portfolio Operations.
+
+2. IDENTITY VALIDATION: Call log_action with:
+   {"action": "identity_validation", "system": "SailPoint", "details": "Identity cross-check: BMSA-SYNTH-001 validated in RadiantOne directory. Existing entitlement scan initiated across all connected systems including Active Directory and Aladdin OMS."}
+
+3. COMPLIANCE GATE: Call log_action with:
+   {"action": "compliance_precheck", "system": "SailPoint", "details": "Cross-system entitlement scan flagged potential conflict on Aladdin OMS. Routing to Aquera compliance gate for full SoD validation before provisioning proceeds."}
+
+Stop here. Do NOT proceed to Aquera registration. Do NOT call activate_identity or provision_account. The Aquera agent will run its compliance check independently.`;
+
+      const SOD_AQUERA_PROMPT = `You are the Aquera Identity Provisioning Agent. Run the compliance pre-check for BMSA-SYNTH-001 (request REQ0084721: Portfolio_Rebalancer on Aladdin OMS).
+
+Call compliance_pre_check to validate the provisioning request against the full identity fabric.
+
+If the compliance check returns a violation or passed=false:
+  - Call log_action with the violation details using system "Aquera"
+  - Call log_action with:
+    {"action": "POLICY_BLOCKED", "system": "Aquera", "details": "Aladdin OMS connector marked Policy Blocked. Provisioning halted. Incident routed to human review queue."}
+  - STOP. Do NOT call register_scim_user. Do NOT call activate_identity.
+
+If the compliance check passes, proceed normally with register_scim_user for each SCIM connector.`;
+
       const WORKER_AGENTS = [
         {
           id: "c21b6549-e24d-4384-b667-9032619e3dd7",
@@ -32979,6 +33009,9 @@ Return ONLY valid JSON array, no explanation.`;
       if (!orchestrator) return res.status(404).json({ error: "Orchestrator agent not found" });
 
       resetDemo();
+      if (isSod) {
+        setSodPending(true);
+      }
 
       // Persist orchestrator as on-demand (scheduleIntervalMinutes: 0)
       const existingRtConfig = (orchestrator.runtimeConfig as Record<string, any>) || {};
@@ -33006,8 +33039,9 @@ Return ONLY valid JSON array, no explanation.`;
       }
 
       // Ensure worker deployments exist
+      const workersToRun = isSod ? [WORKER_AGENTS[0]] : WORKER_AGENTS;
       const workerDeployments: Record<string, string> = {};
-      for (const w of WORKER_AGENTS) {
+      for (const w of workersToRun) {
         let dep = allDeployments.find((d) => d.agentId === w.id && d.environment === "staging" && d.status !== "rolled_back");
         if (!dep) {
           dep = await storage.createDeployment({
@@ -33025,12 +33059,14 @@ Return ONLY valid JSON array, no explanation.`;
       // Fire-and-forget: orchestrator first, then each worker in sequence
       (async () => {
         try {
-          console.log("[demo-pipeline] Starting orchestrator cycle (on-demand)");
-          await runAgentOnce(orchDeployment!.id);
+          const orchPrompt = isSod ? SOD_ORCHESTRATOR_PROMPT : undefined;
+          console.log(`[demo-pipeline] Starting orchestrator cycle (on-demand, scenario=${isSod ? "sod" : "default"})`);
+          await runAgentOnce(orchDeployment!.id, orchPrompt);
           console.log("[demo-pipeline] Orchestrator complete. Running worker agents sequentially...");
-          for (const w of WORKER_AGENTS) {
+          for (const w of workersToRun) {
+            const workerPrompt = isSod ? SOD_AQUERA_PROMPT : w.prompt;
             console.log(`[demo-pipeline] Running ${w.name}`);
-            await runAgentOnce(workerDeployments[w.id], w.prompt);
+            await runAgentOnce(workerDeployments[w.id], workerPrompt);
             console.log(`[demo-pipeline] ${w.name} complete`);
           }
           console.log("[demo-pipeline] All agents complete.");
@@ -33042,7 +33078,10 @@ Return ONLY valid JSON array, no explanation.`;
       return res.json({
         started: true,
         deploymentId: orchDeployment.id,
-        message: "Pipeline started: orchestrator + 4 worker agents will run sequentially (on-demand).",
+        scenario: isSod ? "sod" : "default",
+        message: isSod
+          ? "Pipeline started: orchestrator + Aquera agent will run SoD compliance check."
+          : "Pipeline started: orchestrator + 4 worker agents will run sequentially (on-demand).",
       });
     } catch (err: any) {
       console.error("[demo-api/run-pipeline]", err);

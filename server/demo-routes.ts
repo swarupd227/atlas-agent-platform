@@ -11,6 +11,8 @@ import {
   getSodViolation,
   triggerSodViolation,
   resolveSodViolation,
+  getSodPending,
+  setSodPending,
 } from "./demo-store";
 import type { IStorage } from "./storage";
 
@@ -69,6 +71,10 @@ demoRouter.post("/aquera/connectors/:id/activate", (req: Request, res: Response)
 
 // ── Aquera SCIM worker agent tools ──────────────────────────────────────────
 demoRouter.post("/aquera/scim/compliance-check", (_req: Request, res: Response) => {
+  if (getSodPending()) {
+    setSodPending(false);
+    triggerSodViolation();
+  }
   const sod = getSodViolation();
   if (sod.active && !sod.resolutionPath) {
     return res.json({

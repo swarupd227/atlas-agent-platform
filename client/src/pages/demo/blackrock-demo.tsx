@@ -971,8 +971,8 @@ function SodContextView({ onTrigger, isPending }: { onTrigger: () => void; isPen
       <div className="flex items-center justify-center gap-1 py-3 px-4 bg-muted/20 rounded-xl border border-border/40" data-testid="sod-pipeline-banner">
         {[
           { label: "ServiceNow",   color: "bg-green-500/20 border-green-500 text-green-400",   icon: <CheckCircle2 className="w-3.5 h-3.5" /> },
-          { label: "Orchestrator", color: "bg-orange-500/20 border-orange-500 text-orange-400", icon: <span>&#x1F537;</span> },
-          { label: "Aquera",       color: "bg-primary/20 border-primary text-primary ring-1 ring-primary/50", icon: <Circle className="w-3.5 h-3.5" /> },
+          { label: "Orchestrator", color: isPending ? "bg-orange-500/20 border-orange-500 text-orange-400 animate-pulse" : "bg-orange-500/20 border-orange-500 text-orange-400", icon: isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <span>&#x1F537;</span> },
+          { label: "Aquera",       color: isPending ? "bg-primary/20 border-primary text-primary ring-1 ring-primary/50 animate-pulse" : "bg-primary/20 border-primary text-primary ring-1 ring-primary/50", icon: isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Circle className="w-3.5 h-3.5" /> },
           { label: "SailPoint",    color: "bg-muted/50 border-border text-muted-foreground opacity-40",       icon: <Circle className="w-3.5 h-3.5" /> },
           { label: "Brainwave",    color: "bg-muted/50 border-border text-muted-foreground opacity-40",       icon: <Circle className="w-3.5 h-3.5" /> },
         ].map((node, i, arr) => (
@@ -1567,14 +1567,7 @@ export default function BlackRockDemo() {
     resolvedBy: null,
   };
 
-  const triggerSodMutation = useMutation({
-    mutationFn: () => apiRequest("POST", "/demo-api/sod-violation/trigger"),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ predicate: (q) => typeof q.queryKey[0] === "string" && q.queryKey[0].startsWith("/demo-api") });
-      setActiveSodScreen("aquera");
-      toast({ title: "SoD Violation Detected", description: "Aquera compliance pre-check failed. Aladdin OMS marked Policy Blocked.", variant: "destructive" });
-    },
-  });
+  const [sodPipelineStarted, setSodPipelineStarted] = useState(false);
 
   const resolveSodMutation = useMutation({
     mutationFn: (path: "revoke" | "exception") => apiRequest("POST", "/demo-api/sod-violation/resolve", { path }),
@@ -1594,23 +1587,40 @@ export default function BlackRockDemo() {
     onSuccess: () => {
       queryClient.invalidateQueries({ predicate: (query) => typeof query.queryKey[0] === "string" && query.queryKey[0].startsWith("/demo-api") });
       setActiveSodScreen("context");
+      setSodPipelineStarted(false);
       toast({ title: "Demo reset", description: "All state restored to initial values" });
     },
   });
 
   const runPipelineMutation = useMutation({
-    mutationFn: () => apiRequest("POST", "/demo-api/run-pipeline"),
-    onSuccess: () => {
-      toast({
-        title: "Pipeline started",
-        description: "The orchestrator agent is now running the full 7-step provisioning pipeline. Watch the activity feed below.",
-      });
+    mutationFn: (opts?: { scenario?: "sod" }) =>
+      apiRequest("POST", "/demo-api/run-pipeline", opts?.scenario ? { scenario: opts.scenario } : undefined),
+    onSuccess: (_data, opts) => {
+      if (opts?.scenario === "sod") {
+        setSodPipelineStarted(true);
+        toast({
+          title: "Pipeline started",
+          description: "The orchestrator is running the SoD compliance check pipeline. Watch the activity feed below.",
+        });
+      } else {
+        toast({
+          title: "Pipeline started",
+          description: "The orchestrator agent is now running the full 7-step provisioning pipeline. Watch the activity feed below.",
+        });
+      }
       queryClient.invalidateQueries({ predicate: (query) => typeof query.queryKey[0] === "string" && query.queryKey[0].startsWith("/demo-api") });
     },
     onError: (err: any) => {
       toast({ title: "Pipeline error", description: err.message || "Failed to start pipeline", variant: "destructive" });
     },
   });
+
+  useEffect(() => {
+    if (sodPipelineStarted && sod.active && activeSodScreen === "context") {
+      setActiveSodScreen("aquera");
+      setSodPipelineStarted(false);
+    }
+  }, [sod.active, activeSodScreen, sodPipelineStarted]);
 
   const auditEntries = auditData?.entries ?? [];
 
@@ -1657,6 +1667,12 @@ export default function BlackRockDemo() {
                 Run Live Pipeline
               </Button>
             )
+          )}
+          {activeScenario === "scenario2" && runPipelineMutation.isPending && (
+            <div className="flex items-center gap-2 text-sm text-orange-400 font-medium animate-pulse" data-testid="sod-pipeline-running-indicator">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Pipeline running…
+            </div>
           )}
           <SetupGuide />
           <Button
@@ -1752,8 +1768,8 @@ export default function BlackRockDemo() {
             <div className="lg:col-span-2">
               {activeSodScreen === "context" && (
                 <SodContextView
-                  onTrigger={() => triggerSodMutation.mutate()}
-                  isPending={triggerSodMutation.isPending}
+                  onTrigger={() => runPipelineMutation.mutate({ scenario: "sod" })}
+                  isPending={runPipelineMutation.isPending}
                 />
               )}
               {activeSodScreen === "aquera" && (

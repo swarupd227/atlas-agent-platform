@@ -100,6 +100,15 @@ export interface DemoState {
 }
 
 let auditCounter = 0;
+let sodPending = false;
+
+export function getSodPending(): boolean {
+  return sodPending;
+}
+
+export function setSodPending(value: boolean): void {
+  sodPending = value;
+}
 
 function createInitialSodState(): SodViolationState {
   return {
@@ -344,5 +353,6 @@ export function addAuditEntry(action: string, system: string, details: string): 
 
 export function resetDemo(): void {
   auditCounter = 0;
+  sodPending = false;
   state = createInitialState();
 }
