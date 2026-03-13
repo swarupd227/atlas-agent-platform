@@ -100,6 +100,7 @@ interface OutcomeProposal {
     estimatedImpact: string;
   }>;
   validationChecklist: string[];
+  regulatoryConstraints?: RegulatoryConstraint[];
 }
 
 interface StarterPrompt {
@@ -593,6 +594,10 @@ export default function OutcomeDiscover() {
       if (extracted) {
         setProposal(extracted);
         setCheckedItems(new Set());
+        if (extracted.regulatoryConstraints && extracted.regulatoryConstraints.length > 0) {
+          setActiveRegConstraints(extracted.regulatoryConstraints);
+          setExpandedRegulations(new Set());
+        }
       }
     } catch (err) {
       toast({ title: "Discovery assistant error", description: "Please try again.", variant: "destructive" });
@@ -1785,35 +1790,18 @@ export default function OutcomeDiscover() {
                         <div className="flex items-center gap-1.5">
                           <Shield className="w-3.5 h-3.5" />
                           Regulatory Constraints
-                          {activeRegConstraints ? (
-                            <Badge variant="outline" className="text-[9px] text-primary border-primary/40">AI Detected</Badge>
-                          ) : (
-                            <Badge variant="outline" className="text-[9px] text-muted-foreground">Industry Defaults</Badge>
-                          )}
                         </div>
-                        <div className="flex items-center gap-1">
-                          {activeRegConstraints && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="text-[10px] h-6 px-2"
-                              onClick={() => { setActiveRegConstraints(null); setExpandedRegulations(new Set()); }}
-                              data-testid="button-reset-regulations"
-                            >
-                              Reset
-                            </Button>
-                          )}
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={handleDetectRegulations}
-                            disabled={detectingRegulations}
-                            data-testid="button-ai-detect-regulations"
-                          >
-                            {detectingRegulations ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Sparkles className="w-3.5 h-3.5 mr-1" />}
-                            AI Detect
-                          </Button>
-                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="w-6 h-6"
+                          onClick={handleDetectRegulations}
+                          disabled={detectingRegulations}
+                          title="Re-detect regulations for this outcome"
+                          data-testid="button-refresh-regulations"
+                        >
+                          {detectingRegulations ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                        </Button>
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="p-3 pt-0 flex flex-col gap-2">

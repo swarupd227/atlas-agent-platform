@@ -12871,6 +12871,14 @@ When you have enough information (usually after 2-3 exchanges), produce a struct
       "estimatedImpact": "string - expected business impact"
     }
   ],
+  "regulatoryConstraints": [
+    {
+      "regulation": "string - regulation or compliance framework name (e.g. SOX Section 404, HIPAA, PCI-DSS)",
+      "classification": "Critical | High-Risk | Medium",
+      "requirements": ["string - 2-4 specific requirements this regulation imposes on this outcome"],
+      "autoApplied": boolean
+    }
+  ],
   "validationChecklist": [
     "string - items the expert/business owner should validate before proceeding"
   ]
@@ -12906,7 +12914,8 @@ Guidelines:
 - Be proactive: surface things the user might not have thought of
 - Reference existing templates when a match exists
 - CRITICAL: If STRUCTURED CONTEXT FROM USER INPUTS is present above, you MUST use it: incorporate process steps, pain points, actor names, timing data, and identified opportunities directly into the proposal. Do not ignore this data.
-- CRITICAL: If CURRENT PROPOSAL TO REFINE is present, output a new full proposal JSON that addresses the user's latest request while preserving the parts they haven't asked to change. Always output the complete JSON, not a partial update.`;
+- CRITICAL: If CURRENT PROPOSAL TO REFINE is present, output a new full proposal JSON that addresses the user's latest request while preserving the parts they haven't asked to change. Always output the complete JSON, not a partial update.
+- CRITICAL: Always include a regulatoryConstraints array in the proposal. Pick only the regulations that are specifically relevant to THIS outcome — do not dump all industry regulations. For each, include 2-4 specific requirements that apply to this outcome.`;
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
@@ -12919,7 +12928,7 @@ Guidelines:
           ...messages,
         ],
         stream: true,
-        max_completion_tokens: 3000,
+        max_completion_tokens: 4000,
       });
 
       for await (const chunk of stream) {
