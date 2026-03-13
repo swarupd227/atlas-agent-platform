@@ -867,7 +867,7 @@ function SodStepRail({
 
   function stepState(idx: number): "completed" | "active" | "locked" {
     if (idx < activeIdx) return "completed";
-    if (idx === activeIdx) return "active";
+    if (idx === activeIdx) return (resolved && SOD_STEPS[idx].id === "resolution") ? "completed" : "active";
     const step = SOD_STEPS[idx];
     if (step.id === "context") return "active";
     if (!sodActive) return "locked";
