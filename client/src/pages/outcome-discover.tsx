@@ -592,9 +592,10 @@ export default function OutcomeDiscover() {
 
       const extracted = extractProposal(assistantContent);
       if (extracted) {
+        extracted.regulatoryConstraints = extracted.regulatoryConstraints ?? [];
         setProposal(extracted);
         setCheckedItems(new Set());
-        setActiveRegConstraints(extracted.regulatoryConstraints ?? null);
+        setActiveRegConstraints(extracted.regulatoryConstraints);
         setExpandedRegulations(new Set());
       }
     } catch (err) {
@@ -1781,7 +1782,7 @@ export default function OutcomeDiscover() {
                   </CardContent>
                 </Card>
 
-                {regulatoryConstraints && (
+                {(regulatoryConstraints || proposal) && (
                   <Card>
                     <CardHeader className="p-3 pb-1">
                       <CardTitle className="text-xs font-medium text-muted-foreground flex items-center justify-between gap-1.5 flex-wrap">
@@ -1803,7 +1804,13 @@ export default function OutcomeDiscover() {
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="p-3 pt-0 flex flex-col gap-2">
-                      {regulatoryConstraints.map((reg, i) => (
+                      {(!regulatoryConstraints || regulatoryConstraints.length === 0) && (
+                        <div className="flex items-center gap-2 p-2 rounded-md bg-muted/30 text-muted-foreground" data-testid="text-no-regulations">
+                          <Shield className="w-3.5 h-3.5 shrink-0" />
+                          <span className="text-[11px]">No regulations detected. Click the refresh icon to detect applicable regulations for this outcome.</span>
+                        </div>
+                      )}
+                      {regulatoryConstraints && regulatoryConstraints.map((reg, i) => (
                         <div key={i} className="flex flex-col gap-1.5 p-2 rounded-md bg-muted/50" data-testid={`regulatory-constraint-${i}`}>
                           <div className="flex items-center justify-between gap-2 flex-wrap">
                             <div className="flex items-center gap-2 flex-wrap">
