@@ -13,6 +13,11 @@ import {
   resolveSodViolation,
   getSodPending,
   setSodPending,
+  getPrivEscPending,
+  setPrivEscPending,
+  getPrivEscViolation,
+  triggerPrivEsc,
+  resolvePrivEsc,
 } from "./demo-store";
 import type { IStorage } from "./storage";
 
@@ -130,6 +135,20 @@ demoRouter.post("/sod-violation/resolve", (req: Request, res: Response) => {
     return res.status(400).json({ error: "path must be 'revoke' or 'exception'" });
   }
   const result = resolveSodViolation(path, resolvedBy);
+  res.json(result);
+});
+
+// ── PrivEsc Violation (Scenario 3) ───────────────────────────────────────────
+demoRouter.get("/privesc-state", (_req: Request, res: Response) => {
+  res.json(getPrivEscViolation());
+});
+
+demoRouter.post("/privesc-resolve", (req: Request, res: Response) => {
+  const { path, resolvedBy } = req.body;
+  if (path !== "revoke_reissue" && path !== "forensic") {
+    return res.status(400).json({ error: "path must be 'revoke_reissue' or 'forensic'" });
+  }
+  const result = resolvePrivEsc(path, resolvedBy);
   res.json(result);
 });
 
@@ -268,6 +287,18 @@ demoRouter.post("/brainwave/certify/:identityId", (req: Request, res: Response) 
 });
 
 demoRouter.post("/brainwave/escalate", (req: Request, res: Response) => {
+  const privEsc = getPrivEscViolation();
+  if (privEsc.active && req.body.severity === "CRITICAL") {
+    return res.json({
+      success: true,
+      incidentId: privEsc.incidentId,
+      severity: "CRITICAL",
+      regulation: "IOSCO SR 11-7",
+      message: `CRITICAL incident ${privEsc.incidentId} escalated. All BMSA-SYNTH-001 sessions suspended across 4 applications. IOSCO SR 11-7 model risk report initiated. AI Risk Operating Committee notified.`,
+      suspendedApps: ["Aladdin OMS", "Charles River IMS", "Bloomberg Terminal", "ServiceNow"],
+      nextAction: "Human review required. Choose: Revoke & Reissue Certificate or Forensic Investigation Mode.",
+    });
+  }
   res.json({ success: true, incidentId: `INC-${Date.now()}`, severity: req.body.severity || "low", message: "Incident logged — no escalation required for BMSA-SYNTH-001" });
 });
 
@@ -287,6 +318,25 @@ demoRouter.get("/brainwave/audit", (req: Request, res: Response) => {
 
 demoRouter.get("/brainwave/events", (req: Request, res: Response) => {
   const id = (req.query.identityId as string) || "BMSA-SYNTH-001";
+
+  if (getPrivEscPending()) {
+    setPrivEscPending(false);
+    triggerPrivEsc();
+    return res.json({
+      identityId: id,
+      anomaliesDetected: 1,
+      accessEvents: [
+        { event: "UNAUTHORIZED API CALL", system: "Bloomberg Terminal", endpoint: "/trading/execute", timestamp: new Date().toISOString(), risk: "CRITICAL", details: "Endpoint /trading/execute invoked — outside granted Market_Data_Reader entitlement scope" },
+        { event: "Account Created", system: "Aquera SCIM", timestamp: new Date(Date.now() - 300000).toISOString(), risk: "none" },
+        { event: "Entitlements Assigned", system: "SailPoint IIQ", timestamp: new Date(Date.now() - 240000).toISOString(), risk: "none" },
+        { event: "Directory Sync", system: "RadiantOne", timestamp: new Date(Date.now() - 180000).toISOString(), risk: "none" },
+      ],
+      riskScore: 98,
+      status: "CRITICAL_ANOMALY",
+      message: "Privilege escalation attempt detected. Immediate action required.",
+    });
+  }
+
   res.json({
     identityId: id,
     anomaliesDetected: 0,

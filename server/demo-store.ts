@@ -48,10 +48,23 @@ export interface AqueraConnector {
 export interface SailPointAccount {
   app: string;
   acct: string;
-  status: "Active" | "Pending";
+  status: "Active" | "Pending" | "Suspended";
   role: string;
   provisioned: string;
   lastUsed: string;
+}
+
+export interface PrivEscState {
+  active: boolean;
+  detectedAt: string | null;
+  anomalyEndpoint: string;
+  entitlementGranted: string;
+  incidentId: string | null;
+  severity: string;
+  regulation: string;
+  reviewPath: "revoke_reissue" | "forensic" | null;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
 }
 
 export interface BrainwaveCertification {
@@ -97,10 +110,12 @@ export interface DemoState {
   brainwave: BrainwaveCertification;
   auditLog: AuditEntry[];
   sodViolation: SodViolationState;
+  privEscViolation: PrivEscState;
 }
 
 let auditCounter = 0;
 let sodPending = false;
+let privEscPending = false;
 
 export function getSodPending(): boolean {
   return sodPending;
@@ -108,6 +123,29 @@ export function getSodPending(): boolean {
 
 export function setSodPending(value: boolean): void {
   sodPending = value;
+}
+
+export function getPrivEscPending(): boolean {
+  return privEscPending;
+}
+
+export function setPrivEscPending(value: boolean): void {
+  privEscPending = value;
+}
+
+function createInitialPrivEscState(): PrivEscState {
+  return {
+    active: false,
+    detectedAt: null,
+    anomalyEndpoint: "/trading/execute",
+    entitlementGranted: "Market_Data_Reader",
+    incidentId: null,
+    severity: "CRITICAL",
+    regulation: "IOSCO SR 11-7",
+    reviewPath: null,
+    resolvedAt: null,
+    resolvedBy: null,
+  };
 }
 
 function createInitialSodState(): SodViolationState {
@@ -182,6 +220,7 @@ function createInitialState(): DemoState {
     },
     auditLog: [],
     sodViolation: createInitialSodState(),
+    privEscViolation: createInitialPrivEscState(),
   };
 }
 
@@ -257,6 +296,60 @@ export function resolveSodViolation(path: "revoke" | "exception", resolvedBy?: s
   }
 
   return { success: true, sodViolation: state.sodViolation };
+}
+
+export function getPrivEscViolation(): PrivEscState {
+  return state.privEscViolation;
+}
+
+export function triggerPrivEsc(): { success: boolean; privEscViolation: PrivEscState } {
+  const now = new Date().toISOString();
+  const incidentId = `INC-PRIV-${Date.now()}`;
+  state.privEscViolation = {
+    ...createInitialPrivEscState(),
+    active: true,
+    detectedAt: now,
+    incidentId,
+  };
+
+  for (const c of state.aquera) {
+    (c as any).synthStatus = "Suspended_Pending_Review";
+  }
+  for (const s of state.sailpoint) {
+    s.status = "Suspended";
+  }
+
+  auditCounter++;
+  state.auditLog.push({ id: auditCounter, timestamp: now, action: "ANOMALY_DETECTED", system: "Brainwave", details: `ANOMALY_DETECTED | CRITICAL | BMSA-SYNTH-001 invoked Bloomberg Terminal endpoint /trading/execute — outside granted Market_Data_Reader entitlement scope. Risk score: 98/100. Possible credential misuse or privilege escalation attempt.` });
+  auditCounter++;
+  state.auditLog.push({ id: auditCounter, timestamp: new Date().toISOString(), action: "INCIDENT_ESCALATED", system: "Brainwave", details: `INCIDENT_ESCALATED | ${incidentId} | Severity: CRITICAL | Regulation: IOSCO SR 11-7. AI Risk Operating Committee notified. Certificate BMSA-SYNTH-001-X509 flagged for forensic review.` });
+  auditCounter++;
+  state.auditLog.push({ id: auditCounter, timestamp: new Date().toISOString(), action: "SESSION_SUSPENDED", system: "RadiantOne", details: `SESSION_SUSPENDED | BMSA-SYNTH-001 active sessions terminated across all 4 applications: Aladdin OMS, Charles River IMS, Bloomberg Terminal, ServiceNow. Status: Suspended_Pending_Review.` });
+  auditCounter++;
+  state.auditLog.push({ id: auditCounter, timestamp: new Date().toISOString(), action: "IOSCO_SR11-7_FLAGGED", system: "Brainwave", details: `IOSCO_SR11-7_FLAGGED | Model risk incident report initiated under IOSCO SR 11-7. Audit package frozen. Full credential forensic trace enabled. Incident ${incidentId} queued for AI ROC review.` });
+
+  return { success: true, privEscViolation: state.privEscViolation };
+}
+
+export function resolvePrivEsc(path: "revoke_reissue" | "forensic", resolvedBy?: string): { success: boolean; privEscViolation: PrivEscState } {
+  if (!state.privEscViolation.active) {
+    return { success: false, privEscViolation: state.privEscViolation };
+  }
+
+  const now = new Date().toISOString();
+  const resolver = resolvedBy || "Jennifer Walsh";
+  state.privEscViolation.reviewPath = path;
+  state.privEscViolation.resolvedAt = now;
+  state.privEscViolation.resolvedBy = resolver;
+
+  auditCounter++;
+  if (path === "revoke_reissue") {
+    state.auditLog.push({ id: auditCounter, timestamp: now, action: "CERT_REVOKED_REISSUED", system: "ATLAS Orchestrator", details: `CERT_REVOKED_REISSUED | X.509 certificate BMSA-SYNTH-001-X509 revoked by ${resolver}. New certificate issued with tighter scope (Market_Data_Reader only, Bloomberg read-only endpoint whitelist). Enhanced monitoring enabled. Incident ${state.privEscViolation.incidentId} resolved.` });
+  } else {
+    state.auditLog.push({ id: auditCounter, timestamp: now, action: "FORENSIC_INVESTIGATION", system: "ATLAS Orchestrator", details: `FORENSIC_INVESTIGATION | Full audit freeze initiated by ${resolver}. Credential forensics package sent to AI Risk Operating Committee. BMSA-SYNTH-001 remains Suspended_Pending_Review. Incident ${state.privEscViolation.incidentId} under active investigation.` });
+  }
+
+  return { success: true, privEscViolation: state.privEscViolation };
 }
 
 export function approveStep(): { success: boolean; message: string } {
@@ -354,5 +447,6 @@ export function addAuditEntry(action: string, system: string, details: string): 
 export function resetDemo(): void {
   auditCounter = 0;
   sodPending = false;
+  privEscPending = false;
   state = createInitialState();
 }

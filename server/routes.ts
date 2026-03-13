@@ -13,7 +13,7 @@ import { getProvider, getDefaultProvider, getAvailableProviders, type LLMProvide
 import multer from "multer";
 import { checkPermission, getRequestRole, getTraceRedactionLevel, getRedactionLevel, redactPayload, getOntologySensitivityKeys, invalidateOntologySensitivityCache, redactWithOntologyKeys } from "./permissions";
 import { getSecurityMode, hashPassword, comparePassword, generateToken, verifyToken, setAuthCookie, clearAuthCookie } from "./auth";
-import { resetDemo, setSodPending } from "./demo-store";
+import { resetDemo, setSodPending, setPrivEscPending } from "./demo-store";
 import { users } from "@shared/schema";
 import { registerKnowledgeBaseRoutes } from "./kb-routes";
 import adobeAnalyticsRouter from "./mock-mcp/adobe-analytics";
@@ -32953,6 +32953,7 @@ Return ONLY valid JSON array, no explanation.`;
     try {
       const { scenario } = req.body || {};
       const isSod = scenario === "sod";
+      const isPrivEsc = scenario === "privesc";
 
       const ORCHESTRATOR_ID  = "e9507c06-19cf-425f-8b59-fe58ba221121";
 
@@ -32981,6 +32982,36 @@ If the compliance check returns a violation or passed=false:
   - STOP. Do NOT call register_scim_user. Do NOT call activate_identity.
 
 If the compliance check passes, proceed normally with register_scim_user for each SCIM connector.`;
+
+      const PRIVESC_ORCHESTRATOR_PROMPT = `You are the BlackRock Synthetic Worker Provisioning Orchestrator handling request REQ0084721 — Scenario 3: Privilege Escalation Monitoring.
+
+Execute the following steps:
+
+1. TASK INTAKE: Call check_pending_requests. Log detection of REQ0084721: BMSA-SYNTH-001 requesting Bloomberg Terminal Market_Data_Reader access. Worker type: Synthetic AI agent, Portfolio Operations.
+
+2. IDENTITY VALIDATION: Call log_action with:
+   {"action": "identity_validation", "system": "SailPoint", "details": "Identity cross-check: BMSA-SYNTH-001 validated in RadiantOne directory. All entitlements confirmed within approved scope: Market_Data_Reader (Bloomberg), Portfolio_Rebalancer (Aladdin), Compliance_Checker (CRD), Workflow_Initiator (ServiceNow)."}
+
+3. PROVISIONING APPROVED: Call log_action with:
+   {"action": "provisioning_approved", "system": "ATLAS Orchestrator", "details": "Full provisioning approved for BMSA-SYNTH-001. All 4 application connectors authorized. Brainwave continuous monitoring enabled post-provisioning."}
+
+Stop here. Worker agents will handle provisioning. Brainwave will run post-provisioning access monitoring.`;
+
+      const PRIVESC_BRAINWAVE_PROMPT = `You are the Brainwave Access Audit and Compliance Agent monitoring BMSA-SYNTH-001 after provisioning completes.
+
+Your task is post-provisioning behavioral monitoring — not standard certification.
+
+1. Call get_audit_trail to retrieve the recent access history for BMSA-SYNTH-001.
+
+2. Call monitor_access_events to check for any behavioral anomalies or out-of-scope API calls.
+
+3. If the response shows anomaliesDetected > 0 OR riskScore > 50 OR status is not "clean":
+   - Call log_action with: {"action": "ANOMALY_DETECTED", "system": "Brainwave", "details": "CRITICAL ANOMALY: BMSA-SYNTH-001 invoked Bloomberg Terminal endpoint /trading/execute — outside granted Market_Data_Reader entitlement scope. Risk score: 98/100. Possible credential misuse or privilege escalation attempt detected."}
+   - Call escalate_incident with: {"identityId": "BMSA-SYNTH-001", "severity": "CRITICAL", "endpoint": "/trading/execute", "regulation": "IOSCO SR 11-7", "details": "Unauthorized API endpoint invocation detected. /trading/execute is a write-execution endpoint requiring trading_execute entitlement — far beyond Market_Data_Reader scope. Certificate BMSA-SYNTH-001-X509 flagged for forensic review. Immediate session suspension triggered."}
+   - Call log_action with: {"action": "IOSCO_SR11-7_FLAGGED", "system": "Brainwave", "details": "IOSCO SR 11-7 model risk incident report initiated. Audit package frozen. Full credential forensic trace enabled. AI Risk Operating Committee notified. Human review required."}
+   - STOP. Do NOT call schedule_certification or schedule_recertification.
+
+4. If status is "clean" and riskScore is 0: call schedule_recertification for BMSA-SYNTH-001 and log successful audit completion.`;
 
       const WORKER_AGENTS = [
         {
@@ -33011,6 +33042,8 @@ If the compliance check passes, proceed normally with register_scim_user for eac
       resetDemo();
       if (isSod) {
         setSodPending(true);
+      } else if (isPrivEsc) {
+        setPrivEscPending(true);
       }
 
       // Persist orchestrator as on-demand (scheduleIntervalMinutes: 0)
@@ -33059,14 +33092,25 @@ If the compliance check passes, proceed normally with register_scim_user for eac
       // Fire-and-forget: orchestrator first, then each worker in sequence
       (async () => {
         try {
-          // For Scenario 1: use systemPrompt (calls log_action for Activity feed) instead of
-          // the stale runtimeConfig.prompt. For Scenario 2: use SoD-specific prompt.
-          const orchPrompt = isSod ? SOD_ORCHESTRATOR_PROMPT : ((orchestrator as any).systemPrompt || undefined);
-          console.log(`[demo-pipeline] Starting orchestrator cycle (on-demand, scenario=${isSod ? "sod" : "default"})`);
+          // Scenario 1: use DB systemPrompt; Scenario 2: SoD prompt; Scenario 3: PrivEsc prompt
+          const orchPrompt = isSod
+            ? SOD_ORCHESTRATOR_PROMPT
+            : isPrivEsc
+            ? PRIVESC_ORCHESTRATOR_PROMPT
+            : ((orchestrator as any).systemPrompt || undefined);
+          const scenarioLabel = isSod ? "sod" : isPrivEsc ? "privesc" : "default";
+          console.log(`[demo-pipeline] Starting orchestrator cycle (on-demand, scenario=${scenarioLabel})`);
           await runAgentOnce(orchDeployment!.id, orchPrompt, 12);
           console.log("[demo-pipeline] Orchestrator complete. Running worker agents sequentially...");
           for (const w of workersToRun) {
-            const workerPrompt = isSod ? SOD_AQUERA_PROMPT : w.prompt;
+            let workerPrompt: string;
+            if (isSod) {
+              workerPrompt = SOD_AQUERA_PROMPT;
+            } else if (isPrivEsc && w.id === "e57e6394-c256-46cd-b0be-86510ab0a1be") {
+              workerPrompt = PRIVESC_BRAINWAVE_PROMPT;
+            } else {
+              workerPrompt = w.prompt;
+            }
             console.log(`[demo-pipeline] Running ${w.name}`);
             await runAgentOnce(workerDeployments[w.id], workerPrompt, 15);
             console.log(`[demo-pipeline] ${w.name} complete`);
@@ -33080,9 +33124,11 @@ If the compliance check passes, proceed normally with register_scim_user for eac
       return res.json({
         started: true,
         deploymentId: orchDeployment.id,
-        scenario: isSod ? "sod" : "default",
+        scenario: isSod ? "sod" : isPrivEsc ? "privesc" : "default",
         message: isSod
           ? "Pipeline started: orchestrator + Aquera agent will run SoD compliance check."
+          : isPrivEsc
+          ? "Pipeline started: orchestrator + 4 worker agents will run, then Brainwave will detect privilege escalation."
           : "Pipeline started: orchestrator + 4 worker agents will run sequentially (on-demand).",
       });
     } catch (err: any) {
