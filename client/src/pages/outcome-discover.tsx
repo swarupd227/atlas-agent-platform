@@ -71,6 +71,13 @@ interface ChatMessage {
   content: string;
 }
 
+interface ApplicablePolicy {
+  policyId: string;
+  name: string;
+  domain: string;
+  rationale: string;
+}
+
 interface OutcomeProposal {
   type: "outcome_proposal";
   outcomeContract: {
@@ -101,6 +108,7 @@ interface OutcomeProposal {
   }>;
   validationChecklist: string[];
   regulatoryConstraints?: RegulatoryConstraint[];
+  applicablePolicies?: ApplicablePolicy[];
 }
 
 interface StarterPrompt {
@@ -336,6 +344,7 @@ export default function OutcomeDiscover() {
   const [showKpiBenchmarks, setShowKpiBenchmarks] = useState(false);
   const [expandedRegulations, setExpandedRegulations] = useState<Set<number>>(new Set());
   const [activeRegConstraints, setActiveRegConstraints] = useState<RegulatoryConstraint[] | null>(null);
+  const [activeApplicablePolicies, setActiveApplicablePolicies] = useState<ApplicablePolicy[]>([]);
   const [createdOutcome, setCreatedOutcome] = useState<OutcomeContract | null>(null);
   const [planRequested, setPlanRequested] = useState(false);
   const [builderMode, setBuilderMode] = useState<"ai" | "form">("ai");
@@ -593,9 +602,11 @@ export default function OutcomeDiscover() {
       const extracted = extractProposal(assistantContent);
       if (extracted) {
         extracted.regulatoryConstraints = extracted.regulatoryConstraints ?? [];
+        extracted.applicablePolicies = extracted.applicablePolicies ?? [];
         setProposal(extracted);
         setCheckedItems(new Set());
         setActiveRegConstraints(extracted.regulatoryConstraints);
+        setActiveApplicablePolicies(extracted.applicablePolicies);
         setExpandedRegulations(new Set());
       }
     } catch (err) {
@@ -1857,6 +1868,48 @@ export default function OutcomeDiscover() {
                           )}
                         </div>
                       ))}
+                    </CardContent>
+                  </Card>
+                )}
+
+                {proposal && (
+                  <Card>
+                    <CardHeader className="p-3 pb-1">
+                      <CardTitle className="text-xs font-medium text-muted-foreground flex items-center gap-1.5 flex-wrap">
+                        <BookOpen className="w-3.5 h-3.5" />
+                        Applicable Platform Policies
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-3 pt-0 flex flex-col gap-2">
+                      {activeApplicablePolicies.length === 0 ? (
+                        <div className="flex items-center gap-2 p-2 rounded-md bg-muted/30 text-muted-foreground" data-testid="text-no-applicable-policies">
+                          <BookOpen className="w-3.5 h-3.5 shrink-0" />
+                          <span className="text-[11px]">No platform policies applicable to this outcome.</span>
+                        </div>
+                      ) : (
+                        activeApplicablePolicies.map((pol, i) => (
+                          <div key={i} className="flex flex-col gap-1.5 p-2 rounded-md bg-muted/50" data-testid={`applicable-policy-${i}`}>
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex flex-col gap-1 flex-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-xs font-medium">{pol.name}</span>
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-mono">{pol.domain}</span>
+                                </div>
+                                <span className="text-[11px] text-muted-foreground leading-relaxed">{pol.rationale}</span>
+                              </div>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="w-5 h-5 shrink-0 text-muted-foreground hover:text-destructive"
+                                onClick={() => setActiveApplicablePolicies(prev => prev.filter((_, idx) => idx !== i))}
+                                data-testid={`button-remove-policy-${i}`}
+                              >
+                                <X className="w-3 h-3" />
+                              </Button>
+                            </div>
+                          </div>
+                        ))
+                      )}
                     </CardContent>
                   </Card>
                 )}

@@ -12824,6 +12824,9 @@ Revenue:
 
       const templates = await storage.getAgentTemplates();
       const outcomes = await storage.getOutcomes();
+      const allPolicies = await storage.getPolicies();
+      const activePolicies = allPolicies.filter(p => p.status === "active");
+      const policyListForPrompt = activePolicies.map(p => `- id:${p.id} [${p.domain}] ${p.name}${p.description ? ": " + p.description : ""}`).join("\n");
 
       const industryContext = industry ? `\n\nIMPORTANT: The user is operating in the "${industry.label}" industry workspace. Tailor all suggestions, KPIs, agent designs, and compliance considerations to this industry. Use industry-standard terminology and reference relevant regulations (${industry.id === 'financial_services' ? 'BSA/AML, SOX, PCI-DSS, EU AI Act' : industry.id === 'healthcare' ? 'HIPAA, HITECH, CMS, FDA 21 CFR Part 11' : industry.id === 'manufacturing' ? 'ISO 9001, OSHA, EPA' : industry.id === 'insurance' ? 'State Insurance Regulations, NAIC, ACORD' : industry.id === 'retail' ? 'PCI-DSS, CCPA/CPRA, FTC Act' : industry.id === 'technology_saas' ? 'SOC 2 Type II, GDPR, CCPA, ISO 27001, FedRAMP' : 'general compliance frameworks'}). When proposing agents, include industry-specific skills, MCP connections for industry systems, and note which governance policies will auto-apply.` : '';
 
@@ -12873,10 +12876,18 @@ When you have enough information (usually after 2-3 exchanges), produce a struct
   ],
   "regulatoryConstraints": [
     {
-      "regulation": "string - regulation or compliance framework name (e.g. SOX Section 404, HIPAA, PCI-DSS)",
+      "regulation": "string - EXTERNAL regulation or compliance framework name only (e.g. SOX Section 404, HIPAA, PCI-DSS, GDPR, FINRA, NIST SP 800-53)",
       "classification": "Critical | High-Risk | Medium",
       "requirements": ["string - 2-4 specific requirements this regulation imposes on this outcome"],
       "autoApplied": boolean
+    }
+  ],
+  "applicablePolicies": [
+    {
+      "policyId": "string - the exact policy id from the platform policy list",
+      "name": "string - policy name",
+      "domain": "string - policy domain",
+      "rationale": "string - one sentence explaining why this platform policy applies to this specific outcome"
     }
   ],
   "validationChecklist": [
@@ -12887,6 +12898,9 @@ When you have enough information (usually after 2-3 exchanges), produce a struct
 
 Existing outcome contracts for reference (do NOT duplicate these, use them for context only): ${JSON.stringify(outcomes.slice(0, 5).map(o => ({ name: o.name, description: o.description })))}
 Available agent templates (reference these when relevant): ${JSON.stringify(templates.slice(0, 10).map(t => ({ name: t.name, category: t.category, industry: t.industry, description: t.description })))}
+
+ACTIVE PLATFORM GOVERNANCE POLICIES (select applicable ones for this outcome):
+${policyListForPrompt || "(no active policies)"}
 
 ${(() => {
   const ctx = discoveryContext || {};
@@ -12915,7 +12929,8 @@ Guidelines:
 - Reference existing templates when a match exists
 - CRITICAL: If STRUCTURED CONTEXT FROM USER INPUTS is present above, you MUST use it: incorporate process steps, pain points, actor names, timing data, and identified opportunities directly into the proposal. Do not ignore this data.
 - CRITICAL: If CURRENT PROPOSAL TO REFINE is present, output a new full proposal JSON that addresses the user's latest request while preserving the parts they haven't asked to change. Always output the complete JSON, not a partial update.
-- CRITICAL: Always include a regulatoryConstraints array in the proposal. Pick only the regulations that are specifically relevant to THIS outcome — do not dump all industry regulations. For each, include 2-4 specific requirements that apply to this outcome.`;
+- CRITICAL: Always include a regulatoryConstraints array in the proposal with 4–8 EXTERNAL statutory or regulatory frameworks (e.g. SOX, GDPR, FINRA, HIPAA, PCI-DSS, NIST). Do NOT put internal platform governance policies in this array — those go in applicablePolicies. Do not dump generic industry regulations; select only those genuinely relevant to this specific outcome. For each, include 2-4 specific requirements.
+- CRITICAL: Always include an applicablePolicies array. Review the ACTIVE PLATFORM GOVERNANCE POLICIES listed above and select ONLY the ones that are directly applicable to this specific outcome. For each selected policy include its exact policyId (the id shown after the domain tag), name, domain, and a one-sentence rationale. If none apply, return an empty array.`;
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
@@ -13032,11 +13047,11 @@ Guidelines:
         messages: [
           {
             role: "system",
-            content: `You are a regulatory compliance analyst. Given a business outcome description, an industry, and a list of active internal governance policies in this platform, identify all applicable external regulations AND note which internal policies are relevant. Classify each by risk level. Return a JSON object with a "constraints" array where each item has: regulation (string — the regulation name or internal policy name), classification (one of "Critical", "High-Risk", "Medium"), requirements (string array of 2-4 specific requirements), autoApplied (boolean — true if this should be automatically enforced), rationale (string — brief explanation of why this applies).`,
+            content: `You are a regulatory compliance analyst. Given a business outcome description and an industry, identify 4–8 applicable EXTERNAL statutory or regulatory frameworks. ONLY return external government or industry regulations (e.g. SOX, GDPR, FINRA, HIPAA, PCI-DSS, NIST SP 800-53, EU AI Act, BSA/AML). Do NOT list internal platform governance policies as separate items — they are provided only as background context to help you write precise requirements under each regulation. For each regulation return: regulation (string — the external regulation name only), classification (one of "Critical", "High-Risk", "Medium"), requirements (string array of 2-4 specific requirements this regulation places on the outcome), autoApplied (boolean — true if automatically enforced), rationale (string — one sentence explaining why this applies). Return a JSON object with a "constraints" array.`,
           },
           {
             role: "user",
-            content: `Industry: ${industry.label || industry} (${industry.id || industry})\nOutcome: ${description || "(no description provided)"}\n\nActive Governance Policies in this platform:\n${policyContext || "(none)"}`,
+            content: `Industry: ${industry.label || industry} (${industry.id || industry})\nOutcome: ${description || "(no description provided)"}\n\nInternal platform policies (background context only — do NOT list these as separate constraint items):\n${policyContext || "(none)"}`,
           },
         ],
         max_completion_tokens: 1800,
