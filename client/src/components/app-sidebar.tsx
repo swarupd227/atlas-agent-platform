@@ -239,7 +239,7 @@ export function AppSidebar() {
                     <SidebarMenuButton asChild data-active={location.startsWith("/demo/blackrock")}>
                       <Link href="/demo/blackrock" data-testid="link-nav-blackrock-demo">
                         <Building2 className="w-4 h-4" />
-                        <span>BlackRock</span>
+                        <span>AIM - Synthetic Worker</span>
                       </Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
