@@ -715,7 +715,7 @@ export default function OutcomeDiscover() {
         setExpandedRegulations(new Set());
         toast({ title: "Regulations updated", description: `Detected ${mapped.length} regulation${mapped.length !== 1 ? "s" : ""} specific to this outcome.` });
       } else {
-        toast({ title: "No regulations detected", description: "No specific regulations found for this outcome. Industry defaults are shown.", variant: "destructive" });
+        toast({ title: "No regulations detected", description: "No specific regulations found for this outcome. Try refining the outcome description.", variant: "destructive" });
       }
     } catch (err: any) {
       toast({ title: "Detection failed", description: err.message || "Could not detect regulations.", variant: "destructive" });
@@ -1795,7 +1795,7 @@ export default function OutcomeDiscover() {
                           size="icon"
                           className="w-6 h-6"
                           onClick={handleDetectRegulations}
-                          disabled={detectingRegulations}
+                          disabled={detectingRegulations || !proposal}
                           title="Re-detect regulations for this outcome"
                           data-testid="button-refresh-regulations"
                         >
