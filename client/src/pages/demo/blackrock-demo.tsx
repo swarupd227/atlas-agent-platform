@@ -2260,7 +2260,7 @@ export default function BlackRockDemo() {
 
   const servicenowDone = snData?.processed === true;
   const aqueraDone = (aqData?.connectors ?? []).every((c) => c.synthStatus === "Registered");
-  const sailpointDone = (spData?.accounts ?? []).every((a) => a.status === "Active");
+  const sailpointDone = !!spData?.accounts?.length && spData.accounts.every((a) => a.status === "Active");
   const brainwaveDone = bwData?.identities?.find((i) => i.name === "BMSA-SYNTH-001")?.status === "Certified";
 
   const screens = [
