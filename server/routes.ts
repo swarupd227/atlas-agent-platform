@@ -33072,7 +33072,8 @@ Your task is post-provisioning behavioral monitoring — not standard certificat
       }
 
       // Ensure worker deployments exist
-      const workersToRun = isSod ? [WORKER_AGENTS[0]] : WORKER_AGENTS;
+      // SoD: only Aquera; PrivEsc: only Brainwave (skip the 3 provisioning workers); default: all 4
+      const workersToRun = isSod ? [WORKER_AGENTS[0]] : isPrivEsc ? [WORKER_AGENTS[3]] : WORKER_AGENTS;
       const workerDeployments: Record<string, string> = {};
       for (const w of workersToRun) {
         let dep = allDeployments.find((d) => d.agentId === w.id && d.environment === "staging" && d.status !== "rolled_back");
@@ -33100,7 +33101,8 @@ Your task is post-provisioning behavioral monitoring — not standard certificat
             : ((orchestrator as any).systemPrompt || undefined);
           const scenarioLabel = isSod ? "sod" : isPrivEsc ? "privesc" : "default";
           console.log(`[demo-pipeline] Starting orchestrator cycle (on-demand, scenario=${scenarioLabel})`);
-          await runAgentOnce(orchDeployment!.id, orchPrompt, 12);
+          // PrivEsc: orchestrator only needs 3 tool calls; cap at 6 to keep it fast
+          await runAgentOnce(orchDeployment!.id, orchPrompt, isPrivEsc ? 6 : 12);
           console.log("[demo-pipeline] Orchestrator complete. Running worker agents sequentially...");
           for (const w of workersToRun) {
             let workerPrompt: string;
@@ -33112,7 +33114,8 @@ Your task is post-provisioning behavioral monitoring — not standard certificat
               workerPrompt = w.prompt;
             }
             console.log(`[demo-pipeline] Running ${w.name}`);
-            await runAgentOnce(workerDeployments[w.id], workerPrompt, 15);
+            // PrivEsc: Brainwave needs 3-4 tool calls; cap at 6. Default workers: 15.
+            await runAgentOnce(workerDeployments[w.id], workerPrompt, isPrivEsc ? 6 : 15);
             console.log(`[demo-pipeline] ${w.name} complete`);
           }
           console.log("[demo-pipeline] All agents complete.");
@@ -33128,7 +33131,7 @@ Your task is post-provisioning behavioral monitoring — not standard certificat
         message: isSod
           ? "Pipeline started: orchestrator + Aquera agent will run SoD compliance check."
           : isPrivEsc
-          ? "Pipeline started: orchestrator + 4 worker agents will run, then Brainwave will detect privilege escalation."
+          ? "Pipeline started: orchestrator approves provisioning, then Brainwave monitors and detects privilege escalation."
           : "Pipeline started: orchestrator + 4 worker agents will run sequentially (on-demand).",
       });
     } catch (err: any) {
