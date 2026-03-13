@@ -1571,6 +1571,7 @@ export default function BlackRockDemo() {
     mutationFn: () => apiRequest("POST", "/demo-api/sod-violation/trigger"),
     onSuccess: () => {
       queryClient.invalidateQueries({ predicate: (q) => typeof q.queryKey[0] === "string" && q.queryKey[0].startsWith("/demo-api") });
+      setActiveSodScreen("aquera");
       toast({ title: "SoD Violation Detected", description: "Aquera compliance pre-check failed. Aladdin OMS marked Policy Blocked.", variant: "destructive" });
     },
   });
@@ -1617,12 +1618,6 @@ export default function BlackRockDemo() {
   const aqueraDone = (aqData?.connectors ?? []).every((c) => c.synthStatus === "Registered");
   const sailpointDone = (spData?.accounts ?? []).every((a) => a.status === "Active");
   const brainwaveDone = bwData?.identities?.find((i) => i.name === "BMSA-SYNTH-001")?.status === "Certified";
-
-  useEffect(() => {
-    if (activeScenario === "scenario2" && sod.active && activeSodScreen === "context") {
-      setActiveSodScreen("aquera");
-    }
-  }, [sod.active, activeScenario, activeSodScreen]);
 
   const screens = [
     { id: "servicenow", label: "ServiceNow", color: "bg-green-700 hover:bg-green-600" },
