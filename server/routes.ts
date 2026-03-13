@@ -12992,25 +12992,34 @@ Guidelines:
       if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
         return res.status(503).json({ error: "AI is not configured" });
       }
-      const { outcomeDescription, industry } = req.body;
+      const { description, industry } = req.body;
 
       if (!industry) return res.status(400).json({ error: "Industry context required" });
+
+      const activePolicies = await storage.getPolicies();
+      const policyContext = activePolicies
+        .filter(p => p.status === "active")
+        .map(p => `- [${p.domain}] ${p.name}: ${p.description || ""}`)
+        .join("\n");
 
       const response = await openai.chat.completions.create({
         model: "gpt-4.1-mini",
         messages: [
           {
             role: "system",
-            content: `You are a regulatory compliance analyst. Given a business outcome description and an industry, identify all applicable regulations, classify their risk level, list specific requirements that auto-apply, and flag any high-risk AI Act classifications. Return a JSON object with a "constraints" array where each item has: regulation (string), classification (one of "Critical", "High-Risk", "Medium"), requirements (string array of specific requirements), autoApplied (boolean - true if this should be automatically enforced), rationale (string - brief explanation of why this regulation applies to this outcome).`,
+            content: `You are a regulatory compliance analyst. Given a business outcome description, an industry, and a list of active internal governance policies in this platform, identify all applicable external regulations AND note which internal policies are relevant. Classify each by risk level. Return a JSON object with a "constraints" array where each item has: regulation (string — the regulation name or internal policy name), classification (one of "Critical", "High-Risk", "Medium"), requirements (string array of 2-4 specific requirements), autoApplied (boolean — true if this should be automatically enforced), rationale (string — brief explanation of why this applies).`,
           },
-          { role: "user", content: `Industry: ${industry.label} (${industry.id})\nOutcome: ${outcomeDescription}` },
+          {
+            role: "user",
+            content: `Industry: ${industry.label || industry} (${industry.id || industry})\nOutcome: ${description || "(no description provided)"}\n\nActive Governance Policies in this platform:\n${policyContext || "(none)"}`,
+          },
         ],
-        max_completion_tokens: 1500,
+        max_completion_tokens: 1800,
         response_format: { type: "json_object" },
       });
 
       const result = JSON.parse(response.choices[0]?.message?.content || '{"constraints":[]}');
-      res.json(result);
+      res.json(Array.isArray(result) ? result : (result.constraints || []));
     } catch (error) {
       console.error("Regulatory constraints error:", error);
       res.status(500).json({ error: "Failed to detect regulatory constraints" });
