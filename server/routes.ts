@@ -12826,7 +12826,22 @@ Revenue:
       const outcomes = await storage.getOutcomes();
       const allPolicies = await storage.getPolicies();
       const activePolicies = allPolicies.filter(p => p.status === "active");
-      const policyListForPrompt = activePolicies.map(p => `- id:${p.id} [${p.domain}] ${p.name}${p.description ? ": " + p.description : ""}`).join("\n");
+      const seenPolicyKeys = new Set<string>();
+      const uniquePolicies = activePolicies.filter(p => {
+        const key = `${p.domain}::${p.name}`;
+        if (seenPolicyKeys.has(key)) return false;
+        seenPolicyKeys.add(key);
+        return true;
+      });
+      const packPolicies = uniquePolicies.filter(p => /^\[[^\]]+\]/.test(p.name));
+      const standalonePolicies = uniquePolicies.filter(p => !/^\[[^\]]+\]/.test(p.name));
+      const packPoliciesBlock = packPolicies.length > 0
+        ? `COMPLIANCE PACK POLICIES (installed from governance packs):\n${packPolicies.map(p => `- id:${p.id} [${p.domain}] ${p.name}${p.description ? ": " + p.description : ""}`).join("\n")}`
+        : "";
+      const standalonePoliciesBlock = standalonePolicies.length > 0
+        ? `STANDALONE PLATFORM POLICIES (custom org-level policies):\n${standalonePolicies.map(p => `- id:${p.id} [${p.domain}] ${p.name}${p.description ? ": " + p.description : ""}`).join("\n")}`
+        : "";
+      const policyListForPrompt = [packPoliciesBlock, standalonePoliciesBlock].filter(Boolean).join("\n\n");
 
       const industryContext = industry ? `\n\nIMPORTANT: The user is operating in the "${industry.label}" industry workspace. Tailor all suggestions, KPIs, agent designs, and compliance considerations to this industry. Use industry-standard terminology and reference relevant regulations (${industry.id === 'financial_services' ? 'BSA/AML, SOX, PCI-DSS, EU AI Act' : industry.id === 'healthcare' ? 'HIPAA, HITECH, CMS, FDA 21 CFR Part 11' : industry.id === 'manufacturing' ? 'ISO 9001, OSHA, EPA' : industry.id === 'insurance' ? 'State Insurance Regulations, NAIC, ACORD' : industry.id === 'retail' ? 'PCI-DSS, CCPA/CPRA, FTC Act' : industry.id === 'technology_saas' ? 'SOC 2 Type II, GDPR, CCPA, ISO 27001, FedRAMP' : 'general compliance frameworks'}). When proposing agents, include industry-specific skills, MCP connections for industry systems, and note which governance policies will auto-apply.` : '';
 
@@ -12900,7 +12915,7 @@ When you have enough information (usually after 2-3 exchanges), produce a struct
 Existing outcome contracts for reference (do NOT duplicate these, use them for context only): ${JSON.stringify(outcomes.slice(0, 5).map(o => ({ name: o.name, description: o.description })))}
 Available agent templates (reference these when relevant): ${JSON.stringify(templates.slice(0, 10).map(t => ({ name: t.name, category: t.category, industry: t.industry, description: t.description })))}
 
-ACTIVE PLATFORM GOVERNANCE POLICIES (select applicable ones for this outcome):
+ACTIVE PLATFORM GOVERNANCE POLICIES (select applicable ones for this outcome — prefer COMPLIANCE PACK POLICIES over standalone ones):
 ${policyListForPrompt || "(no active policies)"}
 
 ${(() => {
@@ -12931,7 +12946,7 @@ Guidelines:
 - CRITICAL: If STRUCTURED CONTEXT FROM USER INPUTS is present above, you MUST use it: incorporate process steps, pain points, actor names, timing data, and identified opportunities directly into the proposal. Do not ignore this data.
 - CRITICAL: If CURRENT PROPOSAL TO REFINE is present, output a new full proposal JSON that addresses the user's latest request while preserving the parts they haven't asked to change. Always output the complete JSON, not a partial update.
 - CRITICAL: Always include a regulatoryConstraints array in the proposal with 4–8 EXTERNAL statutory or regulatory frameworks (e.g. SOX, GDPR, FINRA, HIPAA, PCI-DSS, NIST). Do NOT put internal platform governance policies in this array — those go in applicablePolicies. Do not dump generic industry regulations; select only those genuinely relevant to this specific outcome. For each, include 2-4 specific requirements.
-- CRITICAL: Always include an applicablePolicies array. Review the ACTIVE PLATFORM GOVERNANCE POLICIES listed above and select ONLY the ones that are directly applicable to this specific outcome. For each selected policy include its exact policyId (the id shown after "id:" in the list), name exactly as listed (including any [Framework] prefix), domain, a one-sentence rationale, and packName (if the policy name starts with "[Framework]" extract that text to derive the compliance pack name, e.g. "[SOX]" → "SOX Compliance Pack", "[MiFID II]" → "MiFID II Compliance Pack"; otherwise set to null). If none apply, return an empty array.`;
+- CRITICAL: Always include an applicablePolicies array. Review the ACTIVE PLATFORM GOVERNANCE POLICIES listed above — prioritize COMPLIANCE PACK POLICIES (those listed under "COMPLIANCE PACK POLICIES") over standalone ones. Select ONLY the policies genuinely applicable to this specific outcome. For each selected policy include: policyId (the exact UUID shown after "id:"), name exactly as listed (including any [Framework] prefix), domain, a one-sentence rationale, and packName (if the policy name has a [Framework] prefix extract the compliance pack name from it, e.g. "[SOX]" → "SOX Compliance Pack", "[MiFID II]" → "MiFID II Compliance Pack", "[HIPAA]" → "HIPAA Compliance Pack"; for standalone policies set packName to null). If no policies apply, return an empty array.`;
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
@@ -13037,9 +13052,15 @@ Guidelines:
 
       if (!industry) return res.status(400).json({ error: "Industry context required" });
 
-      const activePolicies = await storage.getPolicies();
-      const policyContext = activePolicies
-        .filter(p => p.status === "active")
+      const allActivePolicies = (await storage.getPolicies()).filter(p => p.status === "active");
+      const seenKeys = new Set<string>();
+      const uniqueActive = allActivePolicies.filter(p => {
+        const k = `${p.domain}::${p.name}`;
+        if (seenKeys.has(k)) return false;
+        seenKeys.add(k);
+        return true;
+      });
+      const policyContext = uniqueActive
         .map(p => `- [${p.domain}] ${p.name}: ${p.description || ""}`)
         .join("\n");
 
