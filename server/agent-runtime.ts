@@ -2456,7 +2456,7 @@ export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?
   }
 }
 
-export async function runAgentOnce(deploymentId: string, promptOverride?: string): Promise<{ success: boolean; message: string }> {
+export async function runAgentOnce(deploymentId: string, promptOverride?: string, maxIterationsOverride?: number): Promise<{ success: boolean; message: string }> {
   const deployment = await storage.getDeployment(deploymentId);
   if (!deployment) return { success: false, message: "Deployment not found" };
 
@@ -2493,7 +2493,7 @@ export async function runAgentOnce(deploymentId: string, promptOverride?: string
     blueprintRequirements: undefined,
     modelProvider: (agent as any).modelProvider || "openai",
     modelName: (agent as any).modelName || "gpt-4.1",
-    maxToolIterations: agent.maxToolIterations ?? 5,
+    maxToolIterations: maxIterationsOverride ?? (agent.maxToolIterations ?? 5),
   };
 
   try {

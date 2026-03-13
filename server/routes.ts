@@ -33059,14 +33059,16 @@ If the compliance check passes, proceed normally with register_scim_user for eac
       // Fire-and-forget: orchestrator first, then each worker in sequence
       (async () => {
         try {
-          const orchPrompt = isSod ? SOD_ORCHESTRATOR_PROMPT : undefined;
+          // For Scenario 1: use systemPrompt (calls log_action for Activity feed) instead of
+          // the stale runtimeConfig.prompt. For Scenario 2: use SoD-specific prompt.
+          const orchPrompt = isSod ? SOD_ORCHESTRATOR_PROMPT : ((orchestrator as any).systemPrompt || undefined);
           console.log(`[demo-pipeline] Starting orchestrator cycle (on-demand, scenario=${isSod ? "sod" : "default"})`);
-          await runAgentOnce(orchDeployment!.id, orchPrompt);
+          await runAgentOnce(orchDeployment!.id, orchPrompt, 12);
           console.log("[demo-pipeline] Orchestrator complete. Running worker agents sequentially...");
           for (const w of workersToRun) {
             const workerPrompt = isSod ? SOD_AQUERA_PROMPT : w.prompt;
             console.log(`[demo-pipeline] Running ${w.name}`);
-            await runAgentOnce(workerDeployments[w.id], workerPrompt);
+            await runAgentOnce(workerDeployments[w.id], workerPrompt, 15);
             console.log(`[demo-pipeline] ${w.name} complete`);
           }
           console.log("[demo-pipeline] All agents complete.");
