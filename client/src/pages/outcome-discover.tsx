@@ -38,6 +38,7 @@ import {
   Activity,
   X,
 } from "lucide-react";
+import { findPolicyPackName } from "@/lib/policy-packs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -515,6 +516,8 @@ export default function OutcomeDiscover() {
           proposedKpis: proposal?.kpis || [],
           proposedAgents: proposal?.proposedAgents || [],
           validationChecklist: proposal?.validationChecklist || [],
+          regulatoryConstraints: activeRegConstraints || [],
+          applicablePolicies: activeApplicablePolicies,
           outcomeContract: data,
           discoveryConversation: messages.length,
           createdKpis: result.kpis?.length || 0,
@@ -1887,7 +1890,9 @@ export default function OutcomeDiscover() {
                           <span className="text-[11px]">No platform policies applicable to this outcome.</span>
                         </div>
                       ) : (
-                        activeApplicablePolicies.map((pol, i) => (
+                        activeApplicablePolicies.map((pol, i) => {
+                          const packName = findPolicyPackName(pol.name, pol.domain);
+                          return (
                           <div key={i} className="flex flex-col gap-1.5 p-2 rounded-md bg-muted/50" data-testid={`applicable-policy-${i}`}>
                             <div className="flex items-start justify-between gap-2">
                               <div className="flex flex-col gap-1 flex-1 min-w-0">
@@ -1895,6 +1900,9 @@ export default function OutcomeDiscover() {
                                   <span className="text-xs font-medium">{pol.name}</span>
                                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-mono">{pol.domain}</span>
                                 </div>
+                                {packName && (
+                                  <span className="text-[10px] text-muted-foreground/70 font-medium" data-testid={`text-policy-pack-${i}`}>{packName}</span>
+                                )}
                                 <span className="text-[11px] text-muted-foreground leading-relaxed">{pol.rationale}</span>
                               </div>
                               <Button
@@ -1908,7 +1916,7 @@ export default function OutcomeDiscover() {
                               </Button>
                             </div>
                           </div>
-                        ))
+                        );})
                       )}
                     </CardContent>
                   </Card>
