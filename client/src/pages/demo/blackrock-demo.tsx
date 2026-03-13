@@ -595,8 +595,8 @@ function SailPointScreen() {
           </div>
           <div className="space-y-2 text-sm">
             {[
-              ["Owner (Manager)", "Jennifer Walsh"],
-              ["Executive Sponsor", "Mark Chen"],
+              ["Owner (Manager)", "Alexandra Moore"],
+              ["Executive Sponsor", "Daniel Okafor"],
               ["Department", "Multi-Asset Strategies"],
               ["Lifecycle State", accounts.some((a) => a.status === "Active") ? "Active" : accounts.length === 0 ? "Not Yet Provisioned" : "Pending"],
               ["Authentication", "X.509 Certificate"],
@@ -687,7 +687,7 @@ function SailPointScreen() {
                     <Badge className="bg-yellow-600 text-white">Scheduled</Badge>
                   </div>
                   <div className="text-sm space-y-1 text-muted-foreground">
-                    <div>Certifier: <strong className="text-foreground">Jennifer Walsh</strong></div>
+                    <div>Certifier: <strong className="text-foreground">Alexandra Moore</strong></div>
                     <div>Campaign Due: <strong className="text-foreground">April 30, 2026</strong></div>
                     <div>Items to Certify: <strong className="text-foreground">4 applications, 12 entitlements</strong></div>
                   </div>
@@ -700,8 +700,8 @@ function SailPointScreen() {
             <div className="space-y-2">
               <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">Recent Activity</h3>
               {[
-                { time: "2 min ago", action: "Provisioned account for new hire J. Martinez", app: "Aladdin OMS" },
-                { time: "8 min ago", action: "Modified entitlements for role change K. Patel", app: "Charles River" },
+                { time: "2 min ago", action: "Provisioned account for new hire R. Nguyen", app: "Aladdin OMS" },
+                { time: "8 min ago", action: "Modified entitlements for role change M. Torres", app: "Charles River" },
                 { time: "22 min ago", action: "Deactivated account for termination R. Singh", app: "Bloomberg" },
               ].map((a, i) => (
                 <div key={i} className="bg-muted/30 rounded px-3 py-2 flex items-center justify-between text-sm">
@@ -1470,7 +1470,7 @@ function SodResolutionPanel({
                 Approve a SOX §404 exception with documented compensating controls. Requires dual sign-off from two named approvers. Access is granted with enhanced monitoring.
               </p>
               <div className="space-y-1 text-xs">
-                {["Jennifer Walsh (Ops Lead) sign-off", "Mark Chen (MD) counter-sign", "Compensating: 30-day review cycle", "Compensating: Brainwave HIGH alert"].map((item) => (
+                {["Alexandra Moore (Ops Lead) sign-off", "Daniel Okafor (MD) counter-sign", "Compensating: 30-day review cycle", "Compensating: Brainwave HIGH alert"].map((item) => (
                   <div key={item} className="flex items-center gap-1.5 text-muted-foreground">
                     <CheckCircle2 className="w-3 h-3 text-orange-400 shrink-0" /> {item}
                   </div>

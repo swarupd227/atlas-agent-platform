@@ -176,9 +176,9 @@ function createInitialState(): DemoState {
       justification:
         "Our team executes 1,200+ daily rebalancing events across 280+ model portfolios. Each event requires manual coordination across Aladdin OMS, Charles River, and Bloomberg — order staging, compliance pre-checks, and post-trade reconciliation — consuming 5–6 analyst hours per day. A Synthetic Worker will automate routine compliance validation, order staging, and settlement reconciliation, reducing analyst intervention to exception handling only.",
       approvalChain: [
-        { role: "IT Security Review", person: "Sarah Kim, CISO Office", status: "approved", date: "Mar 5" },
+        { role: "IT Security Review", person: "Rachel Stone, CISO Office", status: "approved", date: "Mar 5" },
         { role: "AI Risk Operating Committee", person: "AI ROC Board", status: "approved", date: "Mar 6" },
-        { role: "AIM Team Acceptance", person: "Michael Yoder", status: "approved", date: "Mar 7" },
+        { role: "AIM Team Acceptance", person: "Chris Harmon", status: "approved", date: "Mar 7" },
       ],
       status: "approved",
       processed: false,
@@ -189,8 +189,8 @@ function createInitialState(): DemoState {
         { app: "ServiceNow", access: "Workflow_Initiator role", risk: "Low" },
       ],
       governance: {
-        owner: "Jennifer Walsh, BMSA Operations Lead",
-        sponsor: "Mark Chen, Managing Director, Multi-Asset Strategies",
+        owner: "Alexandra Moore, BMSA Operations Lead",
+        sponsor: "Daniel Okafor, Managing Director, Multi-Asset Strategies",
         authMethod: "X.509 Certificate (90-day rotation)",
         platform: "Atlas Agent Orchestrator",
       },
@@ -211,11 +211,11 @@ function createInitialState(): DemoState {
       campaign: "Q2 2026 BMSA Access Recertification",
       due: "April 30, 2026",
       identities: [
-        { name: "Sarah Chen", type: "Employee", apps: 6, ents: 24, certifier: "Tom Walsh", status: "Certified", risk: "Low" },
-        { name: "John Park", type: "Employee", apps: 5, ents: 19, certifier: "Tom Walsh", status: "Certified", risk: "Low" },
-        { name: "Lisa Wang", type: "Employee", apps: 4, ents: 15, certifier: "Jennifer Walsh", status: "Certified", risk: "Low" },
-        { name: "David Kim", type: "Employee", apps: 7, ents: 31, certifier: "Jennifer Walsh", status: "Pending", risk: "Medium" },
-        { name: "Emily Zhang", type: "Employee", apps: 3, ents: 11, certifier: "Jennifer Walsh", status: "Certified", risk: "Low" },
+        { name: "Maya Prentiss", type: "Employee", apps: 6, ents: 24, certifier: "Nathan Holt", status: "Certified", risk: "Low" },
+        { name: "James Harlow", type: "Employee", apps: 5, ents: 19, certifier: "Nathan Holt", status: "Certified", risk: "Low" },
+        { name: "Priya Nair", type: "Employee", apps: 4, ents: 15, certifier: "Alexandra Moore", status: "Certified", risk: "Low" },
+        { name: "Eric Vandenberg", type: "Employee", apps: 7, ents: 31, certifier: "Alexandra Moore", status: "Pending", risk: "Medium" },
+        { name: "Chloe Fitzroy", type: "Employee", apps: 3, ents: 11, certifier: "Alexandra Moore", status: "Certified", risk: "Low" },
       ],
     },
     auditLog: [],
@@ -257,7 +257,7 @@ export function triggerSodViolation(): { success: boolean; sodViolation: SodViol
   auditCounter++;
   state.auditLog.push({ id: auditCounter, timestamp: new Date().toISOString(), action: "POLICY_BLOCKED", system: "Aquera", details: "Aladdin OMS connector marked Policy Blocked. BMSA-SYNTH-001 provisioning halted. Orchestrator routing to human review queue — SailPoint step bypassed." });
   auditCounter++;
-  state.auditLog.push({ id: auditCounter, timestamp: new Date().toISOString(), action: "HUMAN_REVIEW_QUEUED", system: "ATLAS Orchestrator", details: "Violation incident INC-SOD-20260313 created. Routed to Jennifer Walsh (BMSA Operations Lead) for remediation decision. Dual sign-off required for exception path." });
+  state.auditLog.push({ id: auditCounter, timestamp: new Date().toISOString(), action: "HUMAN_REVIEW_QUEUED", system: "ATLAS Orchestrator", details: "Violation incident INC-SOD-20260313 created. Routed to Alexandra Moore (BMSA Operations Lead) for remediation decision. Dual sign-off required for exception path." });
 
   return { success: true, sodViolation: state.sodViolation };
 }
@@ -268,7 +268,7 @@ export function resolveSodViolation(path: "revoke" | "exception", resolvedBy?: s
   }
 
   const now = new Date().toISOString();
-  const resolver = resolvedBy || "Jennifer Walsh";
+  const resolver = resolvedBy || "Alexandra Moore";
   state.sodViolation.resolutionPath = path;
   state.sodViolation.resolvedAt = now;
   state.sodViolation.resolvedBy = resolver;
@@ -290,7 +290,7 @@ export function resolveSodViolation(path: "revoke" | "exception", resolvedBy?: s
       delete aladdin.sodBlock;
     }
     auditCounter++;
-    state.auditLog.push({ id: auditCounter, timestamp: now, action: "SOD_RESOLVED_EXCEPTION", system: "ATLAS Orchestrator", details: `Resolution path B selected: Exception approved with dual sign-off — ${resolver} + Mark Chen (Managing Director). Compensating controls: enhanced monitoring, 30-day review cycle, Brainwave alert threshold lowered to HIGH.` });
+    state.auditLog.push({ id: auditCounter, timestamp: now, action: "SOD_RESOLVED_EXCEPTION", system: "ATLAS Orchestrator", details: `Resolution path B selected: Exception approved with dual sign-off — ${resolver} + Daniel Okafor (Managing Director). Compensating controls: enhanced monitoring, 30-day review cycle, Brainwave alert threshold lowered to HIGH.` });
     auditCounter++;
     state.auditLog.push({ id: auditCounter, timestamp: new Date().toISOString(), action: "AUDIT_SOX_S404", system: "Brainwave", details: "SOX §404 audit record updated: SoD exception granted with dual-approver sign-off. Compensating control package attached. Incident INC-SOD-20260313 closed — exception tracked." });
   }
@@ -337,7 +337,7 @@ export function resolvePrivEsc(path: "revoke_reissue" | "forensic", resolvedBy?:
   }
 
   const now = new Date().toISOString();
-  const resolver = resolvedBy || "Jennifer Walsh";
+  const resolver = resolvedBy || "Alexandra Moore";
   state.privEscViolation.reviewPath = path;
   state.privEscViolation.resolvedAt = now;
   state.privEscViolation.resolvedBy = resolver;
@@ -423,7 +423,7 @@ export function certifyIdentity(identityId: string): { success: boolean; message
       type: "Synthetic Worker",
       apps: Math.max(state.sailpoint.length, 4),
       ents: Math.max(state.sailpoint.length * 3, 12),
-      certifier: "Jennifer Walsh",
+      certifier: "Alexandra Moore",
       status: "Certified",
       risk: "Low",
     });
