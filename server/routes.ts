@@ -12877,20 +12877,36 @@ When you have enough information (usually after 2-3 exchanges), produce a struct
 }
 \`\`\`
 
-Existing outcome contracts for context: ${JSON.stringify(outcomes.slice(0, 5).map(o => ({ name: o.name, description: o.description })))}
-Available agent templates for context: ${JSON.stringify(templates.slice(0, 10).map(t => ({ name: t.name, category: t.category, industry: t.industry, description: t.description })))}
+Existing outcome contracts for reference (do NOT duplicate these, use them for context only): ${JSON.stringify(outcomes.slice(0, 5).map(o => ({ name: o.name, description: o.description })))}
+Available agent templates (reference these when relevant): ${JSON.stringify(templates.slice(0, 10).map(t => ({ name: t.name, category: t.category, industry: t.industry, description: t.description })))}
 
-Current discovery context: ${JSON.stringify(discoveryContext || {})}
+${(() => {
+  const ctx = discoveryContext || {};
+  const parts: string[] = [];
+  if (ctx.processSteps && ctx.processSteps.length > 0) {
+    parts.push(`PROCESS FLOW THE USER HAS MAPPED (${ctx.processSteps.length} steps, total ${ctx.processSteps.reduce((s: number, p: any) => s + (p.timeMins || 0), 0)} mins):\n${ctx.processSteps.map((s: any, i: number) => `  Step ${i+1}: "${s.description}" | Actor: ${s.actor} | Time: ${s.timeMins} mins | Pain points: ${s.painPoints || 'none'} | Improvement ideas: ${s.improvementIdeas || 'none'}`).join('\n')}`);
+  }
+  if (ctx.transcriptAnalysis) {
+    parts.push(`VOICE RECORDING ANALYSIS (use these opportunities directly in the proposal):\nTranscript summary: ${ctx.transcriptAnalysis.transcript ? ctx.transcriptAnalysis.transcript.slice(0, 500) : 'N/A'}\nIdentified opportunities:\n${(ctx.transcriptAnalysis.opportunities || []).map((o: any) => `  - ${o.name}: ${o.description} (systems: ${(o.suggestedSystems || []).join(', ')})`).join('\n')}`);
+  }
+  if (ctx.currentProposal) {
+    parts.push(`CURRENT PROPOSAL TO REFINE (the user is asking to update or improve this):\n${JSON.stringify(ctx.currentProposal, null, 2)}`);
+  }
+  return parts.length > 0 ? `STRUCTURED CONTEXT FROM USER INPUTS:\n${parts.join('\n\n')}` : 'No additional structured context provided yet.';
+})()}
 
 Guidelines:
 - Use warm, accessible business language - avoid technical jargon
 - Ask clarifying questions about business goals, current pain points, and success criteria
-- Propose realistic, measurable KPIs with specific numeric targets
-- Suggest agents that map to the user's domain (not generic AI agents)
-- Include a validation checklist of items the business owner and expert should confirm
+- Propose realistic, measurable KPIs with specific numeric targets — use the user's own numbers (e.g., "currently 5 days, target 24 hours") wherever they were mentioned
+- Suggest agents that map to the user's exact domain with specific role names (e.g., "KYC Verification Agent", not "Data Processing Agent")
+- proposedAgents must each have specific workflowSteps describing real tasks (not generic steps like "Process data")
+- Include a validation checklist of actionable items the business owner and expert should confirm
 - When the user seems ready, produce the full structured proposal
-- Be proactive: suggest things the user might not have thought of
-- Reference existing templates when a match exists`;
+- Be proactive: surface things the user might not have thought of
+- Reference existing templates when a match exists
+- CRITICAL: If STRUCTURED CONTEXT FROM USER INPUTS is present above, you MUST use it: incorporate process steps, pain points, actor names, timing data, and identified opportunities directly into the proposal. Do not ignore this data.
+- CRITICAL: If CURRENT PROPOSAL TO REFINE is present, output a new full proposal JSON that addresses the user's latest request while preserving the parts they haven't asked to change. Always output the complete JSON, not a partial update.`;
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");

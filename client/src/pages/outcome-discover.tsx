@@ -538,10 +538,25 @@ export default function OutcomeDiscover() {
     setStreaming(true);
 
     try {
+      const discoveryContext: Record<string, unknown> = {};
+      if (processSteps.length > 0) {
+        discoveryContext.processSteps = processSteps;
+      }
+      if (transcriptResult) {
+        discoveryContext.transcriptAnalysis = transcriptResult;
+      }
+      if (proposal) {
+        discoveryContext.currentProposal = proposal;
+      }
+
       const res = await fetch("/api/ai/outcome-discover", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: newMessages, industry: industry || undefined }),
+        body: JSON.stringify({
+          messages: newMessages,
+          industry: industry || undefined,
+          discoveryContext: Object.keys(discoveryContext).length > 0 ? discoveryContext : undefined,
+        }),
       });
 
       if (!res.ok) throw new Error("Discovery request failed");
