@@ -359,7 +359,7 @@ export default function OutcomeDiscover() {
   const starterPrompts = INDUSTRY_STARTER_PROMPTS[(industry?.id ?? "null") as keyof typeof INDUSTRY_STARTER_PROMPTS] || INDUSTRY_STARTER_PROMPTS["null"];
 
   const industryKpis = industry && industry.id !== "custom" ? INDUSTRY_KPI_LIBRARY[industry.id] : null;
-  const regulatoryConstraints = activeRegConstraints ?? (industry && industry.id !== "custom" ? INDUSTRY_REGULATORY_CONSTRAINTS[industry.id] : null);
+  const regulatoryConstraints = activeRegConstraints ?? (!proposal && industry && industry.id !== "custom" ? INDUSTRY_REGULATORY_CONSTRAINTS[industry.id] : null);
 
   const industryTemplates = OUTCOME_TEMPLATES.filter((t) => t.industry === industry?.id);
   const otherTemplates = OUTCOME_TEMPLATES.filter((t) => t.industry !== industry?.id);
@@ -594,10 +594,8 @@ export default function OutcomeDiscover() {
       if (extracted) {
         setProposal(extracted);
         setCheckedItems(new Set());
-        if (extracted.regulatoryConstraints && extracted.regulatoryConstraints.length > 0) {
-          setActiveRegConstraints(extracted.regulatoryConstraints);
-          setExpandedRegulations(new Set());
-        }
+        setActiveRegConstraints(extracted.regulatoryConstraints ?? null);
+        setExpandedRegulations(new Set());
       }
     } catch (err) {
       toast({ title: "Discovery assistant error", description: "Please try again.", variant: "destructive" });
