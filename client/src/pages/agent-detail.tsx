@@ -6145,18 +6145,22 @@ function AgentDetailInner() {
                     const connectors = allToolConnectors || [];
                     const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
                     const connectorMap = new Map(connectors.map(c => [normalize(c.name), c]));
-                    const initialOverrides: Record<string, "builtin" | "customer" | "stub"> = {};
+                    const resolvedOverrides: Record<string, "builtin" | "customer" | "stub"> = {};
                     agentTools.forEach((t: any) => {
                       const name = normalize(t.name || "");
                       const connector = connectorMap.get(name);
-                      if (!toolAdapterOverrides[t.name]) {
-                        if (connector && connector.status === "connected") initialOverrides[t.name] = "builtin";
-                        else if (connector) initialOverrides[t.name] = "customer";
-                        else initialOverrides[t.name] = "stub";
+                      if (toolAdapterOverrides[t.name]) {
+                        resolvedOverrides[t.name] = toolAdapterOverrides[t.name];
+                      } else if (connector && connector.status === "connected") {
+                        resolvedOverrides[t.name] = "builtin";
+                      } else if (connector) {
+                        resolvedOverrides[t.name] = "customer";
+                      } else {
+                        resolvedOverrides[t.name] = "stub";
                       }
                     });
-                    if (Object.keys(initialOverrides).length > 0) setToolAdapterOverrides(prev => ({ ...initialOverrides, ...prev }));
-                    exportCodeMutation.mutate({ format: exportFormat, llmProvider: exportLlmProvider, maxIterations: exportMaxIterations, completionPromise: exportCompletionPromise, framework: exportFramework, toolAdapters: toolAdapterOverrides, pinVersions, otelEnabled, spanGranularity });
+                    setToolAdapterOverrides(resolvedOverrides);
+                    exportCodeMutation.mutate({ format: exportFormat, llmProvider: exportLlmProvider, maxIterations: exportMaxIterations, completionPromise: exportCompletionPromise, framework: exportFramework, toolAdapters: resolvedOverrides, pinVersions, otelEnabled, spanGranularity });
                   }}
                   disabled={exportCodeMutation.isPending}
                   data-testid="button-export-generate"
