@@ -836,7 +836,7 @@ export default function Agents() {
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem asChild data-testid={`menu-export-agent-${agent.id}`}>
-                              <Link href={`/agents/${agent.id}?export=1`}>
+                              <Link href={`/agents/${agent.id}/export`}>
                                 <Download className="w-3.5 h-3.5 mr-2" /> Export as Code
                               </Link>
                             </DropdownMenuItem>

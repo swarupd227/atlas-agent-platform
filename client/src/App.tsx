@@ -88,6 +88,7 @@ import KnowledgeBasesPage from "@/pages/knowledge-bases";
 import KnowledgeBaseDetail from "@/pages/knowledge-base-detail";
 import ModelProviders from "@/pages/model-providers";
 import DeveloperPortal from "@/pages/developer-portal";
+import AgentExport from "@/pages/agent-export";
 import BlackRockDemo from "@/pages/demo/blackrock-demo";
 import { Shield, LogOut } from "lucide-react";
 
@@ -146,6 +147,7 @@ function DashboardRouter() {
       <Route path="/agents/wizard" component={AgentWizard} />
       <Route path="/agents/teams" component={AgentTeams} />
       <Route path="/agents/remote" component={RemoteAgents} />
+      <Route path="/agents/:id/export" component={AgentExport} />
       <Route path="/agents/:id/playground" component={AgentPlayground} />
       <Route path="/agents/:id" component={AgentDetail} />
       <Route path="/blueprints" component={Blueprints} />
