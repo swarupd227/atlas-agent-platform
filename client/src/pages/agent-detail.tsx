@@ -99,7 +99,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import type { Agent, RunTrace, EvalSuite, OutcomeContract, ImprovementRecommendation, AutonomousActionLog, AgentVersion, Deployment, Policy, Approval, PolicyException, ToolConnector, RemoteAgent, AgentTeam, Skill, McpServer, McpServerTool, McpServerResource, AgentMcpServer, OntologyConcept, Blueprint, KnowledgeBase, AgentKnowledgeBase, AgentTrigger } from "@shared/schema";
-import { Wifi, WifiOff, Crown, Brain, Sparkles, ShieldAlert, Layers3, BookMarked, Binary, ScrollText, FileCheck, ChevronDown } from "lucide-react";
+import { Wifi, WifiOff, Crown, Brain, Sparkles, ShieldAlert, Layers3, BookMarked, Binary, ScrollText, FileCheck, ChevronDown, ChevronUp } from "lucide-react";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { useIndustry } from "@/components/industry-provider";
 import { formatMs } from "@/components/shared-utils";
 
@@ -890,7 +891,7 @@ function AgentDetailInner() {
   const [exportFramework, setExportFramework] = useState<string>("generic");
   const [exportPreview, setExportPreview] = useState<{ files: Record<string, string>; metadata: any } | null>(null);
   const [exportPreviewFile, setExportPreviewFile] = useState<string>("");
-  const [exportStep, setExportStep] = useState<"select" | "configure" | "tools" | "dependencies" | "envvars" | "observability" | "buildtest" | "preview" | "approval" | "delivery" | "guide">("select");
+  const [exportStep, setExportStep] = useState<"configure" | "preview" | "download">("configure");
   const [exportApprovalSubmitted, setExportApprovalSubmitted] = useState(false);
   const [exportApprovalId, setExportApprovalId] = useState<string | null>(null);
   const [deliveryTarget, setDeliveryTarget] = useState<"zip" | "git" | "replit">("zip");
@@ -2227,7 +2228,7 @@ function AgentDetailInner() {
                       variant="default"
                       size="sm"
                       className="w-full"
-                      onClick={() => { setExportStep("select"); setExportPreview(null); setExportFramework("generic"); setExportDialogOpen(true); }}
+                      onClick={() => { setExportStep("configure"); setExportPreview(null); setExportFramework("generic"); setExportDialogOpen(true); }}
                       data-testid="button-summary-export-code"
                     >
                       <Package className="w-3.5 h-3.5 mr-1.5" /> Export / Generate Code
@@ -2809,7 +2810,7 @@ function AgentDetailInner() {
             <Button variant="outline" size="sm" onClick={() => toast({ title: "Version comparison opened" })} data-testid="button-compare-version">
               <Layers className="w-3.5 h-3.5 mr-1.5" /> Compare vs Version...
             </Button>
-            <Button variant="outline" size="sm" onClick={() => { setExportStep("select"); setExportPreview(null); setExportFramework("generic"); setExportDialogOpen(true); }} data-testid="button-export-code">
+            <Button variant="outline" size="sm" onClick={() => { setExportStep("configure"); setExportPreview(null); setExportFramework("generic"); setExportDialogOpen(true); }} data-testid="button-export-code">
               <Download className="w-3.5 h-3.5 mr-1.5" /> Export as Code
             </Button>
             <div className="flex-1" />
@@ -2899,7 +2900,7 @@ function AgentDetailInner() {
               <ImplementationGraph
                 agent={agent}
                 toolConnectors={allToolConnectors || []}
-                onGenerateExport={() => { setExportStep("select"); setExportPreview(null); setExportFramework("generic"); setExportDialogOpen(true); }}
+                onGenerateExport={() => { setExportStep("configure"); setExportPreview(null); setExportFramework("generic"); setExportDialogOpen(true); }}
               />
             </>
           )}
@@ -5578,1598 +5579,540 @@ function AgentDetailInner() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={exportDialogOpen} onOpenChange={(open) => { setExportDialogOpen(open); if (!open) { setExportStep("select"); setExportPreview(null); setToolAdapterOverrides({}); setOtelEnabled(true); setSpanGranularity("per-node"); setCompileStatus("idle"); setCompileOutput(""); setEvalStatus("idle"); setEvalOutput(""); setExportApprovalSubmitted(false); setExportApprovalId(null); setDeliveryTarget("zip"); setGitRepoUrl(""); } }}>
-        <DialogContent className="max-w-3xl max-h-[85vh] overflow-hidden flex flex-col">
-          <DialogHeader>
+      <Dialog open={exportDialogOpen} onOpenChange={(open) => { setExportDialogOpen(open); if (!open) { setExportStep("configure"); setExportPreview(null); setToolAdapterOverrides({}); setOtelEnabled(true); setSpanGranularity("per-node"); setCompileStatus("idle"); setCompileOutput(""); setEvalStatus("idle"); setEvalOutput(""); setExportApprovalSubmitted(false); setExportApprovalId(null); setDeliveryTarget("zip"); setGitRepoUrl(""); } }}>
+        <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col overflow-hidden">
+          <DialogHeader className="shrink-0">
             <DialogTitle className="flex items-center gap-2">
-              {exportStep === "select" ? (
-                <><Package className="w-4 h-4" /> Export Agent</>
-              ) : exportStep === "configure" ? (
+              {exportStep === "configure" ? (
                 <><Code className="w-4 h-4" /> Configure Source Export</>
-              ) : exportStep === "tools" ? (
-                <><Wrench className="w-4 h-4" /> Tool Adapter Resolution</>
-              ) : exportStep === "dependencies" ? (
-                <><Layers className="w-4 h-4" /> Dependencies &amp; Reproducibility</>
-              ) : exportStep === "envvars" ? (
-                <><KeyRound className="w-4 h-4" /> Environment Variables &amp; Secrets</>
-              ) : exportStep === "observability" ? (
-                <><Radio className="w-4 h-4" /> Observability &amp; Trace Settings</>
-              ) : exportStep === "buildtest" ? (
-                <><Hammer className="w-4 h-4" /> Build &amp; Test Gate</>
               ) : exportStep === "preview" ? (
                 <><FileCode className="w-4 h-4" /> Preview Source Files</>
-              ) : exportStep === "delivery" ? (
-                <><Package className="w-4 h-4" /> Delivery Target</>
-              ) : exportStep === "guide" ? (
-                <><BookOpen className="w-4 h-4" /> Deployment Guide</>
               ) : (
-                <><ShieldCheck className="w-4 h-4" /> Approval Preview</>
+                <><Download className="w-4 h-4" /> Download &amp; Deploy</>
               )}
             </DialogTitle>
             <DialogDescription>
-              {exportStep === "select"
-                ? "Choose how this agent should be packaged for deployment."
-                : exportStep === "configure"
-                  ? "Configure source files for standalone deployment via your CI/CD pipeline."
-                  : exportStep === "tools"
-                    ? "Ensure every tool reference has an implementation path in the export package."
-                    : exportStep === "dependencies"
-                      ? "Review what will be installed and ensure reproducible builds."
-                      : exportStep === "envvars"
-                        ? "Review the environment variables your deployed agent will need at runtime."
-                        : exportStep === "observability"
-                          ? "Preserve the ATLAS flight recorder by configuring OpenTelemetry trace settings."
-                          : exportStep === "buildtest"
-                            ? "Validate the generated export before finalizing — compile check and eval suite."
-                            : exportStep === "preview"
-                              ? "Review the generated source files before downloading."
-                              : exportStep === "delivery"
-                                ? "Choose how to receive the generated code package."
-                                : exportStep === "guide"
-                                  ? "Follow these steps to deploy your exported agent in production."
-                                  : "Review governance requirements and request expert validation for this export package."}
+              {exportStep === "configure"
+                ? "Configure source files for standalone deployment via your CI/CD pipeline."
+                : exportStep === "preview"
+                  ? "Review the generated source files before downloading."
+                  : "Download the source package and follow deployment instructions."}
             </DialogDescription>
+            <div className="flex items-center gap-0 mt-3" data-testid="export-step-progress">
+              {[
+                { key: "configure", label: "Configure", num: 1 },
+                { key: "preview", label: "Preview", num: 2 },
+                { key: "download", label: "Download", num: 3 },
+              ].map((s, i) => {
+                const stepOrder = ["configure", "preview", "download"];
+                const currentIdx = stepOrder.indexOf(exportStep);
+                const thisIdx = stepOrder.indexOf(s.key);
+                const isActive = exportStep === s.key;
+                const isDone = thisIdx < currentIdx;
+                return (
+                  <Fragment key={s.key}>
+                    {i > 0 && <div className={`flex-1 h-0.5 mx-2 rounded ${isDone ? "bg-primary" : "bg-muted"}`} />}
+                    <div className="flex items-center gap-1.5" data-testid={`step-indicator-${s.key}`}>
+                      <span className={`flex items-center justify-center w-6 h-6 rounded-full text-[11px] font-medium ${isActive ? "bg-primary text-primary-foreground" : isDone ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"}`}>
+                        {isDone ? <Check className="w-3.5 h-3.5" /> : s.num}
+                      </span>
+                      <span className={`text-xs font-medium ${isActive ? "text-foreground" : isDone ? "text-primary" : "text-muted-foreground"}`}>{s.label}</span>
+                    </div>
+                  </Fragment>
+                );
+              })}
+            </div>
           </DialogHeader>
 
-          {exportStep === "select" && (
-            <div className="flex flex-col gap-4 py-2">
-              <div className="flex items-center gap-2 mb-1 flex-wrap">
-                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">1</span>
-                  <span className="font-medium">Export Type</span>
-                </div>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Configure</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Tools</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Deps</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Env</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Traces</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Gate</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Preview</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Approval</span>
-              </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div
-                  className="flex flex-col gap-3 p-4 rounded-md border hover-elevate cursor-pointer"
-                  onClick={() => {
-                    setExportDialogOpen(false);
-                    toast({ title: "Managed Runtime", description: "This agent is already configured for managed runtime deployment. No export needed." });
-                  }}
-                  data-testid="card-export-managed"
-                >
-                  <div className="flex items-center gap-2">
-                    <div className="flex items-center justify-center w-8 h-8 rounded-md bg-primary/10 shrink-0">
-                      <Rocket className="w-4 h-4 text-primary" />
+            <div className="flex-1 min-h-0 overflow-y-auto py-2" data-testid="export-dialog-body">
+            {exportStep === "configure" && (() => {
+              const agentTools = Array.isArray(agent?.toolsConfig) ? agent.toolsConfig as any[] : [];
+              const connectors = allToolConnectors || [];
+              const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+              const connectorMap = new Map(connectors.map(c => [normalize(c.name), c]));
+
+              const resolvedTools = agentTools.map((t: any) => {
+                const override = toolAdapterOverrides[t.name];
+                const normalized = normalize(t.name || "");
+                const connector = connectorMap.get(normalized);
+                let status: "builtin" | "customer" | "stub" = override || "stub";
+                if (!override) {
+                  if (connector && connector.status === "connected") status = "builtin";
+                  else if (connector) status = "customer";
+                  else status = "stub";
+                }
+                return { name: t.name || "Unknown Tool", description: t.description || t.type || "No description", status, connectorId: connector?.id };
+              });
+
+              const depData = (() => {
+                const fw = exportFramework;
+                const fmt = exportFormat;
+                const llm = exportLlmProvider;
+                if (fmt === "typescript") {
+                  const deps: Record<string, string> = {
+                    "typescript": pinVersions ? "5.6.3" : "^5.0.0",
+                    "ts-node": pinVersions ? "10.9.2" : "^10.9.0",
+                    "js-yaml": pinVersions ? "4.1.0" : "^4.1.0",
+                    "@types/js-yaml": pinVersions ? "4.0.9" : "^4.0.9",
+                    "@types/node": pinVersions ? "20.17.12" : "^20.0.0",
+                  };
+                  if (llm === "openai") deps["openai"] = pinVersions ? "4.77.0" : "^4.0.0";
+                  else deps["@anthropic-ai/sdk"] = pinVersions ? "0.30.1" : "^0.30.0";
+                  if (fw === "langgraph") {
+                    deps["@langchain/langgraph"] = pinVersions ? "0.2.36" : "^0.2.0";
+                    deps["@langchain/core"] = pinVersions ? "0.3.26" : "^0.3.0";
+                    if (llm === "openai") deps["@langchain/openai"] = pinVersions ? "0.3.16" : "^0.3.0";
+                    else deps["@langchain/anthropic"] = pinVersions ? "0.3.12" : "^0.3.0";
+                  }
+                  if (fw === "bedrock") deps["@aws-sdk/client-bedrock-agent-runtime"] = pinVersions ? "3.712.0" : "^3.0.0";
+                  if (fw === "n8n") deps["n8n-workflow"] = pinVersions ? "1.69.2" : "^1.0.0";
+                  if (fw === "vertex") deps["@google-cloud/aiplatform"] = pinVersions ? "3.34.0" : "^3.0.0";
+                  return { fileName: "package.json", deps };
+                } else {
+                  const reqs: Array<{ name: string; pinned: string; range: string }> = [
+                    { name: "pyyaml", pinned: "6.0.2", range: ">=6.0" },
+                  ];
+                  if (llm === "openai") reqs.push({ name: "openai", pinned: "1.58.1", range: ">=1.0" });
+                  else reqs.push({ name: "anthropic", pinned: "0.30.1", range: ">=0.30" });
+                  if (fw === "langgraph") {
+                    reqs.push({ name: "langgraph", pinned: "0.2.60", range: ">=0.2.0" });
+                    reqs.push({ name: "langchain-core", pinned: "0.3.28", range: ">=0.3.0" });
+                    if (llm === "openai") reqs.push({ name: "langchain-openai", pinned: "0.2.14", range: ">=0.2.0" });
+                    else reqs.push({ name: "langchain-anthropic", pinned: "0.2.8", range: ">=0.2.0" });
+                  }
+                  if (fw === "crewai") reqs.push({ name: "crewai", pinned: "0.80.0", range: ">=0.80.0" });
+                  if (fw === "bedrock") reqs.push({ name: "boto3", pinned: "1.34.162", range: ">=1.34.0" });
+                  if (fw === "vertex") reqs.push({ name: "google-cloud-aiplatform", pinned: "1.60.0", range: ">=1.60.0" });
+                  if (fw === "databricks") {
+                    reqs.push({ name: "mlflow", pinned: "2.18.0", range: ">=2.18.0" });
+                    reqs.push({ name: "databricks-sdk", pinned: "0.36.0", range: ">=0.36.0" });
+                    reqs.push({ name: "databricks-langchain", pinned: "0.3.0", range: ">=0.3.0" });
+                    reqs.push({ name: "langchain-core", pinned: "0.3.28", range: ">=0.3.0" });
+                  }
+                  const depsMap: Record<string, string> = {};
+                  reqs.forEach(r => { depsMap[r.name] = pinVersions ? r.pinned : r.range; });
+                  return { fileName: "requirements.txt", deps: depsMap };
+                }
+              })();
+
+              const envVars: Array<{ key: string; description: string; required: boolean }> = [];
+              if (exportLlmProvider === "openai") envVars.push({ key: "OPENAI_API_KEY", description: "OpenAI API key", required: true });
+              else envVars.push({ key: "ANTHROPIC_API_KEY", description: "Anthropic API key", required: true });
+              if (exportFramework === "bedrock") {
+                envVars.push({ key: "AWS_ACCESS_KEY_ID", description: "AWS access key", required: true });
+                envVars.push({ key: "AWS_SECRET_ACCESS_KEY", description: "AWS secret key", required: true });
+                envVars.push({ key: "AWS_REGION", description: "AWS region", required: true });
+              }
+              if (exportFramework === "vertex") envVars.push({ key: "GOOGLE_APPLICATION_CREDENTIALS", description: "GCP credentials path", required: true });
+              if (exportFramework === "databricks") {
+                envVars.push({ key: "DATABRICKS_HOST", description: "Databricks workspace URL", required: true });
+                envVars.push({ key: "DATABRICKS_TOKEN", description: "Databricks access token", required: true });
+              }
+              if (otelEnabled) envVars.push({ key: "OTEL_EXPORTER_OTLP_ENDPOINT", description: "OpenTelemetry collector endpoint", required: false });
+              envVars.push({ key: "ATLAS_AGENT_ID", description: "Agent identifier for trace correlation", required: false });
+
+              const stubCount = resolvedTools.filter(t => t.status === "stub").length;
+              const builtinCount = resolvedTools.filter(t => t.status === "builtin").length;
+              const customerCount = resolvedTools.filter(t => t.status === "customer").length;
+              const depCount = Object.keys(depData.deps).length;
+
+              return (
+                <div className="flex flex-col gap-6" data-testid="step-configure">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="flex flex-col gap-2">
+                      <Label className="text-xs font-medium">Framework / Pattern</Label>
+                      <Select value={exportFramework} onValueChange={setExportFramework}>
+                        <SelectTrigger data-testid="select-framework">
+                          <SelectValue placeholder="Select framework" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="generic">Generic (Ralph Loop)</SelectItem>
+                          <SelectItem value="langgraph">LangGraph</SelectItem>
+                          <SelectItem value="crewai">CrewAI</SelectItem>
+                          <SelectItem value="bedrock">AWS Bedrock Agents</SelectItem>
+                          <SelectItem value="n8n">n8n Workflow</SelectItem>
+                          <SelectItem value="vertex">Vertex AI Agent Builder</SelectItem>
+                          <SelectItem value="databricks">Databricks AgentBricks</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
-                    <div className="flex flex-col min-w-0">
-                      <span className="text-sm font-medium">Managed Runtime Artifact</span>
-                      <Badge variant="outline" className="text-[10px] w-fit mt-0.5">Default</Badge>
+                    <div className="flex flex-col gap-2">
+                      <Label className="text-xs font-medium">Language</Label>
+                      <Select value={exportFormat} onValueChange={setExportFormat}>
+                        <SelectTrigger data-testid="select-format">
+                          <SelectValue placeholder="Select language" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="typescript">TypeScript</SelectItem>
+                          <SelectItem value="python">Python</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Deploy through the platform runtime. No source files are exported — the agent runs using its declarative configuration.
-                  </p>
-                  <div className="flex flex-col gap-1.5 mt-auto">
-                    {["Platform-managed lifecycle", "Automatic scaling and monitoring", "No CI/CD setup required"].map(f => (
-                      <div key={f} className="flex items-center gap-2">
-                        <CheckCircle className="w-3 h-3 text-emerald-500 shrink-0" />
-                        <span className="text-[11px] text-muted-foreground">{f}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div
-                  className="flex flex-col gap-3 p-4 rounded-md border hover-elevate cursor-pointer"
-                  onClick={() => setExportStep("configure")}
-                  data-testid="card-export-source"
-                >
-                  <div className="flex items-center gap-2">
-                    <div className="flex items-center justify-center w-8 h-8 rounded-md bg-primary/10 shrink-0">
-                      <Code className="w-4 h-4 text-primary" />
+                    <div className="flex flex-col gap-2">
+                      <Label className="text-xs font-medium">LLM Provider</Label>
+                      <Select value={exportLlmProvider} onValueChange={setExportLlmProvider}>
+                        <SelectTrigger data-testid="select-llm-provider">
+                          <SelectValue placeholder="Select provider" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="openai">OpenAI</SelectItem>
+                          <SelectItem value="anthropic">Anthropic (Claude)</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
-                    <div className="flex flex-col min-w-0">
-                      <span className="text-sm font-medium">Source Export</span>
-                      <Badge variant="outline" className="text-[10px] w-fit mt-0.5">CI/CD &amp; Portability</Badge>
-                    </div>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Generate source files for standalone deployment. Integrate into your CI/CD pipeline or run independently outside the platform.
-                  </p>
-                  <div className="flex flex-col gap-1.5 mt-auto">
-                    {["Downloadable source files (TypeScript / Python)", "CI/CD pipeline integration ready", "Full portability — deploy anywhere"].map(f => (
-                      <div key={f} className="flex items-center gap-2">
-                        <CheckCircle className="w-3 h-3 text-emerald-500 shrink-0" />
-                        <span className="text-[11px] text-muted-foreground">{f}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {exportStep === "configure" && (() => {
-            const frameworkOptions = [
-              { id: "generic", label: "Generic Tool-Calling Runtime", desc: "Minimal tool-calling agent — universal baseline", icon: Cpu, recommended: true },
-              { id: "langgraph", label: "LangGraph Graph App", desc: "Graph-oriented state machine with nodes and edges", icon: Network },
-              { id: "crewai", label: "CrewAI Project Scaffold", desc: "YAML-first multi-agent crew with role definitions", icon: Users },
-              { id: "foundry", label: "Microsoft Foundry Agent", desc: "Foundry-compatible project with manifest and skills", icon: Boxes },
-              { id: "bedrock", label: "AWS Bedrock Agent", desc: "Action groups with Lambda handlers and OpenAPI specs", icon: Cloud },
-              { id: "n8n", label: "N8N Workflow", desc: "Workflow JSON with custom node stubs and credentials", icon: Workflow },
-              { id: "vertex", label: "GCP Vertex AI Agent", desc: "Vertex Agent Builder layout with tools and extensions", icon: Box },
-              { id: "databricks", label: "Databricks AgentBricks", desc: "Mosaic AI Agent Framework with MLflow tracking and Unity Catalog tools", icon: Database },
-            ];
-            const frameworkFileMap: Record<string, Array<{ label: string; desc: string }>> = {
-              generic: [
-                { label: "agent.yaml", desc: "Agent manifest with config" },
-                { label: exportFormat === "typescript" ? "entrypoint.ts" : "entrypoint.py", desc: "Ralph Loop orchestration" },
-                { label: exportFormat === "typescript" ? "tools/index.ts" : "tools/__init__.py", desc: "Tool adapter registry" },
-                { label: exportFormat === "typescript" ? "package.json" : "requirements.txt", desc: "Dependencies" },
-                { label: ".env.example", desc: "Environment variables" },
-                { label: "Dockerfile", desc: "Container build for CI/CD" },
-              ],
-              langgraph: [
-                { label: "agent.yaml", desc: "Agent manifest with config" },
-                { label: exportFormat === "typescript" ? "graph.ts" : "graph.py", desc: "LangGraph state graph definition" },
-                { label: exportFormat === "typescript" ? "nodes/index.ts" : "nodes/__init__.py", desc: "Graph node implementations" },
-                { label: exportFormat === "typescript" ? "tools/index.ts" : "tools/__init__.py", desc: "Tool adapter registry" },
-                { label: "langgraph.json", desc: "LangGraph manifest and config" },
-                { label: exportFormat === "typescript" ? "package.json" : "requirements.txt", desc: "Dependencies" },
-                { label: ".env.example", desc: "Environment variables" },
-                { label: "Dockerfile", desc: "Container build for CI/CD" },
-              ],
-              crewai: [
-                { label: "agent.yaml", desc: "Agent manifest with config" },
-                { label: "config/agents.yaml", desc: "CrewAI agent role definitions" },
-                { label: "config/tasks.yaml", desc: "CrewAI task definitions" },
-                { label: exportFormat === "typescript" ? "crew.ts" : "crew.py", desc: "Crew orchestration entry point" },
-                { label: exportFormat === "typescript" ? "tools/index.ts" : "tools/__init__.py", desc: "Tool adapter registry" },
-                { label: exportFormat === "typescript" ? "package.json" : "requirements.txt", desc: "Dependencies" },
-                { label: ".env.example", desc: "Environment variables" },
-                { label: "Dockerfile", desc: "Container build for CI/CD" },
-              ],
-              foundry: [
-                { label: "agent.yaml", desc: "Agent manifest with config" },
-                { label: "foundry.manifest.json", desc: "Foundry agent manifest" },
-                { label: exportFormat === "typescript" ? "skills/index.ts" : "skills/__init__.py", desc: "Skill implementations" },
-                { label: exportFormat === "typescript" ? "tools/index.ts" : "tools/__init__.py", desc: "Tool adapter registry" },
-                { label: exportFormat === "typescript" ? "entrypoint.ts" : "entrypoint.py", desc: "Agent entry point" },
-                { label: exportFormat === "typescript" ? "package.json" : "requirements.txt", desc: "Dependencies" },
-                { label: ".env.example", desc: "Environment variables" },
-                { label: "Dockerfile", desc: "Container build for CI/CD" },
-              ],
-              bedrock: [
-                { label: "agent.yaml", desc: "Agent manifest with config" },
-                { label: "agent-config.json", desc: "Bedrock agent configuration" },
-                { label: "action-groups/openapi.yaml", desc: "OpenAPI spec for action groups" },
-                { label: exportFormat === "typescript" ? "lambda/handler.ts" : "lambda/handler.py", desc: "Lambda function handler" },
-                { label: exportFormat === "typescript" ? "tools/index.ts" : "tools/__init__.py", desc: "Tool adapter registry" },
-                { label: "template.yaml", desc: "SAM/CloudFormation template" },
-                { label: exportFormat === "typescript" ? "package.json" : "requirements.txt", desc: "Dependencies" },
-                { label: ".env.example", desc: "Environment variables" },
-              ],
-              n8n: [
-                { label: "agent.yaml", desc: "Agent manifest with config" },
-                { label: "workflow.json", desc: "N8N workflow definition" },
-                { label: exportFormat === "typescript" ? "nodes/AgentNode.ts" : "nodes/agent_node.py", desc: "Custom agent node" },
-                { label: exportFormat === "typescript" ? "nodes/ToolNode.ts" : "nodes/tool_node.py", desc: "Custom tool node" },
-                { label: "credentials/AgentCredentials.json", desc: "Credential type definitions" },
-                { label: exportFormat === "typescript" ? "package.json" : "requirements.txt", desc: "Dependencies" },
-                { label: ".env.example", desc: "Environment variables" },
-              ],
-              vertex: [
-                { label: "agent.yaml", desc: "Agent manifest with config" },
-                { label: "agent-config.json", desc: "Vertex AI agent definition" },
-                { label: exportFormat === "typescript" ? "extensions/index.ts" : "extensions/__init__.py", desc: "Extension implementations" },
-                { label: exportFormat === "typescript" ? "tools/index.ts" : "tools/__init__.py", desc: "Tool adapter registry" },
-                { label: exportFormat === "typescript" ? "entrypoint.ts" : "entrypoint.py", desc: "Agent entry point" },
-                { label: exportFormat === "typescript" ? "package.json" : "requirements.txt", desc: "Dependencies" },
-                { label: ".env.example", desc: "Environment variables" },
-                { label: "Dockerfile", desc: "Container build for CI/CD" },
-              ],
-              databricks: [
-                { label: "agent.yaml", desc: "Agent manifest with config" },
-                { label: "agent.py", desc: "MLflow ChatAgent with tool-calling loop" },
-                { label: "config.yaml", desc: "AgentBricks model and tool configuration" },
-                { label: "tools/__init__.py", desc: "Tool registry for Unity Catalog binding" },
-                { label: "databricks.yml", desc: "Asset Bundle for CI/CD deployment" },
-                { label: "MLproject", desc: "MLflow project definition" },
-                { label: "conda.yaml", desc: "Conda environment spec" },
-                { label: "requirements.txt", desc: "Python package dependencies" },
-                { label: ".env.example", desc: "Environment variables" },
-              ],
-            };
-            const currentFiles = frameworkFileMap[exportFramework] || frameworkFileMap.generic;
-            return (
-            <div className="flex flex-col gap-5 py-2">
-              <div className="flex items-center gap-2 mb-1 flex-wrap">
-                <span className="text-[11px] text-muted-foreground/40">Export Type</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">2</span>
-                  <span className="font-medium">Configure</span>
-                </div>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Tools</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Deps</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Env</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Traces</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Gate</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Preview</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Approval</span>
-              </div>
-
-              <div className="flex flex-col gap-2">
-                <Label>Template & Framework</Label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[200px] overflow-y-auto pr-1">
-                  {frameworkOptions.map(fw => {
-                    const Icon = fw.icon;
-                    const selected = exportFramework === fw.id;
-                    return (
-                      <div
-                        key={fw.id}
-                        className={`flex items-start gap-2.5 p-2.5 rounded-md border cursor-pointer hover-elevate ${selected ? "border-primary bg-primary/5" : ""}`}
-                        onClick={() => { setExportFramework(fw.id); if (fw.id === "databricks") setExportFormat("python"); }}
-                        data-testid={`framework-${fw.id}`}
-                      >
-                        <Icon className={`w-4 h-4 mt-0.5 shrink-0 ${selected ? "text-primary" : "text-muted-foreground"}`} />
-                        <div className="flex flex-col min-w-0">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-xs font-medium truncate">{fw.label}</span>
-                            {fw.recommended && <Badge variant="secondary" className="text-[9px] px-1.5 py-0">Recommended</Badge>}
-                            {fw.id === "databricks" && <Badge variant="outline" className="text-[9px] px-1.5 py-0 text-amber-600 border-amber-400/40">Python only</Badge>}
-                          </div>
-                          <span className="text-[10px] text-muted-foreground leading-tight">{fw.desc}</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="flex flex-col gap-2">
-                  <Label>Language</Label>
-                  <Select value={exportFormat} onValueChange={(v) => setExportFormat(v as "typescript" | "python")}>
-                    <SelectTrigger data-testid="select-export-format">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="typescript">TypeScript</SelectItem>
-                      <SelectItem value="python">Python</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="flex flex-col gap-2">
-                  <Label>LLM Provider</Label>
-                  <Select value={exportLlmProvider} onValueChange={(v) => setExportLlmProvider(v as "openai" | "anthropic")}>
-                    <SelectTrigger data-testid="select-export-llm">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="openai">OpenAI GPT-4</SelectItem>
-                      <SelectItem value="anthropic">Anthropic Claude</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <Card>
-                <CardContent className="p-4 flex flex-col gap-3">
-                  <div className="flex items-center gap-2">
-                    <RefreshCw className="w-3.5 h-3.5 text-muted-foreground" />
-                    <span className="text-sm font-medium">Ralph Loop Configuration</span>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="flex flex-col gap-1.5">
-                      <Label className="text-xs">Max Iterations</Label>
+                    <div className="flex flex-col gap-2">
+                      <Label className="text-xs font-medium">Max Iterations</Label>
                       <Input
                         type="number"
                         min={1}
                         max={100}
                         value={exportMaxIterations}
-                        onChange={(e) => setExportMaxIterations(Number(e.target.value) || 20)}
+                        onChange={(e) => setExportMaxIterations(parseInt(e.target.value) || 10)}
                         data-testid="input-max-iterations"
                       />
-                      <span className="text-[10px] text-muted-foreground">Safety limit to prevent infinite loops</span>
-                    </div>
-                    <div className="flex flex-col gap-1.5">
-                      <Label className="text-xs">Completion Promise</Label>
-                      <Input
-                        value={exportCompletionPromise}
-                        onChange={(e) => setExportCompletionPromise(e.target.value)}
-                        placeholder="TASK_COMPLETE"
-                        data-testid="input-completion-promise"
-                      />
-                      <span className="text-[10px] text-muted-foreground">Agent outputs this string when done</span>
                     </div>
                   </div>
-                </CardContent>
-              </Card>
 
-              <Card>
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-2 mb-3">
-                    <Terminal className="w-3.5 h-3.5 text-muted-foreground" />
-                    <span className="text-sm font-medium">Source Files Generated</span>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {currentFiles.map(f => (
-                      <div key={f.label} className="flex items-center gap-2 p-2 rounded-md bg-muted/30" data-testid={`source-file-${f.label.replace(/[/.]/g, "-")}`}>
-                        <FileCode className="w-3 h-3 text-muted-foreground shrink-0" />
-                        <div className="flex flex-col min-w-0">
-                          <span className="text-xs font-mono truncate">{f.label}</span>
-                          <span className="text-[10px] text-muted-foreground">{f.desc}</span>
-                        </div>
+                  <Separator />
+
+                  <div className="flex flex-col gap-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Wrench className="w-4 h-4 text-muted-foreground" />
+                        <span className="text-sm font-medium">Tool Adapters</span>
                       </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-            );
-          })()}
-
-          {exportStep === "tools" && (() => {
-            const agentTools = Array.isArray(agent?.toolsConfig) ? agent.toolsConfig as any[] : [];
-            const connectors = allToolConnectors || [];
-            const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-            const connectorMap = new Map(connectors.map(c => [normalize(c.name), c]));
-
-            type ToolResolution = {
-              name: string;
-              description: string;
-              status: "builtin" | "customer" | "stub";
-              connectorId?: string;
-              connectorVersion?: string;
-            };
-
-            const resolvedTools: ToolResolution[] = agentTools.map((t: any) => {
-              const override = toolAdapterOverrides[t.name];
-              const normalized = normalize(t.name || "");
-              const connector = connectorMap.get(normalized);
-              let status: "builtin" | "customer" | "stub" = override || "stub";
-              if (!override) {
-                if (connector && connector.status === "connected") status = "builtin";
-                else if (connector) status = "customer";
-                else status = "stub";
-              }
-              return {
-                name: t.name || "Unknown Tool",
-                description: t.description || t.type || "No description",
-                status,
-                connectorId: connector?.id,
-                connectorVersion: connector ? `v${connector.id.substring(0, 6)}` : undefined,
-              };
-            });
-
-            const builtinCount = resolvedTools.filter(t => t.status === "builtin").length;
-            const customerCount = resolvedTools.filter(t => t.status === "customer").length;
-            const stubCount = resolvedTools.filter(t => t.status === "stub").length;
-
-            return (
-              <div className="flex flex-col gap-4 py-2 flex-1 min-h-0" data-testid="step-tool-adapters">
-                <div className="flex items-center gap-2 mb-1 flex-wrap">
-                  <span className="text-[11px] text-muted-foreground/40">Export Type</span>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Configure</span>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">3</span>
-                    <span className="font-medium">Tools</span>
-                  </div>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Deps</span>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Env</span>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Traces</span>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Gate</span>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Preview</span>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Approval</span>
-                </div>
-
-                <div className="flex items-center gap-3 flex-wrap">
-                  <Badge variant="outline" className="text-[10px]" data-testid="badge-adapter-builtin">
-                    <CheckCircle className="w-3 h-3 mr-1 text-emerald-500" /> {builtinCount} Built-in
-                  </Badge>
-                  <Badge variant="outline" className="text-[10px]" data-testid="badge-adapter-customer">
-                    <AlertCircle className="w-3 h-3 mr-1 text-amber-500" /> {customerCount} Customer Required
-                  </Badge>
-                  <Badge variant="outline" className="text-[10px]" data-testid="badge-adapter-stub">
-                    <FileCode className="w-3 h-3 mr-1 text-muted-foreground" /> {stubCount} Stubs
-                  </Badge>
-                </div>
-
-                {resolvedTools.length === 0 ? (
-                  <Card>
-                    <CardContent className="p-6 flex flex-col items-center gap-2 text-center">
-                      <Wrench className="w-6 h-6 text-muted-foreground/40" />
-                      <span className="text-sm text-muted-foreground">No tools referenced</span>
-                      <span className="text-xs text-muted-foreground/60">This agent's blueprint has no tool references. You can proceed directly to generate source files.</span>
-                    </CardContent>
-                  </Card>
-                ) : (
-                  <div className="flex flex-col gap-2 overflow-y-auto flex-1 min-h-0 pr-1">
-                    {resolvedTools.map((tool, idx) => {
-                      const statusConfig = {
-                        builtin: { label: "Built-in adapter included", color: "text-emerald-600 dark:text-emerald-400", bg: "bg-emerald-500/10", icon: CheckCircle },
-                        customer: { label: "Customer adapter required", color: "text-amber-600 dark:text-amber-400", bg: "bg-amber-500/10", icon: AlertTriangle },
-                        stub: { label: "Stub will be generated", color: "text-muted-foreground", bg: "bg-muted/50", icon: FileCode },
-                      };
-                      const cfg = statusConfig[tool.status];
-                      const StatusIcon = cfg.icon;
-
-                      return (
-                        <div
-                          key={tool.name}
-                          className="flex items-center gap-3 p-3 rounded-md border"
-                          data-testid={`tool-adapter-row-${idx}`}
-                        >
-                          <div className="flex items-center justify-center w-8 h-8 rounded-md bg-primary/10 shrink-0">
-                            <Wrench className="w-4 h-4 text-primary" />
-                          </div>
-                          <div className="flex flex-col gap-0.5 min-w-0 flex-1">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-sm font-medium truncate" data-testid={`tool-name-${idx}`}>{tool.name}</span>
-                              <Badge variant="outline" className={`text-[9px] shrink-0 ${cfg.bg} ${cfg.color}`} data-testid={`tool-status-${idx}`}>
-                                <StatusIcon className="w-2.5 h-2.5 mr-1" />
-                                {cfg.label}
-                              </Badge>
-                            </div>
-                            <span className="text-[11px] text-muted-foreground truncate">{tool.description}</span>
-                          </div>
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            {tool.status === "builtin" && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => setToolAdapterOverrides(prev => ({ ...prev, [tool.name]: "stub" }))}
-                                data-testid={`button-switch-to-stub-${idx}`}
-                              >
-                                <FileCode className="w-3 h-3 mr-1" /> Use Stub Instead
-                              </Button>
-                            )}
-                            {tool.status === "customer" && (
-                              <>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => setToolAdapterOverrides(prev => ({ ...prev, [tool.name]: "stub" }))}
-                                  data-testid={`button-generate-stub-${idx}`}
-                                >
-                                  <FileCode className="w-3 h-3 mr-1" /> Generate Stub
-                                </Button>
-                                {tool.connectorId && (
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => setToolAdapterOverrides(prev => ({ ...prev, [tool.name]: "builtin" }))}
-                                    data-testid={`button-attach-adapter-${idx}`}
-                                  >
-                                    <Layers className="w-3 h-3 mr-1" /> Attach Adapter
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {builtinCount > 0 && <Badge variant="outline" className="text-[10px]"><CheckCircle className="w-3 h-3 mr-1 text-emerald-500" />{builtinCount} Built-in</Badge>}
+                        {customerCount > 0 && <Badge variant="outline" className="text-[10px]"><AlertCircle className="w-3 h-3 mr-1 text-amber-500" />{customerCount} Customer</Badge>}
+                        {stubCount > 0 && <Badge variant="outline" className="text-[10px]"><FileCode className="w-3 h-3 mr-1 text-muted-foreground" />{stubCount} Stubs</Badge>}
+                      </div>
+                    </div>
+                    {resolvedTools.length === 0 ? (
+                      <span className="text-xs text-muted-foreground">No tools referenced by this agent.</span>
+                    ) : (
+                      <div className="flex flex-col gap-1.5">
+                        {resolvedTools.map((tool, idx) => {
+                          const cfg = tool.status === "builtin" ? { color: "text-emerald-600 dark:text-emerald-400", icon: CheckCircle, label: "Built-in" }
+                            : tool.status === "customer" ? { color: "text-amber-600 dark:text-amber-400", icon: AlertTriangle, label: "Customer" }
+                            : { color: "text-muted-foreground", icon: FileCode, label: "Stub" };
+                          const StatusIcon = cfg.icon;
+                          return (
+                            <div key={tool.name} className="flex items-center justify-between gap-2 p-2 rounded-md border" data-testid={`tool-adapter-row-${idx}`}>
+                              <div className="flex items-center gap-2 min-w-0">
+                                <Wrench className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                                <span className="text-sm truncate" data-testid={`tool-name-${idx}`}>{tool.name}</span>
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <Badge variant="outline" className={`text-[9px] ${cfg.color}`} data-testid={`tool-status-${idx}`}>
+                                  <StatusIcon className="w-2.5 h-2.5 mr-1" />{cfg.label}
+                                </Badge>
+                                {tool.status !== "stub" && (
+                                  <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px]" onClick={() => setToolAdapterOverrides(prev => ({ ...prev, [tool.name]: "stub" }))} data-testid={`button-switch-to-stub-${idx}`}>
+                                    Use Stub
                                   </Button>
                                 )}
-                              </>
-                            )}
-                            {tool.status === "stub" && (
-                              <>
-                                {tool.connectorId && (
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => setToolAdapterOverrides(prev => ({ ...prev, [tool.name]: "builtin" }))}
-                                    data-testid={`button-attach-adapter-${idx}`}
-                                  >
-                                    <Layers className="w-3 h-3 mr-1" /> Attach Adapter
+                                {tool.status === "stub" && tool.connectorId && (
+                                  <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px]" onClick={() => setToolAdapterOverrides(prev => ({ ...prev, [tool.name]: "builtin" }))} data-testid={`button-attach-adapter-${idx}`}>
+                                    Attach
                                   </Button>
                                 )}
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {stubCount > 0 && (
-                  <div className="flex items-start gap-2 p-3 rounded-md bg-muted/30 border border-dashed" data-testid="notice-stubs-info">
-                    <AlertCircle className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
-                    <div className="flex flex-col gap-0.5">
-                      <span className="text-xs font-medium">Stub adapters will be generated</span>
-                      <span className="text-[11px] text-muted-foreground">
-                        {stubCount} tool{stubCount !== 1 ? "s" : ""} will have placeholder implementations in the export. You'll need to provide the actual implementation before deployment.
-                      </span>
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })()}
-
-          {exportStep === "dependencies" && (() => {
-            const depData = (() => {
-              const fw = exportFramework;
-              const fmt = exportFormat;
-              const llm = exportLlmProvider;
-
-              if (fmt === "typescript") {
-                const deps: Record<string, string> = {
-                  "typescript": pinVersions ? "5.6.3" : "^5.0.0",
-                  "ts-node": pinVersions ? "10.9.2" : "^10.9.0",
-                  "js-yaml": pinVersions ? "4.1.0" : "^4.1.0",
-                  "@types/js-yaml": pinVersions ? "4.0.9" : "^4.0.9",
-                  "@types/node": pinVersions ? "20.17.12" : "^20.0.0",
-                };
-                if (llm === "openai") deps["openai"] = pinVersions ? "4.77.0" : "^4.0.0";
-                else deps["@anthropic-ai/sdk"] = pinVersions ? "0.30.1" : "^0.30.0";
-
-                if (fw === "langgraph") {
-                  deps["@langchain/langgraph"] = pinVersions ? "0.2.36" : "^0.2.0";
-                  deps["@langchain/core"] = pinVersions ? "0.3.26" : "^0.3.0";
-                  if (llm === "openai") { deps["@langchain/openai"] = pinVersions ? "0.3.16" : "^0.3.0"; }
-                  else { deps["@langchain/anthropic"] = pinVersions ? "0.3.12" : "^0.3.0"; }
-                }
-                if (fw === "bedrock") deps["@aws-sdk/client-bedrock-agent-runtime"] = pinVersions ? "3.712.0" : "^3.0.0";
-                if (fw === "n8n") deps["n8n-workflow"] = pinVersions ? "1.69.2" : "^1.0.0";
-                if (fw === "vertex") deps["@google-cloud/aiplatform"] = pinVersions ? "3.34.0" : "^3.0.0";
-
-                return {
-                  fileName: "package.json",
-                  content: JSON.stringify({
-                    name: (agent?.name || "agent").toLowerCase().replace(/[^a-z0-9]+/g, "-"),
-                    version: "1.0.0",
-                    private: true,
-                    scripts: { start: fw === "langgraph" ? "ts-node graph.ts" : "ts-node entrypoint.ts" },
-                    dependencies: deps,
-                  }, null, 2),
-                  deps,
-                };
-              } else {
-                const reqs: Array<{ name: string; pinned: string; range: string }> = [
-                  { name: "pyyaml", pinned: "6.0.2", range: ">=6.0" },
-                ];
-                if (llm === "openai") reqs.push({ name: "openai", pinned: "1.58.1", range: ">=1.0" });
-                else reqs.push({ name: "anthropic", pinned: "0.30.1", range: ">=0.30" });
-
-                if (fw === "langgraph") {
-                  reqs.push({ name: "langgraph", pinned: "0.2.60", range: ">=0.2.0" });
-                  reqs.push({ name: "langchain-core", pinned: "0.3.28", range: ">=0.3.0" });
-                  if (llm === "openai") reqs.push({ name: "langchain-openai", pinned: "0.2.14", range: ">=0.2.0" });
-                  else reqs.push({ name: "langchain-anthropic", pinned: "0.2.8", range: ">=0.2.0" });
-                }
-                if (fw === "crewai") reqs.push({ name: "crewai", pinned: "0.80.0", range: ">=0.80.0" });
-                if (fw === "bedrock") reqs.push({ name: "boto3", pinned: "1.34.162", range: ">=1.34.0" });
-                if (fw === "vertex") reqs.push({ name: "google-cloud-aiplatform", pinned: "1.60.0", range: ">=1.60.0" });
-                if (fw === "databricks") {
-                  reqs.push({ name: "mlflow", pinned: "2.18.0", range: ">=2.18.0" });
-                  reqs.push({ name: "databricks-sdk", pinned: "0.36.0", range: ">=0.36.0" });
-                  reqs.push({ name: "databricks-langchain", pinned: "0.3.0", range: ">=0.3.0" });
-                  reqs.push({ name: "langchain-core", pinned: "0.3.28", range: ">=0.3.0" });
-                }
-
-                const content = reqs.map(r => pinVersions ? `${r.name}==${r.pinned}` : `${r.name}${r.range}`).join("\n") + "\n";
-                const depsMap: Record<string, string> = {};
-                reqs.forEach(r => { depsMap[r.name] = pinVersions ? r.pinned : r.range; });
-
-                return {
-                  fileName: "requirements.txt",
-                  content,
-                  deps: depsMap,
-                };
-              }
-            })();
-
-            const depCount = Object.keys(depData.deps).length;
-            const warnings: string[] = [];
-
-            if (exportFormat === "typescript") {
-              if (depData.deps["@types/js-yaml"] && depData.deps["@types/node"]) {
-                warnings.push("Type definition packages (@types/*) add build-time overhead — consider removing if not needed in production.");
-              }
-              if (depCount > 8) {
-                warnings.push(`${depCount} dependencies detected — review if all are required for your deployment target.`);
-              }
-            }
-            if (exportFormat === "python") {
-              if (depCount > 5) {
-                warnings.push(`${depCount} packages listed — verify all are needed for your deployment environment.`);
-              }
-            }
-            if (exportFramework === "langgraph") {
-              warnings.push("LangGraph + LangChain pull in transitive dependencies — consider pinning sub-dependencies in a lockfile.");
-            }
-            if (exportFramework === "databricks") {
-              warnings.push("Databricks AgentBricks requires a Databricks workspace with Model Serving enabled. MLflow and databricks-langchain are large transitive dependencies — pin versions for reproducible deployments.");
-            }
-            if (!pinVersions) {
-              warnings.push("Unpinned versions may cause non-reproducible builds — enable pinning for production deployments.");
-            }
-
-            return (
-              <div className="flex flex-col gap-4 py-2 flex-1 min-h-0" data-testid="step-dependencies">
-                <div className="flex items-center gap-2 mb-1 flex-wrap">
-                  <span className="text-[11px] text-muted-foreground/40">Export Type</span>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Configure</span>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Tools</span>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">4</span>
-                    <span className="font-medium">Deps</span>
-                  </div>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Env</span>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Traces</span>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Gate</span>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Preview</span>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Approval</span>
-                </div>
-
-                <div className="flex items-center justify-between gap-4 flex-wrap">
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <Badge variant="outline" className="text-[10px]" data-testid="badge-dep-count">
-                      <Package className="w-3 h-3 mr-1" /> {depCount} {depCount === 1 ? "dependency" : "dependencies"}
-                    </Badge>
-                    <Badge variant="outline" className="text-[10px]" data-testid="badge-dep-file">
-                      <FileCode className="w-3 h-3 mr-1" /> {depData.fileName}
-                    </Badge>
-                    {warnings.length > 0 && (
-                      <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-600 dark:text-amber-400" data-testid="badge-dep-warnings">
-                        <AlertTriangle className="w-3 h-3 mr-1" /> {warnings.length} {warnings.length === 1 ? "warning" : "warnings"}
-                      </Badge>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Label htmlFor="pin-versions-toggle" className="text-xs cursor-pointer">Pin versions</Label>
-                    <Switch
-                      id="pin-versions-toggle"
-                      checked={pinVersions}
-                      onCheckedChange={setPinVersions}
-                      data-testid="toggle-pin-versions"
-                    />
-                  </div>
-                </div>
-
-                <Card>
-                  <CardContent className="p-0">
-                    <div className="flex items-center gap-2 px-4 py-2.5 border-b">
-                      <FileCode className="w-3.5 h-3.5 text-muted-foreground" />
-                      <span className="text-xs font-medium font-mono">{depData.fileName}</span>
-                      {pinVersions && (
-                        <Badge variant="secondary" className="text-[9px] ml-auto">
-                          <Lock className="w-2.5 h-2.5 mr-1" /> Pinned
-                        </Badge>
-                      )}
-                      {!pinVersions && (
-                        <Badge variant="secondary" className="text-[9px] ml-auto bg-amber-500/10 text-amber-600 dark:text-amber-400">
-                          <Unlock className="w-2.5 h-2.5 mr-1" /> Unpinned
-                        </Badge>
-                      )}
-                    </div>
-                    <div className="overflow-auto max-h-[200px]">
-                      <pre className="text-xs font-mono p-4 whitespace-pre-wrap" data-testid="dep-file-preview">
-                        <code>{depData.content}</code>
-                      </pre>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {warnings.length > 0 && (
-                  <Card>
-                    <CardContent className="p-4 flex flex-col gap-2">
-                      <div className="flex items-center gap-2">
-                        <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
-                        <span className="text-xs font-medium">Minimize Dependencies</span>
-                        <Badge variant="secondary" className="text-[9px]">{warnings.length}</Badge>
-                      </div>
-                      <div className="flex flex-col gap-1.5">
-                        {warnings.map((w, i) => (
-                          <div key={i} className="flex items-start gap-2 text-xs text-muted-foreground" data-testid={`dep-warning-${i}`}>
-                            <AlertCircle className="w-3 h-3 mt-0.5 shrink-0 text-amber-500/70" />
-                            <span>{w}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
-
-                {pinVersions && (
-                  <div className="flex items-start gap-2 p-3 rounded-md bg-emerald-500/5 border border-emerald-500/20" data-testid="notice-pinned-info">
-                    <CheckCircle className="w-4 h-4 text-emerald-500 mt-0.5 shrink-0" />
-                    <div className="flex flex-col gap-0.5">
-                      <span className="text-xs font-medium">Reproducible build configured</span>
-                      <span className="text-[11px] text-muted-foreground">
-                        All {depCount} dependencies are pinned to exact versions. Builds will produce identical results across environments.
-                      </span>
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })()}
-
-          {exportStep === "envvars" && (() => {
-            const envVars: Array<{ key: string; description: string; category: "llm" | "tool" | "infra" | "agent"; required: boolean; example: string }> = [];
-
-            if (exportLlmProvider === "openai") {
-              envVars.push({ key: "OPENAI_API_KEY", description: "OpenAI API key for LLM inference", category: "llm", required: true, example: "sk-proj-..." });
-            } else {
-              envVars.push({ key: "ANTHROPIC_API_KEY", description: "Anthropic API key for Claude inference", category: "llm", required: true, example: "sk-ant-..." });
-            }
-
-            if (exportFramework === "bedrock") {
-              envVars.push({ key: "AWS_ACCESS_KEY_ID", description: "AWS access key for Bedrock API", category: "infra", required: true, example: "AKIA..." });
-              envVars.push({ key: "AWS_SECRET_ACCESS_KEY", description: "AWS secret key for Bedrock API", category: "infra", required: true, example: "wJal..." });
-              envVars.push({ key: "AWS_REGION", description: "AWS region for Bedrock service", category: "infra", required: true, example: "us-east-1" });
-            }
-            if (exportFramework === "vertex") {
-              envVars.push({ key: "GOOGLE_APPLICATION_CREDENTIALS", description: "Path to GCP service account JSON", category: "infra", required: true, example: "/path/to/credentials.json" });
-              envVars.push({ key: "GCP_PROJECT_ID", description: "Google Cloud project identifier", category: "infra", required: true, example: "my-project-123" });
-            }
-            if (exportFramework === "databricks") {
-              envVars.push({ key: "DATABRICKS_HOST", description: "Databricks workspace URL", category: "infra", required: true, example: "https://adb-1234567890.1.azuredatabricks.net" });
-              envVars.push({ key: "DATABRICKS_TOKEN", description: "Databricks personal access token", category: "infra", required: true, example: "dapi..." });
-              envVars.push({ key: "DATABRICKS_SERVING_ENDPOINT", description: "Model Serving endpoint name for the deployed agent", category: "infra", required: false, example: "my-agent-endpoint" });
-              envVars.push({ key: "MLFLOW_TRACKING_URI", description: "MLflow tracking server URI (defaults to Databricks workspace)", category: "infra", required: false, example: "databricks" });
-            }
-
-            const agentTools = Array.isArray(agent?.toolsConfig) ? agent.toolsConfig as any[] : [];
-            const toolsWithTokens = agentTools.filter(t => {
-              const override = toolAdapterOverrides[t.name];
-              return override === "builtin" || override === "customer";
-            });
-            toolsWithTokens.forEach(t => {
-              const envKey = `${(t.name || "TOOL").toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_API_KEY`;
-              envVars.push({ key: envKey, description: `API key / token for ${t.name} tool`, category: "tool", required: false, example: "tok-..." });
-            });
-
-            envVars.push({ key: "AGENT_LOG_LEVEL", description: "Logging verbosity (debug, info, warn, error)", category: "agent", required: false, example: "info" });
-            envVars.push({ key: "AGENT_MAX_ITERATIONS", description: "Max Ralph Loop iterations before halting", category: "agent", required: false, example: String(exportMaxIterations) });
-
-            if (exportFramework === "foundry") {
-              envVars.push({ key: "DATABASE_URL", description: "Database connection string for persistence", category: "infra", required: false, example: "postgresql://user:pass@host:5432/db" });
-            }
-
-            if (otelEnabled) {
-              envVars.push({ key: "OTEL_EXPORTER_OTLP_ENDPOINT", description: "OpenTelemetry collector endpoint for trace export", category: "infra", required: false, example: "http://localhost:4318" });
-              envVars.push({ key: "OTEL_SERVICE_NAME", description: "Service name reported in trace spans", category: "infra", required: false, example: (agent?.name || "agent").toLowerCase().replace(/[^a-z0-9]+/g, "-") });
-            }
-
-            const envExampleContent = envVars.map(v => {
-              const commentLine = `# ${v.description}${v.required ? " (REQUIRED)" : ""}`;
-              return `${commentLine}\n${v.key}=`;
-            }).join("\n\n") + "\n";
-
-            const requiredCount = envVars.filter(v => v.required).length;
-            const optionalCount = envVars.filter(v => !v.required).length;
-            const categoryLabels: Record<string, string> = { llm: "LLM Provider", tool: "Tool Credentials", infra: "Infrastructure", agent: "Agent Config" };
-            const grouped = envVars.reduce<Record<string, typeof envVars>>((acc, v) => {
-              if (!acc[v.category]) acc[v.category] = [];
-              acc[v.category].push(v);
-              return acc;
-            }, {});
-
-            return (
-              <div className="flex flex-col gap-4 py-2 flex-1 min-h-0 overflow-auto" data-testid="step-envvars">
-                <div className="flex items-center gap-2 mb-1 flex-wrap">
-                  <span className="text-[11px] text-muted-foreground/40">Export Type</span>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Configure</span>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Tools</span>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Deps</span>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">5</span>
-                    <span className="font-medium">Env</span>
-                  </div>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Traces</span>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Gate</span>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Preview</span>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Approval</span>
-                </div>
-
-                <div className="flex items-center gap-3 flex-wrap">
-                  <Badge variant="outline" className="text-[10px]" data-testid="badge-env-total">
-                    <KeyRound className="w-3 h-3 mr-1" /> {envVars.length} variable{envVars.length !== 1 ? "s" : ""}
-                  </Badge>
-                  {requiredCount > 0 && (
-                    <Badge variant="outline" className="text-[10px] bg-red-500/10 text-red-600 dark:text-red-400" data-testid="badge-env-required">
-                      <Lock className="w-3 h-3 mr-1" /> {requiredCount} required
-                    </Badge>
-                  )}
-                  {optionalCount > 0 && (
-                    <Badge variant="outline" className="text-[10px]" data-testid="badge-env-optional">
-                      {optionalCount} optional
-                    </Badge>
-                  )}
-                </div>
-
-                <div className="flex flex-col gap-3">
-                  {(["llm", "tool", "infra", "agent"] as const).filter(cat => grouped[cat]?.length).map(cat => (
-                    <Card key={cat}>
-                      <CardContent className="p-4 flex flex-col gap-2">
-                        <div className="flex items-center gap-2">
-                          {cat === "llm" && <Cpu className="w-3.5 h-3.5 text-muted-foreground" />}
-                          {cat === "tool" && <Wrench className="w-3.5 h-3.5 text-muted-foreground" />}
-                          {cat === "infra" && <Database className="w-3.5 h-3.5 text-muted-foreground" />}
-                          {cat === "agent" && <Settings className="w-3.5 h-3.5 text-muted-foreground" />}
-                          <span className="text-xs font-medium">{categoryLabels[cat]}</span>
-                          <Badge variant="secondary" className="text-[9px]">{grouped[cat].length}</Badge>
-                        </div>
-                        <div className="flex flex-col gap-1.5">
-                          {grouped[cat].map(v => (
-                            <div key={v.key} className="flex items-start gap-3 py-1.5 border-b last:border-0" data-testid={`env-var-${v.key}`}>
-                              <code className="text-[11px] font-mono font-medium shrink-0 mt-0.5">{v.key}</code>
-                              <span className="text-[11px] text-muted-foreground flex-1">{v.description}</span>
-                              {v.required && (
-                                <Badge variant="outline" className="text-[9px] bg-red-500/10 text-red-600 dark:text-red-400 shrink-0">required</Badge>
-                              )}
+                              </div>
                             </div>
-                          ))}
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-
-                <Card>
-                  <CardContent className="p-0">
-                    <div className="flex items-center gap-2 px-4 py-2.5 border-b">
-                      <FileText className="w-3.5 h-3.5 text-muted-foreground" />
-                      <span className="text-xs font-medium font-mono">.env.example</span>
-                      <Badge variant="secondary" className="text-[9px] ml-auto">
-                        <Shield className="w-2.5 h-2.5 mr-1" /> No real values
-                      </Badge>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        onClick={() => {
-                          navigator.clipboard.writeText(envExampleContent);
-                          toast({ title: "Copied", description: ".env.example content copied to clipboard." });
-                        }}
-                        data-testid="button-copy-env-example"
-                      >
-                        <Copy className="w-3.5 h-3.5" />
-                      </Button>
-                    </div>
-                    <div className="overflow-auto max-h-[180px]">
-                      <pre className="text-xs font-mono p-4 whitespace-pre-wrap" data-testid="env-example-preview">
-                        <code>{envExampleContent}</code>
-                      </pre>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <div className="flex items-start gap-2 p-3 rounded-md bg-blue-500/5 border border-blue-500/20" data-testid="notice-replit-secrets">
-                  <Lock className="w-4 h-4 text-blue-500 mt-0.5 shrink-0" />
-                  <div className="flex flex-col gap-0.5">
-                    <span className="text-xs font-medium">Deploying on Replit?</span>
-                    <span className="text-[11px] text-muted-foreground">
-                      Store these as encrypted Secrets in your Repl's "Secrets" tab instead of committing a .env file.
-                      Secrets are injected as environment variables at runtime and never exposed in your source code.
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-2 p-3 rounded-md bg-muted/30 border border-dashed" data-testid="notice-env-security">
-                  <Shield className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
-                  <div className="flex flex-col gap-0.5">
-                    <span className="text-xs font-medium">Never commit real secrets</span>
-                    <span className="text-[11px] text-muted-foreground">
-                      The .env.example file is safe to commit — it contains only variable names with empty values as documentation.
-                      Add .env to your .gitignore and use your platform's secrets manager for actual values.
-                    </span>
-                  </div>
-                </div>
-              </div>
-            );
-          })()}
-
-          {exportStep === "observability" && (
-            <div className="flex flex-col gap-4 py-2 flex-1 min-h-0 overflow-auto" data-testid="step-observability">
-              <div className="flex items-center gap-2 mb-1 flex-wrap">
-                <span className="text-[11px] text-muted-foreground/40">Export Type</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Configure</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Tools</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Deps</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Env</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">6</span>
-                  <span className="font-medium">Traces</span>
-                </div>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Gate</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Preview</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Approval</span>
-              </div>
-
-              <Card>
-                <CardContent className="p-4 flex flex-col gap-4">
-                  <div className="flex items-center justify-between gap-4 flex-wrap">
-                    <div className="flex flex-col gap-0.5">
-                      <div className="flex items-center gap-2">
-                        <Radio className="w-4 h-4 text-primary" />
-                        <span className="text-sm font-medium">OpenTelemetry-Compatible Traces</span>
-                      </div>
-                      <span className="text-[11px] text-muted-foreground ml-6">
-                        Emit trace data using the OpenTelemetry SDK so you can pipe spans to Jaeger, Datadog, Honeycomb, or any OTLP-compatible backend.
-                      </span>
-                    </div>
-                    <Switch
-                      checked={otelEnabled}
-                      onCheckedChange={setOtelEnabled}
-                      data-testid="switch-otel-enabled"
-                    />
-                  </div>
-
-                  {otelEnabled && (
-                    <div className="flex flex-col gap-3 pl-6 border-l-2 border-primary/20">
-                      <div className="flex flex-col gap-1.5">
-                        <Label className="text-xs font-medium">Span Granularity</Label>
-                        <span className="text-[11px] text-muted-foreground">
-                          Controls how much detail each trace captures. Higher granularity means more spans per trace.
-                        </span>
-                      </div>
-                      <div className="flex flex-col gap-2">
-                        <div
-                          className={`flex items-start gap-3 p-3 rounded-md border cursor-pointer hover-elevate ${spanGranularity === "per-node" ? "border-primary bg-primary/5" : ""}`}
-                          onClick={() => setSpanGranularity("per-node")}
-                          data-testid="option-granularity-per-node"
-                        >
-                          <div className={`flex items-center justify-center w-4 h-4 rounded-full border-2 mt-0.5 shrink-0 ${spanGranularity === "per-node" ? "border-primary bg-primary" : "border-muted-foreground/40"}`}>
-                            {spanGranularity === "per-node" && <div className="w-1.5 h-1.5 rounded-full bg-primary-foreground" />}
-                          </div>
-                          <div className="flex flex-col gap-0.5">
-                            <span className="text-xs font-medium">Per Node</span>
-                            <span className="text-[11px] text-muted-foreground">
-                              One span per workflow node (decision, action, tool-group). Balances visibility with low overhead.
-                            </span>
-                          </div>
-                        </div>
-                        <div
-                          className={`flex items-start gap-3 p-3 rounded-md border cursor-pointer hover-elevate ${spanGranularity === "per-tool-call" ? "border-primary bg-primary/5" : ""}`}
-                          onClick={() => setSpanGranularity("per-tool-call")}
-                          data-testid="option-granularity-per-tool-call"
-                        >
-                          <div className={`flex items-center justify-center w-4 h-4 rounded-full border-2 mt-0.5 shrink-0 ${spanGranularity === "per-tool-call" ? "border-primary bg-primary" : "border-muted-foreground/40"}`}>
-                            {spanGranularity === "per-tool-call" && <div className="w-1.5 h-1.5 rounded-full bg-primary-foreground" />}
-                          </div>
-                          <div className="flex flex-col gap-0.5">
-                            <span className="text-xs font-medium">Per Tool Call</span>
-                            <span className="text-[11px] text-muted-foreground">
-                              One span per individual tool invocation inside each node. Maximum detail for debugging tool-level latency and errors.
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardContent className="p-4 flex flex-col gap-3">
-                  <div className="flex items-center gap-2">
-                    <Scan className="w-4 h-4 text-muted-foreground" />
-                    <span className="text-sm font-medium">Span Mapping Preview</span>
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    <div className="flex items-start gap-3 py-2 border-b">
-                      <Badge variant="outline" className="text-[9px] shrink-0">root</Badge>
-                      <div className="flex flex-col gap-0.5 min-w-0">
-                        <code className="text-[11px] font-mono font-medium">agent.run</code>
-                        <span className="text-[10px] text-muted-foreground">Root span wrapping the entire Ralph Loop execution</span>
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-3 py-2 border-b">
-                      <Badge variant="outline" className="text-[9px] shrink-0">node</Badge>
-                      <div className="flex flex-col gap-0.5 min-w-0">
-                        <code className="text-[11px] font-mono font-medium">agent.iteration.{"{n}"}</code>
-                        <span className="text-[10px] text-muted-foreground">One child span per loop iteration — covers LLM call + tool execution</span>
-                      </div>
-                    </div>
-                    {otelEnabled && spanGranularity === "per-tool-call" && (
-                      <div className="flex items-start gap-3 py-2 border-b">
-                        <Badge variant="outline" className="text-[9px] shrink-0">tool</Badge>
-                        <div className="flex flex-col gap-0.5 min-w-0">
-                          <code className="text-[11px] font-mono font-medium">tool.invoke.{"{toolName}"}</code>
-                          <span className="text-[10px] text-muted-foreground">Nested span for each tool call with input/output attributes</span>
-                        </div>
+                          );
+                        })}
                       </div>
                     )}
-                    <div className="flex items-start gap-3 py-2">
-                      <Badge variant="outline" className="text-[9px] shrink-0">llm</Badge>
-                      <div className="flex flex-col gap-0.5 min-w-0">
-                        <code className="text-[11px] font-mono font-medium">llm.chat.completion</code>
-                        <span className="text-[10px] text-muted-foreground">LLM inference call with model, token count, and latency attributes</span>
-                      </div>
-                    </div>
                   </div>
-                </CardContent>
-              </Card>
 
-              {otelEnabled && (
-                <div className="flex items-start gap-2 p-3 rounded-md bg-blue-500/5 border border-blue-500/20" data-testid="notice-otel-env">
-                  <Radio className="w-4 h-4 text-blue-500 mt-0.5 shrink-0" />
-                  <div className="flex flex-col gap-0.5">
-                    <span className="text-xs font-medium">OTEL Endpoint Required</span>
-                    <span className="text-[11px] text-muted-foreground">
-                      Set <code className="font-mono text-[10px] bg-muted px-1 rounded">OTEL_EXPORTER_OTLP_ENDPOINT</code> at runtime to point at your collector (e.g. <code className="font-mono text-[10px] bg-muted px-1 rounded">http://localhost:4318</code>). This variable was added to your Env Vars step automatically.
-                    </span>
-                  </div>
-                </div>
-              )}
+                  <Separator />
 
-              {!otelEnabled && (
-                <div className="flex items-start gap-2 p-3 rounded-md bg-muted/30 border border-dashed" data-testid="notice-otel-disabled">
-                  <AlertCircle className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
-                  <div className="flex flex-col gap-0.5">
-                    <span className="text-xs font-medium">Traces Disabled</span>
-                    <span className="text-[11px] text-muted-foreground">
-                      The exported code will not include OpenTelemetry instrumentation. You can enable it later by adding the SDK manually.
-                    </span>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {exportStep === "buildtest" && (
-            <div className="flex flex-col gap-4 py-2 flex-1 min-h-0 overflow-auto" data-testid="step-buildtest">
-              <div className="flex items-center gap-2 mb-1 flex-wrap">
-                <span className="text-[11px] text-muted-foreground/40">Export Type</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Configure</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Tools</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Deps</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Env</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Traces</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">7</span>
-                  <span className="font-medium">Gate</span>
-                </div>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Preview</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Approval</span>
-              </div>
-
-              <div className="flex items-center gap-3 flex-wrap">
-                <Badge variant="outline" className="text-[10px]" data-testid="badge-gate-compile">
-                  <Hammer className="w-3 h-3 mr-1" />
-                  Compile: {compileStatus === "idle" ? "Not run" : compileStatus === "running" ? "Running..." : compileStatus === "passed" ? "Passed" : "Failed"}
-                </Badge>
-                <Badge variant="outline" className="text-[10px]" data-testid="badge-gate-eval">
-                  <FlaskRound className="w-3 h-3 mr-1" />
-                  Eval: {evalStatus === "idle" ? "Not run" : evalStatus === "running" ? "Running..." : evalStatus === "passed" ? "Passed" : "Failed"}
-                </Badge>
-              </div>
-
-              <Card>
-                <CardContent className="p-4 flex flex-col gap-3">
-                  <div className="flex items-center justify-between gap-4 flex-wrap">
-                    <div className="flex flex-col gap-0.5">
+                  <div className="flex flex-col gap-3">
+                    <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <Hammer className="w-4 h-4 text-primary" />
-                        <span className="text-sm font-medium">Run Static Compile</span>
+                        <Package className="w-4 h-4 text-muted-foreground" />
+                        <span className="text-sm font-medium">Dependencies</span>
+                        <Badge variant="outline" className="text-[10px]">{depCount} packages</Badge>
                       </div>
-                      <span className="text-[11px] text-muted-foreground ml-6">
-                        {exportFormat === "typescript"
-                          ? "Runs tsc --noEmit against the generated TypeScript files to check for type errors and syntax issues."
-                          : "Runs a Python AST parse and pyflakes check against the generated source files."}
-                      </span>
-                    </div>
-                    <Button
-                      size="sm"
-                      variant={compileStatus === "passed" ? "outline" : "default"}
-                      disabled={compileStatus === "running"}
-                      onClick={async () => {
-                        setCompileStatus("running");
-                        setCompileOutput("");
-                        try {
-                          const res = await apiRequest("POST", `/api/agents/${agentId}/export-validate`, {
-                            type: "compile",
-                            format: exportFormat,
-                            framework: exportFramework,
-                            llmProvider: exportLlmProvider,
-                          });
-                          const data = await res.json();
-                          setCompileStatus(data.passed ? "passed" : "failed");
-                          setCompileOutput(data.output || (data.passed ? "All checks passed — no errors found." : "Compilation errors detected."));
-                        } catch (err) {
-                          setCompileStatus("failed");
-                          setCompileOutput("Compile check could not complete — verify your export configuration and try again.");
-                        }
-                      }}
-                      data-testid="button-run-compile"
-                    >
-                      {compileStatus === "running" ? (
-                        <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Compiling...</>
-                      ) : compileStatus === "passed" ? (
-                        <><CheckCircle2 className="w-3.5 h-3.5 mr-1.5 text-emerald-500" /> Passed</>
-                      ) : compileStatus === "failed" ? (
-                        <><XOctagon className="w-3.5 h-3.5 mr-1.5" /> Re-run</>
-                      ) : (
-                        <><Terminal className="w-3.5 h-3.5 mr-1.5" /> Run Check</>
-                      )}
-                    </Button>
-                  </div>
-                  {compileOutput && (
-                    <div className={`rounded-md p-3 text-xs font-mono whitespace-pre-wrap ${compileStatus === "passed" ? "bg-emerald-500/5 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400" : compileStatus === "failed" ? "bg-red-500/5 border border-red-500/20 text-red-700 dark:text-red-400" : "bg-muted"}`} data-testid="output-compile">
-                      {compileOutput}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardContent className="p-4 flex flex-col gap-3">
-                  <div className="flex items-center justify-between gap-4 flex-wrap">
-                    <div className="flex flex-col gap-0.5">
                       <div className="flex items-center gap-2">
-                        <FlaskRound className="w-4 h-4 text-primary" />
-                        <span className="text-sm font-medium">Run Eval Suite Locally</span>
+                        <Label htmlFor="pin-versions-toggle" className="text-xs cursor-pointer">Pin versions</Label>
+                        <Switch id="pin-versions-toggle" checked={pinVersions} onCheckedChange={setPinVersions} data-testid="toggle-pin-versions" />
                       </div>
-                      <span className="text-[11px] text-muted-foreground ml-6">
-                        Executes the same evaluation bundles ATLAS uses for this agent — scorer thresholds, regression checks, and assertion tests against the generated code.
-                      </span>
                     </div>
-                    <Button
-                      size="sm"
-                      variant={evalStatus === "passed" ? "outline" : "default"}
-                      disabled={evalStatus === "running"}
-                      onClick={async () => {
-                        setEvalStatus("running");
-                        setEvalOutput("");
-                        try {
-                          const res = await apiRequest("POST", `/api/agents/${agentId}/export-validate`, {
-                            type: "eval",
-                            format: exportFormat,
-                            framework: exportFramework,
-                            llmProvider: exportLlmProvider,
-                          });
-                          const data = await res.json();
-                          setEvalStatus(data.passed ? "passed" : "failed");
-                          setEvalOutput(data.output || (data.passed ? "All eval cases passed." : "Some eval cases failed."));
-                        } catch (err) {
-                          setEvalStatus("failed");
-                          setEvalOutput("Eval suite could not complete — verify your export configuration and try again.");
-                        }
-                      }}
-                      data-testid="button-run-eval"
-                    >
-                      {evalStatus === "running" ? (
-                        <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Evaluating...</>
-                      ) : evalStatus === "passed" ? (
-                        <><CheckCircle2 className="w-3.5 h-3.5 mr-1.5 text-emerald-500" /> Passed</>
-                      ) : evalStatus === "failed" ? (
-                        <><XOctagon className="w-3.5 h-3.5 mr-1.5" /> Re-run</>
-                      ) : (
-                        <><FlaskConical className="w-3.5 h-3.5 mr-1.5" /> Run Eval</>
-                      )}
-                    </Button>
+                    <div className="flex flex-wrap gap-1.5">
+                      {Object.entries(depData.deps).map(([name, ver]) => (
+                        <Badge key={name} variant="secondary" className="text-[10px] font-mono">{name}@{ver}</Badge>
+                      ))}
+                    </div>
                   </div>
-                  {evalOutput && (
-                    <div className={`rounded-md p-3 text-xs font-mono whitespace-pre-wrap ${evalStatus === "passed" ? "bg-emerald-500/5 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400" : evalStatus === "failed" ? "bg-red-500/5 border border-red-500/20 text-red-700 dark:text-red-400" : "bg-muted"}`} data-testid="output-eval">
-                      {evalOutput}
+
+                  <Separator />
+
+                  <div className="flex flex-col gap-3">
+                    <div className="flex items-center gap-2">
+                      <KeyRound className="w-4 h-4 text-muted-foreground" />
+                      <span className="text-sm font-medium">Environment Variables</span>
+                      <Badge variant="outline" className="text-[10px]">{envVars.length} vars</Badge>
                     </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              <div className="flex items-start gap-2 p-3 rounded-md bg-muted/30 border border-dashed" data-testid="notice-gate-info">
-                <Shield className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-xs font-medium">Pre-export health check</span>
-                  <span className="text-[11px] text-muted-foreground">
-                    These checks run against the export configuration, not the generated files. They verify that the selected framework, dependencies, and tool adapters produce a valid, compilable project that passes the agent's linked eval suite. You can proceed without running them.
-                  </span>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {exportStep === "preview" && (
-            <div className="flex flex-col gap-3 flex-1 min-h-0">
-              <div className="flex items-center gap-2 mb-1 flex-wrap">
-                <span className="text-[11px] text-muted-foreground/40">Export Type</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Configure</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Tools</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Deps</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Env</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Traces</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Gate</span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">8</span>
-                  <span className="font-medium">Preview</span>
-                </div>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Approval</span>
-              </div>
-              <div className="flex items-center gap-2 flex-wrap">
-                {exportPreview && Object.keys(exportPreview.files).map(fname => (
-                  <Button
-                    key={fname}
-                    size="sm"
-                    variant={exportPreviewFile === fname ? "default" : "outline"}
-                    onClick={() => setExportPreviewFile(fname)}
-                    data-testid={`button-preview-file-${fname.replace(/[/.]/g, "-")}`}
-                  >
-                    <FileCode className="w-3 h-3 mr-1" />
-                    {fname}
-                  </Button>
-                ))}
-              </div>
-              <div className="flex-1 min-h-0 overflow-auto rounded-md bg-muted/30 border">
-                <pre className="text-xs font-mono p-4 whitespace-pre-wrap" data-testid="preview-code-content">
-                  <code>{exportPreview?.files[exportPreviewFile] || ""}</code>
-                </pre>
-              </div>
-              {exportPreview?.metadata && (
-                <div className="flex items-center gap-3 flex-wrap text-[10px] text-muted-foreground">
-                  <Badge variant="outline" className="text-[10px]">{exportPreview.metadata.pattern}</Badge>
-                  <Badge variant="outline" className="text-[10px]">{exportPreview.metadata.format}</Badge>
-                  <Badge variant="outline" className="text-[10px]">{exportPreview.metadata.llmProvider}</Badge>
-                  <span>Generated {new Date(exportPreview.metadata.generatedAt).toLocaleString()}</span>
-                </div>
-              )}
-            </div>
-          )}
-
-          {exportStep === "approval" && (() => {
-            const stubCount = Object.values(toolAdapterOverrides).filter(v => v === "stub").length;
-            const customerCount = Object.values(toolAdapterOverrides).filter(v => v === "customer").length;
-            const builtinCount = Object.values(toolAdapterOverrides).filter(v => v === "builtin").length;
-            const totalTools = Object.keys(toolAdapterOverrides).length;
-            const hasNewStubs = stubCount > 0;
-            const hasCustomerAdapters = customerCount > 0;
-            const compileGatePassed = compileStatus === "passed";
-            const evalGatePassed = evalStatus === "passed";
-            const fileCount = exportPreview ? Object.keys(exportPreview.files).length : 0;
-
-            const riskTier = (() => {
-              if (hasNewStubs && stubCount >= 3) return "critical";
-              if (hasNewStubs || !compileGatePassed || !evalGatePassed) return "high";
-              if (hasCustomerAdapters || !otelEnabled) return "medium";
-              return "low";
-            })();
-            const riskTierColor = riskTier === "critical" ? "text-red-600 dark:text-red-400 border-red-500/20" : riskTier === "high" ? "text-amber-600 dark:text-amber-400 border-amber-500/20" : riskTier === "medium" ? "text-yellow-600 dark:text-yellow-400 border-yellow-500/20" : "text-emerald-600 dark:text-emerald-400 border-emerald-500/20";
-            const riskTierBg = riskTier === "critical" ? "bg-red-50 dark:bg-red-950/30" : riskTier === "high" ? "bg-amber-50 dark:bg-amber-950/30" : riskTier === "medium" ? "bg-yellow-50 dark:bg-yellow-950/30" : "bg-emerald-50 dark:bg-emerald-950/30";
-
-            const changeSummary: string[] = [];
-            changeSummary.push(`${fileCount} source file${fileCount !== 1 ? "s" : ""} generated`);
-            changeSummary.push(`Framework: ${exportFramework}`);
-            changeSummary.push(`Format: ${exportFormat}`);
-            changeSummary.push(`LLM Provider: ${exportLlmProvider}`);
-            if (pinVersions) changeSummary.push("Pinned dependency versions");
-            if (otelEnabled) changeSummary.push(`OpenTelemetry traces enabled (${spanGranularity})`);
-            else changeSummary.push("OpenTelemetry traces disabled");
-
-            return (
-              <div className="flex flex-col gap-3 flex-1 min-h-0 overflow-auto" data-testid="step-approval">
-                <div className="flex items-center gap-2 mb-1 flex-wrap">
-                  <span className="text-[11px] text-muted-foreground/40">Export Type</span>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Configure</span>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Tools</span>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Deps</span>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Env</span>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Traces</span>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Gate</span>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground/40">Preview</span>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">9</span>
-                    <span className="font-medium">Approval</span>
-                  </div>
-                </div>
-
-                <Card data-testid="card-risk-tier">
-                  <CardContent className="pt-4 pb-3">
-                    <div className="flex items-center justify-between gap-3 flex-wrap">
-                      <div className="flex items-center gap-3">
-                        <div className={`flex items-center justify-center w-10 h-10 rounded-md ${riskTierBg}`}>
-                          <Shield className={`w-5 h-5 ${riskTierColor.split(" ")[0]}`} />
-                        </div>
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-sm font-medium">Risk Assessment</span>
-                          <span className="text-xs text-muted-foreground">Governance tier computed from export configuration</span>
-                        </div>
-                      </div>
-                      <Badge variant="outline" className={`text-xs font-semibold uppercase ${riskTierColor}`} data-testid="badge-export-risk-tier">
-                        {riskTier} risk
-                      </Badge>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card data-testid="card-change-summary">
-                  <CardHeader className="flex flex-row items-center gap-2 space-y-0 pb-2">
-                    <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
-                      <FileText className="w-4 h-4 text-muted-foreground" />
-                      What Changed
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="flex flex-col gap-1.5">
-                      {changeSummary.map((item, i) => (
-                        <div key={i} className="flex items-center gap-2" data-testid={`text-change-${i}`}>
-                          <ChevronRight className="w-3 h-3 text-muted-foreground shrink-0" />
-                          <span className="text-sm">{item}</span>
+                    <div className="flex flex-col gap-1">
+                      {envVars.map(v => (
+                        <div key={v.key} className="flex items-center gap-2 text-xs" data-testid={`env-var-${v.key}`}>
+                          <code className="font-mono text-[11px] font-medium">{v.key}</code>
+                          <span className="text-muted-foreground flex-1">{v.description}</span>
+                          {v.required && <Badge variant="outline" className="text-[9px] bg-red-500/10 text-red-600 dark:text-red-400">required</Badge>}
                         </div>
                       ))}
                     </div>
-                  </CardContent>
-                </Card>
+                  </div>
 
-                <Card data-testid="card-tool-permissions">
-                  <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-                    <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
-                      <Wrench className="w-4 h-4 text-muted-foreground" />
-                      Tool Permissions
-                    </CardTitle>
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <Badge variant="outline" className="text-[10px]" data-testid="badge-tools-builtin">{builtinCount} built-in</Badge>
-                      <Badge variant="outline" className="text-[10px]" data-testid="badge-tools-customer">{customerCount} customer</Badge>
-                      {hasNewStubs && (
-                        <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400 border-amber-500/20" data-testid="badge-tools-stub">{stubCount} stub</Badge>
-                      )}
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="flex flex-col gap-1.5">
-                      {totalTools === 0 ? (
-                        <span className="text-xs text-muted-foreground">No tool adapters configured</span>
-                      ) : (
-                        Object.entries(toolAdapterOverrides).map(([name, status]) => (
-                          <div key={name} className="flex items-center justify-between gap-2 flex-wrap" data-testid={`tool-perm-${name}`}>
-                            <span className="text-sm">{name}</span>
-                            <Badge
-                              variant="outline"
-                              className={`text-[10px] ${status === "stub" ? "text-amber-600 dark:text-amber-400 border-amber-500/20" : status === "customer" ? "text-blue-600 dark:text-blue-400 border-blue-500/20" : "text-emerald-600 dark:text-emerald-400 border-emerald-500/20"}`}
-                            >
-                              {status === "stub" ? "Stub (new permission)" : status === "customer" ? "Customer adapter" : "Built-in"}
-                            </Badge>
-                          </div>
-                        ))
-                      )}
-                      {hasNewStubs && (
-                        <div className="flex items-start gap-2 mt-2 p-2.5 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/40">
-                          <AlertTriangle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
-                          <span className="text-xs text-amber-700 dark:text-amber-300">{stubCount} stub adapter{stubCount !== 1 ? "s" : ""} will be generated with placeholder implementations. These introduce new tool permissions that require expert review.</span>
+                  <Accordion type="single" collapsible className="border rounded-md">
+                    <AccordionItem value="advanced" className="border-0">
+                      <AccordionTrigger className="px-4 py-3 text-sm hover:no-underline" data-testid="accordion-advanced-settings">
+                        <div className="flex items-center gap-2">
+                          <Settings className="w-4 h-4 text-muted-foreground" />
+                          <span>Advanced Settings</span>
                         </div>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
+                      </AccordionTrigger>
+                      <AccordionContent className="px-4 pb-4">
+                        <div className="flex flex-col gap-4">
+                          <div className="flex items-center justify-between gap-4">
+                            <div className="flex flex-col gap-0.5">
+                              <div className="flex items-center gap-2">
+                                <Radio className="w-4 h-4 text-primary" />
+                                <span className="text-sm font-medium">OpenTelemetry Traces</span>
+                              </div>
+                              <span className="text-[11px] text-muted-foreground ml-6">Emit OTLP-compatible trace data for production observability.</span>
+                            </div>
+                            <Switch checked={otelEnabled} onCheckedChange={setOtelEnabled} data-testid="switch-otel-enabled" />
+                          </div>
 
-                <Card data-testid="card-gate-results">
-                  <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-                    <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
-                      <FlaskConical className="w-4 h-4 text-muted-foreground" />
-                      Validation Gate Results
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="flex flex-col gap-2">
-                      <div className="flex items-center justify-between gap-2 flex-wrap" data-testid="gate-compile-result">
-                        <span className="text-sm">Static Compile</span>
-                        <Badge variant="outline" className={`text-[10px] ${compileGatePassed ? "text-emerald-600 dark:text-emerald-400 border-emerald-500/20" : compileStatus === "failed" ? "text-red-600 dark:text-red-400 border-red-500/20" : "text-muted-foreground"}`}>
-                          {compileGatePassed ? "Passed" : compileStatus === "failed" ? "Failed" : "Not run"}
-                        </Badge>
-                      </div>
-                      <div className="flex items-center justify-between gap-2 flex-wrap" data-testid="gate-eval-result">
-                        <span className="text-sm">Eval Suite</span>
-                        <Badge variant="outline" className={`text-[10px] ${evalGatePassed ? "text-emerald-600 dark:text-emerald-400 border-emerald-500/20" : evalStatus === "failed" ? "text-red-600 dark:text-red-400 border-red-500/20" : "text-muted-foreground"}`}>
-                          {evalGatePassed ? "Passed" : evalStatus === "failed" ? "Failed" : "Not run"}
-                        </Badge>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
+                          {otelEnabled && (
+                            <div className="flex flex-col gap-2 pl-6 border-l-2 border-primary/20">
+                              <Label className="text-xs font-medium">Span Granularity</Label>
+                              <div className="flex gap-2">
+                                <Button size="sm" variant={spanGranularity === "per-node" ? "default" : "outline"} onClick={() => setSpanGranularity("per-node")} data-testid="option-granularity-per-node" className="text-xs">Per Node</Button>
+                                <Button size="sm" variant={spanGranularity === "per-tool-call" ? "default" : "outline"} onClick={() => setSpanGranularity("per-tool-call")} data-testid="option-granularity-per-tool-call" className="text-xs">Per Tool Call</Button>
+                              </div>
+                            </div>
+                          )}
 
-                {exportApprovalSubmitted && exportApprovalId && (
-                  <div className="flex items-start gap-2 p-3 rounded-md bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/40" data-testid="notice-approval-submitted">
-                    <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 mt-0.5 shrink-0" />
-                    <div className="flex flex-col gap-1">
-                      <span className="text-sm font-medium text-emerald-700 dark:text-emerald-300">Export approval requested</span>
-                      <span className="text-xs text-emerald-600 dark:text-emerald-400">An approval record has been created for expert validation. Reviewers can inspect the full evidence bundle including source files, dependencies, and eval results.</span>
-                      <Link href={`/approvals/${exportApprovalId}`}>
-                        <Button variant="outline" size="sm" className="mt-1 w-fit" data-testid="button-view-approval">
-                          View Approval <ArrowRight className="w-3 h-3 ml-1" />
-                        </Button>
-                      </Link>
-                    </div>
+                          <Separator />
+
+                          <div className="flex flex-col gap-3">
+                            <div className="flex items-center gap-2">
+                              <Hammer className="w-4 h-4 text-muted-foreground" />
+                              <span className="text-sm font-medium">Build &amp; Test Gate</span>
+                            </div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <Button
+                                size="sm"
+                                variant={compileStatus === "passed" ? "outline" : "default"}
+                                disabled={compileStatus === "running"}
+                                onClick={async () => {
+                                  setCompileStatus("running");
+                                  setCompileOutput("");
+                                  try {
+                                    const res = await apiRequest("POST", `/api/agents/${agentId}/export-validate`, { type: "compile", format: exportFormat, framework: exportFramework, llmProvider: exportLlmProvider });
+                                    const data = await res.json();
+                                    setCompileStatus(data.passed ? "passed" : "failed");
+                                    setCompileOutput(data.output || (data.passed ? "All checks passed." : "Errors detected."));
+                                  } catch { setCompileStatus("failed"); setCompileOutput("Check failed."); }
+                                }}
+                                data-testid="button-run-compile"
+                              >
+                                {compileStatus === "running" ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Compiling...</> : compileStatus === "passed" ? <><CheckCircle2 className="w-3.5 h-3.5 mr-1.5 text-emerald-500" />Compile Passed</> : compileStatus === "failed" ? <><XOctagon className="w-3.5 h-3.5 mr-1.5" />Re-run Compile</> : <><Terminal className="w-3.5 h-3.5 mr-1.5" />Run Compile</>}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant={evalStatus === "passed" ? "outline" : "default"}
+                                disabled={evalStatus === "running"}
+                                onClick={async () => {
+                                  setEvalStatus("running");
+                                  setEvalOutput("");
+                                  try {
+                                    const res = await apiRequest("POST", `/api/agents/${agentId}/export-validate`, { type: "eval", format: exportFormat, framework: exportFramework, llmProvider: exportLlmProvider });
+                                    const data = await res.json();
+                                    setEvalStatus(data.passed ? "passed" : "failed");
+                                    setEvalOutput(data.output || (data.passed ? "All evals passed." : "Some evals failed."));
+                                  } catch { setEvalStatus("failed"); setEvalOutput("Eval failed."); }
+                                }}
+                                data-testid="button-run-eval"
+                              >
+                                {evalStatus === "running" ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Evaluating...</> : evalStatus === "passed" ? <><CheckCircle2 className="w-3.5 h-3.5 mr-1.5 text-emerald-500" />Eval Passed</> : evalStatus === "failed" ? <><XOctagon className="w-3.5 h-3.5 mr-1.5" />Re-run Eval</> : <><FlaskConical className="w-3.5 h-3.5 mr-1.5" />Run Eval</>}
+                              </Button>
+                            </div>
+                            {compileOutput && (
+                              <div className={`rounded-md p-2 text-xs font-mono whitespace-pre-wrap ${compileStatus === "passed" ? "bg-emerald-500/5 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400" : "bg-red-500/5 border border-red-500/20 text-red-700 dark:text-red-400"}`} data-testid="output-compile">{compileOutput}</div>
+                            )}
+                            {evalOutput && (
+                              <div className={`rounded-md p-2 text-xs font-mono whitespace-pre-wrap ${evalStatus === "passed" ? "bg-emerald-500/5 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400" : "bg-red-500/5 border border-red-500/20 text-red-700 dark:text-red-400"}`} data-testid="output-eval">{evalOutput}</div>
+                            )}
+                          </div>
+
+                          <Separator />
+
+                          <div className="flex flex-col gap-3">
+                            <div className="flex items-center gap-2">
+                              <ShieldCheck className="w-4 h-4 text-muted-foreground" />
+                              <span className="text-sm font-medium">Export Approval</span>
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={exportApprovalSubmitted}
+                              onClick={async () => {
+                                try {
+                                  const sc = Object.values(toolAdapterOverrides).filter(v => v === "stub").length;
+                                  const riskTier = sc >= 3 ? "critical" : sc > 0 || compileStatus !== "passed" || evalStatus !== "passed" ? "high" : Object.values(toolAdapterOverrides).some(v => v === "customer") || !otelEnabled ? "medium" : "low";
+                                  const riskScore = riskTier === "critical" ? 9 : riskTier === "high" ? 7 : riskTier === "medium" ? 4 : 1;
+                                  const res = await apiRequest("POST", "/api/approvals", {
+                                    type: "export_review", objectType: "export_package", objectId: agentId,
+                                    objectName: `Export: ${agent?.name || "Agent"} (${exportFramework})`,
+                                    riskScore, status: "pending", requestedBy: "System", requesterType: "system", agentId,
+                                    description: `Code export for ${agent?.name} using ${exportFramework}, ${exportFormat}, ${exportLlmProvider}`,
+                                    changeType: "export", toolPermissionClass: sc > 0 ? "elevated" : "standard",
+                                    diffSummary: `${exportPreview ? Object.keys(exportPreview.files).length : 0} files, ${sc} stubs`,
+                                    evidenceJson: { exportConfig: { framework: exportFramework, format: exportFormat, llmProvider: exportLlmProvider, pinVersions, otelEnabled, spanGranularity, maxIterations: exportMaxIterations }, toolAdapters: toolAdapterOverrides, gateResults: { compileStatus, evalStatus } },
+                                  });
+                                  const data = await res.json();
+                                  setExportApprovalSubmitted(true);
+                                  setExportApprovalId(data.id);
+                                  queryClient.invalidateQueries({ queryKey: ["/api/approvals"] });
+                                  toast({ title: "Export approval requested", description: "An expert validator will review the export package." });
+                                } catch { toast({ title: "Failed to request approval", variant: "destructive" }); }
+                              }}
+                              data-testid="button-request-export-approval"
+                            >
+                              <ShieldCheck className="w-3.5 h-3.5 mr-1.5" />
+                              {exportApprovalSubmitted ? "Approval Requested" : "Request Export Approval"}
+                            </Button>
+                            {exportApprovalSubmitted && exportApprovalId && (
+                              <div className="flex items-center gap-2 p-2 rounded-md bg-emerald-500/5 border border-emerald-500/20">
+                                <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                                <span className="text-xs text-emerald-700 dark:text-emerald-400">Approval created.</span>
+                                <Link href={`/approvals/${exportApprovalId}`}>
+                                  <Button variant="link" size="sm" className="h-auto p-0 text-xs" data-testid="button-view-approval">View</Button>
+                                </Link>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </AccordionContent>
+                    </AccordionItem>
+                  </Accordion>
+                </div>
+              );
+            })()}
+
+            {exportStep === "preview" && (
+              <div className="flex flex-col gap-3 flex-1 min-h-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  {exportPreview && Object.keys(exportPreview.files).map(fname => (
+                    <Button
+                      key={fname}
+                      size="sm"
+                      variant={exportPreviewFile === fname ? "default" : "outline"}
+                      onClick={() => setExportPreviewFile(fname)}
+                      data-testid={`button-preview-file-${fname.replace(/[/.]/g, "-")}`}
+                    >
+                      <FileCode className="w-3 h-3 mr-1" />
+                      {fname}
+                    </Button>
+                  ))}
+                </div>
+                <div className="flex-1 min-h-0 overflow-auto rounded-md bg-muted/30 border">
+                  <pre className="text-xs font-mono p-4 whitespace-pre-wrap" data-testid="preview-code-content">
+                    <code>{exportPreview?.files[exportPreviewFile] || ""}</code>
+                  </pre>
+                </div>
+                {exportPreview?.metadata && (
+                  <div className="flex items-center gap-3 flex-wrap text-[10px] text-muted-foreground">
+                    <Badge variant="outline" className="text-[10px]">{exportPreview.metadata.pattern}</Badge>
+                    <Badge variant="outline" className="text-[10px]">{exportPreview.metadata.format}</Badge>
+                    <Badge variant="outline" className="text-[10px]">{exportPreview.metadata.llmProvider}</Badge>
+                    <span>Generated {new Date(exportPreview.metadata.generatedAt).toLocaleString()}</span>
                   </div>
                 )}
               </div>
-            );
-          })()}
+            )}
 
-          {exportStep === "delivery" && (
-            <div className="flex flex-col gap-3 flex-1 min-h-0 overflow-auto" data-testid="step-delivery">
-              <div className="flex items-center gap-2 mb-1 flex-wrap">
-                {["Export Type", "Configure", "Tools", "Deps", "Env", "Traces", "Gate", "Preview", "Approval"].map((label, i) => (
-                  <Fragment key={i}>
-                    <span className="text-[11px] text-muted-foreground/40">{label}</span>
-                    <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                  </Fragment>
-                ))}
-                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">10</span>
-                  <span className="font-medium">Delivery</span>
+            {exportStep === "download" && (
+              <div className="flex flex-col gap-4" data-testid="step-download">
+                <div className="flex flex-col gap-2">
+                  <Card
+                    className={`cursor-pointer hover-elevate ${deliveryTarget === "zip" ? "border-primary" : ""}`}
+                    onClick={() => setDeliveryTarget("zip")}
+                    data-testid="card-delivery-zip"
+                  >
+                    <CardContent className="pt-4 pb-3">
+                      <div className="flex items-center gap-3">
+                        <div className="flex items-center justify-center w-10 h-10 rounded-md bg-primary/10"><Download className="w-5 h-5 text-primary" /></div>
+                        <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+                          <span className="text-sm font-medium">Download ZIP</span>
+                          <span className="text-xs text-muted-foreground">Download the complete source package as a ZIP archive.</span>
+                        </div>
+                        {deliveryTarget === "zip" && <CheckCircle className="w-5 h-5 text-primary shrink-0" />}
+                      </div>
+                    </CardContent>
+                  </Card>
+                  <Card
+                    className={`cursor-pointer hover-elevate ${deliveryTarget === "git" ? "border-primary" : ""}`}
+                    onClick={() => setDeliveryTarget("git")}
+                    data-testid="card-delivery-git"
+                  >
+                    <CardContent className="pt-4 pb-3">
+                      <div className="flex items-center gap-3">
+                        <div className="flex items-center justify-center w-10 h-10 rounded-md bg-primary/10"><GitBranch className="w-5 h-5 text-primary" /></div>
+                        <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+                          <span className="text-sm font-medium">Push to Git Repo</span>
+                          <span className="text-xs text-muted-foreground">Push generated source files to a Git repository for CI/CD.</span>
+                        </div>
+                        {deliveryTarget === "git" && <CheckCircle className="w-5 h-5 text-primary shrink-0" />}
+                      </div>
+                    </CardContent>
+                  </Card>
+                  <Card
+                    className={`cursor-pointer hover-elevate ${deliveryTarget === "replit" ? "border-primary" : ""}`}
+                    onClick={() => setDeliveryTarget("replit")}
+                    data-testid="card-delivery-replit"
+                  >
+                    <CardContent className="pt-4 pb-3">
+                      <div className="flex items-center gap-3">
+                        <div className="flex items-center justify-center w-10 h-10 rounded-md bg-primary/10"><Globe className="w-5 h-5 text-primary" /></div>
+                        <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+                          <span className="text-sm font-medium">Publish to Replit via GitHub</span>
+                          <span className="text-xs text-muted-foreground">Import into a Replit app through GitHub for instant hosting.</span>
+                        </div>
+                        {deliveryTarget === "replit" && <CheckCircle className="w-5 h-5 text-primary shrink-0" />}
+                      </div>
+                    </CardContent>
+                  </Card>
                 </div>
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                <span className="text-[11px] text-muted-foreground/40">Guide</span>
-              </div>
 
-              <div className="flex flex-col gap-2">
-                <Card 
-                  className={`cursor-pointer hover-elevate ${deliveryTarget === "zip" ? "border-primary" : ""}`}
-                  onClick={() => setDeliveryTarget("zip")}
-                  data-testid="card-delivery-zip"
-                >
-                  <CardContent className="pt-4 pb-3">
-                    <div className="flex items-center gap-3">
-                      <div className="flex items-center justify-center w-10 h-10 rounded-md bg-primary/10">
-                        <Download className="w-5 h-5 text-primary" />
-                      </div>
-                      <div className="flex flex-col gap-0.5 flex-1 min-w-0">
-                        <span className="text-sm font-medium">Download ZIP</span>
-                        <span className="text-xs text-muted-foreground">Download the complete source package as a ZIP archive. Always available.</span>
-                      </div>
-                      {deliveryTarget === "zip" && <CheckCircle className="w-5 h-5 text-primary shrink-0" />}
-                    </div>
-                  </CardContent>
-                </Card>
+                {deliveryTarget === "git" && (
+                  <div className="flex flex-col gap-2">
+                    <Label className="text-xs font-medium">Repository URL</Label>
+                    <Input placeholder="https://github.com/org/repo.git" value={gitRepoUrl} onChange={(e) => setGitRepoUrl(e.target.value)} data-testid="input-git-repo-url" />
+                  </div>
+                )}
 
-                <Card 
-                  className={`cursor-pointer hover-elevate ${deliveryTarget === "git" ? "border-primary" : ""}`}
-                  onClick={() => setDeliveryTarget("git")}
-                  data-testid="card-delivery-git"
-                >
-                  <CardContent className="pt-4 pb-3">
-                    <div className="flex items-center gap-3">
-                      <div className="flex items-center justify-center w-10 h-10 rounded-md bg-primary/10">
-                        <GitBranch className="w-5 h-5 text-primary" />
-                      </div>
-                      <div className="flex flex-col gap-0.5 flex-1 min-w-0">
-                        <span className="text-sm font-medium">Push to Git Repo</span>
-                        <span className="text-xs text-muted-foreground">Push the generated source files to a Git repository for CI/CD workflows.</span>
-                      </div>
-                      {deliveryTarget === "git" && <CheckCircle className="w-5 h-5 text-primary shrink-0" />}
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card 
-                  className={`cursor-pointer hover-elevate ${deliveryTarget === "replit" ? "border-primary" : ""}`}
-                  onClick={() => setDeliveryTarget("replit")}
-                  data-testid="card-delivery-replit"
-                >
-                  <CardContent className="pt-4 pb-3">
-                    <div className="flex items-center gap-3">
-                      <div className="flex items-center justify-center w-10 h-10 rounded-md bg-primary/10">
-                        <Globe className="w-5 h-5 text-primary" />
-                      </div>
-                      <div className="flex flex-col gap-0.5 flex-1 min-w-0">
-                        <span className="text-sm font-medium">Publish to Replit via GitHub</span>
-                        <span className="text-xs text-muted-foreground">Import the source package into a Replit app through GitHub for instant hosting.</span>
-                      </div>
-                      {deliveryTarget === "replit" && <CheckCircle className="w-5 h-5 text-primary shrink-0" />}
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-
-              {deliveryTarget === "git" && (
                 <Card>
                   <CardContent className="pt-4 pb-3">
                     <div className="flex flex-col gap-2">
-                      <span className="text-sm font-medium">Repository URL</span>
-                      <Input
-                        placeholder="https://github.com/org/repo.git"
-                        value={gitRepoUrl}
-                        onChange={(e) => setGitRepoUrl(e.target.value)}
-                        data-testid="input-git-repo-url"
-                      />
-                      <span className="text-xs text-muted-foreground">The source package will be pushed to the main branch of this repository.</span>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-
-              {deliveryTarget === "replit" && (
-                <Card>
-                  <CardContent className="pt-4 pb-3">
-                    <div className="flex flex-col gap-2">
-                      <span className="text-sm font-medium">Replit Import Steps</span>
+                      <span className="text-sm font-medium">Getting Started</span>
                       <div className="flex flex-col gap-1.5">
-                        {[
-                          "Push the source package to a GitHub repository",
-                          "Navigate to replit.com and click 'Create Repl'",
-                          "Select 'Import from GitHub'",
-                          "Connect your GitHub account if not already connected",
-                          "Select the repository containing the exported agent",
-                          "Click 'Import' to create the Replit app"
-                        ].map((step, i) => (
+                        {(deliveryTarget === "replit" ? [
+                          "Push source package to a GitHub repository",
+                          "Navigate to replit.com → Create Repl → Import from GitHub",
+                          "Select the repository and click Import",
+                          "Configure Secrets in your Repl's Secrets tab",
+                          "Click Publish to deploy",
+                        ] : [
+                          `Install dependencies: ${exportFormat === "typescript" ? "npm install" : "pip install -r requirements.txt"}`,
+                          "Copy .env.example to .env and fill in your API keys",
+                          `Run the agent: ${exportFormat === "typescript" ? "npm start" : "python src/runtime/orchestrator.py"}`,
+                          `Run tests: ${exportFormat === "typescript" ? "npm test" : "python -m pytest tests/"}`,
+                        ]).map((step, i) => (
                           <div key={i} className="flex items-start gap-2">
                             <span className="flex items-center justify-center w-5 h-5 rounded-full bg-muted text-[10px] font-medium shrink-0 mt-0.5">{i + 1}</span>
                             <span className="text-sm">{step}</span>
@@ -7179,425 +6122,82 @@ function AgentDetailInner() {
                     </div>
                   </CardContent>
                 </Card>
-              )}
-            </div>
-          )}
-
-          {exportStep === "guide" && (() => {
-            const isReplit = deliveryTarget === "replit";
-            const isGit = deliveryTarget === "git";
-            return (
-              <div className="flex flex-col gap-3 flex-1 min-h-0 overflow-auto" data-testid="step-guide">
-                <div className="flex items-center gap-2 mb-1 flex-wrap">
-                  {["Export Type", "Configure", "Tools", "Deps", "Env", "Traces", "Gate", "Preview", "Approval", "Delivery"].map((label, i) => (
-                    <Fragment key={i}>
-                      <span className="text-[11px] text-muted-foreground/40">{label}</span>
-                      <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                    </Fragment>
-                  ))}
-                  <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">11</span>
-                    <span className="font-medium">Deploy Guide</span>
-                  </div>
-                </div>
-
-                {isReplit ? (
-                  <>
-                    <Card data-testid="card-guide-deployment-type">
-                      <CardHeader className="flex flex-row items-center gap-2 space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
-                          <Rocket className="w-4 h-4 text-muted-foreground" />
-                          Recommended Deployment Type
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="flex flex-col gap-2">
-                          {[
-                            { type: "Autoscale", desc: "Best for APIs and services that scale with traffic. Automatically adjusts resources based on demand.", recommended: true },
-                            { type: "Reserved VM", desc: "Best for always-on workloads requiring persistent connections or background processing.", recommended: false },
-                            { type: "Scheduled", desc: "Best for periodic tasks like cron jobs, batch processing, or scheduled reports.", recommended: false },
-                          ].map(dt => (
-                            <div key={dt.type} className={`flex items-start gap-3 p-2.5 rounded-md ${dt.recommended ? "bg-primary/5 border border-primary/20" : "bg-muted/30"}`} data-testid={`guide-deploy-type-${dt.type.toLowerCase()}`}>
-                              {dt.recommended ? <CheckCircle className="w-4 h-4 text-primary mt-0.5 shrink-0" /> : <Circle className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />}
-                              <div className="flex flex-col gap-0.5">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span className="text-sm font-medium">{dt.type}</span>
-                                  {dt.recommended && <Badge variant="outline" className="text-[10px]">Recommended</Badge>}
-                                </div>
-                                <span className="text-xs text-muted-foreground">{dt.desc}</span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </CardContent>
-                    </Card>
-
-                    <Card data-testid="card-guide-publish-path">
-                      <CardHeader className="flex flex-row items-center gap-2 space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
-                          <Globe className="w-4 h-4 text-muted-foreground" />
-                          Publish Path
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="flex flex-col gap-1.5">
-                          {[
-                            "Open your Replit app after GitHub import",
-                            "Click 'Publish' in the top navigation",
-                            "Select your deployment type (Autoscale recommended)",
-                            "Configure your custom domain (optional)",
-                            "Click 'Publish' to make your agent live",
-                          ].map((step, i) => (
-                            <div key={i} className="flex items-start gap-2">
-                              <span className="flex items-center justify-center w-5 h-5 rounded-full bg-muted text-[10px] font-medium shrink-0 mt-0.5">{i + 1}</span>
-                              <span className="text-sm">{step}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </CardContent>
-                    </Card>
-
-                    <Card data-testid="card-guide-secrets">
-                      <CardHeader className="flex flex-row items-center gap-2 space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
-                          <KeyRound className="w-4 h-4 text-muted-foreground" />
-                          Configure Secrets
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="flex flex-col gap-2">
-                          <span className="text-sm">Use Replit's Secrets tool to store encrypted environment variables. Deployment secrets sync with workspace secrets.</span>
-                          <div className="flex flex-col gap-1">
-                            <div className="flex items-center gap-2 p-2 rounded-md bg-muted/30">
-                              <KeyRound className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                              <span className="text-xs font-mono">{exportLlmProvider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY"}</span>
-                            </div>
-                            {otelEnabled && (
-                              <div className="flex items-center gap-2 p-2 rounded-md bg-muted/30">
-                                <KeyRound className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                                <span className="text-xs font-mono">OTEL_EXPORTER_OTLP_ENDPOINT</span>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-
-                    <Card data-testid="card-guide-monitoring">
-                      <CardHeader className="flex flex-row items-center gap-2 space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
-                          <Activity className="w-4 h-4 text-muted-foreground" />
-                          Monitoring
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <span className="text-sm">After publishing, monitor your deployment from the Replit dashboard. Check the deployment overview for status, health, and resource usage. {otelEnabled ? "OpenTelemetry traces will be exported to your configured OTEL endpoint for production observability." : ""}</span>
-                      </CardContent>
-                    </Card>
-                  </>
-                ) : isGit ? (
-                  <>
-                    <Card data-testid="card-guide-cicd">
-                      <CardHeader className="flex flex-row items-center gap-2 space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
-                          <GitBranch className="w-4 h-4 text-muted-foreground" />
-                          CI/CD Setup
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="flex flex-col gap-2">
-                          <span className="text-sm">Your source package is ready for CI/CD integration. Recommended steps:</span>
-                          <div className="flex flex-col gap-1.5">
-                            {[
-                              "Add environment secrets to your CI/CD platform (GitHub Actions, GitLab CI, etc.)",
-                              `Install dependencies: ${exportFormat === "typescript" ? "npm ci" : "pip install -r requirements.txt"}`,
-                              `Run tests: ${exportFormat === "typescript" ? "npm test" : "python -m pytest tests/"}`,
-                              `Build and deploy using your preferred hosting (Docker, serverless, or cloud VM)`,
-                            ].map((step, i) => (
-                              <div key={i} className="flex items-start gap-2">
-                                <span className="flex items-center justify-center w-5 h-5 rounded-full bg-muted text-[10px] font-medium shrink-0 mt-0.5">{i + 1}</span>
-                                <span className="text-sm">{step}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-
-                    <Card data-testid="card-guide-env-config">
-                      <CardHeader className="flex flex-row items-center gap-2 space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
-                          <KeyRound className="w-4 h-4 text-muted-foreground" />
-                          Environment Configuration
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="flex flex-col gap-2">
-                          <span className="text-sm">Copy <code className="text-xs bg-muted px-1 py-0.5 rounded">.env.example</code> to <code className="text-xs bg-muted px-1 py-0.5 rounded">.env</code> and fill in your secrets. Never commit real values to version control.</span>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  </>
-                ) : (
-                  <>
-                    <Card data-testid="card-guide-zip">
-                      <CardHeader className="flex flex-row items-center gap-2 space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
-                          <Download className="w-4 h-4 text-muted-foreground" />
-                          Getting Started
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="flex flex-col gap-2">
-                          <span className="text-sm">After extracting the ZIP archive:</span>
-                          <div className="flex flex-col gap-1.5">
-                            {[
-                              `Install dependencies: ${exportFormat === "typescript" ? "npm install" : "pip install -r requirements.txt"}`,
-                              "Copy .env.example to .env and fill in your API keys",
-                              `Run the agent: ${exportFormat === "typescript" ? "npm start" : "python src/runtime/orchestrator.py"}`,
-                              `Run tests: ${exportFormat === "typescript" ? "npm test" : "python -m pytest tests/"}`,
-                            ].map((step, i) => (
-                              <div key={i} className="flex items-start gap-2">
-                                <span className="flex items-center justify-center w-5 h-5 rounded-full bg-muted text-[10px] font-medium shrink-0 mt-0.5">{i + 1}</span>
-                                <span className="text-sm">{step}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  </>
-                )}
 
                 <div className="flex items-start gap-2 p-3 rounded-md bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/40" data-testid="notice-export-complete">
                   <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 mt-0.5 shrink-0" />
-                  <div className="flex flex-col gap-1">
+                  <div className="flex flex-col gap-0.5">
                     <span className="text-sm font-medium text-emerald-700 dark:text-emerald-300">Export Complete</span>
-                    <span className="text-xs text-emerald-600 dark:text-emerald-400">Your agent source package has been generated and is ready for deployment. Follow the steps above to get your agent running in production.</span>
+                    <span className="text-xs text-emerald-600 dark:text-emerald-400">Your agent source package is ready for deployment.</span>
                   </div>
                 </div>
               </div>
-            );
-          })()}
+            )}
+            </div>
 
-          <DialogFooter className="gap-2">
-            {exportStep === "configure" && (
-              <Button variant="outline" onClick={() => setExportStep("select")} data-testid="button-export-back-to-select">
-                Back
+            <DialogFooter className="gap-2 shrink-0">
+              <Button variant="outline" onClick={() => setExportDialogOpen(false)} data-testid="button-export-cancel">
+                Cancel
               </Button>
-            )}
-            {exportStep === "tools" && (
-              <Button variant="outline" onClick={() => setExportStep("configure")} data-testid="button-export-back-to-configure">
-                Back
-              </Button>
-            )}
-            {exportStep === "dependencies" && (
-              <Button variant="outline" onClick={() => setExportStep("tools")} data-testid="button-export-back-to-tools">
-                Back
-              </Button>
-            )}
-            {exportStep === "envvars" && (
-              <Button variant="outline" onClick={() => setExportStep("dependencies")} data-testid="button-export-back-to-deps">
-                Back
-              </Button>
-            )}
-            {exportStep === "observability" && (
-              <Button variant="outline" onClick={() => setExportStep("envvars")} data-testid="button-export-back-to-envvars">
-                Back
-              </Button>
-            )}
-            {exportStep === "buildtest" && (
-              <Button variant="outline" onClick={() => setExportStep("observability")} data-testid="button-export-back-to-observability">
-                Back
-              </Button>
-            )}
-            {exportStep === "preview" && (
-              <Button variant="outline" onClick={() => setExportStep("buildtest")} data-testid="button-export-back">
-                Back
-              </Button>
-            )}
-            <Button variant="outline" onClick={() => setExportDialogOpen(false)} data-testid="button-export-cancel">
-              Cancel
-            </Button>
-            {exportStep === "configure" && (
-              <Button
-                onClick={() => {
-                  const agentTools = Array.isArray(agent?.toolsConfig) ? agent.toolsConfig as any[] : [];
-                  const connectors = allToolConnectors || [];
-                  const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-                  const connectorMap = new Map(connectors.map(c => [normalize(c.name), c]));
-                  const initialOverrides: Record<string, "builtin" | "customer" | "stub"> = {};
-                  agentTools.forEach(t => {
-                    const name = normalize(t.name || "");
-                    const connector = connectorMap.get(name);
-                    if (connector && connector.status === "connected") {
-                      initialOverrides[t.name] = "builtin";
-                    } else if (connector) {
-                      initialOverrides[t.name] = "customer";
-                    } else {
-                      initialOverrides[t.name] = "stub";
-                    }
-                  });
-                  setToolAdapterOverrides(initialOverrides);
-                  setExportStep("tools");
-                }}
-                data-testid="button-export-next-tools"
-              >
-                Next: Tool Adapters <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
-              </Button>
-            )}
-            {exportStep === "tools" && (
-              <Button
-                onClick={() => setExportStep("dependencies")}
-                data-testid="button-export-next-deps"
-              >
-                Next: Dependencies <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
-              </Button>
-            )}
-            {exportStep === "dependencies" && (
-              <Button
-                onClick={() => setExportStep("envvars")}
-                data-testid="button-export-next-envvars"
-              >
-                Next: Env Vars <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
-              </Button>
-            )}
-            {exportStep === "envvars" && (
-              <Button
-                onClick={() => setExportStep("observability")}
-                data-testid="button-export-next-observability"
-              >
-                Next: Traces <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
-              </Button>
-            )}
-            {exportStep === "observability" && (
-              <Button
-                onClick={() => setExportStep("buildtest")}
-                data-testid="button-export-next-buildtest"
-              >
-                Next: Build &amp; Test <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
-              </Button>
-            )}
-            {exportStep === "buildtest" && (
-              <Button
-                onClick={() => exportCodeMutation.mutate({ format: exportFormat, llmProvider: exportLlmProvider, maxIterations: exportMaxIterations, completionPromise: exportCompletionPromise, framework: exportFramework, toolAdapters: toolAdapterOverrides, pinVersions, otelEnabled, spanGranularity })}
-                disabled={exportCodeMutation.isPending}
-                data-testid="button-export-generate"
-              >
-                {exportCodeMutation.isPending ? "Generating Source Files..." : "Generate Source Files"}
-              </Button>
-            )}
-            {exportStep === "preview" && (
-              <Button
-                onClick={() => setExportStep("approval")}
-                data-testid="button-export-next-approval"
-              >
-                Next: Approval <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
-              </Button>
-            )}
-            {exportStep === "preview" && (
-              <Button onClick={downloadExportPackage} data-testid="button-export-download">
-                <Download className="w-3.5 h-3.5 mr-1.5" /> Download Source Package
-              </Button>
-            )}
-            {exportStep === "approval" && (
-              <Button variant="outline" onClick={() => setExportStep("preview")} data-testid="button-export-back-to-preview">
-                Back
-              </Button>
-            )}
-            {exportStep === "delivery" && (
-              <Button variant="outline" onClick={() => setExportStep("approval")} data-testid="button-export-back-to-approval">
-                Back
-              </Button>
-            )}
-            {exportStep === "guide" && (
-              <Button variant="outline" onClick={() => setExportStep("delivery")} data-testid="button-export-back-to-delivery">
-                Back
-              </Button>
-            )}
-            {exportStep === "approval" && (
-              <Button
-                onClick={async () => {
-                  try {
-                    const stubCount = Object.values(toolAdapterOverrides).filter(v => v === "stub").length;
-                    const riskTier = stubCount >= 3 ? "critical" : stubCount > 0 || compileStatus !== "passed" || evalStatus !== "passed" ? "high" : Object.values(toolAdapterOverrides).some(v => v === "customer") || !otelEnabled ? "medium" : "low";
-                    const riskScore = riskTier === "critical" ? 9 : riskTier === "high" ? 7 : riskTier === "medium" ? 4 : 1;
-                    const res = await apiRequest("POST", "/api/approvals", {
-                      type: "export_review",
-                      objectType: "export_package",
-                      objectId: agentId,
-                      objectName: `Export: ${agent?.name || "Agent"} (${exportFramework})`,
-                      riskScore,
-                      status: "pending",
-                      requestedBy: "System",
-                      requesterType: "system",
-                      agentId,
-                      description: `Code export package for ${agent?.name} using ${exportFramework} framework, ${exportFormat} format, ${exportLlmProvider} provider`,
-                      changeType: "export",
-                      toolPermissionClass: stubCount > 0 ? "elevated" : "standard",
-                      diffSummary: `${exportPreview ? Object.keys(exportPreview.files).length : 0} files generated, ${stubCount} stub adapters, ${Object.values(toolAdapterOverrides).filter(v => v === "builtin").length} built-in adapters`,
-                      evidenceJson: {
-                        exportConfig: { framework: exportFramework, format: exportFormat, llmProvider: exportLlmProvider, pinVersions, otelEnabled, spanGranularity, maxIterations: exportMaxIterations },
-                        fileTree: exportPreview ? Object.keys(exportPreview.files) : [],
-                        fileContents: exportPreview?.files || {},
-                        toolAdapters: toolAdapterOverrides,
-                        gateResults: { compileStatus, compileOutput, evalStatus, evalOutput },
-                        riskTier,
-                        metadata: exportPreview?.metadata || {},
-                      },
+              {exportStep === "configure" && (
+                <Button
+                  onClick={() => {
+                    const agentTools = Array.isArray(agent?.toolsConfig) ? agent.toolsConfig as any[] : [];
+                    const connectors = allToolConnectors || [];
+                    const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+                    const connectorMap = new Map(connectors.map(c => [normalize(c.name), c]));
+                    const initialOverrides: Record<string, "builtin" | "customer" | "stub"> = {};
+                    agentTools.forEach((t: any) => {
+                      const name = normalize(t.name || "");
+                      const connector = connectorMap.get(name);
+                      if (!toolAdapterOverrides[t.name]) {
+                        if (connector && connector.status === "connected") initialOverrides[t.name] = "builtin";
+                        else if (connector) initialOverrides[t.name] = "customer";
+                        else initialOverrides[t.name] = "stub";
+                      }
                     });
-                    const data = await res.json();
-                    setExportApprovalSubmitted(true);
-                    setExportApprovalId(data.id);
-                    queryClient.invalidateQueries({ queryKey: ["/api/approvals"] });
-                    toast({ title: "Export approval requested", description: "An expert validator will review the export package." });
-                  } catch (err) {
-                    toast({ title: "Failed to request approval", description: "Could not create approval record.", variant: "destructive" });
-                  }
-                }}
-                disabled={exportApprovalSubmitted}
-                data-testid="button-request-export-approval"
-              >
-                <ShieldCheck className="w-3.5 h-3.5 mr-1.5" />
-                {exportApprovalSubmitted ? "Approval Requested" : "Request Export Approval"}
-              </Button>
-            )}
-            {exportStep === "approval" && (
-              <Button
-                onClick={() => setExportStep("delivery")}
-                data-testid="button-export-next-delivery"
-              >
-                Next: Delivery <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
-              </Button>
-            )}
-            {exportStep === "delivery" && (
-              <Button
-                onClick={() => {
-                  if (deliveryTarget === "zip") {
-                    downloadExportPackage();
-                  } else if (deliveryTarget === "git") {
-                    toast({ title: "Git push initiated", description: `Source package will be pushed to ${gitRepoUrl}. Configure repository access in your CI/CD settings.` });
-                  }
-                  setExportStep("guide");
-                }}
-                disabled={deliveryTarget === "git" && !gitRepoUrl.trim()}
-                data-testid="button-export-deliver"
-              >
-                {deliveryTarget === "zip" ? (
-                  <><Download className="w-3.5 h-3.5 mr-1.5" /> Download &amp; Continue</>
-                ) : deliveryTarget === "git" ? (
-                  <>Push &amp; Continue <ArrowRight className="w-3.5 h-3.5 ml-1.5" /></>
-                ) : (
-                  <>Next: Deploy Guide <ArrowRight className="w-3.5 h-3.5 ml-1.5" /></>
-                )}
-              </Button>
-            )}
-            {exportStep === "guide" && (
-              <Button onClick={() => setExportDialogOpen(false)} data-testid="button-export-done">
-                Done
-              </Button>
-            )}
-          </DialogFooter>
+                    if (Object.keys(initialOverrides).length > 0) setToolAdapterOverrides(prev => ({ ...initialOverrides, ...prev }));
+                    exportCodeMutation.mutate({ format: exportFormat, llmProvider: exportLlmProvider, maxIterations: exportMaxIterations, completionPromise: exportCompletionPromise, framework: exportFramework, toolAdapters: toolAdapterOverrides, pinVersions, otelEnabled, spanGranularity });
+                  }}
+                  disabled={exportCodeMutation.isPending}
+                  data-testid="button-export-generate"
+                >
+                  {exportCodeMutation.isPending ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Generating...</> : <>Generate Source Files <ArrowRight className="w-3.5 h-3.5 ml-1.5" /></>}
+                </Button>
+              )}
+              {exportStep === "preview" && (
+                <Button variant="outline" onClick={() => setExportStep("configure")} data-testid="button-export-back-to-configure">
+                  Back
+                </Button>
+              )}
+              {exportStep === "preview" && (
+                <Button onClick={downloadExportPackage} data-testid="button-export-download">
+                  <Download className="w-3.5 h-3.5 mr-1.5" /> Download Source Package
+                </Button>
+              )}
+              {exportStep === "preview" && (
+                <Button onClick={() => setExportStep("download")} data-testid="button-export-next-download">
+                  Next: Download <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
+                </Button>
+              )}
+              {exportStep === "download" && (
+                <Button variant="outline" onClick={() => setExportStep("preview")} data-testid="button-export-back-to-preview">
+                  Back
+                </Button>
+              )}
+              {exportStep === "download" && (
+                <Button
+                  onClick={() => {
+                    if (deliveryTarget === "zip") downloadExportPackage();
+                    else if (deliveryTarget === "git") toast({ title: "Git push initiated", description: `Source package will be pushed to ${gitRepoUrl}.` });
+                    setExportDialogOpen(false);
+                  }}
+                  disabled={deliveryTarget === "git" && !gitRepoUrl.trim()}
+                  data-testid="button-export-deliver"
+                >
+                  {deliveryTarget === "zip" ? <><Download className="w-3.5 h-3.5 mr-1.5" />Download &amp; Close</> : deliveryTarget === "git" ? <>Push &amp; Close</> : <>Done</>}
+                </Button>
+              )}
+            </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
