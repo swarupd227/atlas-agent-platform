@@ -1288,7 +1288,7 @@ export default function AgentWizard() {
       permissionsConfig: wizardState.permissionsConfig,
       memoryRagConfig: wizardState.memoryRagEnabled ? wizardState.memoryRagConfig : null,
       blueprintId: wizardState.blueprintId || undefined,
-      blueprintJson: { nodes: wizardState.workflowNodes },
+      blueprintJson: wizardState.blueprintId ? undefined : { nodes: wizardState.workflowNodes },
       policyBindings: wizardState.policyBindings,
       evalBindings: wizardState.evalBindings,
       guardrailsConfig: wizardState.guardrailsConfig,
@@ -2738,11 +2738,28 @@ function Step2ChooseBlueprint({
         </div>
       )}
 
-      {!state.blueprintId && availableBlueprints.length > 0 && (
-        <p className="text-xs text-muted-foreground text-center">
-          You can skip this step to configure the agent workflow manually
-        </p>
-      )}
+      <Card
+        className={`cursor-pointer transition-all duration-200 hover:shadow-md border-dashed ${
+          !state.blueprintId ? "ring-2 ring-primary border-primary/30 shadow-sm" : "hover:border-primary/20"
+        }`}
+        onClick={() => updateState({ blueprintId: null, blueprintName: null })}
+        data-testid="card-blueprint-blank"
+      >
+        <CardContent className="p-4 flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center shrink-0">
+            <Plus className="w-4 h-4 text-muted-foreground" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium">Start Blank</p>
+            <p className="text-xs text-muted-foreground">Configure the agent workflow manually without a blueprint</p>
+          </div>
+          {!state.blueprintId && (
+            <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center shrink-0">
+              <Check className="w-3 h-3 text-primary-foreground" />
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

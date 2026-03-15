@@ -4013,6 +4013,65 @@ function KnowledgeBaseSelector({ selectedKbs, onChange, testIdPrefix }: {
   );
 }
 
+function BlueprintOverridePicker({ currentBlueprintId, currentBlueprintName, patternType, onSelect, testIdSuffix }: {
+  currentBlueprintId: string | null;
+  currentBlueprintName: string | null;
+  patternType: string | null;
+  onSelect: (bpId: string | null, bpName: string | null) => void;
+  testIdSuffix: string;
+}) {
+  const { data: blueprints } = useQuery<any[]>({ queryKey: ["/api/blueprints"] });
+  const [open, setOpen] = useState(false);
+
+  const available = (blueprints || []).filter(
+    (bp: any) => bp.isShared || bp.status === "signed" || bp.status === "compiled"
+  );
+
+  if (available.length === 0 && !currentBlueprintName) return null;
+
+  return (
+    <div className="relative inline-flex">
+      <button
+        type="button"
+        className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded border border-blue-500/20 bg-blue-500/5 text-blue-600 dark:text-blue-400 hover:bg-blue-500/10 transition-colors"
+        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
+        data-testid={`button-blueprint-override-${testIdSuffix}`}
+      >
+        <Layers className="w-2.5 h-2.5" />
+        {currentBlueprintName ? `BP: ${currentBlueprintName}` : "Assign Blueprint"}
+        <ChevronDown className="w-2.5 h-2.5" />
+      </button>
+      {open && (
+        <div
+          className="absolute top-full left-0 z-50 mt-1 w-56 rounded-md border bg-popover shadow-lg"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="p-1 max-h-48 overflow-y-auto">
+            <button
+              className={`w-full text-left text-xs px-2 py-1.5 rounded hover:bg-muted ${!currentBlueprintId ? "bg-muted font-medium" : ""}`}
+              onClick={() => { onSelect(null, null); setOpen(false); }}
+              data-testid={`option-blueprint-none-${testIdSuffix}`}
+            >
+              No blueprint (auto-generate)
+            </button>
+            {available.map((bp: any) => (
+              <button
+                key={bp.id}
+                className={`w-full text-left text-xs px-2 py-1.5 rounded hover:bg-muted ${currentBlueprintId === bp.id ? "bg-muted font-medium" : ""}`}
+                onClick={() => { onSelect(bp.id, bp.name); setOpen(false); }}
+                data-testid={`option-blueprint-${bp.id}-${testIdSuffix}`}
+              >
+                {bp.name}
+                {bp.patternType && <span className="text-muted-foreground ml-1">({bp.patternType.replace(/_/g, " ")})</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AgentProposalCard({ agent, index, isOrchestrator, isSelected, onToggle, isCreating, onEdit, onDelete, onDuplicate, isDragging, onDragStart, onDragOver, onDrop }: {
   agent: AgentProposal;
   index: number;
@@ -4172,10 +4231,18 @@ function AgentProposalCard({ agent, index, isOrchestrator, isSelected, onToggle,
                   {agent.suggestedPatternType.replace(/_/g, " ")}
                 </Badge>
               )}
-              {agent.suggestedBlueprintName && (
-                <Badge variant="outline" className="text-[10px] text-blue-600 dark:text-blue-400 border-blue-500/20 bg-blue-500/5" data-testid={`badge-blueprint-${isOrchestrator ? "orch" : index}`}>
-                  Blueprint: {agent.suggestedBlueprintName}
-                </Badge>
+              {(agent.suggestedBlueprintName || agent.suggestedPatternType) && (
+                <BlueprintOverridePicker
+                  currentBlueprintId={agent.suggestedBlueprintId || null}
+                  currentBlueprintName={agent.suggestedBlueprintName || null}
+                  patternType={agent.suggestedPatternType || null}
+                  onSelect={(bpId, bpName) => {
+                    if (onEdit) {
+                      onEdit({ ...agent, suggestedBlueprintId: bpId, suggestedBlueprintName: bpName });
+                    }
+                  }}
+                  testIdSuffix={isOrchestrator ? "orch" : String(index)}
+                />
               )}
             </div>
             <div className="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-gradient-to-r from-emerald-500/5 to-green-500/5 border border-emerald-500/15" data-testid={`estimated-impact-${isOrchestrator ? "orch" : index}`}>
@@ -5090,7 +5157,7 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
               suggestedRagPipeline: worker.suggestedRagPipeline || null,
               mcpToolBindings: worker.mcpToolBindings || [],
             },
-            blueprintJson: worker.workflowSteps?.length ? {
+            blueprintJson: worker.suggestedBlueprintId ? undefined : worker.workflowSteps?.length ? {
               type: "workflow",
               steps: worker.workflowSteps.map((step, idx) => ({
                 id: `step-${idx + 1}`,

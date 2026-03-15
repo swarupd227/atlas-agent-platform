@@ -2286,7 +2286,7 @@ export async function registerRoutes(
   app.post("/api/agents", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const body = { ...req.body };
-      if (body.blueprintId && !body.blueprintJson) {
+      if (body.blueprintId) {
         const bp = await storage.getBlueprint(body.blueprintId);
         if (bp && bp.blueprintJson) {
           body.blueprintJson = bp.blueprintJson;
