@@ -18588,7 +18588,7 @@ Return valid JSON only. No markdown. No code fences.`;
       const agentSlug = agent.name.toLowerCase().replace(/[^a-z0-9-]/g, "-");
 
       const files: Record<string, string> = {
-        "agent.yaml": aiResult?.agentYaml || agentYaml,
+        "agent.yaml": agentYaml,
       };
 
       const pin = pinVersions;
@@ -18641,6 +18641,8 @@ Return valid JSON only. No markdown. No code fences.`;
           blueprintJson,
         });
       } catch { /* swallow — templates handle fallback */ }
+
+      if (aiResult?.agentYaml) files["agent.yaml"] = aiResult.agentYaml;
 
       if (framework === "generic") {
         const crypto = await import("crypto");
