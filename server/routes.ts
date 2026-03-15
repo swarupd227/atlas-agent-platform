@@ -18361,7 +18361,7 @@ def ${tool.name}(args: dict) -> dict:
     completionPromise: string;
     framework: string;
     blueprintJson?: Record<string, unknown>;
-  }): Promise<{ entrypoint: string; toolAdapters: Record<string, string>; agentYaml?: string; dockerfile?: string; aiGenerated: true } | null> {
+  }): Promise<{ entrypoint: string; toolAdapters: Record<string, string>; agentYaml?: string; dockerfile?: string; frameworkFiles?: Record<string, string>; aiGenerated: true } | null> {
     try {
       const toolsJson = JSON.stringify(ctx.tools.map(t => ({
         name: t.name,
@@ -18385,8 +18385,13 @@ The JSON must have these keys:
     ...
   },
   "agentYaml": "<optional: enriched agent.yaml content reflecting the agent's actual config>",
-  "dockerfile": "<optional: Dockerfile content tailored to the agent's dependencies>"
-}`;
+  "dockerfile": "<optional: Dockerfile content tailored to the agent's dependencies>",
+  "frameworkFiles": {
+    "<filePath>": "<file content as string>",
+    ...
+  }
+}
+The "frameworkFiles" field should contain any framework-specific config/manifest files (e.g. for CrewAI: config/agents.yaml and config/tasks.yaml derived from the agent's blueprint, roles, and tool mappings).`;
 
       const blueprintStr = (ctx.blueprintJson && Object.keys(ctx.blueprintJson).length > 0)
         ? JSON.stringify(ctx.blueprintJson, null, 2)
@@ -18479,13 +18484,20 @@ Return valid JSON only. No markdown. No code fences.`;
         }
       }
 
-      const result: { entrypoint: string; toolAdapters: Record<string, string>; agentYaml?: string; dockerfile?: string; aiGenerated: true } = {
+      const result: { entrypoint: string; toolAdapters: Record<string, string>; agentYaml?: string; dockerfile?: string; frameworkFiles?: Record<string, string>; aiGenerated: true } = {
         entrypoint: parsed.entrypoint,
         toolAdapters,
         aiGenerated: true,
       };
       if (typeof parsed.agentYaml === "string" && parsed.agentYaml.length > 10) result.agentYaml = parsed.agentYaml;
       if (typeof parsed.dockerfile === "string" && parsed.dockerfile.length > 10) result.dockerfile = parsed.dockerfile;
+      if (parsed.frameworkFiles && typeof parsed.frameworkFiles === "object") {
+        const ff: Record<string, string> = {};
+        for (const [path, content] of Object.entries(parsed.frameworkFiles)) {
+          if (typeof content === "string" && content.length > 5) ff[path] = content;
+        }
+        if (Object.keys(ff).length > 0) result.frameworkFiles = ff;
+      }
       return result;
     } catch (err: any) {
       console.error("[generateAgentCodeWithAI] Failed:", err?.message || err);
@@ -18858,8 +18870,10 @@ Return valid JSON only. No markdown. No code fences.`;
         }
         files["Dockerfile"] = aiResult?.dockerfile || (format === "typescript" ? dockerfile : dockerfilePy);
       } else if (framework === "crewai") {
-        files["config/agents.yaml"] = `# CrewAI Agent Definitions\n# Generated for ${agent.name}\nagents:\n  - name: "${agent.name}"\n    role: "Primary Agent"\n    goal: "${agent.description || "Complete assigned tasks"}"\n    backstory: "${systemPrompt.substring(0, 200)}"\n    tools:\n${tools.map(t => `      - ${t.name}`).join("\n")}\n    max_iter: ${maxIterations}\n    verbose: true\n`;
-        files["config/tasks.yaml"] = `# CrewAI Task Definitions\ntasks:\n  - name: "main_task"\n    description: "Execute the primary objective"\n    agent: "${agent.name}"\n    expected_output: "${completionPromise}"\n`;
+        const crewAgentsTemplate = `# CrewAI Agent Definitions\n# Generated for ${agent.name}\nagents:\n  - name: "${agent.name}"\n    role: "Primary Agent"\n    goal: "${agent.description || "Complete assigned tasks"}"\n    backstory: "${systemPrompt.substring(0, 200)}"\n    tools:\n${tools.map(t => `      - ${t.name}`).join("\n")}\n    max_iter: ${maxIterations}\n    verbose: true\n`;
+        const crewTasksTemplate = `# CrewAI Task Definitions\ntasks:\n  - name: "main_task"\n    description: "Execute the primary objective"\n    agent: "${agent.name}"\n    expected_output: "${completionPromise}"\n`;
+        files["config/agents.yaml"] = aiResult?.frameworkFiles?.["config/agents.yaml"] || crewAgentsTemplate;
+        files["config/tasks.yaml"] = aiResult?.frameworkFiles?.["config/tasks.yaml"] || crewTasksTemplate;
         const crewTemplateTs = `// CrewAI-style Crew Orchestration\n// Generated for ${agent.name}\nimport yaml from "js-yaml";\nimport fs from "fs";\nimport { loadTools } from "./tools";\n\nconst agentsConfig = yaml.load(fs.readFileSync("config/agents.yaml", "utf-8")) as any;\nconst tasksConfig = yaml.load(fs.readFileSync("config/tasks.yaml", "utf-8")) as any;\nconst tools = loadTools();\n\nasync function runCrew() {\n  console.log("Starting crew with agents:", agentsConfig.agents.map((a: any) => a.name));\n  console.log("Tasks:", tasksConfig.tasks.map((t: any) => t.name));\n  // Implement crew orchestration logic using loaded configs and tools\n  for (const task of tasksConfig.tasks) {\n    console.log(\`Executing task: \${task.name}\`);\n    // TODO: Wire up LLM calls with agent config\n  }\n}\n\nrunCrew().catch(console.error);\n`;
         const crewTemplatePy = `# CrewAI-style Crew Orchestration\n# Generated for ${agent.name}\nimport yaml\nfrom tools import load_tools\n\nwith open("config/agents.yaml") as f:\n    agents_config = yaml.safe_load(f)\nwith open("config/tasks.yaml") as f:\n    tasks_config = yaml.safe_load(f)\n\ntools = load_tools()\n\ndef run_crew():\n    print("Starting crew with agents:", [a["name"] for a in agents_config["agents"]])\n    print("Tasks:", [t["name"] for t in tasks_config["tasks"]])\n    for task in tasks_config["tasks"]:\n        print(f"Executing task: {task['name']}")\n        # TODO: Wire up LLM calls with agent config\n\nif __name__ == "__main__":\n    run_crew()\n`;
         if (format === "typescript") {
