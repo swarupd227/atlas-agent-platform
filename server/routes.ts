@@ -17745,13 +17745,12 @@ Eval Suites: ${evalSuites.length} configured`,
 
   function generateAgentYaml(
     agent: { name: string; description: string | null; modelProvider: string | null; modelName: string | null },
-    tools: Array<{ name: string }>,
+    tools: Array<{ name: string; description?: string; parameters?: any }>,
     systemPrompt: string,
     maxIterations: number,
     completionPromise: string,
     extras?: AgentYamlExtras
   ): string {
-    const toolsList = tools.map(t => `  - ${t.name}`).join("\n");
     const lines = [
       `name: "${agent.name}"`,
       `description: "${(agent.description || "").replace(/"/g, '\\"')}"`,
@@ -17765,10 +17764,22 @@ Eval Suites: ${evalSuites.length} configured`,
     lines.push(
       `system_prompt: |`,
       ...systemPrompt.split("\n").map(line => `  ${line}`),
-      `tools:`,
-      toolsList || "  []",
+    );
+    if (tools.length > 0) {
+      lines.push(`tools:`);
+      for (const t of tools) {
+        lines.push(`  - name: "${t.name}"`);
+        if (t.description) lines.push(`    description: "${t.description.replace(/"/g, '\\"').replace(/\n/g, " ")}"`);
+        const schema = t.parameters && typeof t.parameters === "object" && Object.keys(t.parameters).length > 0 ? t.parameters : null;
+        if (schema) lines.push(`    parameters: ${JSON.stringify(schema)}`);
+      }
+    } else {
+      lines.push(`tools: []`);
+    }
+    lines.push(
       `max_iterations: ${maxIterations}`,
       `completion_promise: "${completionPromise}"`,
+      `context_window_limit: 40`,
     );
     if (extras?.skills && extras.skills.length > 0) {
       lines.push(`skills:`);
@@ -17799,12 +17810,18 @@ Eval Suites: ${evalSuites.length} configured`,
   }
 
   function generateTsEntrypointOpenAI(
-    tools: Array<{ name: string }>,
+    tools: Array<{ name: string; description?: string; parameters?: any }>,
     maxIterations: number,
     completionPromise: string
   ): string {
     const toolImports = tools.map(t => `import { ${t.name} } from "./tools/${t.name}";`).join("\n");
     const toolMap = tools.map(t => `  "${t.name}": ${t.name},`).join("\n");
+    const toolRegistryEntries = tools.map(t => {
+      const schema = (t.parameters && typeof t.parameters === "object" && Object.keys(t.parameters).length > 0)
+        ? t.parameters
+        : { type: "object", properties: {}, additionalProperties: true };
+      return `  "${t.name}": { description: ${JSON.stringify(t.description || `Execute the ${t.name} tool`)}, parameters: ${JSON.stringify(schema)} }`;
+    }).join(",\n");
     return `import OpenAI from "openai";
 import * as fs from "fs";
 import * as yaml from "js-yaml";
@@ -17817,27 +17834,33 @@ const toolAdapters: Record<string, (args: any) => Promise<any>> = {
 ${toolMap}
 };
 
-const toolDefinitions: OpenAI.Chat.Completions.ChatCompletionTool[] = config.tools.map((name: string) => ({
+const TOOL_REGISTRY: Record<string, { description: string; parameters: any }> = {
+${toolRegistryEntries}
+};
+
+const toolDefinitions: OpenAI.Chat.Completions.ChatCompletionTool[] = Object.entries(TOOL_REGISTRY).map(([name, schema]) => ({
   type: "function" as const,
-  function: {
-    name,
-    description: \`Execute the \${name} tool\`,
-    parameters: { type: "object", properties: {}, additionalProperties: true },
-  },
+  function: { name, description: schema.description, parameters: schema.parameters },
 }));
 
 async function main() {
   const task = process.argv[2] || "Hello, agent!";
-  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+  let messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
     { role: "system", content: config.system_prompt },
     { role: "user", content: task },
   ];
 
   const maxIter = config.max_iterations || ${maxIterations};
   const promise = config.completion_promise || "${completionPromise}";
+  const ctxLimit = config.context_window_limit || 40;
 
   for (let i = 0; i < maxIter; i++) {
     console.log(\`[iteration \${i + 1}/\${maxIter}]\`);
+
+    // Trim message history to avoid context overflow, preserving system message
+    if (messages.length > ctxLimit + 1) {
+      messages = [messages[0], ...messages.slice(-(ctxLimit))];
+    }
 
     const response = await client.chat.completions.create({
       model: config.model.name,
@@ -17889,12 +17912,18 @@ main().catch(console.error);
   }
 
   function generateTsEntrypointAnthropic(
-    tools: Array<{ name: string }>,
+    tools: Array<{ name: string; description?: string; parameters?: any }>,
     maxIterations: number,
     completionPromise: string
   ): string {
     const toolImports = tools.map(t => `import { ${t.name} } from "./tools/${t.name}";`).join("\n");
     const toolMap = tools.map(t => `  "${t.name}": ${t.name},`).join("\n");
+    const toolRegistryEntries = tools.map(t => {
+      const schema = (t.parameters && typeof t.parameters === "object" && Object.keys(t.parameters).length > 0)
+        ? t.parameters
+        : { type: "object", properties: {} };
+      return `  "${t.name}": { description: ${JSON.stringify(t.description || `Execute the ${t.name} tool`)}, input_schema: ${JSON.stringify(schema)} }`;
+    }).join(",\n");
     return `import Anthropic from "@anthropic-ai/sdk";
 import * as fs from "fs";
 import * as yaml from "js-yaml";
@@ -17907,23 +17936,33 @@ const toolAdapters: Record<string, (args: any) => Promise<any>> = {
 ${toolMap}
 };
 
-const toolDefinitions: Anthropic.Tool[] = config.tools.map((name: string) => ({
+const TOOL_REGISTRY: Record<string, { description: string; input_schema: any }> = {
+${toolRegistryEntries}
+};
+
+const toolDefinitions: Anthropic.Tool[] = Object.entries(TOOL_REGISTRY).map(([name, schema]) => ({
   name,
-  description: \`Execute the \${name} tool\`,
-  input_schema: { type: "object" as const, properties: {} },
+  description: schema.description,
+  input_schema: schema.input_schema,
 }));
 
 async function main() {
   const task = process.argv[2] || "Hello, agent!";
-  const messages: Anthropic.MessageParam[] = [
+  let messages: Anthropic.MessageParam[] = [
     { role: "user", content: task },
   ];
 
   const maxIter = config.max_iterations || ${maxIterations};
   const promise = config.completion_promise || "${completionPromise}";
+  const ctxLimit = config.context_window_limit || 40;
 
   for (let i = 0; i < maxIter; i++) {
     console.log(\`[iteration \${i + 1}/\${maxIter}]\`);
+
+    // Trim message history to avoid context overflow
+    if (messages.length > ctxLimit) {
+      messages = messages.slice(-(ctxLimit));
+    }
 
     const response = await client.messages.create({
       model: config.model.name,
@@ -17980,12 +18019,18 @@ main().catch(console.error);
   }
 
   function generatePyEntrypointOpenAI(
-    tools: Array<{ name: string }>,
+    tools: Array<{ name: string; description?: string; parameters?: any }>,
     maxIterations: number,
     completionPromise: string
   ): string {
     const toolImports = tools.map(t => `from tools.${t.name} import ${t.name}`).join("\n");
     const toolMap = tools.map(t => `    "${t.name}": ${t.name},`).join("\n");
+    const toolRegistryEntries = tools.map(t => {
+      const schema = (t.parameters && typeof t.parameters === "object" && Object.keys(t.parameters).length > 0)
+        ? t.parameters
+        : { type: "object", properties: {}, additionalProperties: true };
+      return `    "${t.name}": {"description": ${JSON.stringify(t.description || `Execute the ${t.name} tool`)}, "parameters": ${JSON.stringify(schema)}}`;
+    }).join(",\n");
     return `import json
 import sys
 import yaml
@@ -18001,16 +18046,20 @@ tool_adapters = {
 ${toolMap}
 }
 
+TOOL_REGISTRY = {
+${toolRegistryEntries}
+}
+
 tool_definitions = [
     {
         "type": "function",
         "function": {
             "name": name,
-            "description": f"Execute the {name} tool",
-            "parameters": {"type": "object", "properties": {}, "additionalProperties": True},
+            "description": schema["description"],
+            "parameters": schema["parameters"],
         },
     }
-    for name in config.get("tools", [])
+    for name, schema in TOOL_REGISTRY.items()
 ]
 
 
@@ -18023,9 +18072,14 @@ def main():
 
     max_iter = config.get("max_iterations", ${maxIterations})
     promise = config.get("completion_promise", "${completionPromise}")
+    ctx_limit = config.get("context_window_limit", 40)
 
     for i in range(max_iter):
         print(f"[iteration {i + 1}/{max_iter}]")
+
+        # Trim message history to avoid context overflow, preserving system message
+        if len(messages) > ctx_limit + 1:
+            messages = [messages[0]] + messages[-(ctx_limit):]
 
         kwargs = {
             "model": config["model"]["name"],
@@ -18074,12 +18128,18 @@ if __name__ == "__main__":
   }
 
   function generatePyEntrypointAnthropic(
-    tools: Array<{ name: string }>,
+    tools: Array<{ name: string; description?: string; parameters?: any }>,
     maxIterations: number,
     completionPromise: string
   ): string {
     const toolImports = tools.map(t => `from tools.${t.name} import ${t.name}`).join("\n");
     const toolMap = tools.map(t => `    "${t.name}": ${t.name},`).join("\n");
+    const toolRegistryEntries = tools.map(t => {
+      const schema = (t.parameters && typeof t.parameters === "object" && Object.keys(t.parameters).length > 0)
+        ? t.parameters
+        : { type: "object", properties: {} };
+      return `    "${t.name}": {"description": ${JSON.stringify(t.description || `Execute the ${t.name} tool`)}, "input_schema": ${JSON.stringify(schema)}}`;
+    }).join(",\n");
     return `import json
 import sys
 import yaml
@@ -18095,13 +18155,17 @@ tool_adapters = {
 ${toolMap}
 }
 
+TOOL_REGISTRY = {
+${toolRegistryEntries}
+}
+
 tool_definitions = [
     {
         "name": name,
-        "description": f"Execute the {name} tool",
-        "input_schema": {"type": "object", "properties": {}},
+        "description": schema["description"],
+        "input_schema": schema["input_schema"],
     }
-    for name in config.get("tools", [])
+    for name, schema in TOOL_REGISTRY.items()
 ]
 
 
@@ -18113,9 +18177,14 @@ def main():
 
     max_iter = config.get("max_iterations", ${maxIterations})
     promise = config.get("completion_promise", "${completionPromise}")
+    ctx_limit = config.get("context_window_limit", 40)
 
     for i in range(max_iter):
         print(f"[iteration {i + 1}/{max_iter}]")
+
+        # Trim message history to avoid context overflow
+        if len(messages) > ctx_limit:
+            messages = messages[-(ctx_limit):]
 
         kwargs = {
             "model": config["model"]["name"],
@@ -18199,15 +18268,20 @@ export async function ${tool.name}(args: Record<string, any>): Promise<any> {
 export default ${tool.name};
 `;
     }
-    return `// Built-in adapter for "${tool.name}"
-// Status: Built-in adapter included from ATLAS Tool Registry
+    const paramSchema = (tool.parameters && typeof tool.parameters === "object" && Object.keys(tool.parameters).length > 0)
+      ? JSON.stringify(tool.parameters, null, 2).split("\n").map((l: string) => `// ${l}`).join("\n")
+      : `// Parameters: {}`;
+    return `// REQUIRES IMPLEMENTATION: "${tool.name}"
+// Status: Scaffold generated — replace the body with your actual implementation
 // Description: ${tool.description || "No description provided"}
+// Parameter schema:
+${paramSchema}
 
 export async function ${tool.name}(args: Record<string, any>): Promise<any> {
-  console.log("[${tool.name}] executing with:", args);
-  // Adapter implementation sourced from platform registry
-  const result = await Promise.resolve({ success: true, tool: "${tool.name}", output: args });
-  return result;
+  console.log("[${tool.name}] called with:", JSON.stringify(args, null, 2));
+  // TODO: Implement this tool adapter.
+  // The parameter schema above shows what arguments this tool expects.
+  throw new Error("[${tool.name}] Not implemented. Replace this with your adapter logic.");
 }
 
 export default ${tool.name};
@@ -18240,15 +18314,23 @@ def ${tool.name}(args: dict) -> dict:
     return {"status": "needs_implementation", "tool": "${tool.name}", "args": args}
 `;
     }
-    return `# Built-in adapter for "${tool.name}"
-# Status: Built-in adapter included from ATLAS Tool Registry
+    const pyParamSchema = (tool.parameters && typeof tool.parameters === "object" && Object.keys(tool.parameters).length > 0)
+      ? JSON.stringify(tool.parameters, null, 2).split("\n").map((l: string) => `# ${l}`).join("\n")
+      : `# Parameters: {}`;
+    return `# REQUIRES IMPLEMENTATION: "${tool.name}"
+# Status: Scaffold generated — replace the body with your actual implementation
 # Description: ${tool.description || "No description provided"}
+# Parameter schema:
+${pyParamSchema}
+
 
 def ${tool.name}(args: dict) -> dict:
-    """${tool.description || "No description provided"}"""
-    print(f"[${tool.name}] executing with: {args}")
-    result = {"success": True, "tool": "${tool.name}", "output": args}
-    return result
+    """TODO: Implement this tool adapter.
+    The parameter schema above shows what arguments this tool expects.
+    ${tool.description || ""}
+    """
+    print(f"[${tool.name}] called with: {args}")
+    raise NotImplementedError("[${tool.name}] Not implemented. Replace this with your adapter logic.")
 `;
   }
 
@@ -18258,6 +18340,102 @@ def ${tool.name}(args: dict) -> dict:
 
   function generatePyToolsInit(tools: Array<{ name: string }>): string {
     return tools.map(t => `from .${t.name} import ${t.name}`).join("\n") + "\n";
+  }
+
+  async function generateAgentCodeWithAI(ctx: {
+    agentName: string;
+    agentDescription: string;
+    systemPrompt: string;
+    tools: Array<{ name: string; description?: string; parameters?: any }>;
+    format: "typescript" | "python";
+    llmProvider: "openai" | "anthropic";
+    maxIterations: number;
+    completionPromise: string;
+    framework: string;
+  }): Promise<{ entrypoint: string; toolAdapters: Record<string, string>; aiGenerated: true } | null> {
+    try {
+      const toolsJson = JSON.stringify(ctx.tools.map(t => ({
+        name: t.name,
+        description: t.description || "",
+        parameters: t.parameters || {},
+      })), null, 2);
+
+      const lang = ctx.format === "typescript" ? "TypeScript" : "Python";
+      const provider = ctx.llmProvider === "openai" ? "OpenAI" : "Anthropic";
+      const clientLib = ctx.llmProvider === "openai"
+        ? (ctx.format === "typescript" ? "openai (npm)" : "openai (pip)")
+        : (ctx.format === "typescript" ? "@anthropic-ai/sdk (npm)" : "anthropic (pip)");
+
+      const systemMsg = `You are an expert AI agent developer. Generate production-quality ${lang} code for an autonomous AI agent package.
+You MUST respond with valid JSON only — no markdown, no explanations, no code fences.
+The JSON must have exactly these keys:
+{
+  "entrypoint": "<full entrypoint file content as a string>",
+  "toolAdapters": {
+    "<toolName>": "<full adapter file content as a string>",
+    ...
+  }
+}`;
+
+      const userMsg = `Generate a complete, runnable autonomous agent in ${lang} using the ${provider} API (${clientLib}).
+
+Agent context:
+- Name: ${ctx.agentName}
+- Description: ${ctx.agentDescription}
+- System prompt: ${ctx.systemPrompt.substring(0, 800)}${ctx.systemPrompt.length > 800 ? "..." : ""}
+- Max iterations: ${ctx.maxIterations}
+- Completion signal phrase: "${ctx.completionPromise}"
+- Framework: ${ctx.framework}
+
+Tools (${ctx.tools.length}):
+${toolsJson}
+
+Requirements for the ENTRYPOINT file (${ctx.format === "typescript" ? "src/runtime/orchestrator.ts" : "src/runtime/orchestrator.py"}):
+1. Import and use the ${provider} SDK with the correct API call pattern
+2. Load config from agent.yaml using ${ctx.format === "typescript" ? "js-yaml" : "pyyaml"}
+3. Define TOOL_REGISTRY with each tool's actual description and parameter schema (not generic placeholders)
+4. Build toolDefinitions array from TOOL_REGISTRY with full schemas
+5. Implement the agent loop: call LLM → check for completion phrase → dispatch tool calls → collect results → repeat
+6. Include context window trimming when message history exceeds 40 messages
+7. Include clear console logging for each iteration and tool call
+8. Accept task input from command line argv
+
+Requirements for each TOOL ADAPTER file:
+1. Each adapter must have a typed function signature derived from the tool's parameter schema
+2. Include the tool's description as a docstring/JSDoc comment
+3. Include clear TODO comments showing exactly what API/system to connect to based on the tool's purpose
+4. Log the call with the tool name and args
+5. Throw/raise NotImplementedError with a clear message so developers know to implement it
+
+Return valid JSON only. No markdown. No code fences.`;
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        messages: [
+          { role: "system", content: systemMsg },
+          { role: "user", content: userMsg },
+        ],
+        max_tokens: 8192,
+        temperature: 0.2,
+        response_format: { type: "json_object" },
+      });
+
+      const raw = response.choices[0]?.message?.content || "";
+      const parsed = JSON.parse(raw);
+
+      if (!parsed.entrypoint || typeof parsed.entrypoint !== "string") return null;
+      const toolAdapters: Record<string, string> = {};
+      if (parsed.toolAdapters && typeof parsed.toolAdapters === "object") {
+        for (const [name, content] of Object.entries(parsed.toolAdapters)) {
+          if (typeof content === "string") toolAdapters[name] = content;
+        }
+      }
+
+      return { entrypoint: parsed.entrypoint, toolAdapters, aiGenerated: true };
+    } catch (err: any) {
+      console.error("[generateAgentCodeWithAI] Failed:", err?.message || err);
+      return null;
+    }
   }
 
   // POST /api/agents/:id/export-code
@@ -18392,6 +18570,8 @@ def ${tool.name}(args: dict) -> dict:
         return "builtin";
       };
 
+      let aiResult: Awaited<ReturnType<typeof generateAgentCodeWithAI>> = null;
+
       if (framework === "generic") {
         const crypto = await import("crypto");
         const blueprintHash = crypto.createHash("sha256").update(agentYaml).digest("hex");
@@ -18486,13 +18666,30 @@ def ${tool.name}(args: dict) -> dict:
 
         files["README.md"] = `<!-- ATLAS-generated README -->\n# ${agent.name}\n\n${agent.description || ""}\n\n## Setup\n\n1. Install dependencies:\n   \`\`\`bash\n   ${depCmd}\n   \`\`\`\n2. Copy \`.env.example\` to \`.env\` and fill in your API keys.\n3. Run the agent:\n   \`\`\`bash\n   ${runCmd}\n   \`\`\`\n\n## File Structure\n\n\`\`\`\n${format === "typescript" ? `src/\n  runtime/\n    orchestrator.ts    # Main agent loop\n    policy.ts          # Policy evaluation hooks\n    tracing.ts         # OpenTelemetry tracing setup\n  agent/\n    graph.ts           # Graph construction from blueprint\n    prompts/\n      system.txt       # System prompt\n    schemas/\n      input.json       # Input JSON schema\n      output.json      # Output JSON schema\n  tools/\n    index.ts           # Tool registry\n    {tool}.ts          # Individual tool adapters\ntests/\n  eval_smoke.test.ts   # Smoke evaluation test\npackage.json\nagent.yaml\nalmp.manifest.json\n.env.example` : `src/\n  runtime/\n    orchestrator.py    # Main agent loop\n    policy.py          # Policy evaluation hooks\n    tracing.py         # OpenTelemetry tracing setup\n  agent/\n    graph.py           # Graph construction from blueprint\n    prompts/\n      system.txt       # System prompt\n    schemas/\n      input.json       # Input JSON schema\n      output.json      # Output JSON schema\n  tools/\n    __init__.py        # Tool registry\n    {tool}.py          # Individual tool adapters\ntests/\n  eval_smoke_test.py   # Smoke evaluation test\nrequirements.txt\nagent.yaml\nalmp.manifest.json\n.env.example`}\n\`\`\`\n\n## Tools\n\n${tools.length > 0 ? toolList : "No tools configured."}\n`;
 
+        // Attempt AI-powered code generation; fall back to templates on failure
+        try {
+          aiResult = await generateAgentCodeWithAI({
+            agentName: agent.name,
+            agentDescription: agent.description || "",
+            systemPrompt,
+            tools,
+            format,
+            llmProvider,
+            maxIterations,
+            completionPromise,
+            framework,
+          });
+        } catch { /* swallow — templates handle fallback */ }
+
         if (format === "typescript") {
-          files["src/runtime/orchestrator.ts"] = llmProvider === "openai"
+          files["src/runtime/orchestrator.ts"] = aiResult?.entrypoint || (llmProvider === "openai"
             ? generateTsEntrypointOpenAI(tools, maxIterations, completionPromise)
-            : generateTsEntrypointAnthropic(tools, maxIterations, completionPromise);
+            : generateTsEntrypointAnthropic(tools, maxIterations, completionPromise));
 
           files["src/tools/index.ts"] = generateTsToolsIndex(tools);
-          for (const tool of tools) { files[`src/tools/${tool.name}.ts`] = generateTsToolAdapter(tool, getAdapterType(tool.name)); }
+          for (const tool of tools) {
+            files[`src/tools/${tool.name}.ts`] = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, getAdapterType(tool.name));
+          }
 
           if (linkedPolicies.length > 0) {
             files["src/runtime/policy.ts"] = `// ATLAS-generated: Policy evaluation hooks (data-driven)\nimport * as fs from "fs";\nimport * as path from "path";\n\nexport interface PolicyContext {\n  agentName: string;\n  action: string;\n  toolName?: string;\n  input?: Record<string, any>;\n}\n\nexport interface PolicyResult {\n  allowed: boolean;\n  reason?: string;\n  policyName?: string;\n}\n\ninterface PolicyRule {\n  id: string;\n  name: string;\n  domain: string | null;\n  rules: any;\n}\n\nlet policies: PolicyRule[] = [];\ntry {\n  const raw = fs.readFileSync(path.resolve(__dirname, "../agent/policies.json"), "utf-8");\n  policies = JSON.parse(raw);\n} catch { /* no policies file */ }\n\nexport async function evaluatePolicy(ctx: PolicyContext): Promise<PolicyResult> {\n  for (const policy of policies) {\n    const rules = policy.rules;\n    if (!rules) continue;\n    if (rules.blockedTools && ctx.toolName && rules.blockedTools.includes(ctx.toolName)) {\n      return { allowed: false, reason: \`Tool "\${ctx.toolName}" blocked by policy "\${policy.name}"\`, policyName: policy.name };\n    }\n    if (rules.blockedActions && rules.blockedActions.includes(ctx.action)) {\n      return { allowed: false, reason: \`Action "\${ctx.action}" blocked by policy "\${policy.name}"\`, policyName: policy.name };\n    }\n    if (rules.requireApproval && rules.requireApproval.includes(ctx.action)) {\n      return { allowed: false, reason: \`Action "\${ctx.action}" requires approval per policy "\${policy.name}"\`, policyName: policy.name };\n    }\n  }\n  return { allowed: true };\n}\n\nexport async function onBeforeToolCall(toolName: string, args: Record<string, any>): Promise<PolicyResult> {\n  return evaluatePolicy({ agentName: "${agent.name}", action: "tool_call", toolName, input: args });\n}\n\nexport async function onBeforeResponse(response: string): Promise<PolicyResult> {\n  return evaluatePolicy({ agentName: "${agent.name}", action: "respond" });\n}\n\nexport function listPolicies(): Array<{ name: string; domain: string | null }> {\n  return policies.map(p => ({ name: p.name, domain: p.domain }));\n}\n`;
@@ -18533,12 +18730,14 @@ def ${tool.name}(args: dict) -> dict:
           }
           files["package.json"] = JSON.stringify({ name: agentSlug, version: agentVersion, private: true, scripts: { start: "ts-node src/runtime/orchestrator.ts", test: "ts-node tests/eval_smoke.test.ts" }, dependencies: deps }, null, 2);
         } else {
-          files["src/runtime/orchestrator.py"] = llmProvider === "openai"
+          files["src/runtime/orchestrator.py"] = aiResult?.entrypoint || (llmProvider === "openai"
             ? generatePyEntrypointOpenAI(tools, maxIterations, completionPromise)
-            : generatePyEntrypointAnthropic(tools, maxIterations, completionPromise);
+            : generatePyEntrypointAnthropic(tools, maxIterations, completionPromise));
 
           files["src/tools/__init__.py"] = generatePyToolsInit(tools);
-          for (const tool of tools) { files[`src/tools/${tool.name}.py`] = generatePyToolAdapter(tool, getAdapterType(tool.name)); }
+          for (const tool of tools) {
+            files[`src/tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, getAdapterType(tool.name));
+          }
 
           if (linkedPolicies.length > 0) {
             files["src/runtime/policy.py"] = `# ATLAS-generated: Policy evaluation hooks (data-driven)\nimport json\nimport os\nfrom typing import Optional\n\nPOLICIES = []\ntry:\n    _policy_path = os.path.join(os.path.dirname(__file__), "..", "agent", "policies.json")\n    with open(_policy_path) as f:\n        POLICIES = json.load(f)\nexcept FileNotFoundError:\n    pass\n\n\ndef evaluate_policy(agent_name: str, action: str, tool_name: Optional[str] = None, input_data: Optional[dict] = None) -> dict:\n    for policy in POLICIES:\n        rules = policy.get("rules") or {}\n        if rules.get("blockedTools") and tool_name in rules["blockedTools"]:\n            return {"allowed": False, "reason": f'Tool "{tool_name}" blocked by policy "{policy["name"]}"', "policyName": policy["name"]}\n        if rules.get("blockedActions") and action in rules["blockedActions"]:\n            return {"allowed": False, "reason": f'Action "{action}" blocked by policy "{policy["name"]}"', "policyName": policy["name"]}\n        if rules.get("requireApproval") and action in rules["requireApproval"]:\n            return {"allowed": False, "reason": f'Action "{action}" requires approval per policy "{policy["name"]}"', "policyName": policy["name"]}\n    return {"allowed": True}\n\n\ndef on_before_tool_call(tool_name: str, args: dict) -> dict:\n    return evaluate_policy("${agent.name}", "tool_call", tool_name=tool_name, input_data=args)\n\n\ndef on_before_response(response: str) -> dict:\n    return evaluate_policy("${agent.name}", "respond")\n\n\ndef list_policies():\n    return [{"name": p["name"], "domain": p.get("domain")} for p in POLICIES]\n`;
@@ -18785,6 +18984,7 @@ def ${tool.name}(args: dict) -> dict:
           toolAdapters: toolAdapters || {},
           pinVersions,
           generatedAt: new Date().toISOString(),
+          aiGenerated: !!aiResult,
         },
       });
     } catch (e) {

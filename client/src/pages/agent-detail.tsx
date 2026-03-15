@@ -6034,6 +6034,11 @@ function AgentDetailInner() {
                 </div>
                 {exportPreview?.metadata && (
                   <div className="flex items-center gap-3 flex-wrap text-[10px] text-muted-foreground">
+                    {exportPreview.metadata.aiGenerated && (
+                      <Badge className="text-[10px] bg-primary/10 text-primary border-primary/20 gap-1">
+                        <Sparkles className="w-2.5 h-2.5" />AI-Generated
+                      </Badge>
+                    )}
                     <Badge variant="outline" className="text-[10px]">{exportPreview.metadata.pattern}</Badge>
                     <Badge variant="outline" className="text-[10px]">{exportPreview.metadata.format}</Badge>
                     <Badge variant="outline" className="text-[10px]">{exportPreview.metadata.llmProvider}</Badge>
@@ -6172,7 +6177,7 @@ function AgentDetailInner() {
                   disabled={exportCodeMutation.isPending}
                   data-testid="button-export-generate"
                 >
-                  {exportCodeMutation.isPending ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Generating...</> : <>Generate Source Files <ArrowRight className="w-3.5 h-3.5 ml-1.5" /></>}
+                  {exportCodeMutation.isPending ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Generating with AI...</> : <><Sparkles className="w-3.5 h-3.5 mr-1.5" />Generate Source Files <ArrowRight className="w-3.5 h-3.5 ml-1.5" /></>}
                 </Button>
               )}
               {exportStep === "preview" && (
