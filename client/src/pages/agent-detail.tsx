@@ -5611,7 +5611,7 @@ function AgentDetailInner() {
                 const isDone = thisIdx < currentIdx;
                 return (
                   <Fragment key={s.key}>
-                    {i > 0 && <div className={`flex-1 h-0.5 mx-2 rounded ${isDone ? "bg-primary" : "bg-muted"}`} />}
+                    {i > 0 && <div className={`flex-1 h-0.5 mx-2 rounded ${currentIdx >= i ? "bg-primary" : "bg-muted"}`} />}
                     <div className="flex items-center gap-1.5" data-testid={`step-indicator-${s.key}`}>
                       <span className={`flex items-center justify-center w-6 h-6 rounded-full text-[11px] font-medium ${isActive ? "bg-primary text-primary-foreground" : isDone ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"}`}>
                         {isDone ? <Check className="w-3.5 h-3.5" /> : s.num}
@@ -5828,16 +5828,10 @@ function AgentDetailInner() {
                   <Separator />
 
                   <div className="flex flex-col gap-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Package className="w-4 h-4 text-muted-foreground" />
-                        <span className="text-sm font-medium">Dependencies</span>
-                        <Badge variant="outline" className="text-[10px]">{depCount} packages</Badge>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Label htmlFor="pin-versions-toggle" className="text-xs cursor-pointer">Pin versions</Label>
-                        <Switch id="pin-versions-toggle" checked={pinVersions} onCheckedChange={setPinVersions} data-testid="toggle-pin-versions" />
-                      </div>
+                    <div className="flex items-center gap-2">
+                      <Package className="w-4 h-4 text-muted-foreground" />
+                      <span className="text-sm font-medium">Dependencies</span>
+                      <Badge variant="outline" className="text-[10px]">{depCount} packages</Badge>
                     </div>
                     <div className="flex flex-wrap gap-1.5">
                       {Object.entries(depData.deps).map(([name, ver]) => (
@@ -5875,6 +5869,19 @@ function AgentDetailInner() {
                       </AccordionTrigger>
                       <AccordionContent className="px-4 pb-4">
                         <div className="flex flex-col gap-4">
+                          <div className="flex items-center justify-between gap-4">
+                            <div className="flex flex-col gap-0.5">
+                              <div className="flex items-center gap-2">
+                                <Lock className="w-4 h-4 text-muted-foreground" />
+                                <span className="text-sm font-medium">Pin Dependency Versions</span>
+                              </div>
+                              <span className="text-[11px] text-muted-foreground ml-6">Pin packages to exact versions for reproducible builds across environments.</span>
+                            </div>
+                            <Switch id="pin-versions-toggle" checked={pinVersions} onCheckedChange={setPinVersions} data-testid="toggle-pin-versions" />
+                          </div>
+
+                          <Separator />
+
                           <div className="flex items-center justify-between gap-4">
                             <div className="flex flex-col gap-0.5">
                               <div className="flex items-center gap-2">
