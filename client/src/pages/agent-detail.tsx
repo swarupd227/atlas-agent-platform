@@ -902,7 +902,9 @@ function AgentDetailInner() {
       setExportPreview(null);
       setExportFramework("generic");
       setExportDialogOpen(true);
-      window.history.replaceState({}, "", window.location.pathname);
+      params.delete("export");
+      const remaining = params.toString();
+      window.history.replaceState({}, "", window.location.pathname + (remaining ? `?${remaining}` : ""));
     }
   }, []);
   const [deliveryTarget, setDeliveryTarget] = useState<"zip" | "git" | "replit">("zip");

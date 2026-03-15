@@ -835,11 +835,11 @@ export default function Agents() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <Link href={`/agents/${agent.id}?export=1`}>
-                              <DropdownMenuItem data-testid={`menu-export-agent-${agent.id}`}>
+                            <DropdownMenuItem asChild data-testid={`menu-export-agent-${agent.id}`}>
+                              <Link href={`/agents/${agent.id}?export=1`}>
                                 <Download className="w-3.5 h-3.5 mr-2" /> Export as Code
-                              </DropdownMenuItem>
-                            </Link>
+                              </Link>
+                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                         <Link href={`/agents/${agent.id}`}>
