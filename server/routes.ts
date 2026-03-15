@@ -18361,7 +18361,7 @@ def ${tool.name}(args: dict) -> dict:
     completionPromise: string;
     framework: string;
     blueprintJson?: Record<string, unknown>;
-  }): Promise<{ entrypoint: string; toolAdapters: Record<string, string>; aiGenerated: true } | null> {
+  }): Promise<{ entrypoint: string; toolAdapters: Record<string, string>; agentYaml?: string; dockerfile?: string; aiGenerated: true } | null> {
     try {
       const toolsJson = JSON.stringify(ctx.tools.map(t => ({
         name: t.name,
@@ -18377,13 +18377,15 @@ def ${tool.name}(args: dict) -> dict:
 
       const systemMsg = `You are an expert AI agent developer. Generate production-quality ${lang} code for an autonomous AI agent package.
 You MUST respond with valid JSON only — no markdown, no explanations, no code fences.
-The JSON must have exactly these keys:
+The JSON must have these keys:
 {
   "entrypoint": "<full entrypoint file content as a string>",
   "toolAdapters": {
     "<toolName>": "<full adapter file content as a string>",
     ...
-  }
+  },
+  "agentYaml": "<optional: enriched agent.yaml content reflecting the agent's actual config>",
+  "dockerfile": "<optional: Dockerfile content tailored to the agent's dependencies>"
 }`;
 
       const blueprintStr = (ctx.blueprintJson && Object.keys(ctx.blueprintJson).length > 0)
@@ -18473,11 +18475,18 @@ Return valid JSON only. No markdown. No code fences.`;
       const toolAdapters: Record<string, string> = {};
       if (parsed.toolAdapters && typeof parsed.toolAdapters === "object") {
         for (const [name, content] of Object.entries(parsed.toolAdapters)) {
-          if (typeof content === "string") toolAdapters[name] = content;
+          if (typeof content === "string" && content.length > 10) toolAdapters[name] = content;
         }
       }
 
-      return { entrypoint: parsed.entrypoint, toolAdapters, aiGenerated: true };
+      const result: { entrypoint: string; toolAdapters: Record<string, string>; agentYaml?: string; dockerfile?: string; aiGenerated: true } = {
+        entrypoint: parsed.entrypoint,
+        toolAdapters,
+        aiGenerated: true,
+      };
+      if (typeof parsed.agentYaml === "string" && parsed.agentYaml.length > 10) result.agentYaml = parsed.agentYaml;
+      if (typeof parsed.dockerfile === "string" && parsed.dockerfile.length > 10) result.dockerfile = parsed.dockerfile;
+      return result;
     } catch (err: any) {
       console.error("[generateAgentCodeWithAI] Failed:", err?.message || err);
       return null;
@@ -18579,7 +18588,7 @@ Return valid JSON only. No markdown. No code fences.`;
       const agentSlug = agent.name.toLowerCase().replace(/[^a-z0-9-]/g, "-");
 
       const files: Record<string, string> = {
-        "agent.yaml": agentYaml,
+        "agent.yaml": aiResult?.agentYaml || agentYaml,
       };
 
       const pin = pinVersions;
@@ -18845,7 +18854,7 @@ Return valid JSON only. No markdown. No code fences.`;
           if (llmProvider === "openai") reqs.push(pin ? "langchain-openai==0.2.14" : "langchain-openai>=0.2.0", pin ? "openai==1.58.1" : "openai>=1.0"); else reqs.push(pin ? "langchain-anthropic==0.2.8" : "langchain-anthropic>=0.2.0", pin ? "anthropic==0.30.1" : "anthropic>=0.30");
           files["requirements.txt"] = reqs.join("\n") + "\n";
         }
-        files["Dockerfile"] = format === "typescript" ? dockerfile : dockerfilePy;
+        files["Dockerfile"] = aiResult?.dockerfile || (format === "typescript" ? dockerfile : dockerfilePy);
       } else if (framework === "crewai") {
         files["config/agents.yaml"] = `# CrewAI Agent Definitions\n# Generated for ${agent.name}\nagents:\n  - name: "${agent.name}"\n    role: "Primary Agent"\n    goal: "${agent.description || "Complete assigned tasks"}"\n    backstory: "${systemPrompt.substring(0, 200)}"\n    tools:\n${tools.map(t => `      - ${t.name}`).join("\n")}\n    max_iter: ${maxIterations}\n    verbose: true\n`;
         files["config/tasks.yaml"] = `# CrewAI Task Definitions\ntasks:\n  - name: "main_task"\n    description: "Execute the primary objective"\n    agent: "${agent.name}"\n    expected_output: "${completionPromise}"\n`;
@@ -18864,7 +18873,7 @@ Return valid JSON only. No markdown. No code fences.`;
           const reqs = [...baseReqs, pin ? "crewai==0.80.0" : "crewai>=0.80.0"]; addLlmDep({}, reqs);
           files["requirements.txt"] = reqs.join("\n") + "\n";
         }
-        files["Dockerfile"] = format === "typescript" ? dockerfile : dockerfilePy;
+        files["Dockerfile"] = aiResult?.dockerfile || (format === "typescript" ? dockerfile : dockerfilePy);
       } else if (framework === "foundry") {
         files["foundry.manifest.json"] = JSON.stringify({
           "$schema": "https://foundry.microsoft.com/schemas/agent-manifest.json",
@@ -18889,7 +18898,7 @@ Return valid JSON only. No markdown. No code fences.`;
           const reqs = [...baseReqs]; addLlmDep({}, reqs);
           files["requirements.txt"] = reqs.join("\n") + "\n";
         }
-        files["Dockerfile"] = format === "typescript" ? dockerfile : dockerfilePy;
+        files["Dockerfile"] = aiResult?.dockerfile || (format === "typescript" ? dockerfile : dockerfilePy);
       } else if (framework === "bedrock") {
         const openApiPaths: Record<string, any> = {};
         for (const tool of tools) {
@@ -18990,7 +18999,7 @@ Return valid JSON only. No markdown. No code fences.`;
           const reqs = [...baseReqs, pin ? "google-cloud-aiplatform==1.60.0" : "google-cloud-aiplatform>=1.60.0"]; addLlmDep({}, reqs);
           files["requirements.txt"] = reqs.join("\n") + "\n";
         }
-        files["Dockerfile"] = format === "typescript" ? dockerfile : dockerfilePy;
+        files["Dockerfile"] = aiResult?.dockerfile || (format === "typescript" ? dockerfile : dockerfilePy);
       } else if (framework === "databricks") {
         // Databricks AgentBricks (Mosaic AI Agent Framework) — Python only
         const dbxEndpoint = llmProvider === "openai" ? "databricks-meta-llama-3-1-70b-instruct" : "databricks-claude-3-5-sonnet";
