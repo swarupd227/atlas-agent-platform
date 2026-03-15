@@ -13,37 +13,74 @@ async function api(method: string, path: string, body?: any) {
   return { status: res.status, data };
 }
 
+async function ensureBlueprint(): Promise<{ id: string; blueprintJson: any }> {
+  const existing = await api("GET", "/api/blueprints");
+  if (existing.status === 200 && Array.isArray(existing.data)) {
+    const withJson = existing.data.find((b: any) => b.blueprintJson != null);
+    if (withJson) return { id: withJson.id, blueprintJson: withJson.blueprintJson };
+    if (existing.data.length > 0) return { id: existing.data[0].id, blueprintJson: existing.data[0].blueprintJson };
+  }
+  const created = await api("POST", "/api/blueprints", {
+    name: `Test-Blueprint-${Date.now()}`,
+    description: "Fixture blueprint for agent creation tests",
+    status: "draft",
+    blueprintJson: {
+      nodes: [{ id: "n1", type: "llm_call", label: "Process" }, { id: "n2", type: "tool_call", label: "Execute" }],
+      edges: [{ from: "n1", to: "n2" }],
+    },
+  });
+  expect(created.status).toBe(201);
+  return { id: created.data.id, blueprintJson: created.data.blueprintJson };
+}
+
+async function ensureOutcome(): Promise<string> {
+  const existing = await api("GET", "/api/outcomes");
+  if (existing.status === 200 && Array.isArray(existing.data) && existing.data.length > 0) {
+    return existing.data[0].id;
+  }
+  const created = await api("POST", "/api/outcomes", {
+    name: `Test-Outcome-${Date.now()}`,
+    description: "Fixture outcome for agent creation tests",
+    status: "active",
+    riskTier: "MEDIUM",
+    industry: "financial_services",
+  });
+  expect(created.status).toBe(201);
+  return created.data.id;
+}
+
+async function ensureTemplate(): Promise<string> {
+  const existing = await api("GET", "/api/agent-templates");
+  if (existing.status === 200 && Array.isArray(existing.data) && existing.data.length > 0) {
+    return existing.data[0].id;
+  }
+  const created = await api("POST", "/api/agent-templates", {
+    name: `Test-Template-${Date.now()}`,
+    description: "Fixture template for agent creation tests",
+    category: "general",
+    industry: "cross_industry",
+    complexity: "medium",
+  });
+  expect(created.status).toBe(201);
+  return created.data.id;
+}
+
 describe("Agent Creation Routes (Post Task #24)", () => {
-  let existingBlueprintId: string;
-  let existingBlueprintJson: any;
-  let existingOutcomeId: string;
-  let existingTemplateId: string;
+  let blueprintId: string;
+  let blueprintJson: any;
+  let outcomeId: string;
+  let templateId: string;
 
   beforeAll(async () => {
-    const bpRes = await api("GET", "/api/blueprints");
-    expect(bpRes.status).toBe(200);
-    expect(Array.isArray(bpRes.data)).toBe(true);
-    expect(bpRes.data.length).toBeGreaterThan(0);
-    const bpWithJson = bpRes.data.find((b: any) => b.blueprintJson != null);
-    const bp = bpWithJson || bpRes.data[0];
-    existingBlueprintId = bp.id;
-    existingBlueprintJson = bp.blueprintJson;
-
-    const ocRes = await api("GET", "/api/outcomes");
-    expect(ocRes.status).toBe(200);
-    expect(Array.isArray(ocRes.data)).toBe(true);
-    expect(ocRes.data.length).toBeGreaterThan(0);
-    existingOutcomeId = ocRes.data[0].id;
-
-    const tplRes = await api("GET", "/api/agent-templates");
-    expect(tplRes.status).toBe(200);
-    expect(Array.isArray(tplRes.data)).toBe(true);
-    expect(tplRes.data.length).toBeGreaterThan(0);
-    existingTemplateId = tplRes.data[0].id;
+    const bp = await ensureBlueprint();
+    blueprintId = bp.id;
+    blueprintJson = bp.blueprintJson;
+    outcomeId = await ensureOutcome();
+    templateId = await ensureTemplate();
   });
 
-  describe("POST /api/agents", () => {
-    it("creates agent without blueprint — no blueprintJson in response", async () => {
+  describe("POST /api/agents — single agent creation", () => {
+    it("creates agent without blueprint", async () => {
       const name = `Test-NoBP-${Date.now()}`;
       const res = await api("POST", "/api/agents", {
         name,
@@ -74,19 +111,18 @@ describe("Agent Creation Routes (Post Task #24)", () => {
         modelProvider: "openai",
         modelName: "gpt-4.1",
         status: "active",
-        blueprintId: existingBlueprintId,
+        blueprintId,
       });
       expect(res.status).toBe(201);
       expect(res.data).toHaveProperty("id");
       expect(res.data.blueprintJson).not.toBeNull();
-      if (existingBlueprintJson) {
-        expect(JSON.stringify(res.data.blueprintJson)).toBe(
-          JSON.stringify(existingBlueprintJson)
-        );
+      if (blueprintJson) {
+        expect(JSON.stringify(res.data.blueprintJson)).toBe(JSON.stringify(blueprintJson));
       }
     });
 
     it("returns 400 for invalid blueprintId", async () => {
+      const badId = "non-existent-blueprint-id-12345";
       const res = await api("POST", "/api/agents", {
         name: `Test-BadBP-${Date.now()}`,
         description: "Should fail",
@@ -96,18 +132,17 @@ describe("Agent Creation Routes (Post Task #24)", () => {
         modelProvider: "openai",
         modelName: "gpt-4.1",
         status: "active",
-        blueprintId: "non-existent-blueprint-id-12345",
+        blueprintId: badId,
       });
       expect(res.status).toBe(400);
       expect(res.data.message).toContain("Blueprint not found");
-      expect(res.data.message).toContain("non-existent-blueprint-id-12345");
+      expect(res.data.message).toContain(badId);
     });
 
-    it("creates agent without blueprintId — blueprintJson from body is preserved", async () => {
-      const customBlueprintJson = { nodes: [{ id: "n1", type: "llm_call", label: "Test" }], edges: [] };
-      const name = `Test-CustomBP-${Date.now()}`;
+    it("preserves inline blueprintJson when no blueprintId is set", async () => {
+      const inlineJson = { nodes: [{ id: "n1", type: "llm_call", label: "Test" }], edges: [] };
       const res = await api("POST", "/api/agents", {
-        name,
+        name: `Test-InlineBP-${Date.now()}`,
         description: "Agent with inline blueprintJson",
         agentType: "single",
         riskTier: "MEDIUM",
@@ -115,97 +150,92 @@ describe("Agent Creation Routes (Post Task #24)", () => {
         modelProvider: "openai",
         modelName: "gpt-4.1",
         status: "active",
-        blueprintJson: customBlueprintJson,
+        blueprintJson: inlineJson,
       });
       expect(res.status).toBe(201);
       expect(res.data.blueprintJson).toBeTruthy();
-      expect(res.data.blueprintJson.nodes).toEqual(customBlueprintJson.nodes);
+      expect(res.data.blueprintJson.nodes).toEqual(inlineJson.nodes);
     });
   });
 
   describe("POST /api/agents/bulk-create-from-plan", () => {
-    it("creates multiple agents — second with blueprintId resolves blueprintJson", async () => {
+    it("creates multiple agents — resolves blueprintJson for agent with blueprintId", async () => {
       const res = await api("POST", "/api/agents/bulk-create-from-plan", {
-        outcomeId: existingOutcomeId,
+        outcomeId,
         industry: "financial_services",
         agents: [
           {
             name: `BulkA-${Date.now()}`,
-            description: "First bulk agent (no blueprint)",
+            description: "No blueprint",
             riskTier: "MEDIUM",
             autonomyMode: "assisted",
           },
           {
             name: `BulkB-${Date.now()}`,
-            description: "Second bulk agent (with blueprint)",
+            description: "With blueprint",
             riskTier: "HIGH",
             autonomyMode: "assisted",
-            blueprintId: existingBlueprintId,
+            blueprintId,
           },
         ],
       });
       expect(res.status).toBe(200);
       expect(res.data.agents).toHaveLength(2);
       expect(res.data.count).toBe(2);
-      expect(res.data.agents[0].outcomeId).toBe(existingOutcomeId);
+      expect(res.data.agents[0].outcomeId).toBe(outcomeId);
       expect(res.data.agents[1].blueprintJson).not.toBeNull();
-      if (existingBlueprintJson) {
-        expect(JSON.stringify(res.data.agents[1].blueprintJson)).toBe(
-          JSON.stringify(existingBlueprintJson)
-        );
+      if (blueprintJson) {
+        expect(JSON.stringify(res.data.agents[1].blueprintJson)).toBe(JSON.stringify(blueprintJson));
       }
     });
 
     it("returns 400 for invalid blueprintId in bulk create", async () => {
+      const badId = "fake-blueprint-id-99999";
       const res = await api("POST", "/api/agents/bulk-create-from-plan", {
-        outcomeId: existingOutcomeId,
-        agents: [
-          {
-            name: `BulkBad-${Date.now()}`,
-            description: "Should fail",
-            blueprintId: "fake-blueprint-id-99999",
-          },
-        ],
+        outcomeId,
+        agents: [{ name: `BulkBad-${Date.now()}`, description: "Should fail", blueprintId: badId }],
       });
       expect(res.status).toBe(400);
       expect(res.data.message).toContain("Blueprint not found");
-      expect(res.data.message).toContain("fake-blueprint-id-99999");
+      expect(res.data.message).toContain(badId);
     });
 
-    it("fails validation when agents array is empty", async () => {
+    it("rejects empty agents array", async () => {
       const res = await api("POST", "/api/agents/bulk-create-from-plan", {
-        outcomeId: existingOutcomeId,
+        outcomeId,
         agents: [],
       });
       expect(res.status).toBe(400);
     });
   });
 
-  describe("Template defaultBlueprintId", () => {
-    it("GET /api/agent-templates returns templates — defaultBlueprintId field exists", async () => {
+  describe("Template defaultBlueprintId field", () => {
+    it("GET /api/agent-templates includes defaultBlueprintId on each template", async () => {
       const res = await api("GET", "/api/agent-templates");
       expect(res.status).toBe(200);
       expect(Array.isArray(res.data)).toBe(true);
-      const first = res.data[0];
-      expect(first).toHaveProperty("id");
-      expect(first).toHaveProperty("name");
-      expect("defaultBlueprintId" in first).toBe(true);
+      for (const t of res.data) {
+        expect("defaultBlueprintId" in t).toBe(true);
+      }
     });
 
-    it("PUT /api/agent-templates/:id can set defaultBlueprintId", async () => {
-      const getRes = await api("GET", `/api/agent-templates/${existingTemplateId}`);
+    it("PUT /api/agent-templates/:id can set and restore defaultBlueprintId", async () => {
+      const getRes = await api("GET", `/api/agent-templates/${templateId}`);
       expect(getRes.status).toBe(200);
-      const original = getRes.data;
-      const originalDefaultBlueprintId = original.defaultBlueprintId;
+      const originalVal = getRes.data.defaultBlueprintId;
 
-      const updateRes = await api("PUT", `/api/agent-templates/${existingTemplateId}`, {
-        defaultBlueprintId: existingBlueprintId,
+      const setRes = await api("PUT", `/api/agent-templates/${templateId}`, {
+        defaultBlueprintId: blueprintId,
       });
-      expect(updateRes.status).toBe(200);
-      expect(updateRes.data.defaultBlueprintId).toBe(existingBlueprintId);
+      expect(setRes.status).toBe(200);
+      expect(setRes.data.defaultBlueprintId).toBe(blueprintId);
 
-      await api("PUT", `/api/agent-templates/${existingTemplateId}`, {
-        defaultBlueprintId: originalDefaultBlueprintId || null,
+      const verifyRes = await api("GET", `/api/agent-templates/${templateId}`);
+      expect(verifyRes.status).toBe(200);
+      expect(verifyRes.data.defaultBlueprintId).toBe(blueprintId);
+
+      await api("PUT", `/api/agent-templates/${templateId}`, {
+        defaultBlueprintId: originalVal || null,
       });
     });
   });
