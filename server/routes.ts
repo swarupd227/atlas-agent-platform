@@ -9,6 +9,7 @@ import { z, ZodError } from "zod";
 import { startWorker, jobEvents } from "./worker";
 import { executePromptWithMcp, executeTeamPipeline, executeKGQueryTemplate, startAgentRuntime, stopAgentRuntime, runAgentOnce, getActiveRuntimes, isRuntimeActive, runtimeEvents, canonicalJsonStringify, checkOntologyCompliance, type RuntimeAgent, type RuntimeProgressEvent } from "./agent-runtime";
 import OpenAI, { toFile } from "openai";
+import Anthropic from "@anthropic-ai/sdk";
 import { getProvider, getDefaultProvider, getAvailableProviders, type LLMProvider } from "./llm-provider";
 import multer from "multer";
 import { checkPermission, getRequestRole, getTraceRedactionLevel, getRedactionLevel, redactPayload, getOntologySensitivityKeys, invalidateOntologySensitivityCache, redactWithOntologyKeys } from "./permissions";
@@ -91,6 +92,11 @@ import {
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+});
+
+const anthropicClient = new Anthropic({
+  apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
+  baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
 });
 
 async function routeAIComplete(
@@ -18342,8 +18348,8 @@ def ${tool.name}(args: dict) -> dict:
     return tools.map(t => `from .${t.name} import ${t.name}`).join("\n") + "\n";
   }
 
-  // Uses OpenAI GPT-4.1 via the installed AI Integrations (javascript_openai_ai_integrations).
-  // Anthropic/Claude is not available as a configured integration in this environment.
+  // Uses Claude (Anthropic) via the installed AI Integrations (javascript_anthropic_ai_integrations).
+  // Falls back to templates if Claude generation fails.
   async function generateAgentCodeWithAI(ctx: {
     agentName: string;
     agentDescription: string;
@@ -18447,18 +18453,20 @@ Requirements for each TOOL ADAPTER file:
 
 Return valid JSON only. No markdown. No code fences.`;
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1",
+      const response = await anthropicClient.messages.create({
+        model: "claude-sonnet-4-6",
+        max_tokens: 8192,
+        system: systemMsg,
         messages: [
-          { role: "system", content: systemMsg },
           { role: "user", content: userMsg },
         ],
-        max_tokens: 8192,
-        temperature: 0.2,
-        response_format: { type: "json_object" },
       });
 
-      const raw = response.choices[0]?.message?.content || "";
+      const textBlocks = response.content.filter((b): b is Anthropic.TextBlock => b.type === "text");
+      let raw = textBlocks.map(b => b.text).join("");
+      const jsonMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (jsonMatch) raw = jsonMatch[1].trim();
+      raw = raw.trim();
       const parsed = JSON.parse(raw);
 
       if (!parsed.entrypoint || typeof parsed.entrypoint !== "string") return null;
