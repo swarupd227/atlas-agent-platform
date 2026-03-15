@@ -2130,7 +2130,7 @@ export default function TemplateDetail() {
               <CardContent className="p-4">
                 <DefaultBlueprintSection
                   templateId={templateId!}
-                  defaultBlueprintId={(displayTemplate as any)?.defaultBlueprintId || null}
+                  defaultBlueprintId={displayTemplate?.defaultBlueprintId || null}
                   onUpdate={() => {
                     queryClient.invalidateQueries({ queryKey: ["/api/agent-templates", templateId] });
                     queryClient.invalidateQueries({ queryKey: ["/api/agent-templates"] });

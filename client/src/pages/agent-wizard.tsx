@@ -1113,7 +1113,7 @@ export default function AgentWizard() {
           ? template.rollbackPlan
           : JSON.stringify(template.rollbackPlan)
         : "",
-      blueprintId: (template as any).defaultBlueprintId || null,
+      blueprintId: template.defaultBlueprintId || null,
       blueprintName: null,
       templateSkills: (() => {
         const reqSkills = Array.isArray(template.requiredSkills)
