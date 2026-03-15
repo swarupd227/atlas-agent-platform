@@ -1286,6 +1286,9 @@ function AgentDetailInner() {
       const fileNames = Object.keys(data.files || {});
       if (fileNames.length > 0) setExportPreviewFile(fileNames.find((f: string) => f.includes("entrypoint")) || fileNames[0]);
       setExportStep("preview");
+      if (data.metadata && !data.metadata.aiGenerated) {
+        toast({ title: "AI generation unavailable", description: "Code was generated using templates. AI-powered generation was not available or failed.", variant: "default" });
+      }
     },
     onError: () => {
       toast({ title: "Export failed", description: "Could not generate code package", variant: "destructive" });

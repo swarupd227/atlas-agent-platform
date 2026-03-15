@@ -18342,6 +18342,8 @@ def ${tool.name}(args: dict) -> dict:
     return tools.map(t => `from .${t.name} import ${t.name}`).join("\n") + "\n";
   }
 
+  // Uses OpenAI GPT-4.1 via the installed AI Integrations (javascript_openai_ai_integrations).
+  // Anthropic/Claude is not available as a configured integration in this environment.
   async function generateAgentCodeWithAI(ctx: {
     agentName: string;
     agentDescription: string;
@@ -18378,8 +18380,11 @@ The JSON must have exactly these keys:
   }
 }`;
 
-      const blueprintCtx = (ctx.blueprintJson && Object.keys(ctx.blueprintJson).length > 0)
-        ? `\nBlueprint JSON (agent graph structure):\n${JSON.stringify(ctx.blueprintJson, null, 2).substring(0, 1200)}`
+      const blueprintStr = (ctx.blueprintJson && Object.keys(ctx.blueprintJson).length > 0)
+        ? JSON.stringify(ctx.blueprintJson, null, 2)
+        : "";
+      const blueprintCtx = blueprintStr
+        ? `\nBlueprint JSON (agent graph structure):\n${blueprintStr}`
         : "";
 
       const frameworkInstructions: Record<string, string> = {
@@ -18423,7 +18428,7 @@ The JSON must have exactly these keys:
 Agent context:
 - Name: ${ctx.agentName}
 - Description: ${ctx.agentDescription}
-- System prompt: ${ctx.systemPrompt.substring(0, 800)}${ctx.systemPrompt.length > 800 ? "..." : ""}
+- System prompt: ${ctx.systemPrompt}
 - Max iterations: ${ctx.maxIterations}
 - Completion signal phrase: "${ctx.completionPromise}"
 - Framework: ${ctx.framework}${blueprintCtx}
