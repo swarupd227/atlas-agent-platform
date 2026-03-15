@@ -17747,6 +17747,7 @@ Eval Suites: ${evalSuites.length} configured`,
     permissions?: any;
     contextProfileName?: string | null;
     memoryProfileName?: string | null;
+    mcpServers?: Array<{ name: string; url: string | null; transportType: string; description?: string | null }>;
   }
 
   function generateAgentYaml(
@@ -17812,13 +17813,68 @@ Eval Suites: ${evalSuites.length} configured`,
     }
     if (extras?.contextProfileName) lines.push(`context_profile: "${extras.contextProfileName}"`);
     if (extras?.memoryProfileName) lines.push(`memory_profile: "${extras.memoryProfileName}"`);
+    if (extras?.mcpServers && extras.mcpServers.length > 0) {
+      lines.push(`mcp_servers:`);
+      for (const s of extras.mcpServers) {
+        lines.push(`  - name: "${s.name}"`);
+        lines.push(`    transport: "${s.transportType}"`);
+        if (s.url) lines.push(`    url: "${s.url}"`);
+        if (s.description) lines.push(`    description: "${s.description.replace(/"/g, '\\"').replace(/\n/g, " ")}"`);
+      }
+    }
     return lines.join("\n");
+  }
+
+  function generateTsMcpClientBlock(mcpServers: Array<{ name: string; url: string | null; transportType: string }>): string {
+    if (mcpServers.length === 0) return "";
+    const serverInits = mcpServers.map((s, i) => {
+      const varName = `mcpClient${i}`;
+      const url = s.url || "http://localhost:3001";
+      return `
+const ${varName}Transport = new StreamableHTTPClientTransport(new URL("${url}"));
+const ${varName} = new Client({ name: "${s.name}-client", version: "1.0.0" });
+await ${varName}.connect(${varName}Transport);
+console.log("[MCP] Connected to ${s.name} at ${url}");
+mcpClients.push(${varName});`;
+    }).join("\n");
+    return `
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+
+const mcpClients: Client[] = [];
+
+async function initMcpClients() {
+  ${serverInits}
+}
+`;
+  }
+
+  function generatePyMcpClientBlock(mcpServers: Array<{ name: string; url: string | null; transportType: string }>): string {
+    if (mcpServers.length === 0) return "";
+    const serverInits = mcpServers.map((s, i) => {
+      const url = s.url || "http://localhost:3001";
+      return `
+    transport_${i} = StreamableHttpTransport("${url}")
+    client_${i} = ClientSession(transport_${i})
+    await client_${i}.initialize()
+    print(f"[MCP] Connected to ${s.name} at ${url}")
+    mcp_clients.append(client_${i})`;
+    }).join("\n");
+    return `
+from mcp import ClientSession
+from mcp.client.streamable_http import StreamableHttpTransport
+
+mcp_clients: list = []
+
+async def init_mcp_clients():${serverInits}
+`;
   }
 
   function generateTsEntrypointOpenAI(
     tools: Array<{ name: string; description?: string; parameters?: any }>,
     maxIterations: number,
-    completionPromise: string
+    completionPromise: string,
+    mcpServers?: Array<{ name: string; url: string | null; transportType: string }>
   ): string {
     const toolImports = tools.map(t => `import { ${t.name} } from "./tools/${t.name}";`).join("\n");
     const toolMap = tools.map(t => `  "${t.name}": ${t.name},`).join("\n");
@@ -17828,11 +17884,13 @@ Eval Suites: ${evalSuites.length} configured`,
         : { type: "object", properties: {}, additionalProperties: true };
       return `  "${t.name}": { description: ${JSON.stringify(t.description || `Execute the ${t.name} tool`)}, parameters: ${JSON.stringify(schema)} }`;
     }).join(",\n");
+    const mcpBlock = mcpServers && mcpServers.length > 0 ? generateTsMcpClientBlock(mcpServers) : "";
+    const mcpInitCall = mcpServers && mcpServers.length > 0 ? `\n  await initMcpClients();` : "";
     return `import OpenAI from "openai";
 import * as fs from "fs";
 import * as yaml from "js-yaml";
 ${toolImports}
-
+${mcpBlock}
 const config = yaml.load(fs.readFileSync("agent.yaml", "utf8")) as any;
 const client = new OpenAI();
 
@@ -17849,8 +17907,9 @@ const toolDefinitions: OpenAI.Chat.Completions.ChatCompletionTool[] = Object.ent
   function: { name, description: schema.description, parameters: schema.parameters },
 }));
 
-async function main() {
-  const task = process.argv[2] || "Hello, agent!";
+async function main() {${mcpInitCall}
+  const streaming = process.argv.includes("--stream");
+  const task = process.argv.find(a => a !== "--stream" && process.argv.indexOf(a) > 1) || "Hello, agent!";
   let messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
     { role: "system", content: config.system_prompt },
     { role: "user", content: task },
@@ -17920,7 +17979,8 @@ main().catch(console.error);
   function generateTsEntrypointAnthropic(
     tools: Array<{ name: string; description?: string; parameters?: any }>,
     maxIterations: number,
-    completionPromise: string
+    completionPromise: string,
+    mcpServers?: Array<{ name: string; url: string | null; transportType: string }>
   ): string {
     const toolImports = tools.map(t => `import { ${t.name} } from "./tools/${t.name}";`).join("\n");
     const toolMap = tools.map(t => `  "${t.name}": ${t.name},`).join("\n");
@@ -17930,11 +17990,13 @@ main().catch(console.error);
         : { type: "object", properties: {} };
       return `  "${t.name}": { description: ${JSON.stringify(t.description || `Execute the ${t.name} tool`)}, input_schema: ${JSON.stringify(schema)} }`;
     }).join(",\n");
+    const mcpBlock = mcpServers && mcpServers.length > 0 ? generateTsMcpClientBlock(mcpServers) : "";
+    const mcpInitCall = mcpServers && mcpServers.length > 0 ? `\n  await initMcpClients();` : "";
     return `import Anthropic from "@anthropic-ai/sdk";
 import * as fs from "fs";
 import * as yaml from "js-yaml";
 ${toolImports}
-
+${mcpBlock}
 const config = yaml.load(fs.readFileSync("agent.yaml", "utf8")) as any;
 const client = new Anthropic();
 
@@ -17952,8 +18014,9 @@ const toolDefinitions: Anthropic.Tool[] = Object.entries(TOOL_REGISTRY).map(([na
   input_schema: schema.input_schema,
 }));
 
-async function main() {
-  const task = process.argv[2] || "Hello, agent!";
+async function main() {${mcpInitCall}
+  const streaming = process.argv.includes("--stream");
+  const task = process.argv.find(a => a !== "--stream" && process.argv.indexOf(a) > 1) || "Hello, agent!";
   let messages: Anthropic.MessageParam[] = [
     { role: "user", content: task },
   ];
@@ -18027,7 +18090,8 @@ main().catch(console.error);
   function generatePyEntrypointOpenAI(
     tools: Array<{ name: string; description?: string; parameters?: any }>,
     maxIterations: number,
-    completionPromise: string
+    completionPromise: string,
+    mcpServers?: Array<{ name: string; url: string | null; transportType: string }>
   ): string {
     const toolImports = tools.map(t => `from tools.${t.name} import ${t.name}`).join("\n");
     const toolMap = tools.map(t => `    "${t.name}": ${t.name},`).join("\n");
@@ -18037,12 +18101,14 @@ main().catch(console.error);
         : { type: "object", properties: {}, additionalProperties: true };
       return `    "${t.name}": {"description": ${JSON.stringify(t.description || `Execute the ${t.name} tool`)}, "parameters": ${JSON.stringify(schema)}}`;
     }).join(",\n");
+    const mcpBlock = mcpServers && mcpServers.length > 0 ? generatePyMcpClientBlock(mcpServers) : "";
+    const mcpInitCall = mcpServers && mcpServers.length > 0 ? `\n    import asyncio\n    asyncio.run(init_mcp_clients())` : "";
     return `import json
 import sys
 import yaml
 from openai import OpenAI
 ${toolImports}
-
+${mcpBlock}
 with open("agent.yaml", "r") as f:
     config = yaml.safe_load(f)
 
@@ -18070,7 +18136,9 @@ tool_definitions = [
 
 
 def main():
-    task = sys.argv[1] if len(sys.argv) > 1 else "Hello, agent!"
+    streaming = "--stream" in sys.argv
+    args = [a for a in sys.argv[1:] if a != "--stream"]
+    task = args[0] if args else "Hello, agent!"${mcpInitCall}
     messages = [
         {"role": "system", "content": config["system_prompt"]},
         {"role": "user", "content": task},
@@ -18136,7 +18204,8 @@ if __name__ == "__main__":
   function generatePyEntrypointAnthropic(
     tools: Array<{ name: string; description?: string; parameters?: any }>,
     maxIterations: number,
-    completionPromise: string
+    completionPromise: string,
+    mcpServers?: Array<{ name: string; url: string | null; transportType: string }>
   ): string {
     const toolImports = tools.map(t => `from tools.${t.name} import ${t.name}`).join("\n");
     const toolMap = tools.map(t => `    "${t.name}": ${t.name},`).join("\n");
@@ -18146,12 +18215,14 @@ if __name__ == "__main__":
         : { type: "object", properties: {} };
       return `    "${t.name}": {"description": ${JSON.stringify(t.description || `Execute the ${t.name} tool`)}, "input_schema": ${JSON.stringify(schema)}}`;
     }).join(",\n");
+    const mcpBlock = mcpServers && mcpServers.length > 0 ? generatePyMcpClientBlock(mcpServers) : "";
+    const mcpInitCall = mcpServers && mcpServers.length > 0 ? `\n    import asyncio\n    asyncio.run(init_mcp_clients())` : "";
     return `import json
 import sys
 import yaml
 import anthropic
 ${toolImports}
-
+${mcpBlock}
 with open("agent.yaml", "r") as f:
     config = yaml.safe_load(f)
 
@@ -18176,7 +18247,9 @@ tool_definitions = [
 
 
 def main():
-    task = sys.argv[1] if len(sys.argv) > 1 else "Hello, agent!"
+    streaming = "--stream" in sys.argv
+    args = [a for a in sys.argv[1:] if a != "--stream"]
+    task = args[0] if args else "Hello, agent!"${mcpInitCall}
     messages = [
         {"role": "user", "content": task},
     ]
@@ -18583,6 +18656,13 @@ Return valid JSON only. No markdown. No code fences.`;
       const allMemoryProfiles = await storage.getMemoryProfiles();
       const memoryProfile = allMemoryProfiles.find(mp => mp.agentId === agent.id) || null;
 
+      const mcpLinks = await storage.getAgentMcpServers(agent.id);
+      const mcpServerDetails: Array<{ name: string; url: string | null; transportType: string; description?: string | null }> = [];
+      for (const link of mcpLinks) {
+        const srv = await storage.getMcpServer(link.serverId);
+        if (srv) mcpServerDetails.push({ name: srv.name, url: srv.url, transportType: srv.transportType, description: srv.description });
+      }
+
       const yamlExtras: AgentYamlExtras = {
         industry: (agent as any).industry || null,
         autonomyMode: agent.autonomyMode,
@@ -18594,6 +18674,7 @@ Return valid JSON only. No markdown. No code fences.`;
         permissions: permissionsConfig,
         contextProfileName: contextProfile?.name || null,
         memoryProfileName: memoryProfile?.name || null,
+        mcpServers: mcpServerDetails,
       };
 
       const agentYaml = generateAgentYaml(agent, tools, systemPrompt, maxIterations, completionPromise, yamlExtras);
@@ -18616,6 +18697,10 @@ Return valid JSON only. No markdown. No code fences.`;
       const addLlmDep = (deps: Record<string, string>, reqs: string[]) => {
         if (llmProvider === "openai") { deps["openai"] = pin ? "4.77.0" : "^4.0.0"; reqs.push(pin ? "openai==1.58.1" : "openai>=1.0"); }
         else { deps["@anthropic-ai/sdk"] = pin ? "0.30.1" : "^0.30.0"; reqs.push(pin ? "anthropic==0.30.1" : "anthropic>=0.30"); }
+        if (mcpServerDetails.length > 0) {
+          deps["@modelcontextprotocol/sdk"] = pin ? "1.12.1" : "^1.0.0";
+          reqs.push(pin ? "mcp==1.9.3" : "mcp>=1.0");
+        }
       };
 
       const envExample = llmProvider === "openai"
@@ -18760,8 +18845,8 @@ Return valid JSON only. No markdown. No code fences.`;
 
         if (format === "typescript") {
           files["src/runtime/orchestrator.ts"] = aiResult?.entrypoint || (llmProvider === "openai"
-            ? generateTsEntrypointOpenAI(tools, maxIterations, completionPromise)
-            : generateTsEntrypointAnthropic(tools, maxIterations, completionPromise));
+            ? generateTsEntrypointOpenAI(tools, maxIterations, completionPromise, mcpServerDetails)
+            : generateTsEntrypointAnthropic(tools, maxIterations, completionPromise, mcpServerDetails));
 
           files["src/tools/index.ts"] = generateTsToolsIndex(tools);
           for (const tool of tools) {
@@ -18808,8 +18893,8 @@ Return valid JSON only. No markdown. No code fences.`;
           files["package.json"] = JSON.stringify({ name: agentSlug, version: agentVersion, private: true, scripts: { start: "ts-node src/runtime/orchestrator.ts", test: "ts-node tests/eval_smoke.test.ts" }, dependencies: deps }, null, 2);
         } else {
           files["src/runtime/orchestrator.py"] = aiResult?.entrypoint || (llmProvider === "openai"
-            ? generatePyEntrypointOpenAI(tools, maxIterations, completionPromise)
-            : generatePyEntrypointAnthropic(tools, maxIterations, completionPromise));
+            ? generatePyEntrypointOpenAI(tools, maxIterations, completionPromise, mcpServerDetails)
+            : generatePyEntrypointAnthropic(tools, maxIterations, completionPromise, mcpServerDetails));
 
           files["src/tools/__init__.py"] = generatePyToolsInit(tools);
           for (const tool of tools) {
