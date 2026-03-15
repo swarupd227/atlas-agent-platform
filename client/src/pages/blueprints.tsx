@@ -32,7 +32,7 @@ import {
 import {
   GitBranch, Search, Plus, Bot, CheckCircle, FileCode, Pencil,
   Copy, ArrowRight, Shield, AlertTriangle, Crown, Users, Brain,
-  Wrench, Database, Split, UserCheck, Network,
+  Wrench, Database, Split, UserCheck, Network, Lock,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -440,10 +440,14 @@ export default function Blueprints() {
                         {agent.name}
                       </Badge>
                     )}
-                    {(bp.agentCount || 0) > 0 && (
-                      <Badge variant="outline" className="text-[10px]" data-testid={`badge-usage-${bp.id}`}>
-                        <Users className="w-2.5 h-2.5 mr-0.5" />
-                        {bp.agentCount} agent{bp.agentCount !== 1 ? "s" : ""}
+                    <Badge variant="outline" className="text-[10px]" data-testid={`badge-usage-${bp.id}`}>
+                      <Users className="w-2.5 h-2.5 mr-0.5" />
+                      {bp.agentCount || 0} agent{(bp.agentCount || 0) !== 1 ? "s" : ""}
+                    </Badge>
+                    {!bp.isShared && (
+                      <Badge variant="outline" className="text-[10px] bg-muted/50" data-testid={`badge-personal-${bp.id}`}>
+                        <Lock className="w-2.5 h-2.5 mr-0.5" />
+                        Personal
                       </Badge>
                     )}
                   </div>

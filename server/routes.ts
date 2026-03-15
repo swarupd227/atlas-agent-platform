@@ -9227,6 +9227,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     const cloned = await storage.createBlueprint({
       name: `${source.name} (Fork)`,
       description: source.description,
+      agentId: source.agentId,
       blueprintJson: source.blueprintJson,
       patternType: source.patternType,
       tags: source.tags,
