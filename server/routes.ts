@@ -18670,23 +18670,54 @@ Requirements for each TOOL ADAPTER file:
 4. Log the call with the tool name and args
 5. Throw/raise NotImplementedError with a clear message so developers know to implement it
 
-Return valid JSON only. No markdown. No code fences.`;
+IMPORTANT: Keep all code concise. Do NOT include a README or lengthy documentation strings in your JSON output.
+Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and properly closed.`;
 
       const response = await anthropicClient.messages.create({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 8192,
+        model: "claude-sonnet-4-5",
+        max_tokens: 16384,
         system: systemMsg,
         messages: [
           { role: "user", content: userMsg },
         ],
       });
 
+      if (response.stop_reason === "max_tokens") {
+        console.log(`[generateAgentCodeWithAI] Response truncated (hit max_tokens limit). Output may be incomplete.`);
+      }
+
       const textBlocks = response.content.filter((b): b is Anthropic.TextBlock => b.type === "text");
       let raw = textBlocks.map(b => b.text).join("");
       const jsonMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
       if (jsonMatch) raw = jsonMatch[1].trim();
       raw = raw.trim();
-      const parsed = JSON.parse(raw);
+      let parsed: any;
+      try {
+        parsed = JSON.parse(raw);
+      } catch (firstErr: any) {
+        console.log(`[generateAgentCodeWithAI] JSON parse failed: ${firstErr.message}. Attempting repair...`);
+        let fixed = "";
+        let inString = false;
+        let escaped = false;
+        for (let i = 0; i < raw.length; i++) {
+          const ch = raw[i];
+          if (escaped) { fixed += ch; escaped = false; continue; }
+          if (ch === "\\" && inString) { fixed += ch; escaped = true; continue; }
+          if (ch === '"') { inString = !inString; fixed += ch; continue; }
+          if (inString) {
+            if (ch === "\n") { fixed += "\\n"; continue; }
+            if (ch === "\r") { fixed += "\\r"; continue; }
+            if (ch === "\t") { fixed += "\\t"; continue; }
+          }
+          fixed += ch;
+        }
+        try {
+          parsed = JSON.parse(fixed);
+        } catch (secondErr: any) {
+          console.log(`[generateAgentCodeWithAI] JSON repair also failed: ${secondErr.message}`);
+          throw secondErr;
+        }
+      }
 
       if (!parsed.entrypoint || typeof parsed.entrypoint !== "string") return null;
       const toolAdapters: Record<string, string> = {};
