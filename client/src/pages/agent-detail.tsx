@@ -2,7 +2,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute, Link, useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { useState, useEffect, Fragment, Component, type ErrorInfo, type ReactNode } from "react";
+import { useState, useEffect, useMemo, Fragment, Component, type ErrorInfo, type ReactNode } from "react";
 import {
   Bot,
   ArrowLeft,
@@ -102,6 +102,8 @@ import type { Agent, RunTrace, EvalSuite, OutcomeContract, ImprovementRecommenda
 import { Wifi, WifiOff, Crown, Brain, Sparkles, ShieldAlert, Layers3, BookMarked, Binary, ScrollText, FileCheck, ChevronDown, ChevronUp } from "lucide-react";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { useIndustry } from "@/components/industry-provider";
+import { FileTree } from "@/components/file-tree";
+import Editor from "@monaco-editor/react";
 import { formatMs } from "@/components/shared-utils";
 
 
@@ -891,6 +893,8 @@ function AgentDetailInner() {
   const [exportFramework, setExportFramework] = useState<string>("generic");
   const [exportPreview, setExportPreview] = useState<{ files: Record<string, string>; metadata: any } | null>(null);
   const [exportPreviewFile, setExportPreviewFile] = useState<string>("");
+  const [editedFiles, setEditedFiles] = useState<Record<string, string>>({});
+  const [editedFilePaths, setEditedFilePaths] = useState<string[]>([]);
   const [exportStep, setExportStep] = useState<"configure" | "preview" | "download">("configure");
   const [exportApprovalSubmitted, setExportApprovalSubmitted] = useState(false);
   const [exportApprovalId, setExportApprovalId] = useState<string | null>(null);
@@ -1296,7 +1300,10 @@ function AgentDetailInner() {
     },
     onSuccess: (data) => {
       setExportPreview(data);
-      const fileNames = Object.keys(data.files || {});
+      const newFiles = data.files || {};
+      setEditedFiles({ ...newFiles });
+      setEditedFilePaths(Object.keys(newFiles));
+      const fileNames = Object.keys(newFiles);
       if (fileNames.length > 0) setExportPreviewFile(fileNames.find((f: string) => f.includes("entrypoint")) || fileNames[0]);
       setExportStep("preview");
       if (data.metadata && !data.metadata.aiGenerated) {
@@ -1310,7 +1317,7 @@ function AgentDetailInner() {
 
   function downloadExportPackage() {
     if (!exportPreview) return;
-    const files = exportPreview.files;
+    const files = Object.keys(editedFiles).length > 0 ? editedFiles : exportPreview.files;
     const blob = new Blob(
       [JSON.stringify({ files, metadata: exportPreview.metadata }, null, 2)],
       { type: "application/json" }
@@ -5590,8 +5597,8 @@ function AgentDetailInner() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={exportDialogOpen} onOpenChange={(open) => { setExportDialogOpen(open); if (!open) { setExportStep("configure"); setExportPreview(null); setToolAdapterOverrides({}); setOtelEnabled(true); setSpanGranularity("per-node"); setCompileStatus("idle"); setCompileOutput(""); setEvalStatus("idle"); setEvalOutput(""); setExportApprovalSubmitted(false); setExportApprovalId(null); setDeliveryTarget("zip"); setGitRepoUrl(""); } }}>
-        <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col overflow-hidden">
+      <Dialog open={exportDialogOpen} onOpenChange={(open) => { setExportDialogOpen(open); if (!open) { setExportStep("configure"); setExportPreview(null); setEditedFiles({}); setEditedFilePaths([]); setToolAdapterOverrides({}); setOtelEnabled(true); setSpanGranularity("per-node"); setCompileStatus("idle"); setCompileOutput(""); setEvalStatus("idle"); setEvalOutput(""); setExportApprovalSubmitted(false); setExportApprovalId(null); setDeliveryTarget("zip"); setGitRepoUrl(""); } }}>
+        <DialogContent className={`${exportStep === "preview" ? "max-w-5xl" : "max-w-3xl"} max-h-[85vh] flex flex-col overflow-hidden`}>
           <DialogHeader className="shrink-0">
             <DialogTitle className="flex items-center gap-2">
               {exportStep === "configure" ? (
@@ -6024,24 +6031,50 @@ function AgentDetailInner() {
 
             {exportStep === "preview" && (
               <div className="flex flex-col gap-3 flex-1 min-h-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  {exportPreview && Object.keys(exportPreview.files).map(fname => (
-                    <Button
-                      key={fname}
-                      size="sm"
-                      variant={exportPreviewFile === fname ? "default" : "outline"}
-                      onClick={() => setExportPreviewFile(fname)}
-                      data-testid={`button-preview-file-${fname.replace(/[/.]/g, "-")}`}
-                    >
-                      <FileCode className="w-3 h-3 mr-1" />
-                      {fname}
-                    </Button>
-                  ))}
-                </div>
-                <div className="flex-1 min-h-0 overflow-auto rounded-md bg-muted/30 border">
-                  <pre className="text-xs font-mono p-4 whitespace-pre-wrap" data-testid="preview-code-content">
-                    <code>{exportPreview?.files[exportPreviewFile] || ""}</code>
-                  </pre>
+                <div className="flex flex-1 min-h-0 rounded-md border overflow-hidden">
+                  <div className="w-56 shrink-0 border-r bg-muted/20 overflow-y-auto" data-testid="preview-file-tree-panel">
+                    {editedFilePaths.length > 0 && (
+                      <FileTree
+                        filePaths={editedFilePaths}
+                        activeFile={exportPreviewFile}
+                        onFileSelect={(path) => setExportPreviewFile(path)}
+                      />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0" data-testid="preview-editor-panel">
+                    <Editor
+                      height="100%"
+                      language={(() => {
+                        const ext = exportPreviewFile.split(".").pop()?.toLowerCase() || "";
+                        if (["ts", "tsx"].includes(ext)) return "typescript";
+                        if (["js", "jsx"].includes(ext)) return "javascript";
+                        if (ext === "py") return "python";
+                        if (ext === "json") return "json";
+                        if (["yaml", "yml"].includes(ext)) return "yaml";
+                        if (ext === "md") return "markdown";
+                        if (["sh", "bash"].includes(ext)) return "shell";
+                        if (ext === "toml") return "ini";
+                        return "plaintext";
+                      })()}
+                      value={editedFiles[exportPreviewFile] || ""}
+                      onChange={(value) => {
+                        if (value !== undefined) {
+                          setEditedFiles((prev) => ({ ...prev, [exportPreviewFile]: value }));
+                        }
+                      }}
+                      theme="vs-dark"
+                      options={{
+                        minimap: { enabled: false },
+                        fontSize: 12,
+                        lineNumbers: "on",
+                        scrollBeyondLastLine: false,
+                        wordWrap: "on",
+                        automaticLayout: true,
+                        padding: { top: 8 },
+                        readOnly: false,
+                      }}
+                    />
+                  </div>
                 </div>
                 {exportPreview?.metadata && (
                   <div className="flex items-center gap-3 flex-wrap text-[10px] text-muted-foreground">
@@ -6213,15 +6246,32 @@ function AgentDetailInner() {
               )}
               {exportStep === "download" && (
                 <Button
-                  onClick={() => {
-                    if (deliveryTarget === "zip") downloadExportPackage();
-                    else if (deliveryTarget === "git") toast({ title: "Git push initiated", description: `Source package will be pushed to ${gitRepoUrl}.` });
-                    setExportDialogOpen(false);
+                  onClick={async () => {
+                    if (deliveryTarget === "zip") {
+                      downloadExportPackage();
+                      setExportDialogOpen(false);
+                    } else if (deliveryTarget === "git") {
+                      try {
+                        const files = Object.keys(editedFiles).length > 0 ? editedFiles : exportPreview?.files || {};
+                        const res = await apiRequest("POST", `/api/agents/${agentId}/export-code/git-push`, {
+                          files,
+                          repoUrl: gitRepoUrl,
+                          metadata: exportPreview?.metadata,
+                        });
+                        const data = await res.json();
+                        toast({ title: "Pushed to Git", description: `Commit: ${(data.commitSha || "").substring(0, 8)}` });
+                        setExportDialogOpen(false);
+                      } catch {
+                        toast({ title: "Git push failed", description: "Could not push code to the repository. Check your GitHub token and repo URL.", variant: "destructive" });
+                      }
+                    } else {
+                      setExportDialogOpen(false);
+                    }
                   }}
                   disabled={deliveryTarget === "git" && !gitRepoUrl.trim()}
                   data-testid="button-export-deliver"
                 >
-                  {deliveryTarget === "zip" ? <><Download className="w-3.5 h-3.5 mr-1.5" />Download &amp; Close</> : deliveryTarget === "git" ? <>Push &amp; Close</> : <>Done</>}
+                  {deliveryTarget === "zip" ? <><Download className="w-3.5 h-3.5 mr-1.5" />Download &amp; Close</> : deliveryTarget === "git" ? <><GitBranch className="w-3.5 h-3.5 mr-1.5" />Push &amp; Close</> : <>Done</>}
                 </Button>
               )}
             </DialogFooter>

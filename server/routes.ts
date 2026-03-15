@@ -19436,6 +19436,129 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
     }
   });
 
+  app.post("/api/agents/:id/export-code/git-push", async (req, res) => {
+    interface GhRef { object: { sha: string } }
+    interface GhCommit { tree: { sha: string }; sha: string }
+    interface GhBlob { sha: string }
+    interface GhTree { sha: string }
+    interface GhRepo { default_branch: string }
+
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+
+      const { files, repoUrl, metadata } = req.body as { files: Record<string, string>; repoUrl: string; metadata?: { format?: string } };
+      if (!files || typeof files !== "object" || Object.keys(files).length === 0) {
+        return res.status(400).json({ message: "No files provided" });
+      }
+      if (!repoUrl || typeof repoUrl !== "string" || !repoUrl.trim()) {
+        return res.status(400).json({ message: "Repository URL is required" });
+      }
+
+      const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+      if (!token) return res.status(503).json({ message: "GitHub token not configured (GITHUB_TOKEN env var required)" });
+
+      const repoMatch = repoUrl.match(/github\.com[/:]([^/]+)\/([^/.]+)/);
+      if (!repoMatch) return res.status(400).json({ message: "Invalid GitHub repository URL" });
+      const [, owner, repo] = repoMatch;
+
+      const gitConfig = (agent.gitConfig || {}) as Record<string, string>;
+      if (!gitConfig.repoUrl) {
+        return res.status(403).json({ message: "Agent does not have a configured Git repository. Configure gitConfig.repoUrl on the agent before pushing." });
+      }
+      const normalizeUrl = (u: string) => u.replace(/\.git$/, "").replace(/\/$/, "").toLowerCase();
+      if (normalizeUrl(gitConfig.repoUrl) !== normalizeUrl(repoUrl)) {
+        return res.status(403).json({ message: "Repository URL does not match the agent's configured Git repository" });
+      }
+
+      const baseApiUrl = `https://api.github.com/repos/${owner}/${repo}`;
+      const ghHeaders: Record<string, string> = { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "Content-Type": "application/json" };
+
+      const repoRes = await fetch(baseApiUrl, { headers: ghHeaders });
+      if (!repoRes.ok) {
+        const errBody = await repoRes.text();
+        return res.status(repoRes.status === 404 ? 404 : 502).json({ message: `GitHub repository not accessible: ${repoRes.status} ${errBody.substring(0, 200)}` });
+      }
+      const repoData: GhRepo = await repoRes.json() as GhRepo;
+      const branch = repoData.default_branch || "main";
+
+      let parentCommitSha: string | undefined;
+      let baseTreeSha: string | undefined;
+      const refRes = await fetch(`${baseApiUrl}/git/ref/heads/${branch}`, { headers: ghHeaders });
+      if (refRes.ok) {
+        const refData: GhRef = await refRes.json() as GhRef;
+        parentCommitSha = refData.object?.sha;
+        if (parentCommitSha) {
+          const existingCommitRes = await fetch(`${baseApiUrl}/git/commits/${parentCommitSha}`, { headers: ghHeaders });
+          if (existingCommitRes.ok) {
+            const existingCommitData: GhCommit = await existingCommitRes.json() as GhCommit;
+            baseTreeSha = existingCommitData.tree?.sha;
+          }
+        }
+      }
+
+      const treeItems: Array<{ path: string; mode: "100644"; type: "blob"; sha: string }> = [];
+      for (const [filePath, content] of Object.entries(files)) {
+        const blobRes = await fetch(`${baseApiUrl}/git/blobs`, {
+          method: "POST", headers: ghHeaders,
+          body: JSON.stringify({ content, encoding: "utf-8" }),
+        });
+        if (!blobRes.ok) {
+          const errBody = await blobRes.text();
+          return res.status(502).json({ message: `Failed to create blob for ${filePath}: ${blobRes.status} ${errBody.substring(0, 200)}` });
+        }
+        const blobData: GhBlob = await blobRes.json() as GhBlob;
+        treeItems.push({ path: filePath, mode: "100644", type: "blob", sha: blobData.sha });
+      }
+
+      const treeRes = await fetch(`${baseApiUrl}/git/trees`, {
+        method: "POST", headers: ghHeaders,
+        body: JSON.stringify({ tree: treeItems, ...(baseTreeSha ? { base_tree: baseTreeSha } : {}) }),
+      });
+      if (!treeRes.ok) {
+        const errBody = await treeRes.text();
+        return res.status(502).json({ message: `Failed to create Git tree: ${treeRes.status} ${errBody.substring(0, 200)}` });
+      }
+      const treeData: GhTree = await treeRes.json() as GhTree;
+
+      const commitPayload: { message: string; tree: string; parents?: string[] } = {
+        message: `Export code: ${agent.name} (${metadata?.format || "unknown"})`,
+        tree: treeData.sha,
+        ...(parentCommitSha ? { parents: [parentCommitSha] } : {}),
+      };
+
+      const newCommitRes = await fetch(`${baseApiUrl}/git/commits`, {
+        method: "POST", headers: ghHeaders,
+        body: JSON.stringify(commitPayload),
+      });
+      if (!newCommitRes.ok) {
+        const errBody = await newCommitRes.text();
+        return res.status(502).json({ message: `Failed to create Git commit: ${newCommitRes.status} ${errBody.substring(0, 200)}` });
+      }
+      const newCommitData: GhCommit = await newCommitRes.json() as GhCommit;
+
+      const updateRefRes = await fetch(`${baseApiUrl}/git/refs/heads/${branch}`, {
+        method: "PATCH", headers: ghHeaders,
+        body: JSON.stringify({ sha: newCommitData.sha }),
+      });
+      if (!updateRefRes.ok) {
+        const createRefRes = await fetch(`${baseApiUrl}/git/refs`, {
+          method: "POST", headers: ghHeaders,
+          body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: newCommitData.sha }),
+        });
+        if (!createRefRes.ok) {
+          const errBody = await createRefRes.text();
+          return res.status(502).json({ message: `Failed to update branch ref: ${createRefRes.status} ${errBody.substring(0, 200)}` });
+        }
+      }
+
+      res.json({ success: true, commitSha: newCommitData.sha, branch, repoUrl });
+    } catch (e) {
+      console.error("[export-code/git-push] Error:", e);
+      res.status(500).json({ message: "Failed to push code to Git" });
+    }
+  });
+
   app.get("/api/agents/:id/export-manifest", async (req, res) => {
     try {
       const agent = await storage.getAgent(req.params.id);
