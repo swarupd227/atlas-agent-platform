@@ -18655,6 +18655,14 @@ Return valid JSON only. No markdown. No code fences.`;
       } catch { /* swallow — templates handle fallback */ }
 
       if (aiResult?.agentYaml) files["agent.yaml"] = aiResult.agentYaml;
+      if (aiResult?.frameworkFiles) {
+        const allowedPrefixes = ["config/", "manifests/", "workflows/", "pipelines/"];
+        for (const [fpath, content] of Object.entries(aiResult.frameworkFiles)) {
+          if (allowedPrefixes.some(p => fpath.startsWith(p)) && !fpath.includes("..")) {
+            files[fpath] = content;
+          }
+        }
+      }
 
       if (framework === "generic") {
         const crypto = await import("crypto");
