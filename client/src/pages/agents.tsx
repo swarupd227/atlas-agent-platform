@@ -28,6 +28,7 @@ import {
   Minus,
   Trash2,
   Download,
+  MoreVertical,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -69,6 +70,12 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { StatCard } from "@/components/stat-card";
 import { OutcomeKpiStrip } from "@/components/outcome-kpi-strip";
 import { StatusBadge } from "@/components/status-badge";
@@ -821,16 +828,20 @@ export default function Agents() {
                     )}
                     <TableCell>
                       <div className="flex items-center gap-0.5">
-                        <Tooltip>
-                          <TooltipTrigger asChild>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" data-testid={`button-agent-actions-${agent.id}`}>
+                              <MoreVertical className="w-4 h-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
                             <Link href={`/agents/${agent.id}?export=1`}>
-                              <Button variant="ghost" size="icon" data-testid={`button-export-agent-${agent.id}`}>
-                                <Download className="w-3.5 h-3.5" />
-                              </Button>
+                              <DropdownMenuItem data-testid={`menu-export-agent-${agent.id}`}>
+                                <Download className="w-3.5 h-3.5 mr-2" /> Export as Code
+                              </DropdownMenuItem>
                             </Link>
-                          </TooltipTrigger>
-                          <TooltipContent>Export as Code</TooltipContent>
-                        </Tooltip>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                         <Link href={`/agents/${agent.id}`}>
                           <Button variant="ghost" size="icon" data-testid={`button-view-agent-${agent.id}`}>
                             <ArrowRight className="w-4 h-4" />
