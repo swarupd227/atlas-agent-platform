@@ -17831,6 +17831,8 @@ Eval Suites: ${evalSuites.length} configured`,
       const varName = `mcpClient${i}`;
       const url = s.url || "http://localhost:3001";
       return `
+// TODO: If ${s.name} requires authentication, pass headers in the transport options:
+// const ${varName}Transport = new StreamableHTTPClientTransport(new URL("${url}"), { requestInit: { headers: { "Authorization": \`Bearer \${process.env.MCP_${s.name.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_TOKEN}\` } } });
 const ${varName}Transport = new StreamableHTTPClientTransport(new URL("${url}"));
 const ${varName} = new Client({ name: "${s.name}-client", version: "1.0.0" });
 await ${varName}.connect(${varName}Transport);
@@ -17854,6 +17856,8 @@ async function initMcpClients() {
     const serverInits = mcpServers.map((s, i) => {
       const url = s.url || "http://localhost:3001";
       return `
+    # TODO: If ${s.name} requires authentication, pass headers:
+    # transport_${i} = StreamableHttpTransport("${url}", headers={"Authorization": f"Bearer {os.environ.get('MCP_${s.name.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_TOKEN', '')}"})
     transport_${i} = StreamableHttpTransport("${url}")
     client_${i} = ClientSession(transport_${i})
     await client_${i}.initialize()
@@ -17927,45 +17931,85 @@ async function main() {${mcpInitCall}
       messages = [messages[0], ...messages.slice(-(ctxLimit))];
     }
 
-    const response = await client.chat.completions.create({
-      model: config.model.name,
-      messages,
-      tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
-      tool_choice: toolDefinitions.length > 0 ? "auto" : undefined,
-    });
-
-    const choice = response.choices[0];
-    const msg = choice.message;
-    messages.push(msg);
-
-    if (msg.content && msg.content.includes(promise)) {
-      console.log("[completed] Agent returned completion promise.");
-      console.log(msg.content);
-      return;
-    }
-
-    if (!msg.tool_calls || msg.tool_calls.length === 0) {
-      console.log("[done] No tool calls, final output:");
-      console.log(msg.content || "");
-      return;
-    }
-
-    for (const tc of msg.tool_calls) {
-      const fn = tc.function;
-      console.log(\`  [tool] \${fn.name}(\${fn.arguments})\`);
-      const adapter = toolAdapters[fn.name];
-      let result: any;
-      try {
-        const args = JSON.parse(fn.arguments);
-        result = adapter ? await adapter(args) : { error: \`Unknown tool: \${fn.name}\` };
-      } catch (err: any) {
-        result = { error: err.message };
-      }
-      messages.push({
-        role: "tool",
-        tool_call_id: tc.id,
-        content: JSON.stringify(result),
+    if (streaming) {
+      const stream = await client.chat.completions.create({
+        model: config.model.name,
+        messages,
+        tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
+        tool_choice: toolDefinitions.length > 0 ? "auto" : undefined,
+        stream: true,
       });
+      let content = "";
+      const toolCalls: Map<number, { id: string; name: string; arguments: string }> = new Map();
+      for await (const chunk of stream) {
+        const delta = chunk.choices[0]?.delta;
+        if (delta?.content) { process.stdout.write(delta.content); content += delta.content; }
+        if (delta?.tool_calls) {
+          for (const tc of delta.tool_calls) {
+            const existing = toolCalls.get(tc.index) || { id: "", name: "", arguments: "" };
+            if (tc.id) existing.id = tc.id;
+            if (tc.function?.name) existing.name = tc.function.name;
+            if (tc.function?.arguments) existing.arguments += tc.function.arguments;
+            toolCalls.set(tc.index, existing);
+          }
+        }
+      }
+      if (content) process.stdout.write("\\n");
+      const msg: any = { role: "assistant", content: content || null };
+      if (toolCalls.size > 0) msg.tool_calls = [...toolCalls.values()].map(tc => ({ id: tc.id, type: "function", function: { name: tc.name, arguments: tc.arguments } }));
+      messages.push(msg);
+
+      if (content && content.includes(promise)) { console.log("[completed]"); return; }
+      if (toolCalls.size === 0) { console.log("[done]"); return; }
+
+      for (const tc of toolCalls.values()) {
+        console.log(\`  [tool] \${tc.name}(\${tc.arguments})\`);
+        const adapter = toolAdapters[tc.name];
+        let result: any;
+        try { result = adapter ? await adapter(JSON.parse(tc.arguments)) : { error: \`Unknown tool: \${tc.name}\` }; } catch (err: any) { result = { error: err.message }; }
+        messages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(result) });
+      }
+    } else {
+      const response = await client.chat.completions.create({
+        model: config.model.name,
+        messages,
+        tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
+        tool_choice: toolDefinitions.length > 0 ? "auto" : undefined,
+      });
+
+      const choice = response.choices[0];
+      const msg = choice.message;
+      messages.push(msg);
+
+      if (msg.content && msg.content.includes(promise)) {
+        console.log("[completed] Agent returned completion promise.");
+        console.log(msg.content);
+        return;
+      }
+
+      if (!msg.tool_calls || msg.tool_calls.length === 0) {
+        console.log("[done] No tool calls, final output:");
+        console.log(msg.content || "");
+        return;
+      }
+
+      for (const tc of msg.tool_calls) {
+        const fn = tc.function;
+        console.log(\`  [tool] \${fn.name}(\${fn.arguments})\`);
+        const adapter = toolAdapters[fn.name];
+        let result: any;
+        try {
+          const args = JSON.parse(fn.arguments);
+          result = adapter ? await adapter(args) : { error: \`Unknown tool: \${fn.name}\` };
+        } catch (err: any) {
+          result = { error: err.message };
+        }
+        messages.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify(result),
+        });
+      }
     }
   }
 
@@ -18033,51 +18077,80 @@ async function main() {${mcpInitCall}
       messages = messages.slice(-(ctxLimit));
     }
 
-    const response = await client.messages.create({
-      model: config.model.name,
-      max_tokens: 4096,
-      system: config.system_prompt,
-      messages,
-      tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
-    });
-
-    const textBlocks = response.content.filter((b): b is Anthropic.TextBlock => b.type === "text");
-    const toolUseBlocks = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
-
-    const textContent = textBlocks.map(b => b.text).join("\\n");
-
-    if (textContent.includes(promise)) {
-      console.log("[completed] Agent returned completion promise.");
-      console.log(textContent);
-      return;
-    }
-
-    if (toolUseBlocks.length === 0) {
-      console.log("[done] No tool calls, final output:");
-      console.log(textContent);
-      return;
-    }
-
-    messages.push({ role: "assistant", content: response.content });
-
-    const toolResults: Anthropic.ToolResultBlockParam[] = [];
-    for (const tu of toolUseBlocks) {
-      console.log(\`  [tool] \${tu.name}(\${JSON.stringify(tu.input)})\`);
-      const adapter = toolAdapters[tu.name];
-      let result: any;
-      try {
-        result = adapter ? await adapter(tu.input) : { error: \`Unknown tool: \${tu.name}\` };
-      } catch (err: any) {
-        result = { error: err.message };
-      }
-      toolResults.push({
-        type: "tool_result",
-        tool_use_id: tu.id,
-        content: JSON.stringify(result),
+    if (streaming) {
+      const stream = client.messages.stream({
+        model: config.model.name,
+        max_tokens: 4096,
+        system: config.system_prompt,
+        messages,
+        tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
       });
-    }
+      let textContent = "";
+      stream.on("text", (text: string) => { process.stdout.write(text); textContent += text; });
+      const finalMessage = await stream.finalMessage();
+      if (textContent) process.stdout.write("\\n");
+      const toolUseBlocks = finalMessage.content.filter((b: any) => b.type === "tool_use");
 
-    messages.push({ role: "user", content: toolResults });
+      if (textContent.includes(promise)) { console.log("[completed]"); return; }
+      if (toolUseBlocks.length === 0) { console.log("[done]"); return; }
+
+      messages.push({ role: "assistant", content: finalMessage.content });
+      const toolResults: Anthropic.ToolResultBlockParam[] = [];
+      for (const tu of toolUseBlocks) {
+        console.log(\`  [tool] \${tu.name}(\${JSON.stringify(tu.input)})\`);
+        const adapter = toolAdapters[tu.name];
+        let result: any;
+        try { result = adapter ? await adapter(tu.input) : { error: \`Unknown tool: \${tu.name}\` }; } catch (err: any) { result = { error: err.message }; }
+        toolResults.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(result) });
+      }
+      messages.push({ role: "user", content: toolResults });
+    } else {
+      const response = await client.messages.create({
+        model: config.model.name,
+        max_tokens: 4096,
+        system: config.system_prompt,
+        messages,
+        tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
+      });
+
+      const textBlocks = response.content.filter((b): b is Anthropic.TextBlock => b.type === "text");
+      const toolUseBlocks = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+
+      const textContent = textBlocks.map(b => b.text).join("\\n");
+
+      if (textContent.includes(promise)) {
+        console.log("[completed] Agent returned completion promise.");
+        console.log(textContent);
+        return;
+      }
+
+      if (toolUseBlocks.length === 0) {
+        console.log("[done] No tool calls, final output:");
+        console.log(textContent);
+        return;
+      }
+
+      messages.push({ role: "assistant", content: response.content });
+
+      const toolResults: Anthropic.ToolResultBlockParam[] = [];
+      for (const tu of toolUseBlocks) {
+        console.log(\`  [tool] \${tu.name}(\${JSON.stringify(tu.input)})\`);
+        const adapter = toolAdapters[tu.name];
+        let result: any;
+        try {
+          result = adapter ? await adapter(tu.input) : { error: \`Unknown tool: \${tu.name}\` };
+        } catch (err: any) {
+          result = { error: err.message };
+        }
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: tu.id,
+          content: JSON.stringify(result),
+        });
+      }
+
+      messages.push({ role: "user", content: toolResults });
+    }
   }
 
   console.log("[max iterations reached]");
@@ -18163,35 +18236,72 @@ def main():
             kwargs["tools"] = tool_definitions
             kwargs["tool_choice"] = "auto"
 
-        response = client.chat.completions.create(**kwargs)
-        choice = response.choices[0]
-        msg = choice.message
-        messages.append(msg)
+        if streaming:
+            kwargs["stream"] = True
+            stream = client.chat.completions.create(**kwargs)
+            content = ""
+            tool_calls_map = {}
+            for chunk in stream:
+                delta = chunk.choices[0].delta if chunk.choices else None
+                if delta and delta.content:
+                    print(delta.content, end="", flush=True)
+                    content += delta.content
+                if delta and delta.tool_calls:
+                    for tc in delta.tool_calls:
+                        existing = tool_calls_map.get(tc.index, {"id": "", "name": "", "arguments": ""})
+                        if tc.id:
+                            existing["id"] = tc.id
+                        if tc.function and tc.function.name:
+                            existing["name"] = tc.function.name
+                        if tc.function and tc.function.arguments:
+                            existing["arguments"] += tc.function.arguments
+                        tool_calls_map[tc.index] = existing
+            if content:
+                print()
+            if content and promise in content:
+                print("[completed]")
+                return
+            if not tool_calls_map:
+                print("[done]")
+                return
+            for tc in tool_calls_map.values():
+                print(f"  [tool] {tc['name']}({tc['arguments']})")
+                adapter = tool_adapters.get(tc["name"])
+                try:
+                    result = adapter(json.loads(tc["arguments"])) if adapter else {"error": f"Unknown tool: {tc['name']}"}
+                except Exception as e:
+                    result = {"error": str(e)}
+                messages.append({"role": "tool", "tool_call_id": tc["id"], "content": json.dumps(result)})
+        else:
+            response = client.chat.completions.create(**kwargs)
+            choice = response.choices[0]
+            msg = choice.message
+            messages.append(msg)
 
-        if msg.content and promise in msg.content:
-            print("[completed] Agent returned completion promise.")
-            print(msg.content)
-            return
+            if msg.content and promise in msg.content:
+                print("[completed] Agent returned completion promise.")
+                print(msg.content)
+                return
 
-        if not msg.tool_calls:
-            print("[done] No tool calls, final output:")
-            print(msg.content or "")
-            return
+            if not msg.tool_calls:
+                print("[done] No tool calls, final output:")
+                print(msg.content or "")
+                return
 
-        for tc in msg.tool_calls:
-            fn = tc.function
-            print(f"  [tool] {fn.name}({fn.arguments})")
-            adapter = tool_adapters.get(fn.name)
-            try:
-                args = json.loads(fn.arguments)
-                result = adapter(args) if adapter else {"error": f"Unknown tool: {fn.name}"}
-            except Exception as e:
-                result = {"error": str(e)}
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tc.id,
-                "content": json.dumps(result),
-            })
+            for tc in msg.tool_calls:
+                fn = tc.function
+                print(f"  [tool] {fn.name}({fn.arguments})")
+                adapter = tool_adapters.get(fn.name)
+                try:
+                    args = json.loads(fn.arguments)
+                    result = adapter(args) if adapter else {"error": f"Unknown tool: {fn.name}"}
+                except Exception as e:
+                    result = {"error": str(e)}
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": json.dumps(result),
+                })
 
     print("[max iterations reached]")
 
@@ -18274,39 +18384,68 @@ def main():
         if tool_definitions:
             kwargs["tools"] = tool_definitions
 
-        response = client.messages.create(**kwargs)
+        if streaming:
+            text_content = ""
+            tool_blocks = []
+            with client.messages.stream(**kwargs) as stream:
+                for text in stream.text_stream:
+                    print(text, end="", flush=True)
+                    text_content += text
+                response = stream.get_final_message()
+                tool_blocks = [b for b in response.content if b.type == "tool_use"]
+            if text_content:
+                print()
+            if promise in text_content:
+                print("[completed]")
+                return
+            if not tool_blocks:
+                print("[done]")
+                return
+            messages.append({"role": "assistant", "content": response.content})
+            tool_results = []
+            for tu in tool_blocks:
+                print(f"  [tool] {tu.name}({json.dumps(tu.input)})")
+                adapter = tool_adapters.get(tu.name)
+                try:
+                    result = adapter(tu.input) if adapter else {"error": f"Unknown tool: {tu.name}"}
+                except Exception as e:
+                    result = {"error": str(e)}
+                tool_results.append({"type": "tool_result", "tool_use_id": tu.id, "content": json.dumps(result)})
+            messages.append({"role": "user", "content": tool_results})
+        else:
+            response = client.messages.create(**kwargs)
 
-        text_blocks = [b for b in response.content if b.type == "text"]
-        tool_blocks = [b for b in response.content if b.type == "tool_use"]
-        text_content = "\\n".join(b.text for b in text_blocks)
+            text_blocks = [b for b in response.content if b.type == "text"]
+            tool_blocks = [b for b in response.content if b.type == "tool_use"]
+            text_content = "\\n".join(b.text for b in text_blocks)
 
-        if promise in text_content:
-            print("[completed] Agent returned completion promise.")
-            print(text_content)
-            return
+            if promise in text_content:
+                print("[completed] Agent returned completion promise.")
+                print(text_content)
+                return
 
-        if not tool_blocks:
-            print("[done] No tool calls, final output:")
-            print(text_content)
-            return
+            if not tool_blocks:
+                print("[done] No tool calls, final output:")
+                print(text_content)
+                return
 
-        messages.append({"role": "assistant", "content": response.content})
+            messages.append({"role": "assistant", "content": response.content})
 
-        tool_results = []
-        for tu in tool_blocks:
-            print(f"  [tool] {tu.name}({json.dumps(tu.input)})")
-            adapter = tool_adapters.get(tu.name)
-            try:
-                result = adapter(tu.input) if adapter else {"error": f"Unknown tool: {tu.name}"}
-            except Exception as e:
-                result = {"error": str(e)}
-            tool_results.append({
-                "type": "tool_result",
-                "tool_use_id": tu.id,
-                "content": json.dumps(result),
-            })
+            tool_results = []
+            for tu in tool_blocks:
+                print(f"  [tool] {tu.name}({json.dumps(tu.input)})")
+                adapter = tool_adapters.get(tu.name)
+                try:
+                    result = adapter(tu.input) if adapter else {"error": f"Unknown tool: {tu.name}"}
+                except Exception as e:
+                    result = {"error": str(e)}
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": tu.id,
+                    "content": json.dumps(result),
+                })
 
-        messages.append({"role": "user", "content": tool_results})
+            messages.append({"role": "user", "content": tool_results})
 
     print("[max iterations reached]")
 
