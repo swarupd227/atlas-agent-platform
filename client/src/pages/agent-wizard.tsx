@@ -73,6 +73,7 @@ import {
   Lock,
   Square,
   CheckSquare,
+  Layers,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -89,12 +90,13 @@ const iconMap: Record<string, LucideIcon> = {
 const STEPS = [
   { number: 0, label: "Define Agent" },
   { number: 1, label: "Start Path" },
-  { number: 2, label: "Configure Tools" },
-  { number: 3, label: "Governance" },
-  { number: 4, label: "Memory & Context" },
-  { number: 5, label: "Eval Suite" },
-  { number: 6, label: "Rollout Plan" },
-  { number: 7, label: "Review & Create" },
+  { number: 2, label: "Choose Blueprint" },
+  { number: 3, label: "Configure Tools" },
+  { number: 4, label: "Governance" },
+  { number: 5, label: "Memory & Context" },
+  { number: 6, label: "Eval Suite" },
+  { number: 7, label: "Rollout Plan" },
+  { number: 8, label: "Review & Create" },
 ];
 
 interface ToolParam {
@@ -222,6 +224,8 @@ interface WizardState {
   industryId: string;
   contextBudget: Array<{ category: string; pct: number; tokens: number }>;
   memoryGovernanceRules: Array<{ rule: string; regulation: string; type: string }>;
+  blueprintId: string | null;
+  blueprintName: string | null;
   industryAutoApplied: boolean;
   templateSkills: {
     required: Array<{ skillId: string; skillName: string; domain: string; executionOrder: number }>;
@@ -323,6 +327,8 @@ const defaultWizardState: WizardState = {
   industryId: "",
   contextBudget: [],
   memoryGovernanceRules: [],
+  blueprintId: null,
+  blueprintName: null,
   industryAutoApplied: false,
   templateSkills: {
     required: [],
@@ -1107,6 +1113,8 @@ export default function AgentWizard() {
           ? template.rollbackPlan
           : JSON.stringify(template.rollbackPlan)
         : "",
+      blueprintId: (template as any).defaultBlueprintId || null,
+      blueprintName: null,
       templateSkills: (() => {
         const reqSkills = Array.isArray(template.requiredSkills)
           ? (template.requiredSkills as any[]).map((s: any, i: number) => ({
@@ -1279,6 +1287,7 @@ export default function AgentWizard() {
       toolsConfig: wizardState.toolsConfig,
       permissionsConfig: wizardState.permissionsConfig,
       memoryRagConfig: wizardState.memoryRagEnabled ? wizardState.memoryRagConfig : null,
+      blueprintId: wizardState.blueprintId || undefined,
       blueprintJson: { nodes: wizardState.workflowNodes },
       policyBindings: wizardState.policyBindings,
       evalBindings: wizardState.evalBindings,
@@ -1463,7 +1472,7 @@ export default function AgentWizard() {
                   variant="outline"
                   onClick={() => {
                     setJobProgress(null);
-                    setCurrentStep(7);
+                    setCurrentStep(8);
                   }}
                   data-testid="button-back-to-wizard"
                 >
@@ -1578,21 +1587,24 @@ export default function AgentWizard() {
           />
         )}
         {currentStep === 2 && (
-          <Step2IndustryTools state={wizardState} updateState={updateState} ontologyConcepts={ontologyConcepts || []} />
+          <Step2ChooseBlueprint state={wizardState} updateState={updateState} />
         )}
         {currentStep === 3 && (
-          <Step3IndustryGovernance state={wizardState} updateState={updateState} ontologyGuardrails={dynamicOntologyGuardrails} />
+          <Step2IndustryTools state={wizardState} updateState={updateState} ontologyConcepts={ontologyConcepts || []} />
         )}
         {currentStep === 4 && (
-          <Step4MemoryContext state={wizardState} updateState={updateState} />
+          <Step3IndustryGovernance state={wizardState} updateState={updateState} ontologyGuardrails={dynamicOntologyGuardrails} />
         )}
         {currentStep === 5 && (
-          <Step6EvalSuite state={wizardState} updateState={updateState} />
+          <Step4MemoryContext state={wizardState} updateState={updateState} />
         )}
         {currentStep === 6 && (
-          <Step7RolloutPlan state={wizardState} updateState={updateState} />
+          <Step6EvalSuite state={wizardState} updateState={updateState} />
         )}
         {currentStep === 7 && (
+          <Step7RolloutPlan state={wizardState} updateState={updateState} />
+        )}
+        {currentStep === 8 && (
           <StepReview
             state={wizardState}
             onCreate={handleCreate}
@@ -1630,10 +1642,10 @@ export default function AgentWizard() {
           <ArrowLeft className="w-4 h-4 mr-1.5" />
           Back
         </Button>
-        {currentStep < 7 ? (
+        {currentStep < 8 ? (
           <Button
             onClick={() => {
-              setCurrentStep((s) => Math.min(7, s + 1));
+              setCurrentStep((s) => Math.min(8, s + 1));
             }}
             disabled={currentStep === 0 && !wizardState.name}
             data-testid="button-next-step"
@@ -2578,6 +2590,159 @@ function Step0GoldenTemplate({
           </CardContent>
         </Card>
       </div>
+    </div>
+  );
+}
+
+function Step2ChooseBlueprint({
+  state,
+  updateState,
+}: {
+  state: WizardState;
+  updateState: (updates: Partial<WizardState>) => void;
+}) {
+  const { data: blueprints, isLoading } = useQuery<any[]>({
+    queryKey: ["/api/blueprints"],
+  });
+
+  const PATTERN_LABELS: Record<string, { label: string; color: string; icon: string }> = {
+    linear_chain: { label: "Linear Chain", color: "bg-blue-500/10 text-blue-600 border-blue-500/20", icon: "arrow-right" },
+    fan_out: { label: "Fan Out", color: "bg-amber-500/10 text-amber-600 border-amber-500/20", icon: "split" },
+    orchestrator: { label: "Orchestrator", color: "bg-purple-500/10 text-purple-600 border-purple-500/20", icon: "network" },
+    rag_pipeline: { label: "RAG Pipeline", color: "bg-green-500/10 text-green-600 border-green-500/20", icon: "database" },
+    human_in_loop: { label: "Human-in-Loop", color: "bg-rose-500/10 text-rose-600 border-rose-500/20", icon: "user" },
+    custom: { label: "Custom", color: "bg-slate-500/10 text-slate-600 border-slate-500/20", icon: "settings" },
+  };
+
+  const availableBlueprints = (blueprints || []).filter(
+    (bp: any) => bp.isShared || bp.status === "signed" || bp.status === "compiled"
+  );
+
+  const groupedByPattern = availableBlueprints.reduce((acc: Record<string, any[]>, bp: any) => {
+    const pattern = bp.patternType || "custom";
+    if (!acc[pattern]) acc[pattern] = [];
+    acc[pattern].push(bp);
+    return acc;
+  }, {} as Record<string, any[]>);
+
+  const sortedPatterns = Object.keys(groupedByPattern).sort((a, b) => {
+    const order = ["linear_chain", "orchestrator", "fan_out", "rag_pipeline", "human_in_loop", "custom"];
+    return order.indexOf(a) - order.indexOf(b);
+  });
+
+  return (
+    <div className="space-y-6" data-testid="step-choose-blueprint">
+      <div>
+        <h3 className="text-lg font-semibold">Choose a Blueprint</h3>
+        <p className="text-sm text-muted-foreground mt-1">
+          Select a shared blueprint to pre-configure this agent's workflow pattern, or skip to build from scratch.
+        </p>
+      </div>
+
+      {state.blueprintId && (
+        <div className="flex items-center gap-3 p-3 rounded-lg border border-primary/20 bg-primary/5">
+          <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
+            <Layers className="w-4 h-4 text-primary" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium">Selected: {state.blueprintName}</p>
+            <p className="text-xs text-muted-foreground">Blueprint will be applied to this agent</p>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => updateState({ blueprintId: null, blueprintName: null })}
+            data-testid="button-clear-blueprint"
+          >
+            <X className="w-4 h-4" />
+          </Button>
+        </div>
+      )}
+
+      {isLoading ? (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : availableBlueprints.length === 0 ? (
+        <Card className="border-dashed">
+          <CardContent className="flex flex-col items-center justify-center py-10 gap-2">
+            <Layers className="w-8 h-8 text-muted-foreground/50" />
+            <p className="text-sm text-muted-foreground">No shared blueprints available yet</p>
+            <p className="text-xs text-muted-foreground">Create and share blueprints in the Blueprint Library to see them here</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-5">
+          {sortedPatterns.map((pattern) => {
+            const patternInfo = PATTERN_LABELS[pattern] || PATTERN_LABELS.custom;
+            const bps = groupedByPattern[pattern];
+            return (
+              <div key={pattern} className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline" className={`text-[10px] ${patternInfo.color}`}>
+                    {patternInfo.label}
+                  </Badge>
+                  <span className="text-xs text-muted-foreground">{bps.length} blueprint{bps.length !== 1 ? "s" : ""}</span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {bps.map((bp: any) => {
+                    const isSelected = state.blueprintId === bp.id;
+                    const nodeCount = Array.isArray(bp.blueprintJson?.nodes) ? bp.blueprintJson.nodes.length : 0;
+                    return (
+                      <Card
+                        key={bp.id}
+                        className={`cursor-pointer transition-all duration-200 hover:shadow-md ${
+                          isSelected ? "ring-2 ring-primary border-primary/30 shadow-sm" : "hover:border-primary/20"
+                        }`}
+                        onClick={() => {
+                          if (isSelected) {
+                            updateState({ blueprintId: null, blueprintName: null });
+                          } else {
+                            updateState({ blueprintId: bp.id, blueprintName: bp.name });
+                          }
+                        }}
+                        data-testid={`card-blueprint-${bp.id}`}
+                      >
+                        <CardContent className="p-3 space-y-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium truncate">{bp.name}</p>
+                              <p className="text-[11px] text-muted-foreground line-clamp-2 mt-0.5">{bp.description}</p>
+                            </div>
+                            {isSelected && (
+                              <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center shrink-0">
+                                <Check className="w-3 h-3 text-primary-foreground" />
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {nodeCount > 0 && (
+                              <Badge variant="secondary" className="text-[9px]">{nodeCount} nodes</Badge>
+                            )}
+                            <Badge variant="outline" className="text-[9px]">{bp.status}</Badge>
+                            {bp.isShared && (
+                              <Badge variant="outline" className="text-[9px] text-green-600 border-green-500/20">Shared</Badge>
+                            )}
+                            {bp.tags?.length > 0 && bp.tags.slice(0, 2).map((tag: string) => (
+                              <Badge key={tag} variant="secondary" className="text-[9px]">{tag}</Badge>
+                            ))}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {!state.blueprintId && availableBlueprints.length > 0 && (
+        <p className="text-xs text-muted-foreground text-center">
+          You can skip this step to configure the agent workflow manually
+        </p>
+      )}
     </div>
   );
 }
@@ -5195,6 +5360,15 @@ function StepReview({
             <span className="text-muted-foreground">Model</span>
             <span className="font-medium">{state.modelName}</span>
           </div>
+          {state.blueprintId && (
+            <div className="flex justify-between gap-4">
+              <span className="text-muted-foreground">Blueprint</span>
+              <span className="font-medium flex items-center gap-1" data-testid="text-review-blueprint">
+                <Layers className="w-3 h-3 text-primary" />
+                {state.blueprintName || state.blueprintId}
+              </span>
+            </div>
+          )}
           <div className="flex justify-between gap-4">
             <span className="text-muted-foreground">Tools</span>
             <span className="font-medium">

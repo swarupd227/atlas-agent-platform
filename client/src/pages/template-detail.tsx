@@ -2123,6 +2123,23 @@ export default function TemplateDetail() {
             </div>
           </div>
 
+          {/* Default Blueprint */}
+          <div data-testid="section-default-blueprint">
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3">Default Blueprint</h2>
+            <Card>
+              <CardContent className="p-4">
+                <DefaultBlueprintSection
+                  templateId={templateId!}
+                  defaultBlueprintId={(displayTemplate as any)?.defaultBlueprintId || null}
+                  onUpdate={() => {
+                    queryClient.invalidateQueries({ queryKey: ["/api/agent-templates", templateId] });
+                    queryClient.invalidateQueries({ queryKey: ["/api/agent-templates"] });
+                  }}
+                />
+              </CardContent>
+            </Card>
+          </div>
+
           {/* Customization Wizard */}
           <div data-testid="section-customization-wizard">
             <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3">Customize & Deploy</h2>
@@ -2982,6 +2999,89 @@ export default function TemplateDetail() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+function DefaultBlueprintSection({ templateId, defaultBlueprintId, onUpdate }: {
+  templateId: string;
+  defaultBlueprintId: string | null;
+  onUpdate: () => void;
+}) {
+  const { data: blueprints } = useQuery<any[]>({ queryKey: ["/api/blueprints"] });
+  const { toast } = useToast();
+  const [saving, setSaving] = useState(false);
+
+  const availableBlueprints = (blueprints || []).filter(
+    (bp: any) => bp.isShared || bp.status === "signed" || bp.status === "compiled"
+  );
+
+  const selectedBlueprint = availableBlueprints.find((bp: any) => bp.id === defaultBlueprintId);
+
+  async function setDefaultBlueprint(blueprintId: string | null) {
+    setSaving(true);
+    try {
+      await apiRequest("PUT", `/api/agent-templates/${templateId}`, { defaultBlueprintId: blueprintId });
+      onUpdate();
+      toast({ title: blueprintId ? "Default blueprint set" : "Default blueprint cleared" });
+    } catch (e: any) {
+      toast({ title: "Failed to update", description: e.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (availableBlueprints.length === 0) {
+    return (
+      <div className="flex items-center gap-3 text-sm text-muted-foreground">
+        <Layers className="w-4 h-4" />
+        <span>No shared blueprints available. Create blueprints in the Blueprint Library first.</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-muted-foreground">
+        Agents created from this template will pre-select this blueprint in the wizard.
+      </p>
+      {selectedBlueprint ? (
+        <div className="flex items-center gap-3 p-3 rounded-lg border border-primary/20 bg-primary/5">
+          <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
+            <Layers className="w-4 h-4 text-primary" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium" data-testid="text-default-blueprint-name">{selectedBlueprint.name}</p>
+            <p className="text-xs text-muted-foreground truncate">{selectedBlueprint.description}</p>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setDefaultBlueprint(null)}
+            disabled={saving}
+            data-testid="button-clear-default-blueprint"
+          >
+            <X className="w-4 h-4" />
+          </Button>
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground italic">No default blueprint set</p>
+      )}
+      <Select
+        value={defaultBlueprintId || ""}
+        onValueChange={(val) => setDefaultBlueprint(val || null)}
+      >
+        <SelectTrigger className="text-xs" data-testid="select-default-blueprint">
+          <SelectValue placeholder="Select a blueprint..." />
+        </SelectTrigger>
+        <SelectContent>
+          {availableBlueprints.map((bp: any) => (
+            <SelectItem key={bp.id} value={bp.id} data-testid={`select-blueprint-option-${bp.id}`}>
+              {bp.name} {bp.patternType ? `(${bp.patternType.replace(/_/g, " ")})` : ""}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </div>
   );
 }

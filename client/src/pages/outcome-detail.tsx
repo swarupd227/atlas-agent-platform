@@ -3417,6 +3417,9 @@ interface AgentProposal {
   mcpToolBindings?: Array<{ server: string; tool: string }>;
   suggestedRagPipeline?: string | null;
   suggestedKnowledgeBases?: Array<{ id: string; name: string }>;
+  suggestedPatternType?: string;
+  suggestedBlueprintId?: string | null;
+  suggestedBlueprintName?: string | null;
 }
 
 interface PipelineEdge {
@@ -4162,6 +4165,17 @@ function AgentProposalCard({ agent, index, isOrchestrator, isSelected, onToggle,
               <Badge variant="outline" className="text-[10px] text-muted-foreground">{agent.modelProvider}/{agent.modelName}</Badge>
               {agent.templateMatch && (
                 <Badge variant="secondary" className="text-[10px]">Template: {agent.templateMatch}</Badge>
+              )}
+              {agent.suggestedPatternType && (
+                <Badge variant="outline" className="text-[10px] text-violet-600 dark:text-violet-400 border-violet-500/20 bg-violet-500/5" data-testid={`badge-pattern-${isOrchestrator ? "orch" : index}`}>
+                  <Layers className="w-2.5 h-2.5 mr-0.5" />
+                  {agent.suggestedPatternType.replace(/_/g, " ")}
+                </Badge>
+              )}
+              {agent.suggestedBlueprintName && (
+                <Badge variant="outline" className="text-[10px] text-blue-600 dark:text-blue-400 border-blue-500/20 bg-blue-500/5" data-testid={`badge-blueprint-${isOrchestrator ? "orch" : index}`}>
+                  Blueprint: {agent.suggestedBlueprintName}
+                </Badge>
               )}
             </div>
             <div className="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-gradient-to-r from-emerald-500/5 to-green-500/5 border border-emerald-500/15" data-testid={`estimated-impact-${isOrchestrator ? "orch" : index}`}>
@@ -5066,6 +5080,7 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
             complianceTags: worker.complianceTags || [],
             ontologyTags: worker.matchedOntologyConcepts?.length ? { concepts: worker.matchedOntologyConcepts } : {},
             policyBindings: worker.policyConstraints?.length ? { policies: worker.policyConstraints } : {},
+            blueprintId: worker.suggestedBlueprintId || undefined,
             runtimeConfig: {
               prompt: taskPrompt,
               kpiBindings: worker.kpiBindings || [],

@@ -2285,7 +2285,14 @@ export async function registerRoutes(
 
   app.post("/api/agents", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
-      const data = insertAgentSchema.parse(req.body);
+      const body = { ...req.body };
+      if (body.blueprintId && !body.blueprintJson) {
+        const bp = await storage.getBlueprint(body.blueprintId);
+        if (bp && bp.blueprintJson) {
+          body.blueprintJson = bp.blueprintJson;
+        }
+      }
+      const data = insertAgentSchema.parse(body);
       const agent = await storage.createAgent(data);
 
       const hasMemGovRules = Array.isArray(req.body.memoryGovernanceRules) && req.body.memoryGovernanceRules.length > 0;
@@ -2658,12 +2665,18 @@ export async function registerRoutes(
           modelProvider: z.string().optional(),
           modelName: z.string().optional(),
           runtimeConfig: z.any().optional(),
+          blueprintId: z.string().optional(),
         })).min(1),
       });
       const { outcomeId, industry, agents: agentPlans } = schema.parse(req.body);
 
       const created = [];
       for (const plan of agentPlans) {
+        let blueprintJson: any = null;
+        if (plan.blueprintId) {
+          const bp = await storage.getBlueprint(plan.blueprintId);
+          if (bp && bp.blueprintJson) blueprintJson = bp.blueprintJson;
+        }
         const agentData = insertAgentSchema.parse({
           name: plan.name,
           description: plan.description || "",
@@ -2675,6 +2688,8 @@ export async function registerRoutes(
           modelName: plan.modelName || "gpt-4.1",
           industry: industry || undefined,
           runtimeConfig: plan.runtimeConfig || null,
+          blueprintId: plan.blueprintId || undefined,
+          blueprintJson: blueprintJson || undefined,
           status: "active",
         });
         const agent = await storage.createAgent(agentData);
@@ -12263,6 +12278,55 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
             );
           }
         }
+      }
+
+      const ROLE_PATTERN_MAP: Record<string, string> = {
+        orchestrator: "orchestrator",
+        router: "orchestrator",
+        coordinator: "orchestrator",
+        supervisor: "orchestrator",
+        retrieval: "rag_pipeline",
+        rag: "rag_pipeline",
+        data: "rag_pipeline",
+        research: "rag_pipeline",
+        analysis: "linear_chain",
+        processor: "linear_chain",
+        pipeline: "linear_chain",
+        review: "human_in_loop",
+        approval: "human_in_loop",
+        compliance: "human_in_loop",
+        fan: "fan_out",
+        parallel: "fan_out",
+        aggregator: "fan_out",
+      };
+
+      function suggestPatternType(agent: any): string {
+        const combined = `${agent.role || ""} ${agent.name || ""} ${agent.description || ""}`.toLowerCase();
+        for (const [keyword, pattern] of Object.entries(ROLE_PATTERN_MAP)) {
+          if (combined.includes(keyword)) return pattern;
+        }
+        if (agent.tools?.length > 3) return "fan_out";
+        return "linear_chain";
+      }
+
+      try {
+        const allBlueprints = await storage.getBlueprints();
+        const sharedBlueprints = allBlueprints.filter(bp => bp.isShared || bp.status === "signed" || bp.status === "compiled");
+
+        const allResultAgents = [
+          ...(result.orchestrator ? [result.orchestrator] : []),
+          ...(Array.isArray(result.agents) ? result.agents : []),
+        ];
+
+        for (const agent of allResultAgents) {
+          const pattern = suggestPatternType(agent);
+          agent.suggestedPatternType = pattern;
+          const matchingBp = sharedBlueprints.find(bp => bp.patternType === pattern);
+          agent.suggestedBlueprintId = matchingBp?.id || null;
+          agent.suggestedBlueprintName = matchingBp?.name || null;
+        }
+      } catch (bpErr) {
+        console.error("[propose-agents] Blueprint suggestion failed:", bpErr);
       }
 
       if (outcomeContract?.id && (result.agents?.length > 0 || result.orchestrator)) {

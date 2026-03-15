@@ -432,6 +432,7 @@ export const agentTemplates = pgTable("agent_templates", {
   preloadedSkills: jsonb("preloaded_skills").default(sql`'[]'::jsonb`),
   requiredSkills: jsonb("required_skills").default(sql`'[]'::jsonb`),
   optionalSkills: jsonb("optional_skills").default(sql`'[]'::jsonb`),
+  defaultBlueprintId: varchar("default_blueprint_id"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
