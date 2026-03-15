@@ -18456,7 +18456,7 @@ Requirements for each TOOL ADAPTER file:
 Return valid JSON only. No markdown. No code fences.`;
 
       const response = await anthropicClient.messages.create({
-        model: "claude-sonnet-4-6",
+        model: "claude-sonnet-4-20250514",
         max_tokens: 8192,
         system: systemMsg,
         messages: [
