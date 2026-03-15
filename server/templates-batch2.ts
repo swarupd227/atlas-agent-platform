@@ -50,7 +50,7 @@ export const batch2Templates = [
     icon: "book-open",
     complexity: "high",
     modelProvider: "anthropic",
-    modelName: "claude-sonnet-4-20250514",
+    modelName: "claude-sonnet-4-5",
     defaultRiskTier: "LOW",
     defaultAutonomyMode: "assisted",
     toolsConfig: [
@@ -293,7 +293,7 @@ export const batch2Templates = [
     icon: "file-text",
     complexity: "medium",
     modelProvider: "anthropic",
-    modelName: "claude-sonnet-4-20250514",
+    modelName: "claude-sonnet-4-5",
     defaultRiskTier: "LOW",
     defaultAutonomyMode: "autonomous",
     toolsConfig: [
@@ -461,7 +461,7 @@ export const batch2Templates = [
     icon: "flask",
     complexity: "high",
     modelProvider: "anthropic",
-    modelName: "claude-sonnet-4-20250514",
+    modelName: "claude-sonnet-4-5",
     defaultRiskTier: "HIGH",
     defaultAutonomyMode: "manual",
     toolsConfig: [
@@ -626,7 +626,7 @@ export const batch2Templates = [
     icon: "clipboard-list",
     complexity: "medium",
     modelProvider: "anthropic",
-    modelName: "claude-sonnet-4-20250514",
+    modelName: "claude-sonnet-4-5",
     defaultRiskTier: "MEDIUM",
     defaultAutonomyMode: "assisted",
     toolsConfig: [
@@ -1000,7 +1000,7 @@ export const batch2Templates = [
     icon: "file-text",
     complexity: "medium",
     modelProvider: "anthropic",
-    modelName: "claude-sonnet-4-20250514",
+    modelName: "claude-sonnet-4-5",
     defaultRiskTier: "LOW",
     defaultAutonomyMode: "autonomous",
     toolsConfig: [
@@ -1161,7 +1161,7 @@ export const batch2Templates = [
     icon: "lock",
     complexity: "low",
     modelProvider: "anthropic",
-    modelName: "claude-sonnet-4-20250514",
+    modelName: "claude-sonnet-4-5",
     defaultRiskTier: "LOW",
     defaultAutonomyMode: "autonomous",
     toolsConfig: [
@@ -1447,7 +1447,7 @@ export const batch2Templates = [
     icon: "clock",
     complexity: "medium",
     modelProvider: "anthropic",
-    modelName: "claude-sonnet-4-20250514",
+    modelName: "claude-sonnet-4-5",
     defaultRiskTier: "LOW",
     defaultAutonomyMode: "autonomous",
     toolsConfig: [

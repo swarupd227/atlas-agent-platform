@@ -79,7 +79,7 @@ const OPENAI_EMBEDDING_MODELS: LLMProviderInfo["embeddingModels"] = [
 ];
 
 const ANTHROPIC_MODELS: LLMProviderInfo["models"] = [
-  { id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4", contextWindow: 200000, costPer1kInput: 0.003, costPer1kOutput: 0.015, supportsToolCalling: true, supportsJson: true },
+  { id: "claude-sonnet-4-5", name: "Claude Sonnet 4", contextWindow: 200000, costPer1kInput: 0.003, costPer1kOutput: 0.015, supportsToolCalling: true, supportsJson: true },
   { id: "claude-3-5-sonnet-20241022", name: "Claude 3.5 Sonnet", contextWindow: 200000, costPer1kInput: 0.003, costPer1kOutput: 0.015, supportsToolCalling: true, supportsJson: true },
   { id: "claude-3-5-haiku-20241022", name: "Claude 3.5 Haiku", contextWindow: 200000, costPer1kInput: 0.0008, costPer1kOutput: 0.004, supportsToolCalling: true, supportsJson: true },
   { id: "claude-3-opus-20240229", name: "Claude 3 Opus", contextWindow: 200000, costPer1kInput: 0.015, costPer1kOutput: 0.075, supportsToolCalling: true, supportsJson: true },
@@ -252,7 +252,7 @@ class AnthropicProvider implements LLMProvider {
   }
 
   async complete(messages: LLMMessage[], options?: LLMCompletionOptions): Promise<LLMCompletionResult> {
-    const model = options?.model || "claude-sonnet-4-20250514";
+    const model = options?.model || "claude-sonnet-4-5";
 
     let systemPrompt = "";
     const anthropicMessages: Anthropic.MessageParam[] = [];

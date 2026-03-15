@@ -94,7 +94,7 @@ export const batch1Templates = [
     icon: "line-chart",
     complexity: "high",
     modelProvider: "anthropic",
-    modelName: "claude-sonnet-4-20250514",
+    modelName: "claude-sonnet-4-5",
     defaultRiskTier: "MEDIUM",
     defaultAutonomyMode: "assisted",
     toolsConfig: [
@@ -215,7 +215,7 @@ export const batch1Templates = [
     icon: "scale",
     complexity: "high",
     modelProvider: "anthropic",
-    modelName: "claude-sonnet-4-20250514",
+    modelName: "claude-sonnet-4-5",
     defaultRiskTier: "HIGH",
     defaultAutonomyMode: "assisted",
     toolsConfig: [
@@ -539,7 +539,7 @@ export const batch1Templates = [
     icon: "shield-check",
     complexity: "medium",
     modelProvider: "anthropic",
-    modelName: "claude-sonnet-4-20250514",
+    modelName: "claude-sonnet-4-5",
     defaultRiskTier: "MEDIUM",
     defaultAutonomyMode: "assisted",
     toolsConfig: [
@@ -659,7 +659,7 @@ export const batch1Templates = [
     icon: "database",
     complexity: "medium",
     modelProvider: "anthropic",
-    modelName: "claude-sonnet-4-20250514",
+    modelName: "claude-sonnet-4-5",
     defaultRiskTier: "MEDIUM",
     defaultAutonomyMode: "assisted",
     toolsConfig: [
@@ -899,7 +899,7 @@ export const batch1Templates = [
     icon: "truck",
     complexity: "high",
     modelProvider: "anthropic",
-    modelName: "claude-sonnet-4-20250514",
+    modelName: "claude-sonnet-4-5",
     defaultRiskTier: "MEDIUM",
     defaultAutonomyMode: "assisted",
     toolsConfig: [
@@ -1135,7 +1135,7 @@ export const batch1Templates = [
     icon: "wrench",
     complexity: "high",
     modelProvider: "anthropic",
-    modelName: "claude-sonnet-4-20250514",
+    modelName: "claude-sonnet-4-5",
     defaultRiskTier: "MEDIUM",
     defaultAutonomyMode: "assisted",
     toolsConfig: [
@@ -1295,7 +1295,7 @@ export const batch1Templates = [
     icon: "tag",
     complexity: "high",
     modelProvider: "anthropic",
-    modelName: "claude-sonnet-4-20250514",
+    modelName: "claude-sonnet-4-5",
     defaultRiskTier: "MEDIUM",
     defaultAutonomyMode: "assisted",
     toolsConfig: [
@@ -1528,7 +1528,7 @@ export const batch1Templates = [
     icon: "users",
     complexity: "medium",
     modelProvider: "anthropic",
-    modelName: "claude-sonnet-4-20250514",
+    modelName: "claude-sonnet-4-5",
     defaultRiskTier: "LOW",
     defaultAutonomyMode: "autonomous",
     toolsConfig: [

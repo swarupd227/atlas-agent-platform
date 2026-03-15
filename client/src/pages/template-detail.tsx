@@ -903,7 +903,7 @@ export default function TemplateDetail() {
                     <Input
                       value={editData.modelName || ""}
                       onChange={(e) => setEditData({ ...editData, modelName: e.target.value })}
-                      placeholder="e.g., gpt-4.1, claude-sonnet-4-20250514"
+                      placeholder="e.g., gpt-4.1, claude-sonnet-4-5"
                       data-testid="input-edit-model-name"
                     />
                   </div>
