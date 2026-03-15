@@ -147,7 +147,6 @@ function DashboardRouter() {
       <Route path="/agents/wizard" component={AgentWizard} />
       <Route path="/agents/teams" component={AgentTeams} />
       <Route path="/agents/remote" component={RemoteAgents} />
-      <Route path="/agents/:id/export" component={AgentExport} />
       <Route path="/agents/:id/playground" component={AgentPlayground} />
       <Route path="/agents/:id" component={AgentDetail} />
       <Route path="/blueprints" component={Blueprints} />
@@ -270,7 +269,12 @@ function AuthGate() {
     return <LoginPage />;
   }
 
-  return <DashboardLayout />;
+  return (
+    <Switch>
+      <Route path="/agents/:id/export" component={AgentExport} />
+      <Route>{() => <DashboardLayout />}</Route>
+    </Switch>
+  );
 }
 
 function App() {

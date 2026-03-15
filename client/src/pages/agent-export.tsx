@@ -2,7 +2,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute, Link, useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { useState, useEffect, useMemo, Fragment } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from "react";
 import {
   ArrowLeft,
   Code,
@@ -32,6 +32,9 @@ import {
   PanelLeftClose,
   PanelLeft,
   ChevronRight,
+  Copy,
+  GripVertical,
+  Info,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -90,6 +93,34 @@ export default function AgentExport() {
   const [evalStatus, setEvalStatus] = useState<"idle" | "running" | "passed" | "failed">("idle");
   const [evalOutput, setEvalOutput] = useState<string>("");
   const [fileTreeCollapsed, setFileTreeCollapsed] = useState(false);
+  const [fileTreeWidth, setFileTreeWidth] = useState(240);
+  const resizingRef = useRef(false);
+  const startXRef = useRef(0);
+  const startWidthRef = useRef(240);
+
+  const onResizeMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    resizingRef.current = true;
+    startXRef.current = e.clientX;
+    startWidthRef.current = fileTreeWidth;
+    const onMove = (ev: MouseEvent) => {
+      if (!resizingRef.current) return;
+      const delta = ev.clientX - startXRef.current;
+      setFileTreeWidth(Math.max(160, Math.min(400, startWidthRef.current + delta)));
+    };
+    const onUp = () => {
+      resizingRef.current = false;
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, [fileTreeWidth]);
+
+  const copyToClipboard = useCallback((text: string) => {
+    navigator.clipboard.writeText(text);
+    toast({ title: "Copied to clipboard", description: text.length > 60 ? text.substring(0, 60) + "..." : text });
+  }, [toast]);
 
   const exportCodeMutation = useMutation({
     mutationFn: async (params: { format: string; llmProvider: string; maxIterations: number; completionPromise: string; framework?: string; toolAdapters?: Record<string, string>; pinVersions?: boolean; otelEnabled?: boolean; spanGranularity?: string }) => {
@@ -172,7 +203,7 @@ export default function AgentExport() {
 
   if (agentLoading) {
     return (
-      <div className="h-full flex items-center justify-center">
+      <div className="h-screen flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
           <span className="text-sm text-muted-foreground">Loading agent...</span>
@@ -183,7 +214,7 @@ export default function AgentExport() {
 
   if (!agent) {
     return (
-      <div className="h-full flex items-center justify-center">
+      <div className="h-screen flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
           <span className="text-sm text-muted-foreground">Agent not found</span>
           <Button variant="outline" size="sm" onClick={() => navigate("/agents")}>
@@ -203,7 +234,7 @@ export default function AgentExport() {
   const currentIdx = stepOrder.indexOf(exportStep);
 
   return (
-    <div className="flex flex-col h-full" data-testid="agent-export-page">
+    <div className="flex flex-col h-screen" data-testid="agent-export-page">
       <header className="flex items-center justify-between gap-3 px-4 py-2.5 border-b bg-background shrink-0" data-testid="export-header">
         <div className="flex items-center gap-3 min-w-0">
           <Link href={`/agents/${agentId}`}>
@@ -333,7 +364,7 @@ export default function AgentExport() {
         {exportStep === "preview" && (
           <div className="flex h-full">
             {!fileTreeCollapsed && (
-              <div className="w-60 shrink-0 border-r bg-muted/20 flex flex-col" data-testid="preview-file-tree-panel">
+              <div className="shrink-0 border-r bg-muted/20 flex flex-col" style={{ width: fileTreeWidth }} data-testid="preview-file-tree-panel">
                 <div className="flex items-center justify-between px-3 py-2 border-b">
                   <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Files</span>
                   <div className="flex items-center gap-1">
@@ -355,6 +386,16 @@ export default function AgentExport() {
               </div>
             )}
 
+            {!fileTreeCollapsed && (
+              <div
+                className="w-1.5 shrink-0 cursor-col-resize bg-border/40 hover:bg-primary/30 transition-colors flex items-center justify-center"
+                onMouseDown={onResizeMouseDown}
+                data-testid="file-tree-resize-handle"
+              >
+                <GripVertical className="w-3 h-3 text-muted-foreground/50" />
+              </div>
+            )}
+
             <div className="flex-1 min-w-0 flex flex-col">
               <div className="flex items-center gap-2 px-3 py-1.5 border-b bg-muted/10 shrink-0">
                 {fileTreeCollapsed && (
@@ -363,18 +404,6 @@ export default function AgentExport() {
                   </Button>
                 )}
                 <code className="text-xs text-muted-foreground font-mono flex-1 truncate" data-testid="text-current-file">{exportPreviewFile || "No file selected"}</code>
-                {exportPreview?.metadata && (
-                  <div className="flex items-center gap-2 shrink-0">
-                    {exportPreview.metadata.aiGenerated && (
-                      <Badge className="text-[10px] bg-primary/10 text-primary border-primary/20 gap-1">
-                        <Sparkles className="w-2.5 h-2.5" />AI
-                      </Badge>
-                    )}
-                    <Badge variant="outline" className="text-[10px]">{exportPreview.metadata.pattern}</Badge>
-                    <Badge variant="outline" className="text-[10px]">{exportPreview.metadata.format}</Badge>
-                    <Badge variant="outline" className="text-[10px]">{exportPreview.metadata.llmProvider}</Badge>
-                  </div>
-                )}
               </div>
               <div className="flex-1 min-h-0" data-testid="preview-editor-panel">
                 <Editor
@@ -411,6 +440,94 @@ export default function AgentExport() {
                     renderLineHighlight: "all",
                   }}
                 />
+              </div>
+            </div>
+
+            <div className="w-60 shrink-0 border-l bg-muted/10 flex flex-col overflow-y-auto" data-testid="preview-right-sidebar">
+              <div className="px-3 py-2 border-b">
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Details</span>
+              </div>
+              <div className="flex flex-col gap-3 p-3">
+                {exportPreview?.metadata && (
+                  <>
+                    <div className="flex flex-col gap-1.5">
+                      <span className="text-[10px] font-medium text-muted-foreground uppercase">Export Info</span>
+                      <div className="flex flex-wrap gap-1">
+                        {exportPreview.metadata.aiGenerated && (
+                          <Badge className="text-[10px] bg-primary/10 text-primary border-primary/20 gap-1">
+                            <Sparkles className="w-2.5 h-2.5" />AI Generated
+                          </Badge>
+                        )}
+                        <Badge variant="outline" className="text-[10px]">{exportPreview.metadata.pattern}</Badge>
+                        <Badge variant="outline" className="text-[10px]">{exportPreview.metadata.format}</Badge>
+                        <Badge variant="outline" className="text-[10px]">{exportPreview.metadata.llmProvider}</Badge>
+                      </div>
+                    </div>
+                    <Separator />
+                  </>
+                )}
+
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-[10px] font-medium text-muted-foreground uppercase">Files</span>
+                  <div className="flex items-center gap-1.5">
+                    <FileCode className="w-3.5 h-3.5 text-muted-foreground" />
+                    <span className="text-xs">{editedFilePaths.length} files</span>
+                  </div>
+                  {exportPreview?.metadata?.fileCount && (
+                    <span className="text-[10px] text-muted-foreground">{exportPreview.metadata.fileCount} total generated</span>
+                  )}
+                </div>
+
+                <Separator />
+
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-[10px] font-medium text-muted-foreground uppercase">Actions</span>
+                  <div className="flex flex-col gap-1.5">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full justify-start text-xs gap-1.5"
+                      onClick={handleGenerate}
+                      disabled={exportCodeMutation.isPending}
+                      data-testid="button-regenerate"
+                    >
+                      {exportCodeMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                      Regenerate
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full justify-start text-xs gap-1.5"
+                      onClick={downloadExportPackage}
+                      data-testid="button-sidebar-download"
+                    >
+                      <Download className="w-3 h-3" />
+                      Download ZIP
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full justify-start text-xs gap-1.5"
+                      onClick={() => setExportStep("download")}
+                      data-testid="button-sidebar-deliver"
+                    >
+                      <GitBranch className="w-3 h-3" />
+                      Git Push
+                    </Button>
+                  </div>
+                </div>
+
+                {agent && (
+                  <>
+                    <Separator />
+                    <div className="flex flex-col gap-1.5">
+                      <span className="text-[10px] font-medium text-muted-foreground uppercase">Agent</span>
+                      <span className="text-xs font-medium truncate">{agent.name}</span>
+                      {agent.industry && <Badge variant="outline" className="text-[9px] w-fit">{agent.industry}</Badge>}
+                      {agent.riskTier && <Badge variant="outline" className="text-[9px] w-fit">Risk: {agent.riskTier}</Badge>}
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -491,9 +608,18 @@ export default function AgentExport() {
                         `Run the agent: ${exportFormat === "typescript" ? "npm start" : "python src/runtime/orchestrator.py"}`,
                         `Run tests: ${exportFormat === "typescript" ? "npm test" : "python -m pytest tests/"}`,
                       ]).map((step, i) => (
-                        <div key={i} className="flex items-start gap-2">
+                        <div key={i} className="flex items-start gap-2 group" data-testid={`checklist-step-${i}`}>
                           <span className="flex items-center justify-center w-5 h-5 rounded-full bg-muted text-[10px] font-medium shrink-0 mt-0.5">{i + 1}</span>
-                          <span className="text-sm">{step}</span>
+                          <span className="text-sm flex-1">{step}</span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5"
+                            onClick={() => copyToClipboard(step)}
+                            data-testid={`button-copy-step-${i}`}
+                          >
+                            <Copy className="w-3 h-3 text-muted-foreground" />
+                          </Button>
                         </div>
                       ))}
                     </div>
