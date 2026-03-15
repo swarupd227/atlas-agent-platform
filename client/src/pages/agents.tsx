@@ -27,6 +27,7 @@ import {
   CircleDot,
   Minus,
   Trash2,
+  Download,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -819,11 +820,23 @@ export default function Agents() {
                       </TableCell>
                     )}
                     <TableCell>
-                      <Link href={`/agents/${agent.id}`}>
-                        <Button variant="ghost" size="icon" data-testid={`button-view-agent-${agent.id}`}>
-                          <ArrowRight className="w-4 h-4" />
-                        </Button>
-                      </Link>
+                      <div className="flex items-center gap-0.5">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Link href={`/agents/${agent.id}?export=1`}>
+                              <Button variant="ghost" size="icon" data-testid={`button-export-agent-${agent.id}`}>
+                                <Download className="w-3.5 h-3.5" />
+                              </Button>
+                            </Link>
+                          </TooltipTrigger>
+                          <TooltipContent>Export as Code</TooltipContent>
+                        </Tooltip>
+                        <Link href={`/agents/${agent.id}`}>
+                          <Button variant="ghost" size="icon" data-testid={`button-view-agent-${agent.id}`}>
+                            <ArrowRight className="w-4 h-4" />
+                          </Button>
+                        </Link>
+                      </div>
                     </TableCell>
                   </TableRow>
                 );

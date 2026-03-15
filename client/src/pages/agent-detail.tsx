@@ -2,7 +2,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute, Link, useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { useState, Fragment, Component, type ErrorInfo, type ReactNode } from "react";
+import { useState, useEffect, Fragment, Component, type ErrorInfo, type ReactNode } from "react";
 import {
   Bot,
   ArrowLeft,
@@ -894,6 +894,17 @@ function AgentDetailInner() {
   const [exportStep, setExportStep] = useState<"configure" | "preview" | "download">("configure");
   const [exportApprovalSubmitted, setExportApprovalSubmitted] = useState(false);
   const [exportApprovalId, setExportApprovalId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("export") === "1") {
+      setExportStep("configure");
+      setExportPreview(null);
+      setExportFramework("generic");
+      setExportDialogOpen(true);
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
   const [deliveryTarget, setDeliveryTarget] = useState<"zip" | "git" | "replit">("zip");
   const [gitRepoUrl, setGitRepoUrl] = useState("");
   const [toolAdapterOverrides, setToolAdapterOverrides] = useState<Record<string, "builtin" | "customer" | "stub">>({});
@@ -1668,6 +1679,9 @@ function AgentDetailInner() {
         <Button variant="outline" size="sm" data-testid="button-rollback">
           <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> Rollback
         </Button>
+        <Button variant="outline" size="sm" onClick={() => { setExportStep("configure"); setExportPreview(null); setExportFramework("generic"); setExportDialogOpen(true); }} data-testid="button-header-export-code">
+          <Download className="w-3.5 h-3.5 mr-1.5" /> Export as Code
+        </Button>
         {agentDeployments.length > 0 ? (
           <div className="flex items-center gap-1">
             <Button size="sm" data-testid="button-view-deployment" onClick={() => {
@@ -2228,13 +2242,13 @@ function AgentDetailInner() {
                   </div>
                   {hasPinnedVersion && (
                     <Button
-                      variant="default"
+                      variant="outline"
                       size="sm"
                       className="w-full"
                       onClick={() => { setExportStep("configure"); setExportPreview(null); setExportFramework("generic"); setExportDialogOpen(true); }}
                       data-testid="button-summary-export-code"
                     >
-                      <Package className="w-3.5 h-3.5 mr-1.5" /> Export / Generate Code
+                      <Download className="w-3.5 h-3.5 mr-1.5" /> Export as Code
                     </Button>
                   )}
                   {!hasPinnedVersion && (
@@ -2812,9 +2826,6 @@ function AgentDetailInner() {
             </Button>
             <Button variant="outline" size="sm" onClick={() => toast({ title: "Version comparison opened" })} data-testid="button-compare-version">
               <Layers className="w-3.5 h-3.5 mr-1.5" /> Compare vs Version...
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => { setExportStep("configure"); setExportPreview(null); setExportFramework("generic"); setExportDialogOpen(true); }} data-testid="button-export-code">
-              <Download className="w-3.5 h-3.5 mr-1.5" /> Export as Code
             </Button>
             <div className="flex-1" />
             <div className="flex items-center gap-1" data-testid="blueprint-view-toggle">
