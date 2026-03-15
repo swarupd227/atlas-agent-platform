@@ -18352,6 +18352,7 @@ def ${tool.name}(args: dict) -> dict:
     maxIterations: number;
     completionPromise: string;
     framework: string;
+    blueprintJson?: Record<string, unknown>;
   }): Promise<{ entrypoint: string; toolAdapters: Record<string, string>; aiGenerated: true } | null> {
     try {
       const toolsJson = JSON.stringify(ctx.tools.map(t => ({
@@ -18377,6 +18378,46 @@ The JSON must have exactly these keys:
   }
 }`;
 
+      const blueprintCtx = (ctx.blueprintJson && Object.keys(ctx.blueprintJson).length > 0)
+        ? `\nBlueprint JSON (agent graph structure):\n${JSON.stringify(ctx.blueprintJson, null, 2).substring(0, 1200)}`
+        : "";
+
+      const frameworkInstructions: Record<string, string> = {
+        generic: `Requirements for the ENTRYPOINT file (${ctx.format === "typescript" ? "src/runtime/orchestrator.ts" : "src/runtime/orchestrator.py"}):
+1. Import and use the ${provider} SDK with the correct API call pattern
+2. Load config from agent.yaml using ${ctx.format === "typescript" ? "js-yaml" : "pyyaml"}
+3. Define TOOL_REGISTRY with each tool's actual description and parameter schema (not generic placeholders)
+4. Build toolDefinitions array from TOOL_REGISTRY with full schemas
+5. Implement the agent loop: call LLM → check for completion phrase → dispatch tool calls → collect results → repeat
+6. Include context window trimming when message history exceeds 40 messages
+7. Include clear console logging for each iteration and tool call
+8. Accept task input from command line argv`,
+        langgraph: `Requirements for the ENTRYPOINT file (${ctx.format === "typescript" ? "graph.ts" : "graph.py"}):
+1. Use LangGraph's StateGraph to define an agent graph with nodes and edges
+2. Map each tool to a graph node that calls the tool adapter
+3. Create an "agent" reasoning node that calls the LLM and decides which tool to invoke
+4. Add conditional edges: agent → tool nodes, tool nodes → agent, agent → END (on completion)
+5. Use the blueprint JSON (if provided) to derive node names, edges, and execution order
+6. Include proper TypedDict/interface for the graph state (messages, tool_results, iterations)
+7. Export the compiled graph as "app"
+8. Include max iteration guard in the should_continue conditional`,
+        crewai: `Requirements for the ENTRYPOINT file (${ctx.format === "typescript" ? "crew.ts" : "crew.py"}):
+1. Define agent roles derived from the blueprint structure and system prompt
+2. Map tools to the appropriate agent roles based on their descriptions
+3. Define CrewAI tasks that reflect the agent's actual objectives
+4. Wire up the crew orchestration with proper delegation and task assignment
+5. Use the blueprint JSON (if provided) to derive roles, goals, and task sequences
+6. Include verbose logging for each task execution step`,
+        bedrock: `Requirements for the ENTRYPOINT file (${ctx.format === "typescript" ? "lambda/handler.ts" : "lambda/handler.py"}):
+1. Implement an AWS Lambda handler compatible with Bedrock Agent action groups
+2. Route incoming apiPath to the correct tool adapter
+3. Parse parameters from the Bedrock event format
+4. Return responses in Bedrock's expected responseBody format
+5. Include error handling for unknown tools and malformed parameters`,
+      };
+
+      const fwInstr = frameworkInstructions[ctx.framework] || frameworkInstructions.generic;
+
       const userMsg = `Generate a complete, runnable autonomous agent in ${lang} using the ${provider} API (${clientLib}).
 
 Agent context:
@@ -18385,20 +18426,12 @@ Agent context:
 - System prompt: ${ctx.systemPrompt.substring(0, 800)}${ctx.systemPrompt.length > 800 ? "..." : ""}
 - Max iterations: ${ctx.maxIterations}
 - Completion signal phrase: "${ctx.completionPromise}"
-- Framework: ${ctx.framework}
+- Framework: ${ctx.framework}${blueprintCtx}
 
 Tools (${ctx.tools.length}):
 ${toolsJson}
 
-Requirements for the ENTRYPOINT file (${ctx.format === "typescript" ? "src/runtime/orchestrator.ts" : "src/runtime/orchestrator.py"}):
-1. Import and use the ${provider} SDK with the correct API call pattern
-2. Load config from agent.yaml using ${ctx.format === "typescript" ? "js-yaml" : "pyyaml"}
-3. Define TOOL_REGISTRY with each tool's actual description and parameter schema (not generic placeholders)
-4. Build toolDefinitions array from TOOL_REGISTRY with full schemas
-5. Implement the agent loop: call LLM → check for completion phrase → dispatch tool calls → collect results → repeat
-6. Include context window trimming when message history exceeds 40 messages
-7. Include clear console logging for each iteration and tool call
-8. Accept task input from command line argv
+${fwInstr}
 
 Requirements for each TOOL ADAPTER file:
 1. Each adapter must have a typed function signature derived from the tool's parameter schema
@@ -18572,6 +18605,21 @@ Return valid JSON only. No markdown. No code fences.`;
 
       let aiResult: Awaited<ReturnType<typeof generateAgentCodeWithAI>> = null;
 
+      try {
+        aiResult = await generateAgentCodeWithAI({
+          agentName: agent.name,
+          agentDescription: agent.description || "",
+          systemPrompt,
+          tools,
+          format,
+          llmProvider,
+          maxIterations,
+          completionPromise,
+          framework,
+          blueprintJson,
+        });
+      } catch { /* swallow — templates handle fallback */ }
+
       if (framework === "generic") {
         const crypto = await import("crypto");
         const blueprintHash = crypto.createHash("sha256").update(agentYaml).digest("hex");
@@ -18665,21 +18713,6 @@ Return valid JSON only. No markdown. No code fences.`;
         const runCmd = format === "typescript" ? "npm start" : "python src/runtime/orchestrator.py";
 
         files["README.md"] = `<!-- ATLAS-generated README -->\n# ${agent.name}\n\n${agent.description || ""}\n\n## Setup\n\n1. Install dependencies:\n   \`\`\`bash\n   ${depCmd}\n   \`\`\`\n2. Copy \`.env.example\` to \`.env\` and fill in your API keys.\n3. Run the agent:\n   \`\`\`bash\n   ${runCmd}\n   \`\`\`\n\n## File Structure\n\n\`\`\`\n${format === "typescript" ? `src/\n  runtime/\n    orchestrator.ts    # Main agent loop\n    policy.ts          # Policy evaluation hooks\n    tracing.ts         # OpenTelemetry tracing setup\n  agent/\n    graph.ts           # Graph construction from blueprint\n    prompts/\n      system.txt       # System prompt\n    schemas/\n      input.json       # Input JSON schema\n      output.json      # Output JSON schema\n  tools/\n    index.ts           # Tool registry\n    {tool}.ts          # Individual tool adapters\ntests/\n  eval_smoke.test.ts   # Smoke evaluation test\npackage.json\nagent.yaml\nalmp.manifest.json\n.env.example` : `src/\n  runtime/\n    orchestrator.py    # Main agent loop\n    policy.py          # Policy evaluation hooks\n    tracing.py         # OpenTelemetry tracing setup\n  agent/\n    graph.py           # Graph construction from blueprint\n    prompts/\n      system.txt       # System prompt\n    schemas/\n      input.json       # Input JSON schema\n      output.json      # Output JSON schema\n  tools/\n    __init__.py        # Tool registry\n    {tool}.py          # Individual tool adapters\ntests/\n  eval_smoke_test.py   # Smoke evaluation test\nrequirements.txt\nagent.yaml\nalmp.manifest.json\n.env.example`}\n\`\`\`\n\n## Tools\n\n${tools.length > 0 ? toolList : "No tools configured."}\n`;
-
-        // Attempt AI-powered code generation; fall back to templates on failure
-        try {
-          aiResult = await generateAgentCodeWithAI({
-            agentName: agent.name,
-            agentDescription: agent.description || "",
-            systemPrompt,
-            tools,
-            format,
-            llmProvider,
-            maxIterations,
-            completionPromise,
-            framework,
-          });
-        } catch { /* swallow — templates handle fallback */ }
 
         if (format === "typescript") {
           files["src/runtime/orchestrator.ts"] = aiResult?.entrypoint || (llmProvider === "openai"
@@ -18778,20 +18811,22 @@ Return valid JSON only. No markdown. No code fences.`;
         }
       } else if (framework === "langgraph") {
         const toolNames = tools.map(t => t.name).join(", ");
+        const lgTemplateTs = `// LangGraph State Graph Definition\n// Generated for ${agent.name}\nimport { StateGraph, END } from "@langchain/langgraph";\nimport { loadTools } from "./tools";\n\ninterface AgentState {\n  messages: any[];\n  toolResults: Record<string, any>;\n  iterations: number;\n}\n\nconst tools = loadTools();\n\nconst agentNode = async (state: AgentState) => {\n  // Agent reasoning node — calls LLM with tool descriptions\n  // Tools available: ${toolNames}\n  return { ...state, iterations: state.iterations + 1 };\n};\n\nconst toolNode = async (state: AgentState) => {\n  // Execute selected tool and return result\n  return state;\n};\n\nconst shouldContinue = (state: AgentState) => {\n  if (state.iterations >= ${maxIterations}) return "end";\n  return "tools";\n};\n\nconst graph = new StateGraph<AgentState>({\n  channels: { messages: { value: [] }, toolResults: { value: {} }, iterations: { value: 0 } },\n})\n  .addNode("agent", agentNode)\n  .addNode("tools", toolNode)\n  .addEdge("__start__", "agent")\n  .addConditionalEdges("agent", shouldContinue, { tools: "tools", end: END })\n  .addEdge("tools", "agent");\n\nexport const app = graph.compile();\n`;
         if (format === "typescript") {
-          files["graph.ts"] = `// LangGraph State Graph Definition\n// Generated for ${agent.name}\nimport { StateGraph, END } from "@langchain/langgraph";\nimport { loadTools } from "./tools";\n\ninterface AgentState {\n  messages: any[];\n  toolResults: Record<string, any>;\n  iterations: number;\n}\n\nconst tools = loadTools();\n\nconst agentNode = async (state: AgentState) => {\n  // Agent reasoning node — calls LLM with tool descriptions\n  // Tools available: ${toolNames}\n  return { ...state, iterations: state.iterations + 1 };\n};\n\nconst toolNode = async (state: AgentState) => {\n  // Execute selected tool and return result\n  return state;\n};\n\nconst shouldContinue = (state: AgentState) => {\n  if (state.iterations >= ${maxIterations}) return "end";\n  return "tools";\n};\n\nconst graph = new StateGraph<AgentState>({\n  channels: { messages: { value: [] }, toolResults: { value: {} }, iterations: { value: 0 } },\n})\n  .addNode("agent", agentNode)\n  .addNode("tools", toolNode)\n  .addEdge("__start__", "agent")\n  .addConditionalEdges("agent", shouldContinue, { tools: "tools", end: END })\n  .addEdge("tools", "agent");\n\nexport const app = graph.compile();\n`;
+          files["graph.ts"] = aiResult?.entrypoint || lgTemplateTs;
           files["nodes/index.ts"] = `// Graph node implementations\nexport { agentNode } from "../graph";\nexport { toolNode } from "../graph";\n`;
           files["tools/index.ts"] = generateTsToolsIndex(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.ts`] = generateTsToolAdapter(tool, getAdapterType(tool.name)); }
+          for (const tool of tools) { files[`tools/${tool.name}.ts`] = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, getAdapterType(tool.name)); }
           files["langgraph.json"] = JSON.stringify({ graphs: { agent: "./graph.ts:app" }, env: llmProvider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY" }, null, 2);
           const deps: Record<string, string> = { ...baseDeps, "@langchain/langgraph": pin ? "0.2.36" : "^0.2.0", "@langchain/core": pin ? "0.3.26" : "^0.3.0" };
           if (llmProvider === "openai") { deps["@langchain/openai"] = pin ? "0.3.16" : "^0.3.0"; deps["openai"] = pin ? "4.77.0" : "^4.0.0"; } else { deps["@langchain/anthropic"] = pin ? "0.3.12" : "^0.3.0"; deps["@anthropic-ai/sdk"] = pin ? "0.30.1" : "^0.30.0"; }
           files["package.json"] = JSON.stringify({ name: agentSlug, version: "1.0.0", private: true, scripts: { start: "ts-node graph.ts", "langgraph:dev": "langgraph dev" }, dependencies: deps }, null, 2);
         } else {
-          files["graph.py"] = `# LangGraph State Graph Definition\n# Generated for ${agent.name}\nfrom langgraph.graph import StateGraph, END\nfrom typing import TypedDict, Any\nfrom tools import load_tools\n\nclass AgentState(TypedDict):\n    messages: list\n    tool_results: dict\n    iterations: int\n\ntools = load_tools()\n\ndef agent_node(state: AgentState) -> AgentState:\n    \"\"\"Agent reasoning node — calls LLM with tool descriptions.\"\"\"\n    # Tools available: ${toolNames}\n    return {**state, "iterations": state["iterations"] + 1}\n\ndef tool_node(state: AgentState) -> AgentState:\n    \"\"\"Execute selected tool and return result.\"\"\"\n    return state\n\ndef should_continue(state: AgentState) -> str:\n    if state["iterations"] >= ${maxIterations}:\n        return "end"\n    return "tools"\n\ngraph = StateGraph(AgentState)\ngraph.add_node("agent", agent_node)\ngraph.add_node("tools", tool_node)\ngraph.set_entry_point("agent")\ngraph.add_conditional_edges("agent", should_continue, {"tools": "tools", "end": END})\ngraph.add_edge("tools", "agent")\n\napp = graph.compile()\n`;
+          const lgTemplatePy = `# LangGraph State Graph Definition\n# Generated for ${agent.name}\nfrom langgraph.graph import StateGraph, END\nfrom typing import TypedDict, Any\nfrom tools import load_tools\n\nclass AgentState(TypedDict):\n    messages: list\n    tool_results: dict\n    iterations: int\n\ntools = load_tools()\n\ndef agent_node(state: AgentState) -> AgentState:\n    \"\"\"Agent reasoning node — calls LLM with tool descriptions.\"\"\"\n    # Tools available: ${toolNames}\n    return {**state, "iterations": state["iterations"] + 1}\n\ndef tool_node(state: AgentState) -> AgentState:\n    \"\"\"Execute selected tool and return result.\"\"\"\n    return state\n\ndef should_continue(state: AgentState) -> str:\n    if state["iterations"] >= ${maxIterations}:\n        return "end"\n    return "tools"\n\ngraph = StateGraph(AgentState)\ngraph.add_node("agent", agent_node)\ngraph.add_node("tools", tool_node)\ngraph.set_entry_point("agent")\ngraph.add_conditional_edges("agent", should_continue, {"tools": "tools", "end": END})\ngraph.add_edge("tools", "agent")\n\napp = graph.compile()\n`;
+          files["graph.py"] = aiResult?.entrypoint || lgTemplatePy;
           files["nodes/__init__.py"] = `# Graph node implementations\nfrom graph import agent_node, tool_node\n`;
           files["tools/__init__.py"] = generatePyToolsInit(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.py`] = generatePyToolAdapter(tool, getAdapterType(tool.name)); }
+          for (const tool of tools) { files[`tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, getAdapterType(tool.name)); }
           files["langgraph.json"] = JSON.stringify({ graphs: { agent: "./graph.py:app" }, env: llmProvider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY" }, null, 2);
           const reqs = [...baseReqs, pin ? "langgraph==0.2.60" : "langgraph>=0.2.0", pin ? "langchain-core==0.3.28" : "langchain-core>=0.3.0"];
           if (llmProvider === "openai") reqs.push(pin ? "langchain-openai==0.2.14" : "langchain-openai>=0.2.0", pin ? "openai==1.58.1" : "openai>=1.0"); else reqs.push(pin ? "langchain-anthropic==0.2.8" : "langchain-anthropic>=0.2.0", pin ? "anthropic==0.30.1" : "anthropic>=0.30");
@@ -18801,16 +18836,18 @@ Return valid JSON only. No markdown. No code fences.`;
       } else if (framework === "crewai") {
         files["config/agents.yaml"] = `# CrewAI Agent Definitions\n# Generated for ${agent.name}\nagents:\n  - name: "${agent.name}"\n    role: "Primary Agent"\n    goal: "${agent.description || "Complete assigned tasks"}"\n    backstory: "${systemPrompt.substring(0, 200)}"\n    tools:\n${tools.map(t => `      - ${t.name}`).join("\n")}\n    max_iter: ${maxIterations}\n    verbose: true\n`;
         files["config/tasks.yaml"] = `# CrewAI Task Definitions\ntasks:\n  - name: "main_task"\n    description: "Execute the primary objective"\n    agent: "${agent.name}"\n    expected_output: "${completionPromise}"\n`;
+        const crewTemplateTs = `// CrewAI-style Crew Orchestration\n// Generated for ${agent.name}\nimport yaml from "js-yaml";\nimport fs from "fs";\nimport { loadTools } from "./tools";\n\nconst agentsConfig = yaml.load(fs.readFileSync("config/agents.yaml", "utf-8")) as any;\nconst tasksConfig = yaml.load(fs.readFileSync("config/tasks.yaml", "utf-8")) as any;\nconst tools = loadTools();\n\nasync function runCrew() {\n  console.log("Starting crew with agents:", agentsConfig.agents.map((a: any) => a.name));\n  console.log("Tasks:", tasksConfig.tasks.map((t: any) => t.name));\n  // Implement crew orchestration logic using loaded configs and tools\n  for (const task of tasksConfig.tasks) {\n    console.log(\`Executing task: \${task.name}\`);\n    // TODO: Wire up LLM calls with agent config\n  }\n}\n\nrunCrew().catch(console.error);\n`;
+        const crewTemplatePy = `# CrewAI-style Crew Orchestration\n# Generated for ${agent.name}\nimport yaml\nfrom tools import load_tools\n\nwith open("config/agents.yaml") as f:\n    agents_config = yaml.safe_load(f)\nwith open("config/tasks.yaml") as f:\n    tasks_config = yaml.safe_load(f)\n\ntools = load_tools()\n\ndef run_crew():\n    print("Starting crew with agents:", [a["name"] for a in agents_config["agents"]])\n    print("Tasks:", [t["name"] for t in tasks_config["tasks"]])\n    for task in tasks_config["tasks"]:\n        print(f"Executing task: {task['name']}")\n        # TODO: Wire up LLM calls with agent config\n\nif __name__ == "__main__":\n    run_crew()\n`;
         if (format === "typescript") {
-          files["crew.ts"] = `// CrewAI-style Crew Orchestration\n// Generated for ${agent.name}\nimport yaml from "js-yaml";\nimport fs from "fs";\nimport { loadTools } from "./tools";\n\nconst agentsConfig = yaml.load(fs.readFileSync("config/agents.yaml", "utf-8")) as any;\nconst tasksConfig = yaml.load(fs.readFileSync("config/tasks.yaml", "utf-8")) as any;\nconst tools = loadTools();\n\nasync function runCrew() {\n  console.log("Starting crew with agents:", agentsConfig.agents.map((a: any) => a.name));\n  console.log("Tasks:", tasksConfig.tasks.map((t: any) => t.name));\n  // Implement crew orchestration logic using loaded configs and tools\n  for (const task of tasksConfig.tasks) {\n    console.log(\`Executing task: \${task.name}\`);\n    // TODO: Wire up LLM calls with agent config\n  }\n}\n\nrunCrew().catch(console.error);\n`;
+          files["crew.ts"] = aiResult?.entrypoint || crewTemplateTs;
           files["tools/index.ts"] = generateTsToolsIndex(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.ts`] = generateTsToolAdapter(tool, getAdapterType(tool.name)); }
+          for (const tool of tools) { files[`tools/${tool.name}.ts`] = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, getAdapterType(tool.name)); }
           const deps = { ...baseDeps }; addLlmDep(deps, []);
           files["package.json"] = JSON.stringify({ name: agentSlug, version: "1.0.0", private: true, scripts: { start: "ts-node crew.ts" }, dependencies: deps }, null, 2);
         } else {
-          files["crew.py"] = `# CrewAI-style Crew Orchestration\n# Generated for ${agent.name}\nimport yaml\nfrom tools import load_tools\n\nwith open("config/agents.yaml") as f:\n    agents_config = yaml.safe_load(f)\nwith open("config/tasks.yaml") as f:\n    tasks_config = yaml.safe_load(f)\n\ntools = load_tools()\n\ndef run_crew():\n    print("Starting crew with agents:", [a["name"] for a in agents_config["agents"]])\n    print("Tasks:", [t["name"] for t in tasks_config["tasks"]])\n    for task in tasks_config["tasks"]:\n        print(f"Executing task: {task['name']}")\n        # TODO: Wire up LLM calls with agent config\n\nif __name__ == "__main__":\n    run_crew()\n`;
+          files["crew.py"] = aiResult?.entrypoint || crewTemplatePy;
           files["tools/__init__.py"] = generatePyToolsInit(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.py`] = generatePyToolAdapter(tool, getAdapterType(tool.name)); }
+          for (const tool of tools) { files[`tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, getAdapterType(tool.name)); }
           const reqs = [...baseReqs, pin ? "crewai==0.80.0" : "crewai>=0.80.0"]; addLlmDep({}, reqs);
           files["requirements.txt"] = reqs.join("\n") + "\n";
         }
@@ -18822,18 +18859,20 @@ Return valid JSON only. No markdown. No code fences.`;
           skills: tools.map(t => ({ name: t.name, description: t.description || "", type: "tool" })),
           configuration: { maxIterations, completionPromise, llmProvider },
         }, null, 2);
+        const foundryTemplateTs = `// Microsoft Foundry Agent Entry Point\n// Generated for ${agent.name}\nimport yaml from "js-yaml";\nimport fs from "fs";\nimport { loadSkills } from "./skills";\n\nconst manifest = JSON.parse(fs.readFileSync("foundry.manifest.json", "utf-8"));\nconst config = yaml.load(fs.readFileSync("agent.yaml", "utf-8")) as any;\nconst skills = loadSkills();\n\nasync function main() {\n  console.log(\`[Foundry Agent] \${manifest.name} starting...\`);\n  console.log(\`Skills loaded: \${Object.keys(skills).join(", ")}\`);\n  // Implement Foundry-compatible agent loop\n  let iteration = 0;\n  while (iteration < ${maxIterations}) {\n    iteration++;\n    // TODO: Call LLM, invoke skills, check completion\n    console.log(\`Iteration \${iteration}\`);\n    break;\n  }\n}\n\nmain().catch(console.error);\n`;
+        const foundryTemplatePy = `# Microsoft Foundry Agent Entry Point\n# Generated for ${agent.name}\nimport yaml\nimport json\nfrom skills import load_skills\n\nwith open("foundry.manifest.json") as f:\n    manifest = json.load(f)\nwith open("agent.yaml") as f:\n    config = yaml.safe_load(f)\n\nskills = load_skills()\n\ndef main():\n    print(f"[Foundry Agent] {manifest['name']} starting...")\n    print(f"Skills loaded: {', '.join(skills.keys())}")\n    iteration = 0\n    while iteration < ${maxIterations}:\n        iteration += 1\n        print(f"Iteration {iteration}")\n        # TODO: Call LLM, invoke skills, check completion\n        break\n\nif __name__ == "__main__":\n    main()\n`;
         if (format === "typescript") {
-          files["entrypoint.ts"] = `// Microsoft Foundry Agent Entry Point\n// Generated for ${agent.name}\nimport yaml from "js-yaml";\nimport fs from "fs";\nimport { loadSkills } from "./skills";\n\nconst manifest = JSON.parse(fs.readFileSync("foundry.manifest.json", "utf-8"));\nconst config = yaml.load(fs.readFileSync("agent.yaml", "utf-8")) as any;\nconst skills = loadSkills();\n\nasync function main() {\n  console.log(\`[Foundry Agent] \${manifest.name} starting...\`);\n  console.log(\`Skills loaded: \${Object.keys(skills).join(", ")}\`);\n  // Implement Foundry-compatible agent loop\n  let iteration = 0;\n  while (iteration < ${maxIterations}) {\n    iteration++;\n    // TODO: Call LLM, invoke skills, check completion\n    console.log(\`Iteration \${iteration}\`);\n    break;\n  }\n}\n\nmain().catch(console.error);\n`;
+          files["entrypoint.ts"] = aiResult?.entrypoint || foundryTemplateTs;
           files["skills/index.ts"] = `// Skill implementations\n${tools.map(t => `export { default as ${t.name} } from "../tools/${t.name}";`).join("\n")}\n\nexport function loadSkills() {\n  return { ${tools.map(t => t.name).join(", ")} };\n}\n`;
           files["tools/index.ts"] = generateTsToolsIndex(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.ts`] = generateTsToolAdapter(tool, getAdapterType(tool.name)); }
+          for (const tool of tools) { files[`tools/${tool.name}.ts`] = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, getAdapterType(tool.name)); }
           const deps = { ...baseDeps }; addLlmDep(deps, []);
           files["package.json"] = JSON.stringify({ name: agentSlug, version: "1.0.0", private: true, scripts: { start: "ts-node entrypoint.ts" }, dependencies: deps }, null, 2);
         } else {
-          files["entrypoint.py"] = `# Microsoft Foundry Agent Entry Point\n# Generated for ${agent.name}\nimport yaml\nimport json\nfrom skills import load_skills\n\nwith open("foundry.manifest.json") as f:\n    manifest = json.load(f)\nwith open("agent.yaml") as f:\n    config = yaml.safe_load(f)\n\nskills = load_skills()\n\ndef main():\n    print(f"[Foundry Agent] {manifest['name']} starting...")\n    print(f"Skills loaded: {', '.join(skills.keys())}")\n    iteration = 0\n    while iteration < ${maxIterations}:\n        iteration += 1\n        print(f"Iteration {iteration}")\n        # TODO: Call LLM, invoke skills, check completion\n        break\n\nif __name__ == "__main__":\n    main()\n`;
+          files["entrypoint.py"] = aiResult?.entrypoint || foundryTemplatePy;
           files["skills/__init__.py"] = `# Skill implementations\n${tools.map(t => `from tools.${t.name} import execute as ${t.name}_execute`).join("\n")}\n\ndef load_skills():\n    return { ${tools.map(t => `"${t.name}": ${t.name}_execute`).join(", ")} }\n`;
           files["tools/__init__.py"] = generatePyToolsInit(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.py`] = generatePyToolAdapter(tool, getAdapterType(tool.name)); }
+          for (const tool of tools) { files[`tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, getAdapterType(tool.name)); }
           const reqs = [...baseReqs]; addLlmDep({}, reqs);
           files["requirements.txt"] = reqs.join("\n") + "\n";
         }
@@ -18855,17 +18894,19 @@ Return valid JSON only. No markdown. No code fences.`;
           actionGroups: [{ name: "tools", description: "Agent tool actions", apiSchema: { s3: { s3BucketName: "your-bucket", s3ObjectKey: "openapi.yaml" } } }],
           idleSessionTTLInSeconds: 600,
         }, null, 2);
+        const bedrockTemplateTs = `// AWS Lambda Handler for Bedrock Action Groups\n// Generated for ${agent.name}\nimport { loadTools } from "../tools";\n\nconst tools = loadTools();\n\nexport const handler = async (event: any) => {\n  const actionGroup = event.actionGroup;\n  const apiPath = event.apiPath;\n  const parameters = event.parameters || [];\n  const toolName = apiPath.replace("/", "");\n\n  console.log(\`[Bedrock] Action: \${actionGroup}, Path: \${apiPath}\`);\n\n  if (tools[toolName]) {\n    const params: Record<string, any> = {};\n    for (const p of parameters) { params[p.name] = p.value; }\n    const result = await tools[toolName](params);\n    return {\n      messageVersion: "1.0",\n      response: { actionGroup, apiPath, httpMethod: "POST", httpStatusCode: 200,\n        responseBody: { "application/json": { body: JSON.stringify(result) } } },\n    };\n  }\n\n  return { messageVersion: "1.0", response: { actionGroup, apiPath, httpMethod: "POST", httpStatusCode: 404,\n    responseBody: { "application/json": { body: JSON.stringify({ error: "Tool not found" }) } } } };\n};\n`;
+        const bedrockTemplatePy = `# AWS Lambda Handler for Bedrock Action Groups\n# Generated for ${agent.name}\nfrom tools import load_tools\nimport json\n\ntools = load_tools()\n\ndef handler(event, context):\n    action_group = event.get("actionGroup", "")\n    api_path = event.get("apiPath", "")\n    parameters = event.get("parameters", [])\n    tool_name = api_path.lstrip("/")\n\n    print(f"[Bedrock] Action: {action_group}, Path: {api_path}")\n\n    if tool_name in tools:\n        params = {p["name"]: p["value"] for p in parameters}\n        result = tools[tool_name](params)\n        return {\n            "messageVersion": "1.0",\n            "response": {\n                "actionGroup": action_group, "apiPath": api_path,\n                "httpMethod": "POST", "httpStatusCode": 200,\n                "responseBody": {"application/json": {"body": json.dumps(result)}}\n            }\n        }\n\n    return {"messageVersion": "1.0", "response": {"actionGroup": action_group, "apiPath": api_path,\n        "httpMethod": "POST", "httpStatusCode": 404,\n        "responseBody": {"application/json": {"body": json.dumps({"error": "Tool not found"})}}}}\n`;
         if (format === "typescript") {
-          files["lambda/handler.ts"] = `// AWS Lambda Handler for Bedrock Action Groups\n// Generated for ${agent.name}\nimport { loadTools } from "../tools";\n\nconst tools = loadTools();\n\nexport const handler = async (event: any) => {\n  const actionGroup = event.actionGroup;\n  const apiPath = event.apiPath;\n  const parameters = event.parameters || [];\n  const toolName = apiPath.replace("/", "");\n\n  console.log(\`[Bedrock] Action: \${actionGroup}, Path: \${apiPath}\`);\n\n  if (tools[toolName]) {\n    const params: Record<string, any> = {};\n    for (const p of parameters) { params[p.name] = p.value; }\n    const result = await tools[toolName](params);\n    return {\n      messageVersion: "1.0",\n      response: { actionGroup, apiPath, httpMethod: "POST", httpStatusCode: 200,\n        responseBody: { "application/json": { body: JSON.stringify(result) } } },\n    };\n  }\n\n  return { messageVersion: "1.0", response: { actionGroup, apiPath, httpMethod: "POST", httpStatusCode: 404,\n    responseBody: { "application/json": { body: JSON.stringify({ error: "Tool not found" }) } } } };\n};\n`;
+          files["lambda/handler.ts"] = aiResult?.entrypoint || bedrockTemplateTs;
           files["tools/index.ts"] = generateTsToolsIndex(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.ts`] = generateTsToolAdapter(tool, getAdapterType(tool.name)); }
+          for (const tool of tools) { files[`tools/${tool.name}.ts`] = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, getAdapterType(tool.name)); }
           files["template.yaml"] = `AWSTemplateFormatVersion: "2010-09-09"\nTransform: AWS::Serverless-2016-10-31\nDescription: "${agent.name} Bedrock Agent Lambda"\nResources:\n  AgentFunction:\n    Type: AWS::Serverless::Function\n    Properties:\n      Handler: lambda/handler.handler\n      Runtime: nodejs20.x\n      Timeout: 30\n      MemorySize: 256\n`;
           const deps = { ...baseDeps, "@aws-sdk/client-bedrock-agent-runtime": pin ? "3.712.0" : "^3.0.0" }; addLlmDep(deps, []);
           files["package.json"] = JSON.stringify({ name: agentSlug, version: "1.0.0", private: true, scripts: { start: "ts-node lambda/handler.ts", "sam:build": "sam build", "sam:deploy": "sam deploy --guided" }, dependencies: deps }, null, 2);
         } else {
-          files["lambda/handler.py"] = `# AWS Lambda Handler for Bedrock Action Groups\n# Generated for ${agent.name}\nfrom tools import load_tools\nimport json\n\ntools = load_tools()\n\ndef handler(event, context):\n    action_group = event.get("actionGroup", "")\n    api_path = event.get("apiPath", "")\n    parameters = event.get("parameters", [])\n    tool_name = api_path.lstrip("/")\n\n    print(f"[Bedrock] Action: {action_group}, Path: {api_path}")\n\n    if tool_name in tools:\n        params = {p["name"]: p["value"] for p in parameters}\n        result = tools[tool_name](params)\n        return {\n            "messageVersion": "1.0",\n            "response": {\n                "actionGroup": action_group, "apiPath": api_path,\n                "httpMethod": "POST", "httpStatusCode": 200,\n                "responseBody": {"application/json": {"body": json.dumps(result)}}\n            }\n        }\n\n    return {"messageVersion": "1.0", "response": {"actionGroup": action_group, "apiPath": api_path,\n        "httpMethod": "POST", "httpStatusCode": 404,\n        "responseBody": {"application/json": {"body": json.dumps({"error": "Tool not found"})}}}}\n`;
+          files["lambda/handler.py"] = aiResult?.entrypoint || bedrockTemplatePy;
           files["tools/__init__.py"] = generatePyToolsInit(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.py`] = generatePyToolAdapter(tool, getAdapterType(tool.name)); }
+          for (const tool of tools) { files[`tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, getAdapterType(tool.name)); }
           files["template.yaml"] = `AWSTemplateFormatVersion: "2010-09-09"\nTransform: AWS::Serverless-2016-10-31\nDescription: "${agent.name} Bedrock Agent Lambda"\nResources:\n  AgentFunction:\n    Type: AWS::Serverless::Function\n    Properties:\n      Handler: lambda/handler.handler\n      Runtime: python3.11\n      Timeout: 30\n      MemorySize: 256\n`;
           const reqs = [...baseReqs, pin ? "boto3==1.34.162" : "boto3>=1.34.0"]; addLlmDep({}, reqs);
           files["requirements.txt"] = reqs.join("\n") + "\n";
@@ -18897,7 +18938,7 @@ Return valid JSON only. No markdown. No code fences.`;
               name: "apiKey", type: "string", default: "" }],
           }, null, 2);
           files["tools/index.ts"] = generateTsToolsIndex(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.ts`] = generateTsToolAdapter(tool, getAdapterType(tool.name)); }
+          for (const tool of tools) { files[`tools/${tool.name}.ts`] = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, getAdapterType(tool.name)); }
           const deps = { ...baseDeps, "n8n-workflow": pin ? "1.69.2" : "^1.0.0" }; addLlmDep(deps, []);
           files["package.json"] = JSON.stringify({ name: agentSlug, version: "1.0.0", private: true, scripts: { start: "ts-node nodes/AgentNode.ts" }, dependencies: deps }, null, 2);
         } else {
@@ -18909,7 +18950,7 @@ Return valid JSON only. No markdown. No code fences.`;
               name: "apiKey", type: "string", default: "" }],
           }, null, 2);
           files["tools/__init__.py"] = generatePyToolsInit(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.py`] = generatePyToolAdapter(tool, getAdapterType(tool.name)); }
+          for (const tool of tools) { files[`tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, getAdapterType(tool.name)); }
           const reqs = [...baseReqs]; addLlmDep({}, reqs);
           files["requirements.txt"] = reqs.join("\n") + "\n";
         }
@@ -18925,14 +18966,14 @@ Return valid JSON only. No markdown. No code fences.`;
           files["entrypoint.ts"] = `// GCP Vertex AI Agent Entry Point\n// Generated for ${agent.name}\nimport yaml from "js-yaml";\nimport fs from "fs";\nimport { loadExtensions } from "./extensions";\n\nconst agentConfig = JSON.parse(fs.readFileSync("agent-config.json", "utf-8"));\nconst config = yaml.load(fs.readFileSync("agent.yaml", "utf-8")) as any;\nconst extensions = loadExtensions();\n\nasync function main() {\n  console.log(\`[Vertex AI Agent] \${agentConfig.displayName} starting...\`);\n  console.log(\`Extensions loaded: \${Object.keys(extensions).join(", ")}\`);\n  let iteration = 0;\n  while (iteration < ${maxIterations}) {\n    iteration++;\n    console.log(\`Iteration \${iteration}\`);\n    // TODO: Call Vertex AI Gemini, invoke extensions, check completion\n    break;\n  }\n}\n\nmain().catch(console.error);\n`;
           files["extensions/index.ts"] = `// Vertex AI Extension implementations\n${tools.map(t => `export { default as ${t.name} } from "../tools/${t.name}";`).join("\n")}\n\nexport function loadExtensions() {\n  return { ${tools.map(t => t.name).join(", ")} };\n}\n`;
           files["tools/index.ts"] = generateTsToolsIndex(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.ts`] = generateTsToolAdapter(tool, getAdapterType(tool.name)); }
+          for (const tool of tools) { files[`tools/${tool.name}.ts`] = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, getAdapterType(tool.name)); }
           const deps = { ...baseDeps, "@google-cloud/aiplatform": pin ? "3.34.0" : "^3.0.0" }; addLlmDep(deps, []);
           files["package.json"] = JSON.stringify({ name: agentSlug, version: "1.0.0", private: true, scripts: { start: "ts-node entrypoint.ts" }, dependencies: deps }, null, 2);
         } else {
           files["entrypoint.py"] = `# GCP Vertex AI Agent Entry Point\n# Generated for ${agent.name}\nimport yaml\nimport json\nfrom extensions import load_extensions\n\nwith open("agent-config.json") as f:\n    agent_config = json.load(f)\nwith open("agent.yaml") as f:\n    config = yaml.safe_load(f)\n\nextensions = load_extensions()\n\ndef main():\n    print(f"[Vertex AI Agent] {agent_config['displayName']} starting...")\n    print(f"Extensions loaded: {', '.join(extensions.keys())}")\n    iteration = 0\n    while iteration < ${maxIterations}:\n        iteration += 1\n        print(f"Iteration {iteration}")\n        # TODO: Call Vertex AI Gemini, invoke extensions, check completion\n        break\n\nif __name__ == "__main__":\n    main()\n`;
           files["extensions/__init__.py"] = `# Vertex AI Extension implementations\n${tools.map(t => `from tools.${t.name} import execute as ${t.name}_execute`).join("\n")}\n\ndef load_extensions():\n    return { ${tools.map(t => `"${t.name}": ${t.name}_execute`).join(", ")} }\n`;
           files["tools/__init__.py"] = generatePyToolsInit(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.py`] = generatePyToolAdapter(tool, getAdapterType(tool.name)); }
+          for (const tool of tools) { files[`tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, getAdapterType(tool.name)); }
           const reqs = [...baseReqs, pin ? "google-cloud-aiplatform==1.60.0" : "google-cloud-aiplatform>=1.60.0"]; addLlmDep({}, reqs);
           files["requirements.txt"] = reqs.join("\n") + "\n";
         }
@@ -18949,7 +18990,7 @@ Return valid JSON only. No markdown. No code fences.`;
         files["tools/__init__.py"] = `# AgentBricks Tool Registry\n# Generated for: ${agent.name}\n${tools.map(t => `from tools.${t.name} import ${t.name}`).join("\n")}\n\n\ndef load_tools():\n    """Return all tool callables for binding to the LLM."""\n    return [${tools.map(t => t.name).join(", ")}]\n`;
 
         for (const tool of tools) {
-          files[`tools/${tool.name}.py`] = generatePyToolAdapter(tool, getAdapterType(tool.name));
+          files[`tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, getAdapterType(tool.name));
         }
 
         files["databricks.yml"] = `# Databricks Asset Bundle (DAB)\n# Deploy with: databricks bundle deploy\nbundle:\n  name: ${agentSlugDbx}_bundle\n\nworkspace:\n  host: \${DATABRICKS_HOST}\n  root_path: /Shared/.bundle/\${bundle.name}/\${bundle.environment}\n\ntargets:\n  dev:\n    default: true\n    mode: development\n    workspace:\n      host: \${DATABRICKS_HOST}\n\n  staging:\n    mode: development\n    workspace:\n      host: \${DATABRICKS_HOST}\n\n  prod:\n    mode: production\n    workspace:\n      host: \${DATABRICKS_HOST}\n\nresources:\n  jobs:\n    deploy_agent:\n      name: Deploy ${agent.name}\n      tasks:\n        - task_key: log_model\n          python_wheel_task:\n            entry_point: agent.py\n          job_cluster_key: agent_cluster\n      job_clusters:\n        - job_cluster_key: agent_cluster\n          new_cluster:\n            spark_version: 15.4.x-scala2.12\n            node_type_id: Standard_DS3_v2\n            num_workers: 1\n            spark_env_vars:\n              DATABRICKS_HOST: \${DATABRICKS_HOST}\n              DATABRICKS_TOKEN: \${DATABRICKS_TOKEN}\n`;
