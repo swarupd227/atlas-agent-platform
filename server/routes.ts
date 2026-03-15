@@ -2288,7 +2288,10 @@ export async function registerRoutes(
       const body = { ...req.body };
       if (body.blueprintId) {
         const bp = await storage.getBlueprint(body.blueprintId);
-        if (bp && bp.blueprintJson) {
+        if (!bp) {
+          return res.status(400).json({ message: `Blueprint not found: ${body.blueprintId}` });
+        }
+        if (bp.blueprintJson) {
           body.blueprintJson = bp.blueprintJson;
         }
       }
@@ -2675,7 +2678,10 @@ export async function registerRoutes(
         let blueprintJson: any = null;
         if (plan.blueprintId) {
           const bp = await storage.getBlueprint(plan.blueprintId);
-          if (bp && bp.blueprintJson) blueprintJson = bp.blueprintJson;
+          if (!bp) {
+            return res.status(400).json({ message: `Blueprint not found: ${plan.blueprintId}` });
+          }
+          if (bp.blueprintJson) blueprintJson = bp.blueprintJson;
         }
         const agentData = insertAgentSchema.parse({
           name: plan.name,
