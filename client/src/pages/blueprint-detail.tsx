@@ -71,8 +71,20 @@ import {
   Brain, Wrench, Database, GitBranch, Split, UserCheck, Shield,
   Plus, Trash2, Save, Play, PenTool, ArrowLeft, AlertTriangle,
   CheckCircle, ChevronDown, ChevronRight, X, MousePointer, Link2, FileText, MessageSquare, Server, Network,
-  Scale, BookMarked, Diff, Globe2, Lock,
+  Scale, BookMarked, Diff, Globe2, Lock, Crown, Copy,
 } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import TeamGraphEditor from "./team-graph-editor";
 
@@ -260,6 +272,18 @@ export default function BlueprintDetail() {
     onError: (err: Error) => toast({ title: "Save failed", description: err.message, variant: "destructive" }),
   });
 
+  const shareMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("PATCH", `/api/blueprints/${id}`, { isShared: !blueprint?.isShared });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/blueprints", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/blueprints"] });
+      toast({ title: blueprint?.isShared ? "Blueprint unshared" : "Blueprint shared to org" });
+    },
+    onError: (err: Error) => toast({ title: "Failed to update sharing", description: err.message, variant: "destructive" }),
+  });
+
   const compileMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", `/api/blueprints/${id}/compile`);
@@ -375,6 +399,29 @@ export default function BlueprintDetail() {
           >
             <Shield className="w-3 h-3 mr-0.5" />
             Ontology {ontologyReadiness.ready ? "Ready" : `${Math.round(ontologyReadiness.overallScore * 100)}%`}
+          </Badge>
+        )}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant={blueprint.isShared ? "default" : "ghost"}
+              size="sm"
+              className="h-7 text-xs gap-1"
+              onClick={() => shareMutation.mutate()}
+              disabled={shareMutation.isPending}
+              data-testid="button-toggle-share"
+            >
+              <Crown className="w-3 h-3" />
+              {blueprint.isShared ? "Shared" : "Share"}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="text-xs">
+            {blueprint.isShared ? "This blueprint is shared to the org. Click to unshare." : "Share this blueprint with the org."}
+          </TooltipContent>
+        </Tooltip>
+        {blueprint.forkedFromId && (
+          <Badge variant="outline" className="text-[10px]" data-testid="badge-forked">
+            <Copy className="w-2.5 h-2.5 mr-0.5" /> Forked
           </Badge>
         )}
         {dirty && <span className="text-xs text-amber-500" data-testid="text-unsaved">Unsaved changes</span>}
@@ -769,7 +816,53 @@ export default function BlueprintDetail() {
                     </Button>
                   </>
                 ) : (
-                  <p className="text-sm text-muted-foreground text-center py-8" data-testid="text-no-selection">Select a node to edit its properties</p>
+                  <div className="flex flex-col gap-4" data-testid="panel-blueprint-settings">
+                    <p className="text-xs text-muted-foreground">Blueprint Settings</p>
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-xs font-medium text-muted-foreground">Pattern Type</label>
+                      <Select
+                        value={blueprint.patternType || "none"}
+                        onValueChange={(v) => {
+                          const val = v === "none" ? null : v;
+                          apiRequest("PATCH", `/api/blueprints/${id}`, { patternType: val }).then(() => {
+                            queryClient.invalidateQueries({ queryKey: ["/api/blueprints", id] });
+                            queryClient.invalidateQueries({ queryKey: ["/api/blueprints"] });
+                            toast({ title: "Pattern type updated" });
+                          });
+                        }}
+                      >
+                        <SelectTrigger className="h-8 text-xs" data-testid="select-pattern-type">
+                          <SelectValue placeholder="Select pattern" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">No pattern</SelectItem>
+                          <SelectItem value="rag_pipeline">RAG Pipeline</SelectItem>
+                          <SelectItem value="orchestrator">Orchestrator</SelectItem>
+                          <SelectItem value="fan_out">Fan-out</SelectItem>
+                          <SelectItem value="linear_chain">Linear Chain</SelectItem>
+                          <SelectItem value="human_in_loop">Human-in-Loop</SelectItem>
+                          <SelectItem value="custom">Custom</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-xs font-medium text-muted-foreground">Tags</label>
+                      <Input
+                        placeholder="comma-separated tags"
+                        defaultValue={(blueprint.tags as string[] || []).join(", ")}
+                        onBlur={(e) => {
+                          const tags = e.target.value.split(",").map(t => t.trim()).filter(Boolean);
+                          apiRequest("PATCH", `/api/blueprints/${id}`, { tags }).then(() => {
+                            queryClient.invalidateQueries({ queryKey: ["/api/blueprints", id] });
+                            queryClient.invalidateQueries({ queryKey: ["/api/blueprints"] });
+                            toast({ title: "Tags updated" });
+                          });
+                        }}
+                        data-testid="input-tags"
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-4 border-t pt-4">Select a node above to edit its properties</p>
+                  </div>
                 )}
               </div>
             ) : rightPanel === "validation" ? (

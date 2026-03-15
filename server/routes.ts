@@ -9173,8 +9173,19 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
 
   // Blueprint Studio Routes
   app.get("/api/blueprints", async (_req, res) => {
-    const blueprints = await storage.getBlueprints();
-    res.json(blueprints);
+    const allBlueprints = await storage.getBlueprints();
+    const allAgents = await storage.getAgents();
+    const agentCountMap = new Map<string, number>();
+    for (const a of allAgents) {
+      if (a.blueprintId) {
+        agentCountMap.set(a.blueprintId, (agentCountMap.get(a.blueprintId) || 0) + 1);
+      }
+    }
+    const enriched = allBlueprints.map(bp => ({
+      ...bp,
+      agentCount: agentCountMap.get(bp.id) || 0,
+    }));
+    res.json(enriched);
   });
 
   app.get("/api/blueprints/:id", async (req, res) => {
@@ -9194,7 +9205,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
   });
 
   app.patch("/api/blueprints/:id", async (req, res) => {
-    const allowedFields = ["name", "description", "agentId", "blueprintJson", "status"];
+    const allowedFields = ["name", "description", "agentId", "blueprintJson", "status", "patternType", "tags", "isShared"];
     const sanitized: Record<string, any> = {};
     for (const key of allowedFields) {
       if (key in req.body) sanitized[key] = req.body[key];
@@ -9202,10 +9213,28 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     if (sanitized.status && !["draft"].includes(sanitized.status)) {
       return res.status(400).json({ error: "Can only set status to 'draft' via update" });
     }
-    sanitized.status = "draft";
+    if (!("isShared" in sanitized) && !("patternType" in sanitized) && !("tags" in sanitized)) {
+      sanitized.status = "draft";
+    }
     const updated = await storage.updateBlueprint(req.params.id, sanitized);
     if (!updated) return res.status(404).json({ error: "Blueprint not found" });
     res.json(updated);
+  });
+
+  app.post("/api/blueprints/:id/clone", async (req, res) => {
+    const source = await storage.getBlueprint(req.params.id);
+    if (!source) return res.status(404).json({ error: "Blueprint not found" });
+    const cloned = await storage.createBlueprint({
+      name: `${source.name} (Fork)`,
+      description: source.description,
+      blueprintJson: source.blueprintJson,
+      patternType: source.patternType,
+      tags: source.tags,
+      forkedFromId: source.id,
+      version: 0,
+      status: "draft",
+    });
+    res.status(201).json(cloned);
   });
 
   app.post("/api/blueprints/:id/compile", async (req, res) => {

@@ -105,6 +105,7 @@ export const agents = pgTable("agents", {
   maturityScore: real("maturity_score").default(0),
   maturityFactors: jsonb("maturity_factors").notNull().default(sql`'{}'::jsonb`),
   maxToolIterations: integer("max_tool_iterations").default(5),
+  blueprintId: varchar("blueprint_id"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -622,6 +623,10 @@ export const blueprints = pgTable("blueprints", {
   signedAt: timestamp("signed_at"),
   lastEvalAt: timestamp("last_eval_at"),
   lastDeployAt: timestamp("last_deploy_at"),
+  patternType: text("pattern_type"),
+  tags: text("tags").array().default(sql`'{}'::text[]`),
+  isShared: boolean("is_shared").default(false),
+  forkedFromId: varchar("forked_from_id"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
